@@ -3059,20 +3059,22 @@ describe("saving a side's lineup (U8)", function () {
     expect((await save(games.runner, SCORER, hosts)).status).equals(200)
   })
 
-  it('refuses an assistant, a member and the other team’s coach', async function () {
+  it('refuses a member and the other team’s coach, and saves for the team’s assistant', async function () {
     const session = await scoring(games.live)
     const body = bodyOf(session.state, 'home')
     body.battingOrder.reverse()
-    for (const token of [ASSISTANT, FAN, AWAY_COACH]) {
+    for (const token of [FAN, AWAY_COACH]) {
       const answer = await save(games.live, token, body)
       expect(answer.status, token).equals(403)
       expect(answer.body.message).equals(
-        "Only the team's head coach or a scorekeeper may save its lineup"
+        "Only the team's coach, an assistant or a scorekeeper may save its lineup"
       )
     }
-    // A team's admin is its head coach.
+    // A team's assistant coaches it, and a team's admin does too.
+    expect((await save(games.live, ASSISTANT, body)).status).equals(200)
     const away = bodyOf(session.state, 'away')
     expect((await save(games.live, AWAY_COACH, away)).status).equals(200)
+    body.battingOrder.reverse()
     expect((await save(games.live, TEAM_ADMIN, body)).status).equals(200)
   })
 

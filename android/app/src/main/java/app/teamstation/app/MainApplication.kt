@@ -9,6 +9,7 @@ import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.navigation.PredictiveBackPackage
 import app.teamstation.app.network.StalledConnections
 import app.teamstation.app.orientation.OrientationPackage
+import app.teamstation.app.plan.PlanDocumentPackage
 import app.teamstation.app.qrscanner.QrScannerPackage
 import app.teamstation.app.stream.PhoneStreamPackage
 import app.teamstation.app.video.LivePlaylistPatience
@@ -42,6 +43,7 @@ class MainApplication : Application(), ReactApplication {
           add(PredictiveBackPackage())
           add(ExternalBrowserPackage())
           add(HapticsPackage())
+          add(PlanDocumentPackage())
           // The phone's own streaming and recording, and its camera preview.
           add(PhoneStreamPackage())
           // Share Lineup's QR code camera.

@@ -1660,7 +1660,10 @@ describe('Coach Game (U25)', function () {
       />
     )
     await waitFor(
-      () => document.body.textContent!.includes('Only a head coach'),
+      () =>
+        document.body.textContent!.includes(
+          'Only a coach or assistant of this team'
+        ),
       'the refusal'
     )
     await act(async () => {
@@ -2144,17 +2147,16 @@ describe('the coach’s game plan', function () {
     await type(1, 1, ['p'])
     await type(2, 1, ['p'])
     expect(
-      document.querySelector(
-        '[data-testid="Plan warning red duplicatePosition"]'
-      )
-    ).not.equals(null)
+      document.querySelector('[data-testid="Plan position duplicate 1"]')
+        ?.textContent
+    ).equals('Inning 1 has multiple players assigned to P')
     await click('Save Rosters')
     // Its inning 1, two pitchers and the rest blank, benches the Defense
     // tab's other fielders before the first pitch: the notice says so too.
     await waitFor(
       () =>
         document.body.textContent!.includes(
-          'Saved. Defense set from the plan’s inning 1. Plan has 1 red and 1 yellow playing-time warnings.'
+          'Saved. Defense set from the plan’s inning 1. Plan has 1 playing-time warning.'
         ),
       'the warning notice'
     )
@@ -2670,7 +2672,7 @@ describe('the coach’s game plan', function () {
     expect(saveDisabled()).equals(true)
   })
 
-  it('tells somebody the server answers no plan, an admin who is not the team’s coach, that it is the coaches’, and saves none', async function () {
+  it('tells somebody the server answers no plan, an admin who is neither the team’s coach nor its assistant, that it is the coaches’ and assistants’, and saves none', async function () {
     const held = accepted()
     held.client.gamePlans = async () => ({ away: null, home: null })
     let plansSaved = 0
@@ -2681,7 +2683,7 @@ describe('the coach’s game plan', function () {
     await coach(held)
     await click('Plan', 'tab')
     expect(document.body.textContent).includes(
-      "Only the team's coaches can see its game plan."
+      "Only the team's coaches and assistants can see its game plan."
     )
     expect(document.body.textContent).not.includes(
       'Unable to load the game plan'

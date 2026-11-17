@@ -163,7 +163,7 @@ export interface GameScreenProps {
   /** An embedded recording controller; otherwise use this device's camera. */
   recording?: GameRecording
   /**
-   * Opens Coach Game on a team the viewer head-coaches. A head coach of both
+   * Opens Coach Game on a team the viewer coaches or assists. A coach of both
    * teams picks one first.
    */
   onCoachGame?: (teamId: string) => void
@@ -741,7 +741,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
   const [box, setBox] = useState<BoxScoreData | undefined>(undefined)
-  // A head coach of both teams, choosing which to coach.
+  // A coach of both teams, choosing which to coach.
   const [choosingCoach, setChoosingCoach] = useState(false)
   /**
    * The two sides' teams, where they are ones that can actually be opened.
@@ -1901,7 +1901,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
   const teamOf = (side: Side): string =>
     side === 'home' ? game.homeTeamId : game.awayTeamId
-  // Straight to the one team a head coach coaches; a head coach of both
+  // Straight to the one team a coach coaches; a coach of both
   // picks one.
   const openCoach = (): void => {
     const [only, other] = heroCoachSides(game)

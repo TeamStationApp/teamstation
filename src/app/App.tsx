@@ -311,7 +311,7 @@ export type Pushed =
   | CreationRoute
   | { name: 'scoreGame'; gameId: string }
   | { name: 'scoreOptions'; gameId: string }
-  /** Coach Game: a head coach's own team in a game, full screen. */
+  /** Coach Game: a coach's or assistant's own team in a game, full screen. */
   | { name: 'coachGame'; gameId: string; teamId: string }
   | { name: 'gameReplay'; gameId: string }
   /**

@@ -74,6 +74,13 @@ describe('the pills across a game', function () {
         assignedRoles: { away: ['admin'], home: ['coach'] }
       })
     ).deep.equals(['home'])
+    // An assistant coaches his side as a coach does.
+    expect(
+      heroCoachSides({
+        ...game,
+        assignedRoles: { away: ['assistant'], home: ['scorekeeper'] }
+      })
+    ).deep.equals(['away'])
     expect(
       gameActions({ ...callbacks, game: { ...game, eventKind: 'event' } })
     ).deep.equals([])
@@ -198,8 +205,8 @@ describe('the pills across a game', function () {
     expect(ids(gameActions({ game, onCoachGame }))).deep.equals(['coach'])
   })
 
-  it('leaves Coach Game out for an assistant, a scorekeeper, a member, a cancelled game, or no way to open it (U23)', function () {
-    // An assistant, like a member, coaches no side.
+  it('leaves Coach Game out for a scorekeeper, a member, a cancelled game, or no way to open it (U23)', function () {
+    // A member coaches no side.
     expect(
       ids(gameTabs({ game: gameWith({ coachSides: [] }), onCoachGame }))
     ).deep.equals(['info', 'boxScore', 'watch'])

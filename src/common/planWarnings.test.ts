@@ -123,30 +123,17 @@ const afterUnplanned = (rows: PlanCell[][]): PlanCell[][] =>
   rows.map(cells => ['', ...cells])
 
 describe('plan warnings', function () {
-  it('warns of two players at one position in an inning, with no rules', function () {
-    const list = warnings(
-      [
-        ['SS', 'SS', ''],
-        ['SS', 'LF', ''],
-        ['LF', 'SS', '']
-      ],
-      null
-    )
-    expect(list).deep.equals([
-      {
-        rule: 'duplicatePosition',
-        level: 'red',
-        message: `Two players at SS in inning 1: ${RUTH}, ${GEHRIG}`,
-        players: [RUTH, GEHRIG]
-      },
-      {
-        rule: 'duplicatePosition',
-        level: 'red',
-        message: `Two players at SS in inning 2: ${RUTH}, ${DIMAGGIO}`,
-        players: [RUTH, DIMAGGIO]
-      }
-    ])
-    // Blank cells are never a duplicate, so this rule has no yellow.
+  it('warns of nothing with no rules, two players at one position included: that is a position error', function () {
+    expect(
+      warnings(
+        [
+          ['SS', 'SS', ''],
+          ['SS', 'LF', ''],
+          ['LF', 'SS', '']
+        ],
+        null
+      )
+    ).deep.equals([])
     expect(warnings([[''], [''], [''], ['']], rules())).deep.equals([])
   })
 
@@ -340,7 +327,6 @@ describe('plan warnings', function () {
 
     it('is judged on the innings it reached', function () {
       const list = warnings(rows, inOuts(9), final)
-      expect(of(list, 'duplicatePosition')).deep.equals([])
       expect(of(list, 'defensivePlayingTime')).deep.equals([
         { level: 'red', players: [RUTH] }
       ])
@@ -354,18 +340,15 @@ describe('plan warnings', function () {
     it('is never a game still in progress, or one that reached its planned innings', function () {
       const list = warnings(rows, inOuts(9), { playedInnings: 4 })
       expect(of(list, 'defensivePlayingTime')).deep.equals([])
-      expect(of(list, 'duplicatePosition')).deep.equals([
-        { level: 'red', players: [RUTH, GEHRIG] }
-      ])
       expect(
         warnings(rows, inOuts(9), { final: false, playedInnings: 4 })
       ).deep.equals(list)
       expect(
         of(
           warnings(rows, inOuts(9), { final: true, playedInnings: 6 }),
-          'duplicatePosition'
+          'defensivePlayingTime'
         )
-      ).deep.equals([{ level: 'red', players: [RUTH, GEHRIG] }])
+      ).deep.equals([])
     })
   })
 
@@ -1014,7 +997,7 @@ describe('plan warnings', function () {
 
   it('summarises the warnings for the notices', function () {
     const red: PlanWarning = {
-      rule: 'duplicatePosition',
+      rule: 'maxSitsPerGame',
       level: 'red',
       message: '',
       players: []

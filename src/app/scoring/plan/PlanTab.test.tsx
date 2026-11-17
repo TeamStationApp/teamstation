@@ -19,8 +19,11 @@ import { ThemeProvider } from '../../theme/ThemeContext'
 import { PLAN_REFUSAL_MS } from './PlanCell'
 import {
   PLAN_COLUMN_WIDTH,
+  PLAN_MAX_WIDTH,
   PLAN_PLAYER_WIDTH,
+  PLAN_REFERENCE_WIDTH,
   PLAN_SLOT_WIDTH,
+  planColumnWidth,
   planPickerTop
 } from './planLayout'
 import { type PlanContext, PlanTab } from './PlanTab'
@@ -246,6 +249,20 @@ function placeTargets(): void {
   }
 }
 
+/** Replaces a property for a test, answering how to put it back. */
+function replaced(target: object, key: string, value: unknown): () => void {
+  const was = Object.getOwnPropertyDescriptor(target, key)
+  Object.defineProperty(target, key, {
+    configurable: true,
+    writable: true,
+    value
+  })
+  return () => {
+    if (was == null) Reflect.deleteProperty(target, key)
+    else Object.defineProperty(target, key, was)
+  }
+}
+
 describe('the game plan tab', function () {
   it('lists the lineup in batting order, name then jersey, under six inning columns and a plus', async function () {
     await mount()
@@ -283,6 +300,48 @@ describe('the game plan tab', function () {
     expect(cells().map(row => row.length)).deep.equals([7, 7, 7])
     expect(byId('Plan inning 7')).not.equals(null)
     expect(cell(3, 7)).not.equals(null)
+  })
+
+  it('makes an inning column two characters wide on a phone, growing with the window to three times that', function () {
+    expect(PLAN_REFERENCE_WIDTH * 3).equals(PLAN_MAX_WIDTH)
+    expect(
+      [0, 375, 402, 834, 1024, 1206, 1920].map(planColumnWidth)
+    ).deep.equals([28, 28, 28, 58, 71, 84, 84])
+  })
+
+  it('grows the inning columns with the window, up to three times a phone’s, and stops the tab at 1206 points', async function () {
+    const widths = (): string[] =>
+      [byId('Plan inning 1')!, cell(1, 1).parentElement!].map(
+        node => getComputedStyle(node).width
+      )
+    const sized = async (width: number): Promise<void> => {
+      Object.defineProperty(document.documentElement, 'clientWidth', {
+        configurable: true,
+        get: () => width
+      })
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+      await settle()
+    }
+    try {
+      await sized(402)
+      await mount()
+      expect(widths()).deep.equals(['28px', '28px'])
+      await sized(1024)
+      expect(widths()).deep.equals(['71px', '71px'])
+      expect(byId('Plan add inning')!.style.width).equals('71px')
+      await sized(1920)
+      expect(widths()).deep.equals(['84px', '84px'])
+      expect(getComputedStyle(byId('Plan tab')!).maxWidth).equals('1206px')
+      expect(getComputedStyle(byId('Plan tab')!).alignSelf).equals('center')
+    } finally {
+      delete (document.documentElement as unknown as Record<string, unknown>)
+        .clientWidth
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+    }
   })
 
   it('opens a new plan with five innings, and a player column an inning wider, each name a non-selectable ticker', async function () {
@@ -908,6 +967,284 @@ describe('the game plan tab', function () {
     expect(byId('Plan warning red maxSitsPerGame')!.textContent).includes(
       'Lou Gehrig, Babe Ruth'
     )
+  })
+
+  it('lists each inning’s missing and doubled positions under the sheet, before the warnings, and reds a doubled cell', async function () {
+    await mount({
+      context: ruled({}),
+      plan: {
+        ...PLAN,
+        rows: [
+          { player: LINEUP[0], cells: ['SS', 'EH', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['SS', 'EH', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['', '', '', '', '', ''] }
+        ]
+      }
+    })
+    const text = (id: string): string | null => byId(id)?.textContent ?? null
+    expect(text('Plan position missing 1')).equals(
+      'Inning 1 is missing players for positions: P, C, 1B, 2B, 3B, LF, CF, and RF'
+    )
+    expect(text('Plan position duplicate 1')).equals(
+      'Inning 1 has multiple players assigned to SS'
+    )
+    // Two EHs are no duplicate; inning 2 still fields nobody.
+    expect(text('Plan position missing 2')).equals(
+      'Inning 2 is missing players for positions: P, C, 1B, 2B, 3B, SS, LF, CF, and RF'
+    )
+    expect(byId('Plan position duplicate 2')).equals(null)
+    // An inning with nothing assigned has no error.
+    expect(byId('Plan position missing 3')).equals(null)
+    // No line names the players of a doubled position any more.
+    expect(document.body.textContent).not.includes('Two players at')
+    // Under the sheet, then the warnings.
+    const errors = byId('Plan position errors')!
+    expect(
+      byId('Plan sheet')!.compareDocumentPosition(errors) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(
+      errors.compareDocumentPosition(byId('Plan warnings')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    // The doubled cells are the errors' red; EH and the others are not.
+    const colour = (node: Element): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    const red = colour(byId('Plan position duplicate 1')!)
+    expect(colour(cell(1, 1))).equals(red)
+    expect(colour(cell(2, 1))).equals(red)
+    expect(colour(cell(1, 2))).not.equals(red)
+    expect(colour(cell(3, 1))).not.equals(red)
+    // Clear is that red too, and Help the sheet's bright link blue.
+    expect(colour(byId('Plan clear')!)).equals(red)
+    expect(colour(byId('Plan help')!)).equals('rgb(165, 216, 255)')
+    // Fixed, the line and the colour go at once.
+    await press(cell(2, 1))
+    await key('c')
+    await key('Enter')
+    expect(byId('Plan position duplicate 1')).equals(null)
+    expect(text('Plan position missing 1')).equals(
+      'Inning 1 is missing players for positions: P, 1B, 2B, 3B, LF, CF, and RF'
+    )
+    expect(colour(cell(1, 1))).not.equals(red)
+  })
+
+  it('judges a final game that stopped short on the innings it played', async function () {
+    await mount({
+      context: { ...NO_RULES, status: 'final', playedInnings: 1 },
+      plan: {
+        ...PLAN,
+        rows: [
+          { player: LINEUP[0], cells: ['P', 'SS', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['C', 'SS', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['1B', '', '', '', '', ''] }
+        ]
+      }
+    })
+    // Inning 2 was never played: no lines for it, and no red cells.
+    expect(byId('Plan position missing 1')).not.equals(null)
+    expect(byId('Plan position duplicate 2')).equals(null)
+    expect(byId('Plan position missing 2')).equals(null)
+    const colour = (node: Element): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    expect(colour(cell(1, 2))).equals(colour(cell(1, 1)))
+  })
+
+  it('reds a doubled cell on a phone too, and shows no errors for an empty plan', async function () {
+    await mount({ os: 'ios' })
+    expect(byId('Plan position errors')).equals(null)
+    await act(async () => {
+      root!.unmount()
+    })
+    root = undefined
+    host!.remove()
+    await mount({
+      os: 'ios',
+      plan: {
+        ...PLAN,
+        rows: [
+          { player: LINEUP[0], cells: ['DH', '', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['DH', '', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['P', '', '', '', '', ''] }
+        ]
+      }
+    })
+    expect(byId('Plan position duplicate 1')!.textContent).equals(
+      'Inning 1 has multiple players assigned to DH'
+    )
+    const colour = (node: Element): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    const red = colour(byId('Plan position duplicate 1')!)
+    expect(colour(cell(1, 1))).equals(red)
+    expect(colour(cell(3, 1))).not.equals(red)
+  })
+
+  it('puts blue Share and Print pills last, which share and print a PDF of the plan as shown, named for its game', async function () {
+    const made: Blob[] = []
+    const clicked: HTMLAnchorElement[] = []
+    let refuse = false
+    const restore = [
+      replaced(URL, 'createObjectURL', (blob: Blob): string => {
+        if (refuse) throw new Error('No room')
+        made.push(blob)
+        return `blob:plan-${made.length}`
+      }),
+      replaced(URL, 'revokeObjectURL', () => undefined),
+      replaced(
+        window.HTMLAnchorElement.prototype,
+        'click',
+        function (this: HTMLAnchorElement) {
+          clicked.push(this)
+        }
+      )
+    ]
+    try {
+      await mount({
+        context: ruled(
+          {},
+          {
+            document: { team: 'Hosts', opponent: 'Owls', date: '2027-04-11' }
+          }
+        ),
+        plan: {
+          ...PLAN,
+          rows: [
+            { player: LINEUP[0], cells: ['SS', 'P', '', '', '', ''] },
+            { player: LINEUP[1], cells: ['SS', '', '', '', '', ''] },
+            { player: LINEUP[2], cells: ['C', '', '', '', '', ''] }
+          ]
+        }
+      })
+      const share = byId('Plan share')!
+      const print = byId('Plan print')!
+      expect(share.textContent).equals('Share')
+      expect(print.textContent).equals('Print')
+      expect(share.getAttribute('aria-label')).equals(
+        'Share the game plan as a PDF'
+      )
+      expect(print.getAttribute('aria-label')).equals('Print the game plan')
+      // Last: after the errors and the warnings, Share left of Print.
+      const follows = (a: Element, b: Element): boolean =>
+        (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      expect(
+        follows(byId('Plan position errors')!, byId('Plan warnings')!)
+      ).equals(true)
+      expect(follows(byId('Plan warnings')!, share)).equals(true)
+      expect(follows(share, print)).equals(true)
+      // Blue pills with white words and white artwork.
+      for (const pill of [share, print]) {
+        expect(getComputedStyle(pill).backgroundColor).equals(
+          'rgb(21, 101, 192)'
+        )
+        expect(
+          getComputedStyle(pill.querySelector('[dir="auto"]')!).color
+        ).equals('rgb(255, 255, 255)')
+        expect(pill.querySelector('path')!.getAttribute('stroke')).equals(
+          '#ffffff'
+        )
+      }
+      const pdfText = async (blob: Blob): Promise<string> =>
+        new TextDecoder().decode(await blob.arrayBuffer())
+      await press(share)
+      await settle()
+      expect(clicked.map(link => link.download)).deep.equals([
+        'Hosts-game-plan-2027-04-11.pdf'
+      ])
+      const shared = await pdfText(made[0])
+      expect(shared.startsWith('%PDF-1.4')).equals(true)
+      expect(shared).includes('(Hosts game plan - Owls - 2027-04-11) Tj')
+      for (const name of ['Babe Ruth #3', 'Lou Gehrig #4', 'Willie Mays #24'])
+        expect(shared).includes(`(${name}) Tj`)
+      await press(print)
+      await settle()
+      const frame = document.querySelector('iframe')!
+      expect(frame.getAttribute('src')).equals('blob:plan-2')
+      expect(frame.title).equals('Hosts-game-plan-2027-04-11.pdf')
+      expect(await pdfText(made[1])).equals(shared)
+      expect(byId('Plan document failed')).equals(null)
+      // A second press while the first is still opening does nothing.
+      await press(print)
+      await settle()
+      expect(made).has.length(2)
+      expect(document.querySelectorAll('iframe')).has.length(1)
+      // The frame loads and is asked to print, which ends the hand-off.
+      let printed = 0
+      Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: {
+          focus: () => undefined,
+          print: () => {
+            printed++
+          }
+        }
+      })
+      await act(async () => {
+        frame.dispatchEvent(new window.Event('load'))
+      })
+      await settle()
+      expect(printed).equals(1)
+      // A PDF that cannot be handed off says so, until the next press.
+      refuse = true
+      await press(print)
+      await settle()
+      expect(byId('Plan document failed')!.textContent).equals(
+        "Couldn't make the game plan PDF."
+      )
+      refuse = false
+      await press(share)
+      await settle()
+      expect(byId('Plan document failed')).equals(null)
+      frame.remove()
+    } finally {
+      for (const back of restore) back()
+      for (const frame of document.querySelectorAll('iframe')) frame.remove()
+    }
+  })
+
+  it('measures the pressed pill on a phone, for its sheet to open from', async function () {
+    const made: Blob[] = []
+    const restore = replaced(URL, 'createObjectURL', (blob: Blob): string => {
+      made.push(blob)
+      return 'blob:plan'
+    })
+    try {
+      await mount({ os: 'ios' })
+      const print = byId('Plan print')!
+      let measured = 0
+      print.getBoundingClientRect = () => {
+        measured++
+        return box(210, 778, 100, 44)
+      }
+      await press(print)
+      for (let i = 0; i < 10 && made.length === 0; i++)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      await settle()
+      expect(measured).greaterThan(0)
+      expect(made).has.length(1)
+    } finally {
+      restore()
+      for (const frame of document.querySelectorAll('iframe')) frame.remove()
+    }
+  })
+
+  it('names the PDF a game plan when the game is not known', async function () {
+    const made: Blob[] = []
+    const restore = replaced(URL, 'createObjectURL', (blob: Blob): string => {
+      made.push(blob)
+      return 'blob:plan'
+    })
+    try {
+      await mount()
+      await press(byId('Plan print'))
+      await settle()
+      expect(document.querySelector('iframe')!.title).equals('game-plan.pdf')
+      expect(new TextDecoder().decode(await made[0].arrayBuffer())).includes(
+        '(Game plan) Tj'
+      )
+    } finally {
+      restore()
+      for (const frame of document.querySelectorAll('iframe')) frame.remove()
+    }
   })
 
   it('says a team with rules has nothing to warn of, and shows nothing for one with none', async function () {

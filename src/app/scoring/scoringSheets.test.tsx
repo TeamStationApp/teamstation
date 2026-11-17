@@ -578,8 +578,15 @@ describe('scoring slide-up sheets', function () {
     expect(document.querySelector('[aria-label="Save Rosters"]')).not.equals(
       null
     )
-    // An edit and Save go through with the read still out.
+    // An edit and Save go through with the read still out. The scorekeeper's
+    // Clear is the sheet's red, as the coach's is.
     await click('Lineup')
+    const clearLineup = document.querySelector<HTMLElement>(
+      '[aria-label="Clear Lineup"]'
+    )!
+    expect(
+      window.getComputedStyle(clearLineup.firstElementChild!).color
+    ).equals('rgb(248, 113, 113)')
     await click('Clear Lineup')
     await click('Save Rosters')
     expect(document.querySelector('[aria-label="Save Rosters"]')).equals(null)
@@ -787,7 +794,7 @@ describe('scoring slide-up sheets', function () {
     expect(clear.style.right).equals('4px')
     const label = clear.firstElementChild as HTMLElement
     const red = document.createElement('div')
-    red.style.color = getTheme().scoringOutColor
+    red.style.color = getTheme().scoringSurface.danger
     expect(window.getComputedStyle(label).color).equals(red.style.color)
     await click('Clear Defense')
     for (const position of ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF'])

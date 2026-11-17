@@ -1260,24 +1260,25 @@ describe('dictation route', function () {
       ).equals(undefined)
     })
 
-    it('admits a head coach for his own side', async function () {
-      expect(await refusal(coach, { gameId: ownGame, side: 'home' })).equals(
-        undefined
-      )
+    it('admits a head coach and an assistant for their own side', async function () {
+      for (const user of [coach, assistant])
+        expect(await refusal(user, { gameId: ownGame, side: 'home' })).equals(
+          undefined
+        )
     })
 
-    it('refuses a head coach with no side or the other side, an assistant and a member', async function () {
+    it('refuses a head coach with no side or the other side, an assistant with no side, and a member', async function () {
       for (const [user, target] of [
         [coach, { gameId: ownGame }],
         [coach, { gameId: ownGame, side: 'away' }],
-        [assistant, { gameId: ownGame, side: 'home' }],
+        [assistant, { gameId: ownGame }],
         [member, { gameId: ownGame, side: 'home' }]
       ] as const) {
         const error = await refusal(user, target)
         expect(error).instanceOf(HttpError)
         expect((error as HttpError).status).equals(403)
         expect((error as HttpError).message).equals(
-          "Only the team's head coach or a scorekeeper may change its lineup"
+          "Only the team's coach, an assistant or a scorekeeper may change its lineup"
         )
       }
     })
@@ -1305,7 +1306,7 @@ describe('dictation route', function () {
         kind: 'error',
         id: 'r1',
         message:
-          "Only the team's head coach or a scorekeeper may change its lineup"
+          "Only the team's coach, an assistant or a scorekeeper may change its lineup"
       })
       client.send(
         start('r2', {

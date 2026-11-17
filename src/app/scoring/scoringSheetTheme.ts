@@ -44,6 +44,7 @@ export function scoringSheetTheme(theme: Theme): Theme {
     emblemColor: surface.accent,
     plateIconColor: surface.secondaryText,
     dangerColor: surface.danger,
+    linkTextColor: surface.link,
     // The sheet's own card, so its on-card colours follow the sheet too.
     cardDangerColor: surface.danger,
     cardSuccessColor: surface.accent,

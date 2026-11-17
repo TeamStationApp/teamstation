@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -23,6 +24,7 @@ import type { LineupFixture } from '../../server/dev/lineupFixture'
 import { serverConfig } from '../../server/serverConfig'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { signInTestAccount } from '../../test/passwordFixtures'
+import { readPlanPdf } from '../../test/planPdfReader'
 import {
   type BrowserSession,
   browserSession,
@@ -358,6 +360,24 @@ const OPENING_PLAN: PlanCell[][] = SHIFT_PLAN.map(row => [
   row[1],
   ...row.slice(1)
 ])
+
+/**
+ * #299's plan for the home side's nine: inning 1 misses 3B and the outfield
+ * and doubles SS; inning 2 holds only two DHs; inning 3 is a whole field;
+ * inning 4 has two EHs, which is no duplicate, and misses CF and RF; inning
+ * 5 is empty.
+ */
+const ERROR_PLAN: PlanCell[][] = [
+  ['P', 'DH', 'P', 'EH', ''],
+  ['C', 'DH', 'C', 'EH', ''],
+  ['1B', '', '1B', 'P', ''],
+  ['2B', '', '2B', 'C', ''],
+  ['SS', '', '3B', '1B', ''],
+  ['SS', '', 'SS', '2B', ''],
+  ['', '', 'LF', '3B', ''],
+  ['', '', 'CF', 'SS', ''],
+  ['', '', 'RF', 'LF', '']
+]
 
 /** Who a plan's column puts at each position, by gumboId; null for none. */
 function columnDefense(
@@ -1063,6 +1083,37 @@ describe('Coach Plan', function () {
       await coach.tap('Home Team', 'tab')
     await coach.defense()
     await coach.shot(`defense-scorekeeper-${PHASE}.png`)
+  })
+
+  /**
+   * #299's captures, the same on the base and the branch: the coach's Plan
+   * tab holding ERROR_PLAN, scrolled through whole, and the game's pills as
+   * the home team's assistant sees them.
+   */
+  it('captures the plan’s position errors and pills, and the assistant’s pills', async function () {
+    if (!CAPTURING && ARTIFACTS == null) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, ERROR_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.tallShot(
+      `plan-phone-web-${PHASE}.png`,
+      '[data-testid="Plan scroll"]'
+    )
+    await coach.as(fixture, 'assistant')
+    await coach.page.goto(`${APP}/games/${fixture.gameId}`, {
+      waitUntil: 'domcontentloaded'
+    })
+    await coach.page.waitForSelector('[aria-label="Game sections"]', {
+      timeout: 60000
+    })
+    await coach.page.waitForFunction(
+      () => String(document.body.textContent).includes('Hosts'),
+      { timeout: 30000 }
+    )
+    await new Promise(resolve => setTimeout(resolve, 500))
+    await coach.shot(`coach-assistant-${PHASE}.png`)
   })
 
   it('captures the coach Plan tab, holding P8’s plan, and its picker', async function () {
@@ -2174,11 +2225,11 @@ describe('Coach Plan', function () {
   })
 
   /**
-   * P23: the home team's admin, who is not its coach, opens the coach
-   * screen by its address (an admin has no Coach pill) and finds the Plan
-   * tab saying the plan is the coaches'.
+   * P23: the home team's admin, who is neither its coach nor its assistant,
+   * opens the coach screen by its address (an admin has no Coach pill) and
+   * finds the Plan tab saying the plan is the coaches' and assistants'.
    */
-  it('P23 tells a team admin who is not its coach that the plan is the coaches’', async function () {
+  it('P23 tells a team admin who is not its coach or assistant that the plan is the coaches’ and assistants’', async function () {
     if (CAPTURING) this.skip()
     const fixture = await lineupFixture()
     await savePlan(fixture, SHIFT_PLAN)
@@ -2194,7 +2245,7 @@ describe('Coach Plan', function () {
     await coach.page.waitForFunction(
       () =>
         String(document.body.textContent).includes(
-          "Only the team's coaches can see its game plan."
+          "Only the team's coaches and assistants can see its game plan."
         ),
       { timeout: 15000 }
     )
@@ -2207,7 +2258,7 @@ describe('Coach Plan', function () {
    * route answers a scorekeeper, through the API, each request on a `$`
    * line with its status and body after it. Tee'd as `plan-access.log`.
    */
-  it('P24 answers the full plan to the team’s coach alone, and a scorer only the inning in play, after the start time and before the game is over', async function () {
+  it('P24 answers the full plan to the team’s coach and assistant alone, and a scorer only the inning in play, after the start time and before the game is over', async function () {
     if (CAPTURING) this.skip()
     const fixture = await lineupFixture()
     await savePlan(fixture, SHIFT_PLAN)
@@ -2238,7 +2289,15 @@ describe('Coach Plan', function () {
       }
     ).home
     expect(stored).not.equals(null)
-    for (const who of ['scorekeeper', 'assistant', 'teamAdmin'] as const) {
+    // The assistant reads and saves it as the head coach does.
+    expect(
+      ((await call('assistant', 'GET', plansPath)).body as { home: unknown })
+        .home
+    ).deep.equals(stored)
+    expect(
+      (await call('assistant', 'PUT', homePath, stored!.plan)).status
+    ).equals(200)
+    for (const who of ['scorekeeper', 'teamAdmin'] as const) {
       expect((await call(who, 'GET', plansPath)).body).deep.equals({
         away: null,
         home: null
@@ -2308,6 +2367,335 @@ describe('Coach Plan', function () {
     const over = await call('scorekeeper', 'GET', `${homePath}/innings/3`)
     expect(over.status).equals(403)
     expect(reasonOf(over.body)).equals('planGameOver')
+  })
+
+  /**
+   * P26: the position errors under the sheet for ERROR_PLAN, in order and
+   * before the warnings; the doubled cells red, EH's not; and Clear and an
+   * added inning's number that same red.
+   */
+  it('P26 lists each inning’s missing and doubled positions under the sheet, and reds the doubled cells, Clear and an added inning', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, ERROR_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    const RED = 'rgb(248, 113, 113)'
+    const read = async (): Promise<{
+      lines: string[]
+      before: boolean
+      text: string
+    }> =>
+      await coach.page.evaluate(() => {
+        const errors = document.querySelector(
+          '[data-testid="Plan position errors"]'
+        )
+        const warnings = document.querySelector('[data-testid="Plan warnings"]')
+        return {
+          lines: Array.from(
+            document.querySelectorAll('[data-testid^="Plan position "]')
+          )
+            .filter(node =>
+              /^Plan position (missing|duplicate) \d+$/.test(
+                String(node.getAttribute('data-testid'))
+              )
+            )
+            .map(node => String(node.textContent)),
+          before:
+            errors != null &&
+            (warnings == null ||
+              (errors.compareDocumentPosition(warnings) &
+                Node.DOCUMENT_POSITION_FOLLOWING) !==
+                0),
+          text: String(document.body.textContent)
+        }
+      })
+    const shown = await read()
+    console.log(`    P26 errors: ${JSON.stringify(shown.lines)}`)
+    expect(shown.lines).deep.equals([
+      'Inning 1 is missing players for positions: 3B, LF, CF, and RF',
+      'Inning 1 has multiple players assigned to SS',
+      'Inning 2 is missing players for positions: P, C, 1B, 2B, 3B, SS, LF, CF, and RF',
+      'Inning 2 has multiple players assigned to DH',
+      'Inning 4 is missing players for positions: CF and RF'
+    ])
+    expect(shown.before).equals(true)
+    expect(shown.text).not.includes('Two players at')
+    const colour = async (id: string): Promise<string> =>
+      await coach.page.$eval(`[data-testid="${id}"]`, node => {
+        const text = node.querySelector('[dir="auto"]')
+        // No `??` here: the page has no sucrase helpers.
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        return getComputedStyle(text == null ? node : text).color
+      })
+    for (const id of ['5-1', '6-1', '1-2', '2-2'])
+      expect(await colour(`Plan cell ${id}`), id).equals(RED)
+    for (const id of ['1-1', '1-4', '2-4', '9-3'])
+      expect(await colour(`Plan cell ${id}`), id).not.equals(RED)
+    expect(await colour('Plan clear')).equals(RED)
+    await coach.tapCss('[data-testid="Plan add inning"]')
+    await coach.page.waitForSelector('[data-testid="Plan inning 6"]')
+    expect(await colour('Plan inning 6')).equals(RED)
+    expect(await colour('Plan inning 5')).not.equals(RED)
+  })
+
+  /**
+   * P27: an inning column at a phone's 402 points, an iPad's 1024 and a
+   * desktop's 1920, the window resized under the open Plan tab; the tab
+   * stops at 1206 points. Saves `plan-chrome-wide-after.png` at 1920.
+   */
+  it('P27 grows the inning columns with the window, and stops the Plan tab at 1206 points', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, HOME_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    const cdp = await coach.page.createCDPSession()
+    const measure = async (
+      width: number,
+      height: number
+    ): Promise<{ column: number; tab: number; left: number }> => {
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      await coach.page.waitForFunction(
+        (wide: number) =>
+          Math.abs(
+            document
+              .querySelector('[data-testid="Plan cell 1-1"]')!
+              .parentElement!.getBoundingClientRect().width -
+              Math.round((28 * Math.min(Math.max(wide, 402), 1206)) / 402)
+          ) < 1,
+        { timeout: 10000 },
+        width
+      )
+      return await coach.page.evaluate(() => ({
+        column: document
+          .querySelector('[data-testid="Plan cell 1-1"]')!
+          .parentElement!.getBoundingClientRect().width,
+        tab: document
+          .querySelector('[data-testid="Plan tab"]')!
+          .getBoundingClientRect().width,
+        left: document
+          .querySelector('[data-testid="Plan tab"]')!
+          .getBoundingClientRect().left
+      }))
+    }
+    try {
+      const phone = await measure(WIDTH, HEIGHT)
+      const tablet = await measure(1024, 1366)
+      const desktop = await measure(1920, 1080)
+      console.log(
+        `    P27 widths: ${JSON.stringify({ phone, tablet, desktop })}`
+      )
+      expect(phone.column).equals(28)
+      expect(tablet.column).equals(71)
+      expect(desktop.column).equals(84)
+      expect(desktop.tab).equals(1206)
+      // Centred in the window, as the tabs above it are.
+      expect(desktop.left).equals((1920 - 1206) / 2)
+      if (ARTIFACTS != null)
+        await writeFile(
+          join(ARTIFACTS, 'plan-chrome-wide-after.png'),
+          await coach.page.screenshot()
+        )
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride')
+      await cdp.detach()
+    }
+  })
+
+  /**
+   * P28: Share and Print at the very bottom of the plan, in the browser:
+   * blue pills, Share left of Print, after the errors and the warnings.
+   * Share hands the browser's share sheet one PDF where it shares files,
+   * and downloads it where it does not; Print loads it in a hidden frame
+   * and calls that frame's print, recorded instead of opening the dialog.
+   * The downloaded PDF is one Letter page holding the whole plan.
+   */
+  it('P28 shares and prints the plan as a one-page Letter PDF from blue pills at its very bottom', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, ERROR_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.page.$eval('[data-testid="Plan print"]', node => {
+      node.scrollIntoView({ block: 'end' })
+    })
+    const layout = await coach.page.evaluate(() => {
+      const box = (
+        id: string
+      ): {
+        top: number
+        bottom: number
+        left: number
+        right: number
+      } | null => {
+        const node = document.querySelector(`[data-testid="${id}"]`)
+        if (node == null) return null
+        const r = node.getBoundingClientRect()
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+      }
+      const fill = (id: string): string =>
+        getComputedStyle(document.querySelector(`[data-testid="${id}"]`)!)
+          .backgroundColor
+      return {
+        share: box('Plan share'),
+        print: box('Plan print'),
+        errors: box('Plan position errors'),
+        warnings: box('Plan warnings'),
+        shareFill: fill('Plan share'),
+        printFill: fill('Plan print'),
+        words: Array.from(
+          document.querySelectorAll(
+            '[data-testid="Plan share"] [dir="auto"], [data-testid="Plan print"] [dir="auto"]'
+          )
+        ).map(node => [String(node.textContent), getComputedStyle(node).color]),
+        canShare: typeof navigator.canShare === 'function'
+      }
+    })
+    console.log(`    P28 layout: ${JSON.stringify(layout)}`)
+    const { share, print, errors, warnings } = layout
+    expect(share!.right).lessThan(print!.left)
+    expect(Math.abs(share!.top - print!.top)).lessThan(1)
+    // The fixture's team plays by no rules, so it has no warnings to show.
+    expect(warnings).equals(null)
+    expect(errors!.bottom).lessThan(share!.top)
+    expect([layout.shareFill, layout.printFill]).deep.equals([
+      'rgb(21, 101, 192)',
+      'rgb(21, 101, 192)'
+    ])
+    expect(layout.words).deep.equals([
+      ['Share', 'rgb(255, 255, 255)'],
+      ['Print', 'rgb(255, 255, 255)']
+    ])
+    // Where the browser shares files: one PDF, by the game's name.
+    await coach.page.evaluate(() => {
+      const shared: Array<{ name: string; type: string; title: string }> = []
+      Object.assign(window, { __planShares: shared })
+      Object.defineProperty(navigator, 'canShare', {
+        configurable: true,
+        value: () => true
+      })
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: async (data: ShareData) => {
+          for (const file of data.files!)
+            shared.push({
+              name: file.name,
+              type: file.type,
+              title: String(data.title)
+            })
+        }
+      })
+    })
+    await coach.tapCss('[data-testid="Plan share"]')
+    await coach.page.waitForFunction(
+      () =>
+        (window as unknown as { __planShares: unknown[] }).__planShares
+          .length === 1
+    )
+    const shared = await coach.page.evaluate(
+      () => (window as unknown as { __planShares: unknown[] }).__planShares[0]
+    )
+    const name = (shared as { name: string }).name
+    expect(name).match(/^Hosts-game-plan-\d{4}-\d{2}-\d{2}\.pdf$/)
+    expect(shared).deep.include({ type: 'application/pdf' })
+    // Where it does not: a download, which is the whole plan on one page.
+    const downloads = await mkdtemp(join(tmpdir(), 'plan-download-'))
+    const cdp = await coach.page.createCDPSession()
+    try {
+      await cdp.send('Browser.setDownloadBehavior', {
+        behavior: 'allow',
+        downloadPath: downloads
+      })
+      await coach.page.evaluate(() => {
+        Object.defineProperty(navigator, 'canShare', {
+          configurable: true,
+          value: undefined
+        })
+      })
+      await coach.tapCss('[data-testid="Plan share"]')
+      const file = join(downloads, name)
+      const deadline = Date.now() + 15000
+      while (!existsSync(file) && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 200))
+      const read = readPlanPdf(new Uint8Array(await readFile(file)))
+      console.log(
+        `    P28 download: ${name}, ${read.pages} page, MediaBox ${JSON.stringify(read.mediaBox)}`
+      )
+      expect(read.pages).equals(1)
+      expect(read.mediaBox).deep.equals([0, 0, 612, 792])
+      const drawn = read.texts.map(text => text.text)
+      expect(drawn[0]).match(/^Hosts game plan - Visitors - /)
+      for (const row of await coach.planPlayers()) expect(drawn).includes(row)
+      const held: string[] = ERROR_PLAN.flat().filter(cell => cell !== '')
+      expect(
+        read.texts
+          .filter(text => text.bold && held.includes(text.text))
+          .map(text => text.text)
+          .sort()
+      ).deep.equals([...held].sort())
+      for (const text of read.texts) {
+        expect(text.x).at.least(54)
+        expect(text.y).within(54, 738)
+      }
+      if (ARTIFACTS != null)
+        await writeFile(
+          join(ARTIFACTS, 'plan-download.pdf'),
+          await readFile(file)
+        )
+    } finally {
+      await cdp.detach()
+    }
+    // Print: the frame's print is called, recorded here, once it loads.
+    await coach.page.evaluate(() => {
+      const prints = { count: 0 }
+      Object.assign(window, { __planPrints: prints })
+      const own = Object.getOwnPropertyDescriptor(
+        HTMLIFrameElement.prototype,
+        'contentWindow'
+      )!
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+        configurable: true,
+        get(this: HTMLIFrameElement) {
+          const view = own.get!.call(this) as Window | null
+          if (view == null) return view
+          return new Proxy(view, {
+            get: (target, key) =>
+              key === 'print'
+                ? () => {
+                    prints.count++
+                  }
+                : key === 'focus'
+                  ? () => undefined
+                  : Reflect.get(target, key)
+          })
+        }
+      })
+    })
+    await coach.tapCss('[data-testid="Plan print"]')
+    await coach.page.waitForFunction(
+      () =>
+        (window as unknown as { __planPrints: { count: number } }).__planPrints
+          .count === 1,
+      { timeout: 15000 }
+    )
+    const frame = await coach.page.$eval('iframe', node => ({
+      src: String(node.getAttribute('src')),
+      title: node.title
+    }))
+    expect(frame.src).match(/^blob:/)
+    expect(frame.title).equals(name)
+    expect(await coach.page.$('[data-testid="Plan document failed"]')).equals(
+      null
+    )
   })
 
   /**
@@ -2590,7 +2978,7 @@ describe('Coach Plan', function () {
     expect(layout.clear.y + layout.clear.height).at.most(layout.sheet.y + 1)
     // Blue Help, red Clear.
     expect(layout.helpColor).not.equals(layout.clearColor)
-    expect(layout.clearColor).equals('rgb(168, 53, 53)')
+    expect(layout.clearColor).equals('rgb(248, 113, 113)')
     const text = await coach.planHelpSheet()
     expect(text).equals(
       'Tap and hold a player to drag them to a new batting order. Tap or hold an inning slot to set a player’s position.'
@@ -2636,10 +3024,10 @@ describe('Coach Plan', function () {
     // A plan opens with five innings: the sixth is the added one.
     for (const header of headers.slice(0, 5)) {
       expect(header.role, header.id).not.equals('button')
-      expect(header.color, header.id).not.equals('rgb(168, 53, 53)')
+      expect(header.color, header.id).not.equals('rgb(248, 113, 113)')
     }
     expect(headers[5].role).equals('button')
-    expect(headers[5].color).equals('rgb(168, 53, 53)')
+    expect(headers[5].color).equals('rgb(248, 113, 113)')
     const confirm = '[aria-label="Delete inning 6?"]'
     // Inning 1's number does nothing.
     await coach.page.click('[data-testid="Plan inning 1"]')
