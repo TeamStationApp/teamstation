@@ -34,17 +34,17 @@ type PlannedGame = PlanGame & { home_team_id: string; away_team_id: string }
 
 /**
  * A coach's per-inning game plans. Each side's plan is read and saved only
- * by a coach of that team (`planTeams`: given the coach flag on the team, a
- * season it belongs to or its league, head coach or not), and answered with
- * the Playing Time Rules and same-day load its warnings are judged by. No
- * administrator, assistant or scorekeeper reads it. A plan is on when it
+ * by a coach or assistant of that team (`planTeams`: given the coach or the
+ * assistant flag on the team, a season it belongs to or its league, head
+ * coach or not), and answered with the Playing Time Rules and same-day load
+ * its warnings are judged by. No administrator or scorekeeper reads it. A plan is on when it
  * holds a position: the `enabled` a save sends is not read. A save is
  * announced on the game socket as a `plans` change naming the team and the
  * inning, only when it changes the inning in play.
  *
  * A scorer reads one inning's column, `GET
  * /games/:gameId/plans/:teamId/innings/:inning`: whoever scores either team,
- * or a coach of the team (`planTeams`), once the game's start time has
+ * or a coach or assistant of the team (`planTeams`), once the game's start time has
  * passed, for the inning in play alone, until the game is over. The reason
  * for a refusal is in its `details` (`planNotStarted`, `planGameOver`,
  * `planInningNotCurrent`).
@@ -84,8 +84,8 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
 
   /**
    * The teams of the game whose plans the actor may read and save: the ones
-   * they were given the coach flag on (`planTeams`). No administrator,
-   * assistant or scorekeeper is one.
+   * they were given the coach or the assistant flag on (`planTeams`). No
+   * administrator or scorekeeper is one.
    */
   const plannedTeams = async (
     actor: Actor,
@@ -124,7 +124,9 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
       if (teamId !== game.home_team_id && teamId !== game.away_team_id)
         throw notFound()
       if (!(await plannedTeams(actor, game)).includes(teamId))
-        throw forbidden('Only a coach of the team may save its game plan')
+        throw forbidden(
+          "Only the team's coaches and assistants may save its game plan"
+        )
       await saveGamePlan(db, game, teamId, plan, actor.userId)
       res.json(await loadSidePlan(db, game, teamId))
     })
@@ -147,7 +149,7 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
         !(await planTeams(db, actor.userId, game)).includes(teamId)
       )
         throw forbidden(
-          "Only a scorekeeper or the team's coach may read an inning's plan"
+          "Only a scorekeeper or the team's coaches and assistants may read an inning's plan"
         )
       const inning = Number(pathParam(req.params.inning))
       if (

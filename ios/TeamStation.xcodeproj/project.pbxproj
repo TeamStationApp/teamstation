@@ -48,6 +48,7 @@
 		C9B2E4F10000000000000002 /* TSQrScannerComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = C9B2E4F10000000000000001 /* TSQrScannerComponentView.mm */; };
 		AF107DC2F99C16BDC99E1EAC /* NativeChatCrypto.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 513962B8AB54F3D2A1045C0C /* NativeChatCrypto.cpp */; };
 		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
+		D4EEEC93B36A4D25AA681001 /* RCTPlanDocument.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */; };
 		DAF2400A14A8239C28D2D9AF /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */; };
 		DB8130B58995142585D450C9 /* Quicksand-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5A8D1C865B62BA762B9C3380 /* Quicksand-Medium.ttf */; };
 		C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */ = {isa = PBXBuildFile; fileRef = C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */; };
@@ -121,6 +122,7 @@
 		C9B14565B09802CB64B889F5 /* SpaceGrotesk-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Medium.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Medium.ttf"; sourceTree = SOURCE_ROOT; };
 		D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-Regular.ttf"; path = "../src/app/assets/fonts/Inter-Regular.ttf"; sourceTree = SOURCE_ROOT; };
 		E62A480C138F4F68BF682000 /* RCTHaptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTHaptics.mm; path = TeamStation/RCTHaptics.mm; sourceTree = SOURCE_ROOT; };
+		E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTPlanDocument.mm; path = TeamStation/RCTPlanDocument.mm; sourceTree = SOURCE_ROOT; };
 		C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTCameraOrientation.mm; path = TeamStation/RCTCameraOrientation.mm; sourceTree = SOURCE_ROOT; };
 		C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTCueSounds.mm; path = TeamStation/RCTCueSounds.mm; sourceTree = SOURCE_ROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -231,6 +233,7 @@
 				16074B6B89A9C3D672728466 /* MaterialSymbolsOutlined.ttf */,
 				12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */,
 				E62A480C138F4F68BF682000 /* RCTHaptics.mm */,
+				E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */,
 				C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */,
 				C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */,
 				6F1B2D3E4A5C6B7A89D2E3F4 /* TSExpoModules.mm */,
@@ -591,6 +594,7 @@
 				A0B5E8A10000000000000002 /* NativeSentryPrivacy.swift in Sources */,
 				E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */,
 				D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */,
+				D4EEEC93B36A4D25AA681001 /* RCTPlanDocument.mm in Sources */,
 				C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */,
 				C0E5A0D1C0E5A0D1C0E5A002 /* RCTCueSounds.mm in Sources */,
 				5E0A1C2D3F4B5A6978C1D2E3 /* TSExpoModules.mm in Sources */,

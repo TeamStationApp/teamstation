@@ -26,7 +26,6 @@ import {
   guardsPerson,
   guardsPlayer,
   hasRole,
-  isHeadCoach,
   mayEditName,
   mayManagePlayer,
   mayViewFullName,
@@ -403,30 +402,22 @@ describe('role flags', function () {
     expect(canKeepSongs(assistant, 'tem_a2')).equals(false)
   })
 
-  // U9: the head coach saves the team's lineup in a game; an assistant does not.
-  it('makes a coach, an admin of the team and a site admin its head coach, and never an assistant', async function () {
+  // U9: a coach or an assistant saves the team's lineup in a game.
+  it('makes a coach, an assistant, an admin of the team and a site admin coach it, and never a scorekeeper', async function () {
     for (const height of HEIGHTS) {
-      const coach = await scopesOf(`coach@${height.id}`)
-      expect(
-        TEAMS.filter(teamId => isHeadCoach(coach, teamId)),
-        height.id
-      ).deep.equals([...height.teams])
-      const assistant = await scopesOf(`assistant@${height.id}`)
-      expect(
-        TEAMS.filter(teamId => isHeadCoach(assistant, teamId)),
-        height.id
-      ).deep.equals([])
-      const admin = await scopesOf(`admin@${height.id}`)
-      expect(
-        TEAMS.filter(teamId => isHeadCoach(admin, teamId)),
-        height.id
-      ).deep.equals([...height.teams])
+      for (const role of ['coach', 'assistant', 'admin'] as const) {
+        const scopes = await scopesOf(`${role}@${height.id}`)
+        expect(
+          TEAMS.filter(teamId => canCoach(scopes, teamId)),
+          `${role}@${height.id}`
+        ).deep.equals([...height.teams])
+      }
     }
-    expect(isHeadCoach(await scopesOf('manager'), 'tem_a1')).equals(true)
-    expect(isHeadCoach(await scopesOf('manager'), 'tem_a2')).equals(false)
+    expect(canCoach(await scopesOf('manager'), 'tem_a1')).equals(true)
+    expect(canCoach(await scopesOf('manager'), 'tem_a2')).equals(false)
     const site = await scopesOf('siteAdmin')
-    expect(TEAMS.every(teamId => isHeadCoach(site, teamId))).equals(true)
-    expect(isHeadCoach(await scopesOf('scorekeeper@tem_a2'), 'tem_a2')).equals(
+    expect(TEAMS.every(teamId => canCoach(site, teamId))).equals(true)
+    expect(canCoach(await scopesOf('scorekeeper@tem_a2'), 'tem_a2')).equals(
       false
     )
   })

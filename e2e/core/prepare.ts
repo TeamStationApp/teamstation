@@ -43,10 +43,17 @@ function androidSdkEnv(): NodeJS.ProcessEnv {
   return { ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk }
 }
 
-function installPackage(options: PrepareOptions, run: Run): void {
+function installPackage(
+  options: PrepareOptions,
+  run: Run,
+  simulator: (device: string) => boolean
+): void {
   const { app, device, packagePath } = options
   if (packagePath == null) throw new HarnessError('No package to install')
-  if (app.endsWith('-ios')) {
+  if (app.endsWith('-ios') && simulator(device)) {
+    // A simulator takes a simulator build's .app, which devicectl cannot see.
+    run('xcrun', ['simctl', 'install', device, packagePath])
+  } else if (app.endsWith('-ios')) {
     run('xcrun', [
       'devicectl',
       'device',
@@ -105,14 +112,16 @@ export function iosIsSimulator(device: string): boolean {
 }
 
 /**
- * Installs a Mason develop build already on disk. It talks to the server
+ * Installs a Mason develop build already on disk, or on a simulator a
+ * simulator build of the same develop app. It talks to the server
  * its build named until `e2e/rigs/app/setServer.ts` points it at a stack for
  * its next fresh launch. A failed install blocks the run.
  */
 export function prepareApp(
   options: PrepareOptions,
   run: Run = realRun,
-  dir = INSTALLED_DIR
+  dir = INSTALLED_DIR,
+  simulator: (device: string) => boolean = iosIsSimulator
 ): void {
   if (options.packagePath == null) {
     throw new HarnessError(
@@ -120,7 +129,7 @@ export function prepareApp(
     )
   }
   onDevice(() => {
-    installPackage(options, run)
+    installPackage(options, run, simulator)
   })
   mkdirSync(dir, { recursive: true })
   writeFileSync(

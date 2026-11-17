@@ -1,6 +1,262 @@
 {
   "scenarios": [
     {
+      "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
+      "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
+      "covers": [
+        "src/server/access.ts",
+        "src/server/routes/teams.ts",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/CoachGameScreen.tsx",
+        "src/app/scoring/plan/**"
+      ],
+      "minutes": 5,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/coach-game/assistant-coaches",
+      "file": "e2e/tests/scoring/coach-game/assistant-coaches.e2e.ts"
+    },
+    {
+      "id": "scoring/coach-game/assistant-coaches#scorekeeper-has-no-coach",
+      "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
+      "covers": [
+        "src/server/access.ts",
+        "src/server/routes/teams.ts",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/CoachGameScreen.tsx",
+        "src/app/scoring/plan/**"
+      ],
+      "minutes": 5,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/coach-game/assistant-coaches",
+      "file": "e2e/tests/scoring/coach-game/assistant-coaches.e2e.ts"
+    },
+    {
+      "id": "scoring/game-plan/inning-columns#grow-with-window",
+      "title": "The game plan's inning columns grow with the window, up to 1206 points",
+      "covers": [
+        "src/app/scoring/plan/planColumns.ts",
+        "src/app/scoring/plan/planLayout.ts",
+        "src/app/scoring/plan/PlanTab.tsx"
+      ],
+      "minutes": 4,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/game-plan/inning-columns",
+      "file": "e2e/tests/scoring/game-plan/inning-columns.e2e.ts"
+    },
+    {
+      "id": "scoring/game-plan/position-errors#missing-and-doubled",
+      "title": "The game plan lists each inning's missing and doubled positions under the sheet",
+      "covers": [
+        "src/common/gamePlan.ts",
+        "src/app/scoring/plan/PlanTab.tsx",
+        "src/app/scoring/plan/PlanCell.tsx",
+        "src/app/scoring/plan/PlanPositionErrors.tsx"
+      ],
+      "minutes": 5,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/game-plan/position-errors",
+      "file": "e2e/tests/scoring/game-plan/position-errors.e2e.ts"
+    },
+    {
+      "id": "scoring/game-plan/share-print#share-and-print",
+      "title": "Share and Print under the game plan hand over and print a one-page Letter PDF of it",
+      "covers": [
+        "src/common/planPdf.ts",
+        "src/app/scoring/plan/PlanTab.tsx",
+        "src/app/scoring/plan/planDocument.ts",
+        "src/app/scoring/plan/planDocument.native.ts",
+        "src/app/scoring/plan/NativePlanDocument.ts",
+        "ios/TeamStation/RCTPlanDocument.mm",
+        "src/buildCsp.mjs"
+      ],
+      "minutes": 6,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/game-plan/share-print",
+      "file": "e2e/tests/scoring/game-plan/share-print.e2e.ts"
+    },
+    {
       "id": "streaming/basic/four-synthetic#scrub",
       "title": "Four synthetic cameras stream live to an iPhone, an Android phone, Chrome, TeamStation TV and iPhone Safari for 30 minutes of scrubbing, every angle moving, recovering and aligned, with no memory growth",
       "kind": "e2e",

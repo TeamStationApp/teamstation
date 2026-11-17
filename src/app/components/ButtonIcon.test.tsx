@@ -284,9 +284,16 @@ describe('button icon placement', function () {
       )
     }
   })
-  it('centers the custom reply, more and check artwork on native', async function () {
+  it('centers the custom reply, more, check, pin, share and print artwork on native', async function () {
     Platform.OS = 'android'
-    for (const name of ['reply', 'more', 'check', 'pin'] as const) {
+    for (const name of [
+      'reply',
+      'more',
+      'check',
+      'pin',
+      'shareOut',
+      'print'
+    ] as const) {
       const node = await render(
         <ButtonIcon name={name} size={1.5} color="blue">
           <Text>{name}</Text>
@@ -301,6 +308,16 @@ describe('button icon placement', function () {
         expect(slot.querySelector('path')?.getAttribute('stroke')).equals(
           'blue'
         )
+    }
+  })
+  it('draws the share and print artwork on the web in the color given', async function () {
+    Platform.OS = 'web'
+    for (const name of ['shareOut', 'print'] as const) {
+      const node = await render(<ButtonIcon name={name} color="white" />)
+      const path = node.querySelector('path')
+      expect(path, name).not.equals(null)
+      expect(path!.getAttribute('stroke')).equals('white')
+      expect(path!.getAttribute('d')!.length).greaterThan(20)
     }
   })
   it('provides menu artwork when no web override was supplied', async function () {

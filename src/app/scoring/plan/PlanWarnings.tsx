@@ -8,7 +8,7 @@ import { useScoringSheetTheme } from '../scoringSheetTheme'
 /**
  * The plan's playing-time warnings, reds first: a red or yellow dot and the
  * warning. A team with rules and nothing to warn about is told so; one with
- * no rules, which only a duplicate position can warn, sees nothing.
+ * no rules sees nothing.
  */
 export function PlanWarnings({
   warnings,

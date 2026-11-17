@@ -1372,7 +1372,8 @@ export function RosterEditor({
                           ...text,
                           fontWeight: '700',
                           flexShrink: 0,
-                          color: theme.scoringOutColor
+                          // The sheet's red, as the Plan and Defense tabs' Clear.
+                          color: theme.scoringSurface.danger
                         }}
                       >
                         Clear

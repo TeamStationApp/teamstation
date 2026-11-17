@@ -168,8 +168,8 @@ const SAVE_ATTEMPTS = 3
  * gets 404.
  *
  * `POST /games/:gameId/lineups` saves one side's players, batting order and
- * defence (`SaveLineupsBody`), as its head coach or a scorekeeper of either
- * team sets them; anybody else who can see the game gets 403. The game is
+ * defence (`SaveLineupsBody`), as its coach, an assistant or a scorekeeper of
+ * either team sets them; anybody else who can see the game gets 403. The game is
  * replayed as the scoring screen replays it, the side's lineup is applied as
  * a scorer's roster change, and only what that changes is posted, through
  * `postGamePlays`, as a scorer's save is. The other side is never read from
@@ -460,7 +460,7 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asSaveLineupsBody, req.body)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-      // The side's head coach, or a scorekeeper of either team. Asked before
+      // The side's coach or assistant, or a scorekeeper of either team. Asked before
       // the game is replayed, so a save with nothing to change is refused
       // too, and again on the locked row the save is written against.
       const mayPost = async (
@@ -472,7 +472,7 @@ export function lineupRoutes(
           body.side === 'home' ? game.home_team_id : game.away_team_id
         if (!lineupTeams(roles, game).includes(teamId))
           throw forbidden(
-            "Only the team's head coach or a scorekeeper may save its lineup"
+            "Only the team's coach, an assistant or a scorekeeper may save its lineup"
           )
       }
       const teams = await db

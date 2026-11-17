@@ -26,7 +26,7 @@ import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { listsByTeam, teamsOfRow } from '../../common/teamLists'
 import type { Unrostered } from '../../common/unroster'
-import { isHeadCoach, roleScopes } from '../access'
+import { canCoach, roleScopes } from '../access'
 import {
   lockPlayerEdits,
   survivorsOf,
@@ -87,10 +87,8 @@ export async function setRostered(
       .executeTakeFirst()
     if (game == null) throw notFound()
     const teamId = body.side === 'away' ? game.away_team_id : game.home_team_id
-    if (
-      !isHeadCoach(await roleScopes(trx, actor.userId, actor.isAdmin), teamId)
-    )
-      throw forbidden('Only the head coach may change game availability')
+    if (!canCoach(await roleScopes(trx, actor.userId, actor.isAdmin), teamId))
+      throw forbidden('Only a coach or assistant may change game availability')
     if (game.status === 'final' || game.status === 'cancelled')
       throw conflict('This game cannot accept lineup changes')
     const userId = await survivorsOf(trx, [body.userId])

@@ -20,6 +20,7 @@ import { inningsPitched } from '../../common/statExtras'
 import { asUserId } from '../../common/userId'
 import {
   adminScopes,
+  canCoach,
   canKeepSongs,
   canManageRoster,
   canManageTeam,
@@ -28,7 +29,6 @@ import {
   canSeeTeam,
   givenRolesOnTeams,
   guardedPlayers,
-  isHeadCoach,
   nonMemberTeam,
   openablePeople,
   roleScopes,
@@ -658,7 +658,7 @@ export function teamRoutes(
       // every administrator of it is. The events route holds the same rule.
       // And whether to offer DJ Game: a songkeeper of either team, which
       // every scorekeeper is. And the sides whose lineups this caller saves
-      // as their team's head coach, as the lineups route allows.
+      // as their team's coach or assistant, as the lineups route allows.
       const roles =
         actor == null ? null : await roleScopes(db, actor.userId, actor.isAdmin)
 
@@ -792,7 +792,7 @@ export function teamRoutes(
           nonMemberView || roles == null
             ? []
             : (['away', 'home'] as const).filter(side =>
-                isHeadCoach(
+                canCoach(
                   roles,
                   side === 'home' ? game.home_team_id : game.away_team_id
                 )

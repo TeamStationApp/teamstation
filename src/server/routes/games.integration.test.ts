@@ -765,8 +765,8 @@ describe('whether a viewer may score a game', function () {
     }
   })
 
-  // U10: the sides whose lineup this viewer saves as its head coach.
-  it('lists the sides whose team the viewer head-coaches, and none for an assistant or a non-member', async function () {
+  // U10: the sides whose lineup this viewer saves as its coach or assistant.
+  it('lists the sides whose team the viewer coaches or assists, and none for a scorekeeper or a non-member', async function () {
     const sidesFor = async (name: string): Promise<string[]> => {
       const response = await fetch(`${base}/games/${game}`, {
         headers: { 'x-test-user': String(idOf(name)) }
@@ -778,7 +778,8 @@ describe('whether a viewer may score a game', function () {
     expect(await sidesFor('awayManager')).deep.equals(['away'])
     expect(await sidesFor('bothCoach')).deep.equals(['away', 'home'])
     expect(await sidesFor('siteAdmin')).deep.equals(['away', 'home'])
-    for (const name of ['assistant', 'homeScorekeeper', 'member', 'outsider'])
+    expect(await sidesFor('assistant')).deep.equals(['home'])
+    for (const name of ['homeScorekeeper', 'member', 'outsider'])
       expect(await sidesFor(name), name).deep.equals([])
   })
 

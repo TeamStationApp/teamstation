@@ -28,7 +28,8 @@ describe('prepare', function () {
       (command, args) => {
         ran.push([command, ...args])
       },
-      dir
+      dir,
+      () => false
     )
     expect(ran).deep.equals([
       [
@@ -55,6 +56,23 @@ describe('prepare', function () {
     expect(installedPackage('phone-3', dir)).equals(undefined)
   })
 
+  it('installs a simulator build with simctl, and notes it the same way', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'prepare-'))
+    const app = join(dir, 'TeamStation Develop.app')
+    writeFileSync(app, 'app')
+    const ran: string[][] = []
+    prepareApp(
+      { app: 'teamstation-ios', device: 'sim-1', packagePath: app },
+      (command, args) => {
+        ran.push([command, ...args])
+      },
+      dir,
+      device => device === 'sim-1'
+    )
+    expect(ran).deep.equals([['xcrun', 'simctl', 'install', 'sim-1', app]])
+    expect(installedPackage('sim-1', dir)).equals(app)
+  })
+
   it('installs an Android package with adb, and blocks on a failed install', function () {
     const dir = mkdtempSync(join(tmpdir(), 'prepare-'))
     const ran: string[][] = []
@@ -73,7 +91,8 @@ describe('prepare', function () {
           () => {
             throw new Error('no device')
           },
-          dir
+          dir,
+          () => false
         )
       })
     ).instanceOf(BlockedError)

@@ -8,7 +8,7 @@ import {
   type RosterTool,
   rosterToolSchema
 } from '../../common/scoring/rosterCommands'
-import { canScore, isHeadCoach, roleScopes } from '../access'
+import { canCoach, canScore, roleScopes } from '../access'
 import { type Actor, isHumanSession } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { requireVisibleGame } from '../events/requireVisibleGame'
@@ -47,8 +47,8 @@ const asRosterTarget = asObject({
 })
 
 /**
- * The roster sheet: a scorekeeper of either team, or the head coach of the
- * team that plays `side`. A coach names his side; a scorekeeper need not.
+ * The roster sheet: a scorekeeper of either team, or a coach or assistant of
+ * the team that plays `side`. A coach names his side; a scorekeeper need not.
  */
 async function authoriseRoster(
   db: Kysely<Database>,
@@ -67,11 +67,11 @@ async function authoriseRoster(
     return
   if (
     side != null &&
-    isHeadCoach(roles, side === 'home' ? game.home_team_id : game.away_team_id)
+    canCoach(roles, side === 'home' ? game.home_team_id : game.away_team_id)
   )
     return
   throw forbidden(
-    "Only the team's head coach or a scorekeeper may change its lineup"
+    "Only the team's coach, an assistant or a scorekeeper may change its lineup"
   )
 }
 

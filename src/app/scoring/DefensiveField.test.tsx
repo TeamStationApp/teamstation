@@ -740,10 +740,10 @@ describe('compact defensive field', function () {
       }
       expect(
         getComputedStyle(control('Defense help').firstElementChild!).color
-      ).equals(rgb(getTheme().linkTextColor))
+      ).equals(rgb(getTheme().scoringSurface.link))
       expect(
         getComputedStyle(control('Clear Defense').firstElementChild!).color
-      ).equals(rgb(getTheme().scoringOutColor))
+      ).equals(rgb(getTheme().scoringSurface.danger))
       await act(async () => {
         control('Clear Defense').click()
       })

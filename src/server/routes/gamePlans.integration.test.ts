@@ -230,22 +230,27 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     })
   })
 
-  it('answers the plan to the team’s coaches alone: no scorekeeper, assistant or admin of any level, until an admin is given the coach flag', async function () {
+  it('answers the plan to the team’s coaches and assistants alone: no scorekeeper or admin of any level, until an admin is given the coach or the assistant flag', async function () {
     const plan = planOf([[SORIANO, 'SS']])
     await saved(game, plan)
-    // The team's coach, and a coach given the flag on its season.
-    for (const id of [f.people.teamCoach, f.people.seasonCoach]) {
+    // The team's coach, a coach given the flag on its season, and the team's
+    // assistant.
+    for (const id of [
+      f.people.teamCoach,
+      f.people.seasonCoach,
+      f.people.assistant
+    ]) {
       const read = await plans(game, id)
       expect(read.home?.plan, String(id)).deep.equals(plan)
       expect(read.away, String(id)).equals(null)
     }
-    expect(
-      (await put(game, f.teamA, plan, f.people.seasonCoach)).status
-    ).equals(200)
+    for (const id of [f.people.seasonCoach, f.people.assistant])
+      expect((await put(game, f.teamA, plan, id)).status, String(id)).equals(
+        200
+      )
     // Nobody else, whatever else they may do with the team.
     for (const id of [
       f.people.scorekeeper,
-      f.people.assistant,
       f.people.admin,
       f.people.siteAdmin
     ]) {
@@ -256,33 +261,39 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
       const refused = await put(game, f.teamA, plan, id)
       expect(refused.status, String(id)).equals(403)
       expect((refused.body as { message?: string }).message).equals(
-        'Only a coach of the team may save its game plan'
+        "Only the team's coaches and assistants may save its game plan"
       )
       expect(
         (await put(game, f.standaloneTeam, plan, id)).status,
         String(id)
       ).equals(403)
     }
-    // The league, season and team admin, given the coach flag on the team,
-    // reads and saves it.
-    const role = makeId('scopeRole')
-    await f.h.db
-      .insertInto('scope_roles')
-      .values({
-        id: role,
-        user_id: userIdOfGumbo(f.people.admin),
-        scope_type: 'team',
-        scope_id: f.teamA,
-        role: 'coach'
-      })
-      .execute()
-    try {
-      expect((await plans(game, f.people.admin)).home?.plan).deep.equals(plan)
-      expect((await put(game, f.teamA, plan, f.people.admin)).status).equals(
-        200
-      )
-    } finally {
-      await f.h.db.deleteFrom('scope_roles').where('id', '=', role).execute()
+    // The league, season and team admin, given the coach or the assistant
+    // flag on the team, reads and saves it.
+    for (const flag of ['coach', 'assistant'] as const) {
+      const role = makeId('scopeRole')
+      await f.h.db
+        .insertInto('scope_roles')
+        .values({
+          id: role,
+          user_id: userIdOfGumbo(f.people.admin),
+          scope_type: 'team',
+          scope_id: f.teamA,
+          role: flag
+        })
+        .execute()
+      try {
+        expect(
+          (await plans(game, f.people.admin)).home?.plan,
+          flag
+        ).deep.equals(plan)
+        expect(
+          (await put(game, f.teamA, plan, f.people.admin)).status,
+          flag
+        ).equals(200)
+      } finally {
+        await f.h.db.deleteFrom('scope_roles').where('id', '=', role).execute()
+      }
     }
   })
 
@@ -291,10 +302,10 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
       game,
       f.teamA,
       planOf([[SORIANO, 'SS']]),
-      f.people.assistant
+      f.people.guardian
     )
     expect(refused.status).equals(403)
-    expect(await plans(game, f.people.assistant)).deep.equals({
+    expect(await plans(game, f.people.guardian)).deep.equals({
       away: null,
       home: null
     })
@@ -626,7 +637,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
   const reasonOf = (body: Record<string, unknown>): unknown =>
     (body.details as { reason?: unknown } | undefined)?.reason
 
-  it('names as a plan’s coaches only those given the coach flag on the team, its season or its league', async function () {
+  it('names as a plan’s coaches only those given the coach or the assistant flag on the team, its season or its league', async function () {
     const g = await f.h.db
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id'])
@@ -636,10 +647,10 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
       await planTeams(f.h.db, userIdOfGumbo(id), g)
     expect(await teams(f.people.teamCoach)).deep.equals([f.teamA])
     expect(await teams(f.people.seasonCoach)).deep.equals([f.teamA])
+    expect(await teams(f.people.assistant)).deep.equals([f.teamA])
     for (const id of [
       f.people.admin,
       f.people.siteAdmin,
-      f.people.assistant,
       f.people.scorekeeper,
       f.people.follower
     ])
@@ -746,7 +757,12 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     expect((await inningOf(at, f.teamA, 1)).body.column).deep.equals([
       { player: SORIANO, cell: 'SS' }
     ])
+    // The assistant reads it as a coach does; a member who neither scores
+    // nor coaches does not.
     expect((await inningOf(at, f.teamA, 1, f.people.assistant)).status).equals(
+      200
+    )
+    expect((await inningOf(at, f.teamA, 1, f.people.guardian)).status).equals(
       403
     )
     // A follower does not see the game at all.
@@ -770,7 +786,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     // Refused saves announce nothing.
     expect((await put(at, f.teamA, { innings: 99 })).status).equals(400)
     expect(
-      (await put(at, f.teamA, planOf([[SORIANO, 'SS']]), f.people.assistant))
+      (await put(at, f.teamA, planOf([[SORIANO, 'SS']]), f.people.guardian))
         .status
     ).equals(403)
     // The inning in play changes.

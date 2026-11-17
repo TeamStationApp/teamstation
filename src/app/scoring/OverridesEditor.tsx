@@ -89,7 +89,8 @@ export function OverridesEditor({
   const labelStyle = { ...textStyle, flexShrink: 1 }
   const valueStyle = {
     ...textStyle,
-    color: theme.scoringSheet === true ? '#90caf9' : theme.linkTextColor,
+    // A sheet's theme carries its own, brighter link blue.
+    color: theme.linkTextColor,
     fontFamily: theme.semiBoldTextFont
   }
   const selectBatter = (id: number, index: number, pinch: boolean): void => {

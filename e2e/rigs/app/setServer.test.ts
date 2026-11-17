@@ -107,6 +107,36 @@ describe('setServer', function () {
     expect(String(failure)).includes('needs a maestro-d device')
   })
 
+  it('hands an iOS simulator the link through simctl', async function () {
+    const sim = phone()
+    const ran: string[][] = []
+    await setServer({
+      platform: 'ios',
+      udid: 'sim-1',
+      appId: 'app.teamstation.develop',
+      origin: 'https://e2e-03.teamstation.app',
+      device: sim.device,
+      simulator: true,
+      run: async (file, args) => {
+        ran.push([file, ...args])
+      }
+    })
+    expect(ran).deep.equals([
+      [
+        'xcrun',
+        'simctl',
+        'openurl',
+        'sim-1',
+        serverLink('ios', 'https://e2e-03.teamstation.app')
+      ]
+    ])
+    expect(sim.calls.map(([name]) => name)).deep.equals([
+      'stopApp',
+      'assertVisible',
+      'launchApp'
+    ])
+  })
+
   it('launches the TV with the link, then plainly', async function () {
     const ran: string[][] = []
     await setServer({

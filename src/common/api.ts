@@ -1200,8 +1200,8 @@ export const asGameDetail = withEventMetadata(
       () => ({ away: [], home: [] })
     ),
     /**
-     * The sides whose team this viewer head-coaches, which every administrator
-     * of it does, and so whose lineup they may save. An assistant has none.
+     * The sides whose team this viewer coaches or assists, which every
+     * administrator of it does, and so whose lineup they may save.
      * Absent from an older server, and none.
      */
     coachSides: asOptional(asArray(asLiteral('away', 'home')), []),
@@ -3794,7 +3794,7 @@ export interface LineupPlayer {
 
 /**
  * `POST /games/:gameId/lineups`: one side's players, batting order and
- * defence, as its head coach or a scorekeeper saves them. Every number but a
+ * defence, as its coach, an assistant or a scorekeeper saves them. Every number but a
  * `gumboId` is an index into `players`, so the server never depends on the
  * client numbering players as it does. `base` is the lineups digest the
  * client last read; the last save wins, and the client uses it only to tell
@@ -6473,8 +6473,8 @@ export class TeamStationClient {
   }
 
   /**
-   * Saves one side's lineup in a game, as its head coach or a scorekeeper
-   * sets it, and answers both sides' lineups as they now stand.
+   * Saves one side's lineup in a game, as its coach, an assistant or a
+   * scorekeeper sets it, and answers both sides' lineups as they now stand.
    */
   async saveLineups(
     gameId: string,

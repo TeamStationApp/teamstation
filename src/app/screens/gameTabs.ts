@@ -88,12 +88,17 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
   return pills
 }
 
-/** Assigned coaching sides only; administrative permission is not a UI role. */
+/**
+ * Assigned coaching sides only, as a coach or an assistant; administrative
+ * permission is not a UI role.
+ */
 export function heroCoachSides(
   game: GameTabsInput['game']
 ): Array<'away' | 'home'> {
-  return game.coachSides.filter(side =>
-    game.assignedRoles[side].includes('coach')
+  return game.coachSides.filter(
+    side =>
+      game.assignedRoles[side].includes('coach') ||
+      game.assignedRoles[side].includes('assistant')
   )
 }
 

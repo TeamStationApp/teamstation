@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ViewProps
 } from 'react-native'
@@ -16,14 +17,22 @@ import {
   alignPlan,
   clearPlan,
   DEFAULT_PLAN_INNINGS,
+  duplicatedCells,
   type GamePlan,
   MAX_PLAN_INNINGS,
   type PlanCell,
   planCellEntry,
   planCellOf,
   planHasPositions,
+  planPositionErrors,
   removeInning
 } from '../../../common/gamePlan'
+import {
+  planDocumentFileName,
+  type PlanDocumentInfo,
+  planDocumentTitle,
+  planPdf
+} from '../../../common/planPdf'
 import { type PlanSameDay, planWarnings } from '../../../common/planWarnings'
 import type { PlayingTimeRules } from '../../../common/playingTimeRules'
 import { ButtonIcon } from '../../components/ButtonIcon'
@@ -39,6 +48,8 @@ import {
 } from '../RosterDragContext'
 import { useScoringSheetTheme } from '../scoringSheetTheme'
 import { NativePlanCell, PLAN_REFUSAL_MS, WebPlanCell } from './PlanCell'
+import { printPlanDocument, sharePlanDocument } from './planDocument'
+import type { PlanDocumentAnchor } from './planDocumentAnchor'
 import { PlanFieldPicker } from './PlanFieldPicker'
 import {
   type AssignDrag,
@@ -50,15 +61,18 @@ import {
   startAssignDrag
 } from './planGesture'
 import {
-  PLAN_COLUMN_WIDTH,
   PLAN_HEADER_HEIGHT,
+  PLAN_MAX_WIDTH,
   PLAN_PICKER_HEIGHT,
   PLAN_PICKER_WIDTH,
+  PLAN_PILL_BLUE,
   PLAN_PLAYER_WIDTH,
   PLAN_ROW_HEIGHT,
   PLAN_SLOT_WIDTH,
+  planColumnWidth,
   planPickerTop
 } from './planLayout'
+import { PlanPositionErrors } from './PlanPositionErrors'
 import { PlanWarnings } from './PlanWarnings'
 
 /**
@@ -71,6 +85,8 @@ export interface PlanContext {
   sameDay: PlanSameDay
   status: 'scheduled' | 'inProgress' | 'final'
   playedInnings?: number
+  /** The game, which names the plan's PDF. */
+  document?: PlanDocumentInfo
 }
 
 /** A batter of the plan's side, in batting order. */
@@ -87,6 +103,27 @@ export interface PlanBatter {
 /** A plan row's player: "Ruth #7", the name first; "Ruth" with no number. */
 export const planBatterLabel = ({ name, jersey }: PlanBatter): string =>
   jersey === '' ? name : `${name} #${jersey}`
+
+const NOWHERE: PlanDocumentAnchor = { x: 0, y: 0, width: 0, height: 0 }
+/** The Share and Print pills' height. */
+const PLAN_PILL_HEIGHT = 44
+/** The longest a Share or Print press holds off the next one. */
+const PLAN_HANDOFF_MS = 3000
+
+/** Where a control is in the window: nowhere, when it is not drawn. */
+async function anchorOf(
+  node: React.ComponentRef<typeof View> | null
+): Promise<PlanDocumentAnchor> {
+  return await new Promise(resolve => {
+    if (node == null) {
+      resolve(NOWHERE)
+      return
+    }
+    node.measureInWindow((x, y, width, height) => {
+      resolve({ x, y, width, height })
+    })
+  })
+}
 
 /** The vertical scroll the row drag auto-scrolls. */
 const SCROLL_NAME = 'Plan sheet'
@@ -131,9 +168,11 @@ const holds = (node: unknown, other: EventTarget | null): boolean =>
 
 /**
  * The coach's game plan: a row of a blue Help and a red Clear, then a sheet
- * of the lineup in batting order, one two-character column per inning, then
- * the playing-time warnings. The player column stays put while the innings
- * scroll sideways. A cell is set by typing (web) or from the field picker;
+ * of the lineup in batting order, one column per inning, two characters wide
+ * on a phone and wider on a wider window, then each inning's position
+ * errors, then the playing-time warnings, then the blue Share and Print
+ * pills, which make a PDF of the plan. The player column stays put while
+ * the innings scroll sideways. A cell is set by typing (web) or from the field picker;
  * a player is dragged up or down to change the batting order, and his row's
  * innings move with him. A plan is on while any cell holds a position, so
  * every change carries that as `enabled`. The innings added past the first
@@ -199,6 +238,8 @@ function PlanSheet({
   const surface = theme.scoringSurface
   const web = os === 'web'
   const engine = useRosterGesture()
+  // The inning columns grow with the window, up to three times a phone's.
+  const column = planColumnWidth(useWindowDimensions().width)
   const players = useMemo(() => batters.map(batter => batter.player), [batters])
   const aligned = useMemo(() => alignPlan(plan, players), [plan, players])
   // Live: every cell and every move of a player is judged again at once.
@@ -212,6 +253,20 @@ function PlanSheet({
         sameDay: context.sameDay
       }),
     [aligned, context]
+  )
+  // Each inning that is not a complete, unique field, and its doubled cells.
+  // A final game that stopped short is judged on the innings it reached.
+  const reached =
+    context.status === 'final' && context.playedInnings != null
+      ? context.playedInnings
+      : aligned.innings
+  const positionErrors = useMemo(
+    () => planPositionErrors(aligned, reached),
+    [aligned, reached]
+  )
+  const doubled = useMemo(
+    () => duplicatedCells(aligned, positionErrors),
+    [aligned, positionErrors]
   )
   // Every change says whether the plan is now on: whether it holds a
   // position.
@@ -659,11 +714,75 @@ function PlanSheet({
     minHeight: 44,
     justifyContent: 'center' as const
   }
+  // Share and Print make the same PDF of the plan as it is shown.
+  const shareNode = useRef<React.ComponentRef<typeof View>>(null)
+  const printNode = useRef<React.ComponentRef<typeof View>>(null)
+  const [documentFailed, setDocumentFailed] = useState(false)
+  // One hand-off at a time: a second press while a sheet is opening is
+  // ignored, for at most a few seconds should a sheet never say it opened.
+  const handing = useRef(false)
+  const handOff = (how: 'share' | 'print'): void => {
+    if (handing.current) return
+    handing.current = true
+    const released = setTimeout(() => {
+      handing.current = false
+    }, PLAN_HANDOFF_MS)
+    setDocumentFailed(false)
+    const made = (async () => {
+      const bytes = planPdf({
+        plan: aligned,
+        rows: batters.map(planBatterLabel),
+        title: planDocumentTitle(context.document)
+      })
+      const fileName = planDocumentFileName(context.document)
+      const hand = how === 'print' ? printPlanDocument : sharePlanDocument
+      // The web hands the file on within the press, which the browser's
+      // share sheet requires, and has no popover to point; a phone's or an
+      // iPad's sheet opens from the pill, measured first.
+      await hand(
+        bytes,
+        fileName,
+        web
+          ? NOWHERE
+          : await anchorOf((how === 'print' ? printNode : shareNode).current)
+      )
+    })()
+    made
+      .catch(() => {
+        setDocumentFailed(true)
+      })
+      .finally(() => {
+        clearTimeout(released)
+        handing.current = false
+      })
+  }
+  // A pill's label sits on its straight run: half its height at each end.
+  const pill = {
+    minHeight: PLAN_PILL_HEIGHT,
+    paddingHorizontal: PLAN_PILL_HEIGHT / 2,
+    borderRadius: 999,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    backgroundColor: PLAN_PILL_BLUE
+  }
+  const pillText = {
+    color: '#ffffff',
+    fontFamily: theme.boldTextFont,
+    fontSize: 16
+  }
   return (
     <View
       ref={tab}
       testID="Plan tab"
-      style={{ flex: 1, minHeight: 0 }}
+      // Never wider than three phones, centred under the tabs above it.
+      style={{
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        maxWidth: PLAN_MAX_WIDTH,
+        alignSelf: 'center'
+      }}
       onLayout={event => {
         const { width, height } = event.nativeEvent.layout
         setArea({ width, height })
@@ -745,7 +864,7 @@ function PlanSheet({
                 <Text
                   selectable={false}
                   style={{
-                    color: theme.scoringOutColor,
+                    color: surface.danger,
                     fontFamily: theme.boldTextFont,
                     fontSize: 16
                   }}
@@ -921,7 +1040,7 @@ function PlanSheet({
                             ...header,
                             fontSize: 13,
                             color: added
-                              ? theme.scoringOutColor
+                              ? surface.danger
                               : active
                                 ? surface.accent
                                 : surface.mutedText
@@ -931,7 +1050,7 @@ function PlanSheet({
                         </Text>
                       )
                       const style = {
-                        width: PLAN_COLUMN_WIDTH,
+                        width: column,
                         height: PLAN_HEADER_HEIGHT,
                         alignItems: 'center' as const,
                         justifyContent: 'center' as const,
@@ -974,7 +1093,7 @@ function PlanSheet({
                           emit(addInning(aligned))
                         }}
                         style={{
-                          width: PLAN_COLUMN_WIDTH,
+                          width: column,
                           alignItems: 'center',
                           justifyContent: 'center'
                         }}
@@ -1015,11 +1134,12 @@ function PlanSheet({
                           inning + 1
                         )
                         const testID = `Plan cell ${index + 1}-${inning + 1}`
+                        const duplicated = doubled.has(`${index}-${inning}`)
                         return (
                           <View
                             key={inning}
                             style={{
-                              width: PLAN_COLUMN_WIDTH,
+                              width: column,
                               height: PLAN_ROW_HEIGHT - 1,
                               borderRightWidth: StyleSheet.hairlineWidth,
                               borderColor: surface.divider
@@ -1030,6 +1150,7 @@ function PlanSheet({
                                 testID={testID}
                                 label={label}
                                 value={cell}
+                                duplicated={duplicated}
                                 highlighted={selected}
                                 editing={
                                   selected && editing !== ''
@@ -1049,6 +1170,7 @@ function PlanSheet({
                                 testID={testID}
                                 label={label}
                                 value={cell}
+                                duplicated={duplicated}
                                 selected={selected}
                                 onPress={() => {
                                   setPicking(at)
@@ -1084,7 +1206,62 @@ function PlanSheet({
                 </View>
               </ScrollView>
             </View>
+            <PlanPositionErrors errors={positionErrors} />
             <PlanWarnings warnings={warnings} rules={context.rules != null} />
+            <View
+              testID="Plan document row"
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'center',
+                gap: 12,
+                paddingTop: 4
+              }}
+            >
+              <Pressable
+                ref={shareNode}
+                testID="Plan share"
+                accessibilityRole="button"
+                accessibilityLabel={lstrings.plan_share_label}
+                onPress={() => {
+                  handOff('share')
+                }}
+                style={pill}
+              >
+                <ButtonIcon name="shareOut" color="#ffffff" />
+                <Text selectable={false} style={pillText}>
+                  {lstrings.plan_share}
+                </Text>
+              </Pressable>
+              <Pressable
+                ref={printNode}
+                testID="Plan print"
+                accessibilityRole="button"
+                accessibilityLabel={lstrings.plan_print_label}
+                onPress={() => {
+                  handOff('print')
+                }}
+                style={pill}
+              >
+                <ButtonIcon name="print" color="#ffffff" />
+                <Text selectable={false} style={pillText}>
+                  {lstrings.plan_print}
+                </Text>
+              </Pressable>
+            </View>
+            {documentFailed && (
+              <Text
+                testID="Plan document failed"
+                accessibilityLiveRegion="polite"
+                style={{
+                  color: surface.danger,
+                  fontFamily: theme.regularTextFont,
+                  fontSize: 14,
+                  textAlign: 'center'
+                }}
+              >
+                {lstrings.plan_document_failed}
+              </Text>
+            )}
             {/* Said to a screen reader when a cell refuses what was typed. */}
             <Text
               accessibilityLiveRegion="assertive"

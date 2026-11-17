@@ -145,15 +145,15 @@ export const enUs = {
   game_hero_record: 'Record',
   /** The Coach action on the game hero. */
   game_hero_coach: 'Coach',
-  /** The game page's pill for a head coach, and the screen it opens. */
+  /** The game page's pill for a coach or assistant, and the screen it opens. */
   game_coach_game: 'Coach Game',
-  /** Asked of a head coach of both teams before Coach Game opens. */
+  /** Asked of a coach of both teams before Coach Game opens. */
   game_coach_which: 'Coach which team?',
   /** Asked before a coach leaves Coach Game with changes not saved. */
   coach_discard_title: 'Discard unsaved roster changes?',
   coach_discard: 'Discard',
   coach_keep_editing: 'Keep editing',
-  coach_not_coach: 'Only a head coach of this team can coach it here.',
+  coach_not_coach: 'Only a coach or assistant of this team can coach it here.',
   coach_load_failed: 'Unable to load the game. Please try again.',
   coach_save_failed: 'Unable to save the lineup. Please try again.',
   /** The coaching screen's Box Score pill, on its own row above the tabs. */
@@ -180,7 +180,8 @@ export const enUs = {
     'Saved. Defense set from the plan\u2019s inning 1. Plan has %s.',
   coach_plan_load_failed: 'Unable to load the game plan. Please try again.',
   /** The Plan tab, for somebody who is not a coach of the team. */
-  coach_plan_coaches_only: "Only the team's coaches can see its game plan.",
+  coach_plan_coaches_only:
+    "Only the team's coaches and assistants can see its game plan.",
   /**
    * The roster screen's Help and Clear, at the Defense field's top corners,
    * and the sheet Help slides up.
@@ -210,10 +211,17 @@ export const enUs = {
   plan_bench: 'Bench',
   plan_close_picker: 'Close the field',
   plan_no_warnings: 'No playing-time warnings.',
+  plan_position_missing: 'Inning %1$s is missing players for positions: %2$s',
+  plan_position_duplicate: 'Inning %1$s has multiple players assigned to %2$s',
   plan_warning_red: 'Red warning: %s',
   plan_warning_yellow: 'Yellow warning: %s',
   plan_clear: 'Clear',
   plan_clear_label: 'Clear the plan',
+  plan_share: 'Share',
+  plan_share_label: 'Share the game plan as a PDF',
+  plan_print: 'Print',
+  plan_print_label: 'Print the game plan',
+  plan_document_failed: "Couldn't make the game plan PDF.",
   plan_clear_title: 'Clear the whole plan?',
   plan_clear_detail:
     'Every inning is emptied for every player. Nothing is saved until Save Rosters.',

@@ -8,10 +8,14 @@ import { PLAN_CELL_FONT } from './planLayout'
 /** How long a refused entry outlines its cell in red. */
 export const PLAN_REFUSAL_MS = 600
 
-/** A cell's box, the same on both platforms: one column, one row. */
+/**
+ * A cell's box, the same on both platforms: one column, one row. A position
+ * another player holds in the same inning is red.
+ */
 function useCellStyle(
   selected: boolean,
-  refused: boolean
+  refused: boolean,
+  duplicated: boolean
 ): {
   box: {
     flex: number
@@ -43,7 +47,7 @@ function useCellStyle(
     },
     text: {
       ...PLAN_CELL_FONT,
-      color: surface.text,
+      color: duplicated ? surface.danger : surface.text,
       fontWeight: '700',
       textAlign: 'center'
     }
@@ -64,19 +68,22 @@ export function WebPlanCell({
   highlighted,
   editing,
   refused,
+  duplicated = false,
   testID,
   onPress
 }: {
   value: PlanCellValue
   label: string
   highlighted: boolean
+  /** Whether another player holds its position in the same inning. */
+  duplicated?: boolean
   /** What is being typed into it, which replaces its value once whole. */
   editing?: string
   refused: boolean
   testID: string
   onPress: () => void
 }): React.ReactElement {
-  const style = useCellStyle(highlighted, refused)
+  const style = useCellStyle(highlighted, refused, duplicated)
   const shown = editing ?? value
   return (
     <Pressable
@@ -126,6 +133,7 @@ export function NativePlanCell({
   value,
   label,
   selected,
+  duplicated = false,
   testID,
   onPress,
   onLongPress,
@@ -134,12 +142,14 @@ export function NativePlanCell({
   value: PlanCellValue
   label: string
   selected: boolean
+  /** Whether another player holds its position in the same inning. */
+  duplicated?: boolean
   testID: string
   onPress: () => void
   onLongPress: (event: GestureResponderEvent) => void
   onPressOut: () => void
 }): React.ReactElement {
-  const style = useCellStyle(selected, false)
+  const style = useCellStyle(selected, false, duplicated)
   return (
     <Pressable
       testID={testID}

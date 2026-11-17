@@ -20,7 +20,7 @@ import { isPosition, POSITIONS } from './scoring/state'
  */
 
 export interface PlanWarning {
-  rule: PlayingTimeRuleKey | 'duplicatePosition'
+  rule: PlayingTimeRuleKey
   level: 'yellow' | 'red'
   message: string
   /** The rows it names, by `fullName`, in batting order. */
@@ -50,7 +50,7 @@ export const EMPTY_PLAN_SAME_DAY: PlanSameDay = {
 
 export interface PlanWarningsInput {
   plan: GamePlan
-  /** Null when the team plays by no rules: only duplicates warn. */
+  /** Null when the team plays by no rules: nothing warns. */
   rules: PlayingTimeRules | null
   /**
    * The innings the game has reached: its current one while it is in
@@ -151,6 +151,7 @@ function pitchingBlockedFrom(
  */
 export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
   const { plan, rules, sameDay } = input
+  if (rules == null) return []
   const length =
     input.final === true &&
     input.playedInnings != null &&
@@ -175,21 +176,6 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
     if (level != null)
       findings.push({ rule, level, message, player: row.player.fullName })
   }
-
-  for (let inning = 0; inning < length; inning++) {
-    for (const position of POSITIONS) {
-      const at = rows.filter(row => row.cells[inning] === position)
-      if (at.length < 2) continue
-      for (const row of at)
-        warn(
-          'duplicatePosition',
-          'red',
-          `Two players at ${position} in inning ${inning + 1}`,
-          row
-        )
-    }
-  }
-  if (rules == null) return grouped(findings)
 
   const on = (key: ToggleRule): boolean =>
     rules[key] && ruleRowEnabled(rules, key)
