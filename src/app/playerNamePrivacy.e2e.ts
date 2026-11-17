@@ -116,11 +116,33 @@ async function main(): Promise<void> {
   const ROSTER = `/teams/${f.teamA}?tab=team`
   const PLAYER = `/players/${userIdOfGumbo(ALEX)}`
   const BOX = `/games/${gameId}?tab=boxScore`
+  /**
+   * A lineup reads `1. <name>` first. Its rows wrap between first and last
+   * name (901790a25), so the page's lines are read as one.
+   */
+  const batsFirst = async (name: string): Promise<void> => {
+    await page
+      .waitForFunction(
+        (text: string) =>
+          document.body.innerText.replace(/\s+/g, ' ').includes(text),
+        { timeout: 30000 },
+        `1. ${name}`
+      )
+      .catch(async (error: unknown) => {
+        console.error(
+          'Missing text',
+          `1. ${name}`,
+          await page.evaluate(() => document.body.innerText)
+        )
+        throw error
+      })
+  }
   /** The coach's own game screen, on its Lineup tab: `1. <name>` bats first. */
   const coachGame = async (name: string, file: string): Promise<void> => {
-    await open(`/games/${gameId}/coach/${f.teamA}`, 'Batting — Demo Hawks')
+    // The screen opens on whichever tab it opens on; its Lineup tab is what is read.
+    await open(`/games/${gameId}/coach/${f.teamA}`, 'Lineup')
     await m.tapOn({ css: '[aria-label="Lineup"]' })
-    await contains(page, `1. ${name}`)
+    await batsFirst(name)
     await capture(m, artifacts!, file)
   }
 
@@ -422,7 +444,7 @@ async function main(): Promise<void> {
       }
     }
     await m.tapOn({ css: '[aria-label="Lineup"]' })
-    await contains(page, '1. Alex Lee')
+    await batsFirst('Alex Lee')
     await capture(m, artifacts!, 'scoring-lineup-after.png')
     console.log('E4 PASS: the diamond reads Alex L, the lineup sheet Alex Lee')
     await signIn(101)
@@ -643,6 +665,10 @@ async function main(): Promise<void> {
       await logged(model, 'curl -s "$BASE/games/$GAME/events"', events)
     ).include('unauthorized')
     console.log('11 PASS: only an admitted reader holds a model name')
+  } catch (error) {
+    // What the browser showed when a step failed.
+    await capture(m, artifacts!, 'failed.png').catch(() => undefined)
+    throw error
   } finally {
     await browser.disconnect()
     await m.detach().catch(() => undefined)
