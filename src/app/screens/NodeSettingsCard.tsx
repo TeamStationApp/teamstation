@@ -6,10 +6,11 @@ import {
   asDistributionSettings,
   type BoardPlacement,
   defaultDistributionSettings,
+  defaultJevSettings,
   defaultNodeSettings,
   type NodeSettings
 } from '../../common/nodeSettings'
-import { Button, Card, ListCard, SectionHeader } from '../components'
+import { Button, Card, ListCard, SectionHeader, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
 import { CalendarPicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
@@ -85,6 +86,7 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
       speedHoldSec: nearest(HOLDS, s.speedHoldSec)
     },
     distribution: settings.distribution ?? defaultDistributionSettings,
+    jev: settings.jev ?? defaultJevSettings,
     highlights: {
       ...h,
       lagSec: nearest(SECONDS, h.lagSec),
@@ -151,6 +153,9 @@ export function NodeSettingsCard({
   const [loadFailed, setLoadFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [jevInput, setJevInput] = useState('')
+  const [jevBusy, setJevBusy] = useState(false)
+  const [jevProblem, setJevProblem] = useState<string>()
   const load = useCallback(async (): Promise<void> => {
     try {
       setSettings(shownSettings(await client.nodeSettings()))
@@ -220,6 +225,36 @@ export function NodeSettingsCard({
       setBusy(false)
     }
   }
+
+  /**
+   * Set, replace or remove the Jev key, apart from Save: the key is never
+   * read back, so the card keeps only whether one is set.
+   */
+  const changeJevKey = async (apiKey: string | null): Promise<void> => {
+    if (jevBusy) return
+    setJevBusy(true)
+    setJevProblem(undefined)
+    try {
+      if (apiKey == null) await client.clearJevKey()
+      else await client.setJevKey(apiKey)
+      setJevInput('')
+      setSettings(current =>
+        current == null
+          ? current
+          : { ...current, jev: { configured: apiKey != null } }
+      )
+    } catch (error) {
+      setJevProblem(
+        error instanceof Error
+          ? error.message
+          : 'The Jev key could not be changed. Retry.'
+      )
+    } finally {
+      setJevBusy(false)
+    }
+  }
+  const jevConfigured = settings.jev.configured
+  const jevTyped = jevInput.trim()
 
   const { scoreboard, highlights, radar } = settings
   // The account screen's settings row: the whole row is the target, its
@@ -502,6 +537,50 @@ export function NodeSettingsCard({
           {urlRow('iOS TestFlight', 'appStoreUrl')}
         </ListCard>
       </View>
+      <View style={styles.section}>
+        <SectionHeader title="Jev ranking" />
+        <Text style={styles.hint}>
+          {jevConfigured
+            ? 'A key is set. Search re-ranks its results with Jev a moment after typing stops.'
+            : 'No key is set. Search ranks its results by how well the names match.'}
+        </Text>
+        <TextField
+          label="Jev API key"
+          secure
+          value={jevInput}
+          placeholder={jevConfigured ? 'A new key' : 'Paste the key'}
+          disabled={jevBusy}
+          onChangeText={next => {
+            setJevInput(next)
+            setJevProblem(undefined)
+          }}
+        />
+        {jevProblem != null && (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {jevProblem}
+          </Text>
+        )}
+        <View style={styles.buttons}>
+          <Button
+            label={jevConfigured ? 'Replace' : 'Set'}
+            busy={jevBusy}
+            disabled={jevTyped === ''}
+            onPress={() => {
+              changeJevKey(jevTyped).catch(() => undefined)
+            }}
+          />
+          {jevConfigured && (
+            <Button
+              label="Remove"
+              kind="secondary"
+              disabled={jevBusy}
+              onPress={() => {
+                changeJevKey(null).catch(() => undefined)
+              }}
+            />
+          )}
+        </View>
+      </View>
       {problem != null && (
         <Text accessibilityRole="alert" style={styles.error}>
           {problem}
@@ -521,7 +600,8 @@ export function NodeSettingsCard({
         textColor={theme.linkTextColor}
         disabled={busy}
         onPress={() => {
-          change(shownSettings(defaultNodeSettings))
+          // The Jev key is not a setting Reset puts back.
+          change(shownSettings({ ...defaultNodeSettings, jev: settings.jev }))
         }}
       />
       {picker != null && (

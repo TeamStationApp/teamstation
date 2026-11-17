@@ -61,7 +61,9 @@ const appSuites = [
   'src/app/screens/GroupSettingsScreen.test.tsx',
   'src/app/screens/CreatePlayerScreen.test.tsx',
   'src/app/screens/TeamPage.test.tsx',
-  'src/app/screens/AddPlayerScene.test.tsx'
+  'src/app/screens/AddPlayerScene.test.tsx',
+  'src/app/screens/NodeSettingsCard.test.tsx',
+  'src/app/screens/NodeAdministrationScreen.test.tsx'
 ]
 
 /**

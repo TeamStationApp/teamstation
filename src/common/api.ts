@@ -4627,6 +4627,16 @@ export class TeamStationClient {
     return await this.request('PUT', '/node/settings', asNodeSettings, settings)
   }
 
+  /** A node administrator sets or replaces search's Jev API key. */
+  async setJevKey(apiKey: string): Promise<void> {
+    await this.request('PUT', '/node/jev-key', asUnknownOk, { apiKey })
+  }
+
+  /** A node administrator removes the Jev API key. */
+  async clearJevKey(): Promise<void> {
+    await this.request('DELETE', '/node/jev-key', asUnknownOk)
+  }
+
   /** Whether a game's board shows over its videos, and where. */
   async scoreboardOverlay(gameId: string): Promise<ScoreboardOverlay> {
     return await this.request(

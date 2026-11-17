@@ -395,6 +395,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/scoring/projection.js',
   'server/scoring/replayContext.js',
   'server/scoring/rosterWrites.js',
+  'server/search/jev.js',
   'server/sentry/instrument.js',
   'server/sentry/options.js',
   'server/serverConfig.js',

@@ -1572,6 +1572,14 @@ const gumboCount = {
  * The stored play: a standard MLB Gumbo play, in the shape of the live feed
  * (`statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live`, `liveData.plays`).
  */
+/** What `PUT` and `DELETE /node/jev-key` answer: whether a key is set now. */
+const jevKeyStateSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['configured'],
+  properties: { configured: { type: 'boolean' } }
+}
+
 /**
  * The node settings as `GET /node/settings` answers them and `PUT` takes and
  * answers them: one copy, so the three cannot drift apart (`asNodeSettings`).
@@ -1581,6 +1589,14 @@ const nodeSettingsSchema = {
   additionalProperties: false,
   required: ['scoreboard', 'highlights'],
   properties: {
+    jev: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Whether a Jev API key is set, for search ranking. A read always has it; a save may echo it and it changes nothing. The key itself is set and cleared at `/node/jev-key` and never returned.',
+      required: ['configured'],
+      properties: { configured: { type: 'boolean' } }
+    },
     replay: {
       type: 'object',
       additionalProperties: false,
@@ -7535,6 +7551,59 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
+      '/node/jev-key': {
+        put: {
+          summary: 'A node administrator sets or replaces the Jev API key',
+          description:
+            "Search's Jev ranking calls TypeSafe's System One API with this key. It is stored on the node and never returned by any route or written to a log; `GET /node/settings` says only `jev.configured`. Node administrators only.",
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['apiKey'],
+                  properties: {
+                    apiKey: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 512,
+                      pattern: '^\\s*[\\x21-\\x7e]+\\s*$',
+                      description:
+                        'The key, printable characters with no spaces inside; surrounding spaces are trimmed'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The key is set',
+              content: { 'application/json': { schema: jevKeyStateSchema } }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        delete: {
+          summary: 'A node administrator removes the Jev API key',
+          description:
+            'Search then ranks without Jev, by its lexicographic order alone. Node administrators only.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'No key is set',
+              content: { 'application/json': { schema: jevKeyStateSchema } }
+            },
             401: errorResponse,
             403: errorResponse
           }

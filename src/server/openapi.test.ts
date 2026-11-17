@@ -775,4 +775,36 @@ describe('the API document', function () {
     expect(pattern.test('home_run')).equals(true)
     expect(pattern.test('Home-Run')).equals(false)
   })
+
+  it('says only whether a Jev key is set, and documents the key routes for node administrators', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<
+      string,
+      Record<string, any>
+    >
+    const read =
+      paths['/node/settings'].get.responses[200].content['application/json']
+        .schema
+    expect(read.properties.jev).deep.include({ required: ['configured'] })
+    expect(read.properties.jev.properties).deep.equals({
+      configured: { type: 'boolean' }
+    })
+    const key = paths['/node/jev-key']
+    expect(Object.keys(key).sort()).deep.equals(['delete', 'put'])
+    const body = key.put.requestBody.content['application/json'].schema
+    expect(body.required).deep.equals(['apiKey'])
+    expect(
+      new RegExp(body.properties.apiKey.pattern).test(' ts-key_1 ')
+    ).equals(true)
+    expect(new RegExp(body.properties.apiKey.pattern).test('two words')).equals(
+      false
+    )
+    for (const method of ['put', 'delete']) {
+      expect(key[method].responses).to.have.property('403')
+      expect(
+        key[method].responses[200].content['application/json'].schema.properties
+      ).deep.equals({ configured: { type: 'boolean' } })
+    }
+    // The key is never in an answer.
+    expect(JSON.stringify(read)).not.contains('apiKey')
+  })
 })

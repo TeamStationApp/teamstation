@@ -41,6 +41,17 @@ export const asServerConfig = asObject({
       baseUrl: asOptional(asString, 'https://places.googleapis.com')
     })
   ),
+  /**
+   * Where search's Jev ranking calls TypeSafe's System One API. The key is a
+   * node setting (`PUT /node/jev-key`), never in this file. Tests and the
+   * end-to-end stack point `baseUrl` at a stand-in.
+   */
+  jev: asOptional(
+    asObject({
+      baseUrl: asOptional(asString, 'https://api.typesafe.ai')
+    }),
+    { baseUrl: 'https://api.typesafe.ai' }
+  ),
   /** Where the API listens. */
   listenHost: asOptional(asString, '127.0.0.1'),
   listenPort: asOptional(asNumber, 9100),

@@ -28,10 +28,28 @@ import { cleanBody } from '../jsonBody'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { nodeSettings, setNodeSettings } from '../nodeSettings'
+import {
+  clearJevKey,
+  JEV_KEY_MAX,
+  nodeSettings,
+  setJevKey,
+  setNodeSettings
+} from '../nodeSettings'
 import { highlightSettings } from '../settings'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
+
+/** A Jev key: printable, no spaces, at most `JEV_KEY_MAX` characters. */
+const asJevKeyBody = asObject({
+  apiKey: (raw: unknown): string => {
+    const key = typeof raw === 'string' ? raw.trim() : ''
+    if (key === '' || key.length > JEV_KEY_MAX || !/^[\x21-\x7e]+$/.test(key))
+      throw new TypeError(
+        `apiKey must be 1 to ${JEV_KEY_MAX} printable characters with no spaces`
+      )
+    return key
+  }
+})
 
 /**
  * How often one address may read User Management's people and activity: a
@@ -195,6 +213,32 @@ export function nodeAdministrationRoutes(
       await setNodeSettings(db, req.actor, settings)
       // What is stored now, including a pitch delay the save left alone.
       res.json(await nodeSettings(db, req.actor))
+    })
+  )
+  router.put(
+    '/node/jev-key',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      // Who may set it first: a body that does not read is still a 403 to
+      // anybody but a node administrator.
+      await requireNodeAdmin(
+        db,
+        req.actor,
+        'Only a node administrator can set the Jev key'
+      )
+      const { apiKey } = cleanBody(asJevKeyBody, req.body)
+      await setJevKey(db, req.actor, apiKey)
+      res.json({ configured: true })
+    })
+  )
+  router.delete(
+    '/node/jev-key',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      await clearJevKey(db, req.actor)
+      res.json({ configured: false })
     })
   )
   return router

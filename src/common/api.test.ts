@@ -714,6 +714,24 @@ describe('api client', function () {
     expect(told).deep.equals([true])
   })
 
+  it('sets and clears the node’s Jev key', async function () {
+    const { fetch, calls } = stubFetch(200, { ok: true })
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch
+    })
+    await client.setJevKey('ts-jev-key')
+    await client.clearJevKey()
+    expect(calls.map(call => [call.method, call.url, call.body])).deep.equals([
+      [
+        'PUT',
+        'http://example.com/api/v1/node/jev-key',
+        JSON.stringify({ apiKey: 'ts-jev-key' })
+      ],
+      ['DELETE', 'http://example.com/api/v1/node/jev-key', undefined]
+    ])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({
