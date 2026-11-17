@@ -1067,6 +1067,51 @@ describe('Videos tab autoplay', function () {
       }
     })
 
+  it("plays a live game on after Safari's player reloads itself, though the reset said pause", async function () {
+    this.timeout(10000)
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    try {
+      await page([{ ...videoOf('v1', START), status: 'live' }], {
+        autoPlay: false
+      })
+      const video = inline()
+      await act(async () => {
+        await video.play()
+        video.dispatchEvent(new window.Event('play'))
+      })
+      Object.defineProperty(video, 'error', {
+        configurable: true,
+        get: () => ({ code: 2 })
+      })
+      const before = plays.length
+      await act(async () => {
+        video.dispatchEvent(new window.Event('error'))
+        // The element resets itself, and says it is paused.
+        video.pause()
+        video.dispatchEvent(new window.Event('pause'))
+        await new Promise(resolve => setTimeout(resolve, 1100))
+      })
+      expect(plays.length, 'played with the reload').greaterThan(before)
+      expect(video.paused).equals(false)
+      // Once it has pictures again, a pause is the viewer's.
+      await act(async () => {
+        video.dispatchEvent(new window.Event('canplay'))
+        video.pause()
+        video.dispatchEvent(new window.Event('pause'))
+        video.dispatchEvent(new window.Event('error'))
+        await new Promise(resolve => setTimeout(resolve, 2100))
+      })
+      expect(video.paused).equals(true)
+    } finally {
+      if (canPlay != null) Object.defineProperty(proto, 'canPlayType', canPlay)
+      else Reflect.deleteProperty(proto, 'canPlayType')
+    }
+  })
+
   it('starts a paused recording at its saved position when Videos is selected again', async function () {
     await page([videoOf('v1', START)], { initialTab: 'boxScore' })
     await select('Videos')

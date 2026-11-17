@@ -175,6 +175,41 @@ class FakeVideo {
 }
 const onceOf = new WeakMap<() => void, () => void>()
 
+/**
+ * Safari's own player on an iPhone, which loads nothing into an element
+ * until it is played: `load()` empties it and leaves it paused, blank, and
+ * only a `play()` brings metadata and a picture. A desktop player would load
+ * to its first frame by itself and say `canplay`; this one never does.
+ */
+class IphoneVideo extends FakeVideo {
+  /** What the element reaches once it is played after a load. */
+  reloadedAt = 0
+  /** Whether `load()` says `pause`, as a playing element reset may. */
+  pausesOnLoad = false
+
+  load(): void {
+    super.load()
+    const wasPlaying = !this.paused
+    this.paused = true
+    this.readyState = 0
+    this.currentTime = 0
+    this.seekable = { length: 0, start: () => 0, end: () => 0 }
+    if (wasPlaying && this.pausesOnLoad) this.emit('pause')
+  }
+
+  async play(): Promise<void> {
+    this.plays += 1
+    this.paused = false
+    this.emit('play')
+    if (this.readyState === 0 && this.src !== '') {
+      this.readyState = 4
+      this.currentTime = this.reloadedAt
+      this.emit('loadedmetadata')
+      this.emit('canplay')
+    }
+  }
+}
+
 /** A clock that only moves when the test says so. */
 function manualClock(): RetryClock & { advance: (ms: number) => void } {
   let now = 1_000_000
@@ -691,8 +726,9 @@ describe('the browser’s own player, when it stumbles', function () {
         for (let j = 0; j < 10; j++) await Promise.resolve()
       }
       expect(video.loads, 'loaded again').equals(1)
+      // Played with the load, since an iPhone loads nothing until it is.
+      expect(video.plays, 'and played').equals(1)
       // A reloaded element starts at the newest footage; it is put back.
-      video.paused = true
       video.currentTime = 428
       video.emit('loadedmetadata')
       expect(video.currentTime).equals(388)
@@ -702,6 +738,237 @@ describe('the browser’s own player, when it stumbles', function () {
     } finally {
       globalThis.fetch = realFetch
     }
+  })
+
+  it('plays an iPhone again after it loads a live game afresh, since it shows nothing until played', async function () {
+    const video = new IphoneVideo()
+    const clock = manualClock()
+    // Safari stopped at 388 s after a long cut; the server's playlist has
+    // come back and carries on growing.
+    let count = 100
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () => {
+      count += 3
+      const segments = Array.from(
+        { length: count },
+        (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
+      )
+      return new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    }
+    try {
+      video.paused = false
+      video.readyState = 4
+      video.currentTime = 388
+      video.reloadedAt = 450
+      video.seekable = { length: 1, start: () => 0, end: () => 388 }
+      const detach = attachNativeHls(
+        video,
+        url,
+        undefined,
+        { wantsToPlay: () => true, isLive: () => true },
+        clock
+      )
+      for (let i = 0; i < 8; i++) {
+        clock.advance(5000)
+        for (let j = 0; j < 10; j++) await Promise.resolve()
+      }
+      expect(video.loads, 'loaded again').equals(1)
+      expect(video.plays, 'played, so it loads at all').equals(1)
+      expect(video.paused, 'and is playing').equals(false)
+      expect(video.currentTime, 'back where it was').equals(388)
+      detach()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  /**
+   * An iPhone that stood still at 388 s through a 64 s publisher cut, while
+   * the server's playlist carried on after it, reloaded by the watch and put
+   * back at 388 s. `progresses` says whether that position then plays.
+   */
+  async function reloadAfterCut(progresses: boolean): Promise<{
+    video: IphoneVideo
+    clock: ReturnType<typeof manualClock>
+    said: boolean[]
+    detach: () => void
+    restore: () => void
+  }> {
+    const video = new IphoneVideo()
+    const clock = manualClock()
+    const said: boolean[] = []
+    let count = 100
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () => {
+      count += 3
+      const segments = Array.from(
+        { length: count },
+        (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
+      )
+      return new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    }
+    video.paused = false
+    video.readyState = 4
+    video.currentTime = 388
+    video.reloadedAt = 522
+    video.seekable = { length: 1, start: () => 0, end: () => 388 }
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      {
+        wantsToPlay: () => true,
+        isLive: () => true,
+        onRecovery: now => said.push(now)
+      },
+      clock
+    )
+    for (let i = 0; i < 12 && video.loads === 0; i++) {
+      clock.advance(5000)
+      for (let j = 0; j < 10; j++) await Promise.resolve()
+    }
+    expect(video.loads, 'loaded again').equals(1)
+    expect(video.currentTime, 'put back where it stood').equals(388)
+    // After the reload the playlist reaches 567 s, the cut a hole in it.
+    video.seekable = { length: 1, start: () => 0, end: () => 567 }
+    // The element pauses itself in the hole, as the iPhone's did.
+    if (!progresses) {
+      video.paused = true
+      video.emit('pause')
+    }
+    for (let s = 1; s <= 9; s++) {
+      if (progresses) video.currentTime = 388 + s
+      clock.advance(1000)
+    }
+    return {
+      video,
+      clock,
+      said,
+      detach,
+      restore: () => {
+        globalThis.fetch = realFetch
+      }
+    }
+  }
+
+  it('rejoins the live point, playing, when the position put back after a cut never plays', async function () {
+    const run = await reloadAfterCut(false)
+    try {
+      expect(run.video.currentTime, 'still waiting in the hole').equals(388)
+      const plays = run.video.plays
+      run.clock.advance(1000)
+      expect(run.video.currentTime, 'the live point').equals(567 - 45)
+      expect(run.video.plays, 'played again').equals(plays + 1)
+      expect(run.video.paused).equals(false)
+      expect(run.said, 'and the recovery is over').deep.equals([true, false])
+      // It is not moved again.
+      run.video.currentTime = 530
+      run.clock.advance(20_000)
+      expect(run.video.currentTime).equals(530)
+      run.detach()
+    } finally {
+      run.restore()
+    }
+  })
+
+  it('stays where the viewer was when the position put back after a reload plays on', async function () {
+    const run = await reloadAfterCut(true)
+    try {
+      run.clock.advance(1000)
+      run.clock.advance(20_000)
+      expect(run.video.currentTime, 'where the viewer was').equals(397)
+      expect(run.video.paused).equals(false)
+      expect(run.said, 'and the recovery is over').deep.equals([true, false])
+      run.detach()
+    } finally {
+      run.restore()
+    }
+  })
+
+  it('puts a restored position that played on back where it got to, after a second error', async function () {
+    const run = await reloadAfterCut(true)
+    try {
+      // Inside the restore's check, it has played on to 397 s: then an error.
+      run.video.error = { code: 2 }
+      run.video.emit('error')
+      run.video.error = null
+      run.clock.advance(1000)
+      run.video.emit('loadedmetadata')
+      expect(
+        run.video.currentTime,
+        'where it got to, not the first restore'
+      ).equals(397)
+      run.detach()
+    } finally {
+      run.restore()
+    }
+  })
+
+  it('plays an iPhone again after an error’s reload, though the reset said pause', function () {
+    const video = new IphoneVideo()
+    video.pausesOnLoad = true
+    const clock = manualClock()
+    attachNativeHls(video, url, undefined, undefined, clock)
+    video.src = url
+    video.paused = false
+    video.readyState = 4
+    video.emit('play')
+    video.currentTime = 120
+    fail(video)
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+    expect(video.plays).equals(1)
+    expect(video.paused).equals(false)
+    expect(video.currentTime).equals(120)
+  })
+
+  it('leaves an iPhone paused after a reload when the viewer had paused it', function () {
+    const video = new IphoneVideo()
+    const clock = manualClock()
+    attachNativeHls(video, url, undefined, { wantsToPlay: () => false }, clock)
+    fail(video)
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+    expect(video.plays).equals(0)
+  })
+
+  it('tells its owner a reload is under way, so a pause it causes is not read as the viewer’s', function () {
+    const video = new IphoneVideo()
+    video.pausesOnLoad = true
+    const clock = manualClock()
+    const said: boolean[] = []
+    // The owner's own pause listener, as the game page has: it runs first.
+    let viewerWants = true
+    let recovering = false
+    video.addEventListener('pause', () => {
+      if (!recovering) viewerWants = false
+    })
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      {
+        wantsToPlay: () => viewerWants,
+        onRecovery: now => {
+          recovering = now
+          said.push(now)
+        }
+      },
+      clock
+    )
+    video.src = url
+    video.paused = false
+    video.readyState = 4
+    fail(video)
+    clock.advance(1000)
+    expect(viewerWants).equals(true)
+    expect(video.plays).equals(1)
+    expect(said).deep.equals([true, false])
+    // A later pause is the viewer's again.
+    video.paused = true
+    video.emit('pause')
+    expect(viewerWants).equals(false)
+    detach()
   })
 
   it('ignores a load stopped on purpose, and a second error while waiting', function () {

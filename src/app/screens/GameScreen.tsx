@@ -1297,6 +1297,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const suspended = useRef(false)
   suspended.current = standDown
   /**
+   * The attached player is loading itself afresh: a pause now is the reset's,
+   * not the viewer's, and must not stop what recovers it from playing again.
+   */
+  const recovering = useRef(false)
+  /**
    * Where the single player had got to, sampled as it plays.
    *
    * Read from the element when the angles open, it was always zero: React runs
@@ -1361,7 +1366,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       viewerWants.current = true
     }
     const onPause = (): void => {
-      if (!suspended.current) viewerWants.current = false
+      if (!suspended.current && !recovering.current) viewerWants.current = false
     }
     element.addEventListener('timeupdate', onTime)
     element.addEventListener('play', onPlay)
@@ -1536,6 +1541,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       },
       {
         wantsToPlay: () => !suspended.current && viewerWants.current,
+        onRecovery: now => {
+          if (current) recovering.current = now
+        },
         onWallMapping: mapping => {
           mappingRef.current = mapping
           if (mapping == null) noDates()
@@ -1558,6 +1566,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
     const stand = (): void => {
       current = false
+      recovering.current = false
       if (playAttached.current === play) playAttached.current = null
       detach()
     }
