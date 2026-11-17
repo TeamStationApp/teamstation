@@ -316,6 +316,10 @@ describe('the roster screen for a coach', function () {
     await click('Lineup')
     expect(unclipped('Lineup')).equals(true)
     expect(unclipped('Clear')).equals(true)
+    // The sheet's red, as the Plan and Defense tabs' Clear.
+    expect(
+      window.getComputedStyle(node('Clear Lineup')!.firstElementChild!).color
+    ).equals('rgb(248, 113, 113)')
     const order = [...home.battingOrder]
     expect(lineupIds()).deep.equals(order)
     await click('Clear Lineup')

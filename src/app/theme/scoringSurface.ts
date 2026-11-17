@@ -16,6 +16,8 @@ export const scoringSurface = {
   input: '#243b30',
   inputBorder: '#658578',
   danger: '#f87171',
+  /** Tappable text, such as Help: brighter than the app's link blue, on the dark sheet. */
+  link: '#a5d8ff',
   dangerFill: '#991b1b',
   switchThumb: '#e2e8f0',
   baseTarget: {

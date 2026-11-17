@@ -370,6 +370,7 @@ function FieldControl({
   onPress: () => void
 }): React.ReactElement {
   const theme = useTheme()
+  const surface = theme.scoringSurface
   return (
     <Pressable
       testID={`${accessibilityLabel} control`}
@@ -396,7 +397,8 @@ function FieldControl({
           fontFamily: theme.regularTextFont,
           fontSize: 14,
           fontWeight: '700',
-          color: side === 'left' ? theme.linkTextColor : theme.scoringOutColor
+          // The sheet's link blue and red, as the Plan tab's Help and Clear.
+          color: side === 'left' ? surface.link : surface.danger
         }}
       >
         {label}

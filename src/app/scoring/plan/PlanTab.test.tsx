@@ -1015,8 +1015,9 @@ describe('the game plan tab', function () {
     expect(colour(cell(2, 1))).equals(red)
     expect(colour(cell(1, 2))).not.equals(red)
     expect(colour(cell(3, 1))).not.equals(red)
-    // Clear is that red too.
+    // Clear is that red too, and Help the sheet's bright link blue.
     expect(colour(byId('Plan clear')!)).equals(red)
+    expect(colour(byId('Plan help')!)).equals('rgb(165, 216, 255)')
     // Fixed, the line and the colour go at once.
     await press(cell(2, 1))
     await key('c')
