@@ -1,6 +1,366 @@
 {
   "scenarios": [
     {
+      "id": "app-shell/splash/android-launch#dismiss",
+      "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/main/java/app/teamstation/app/splash/**",
+        "android/app/src/main/java/app/teamstation/app/MainActivity.kt",
+        "android/app/src/main/res/values/styles.xml",
+        "mobile/icons/splash/**"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/android-launch",
+      "file": "e2e/tests/app-shell/splash/android-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/android-launch#frames",
+      "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/main/java/app/teamstation/app/splash/**",
+        "android/app/src/main/java/app/teamstation/app/MainActivity.kt",
+        "android/app/src/main/res/values/styles.xml",
+        "mobile/icons/splash/**"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/android-launch",
+      "file": "e2e/tests/app-shell/splash/android-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/android-launch#warm-resume",
+      "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/main/java/app/teamstation/app/splash/**",
+        "android/app/src/main/java/app/teamstation/app/MainActivity.kt",
+        "android/app/src/main/res/values/styles.xml",
+        "mobile/icons/splash/**"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/android-launch",
+      "file": "e2e/tests/app-shell/splash/android-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/ipad-launch#frames-landscape",
+      "title": "The iPad launch splash crops less of the stadium in both orientations and survives a turn",
+      "kind": "e2e",
+      "covers": [
+        "mobile/apps/common/TeamStationSplash/**",
+        "mobile/icons/splash/**",
+        "ios/TeamStation/AppDelegate.swift",
+        "ios/TeamStation/LaunchScreen.storyboard"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/ipad-launch",
+      "file": "e2e/tests/app-shell/splash/ipad-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/ipad-launch#frames-portrait",
+      "title": "The iPad launch splash crops less of the stadium in both orientations and survives a turn",
+      "kind": "e2e",
+      "covers": [
+        "mobile/apps/common/TeamStationSplash/**",
+        "mobile/icons/splash/**",
+        "ios/TeamStation/AppDelegate.swift",
+        "ios/TeamStation/LaunchScreen.storyboard"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/ipad-launch",
+      "file": "e2e/tests/app-shell/splash/ipad-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/ipad-launch#rotate",
+      "title": "The iPad launch splash crops less of the stadium in both orientations and survives a turn",
+      "kind": "e2e",
+      "covers": [
+        "mobile/apps/common/TeamStationSplash/**",
+        "mobile/icons/splash/**",
+        "ios/TeamStation/AppDelegate.swift",
+        "ios/TeamStation/LaunchScreen.storyboard"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/ipad-launch",
+      "file": "e2e/tests/app-shell/splash/ipad-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/phone-launch#dismiss",
+      "title": "The iPhone launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "mobile/apps/common/TeamStationSplash/**",
+        "mobile/icons/splash/**",
+        "ios/TeamStation/AppDelegate.swift",
+        "ios/TeamStation/LaunchScreen.storyboard"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/phone-launch",
+      "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/phone-launch#frames",
+      "title": "The iPhone launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "mobile/apps/common/TeamStationSplash/**",
+        "mobile/icons/splash/**",
+        "ios/TeamStation/AppDelegate.swift",
+        "ios/TeamStation/LaunchScreen.storyboard"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/phone-launch",
+      "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/phone-launch#warm-resume",
+      "title": "The iPhone launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "mobile/apps/common/TeamStationSplash/**",
+        "mobile/icons/splash/**",
+        "ios/TeamStation/AppDelegate.swift",
+        "ios/TeamStation/LaunchScreen.storyboard"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/phone-launch",
+      "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

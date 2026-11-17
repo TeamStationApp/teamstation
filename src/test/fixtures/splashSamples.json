@@ -1,0 +1,4637 @@
+{
+ "sourcesSha256": "ad6d769584e2bbdef89cc5cb07f2bb9bc95a4c6c560f474475f6d991a0014512",
+ "raster": {
+  "mark": {
+   "x": -1,
+   "y": -1,
+   "width": 2,
+   "height": 2
+  },
+  "markBlurred": {
+   "x": -1,
+   "y": -1,
+   "width": 2,
+   "height": 2
+  },
+  "wordmark": {
+   "x": -0.9310620236410935,
+   "y": 0.0666686752658482,
+   "width": 1.8620784081055177,
+   "height": 1.1714207475697138
+  },
+  "wordmarkBox": {
+   "x": -0.43106202364109353,
+   "y": 0.5666686752658482,
+   "width": 0.8620784081055177,
+   "height": 0.17142074756971384
+  },
+  "wordmarkBlurred": {
+   "x": -0.9310620236410935,
+   "y": 0.0666686752658482,
+   "width": 1.8620784081055177,
+   "height": 1.1714207475697138
+  }
+ },
+ "samples": {
+  "390x844": [
+   {
+    "ms": 0,
+    "k": 1,
+    "stadium": {
+     "scale": 2.8,
+     "opacity": 0.95,
+     "brightness": 1.05,
+     "contrast": 1.05,
+     "blur": 0
+    },
+    "dark": {
+     "opacity": 0.15
+    },
+    "glow": {
+     "opacity": 0,
+     "scale": 0.35
+    },
+    "mark": {
+     "opacity": 0,
+     "scale": 4.5,
+     "blur": 12
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 24,
+     "scale": 0.85
+    }
+   },
+   {
+    "ms": 50,
+    "k": 1,
+    "stadium": {
+     "scale": 2.77638,
+     "opacity": 0.946167,
+     "brightness": 1.04808,
+     "contrast": 1.05,
+     "blur": 0.0191664
+    },
+    "dark": {
+     "opacity": 0.150102
+    },
+    "glow": {
+     "opacity": 0.0941238,
+     "scale": 0.421977
+    },
+    "mark": {
+     "opacity": 0.289074,
+     "scale": 4.11243,
+     "blur": 10.6712
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 22.8927,
+     "scale": 0.86661
+    }
+   },
+   {
+    "ms": 100,
+    "k": 1,
+    "stadium": {
+     "scale": 2.74069,
+     "opacity": 0.938737,
+     "brightness": 1.04437,
+     "contrast": 1.05,
+     "blur": 0.056315
+    },
+    "dark": {
+     "opacity": 0.150431
+    },
+    "glow": {
+     "opacity": 0.182778,
+     "scale": 0.489772
+    },
+    "mark": {
+     "opacity": 0.458919,
+     "scale": 3.74738,
+     "blur": 9.4196
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 21.8497,
+     "scale": 0.882255
+    }
+   },
+   {
+    "ms": 150,
+    "k": 1,
+    "stadium": {
+     "scale": 2.69186,
+     "opacity": 0.927933,
+     "brightness": 1.03897,
+     "contrast": 1.05,
+     "blur": 0.110337
+    },
+    "dark": {
+     "opacity": 0.151022
+    },
+    "glow": {
+     "opacity": 0.265236,
+     "scale": 0.552828
+    },
+    "mark": {
+     "opacity": 0.540437,
+     "scale": 3.40785,
+     "blur": 8.25549
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 20.8796,
+     "scale": 0.896806
+    }
+   },
+   {
+    "ms": 200,
+    "k": 1,
+    "stadium": {
+     "scale": 2.62937,
+     "opacity": 0.915396,
+     "brightness": 1.0327,
+     "contrast": 1.05,
+     "blur": 0.173018
+    },
+    "dark": {
+     "opacity": 0.151917
+    },
+    "glow": {
+     "opacity": 0.340932,
+     "scale": 0.610713
+    },
+    "mark": {
+     "opacity": 0.57683,
+     "scale": 3.09616,
+     "blur": 7.18684
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.989,
+     "scale": 0.910165
+    }
+   },
+   {
+    "ms": 250,
+    "k": 1,
+    "stadium": {
+     "scale": 2.5536,
+     "opacity": 0.903177,
+     "brightness": 1.02659,
+     "contrast": 1.05,
+     "blur": 0.234117
+    },
+    "dark": {
+     "opacity": 0.153157
+    },
+    "glow": {
+     "opacity": 0.409521,
+     "scale": 0.663163
+    },
+    "mark": {
+     "opacity": 0.592281,
+     "scale": 2.81374,
+     "blur": 6.21852
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.1821,
+     "scale": 0.922269
+    }
+   },
+   {
+    "ms": 300,
+    "k": 1,
+    "stadium": {
+     "scale": 2.46618,
+     "opacity": 0.892414,
+     "brightness": 1.02121,
+     "contrast": 1.05,
+     "blur": 0.287931
+    },
+    "dark": {
+     "opacity": 0.154793
+    },
+    "glow": {
+     "opacity": 0.47091,
+     "scale": 0.710107
+    },
+    "mark": {
+     "opacity": 0.598137,
+     "scale": 2.56096,
+     "blur": 5.35187
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 18.4599,
+     "scale": 0.933102
+    }
+   },
+   {
+    "ms": 350,
+    "k": 1,
+    "stadium": {
+     "scale": 2.36995,
+     "opacity": 0.883361,
+     "brightness": 1.01668,
+     "contrast": 1.05,
+     "blur": 0.333198
+    },
+    "dark": {
+     "opacity": 0.15688
+    },
+    "glow": {
+     "opacity": 0.525245,
+     "scale": 0.751658
+    },
+    "mark": {
+     "opacity": 0.599806,
+     "scale": 2.33723,
+     "blur": 4.58477
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.8206,
+     "scale": 0.94269
+    }
+   },
+   {
+    "ms": 400,
+    "k": 1,
+    "stadium": {
+     "scale": 2.26856,
+     "opacity": 0.875884,
+     "brightness": 1.01294,
+     "contrast": 1.05,
+     "blur": 0.370579
+    },
+    "dark": {
+     "opacity": 0.159486
+    },
+    "glow": {
+     "opacity": 0.572882,
+     "scale": 0.788086
+    },
+    "mark": {
+     "opacity": 0.6,
+     "scale": 2.14108,
+     "blur": 3.91226
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.2602,
+     "scale": 0.951097
+    }
+   },
+   {
+    "ms": 450,
+    "k": 1,
+    "stadium": {
+     "scale": 2.16575,
+     "opacity": 0.86976,
+     "brightness": 1.00988,
+     "contrast": 1.05,
+     "blur": 0.401202
+    },
+    "dark": {
+     "opacity": 0.162687
+    },
+    "glow": {
+     "opacity": 0.614317,
+     "scale": 0.819772
+    },
+    "mark": {
+     "opacity": 0.654979,
+     "scale": 1.97046,
+     "blur": 3.32729
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.7727,
+     "scale": 0.958409
+    }
+   },
+   {
+    "ms": 500,
+    "k": 1,
+    "stadium": {
+     "scale": 2.06468,
+     "opacity": 0.864772,
+     "brightness": 1.00739,
+     "contrast": 1.05,
+     "blur": 0.426141
+    },
+    "dark": {
+     "opacity": 0.166579
+    },
+    "glow": {
+     "opacity": 0.650135,
+     "scale": 0.847162
+    },
+    "mark": {
+     "opacity": 0.705799,
+     "scale": 1.82297,
+     "blur": 2.82162
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.3514,
+     "scale": 0.96473
+    }
+   },
+   {
+    "ms": 550,
+    "k": 1,
+    "stadium": {
+     "scale": 1.96764,
+     "opacity": 0.86074,
+     "brightness": 1.00537,
+     "contrast": 1.05,
+     "blur": 0.446302
+    },
+    "dark": {
+     "opacity": 0.171278
+    },
+    "glow": {
+     "opacity": 0.680949,
+     "scale": 0.870726
+    },
+    "mark": {
+     "opacity": 0.751842,
+     "scale": 1.69609,
+     "blur": 2.3866
+    },
+    "wordmark": {
+     "opacity": 0.146261,
+     "translateY": 15.9888,
+     "scale": 0.970168
+    }
+   },
+   {
+    "ms": 600,
+    "k": 1,
+    "stadium": {
+     "scale": 1.87603,
+     "opacity": 0.857518,
+     "brightness": 1.00376,
+     "contrast": 1.05,
+     "blur": 0.462412
+    },
+    "dark": {
+     "opacity": 0.176932
+    },
+    "glow": {
+     "opacity": 0.707363,
+     "scale": 0.890925
+    },
+    "mark": {
+     "opacity": 0.792716,
+     "scale": 1.58733,
+     "blur": 2.0137
+    },
+    "wordmark": {
+     "opacity": 0.280562,
+     "translateY": 15.6781,
+     "scale": 0.974829
+    }
+   },
+   {
+    "ms": 650,
+    "k": 1,
+    "stadium": {
+     "scale": 1.79054,
+     "opacity": 0.854989,
+     "brightness": 1.00249,
+     "contrast": 1.05,
+     "blur": 0.475056
+    },
+    "dark": {
+     "opacity": 0.183732
+    },
+    "glow": {
+     "opacity": 0.729945,
+     "scale": 0.908193
+    },
+    "mark": {
+     "opacity": 0.828303,
+     "scale": 1.49435,
+     "blur": 1.6949
+    },
+    "wordmark": {
+     "opacity": 0.401097,
+     "translateY": 15.4124,
+     "scale": 0.978814
+    }
+   },
+   {
+    "ms": 700,
+    "k": 1,
+    "stadium": {
+     "scale": 1.71137,
+     "opacity": 0.853059,
+     "brightness": 1.00153,
+     "contrast": 1.05,
+     "blur": 0.484705
+    },
+    "dark": {
+     "opacity": 0.191939
+    },
+    "glow": {
+     "opacity": 0.74921,
+     "scale": 0.922925
+    },
+    "mark": {
+     "opacity": 0.858763,
+     "scale": 1.41502,
+     "blur": 1.42292
+    },
+    "wordmark": {
+     "opacity": 0.506802,
+     "translateY": 15.1858,
+     "scale": 0.982213
+    }
+   },
+   {
+    "ms": 750,
+    "k": 1,
+    "stadium": {
+     "scale": 1.63842,
+     "opacity": 0.851653,
+     "brightness": 1.00083,
+     "contrast": 1.05,
+     "blur": 0.491737
+    },
+    "dark": {
+     "opacity": 0.201917
+    },
+    "glow": {
+     "opacity": 0.765619,
+     "scale": 0.935473
+    },
+    "mark": {
+     "opacity": 0.884475,
+     "scale": 1.34745,
+     "blur": 1.19126
+    },
+    "wordmark": {
+     "opacity": 0.597528,
+     "translateY": 14.9927,
+     "scale": 0.985109
+    }
+   },
+   {
+    "ms": 800,
+    "k": 1,
+    "stadium": {
+     "scale": 1.57143,
+     "opacity": 0.850707,
+     "brightness": 1.00035,
+     "contrast": 1.05,
+     "blur": 0.496466
+    },
+    "dark": {
+     "opacity": 0.21421
+    },
+    "glow": {
+     "opacity": 0.779575,
+     "scale": 0.946145
+    },
+    "mark": {
+     "opacity": 0.905946,
+     "scale": 1.28999,
+     "blur": 0.994238
+    },
+    "wordmark": {
+     "opacity": 0.673978,
+     "translateY": 14.8285,
+     "scale": 0.987572
+    }
+   },
+   {
+    "ms": 850,
+    "k": 1,
+    "stadium": {
+     "scale": 1.51004,
+     "opacity": 0.85017,
+     "brightness": 1.00009,
+     "contrast": 1.05,
+     "blur": 0.499148
+    },
+    "dark": {
+     "opacity": 0.2297
+    },
+    "glow": {
+     "opacity": 0.791428,
+     "scale": 0.955209
+    },
+    "mark": {
+     "opacity": 0.923738,
+     "scale": 1.24118,
+     "blur": 0.826903
+    },
+    "wordmark": {
+     "opacity": 0.737471,
+     "translateY": 14.6891,
+     "scale": 0.989664
+    }
+   },
+   {
+    "ms": 900,
+    "k": 1,
+    "stadium": {
+     "scale": 1.45386,
+     "opacity": 0.85,
+     "brightness": 1,
+     "contrast": 1.05,
+     "blur": 0.5
+    },
+    "dark": {
+     "opacity": 0.25
+    },
+    "glow": {
+     "opacity": 0.801479,
+     "scale": 0.962896
+    },
+    "mark": {
+     "opacity": 0.9384,
+     "scale": 1.19979,
+     "blur": 0.685002
+    },
+    "wordmark": {
+     "opacity": 0.789642,
+     "translateY": 14.5708,
+     "scale": 0.991437
+    }
+   },
+   {
+    "ms": 950,
+    "k": 1,
+    "stadium": {
+     "scale": 1.40253,
+     "opacity": 0.816821,
+     "brightness": 0.971561,
+     "contrast": 1.05284,
+     "blur": 0.623235
+    },
+    "dark": {
+     "opacity": 0.250943
+    },
+    "glow": {
+     "opacity": 0.809988,
+     "scale": 0.969402
+    },
+    "mark": {
+     "opacity": 0.950437,
+     "scale": 1.16476,
+     "blur": 0.564881
+    },
+    "wordmark": {
+     "opacity": 0.832192,
+     "translateY": 14.4707,
+     "scale": 0.992939
+    }
+   },
+   {
+    "ms": 1000,
+    "k": 1,
+    "stadium": {
+     "scale": 1.35567,
+     "opacity": 0.746664,
+     "brightness": 0.911427,
+     "contrast": 1.05886,
+     "blur": 0.883818
+    },
+    "dark": {
+     "opacity": 0.25409
+    },
+    "glow": {
+     "opacity": 0.817175,
+     "scale": 0.974899
+    },
+    "mark": {
+     "opacity": 0.960291,
+     "scale": 1.13516,
+     "blur": 0.463409
+    },
+    "wordmark": {
+     "opacity": 0.866719,
+     "translateY": 14.3862,
+     "scale": 0.994207
+    }
+   },
+   {
+    "ms": 1050,
+    "k": 1,
+    "stadium": {
+     "scale": 1.31295,
+     "opacity": 0.67034,
+     "brightness": 0.846005,
+     "contrast": 1.0654,
+     "blur": 1.16731
+    },
+    "dark": {
+     "opacity": 0.259962
+    },
+    "glow": {
+     "opacity": 0.823231,
+     "scale": 0.97953
+    },
+    "mark": {
+     "opacity": 0.96834,
+     "scale": 1.11022,
+     "blur": 0.377909
+    },
+    "wordmark": {
+     "opacity": 0.894636,
+     "translateY": 14.3149,
+     "scale": 0.995276
+    }
+   },
+   {
+    "ms": 1100,
+    "k": 1,
+    "stadium": {
+     "scale": 1.27405,
+     "opacity": 0.611111,
+     "brightness": 0.795238,
+     "contrast": 1.07048,
+     "blur": 1.3873
+    },
+    "dark": {
+     "opacity": 0.26917
+    },
+    "glow": {
+     "opacity": 0.828319,
+     "scale": 0.98342
+    },
+    "mark": {
+     "opacity": 0.9749,
+     "scale": 1.08928,
+     "blur": 0.306087
+    },
+    "wordmark": {
+     "opacity": 0.917147,
+     "translateY": 14.2551,
+     "scale": 0.996174
+    }
+   },
+   {
+    "ms": 1150,
+    "k": 1,
+    "stadium": {
+     "scale": 1.23868,
+     "opacity": 0.569159,
+     "brightness": 0.759279,
+     "contrast": 1.07407,
+     "blur": 1.54312
+    },
+    "dark": {
+     "opacity": 0.282455
+    },
+    "glow": {
+     "opacity": 0.832577,
+     "scale": 0.986676
+    },
+    "mark": {
+     "opacity": 0.980232,
+     "scale": 1.07174,
+     "blur": 0.245978
+    },
+    "wordmark": {
+     "opacity": 0.935253,
+     "translateY": 14.205,
+     "scale": 0.996925
+    }
+   },
+   {
+    "ms": 1200,
+    "k": 1,
+    "stadium": {
+     "scale": 1.20659,
+     "opacity": 0.54017,
+     "brightness": 0.734431,
+     "contrast": 1.07656,
+     "blur": 1.6508
+    },
+    "dark": {
+     "opacity": 0.300748
+    },
+    "glow": {
+     "opacity": 0.836124,
+     "scale": 0.989389
+    },
+    "mark": {
+     "opacity": 0.984553,
+     "scale": 1.05714,
+     "blur": 0.195895
+    },
+    "wordmark": {
+     "opacity": 0.949775,
+     "translateY": 14.1632,
+     "scale": 0.997551
+    }
+   },
+   {
+    "ms": 1250,
+    "k": 1,
+    "stadium": {
+     "scale": 1.17754,
+     "opacity": 0.520732,
+     "brightness": 0.717771,
+     "contrast": 1.07822,
+     "blur": 1.72299
+    },
+    "dark": {
+     "opacity": 0.325277
+    },
+    "glow": {
+     "opacity": 0.839064,
+     "scale": 0.991637
+    },
+    "mark": {
+     "opacity": 0.988042,
+     "scale": 1.04503,
+     "blur": 0.15439
+    },
+    "wordmark": {
+     "opacity": 0.961383,
+     "translateY": 14.1287,
+     "scale": 0.99807
+    }
+   },
+   {
+    "ms": 1300,
+    "k": 1,
+    "stadium": {
+     "scale": 1.15132,
+     "opacity": 0.508531,
+     "brightness": 0.707312,
+     "contrast": 1.07927,
+     "blur": 1.76831
+    },
+    "dark": {
+     "opacity": 0.357727
+    },
+    "glow": {
+     "opacity": 0.841485,
+     "scale": 0.993488
+    },
+    "mark": {
+     "opacity": 0.990844,
+     "scale": 1.03506,
+     "blur": 0.120213
+    },
+    "wordmark": {
+     "opacity": 0.970621,
+     "translateY": 14.1002,
+     "scale": 0.998497
+    }
+   },
+   {
+    "ms": 1350,
+    "k": 1,
+    "stadium": {
+     "scale": 1.12774,
+     "opacity": 0.501989,
+     "brightness": 0.701705,
+     "contrast": 1.07983,
+     "blur": 1.79261
+    },
+    "dark": {
+     "opacity": 0.400561
+    },
+    "glow": {
+     "opacity": 0.843463,
+     "scale": 0.995001
+    },
+    "mark": {
+     "opacity": 0.993081,
+     "scale": 1.02692,
+     "blur": 0.0922851
+    },
+    "wordmark": {
+     "opacity": 0.977931,
+     "translateY": 14.0769,
+     "scale": 0.998846
+    }
+   },
+   {
+    "ms": 1400,
+    "k": 1,
+    "stadium": {
+     "scale": 1.10662,
+     "opacity": 0.5,
+     "brightness": 0.7,
+     "contrast": 1.08,
+     "blur": 1.8
+    },
+    "dark": {
+     "opacity": 0.457667
+    },
+    "glow": {
+     "opacity": 0.845065,
+     "scale": 0.996226
+    },
+    "mark": {
+     "opacity": 0.994854,
+     "scale": 1.02032,
+     "blur": 0.0696739
+    },
+    "wordmark": {
+     "opacity": 0.983675,
+     "translateY": 14.0581,
+     "scale": 0.999129
+    }
+   },
+   {
+    "ms": 1450,
+    "k": 1,
+    "stadium": {
+     "scale": 1.08782,
+     "opacity": 0.464597,
+     "brightness": 0.664597,
+     "contrast": 1.08142,
+     "blur": 1.95577
+    },
+    "dark": {
+     "opacity": 0.535917
+    },
+    "glow": {
+     "opacity": 0.846347,
+     "scale": 0.997207
+    },
+    "mark": {
+     "opacity": 0.996244,
+     "scale": 1.01504,
+     "blur": 0.0515698
+    },
+    "wordmark": {
+     "opacity": 0.988147,
+     "translateY": 14.043,
+     "scale": 0.999355
+    }
+   },
+   {
+    "ms": 1500,
+    "k": 1,
+    "stadium": {
+     "scale": 1.07117,
+     "opacity": 0.389663,
+     "brightness": 0.589663,
+     "contrast": 1.08441,
+     "blur": 2.28548
+    },
+    "dark": {
+     "opacity": 0.65
+    },
+    "glow": {
+     "opacity": 0.84736,
+     "scale": 0.997981
+    },
+    "mark": {
+     "opacity": 0.997321,
+     "scale": 1.01087,
+     "blur": 0.0372694
+    },
+    "wordmark": {
+     "opacity": 0.991587,
+     "translateY": 14.0311,
+     "scale": 0.999534
+    }
+   },
+   {
+    "ms": 1550,
+    "k": 1,
+    "stadium": {
+     "scale": 1.05657,
+     "opacity": 0.295745,
+     "brightness": 0.495745,
+     "contrast": 1.08817,
+     "blur": 2.69872
+    },
+    "dark": {
+     "opacity": 0.651208
+    },
+    "glow": {
+     "opacity": 0.848147,
+     "scale": 0.998583
+    },
+    "mark": {
+     "opacity": 0.998143,
+     "scale": 1.00763,
+     "blur": 0.02616
+    },
+    "wordmark": {
+     "opacity": 0.994194,
+     "translateY": 14.0218,
+     "scale": 0.999673
+    }
+   },
+   {
+    "ms": 1600,
+    "k": 1,
+    "stadium": {
+     "scale": 1.04387,
+     "opacity": 0.212069,
+     "brightness": 0.412069,
+     "contrast": 1.09152,
+     "blur": 3.0669
+    },
+    "dark": {
+     "opacity": 0.65532
+    },
+    "glow": {
+     "opacity": 0.848746,
+     "scale": 0.999041
+    },
+    "mark": {
+     "opacity": 0.998758,
+     "scale": 1.00516,
+     "blur": 0.0177069
+    },
+    "wordmark": {
+     "opacity": 0.996132,
+     "translateY": 14.0148,
+     "scale": 0.999779
+    }
+   },
+   {
+    "ms": 1650,
+    "k": 1,
+    "stadium": {
+     "scale": 1.03299,
+     "opacity": 0.147194,
+     "brightness": 0.347194,
+     "contrast": 1.09411,
+     "blur": 3.35234
+    },
+    "dark": {
+     "opacity": 0.663163
+    },
+    "glow": {
+     "opacity": 0.84919,
+     "scale": 0.99938
+    },
+    "mark": {
+     "opacity": 0.999206,
+     "scale": 1.00334,
+     "blur": 0.0114423
+    },
+    "wordmark": {
+     "opacity": 0.997538,
+     "translateY": 14.0095,
+     "scale": 0.999857
+    }
+   },
+   {
+    "ms": 1700,
+    "k": 1,
+    "stadium": {
+     "scale": 1.02381,
+     "opacity": 0.0987983,
+     "brightness": 0.298798,
+     "contrast": 1.09605,
+     "blur": 3.56529
+    },
+    "dark": {
+     "opacity": 0.675752
+    },
+    "glow": {
+     "opacity": 0.849507,
+     "scale": 0.999623
+    },
+    "mark": {
+     "opacity": 0.999522,
+     "scale": 1.00203,
+     "blur": 0.00695649
+    },
+    "wordmark": {
+     "opacity": 0.998524,
+     "translateY": 14.0058,
+     "scale": 0.999913
+    }
+   },
+   {
+    "ms": 1750,
+    "k": 1,
+    "stadium": {
+     "scale": 1.01626,
+     "opacity": 0.0632304,
+     "brightness": 0.26323,
+     "contrast": 1.09747,
+     "blur": 3.72179
+    },
+    "dark": {
+     "opacity": 0.694405
+    },
+    "glow": {
+     "opacity": 0.849724,
+     "scale": 0.999789
+    },
+    "mark": {
+     "opacity": 0.999736,
+     "scale": 1.00113,
+     "blur": 0.00388968
+    },
+    "wordmark": {
+     "opacity": 0.999186,
+     "translateY": 14.0032,
+     "scale": 0.999951
+    }
+   },
+   {
+    "ms": 1800,
+    "k": 1,
+    "stadium": {
+     "scale": 1.01023,
+     "opacity": 0.037588,
+     "brightness": 0.237588,
+     "contrast": 1.0985,
+     "blur": 3.83461
+    },
+    "dark": {
+     "opacity": 0.720935
+    },
+    "glow": {
+     "opacity": 0.849864,
+     "scale": 0.999896
+    },
+    "mark": {
+     "opacity": 0.99987,
+     "scale": 1.00056,
+     "blur": 0.00192569
+    },
+    "wordmark": {
+     "opacity": 0.999602,
+     "translateY": 14.0016,
+     "scale": 0.999976
+    }
+   },
+   {
+    "ms": 1850,
+    "k": 1,
+    "stadium": {
+     "scale": 1.00566,
+     "opacity": 0.0197705,
+     "brightness": 0.219771,
+     "contrast": 1.09921,
+     "blur": 3.91301
+    },
+    "dark": {
+     "opacity": 0.758009
+    },
+    "glow": {
+     "opacity": 0.849944,
+     "scale": 0.999957
+    },
+    "mark": {
+     "opacity": 0.999948,
+     "scale": 1.00023,
+     "blur": 0.00078613
+    },
+    "wordmark": {
+     "opacity": 0.99984,
+     "translateY": 14.0007,
+     "scale": 0.99999
+    }
+   },
+   {
+    "ms": 1900,
+    "k": 1,
+    "stadium": {
+     "scale": 1.00248,
+     "opacity": 0.00826293,
+     "brightness": 0.208263,
+     "contrast": 1.09967,
+     "blur": 3.96364
+    },
+    "dark": {
+     "opacity": 0.809923
+    },
+    "glow": {
+     "opacity": 0.849984,
+     "scale": 0.999988
+    },
+    "mark": {
+     "opacity": 0.999985,
+     "scale": 1.00007,
+     "blur": 0.000225555
+    },
+    "wordmark": {
+     "opacity": 0.999954,
+     "translateY": 14.0002,
+     "scale": 0.999997
+    }
+   },
+   {
+    "ms": 1950,
+    "k": 1,
+    "stadium": {
+     "scale": 1.00061,
+     "opacity": 0.00195187,
+     "brightness": 0.201952,
+     "contrast": 1.09992,
+     "blur": 3.99141
+    },
+    "dark": {
+     "opacity": 0.884552
+    },
+    "glow": {
+     "opacity": 0.849998,
+     "scale": 0.999999
+    },
+    "mark": {
+     "opacity": 0.999998,
+     "scale": 1.00001,
+     "blur": 0.0000273205
+    },
+    "wordmark": {
+     "opacity": 0.999995,
+     "translateY": 14,
+     "scale": 1
+    }
+   },
+   {
+    "ms": 2000,
+    "k": 1,
+    "stadium": {
+     "scale": 1,
+     "opacity": 0,
+     "brightness": 0.2,
+     "contrast": 1.1,
+     "blur": 4
+    },
+    "dark": {
+     "opacity": 1
+    },
+    "glow": {
+     "opacity": 0.85,
+     "scale": 1
+    },
+    "mark": {
+     "opacity": 1,
+     "scale": 1,
+     "blur": 0
+    },
+    "wordmark": {
+     "opacity": 1,
+     "translateY": 14,
+     "scale": 1
+    }
+   }
+  ],
+  "1194x834": [
+   {
+    "ms": 0,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.8,
+     "opacity": 0.95,
+     "brightness": 1.05,
+     "contrast": 1.05,
+     "blur": 0
+    },
+    "dark": {
+     "opacity": 0.15
+    },
+    "glow": {
+     "opacity": 0,
+     "scale": 0.35
+    },
+    "mark": {
+     "opacity": 0,
+     "scale": 4.5,
+     "blur": 11.999979856115107
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 23.999959712230215,
+     "scale": 0.85
+    }
+   },
+   {
+    "ms": 50,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.77638,
+     "opacity": 0.946167,
+     "brightness": 1.04808,
+     "contrast": 1.05,
+     "blur": 0.019166389928057553
+    },
+    "dark": {
+     "opacity": 0.150102
+    },
+    "glow": {
+     "opacity": 0.0941238,
+     "scale": 0.421977
+    },
+    "mark": {
+     "opacity": 0.289074,
+     "scale": 4.11243,
+     "blur": 10.671236450839329
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 22.89263980815348,
+     "scale": 0.86661
+    }
+   },
+   {
+    "ms": 100,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.74069,
+     "opacity": 0.938737,
+     "brightness": 1.04437,
+     "contrast": 1.05,
+     "blur": 0.056314938609112714
+    },
+    "dark": {
+     "opacity": 0.150431
+    },
+    "glow": {
+     "opacity": 0.182778,
+     "scale": 0.489772
+    },
+    "mark": {
+     "opacity": 0.458919,
+     "scale": 3.74738,
+     "blur": 9.419596594724222
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 21.8496824940048,
+     "scale": 0.882255
+    }
+   },
+   {
+    "ms": 150,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.69186,
+     "opacity": 0.927933,
+     "brightness": 1.03897,
+     "contrast": 1.05,
+     "blur": 0.11033731414868106
+    },
+    "dark": {
+     "opacity": 0.151022
+    },
+    "glow": {
+     "opacity": 0.265236,
+     "scale": 0.552828
+    },
+    "mark": {
+     "opacity": 0.540437,
+     "scale": 3.40785,
+     "blur": 8.255483788968824
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 20.879588489208636,
+     "scale": 0.896806
+    }
+   },
+   {
+    "ms": 200,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.62937,
+     "opacity": 0.915396,
+     "brightness": 1.0327,
+     "contrast": 1.05,
+     "blur": 0.17301797601918467
+    },
+    "dark": {
+     "opacity": 0.151917
+    },
+    "glow": {
+     "opacity": 0.340932,
+     "scale": 0.610713
+    },
+    "mark": {
+     "opacity": 0.57683,
+     "scale": 3.09616,
+     "blur": 7.1868421582733815
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.989036930455637,
+     "scale": 0.910165
+    }
+   },
+   {
+    "ms": 250,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.5536,
+     "opacity": 0.903177,
+     "brightness": 1.02659,
+     "contrast": 1.05,
+     "blur": 0.234116896882494
+    },
+    "dark": {
+     "opacity": 0.153157
+    },
+    "glow": {
+     "opacity": 0.409521,
+     "scale": 0.663163
+    },
+    "mark": {
+     "opacity": 0.592281,
+     "scale": 2.81374,
+     "blur": 6.218519136690648
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.1820757793765,
+     "scale": 0.922269
+    }
+   },
+   {
+    "ms": 300,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.46618,
+     "opacity": 0.892414,
+     "brightness": 1.02121,
+     "contrast": 1.05,
+     "blur": 0.2879315107913669
+    },
+    "dark": {
+     "opacity": 0.154793
+    },
+    "glow": {
+     "opacity": 0.47091,
+     "scale": 0.710107
+    },
+    "mark": {
+     "opacity": 0.598137,
+     "scale": 2.56096,
+     "blur": 5.3518606714628305
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 18.45991942446043,
+     "scale": 0.933102
+    }
+   },
+   {
+    "ms": 350,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.36995,
+     "opacity": 0.883361,
+     "brightness": 1.01668,
+     "contrast": 1.05,
+     "blur": 0.3331978417266187
+    },
+    "dark": {
+     "opacity": 0.15688
+    },
+    "glow": {
+     "opacity": 0.525245,
+     "scale": 0.751658
+    },
+    "mark": {
+     "opacity": 0.599806,
+     "scale": 2.33723,
+     "blur": 4.584771942446044
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.820645083932856,
+     "scale": 0.94269
+    }
+   },
+   {
+    "ms": 400,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.26856,
+     "opacity": 0.875884,
+     "brightness": 1.01294,
+     "contrast": 1.05,
+     "blur": 0.3705787434052758
+    },
+    "dark": {
+     "opacity": 0.159486
+    },
+    "glow": {
+     "opacity": 0.572882,
+     "scale": 0.788086
+    },
+    "mark": {
+     "opacity": 0.6,
+     "scale": 2.14108,
+     "blur": 3.912263836930456
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.260204796163073,
+     "scale": 0.951097
+    }
+   },
+   {
+    "ms": 450,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.16575,
+     "opacity": 0.86976,
+     "brightness": 1.00988,
+     "contrast": 1.05,
+     "blur": 0.40120157314148686
+    },
+    "dark": {
+     "opacity": 0.162687
+    },
+    "glow": {
+     "opacity": 0.614317,
+     "scale": 0.819772
+    },
+    "mark": {
+     "opacity": 0.654979,
+     "scale": 1.97046,
+     "blur": 3.327292901678657
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.772729016786574,
+     "scale": 0.958409
+    }
+   },
+   {
+    "ms": 500,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 2.06468,
+     "opacity": 0.864772,
+     "brightness": 1.00739,
+     "contrast": 1.05,
+     "blur": 0.4261410647482015
+    },
+    "dark": {
+     "opacity": 0.166579
+    },
+    "glow": {
+     "opacity": 0.650135,
+     "scale": 0.847162
+    },
+    "mark": {
+     "opacity": 0.705799,
+     "scale": 1.82297,
+     "blur": 2.8216215347721825
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.351336211031175,
+     "scale": 0.96473
+    }
+   },
+   {
+    "ms": 550,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.96764,
+     "opacity": 0.86074,
+     "brightness": 1.00537,
+     "contrast": 1.05,
+     "blur": 0.44630193764988013
+    },
+    "dark": {
+     "opacity": 0.171278
+    },
+    "glow": {
+     "opacity": 0.680949,
+     "scale": 0.870726
+    },
+    "mark": {
+     "opacity": 0.751842,
+     "scale": 1.69609,
+     "blur": 2.3865972182254196
+    },
+    "wordmark": {
+     "opacity": 0.146261,
+     "translateY": 15.9888412470024,
+     "scale": 0.970168
+    }
+   },
+   {
+    "ms": 600,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.87603,
+     "opacity": 0.857518,
+     "brightness": 1.00376,
+     "contrast": 1.05,
+     "blur": 0.4624118129496403
+    },
+    "dark": {
+     "opacity": 0.176932
+    },
+    "glow": {
+     "opacity": 0.707363,
+     "scale": 0.890925
+    },
+    "mark": {
+     "opacity": 0.792716,
+     "scale": 1.58733,
+     "blur": 2.0136989928057556
+    },
+    "wordmark": {
+     "opacity": 0.280562,
+     "translateY": 15.678058992805756,
+     "scale": 0.974829
+    }
+   },
+   {
+    "ms": 650,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.79054,
+     "opacity": 0.854989,
+     "brightness": 1.00249,
+     "contrast": 1.05,
+     "blur": 0.47505663309352525
+    },
+    "dark": {
+     "opacity": 0.183732
+    },
+    "glow": {
+     "opacity": 0.729945,
+     "scale": 0.908193
+    },
+    "mark": {
+     "opacity": 0.828303,
+     "scale": 1.49435,
+     "blur": 1.6949017745803359
+    },
+    "wordmark": {
+     "opacity": 0.401097,
+     "translateY": 15.412411510791367,
+     "scale": 0.978814
+    }
+   },
+   {
+    "ms": 700,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.71137,
+     "opacity": 0.853059,
+     "brightness": 1.00153,
+     "contrast": 1.05,
+     "blur": 0.4847049496402878
+    },
+    "dark": {
+     "opacity": 0.191939
+    },
+    "glow": {
+     "opacity": 0.74921,
+     "scale": 0.922925
+    },
+    "mark": {
+     "opacity": 0.858763,
+     "scale": 1.41502,
+     "blur": 1.422919232613909
+    },
+    "wordmark": {
+     "opacity": 0.506802,
+     "translateY": 15.185725659472423,
+     "scale": 0.982213
+    }
+   },
+   {
+    "ms": 750,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.63842,
+     "opacity": 0.851653,
+     "brightness": 1.00083,
+     "contrast": 1.05,
+     "blur": 0.49173727098321346
+    },
+    "dark": {
+     "opacity": 0.201917
+    },
+    "glow": {
+     "opacity": 0.765619,
+     "scale": 0.935473
+    },
+    "mark": {
+     "opacity": 0.884475,
+     "scale": 1.34745,
+     "blur": 1.1912645083932853
+    },
+    "wordmark": {
+     "opacity": 0.597528,
+     "translateY": 14.992739088729017,
+     "scale": 0.985109
+    }
+   },
+   {
+    "ms": 800,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.57143,
+     "opacity": 0.850707,
+     "brightness": 1.00035,
+     "contrast": 1.05,
+     "blur": 0.4964652901678657
+    },
+    "dark": {
+     "opacity": 0.21421
+    },
+    "glow": {
+     "opacity": 0.779575,
+     "scale": 0.946145
+    },
+    "mark": {
+     "opacity": 0.905946,
+     "scale": 1.28999,
+     "blur": 0.9942380719424462
+    },
+    "wordmark": {
+     "opacity": 0.673978,
+     "translateY": 14.82849304556355,
+     "scale": 0.987572
+    }
+   },
+   {
+    "ms": 850,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.51004,
+     "opacity": 0.85017,
+     "brightness": 1.00009,
+     "contrast": 1.05,
+     "blur": 0.49914807673860917
+    },
+    "dark": {
+     "opacity": 0.2297
+    },
+    "glow": {
+     "opacity": 0.791428,
+     "scale": 0.955209
+    },
+    "mark": {
+     "opacity": 0.923738,
+     "scale": 1.24118,
+     "blur": 0.8269034340527579
+    },
+    "wordmark": {
+     "opacity": 0.737471,
+     "translateY": 14.689040767386093,
+     "scale": 0.989664
+    }
+   },
+   {
+    "ms": 900,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.45386,
+     "opacity": 0.85,
+     "brightness": 1,
+     "contrast": 1.05,
+     "blur": 0.5000001726618706
+    },
+    "dark": {
+     "opacity": 0.25
+    },
+    "glow": {
+     "opacity": 0.801479,
+     "scale": 0.962896
+    },
+    "mark": {
+     "opacity": 0.9384,
+     "scale": 1.19979,
+     "blur": 0.6850021390887291
+    },
+    "wordmark": {
+     "opacity": 0.789642,
+     "translateY": 14.570840287769784,
+     "scale": 0.991437
+    }
+   },
+   {
+    "ms": 950,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.40253,
+     "opacity": 0.816821,
+     "brightness": 0.971561,
+     "contrast": 1.05284,
+     "blur": 0.623235304556355
+    },
+    "dark": {
+     "opacity": 0.250943
+    },
+    "glow": {
+     "opacity": 0.809988,
+     "scale": 0.969402
+    },
+    "mark": {
+     "opacity": 0.950437,
+     "scale": 1.16476,
+     "blur": 0.5648809016786571
+    },
+    "wordmark": {
+     "opacity": 0.832192,
+     "translateY": 14.470754436450841,
+     "scale": 0.992939
+    }
+   },
+   {
+    "ms": 1000,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.35567,
+     "opacity": 0.746664,
+     "brightness": 0.911427,
+     "contrast": 1.05886,
+     "blur": 0.8838177745803357
+    },
+    "dark": {
+     "opacity": 0.25409
+    },
+    "glow": {
+     "opacity": 0.817175,
+     "scale": 0.974899
+    },
+    "mark": {
+     "opacity": 0.960291,
+     "scale": 1.13516,
+     "blur": 0.46340963549160674
+    },
+    "wordmark": {
+     "opacity": 0.866719,
+     "translateY": 14.386152038369305,
+     "scale": 0.994207
+    }
+   },
+   {
+    "ms": 1050,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.31295,
+     "opacity": 0.67034,
+     "brightness": 0.846005,
+     "contrast": 1.0654,
+     "blur": 1.1673106954436452
+    },
+    "dark": {
+     "opacity": 0.259962
+    },
+    "glow": {
+     "opacity": 0.823231,
+     "scale": 0.97953
+    },
+    "mark": {
+     "opacity": 0.96834,
+     "scale": 1.11022,
+     "blur": 0.3779085899280576
+    },
+    "wordmark": {
+     "opacity": 0.894636,
+     "translateY": 14.314907913669066,
+     "scale": 0.995276
+    }
+   },
+   {
+    "ms": 1100,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.27405,
+     "opacity": 0.611111,
+     "brightness": 0.795238,
+     "contrast": 1.07048,
+     "blur": 1.3873072901678658
+    },
+    "dark": {
+     "opacity": 0.26917
+    },
+    "glow": {
+     "opacity": 0.828319,
+     "scale": 0.98342
+    },
+    "mark": {
+     "opacity": 0.9749,
+     "scale": 1.08928,
+     "blur": 0.306086618705036
+    },
+    "wordmark": {
+     "opacity": 0.917147,
+     "translateY": 14.255099280575541,
+     "scale": 0.996174
+    }
+   },
+   {
+    "ms": 1150,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.23868,
+     "opacity": 0.569159,
+     "brightness": 0.759279,
+     "contrast": 1.07407,
+     "blur": 1.54312345323741
+    },
+    "dark": {
+     "opacity": 0.282455
+    },
+    "glow": {
+     "opacity": 0.832577,
+     "scale": 0.986676
+    },
+    "mark": {
+     "opacity": 0.980232,
+     "scale": 1.07174,
+     "blur": 0.24597742446043167
+    },
+    "wordmark": {
+     "opacity": 0.935253,
+     "translateY": 14.205005755395684,
+     "scale": 0.996925
+    }
+   },
+   {
+    "ms": 1200,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.20659,
+     "opacity": 0.54017,
+     "brightness": 0.734431,
+     "contrast": 1.07656,
+     "blur": 1.650799232613909
+    },
+    "dark": {
+     "opacity": 0.300748
+    },
+    "glow": {
+     "opacity": 0.836124,
+     "scale": 0.989389
+    },
+    "mark": {
+     "opacity": 0.984553,
+     "scale": 1.05714,
+     "blur": 0.19589503117505996
+    },
+    "wordmark": {
+     "opacity": 0.949775,
+     "translateY": 14.163210551558754,
+     "scale": 0.997551
+    }
+   },
+   {
+    "ms": 1250,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.17754,
+     "opacity": 0.520732,
+     "brightness": 0.717771,
+     "contrast": 1.07822,
+     "blur": 1.7229946282973623
+    },
+    "dark": {
+     "opacity": 0.325277
+    },
+    "glow": {
+     "opacity": 0.839064,
+     "scale": 0.991637
+    },
+    "mark": {
+     "opacity": 0.988042,
+     "scale": 1.04503,
+     "blur": 0.1543902685851319
+    },
+    "wordmark": {
+     "opacity": 0.961383,
+     "translateY": 14.128701678657075,
+     "scale": 0.99807
+    }
+   },
+   {
+    "ms": 1300,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.15132,
+     "opacity": 0.508531,
+     "brightness": 0.707312,
+     "contrast": 1.07927,
+     "blur": 1.7683115587529978
+    },
+    "dark": {
+     "opacity": 0.357727
+    },
+    "glow": {
+     "opacity": 0.841485,
+     "scale": 0.993488
+    },
+    "mark": {
+     "opacity": 0.990844,
+     "scale": 1.03506,
+     "blur": 0.12021231654676261
+    },
+    "wordmark": {
+     "opacity": 0.970621,
+     "translateY": 14.100163549160673,
+     "scale": 0.998497
+    }
+   },
+   {
+    "ms": 1350,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.12774,
+     "opacity": 0.501989,
+     "brightness": 0.701705,
+     "contrast": 1.07983,
+     "blur": 1.792609448441247
+    },
+    "dark": {
+     "opacity": 0.400561
+    },
+    "glow": {
+     "opacity": 0.843463,
+     "scale": 0.995001
+    },
+    "mark": {
+     "opacity": 0.993081,
+     "scale": 1.02692,
+     "blur": 0.09228502446043166
+    },
+    "wordmark": {
+     "opacity": 0.977931,
+     "translateY": 14.076887769784173,
+     "scale": 0.998846
+    }
+   },
+   {
+    "ms": 1400,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.10662,
+     "opacity": 0.5,
+     "brightness": 0.7,
+     "contrast": 1.08,
+     "blur": 1.7999969784172662
+    },
+    "dark": {
+     "opacity": 0.457667
+    },
+    "glow": {
+     "opacity": 0.845065,
+     "scale": 0.996226
+    },
+    "mark": {
+     "opacity": 0.994854,
+     "scale": 1.02032,
+     "blur": 0.06967381918465228
+    },
+    "wordmark": {
+     "opacity": 0.983675,
+     "translateY": 14.05806474820144,
+     "scale": 0.999129
+    }
+   },
+   {
+    "ms": 1450,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.08782,
+     "opacity": 0.464597,
+     "brightness": 0.664597,
+     "contrast": 1.08142,
+     "blur": 1.9557726618705038
+    },
+    "dark": {
+     "opacity": 0.535917
+    },
+    "glow": {
+     "opacity": 0.846347,
+     "scale": 0.997207
+    },
+    "mark": {
+     "opacity": 0.996244,
+     "scale": 1.01504,
+     "blur": 0.051569816786570744
+    },
+    "wordmark": {
+     "opacity": 0.988147,
+     "translateY": 14.0429860911271,
+     "scale": 0.999355
+    }
+   },
+   {
+    "ms": 1500,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.07117,
+     "opacity": 0.389663,
+     "brightness": 0.589663,
+     "contrast": 1.08441,
+     "blur": 2.2854791366906477
+    },
+    "dark": {
+     "opacity": 0.65
+    },
+    "glow": {
+     "opacity": 0.84736,
+     "scale": 0.997981
+    },
+    "mark": {
+     "opacity": 0.997321,
+     "scale": 1.01087,
+     "blur": 0.03726938033573142
+    },
+    "wordmark": {
+     "opacity": 0.991587,
+     "translateY": 14.031044604316548,
+     "scale": 0.999534
+    }
+   },
+   {
+    "ms": 1550,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.05657,
+     "opacity": 0.295745,
+     "brightness": 0.495745,
+     "contrast": 1.08817,
+     "blur": 2.6987254196642687
+    },
+    "dark": {
+     "opacity": 0.651208
+    },
+    "glow": {
+     "opacity": 0.848147,
+     "scale": 0.998583
+    },
+    "mark": {
+     "opacity": 0.998143,
+     "scale": 1.00763,
+     "blur": 0.026160053237410073
+    },
+    "wordmark": {
+     "opacity": 0.994194,
+     "translateY": 14.021835491606716,
+     "scale": 0.999673
+    }
+   },
+   {
+    "ms": 1600,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.04387,
+     "opacity": 0.212069,
+     "brightness": 0.412069,
+     "contrast": 1.09152,
+     "blur": 3.066897649880096
+    },
+    "dark": {
+     "opacity": 0.65532
+    },
+    "glow": {
+     "opacity": 0.848746,
+     "scale": 0.999041
+    },
+    "mark": {
+     "opacity": 0.998758,
+     "scale": 1.00516,
+     "blur": 0.017706897362110313
+    },
+    "wordmark": {
+     "opacity": 0.996132,
+     "translateY": 14.014751558752998,
+     "scale": 0.999779
+    }
+   },
+   {
+    "ms": 1650,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.03299,
+     "opacity": 0.147194,
+     "brightness": 0.347194,
+     "contrast": 1.09411,
+     "blur": 3.352339664268585
+    },
+    "dark": {
+     "opacity": 0.663163
+    },
+    "glow": {
+     "opacity": 0.84919,
+     "scale": 0.99938
+    },
+    "mark": {
+     "opacity": 0.999206,
+     "scale": 1.00334,
+     "blur": 0.011442373141486812
+    },
+    "wordmark": {
+     "opacity": 0.997538,
+     "translateY": 14.009489208633095,
+     "scale": 0.999857
+    }
+   },
+   {
+    "ms": 1700,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.02381,
+     "opacity": 0.0987983,
+     "brightness": 0.298798,
+     "contrast": 1.09605,
+     "blur": 3.565282685851319
+    },
+    "dark": {
+     "opacity": 0.675752
+    },
+    "glow": {
+     "opacity": 0.849507,
+     "scale": 0.999623
+    },
+    "mark": {
+     "opacity": 0.999522,
+     "scale": 1.00203,
+     "blur": 0.006956492901678658
+    },
+    "wordmark": {
+     "opacity": 0.998524,
+     "translateY": 14.00584604316547,
+     "scale": 0.999913
+    }
+   },
+   {
+    "ms": 1750,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.01626,
+     "opacity": 0.0632304,
+     "brightness": 0.26323,
+     "contrast": 1.09747,
+     "blur": 3.721787002398082
+    },
+    "dark": {
+     "opacity": 0.694405
+    },
+    "glow": {
+     "opacity": 0.849724,
+     "scale": 0.999789
+    },
+    "mark": {
+     "opacity": 0.999736,
+     "scale": 1.00113,
+     "blur": 0.0038896762110311755
+    },
+    "wordmark": {
+     "opacity": 0.999186,
+     "translateY": 14.003214868105518,
+     "scale": 0.999951
+    }
+   },
+   {
+    "ms": 1800,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.01023,
+     "opacity": 0.037588,
+     "brightness": 0.237588,
+     "contrast": 1.0985,
+     "blur": 3.8346138129496405
+    },
+    "dark": {
+     "opacity": 0.720935
+    },
+    "glow": {
+     "opacity": 0.849864,
+     "scale": 0.999896
+    },
+    "mark": {
+     "opacity": 0.99987,
+     "scale": 1.00056,
+     "blur": 0.00192568618705036
+    },
+    "wordmark": {
+     "opacity": 0.999602,
+     "translateY": 14.001595683453237,
+     "scale": 0.999976
+    }
+   },
+   {
+    "ms": 1850,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.00566,
+     "opacity": 0.0197705,
+     "brightness": 0.219771,
+     "contrast": 1.09921,
+     "blur": 3.9130127098321346
+    },
+    "dark": {
+     "opacity": 0.758009
+    },
+    "glow": {
+     "opacity": 0.849944,
+     "scale": 0.999957
+    },
+    "mark": {
+     "opacity": 0.999948,
+     "scale": 1.00023,
+     "blur": 0.0007861293285371703
+    },
+    "wordmark": {
+     "opacity": 0.99984,
+     "translateY": 14.000684892086332,
+     "scale": 0.99999
+    }
+   },
+   {
+    "ms": 1900,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.00248,
+     "opacity": 0.00826293,
+     "brightness": 0.208263,
+     "contrast": 1.09967,
+     "blur": 3.9636425899280576
+    },
+    "dark": {
+     "opacity": 0.809923
+    },
+    "glow": {
+     "opacity": 0.849984,
+     "scale": 0.999988
+    },
+    "mark": {
+     "opacity": 0.999985,
+     "scale": 1.00007,
+     "blur": 0.0002255544460431655
+    },
+    "wordmark": {
+     "opacity": 0.999954,
+     "translateY": 14.000178896882495,
+     "scale": 0.999997
+    }
+   },
+   {
+    "ms": 1950,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1.00061,
+     "opacity": 0.00195187,
+     "brightness": 0.201952,
+     "contrast": 1.09992,
+     "blur": 3.9914116067146286
+    },
+    "dark": {
+     "opacity": 0.884552
+    },
+    "glow": {
+     "opacity": 0.849998,
+     "scale": 0.999999
+    },
+    "mark": {
+     "opacity": 0.999998,
+     "scale": 1.00001,
+     "blur": 0.00002732050263788969
+    },
+    "wordmark": {
+     "opacity": 0.999995,
+     "translateY": 13.99997649880096,
+     "scale": 1
+    }
+   },
+   {
+    "ms": 2000,
+    "k": 0.9881516587677724,
+    "stadium": {
+     "scale": 1,
+     "opacity": 0,
+     "brightness": 0.2,
+     "contrast": 1.1,
+     "blur": 4.00000340527578
+    },
+    "dark": {
+     "opacity": 1
+    },
+    "glow": {
+     "opacity": 0.85,
+     "scale": 1
+    },
+    "mark": {
+     "opacity": 1,
+     "scale": 1,
+     "blur": 0
+    },
+    "wordmark": {
+     "opacity": 1,
+     "translateY": 13.99997649880096,
+     "scale": 1
+    }
+   }
+  ],
+  "834x1194": [
+   {
+    "ms": 0,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.8,
+     "opacity": 0.95,
+     "brightness": 1.05,
+     "contrast": 1.05,
+     "blur": 0
+    },
+    "dark": {
+     "opacity": 0.15
+    },
+    "glow": {
+     "opacity": 0,
+     "scale": 0.35
+    },
+    "mark": {
+     "opacity": 0,
+     "scale": 4.5,
+     "blur": 11.999997654941371
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 23.999995309882742,
+     "scale": 0.85
+    }
+   },
+   {
+    "ms": 50,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.77638,
+     "opacity": 0.946167,
+     "brightness": 1.04808,
+     "contrast": 1.05,
+     "blur": 0.0191663634840871
+    },
+    "dark": {
+     "opacity": 0.150102
+    },
+    "glow": {
+     "opacity": 0.0941238,
+     "scale": 0.421977
+    },
+    "mark": {
+     "opacity": 0.289074,
+     "scale": 4.11243,
+     "blur": 10.67122780569514
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 22.89268710217755,
+     "scale": 0.86661
+    }
+   },
+   {
+    "ms": 100,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.74069,
+     "opacity": 0.938737,
+     "brightness": 1.04437,
+     "contrast": 1.05,
+     "blur": 0.056315016415410375
+    },
+    "dark": {
+     "opacity": 0.150431
+    },
+    "glow": {
+     "opacity": 0.182778,
+     "scale": 0.489772
+    },
+    "mark": {
+     "opacity": 0.458919,
+     "scale": 3.74738,
+     "blur": 9.419577219430483
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 21.849633165829143,
+     "scale": 0.882255
+    }
+   },
+   {
+    "ms": 150,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.69186,
+     "opacity": 0.927933,
+     "brightness": 1.03897,
+     "contrast": 1.05,
+     "blur": 0.11033709547738692
+    },
+    "dark": {
+     "opacity": 0.151022
+    },
+    "glow": {
+     "opacity": 0.265236,
+     "scale": 0.552828
+    },
+    "mark": {
+     "opacity": 0.540437,
+     "scale": 3.40785,
+     "blur": 8.255507537688441
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 20.879598659966497,
+     "scale": 0.896806
+    }
+   },
+   {
+    "ms": 200,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.62937,
+     "opacity": 0.915396,
+     "brightness": 1.0327,
+     "contrast": 1.05,
+     "blur": 0.1730178793969849
+    },
+    "dark": {
+     "opacity": 0.151917
+    },
+    "glow": {
+     "opacity": 0.340932,
+     "scale": 0.610713
+    },
+    "mark": {
+     "opacity": 0.57683,
+     "scale": 3.09616,
+     "blur": 7.186864991624789
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.989016080402006,
+     "scale": 0.910165
+    }
+   },
+   {
+    "ms": 250,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.5536,
+     "opacity": 0.903177,
+     "brightness": 1.02659,
+     "contrast": 1.05,
+     "blur": 0.23411740033500833
+    },
+    "dark": {
+     "opacity": 0.153157
+    },
+    "glow": {
+     "opacity": 0.409521,
+     "scale": 0.663163
+    },
+    "mark": {
+     "opacity": 0.592281,
+     "scale": 2.81374,
+     "blur": 6.218519899497487
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.182126633165826,
+     "scale": 0.922269
+    }
+   },
+   {
+    "ms": 300,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.46618,
+     "opacity": 0.892414,
+     "brightness": 1.02121,
+     "contrast": 1.05,
+     "blur": 0.28793123618090444
+    },
+    "dark": {
+     "opacity": 0.154793
+    },
+    "glow": {
+     "opacity": 0.47091,
+     "scale": 0.710107
+    },
+    "mark": {
+     "opacity": 0.598137,
+     "scale": 2.56096,
+     "blur": 5.351864790619765
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 18.45991993299832,
+     "scale": 0.933102
+    }
+   },
+   {
+    "ms": 350,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.36995,
+     "opacity": 0.883361,
+     "brightness": 1.01668,
+     "contrast": 1.05,
+     "blur": 0.3331976281407035
+    },
+    "dark": {
+     "opacity": 0.15688
+    },
+    "glow": {
+     "opacity": 0.525245,
+     "scale": 0.751658
+    },
+    "mark": {
+     "opacity": 0.599806,
+     "scale": 2.33723,
+     "blur": 4.584771993299832
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.820628810720265,
+     "scale": 0.94269
+    }
+   },
+   {
+    "ms": 400,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.26856,
+     "opacity": 0.875884,
+     "brightness": 1.01294,
+     "contrast": 1.05,
+     "blur": 0.3705789112227805
+    },
+    "dark": {
+     "opacity": 0.159486
+    },
+    "glow": {
+     "opacity": 0.572882,
+     "scale": 0.788086
+    },
+    "mark": {
+     "opacity": 0.6,
+     "scale": 2.14108,
+     "blur": 3.9122580904522604
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.260224120603013,
+     "scale": 0.951097
+    }
+   },
+   {
+    "ms": 450,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.16575,
+     "opacity": 0.86976,
+     "brightness": 1.00988,
+     "contrast": 1.05,
+     "blur": 0.4012018324958123
+    },
+    "dark": {
+     "opacity": 0.162687
+    },
+    "glow": {
+     "opacity": 0.614317,
+     "scale": 0.819772
+    },
+    "mark": {
+     "opacity": 0.654979,
+     "scale": 1.97046,
+     "blur": 3.327289748743718
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.77276817420435,
+     "scale": 0.958409
+    }
+   },
+   {
+    "ms": 500,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 2.06468,
+     "opacity": 0.864772,
+     "brightness": 1.00739,
+     "contrast": 1.05,
+     "blur": 0.42614153768844215
+    },
+    "dark": {
+     "opacity": 0.166579
+    },
+    "glow": {
+     "opacity": 0.650135,
+     "scale": 0.847162
+    },
+    "mark": {
+     "opacity": 0.705799,
+     "scale": 1.82297,
+     "blur": 2.8216248911222777
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.351333668341706,
+     "scale": 0.96473
+    }
+   },
+   {
+    "ms": 550,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.96764,
+     "opacity": 0.86074,
+     "brightness": 1.00537,
+     "contrast": 1.05,
+     "blur": 0.4463014036850921
+    },
+    "dark": {
+     "opacity": 0.171278
+    },
+    "glow": {
+     "opacity": 0.680949,
+     "scale": 0.870726
+    },
+    "mark": {
+     "opacity": 0.751842,
+     "scale": 1.69609,
+     "blur": 2.386597319932998
+    },
+    "wordmark": {
+     "opacity": 0.146261,
+     "translateY": 15.988851926298155,
+     "scale": 0.970168
+    }
+   },
+   {
+    "ms": 600,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.87603,
+     "opacity": 0.857518,
+     "brightness": 1.00376,
+     "contrast": 1.05,
+     "blur": 0.4624123316582913
+    },
+    "dark": {
+     "opacity": 0.176932
+    },
+    "glow": {
+     "opacity": 0.707363,
+     "scale": 0.890925
+    },
+    "mark": {
+     "opacity": 0.792716,
+     "scale": 1.58733,
+     "blur": 2.01369634840871
+    },
+    "wordmark": {
+     "opacity": 0.280562,
+     "translateY": 15.678112897822443,
+     "scale": 0.974829
+    }
+   },
+   {
+    "ms": 650,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.79054,
+     "opacity": 0.854989,
+     "brightness": 1.00249,
+     "contrast": 1.05,
+     "blur": 0.4750567805695141
+    },
+    "dark": {
+     "opacity": 0.183732
+    },
+    "glow": {
+     "opacity": 0.729945,
+     "scale": 0.908193
+    },
+    "mark": {
+     "opacity": 0.828303,
+     "scale": 1.49435,
+     "blur": 1.6948990284757115
+    },
+    "wordmark": {
+     "opacity": 0.401097,
+     "translateY": 15.412401340033497,
+     "scale": 0.978814
+    }
+   },
+   {
+    "ms": 700,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.71137,
+     "opacity": 0.853059,
+     "brightness": 1.00153,
+     "contrast": 1.05,
+     "blur": 0.4847048174204354
+    },
+    "dark": {
+     "opacity": 0.191939
+    },
+    "glow": {
+     "opacity": 0.74921,
+     "scale": 0.922925
+    },
+    "mark": {
+     "opacity": 0.858763,
+     "scale": 1.41502,
+     "blur": 1.4229175544388606
+    },
+    "wordmark": {
+     "opacity": 0.506802,
+     "translateY": 15.18577956448911,
+     "scale": 0.982213
+    }
+   },
+   {
+    "ms": 750,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.63842,
+     "opacity": 0.851653,
+     "brightness": 1.00083,
+     "contrast": 1.05,
+     "blur": 0.4917367370184254
+    },
+    "dark": {
+     "opacity": 0.201917
+    },
+    "glow": {
+     "opacity": 0.765619,
+     "scale": 0.935473
+    },
+    "mark": {
+     "opacity": 0.884475,
+     "scale": 1.34745,
+     "blur": 1.1912628810720267
+    },
+    "wordmark": {
+     "opacity": 0.597528,
+     "translateY": 14.992734003350082,
+     "scale": 0.985109
+    }
+   },
+   {
+    "ms": 800,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.57143,
+     "opacity": 0.850707,
+     "brightness": 1.00035,
+     "contrast": 1.05,
+     "blur": 0.4964656817420435
+    },
+    "dark": {
+     "opacity": 0.21421
+    },
+    "glow": {
+     "opacity": 0.779575,
+     "scale": 0.946145
+    },
+    "mark": {
+     "opacity": 0.905946,
+     "scale": 1.28999,
+     "blur": 0.9942376549413733
+    },
+    "wordmark": {
+     "opacity": 0.673978,
+     "translateY": 14.828528643216076,
+     "scale": 0.987572
+    }
+   },
+   {
+    "ms": 850,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.51004,
+     "opacity": 0.85017,
+     "brightness": 1.00009,
+     "contrast": 1.05,
+     "blur": 0.49914824455611384
+    },
+    "dark": {
+     "opacity": 0.2297
+    },
+    "glow": {
+     "opacity": 0.791428,
+     "scale": 0.955209
+    },
+    "mark": {
+     "opacity": 0.923738,
+     "scale": 1.24118,
+     "blur": 0.8269008710217755
+    },
+    "wordmark": {
+     "opacity": 0.737471,
+     "translateY": 14.689063651591287,
+     "scale": 0.989664
+    }
+   },
+   {
+    "ms": 900,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.45386,
+     "opacity": 0.85,
+     "brightness": 1,
+     "contrast": 1.05,
+     "blur": 0.5000000201005025
+    },
+    "dark": {
+     "opacity": 0.25
+    },
+    "glow": {
+     "opacity": 0.801479,
+     "scale": 0.962896
+    },
+    "mark": {
+     "opacity": 0.9384,
+     "scale": 1.19979,
+     "blur": 0.68500213400335
+    },
+    "wordmark": {
+     "opacity": 0.789642,
+     "translateY": 14.57080469011725,
+     "scale": 0.991437
+    }
+   },
+   {
+    "ms": 950,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.40253,
+     "opacity": 0.816821,
+     "brightness": 0.971561,
+     "contrast": 1.05284,
+     "blur": 0.6232353299832495
+    },
+    "dark": {
+     "opacity": 0.250943
+    },
+    "glow": {
+     "opacity": 0.809988,
+     "scale": 0.969402
+    },
+    "mark": {
+     "opacity": 0.950437,
+     "scale": 1.16476,
+     "blur": 0.564881283082077
+    },
+    "wordmark": {
+     "opacity": 0.832192,
+     "translateY": 14.470712227805691,
+     "scale": 0.992939
+    }
+   },
+   {
+    "ms": 1000,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.35567,
+     "opacity": 0.746664,
+     "brightness": 0.911427,
+     "contrast": 1.05886,
+     "blur": 0.8838178559463985
+    },
+    "dark": {
+     "opacity": 0.25409
+    },
+    "glow": {
+     "opacity": 0.817175,
+     "scale": 0.974899
+    },
+    "mark": {
+     "opacity": 0.960291,
+     "scale": 1.13516,
+     "blur": 0.4634097219430485
+    },
+    "wordmark": {
+     "opacity": 0.866719,
+     "translateY": 14.386170854271354,
+     "scale": 0.994207
+    }
+   },
+   {
+    "ms": 1050,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.31295,
+     "opacity": 0.67034,
+     "brightness": 0.846005,
+     "contrast": 1.0654,
+     "blur": 1.1673071356783917
+    },
+    "dark": {
+     "opacity": 0.259962
+    },
+    "glow": {
+     "opacity": 0.823231,
+     "scale": 0.97953
+    },
+    "mark": {
+     "opacity": 0.96834,
+     "scale": 1.11022,
+     "blur": 0.37790912897822443
+    },
+    "wordmark": {
+     "opacity": 0.894636,
+     "translateY": 14.314918592964823,
+     "scale": 0.995276
+    }
+   },
+   {
+    "ms": 1100,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.27405,
+     "opacity": 0.611111,
+     "brightness": 0.795238,
+     "contrast": 1.07048,
+     "blur": 1.3873055611390281
+    },
+    "dark": {
+     "opacity": 0.26917
+    },
+    "glow": {
+     "opacity": 0.828319,
+     "scale": 0.98342
+    },
+    "mark": {
+     "opacity": 0.9749,
+     "scale": 1.08928,
+     "blur": 0.30608713232830814
+    },
+    "wordmark": {
+     "opacity": 0.917147,
+     "translateY": 14.255046901172527,
+     "scale": 0.996174
+    }
+   },
+   {
+    "ms": 1150,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.23868,
+     "opacity": 0.569159,
+     "brightness": 0.759279,
+     "contrast": 1.07407,
+     "blur": 1.543127470686767
+    },
+    "dark": {
+     "opacity": 0.282455
+    },
+    "glow": {
+     "opacity": 0.832577,
+     "scale": 0.986676
+    },
+    "mark": {
+     "opacity": 0.980232,
+     "scale": 1.07174,
+     "blur": 0.2459779329983249
+    },
+    "wordmark": {
+     "opacity": 0.935253,
+     "translateY": 14.205000670016748,
+     "scale": 0.996925
+    }
+   },
+   {
+    "ms": 1200,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.20659,
+     "opacity": 0.54017,
+     "brightness": 0.734431,
+     "contrast": 1.07656,
+     "blur": 1.650797554438861
+    },
+    "dark": {
+     "opacity": 0.300748
+    },
+    "glow": {
+     "opacity": 0.836124,
+     "scale": 0.989389
+    },
+    "mark": {
+     "opacity": 0.984553,
+     "scale": 1.05714,
+     "blur": 0.19589565159128974
+    },
+    "wordmark": {
+     "opacity": 0.949775,
+     "translateY": 14.163224790619763,
+     "scale": 0.997551
+    }
+   },
+   {
+    "ms": 1250,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.17754,
+     "opacity": 0.520732,
+     "brightness": 0.717771,
+     "contrast": 1.07822,
+     "blur": 1.7229970184254604
+    },
+    "dark": {
+     "opacity": 0.325277
+    },
+    "glow": {
+     "opacity": 0.839064,
+     "scale": 0.991637
+    },
+    "mark": {
+     "opacity": 0.988042,
+     "scale": 1.04503,
+     "blur": 0.15438979564489108
+    },
+    "wordmark": {
+     "opacity": 0.961383,
+     "translateY": 14.128658961474034,
+     "scale": 0.99807
+    }
+   },
+   {
+    "ms": 1300,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.15132,
+     "opacity": 0.508531,
+     "brightness": 0.707312,
+     "contrast": 1.07927,
+     "blur": 1.768314304857621
+    },
+    "dark": {
+     "opacity": 0.357727
+    },
+    "glow": {
+     "opacity": 0.841485,
+     "scale": 0.993488
+    },
+    "mark": {
+     "opacity": 0.990844,
+     "scale": 1.03506,
+     "blur": 0.12021274371859295
+    },
+    "wordmark": {
+     "opacity": 0.970621,
+     "translateY": 14.100172194304854,
+     "scale": 0.998497
+    }
+   },
+   {
+    "ms": 1350,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.12774,
+     "opacity": 0.501989,
+     "brightness": 0.701705,
+     "contrast": 1.07983,
+     "blur": 1.7926093467336681
+    },
+    "dark": {
+     "opacity": 0.400561
+    },
+    "glow": {
+     "opacity": 0.843463,
+     "scale": 0.995001
+    },
+    "mark": {
+     "opacity": 0.993081,
+     "scale": 1.02692,
+     "blur": 0.09228510887772193
+    },
+    "wordmark": {
+     "opacity": 0.977931,
+     "translateY": 14.076916247906196,
+     "scale": 0.998846
+    }
+   },
+   {
+    "ms": 1400,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.10662,
+     "opacity": 0.5,
+     "brightness": 0.7,
+     "contrast": 1.08,
+     "blur": 1.8000031825795644
+    },
+    "dark": {
+     "opacity": 0.457667
+    },
+    "glow": {
+     "opacity": 0.845065,
+     "scale": 0.996226
+    },
+    "mark": {
+     "opacity": 0.994854,
+     "scale": 1.02032,
+     "blur": 0.06967389648241205
+    },
+    "wordmark": {
+     "opacity": 0.983675,
+     "translateY": 14.058042881072023,
+     "scale": 0.999129
+    }
+   },
+   {
+    "ms": 1450,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.08782,
+     "opacity": 0.464597,
+     "brightness": 0.664597,
+     "contrast": 1.08142,
+     "blur": 1.9557756113902844
+    },
+    "dark": {
+     "opacity": 0.535917
+    },
+    "glow": {
+     "opacity": 0.846347,
+     "scale": 0.997207
+    },
+    "mark": {
+     "opacity": 0.996244,
+     "scale": 1.01504,
+     "blur": 0.05156974304857621
+    },
+    "wordmark": {
+     "opacity": 0.988147,
+     "translateY": 14.042986599664989,
+     "scale": 0.999355
+    }
+   },
+   {
+    "ms": 1500,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.07117,
+     "opacity": 0.389663,
+     "brightness": 0.589663,
+     "contrast": 1.08441,
+     "blur": 2.285479899497487
+    },
+    "dark": {
+     "opacity": 0.65
+    },
+    "glow": {
+     "opacity": 0.84736,
+     "scale": 0.997981
+    },
+    "mark": {
+     "opacity": 0.997321,
+     "scale": 1.01087,
+     "blur": 0.037269385929648235
+    },
+    "wordmark": {
+     "opacity": 0.991587,
+     "translateY": 14.031040536013398,
+     "scale": 0.999534
+    }
+   },
+   {
+    "ms": 1550,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.05657,
+     "opacity": 0.295745,
+     "brightness": 0.495745,
+     "contrast": 1.08817,
+     "blur": 2.698721809045226
+    },
+    "dark": {
+     "opacity": 0.651208
+    },
+    "glow": {
+     "opacity": 0.848147,
+     "scale": 0.998583
+    },
+    "mark": {
+     "opacity": 0.998143,
+     "scale": 1.00763,
+     "blur": 0.026160041541038518
+    },
+    "wordmark": {
+     "opacity": 0.994194,
+     "translateY": 14.021780569514236,
+     "scale": 0.999673
+    }
+   },
+   {
+    "ms": 1600,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.04387,
+     "opacity": 0.212069,
+     "brightness": 0.412069,
+     "contrast": 1.09152,
+     "blur": 3.0668938358458955
+    },
+    "dark": {
+     "opacity": 0.65532
+    },
+    "glow": {
+     "opacity": 0.848746,
+     "scale": 0.999041
+    },
+    "mark": {
+     "opacity": 0.998758,
+     "scale": 1.00516,
+     "blur": 0.017706964489112225
+    },
+    "wordmark": {
+     "opacity": 0.996132,
+     "translateY": 14.014782579564486,
+     "scale": 0.999779
+    }
+   },
+   {
+    "ms": 1650,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.03299,
+     "opacity": 0.147194,
+     "brightness": 0.347194,
+     "contrast": 1.09411,
+     "blur": 3.3523411390284754
+    },
+    "dark": {
+     "opacity": 0.663163
+    },
+    "glow": {
+     "opacity": 0.84919,
+     "scale": 0.99938
+    },
+    "mark": {
+     "opacity": 0.999206,
+     "scale": 1.00334,
+     "blur": 0.011442349748743717
+    },
+    "wordmark": {
+     "opacity": 0.997538,
+     "translateY": 14.009551758793966,
+     "scale": 0.999857
+    }
+   },
+   {
+    "ms": 1700,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.02381,
+     "opacity": 0.0987983,
+     "brightness": 0.298798,
+     "contrast": 1.09605,
+     "blur": 3.5652850251256276
+    },
+    "dark": {
+     "opacity": 0.675752
+    },
+    "glow": {
+     "opacity": 0.849507,
+     "scale": 0.999623
+    },
+    "mark": {
+     "opacity": 0.999522,
+     "scale": 1.00203,
+     "blur": 0.006956489748743718
+    },
+    "wordmark": {
+     "opacity": 0.998524,
+     "translateY": 14.005805360134001,
+     "scale": 0.999913
+    }
+   },
+   {
+    "ms": 1750,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.01626,
+     "opacity": 0.0632304,
+     "brightness": 0.26323,
+     "contrast": 1.09747,
+     "blur": 3.72178552763819
+    },
+    "dark": {
+     "opacity": 0.694405
+    },
+    "glow": {
+     "opacity": 0.849724,
+     "scale": 0.999789
+    },
+    "mark": {
+     "opacity": 0.999736,
+     "scale": 1.00113,
+     "blur": 0.003889673668341708
+    },
+    "wordmark": {
+     "opacity": 0.999186,
+     "translateY": 14.003260636515911,
+     "scale": 0.999951
+    }
+   },
+   {
+    "ms": 1800,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.01023,
+     "opacity": 0.037588,
+     "brightness": 0.237588,
+     "contrast": 1.0985,
+     "blur": 3.8346157453936343
+    },
+    "dark": {
+     "opacity": 0.720935
+    },
+    "glow": {
+     "opacity": 0.849864,
+     "scale": 0.999896
+    },
+    "mark": {
+     "opacity": 0.99987,
+     "scale": 1.00056,
+     "blur": 0.0019256913232830817
+    },
+    "wordmark": {
+     "opacity": 0.999602,
+     "translateY": 14.00163484087102,
+     "scale": 0.999976
+    }
+   },
+   {
+    "ms": 1850,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.00566,
+     "opacity": 0.0197705,
+     "brightness": 0.219771,
+     "contrast": 1.09921,
+     "blur": 3.9130073701842543
+    },
+    "dark": {
+     "opacity": 0.758009
+    },
+    "glow": {
+     "opacity": 0.849944,
+     "scale": 0.999957
+    },
+    "mark": {
+     "opacity": 0.999948,
+     "scale": 1.00023,
+     "blur": 0.0007861287437185929
+    },
+    "wordmark": {
+     "opacity": 0.99984,
+     "translateY": 14.00064522613065,
+     "scale": 0.99999
+    }
+   },
+   {
+    "ms": 1900,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.00248,
+     "opacity": 0.00826293,
+     "brightness": 0.208263,
+     "contrast": 1.09967,
+     "blur": 3.963640301507537
+    },
+    "dark": {
+     "opacity": 0.809923
+    },
+    "glow": {
+     "opacity": 0.849984,
+     "scale": 0.999988
+    },
+    "mark": {
+     "opacity": 0.999985,
+     "scale": 1.00007,
+     "blur": 0.00022555511222780567
+    },
+    "wordmark": {
+     "opacity": 0.999954,
+     "translateY": 14.000221105527636,
+     "scale": 0.999997
+    }
+   },
+   {
+    "ms": 1950,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1.00061,
+     "opacity": 0.00195187,
+     "brightness": 0.201952,
+     "contrast": 1.09992,
+     "blur": 3.991413132328308
+    },
+    "dark": {
+     "opacity": 0.884552
+    },
+    "glow": {
+     "opacity": 0.849998,
+     "scale": 0.999999
+    },
+    "mark": {
+     "opacity": 0.999998,
+     "scale": 1.00001,
+     "blur": 0.000027320506197654935
+    },
+    "wordmark": {
+     "opacity": 0.999995,
+     "translateY": 14.000009045226129,
+     "scale": 1
+    }
+   },
+   {
+    "ms": 2000,
+    "k": 1.4146919431279623,
+    "stadium": {
+     "scale": 1,
+     "opacity": 0,
+     "brightness": 0.2,
+     "contrast": 1.1,
+     "blur": 4.000001574539363
+    },
+    "dark": {
+     "opacity": 1
+    },
+    "glow": {
+     "opacity": 0.85,
+     "scale": 1
+    },
+    "mark": {
+     "opacity": 1,
+     "scale": 1,
+     "blur": 0
+    },
+    "wordmark": {
+     "opacity": 1,
+     "translateY": 14.000009045226129,
+     "scale": 1
+    }
+   }
+  ],
+  "1920x1080": [
+   {
+    "ms": 0,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.8,
+     "opacity": 0.95,
+     "brightness": 1.05,
+     "contrast": 1.05,
+     "blur": 0
+    },
+    "dark": {
+     "opacity": 0.15
+    },
+    "glow": {
+     "opacity": 0,
+     "scale": 0.35
+    },
+    "mark": {
+     "opacity": 0,
+     "scale": 4.5,
+     "blur": 12.00003888888889
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 23.99999962962963,
+     "scale": 0.85
+    }
+   },
+   {
+    "ms": 50,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.77638,
+     "opacity": 0.946167,
+     "brightness": 1.04808,
+     "contrast": 1.05,
+     "blur": 0.019166380370370373
+    },
+    "dark": {
+     "opacity": 0.150102
+    },
+    "glow": {
+     "opacity": 0.0941238,
+     "scale": 0.421977
+    },
+    "mark": {
+     "opacity": 0.289074,
+     "scale": 4.11243,
+     "blur": 10.671207777777777
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 22.892640370370373,
+     "scale": 0.86661
+    }
+   },
+   {
+    "ms": 100,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.74069,
+     "opacity": 0.938737,
+     "brightness": 1.04437,
+     "contrast": 1.05,
+     "blur": 0.05631496222222222
+    },
+    "dark": {
+     "opacity": 0.150431
+    },
+    "glow": {
+     "opacity": 0.182778,
+     "scale": 0.489772
+    },
+    "mark": {
+     "opacity": 0.458919,
+     "scale": 3.74738,
+     "blur": 9.419587037037038
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 21.849675185185188,
+     "scale": 0.882255
+    }
+   },
+   {
+    "ms": 150,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.69186,
+     "opacity": 0.927933,
+     "brightness": 1.03897,
+     "contrast": 1.05,
+     "blur": 0.1103365888888889
+    },
+    "dark": {
+     "opacity": 0.151022
+    },
+    "glow": {
+     "opacity": 0.265236,
+     "scale": 0.552828
+    },
+    "mark": {
+     "opacity": 0.540437,
+     "scale": 3.40785,
+     "blur": 8.255492222222223
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 20.879544074074076,
+     "scale": 0.896806
+    }
+   },
+   {
+    "ms": 200,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.62937,
+     "opacity": 0.915396,
+     "brightness": 1.0327,
+     "contrast": 1.05,
+     "blur": 0.17301765555555557
+    },
+    "dark": {
+     "opacity": 0.151917
+    },
+    "glow": {
+     "opacity": 0.340932,
+     "scale": 0.610713
+    },
+    "mark": {
+     "opacity": 0.57683,
+     "scale": 3.09616,
+     "blur": 7.186839740740741
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.989045925925925,
+     "scale": 0.910165
+    }
+   },
+   {
+    "ms": 250,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.5536,
+     "opacity": 0.903177,
+     "brightness": 1.02659,
+     "contrast": 1.05,
+     "blur": 0.23411700370370372
+    },
+    "dark": {
+     "opacity": 0.153157
+    },
+    "glow": {
+     "opacity": 0.409521,
+     "scale": 0.663163
+    },
+    "mark": {
+     "opacity": 0.592281,
+     "scale": 2.81374,
+     "blur": 6.218521666666667
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 19.18208814814815,
+     "scale": 0.922269
+    }
+   },
+   {
+    "ms": 300,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.46618,
+     "opacity": 0.892414,
+     "brightness": 1.02121,
+     "contrast": 1.05,
+     "blur": 0.2879313814814815
+    },
+    "dark": {
+     "opacity": 0.154793
+    },
+    "glow": {
+     "opacity": 0.47091,
+     "scale": 0.710107
+    },
+    "mark": {
+     "opacity": 0.598137,
+     "scale": 2.56096,
+     "blur": 5.351866518518519
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 18.459921111111115,
+     "scale": 0.933102
+    }
+   },
+   {
+    "ms": 350,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.36995,
+     "opacity": 0.883361,
+     "brightness": 1.01668,
+     "contrast": 1.05,
+     "blur": 0.33319791481481487
+    },
+    "dark": {
+     "opacity": 0.15688
+    },
+    "glow": {
+     "opacity": 0.525245,
+     "scale": 0.751658
+    },
+    "mark": {
+     "opacity": 0.599806,
+     "scale": 2.33723,
+     "blur": 4.5847721111111115
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.82066925925926,
+     "scale": 0.94269
+    }
+   },
+   {
+    "ms": 400,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.26856,
+     "opacity": 0.875884,
+     "brightness": 1.01294,
+     "contrast": 1.05,
+     "blur": 0.3705793
+    },
+    "dark": {
+     "opacity": 0.159486
+    },
+    "glow": {
+     "opacity": 0.572882,
+     "scale": 0.788086
+    },
+    "mark": {
+     "opacity": 0.6,
+     "scale": 2.14108,
+     "blur": 3.912260407407408
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 17.260190740740743,
+     "scale": 0.951097
+    }
+   },
+   {
+    "ms": 450,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.16575,
+     "opacity": 0.86976,
+     "brightness": 1.00988,
+     "contrast": 1.05,
+     "blur": 0.4012016518518519
+    },
+    "dark": {
+     "opacity": 0.162687
+    },
+    "glow": {
+     "opacity": 0.614317,
+     "scale": 0.819772
+    },
+    "mark": {
+     "opacity": 0.654979,
+     "scale": 1.97046,
+     "blur": 3.3272902592592595
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.772702592592594,
+     "scale": 0.958409
+    }
+   },
+   {
+    "ms": 500,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 2.06468,
+     "opacity": 0.864772,
+     "brightness": 1.00739,
+     "contrast": 1.05,
+     "blur": 0.4261410703703704
+    },
+    "dark": {
+     "opacity": 0.166579
+    },
+    "glow": {
+     "opacity": 0.650135,
+     "scale": 0.847162
+    },
+    "mark": {
+     "opacity": 0.705799,
+     "scale": 1.82297,
+     "blur": 2.821624851851852
+    },
+    "wordmark": {
+     "opacity": 0,
+     "translateY": 16.35132777777778,
+     "scale": 0.96473
+    }
+   },
+   {
+    "ms": 550,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.96764,
+     "opacity": 0.86074,
+     "brightness": 1.00537,
+     "contrast": 1.05,
+     "blur": 0.44630172962962966
+    },
+    "dark": {
+     "opacity": 0.171278
+    },
+    "glow": {
+     "opacity": 0.680949,
+     "scale": 0.870726
+    },
+    "mark": {
+     "opacity": 0.751842,
+     "scale": 1.69609,
+     "blur": 2.386597555555556
+    },
+    "wordmark": {
+     "opacity": 0.146261,
+     "translateY": 15.988798518518518,
+     "scale": 0.970168
+    }
+   },
+   {
+    "ms": 600,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.87603,
+     "opacity": 0.857518,
+     "brightness": 1.00376,
+     "contrast": 1.05,
+     "blur": 0.4624119703703704
+    },
+    "dark": {
+     "opacity": 0.176932
+    },
+    "glow": {
+     "opacity": 0.707363,
+     "scale": 0.890925
+    },
+    "mark": {
+     "opacity": 0.792716,
+     "scale": 1.58733,
+     "blur": 2.013698037037037
+    },
+    "wordmark": {
+     "opacity": 0.280562,
+     "translateY": 15.678081481481485,
+     "scale": 0.974829
+    }
+   },
+   {
+    "ms": 650,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.79054,
+     "opacity": 0.854989,
+     "brightness": 1.00249,
+     "contrast": 1.05,
+     "blur": 0.47505634074074077
+    },
+    "dark": {
+     "opacity": 0.183732
+    },
+    "glow": {
+     "opacity": 0.729945,
+     "scale": 0.908193
+    },
+    "mark": {
+     "opacity": 0.828303,
+     "scale": 1.49435,
+     "blur": 1.6949004814814814
+    },
+    "wordmark": {
+     "opacity": 0.401097,
+     "translateY": 15.41237777777778,
+     "scale": 0.978814
+    }
+   },
+   {
+    "ms": 700,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.71137,
+     "opacity": 0.853059,
+     "brightness": 1.00153,
+     "contrast": 1.05,
+     "blur": 0.4847045111111111
+    },
+    "dark": {
+     "opacity": 0.191939
+    },
+    "glow": {
+     "opacity": 0.74921,
+     "scale": 0.922925
+    },
+    "mark": {
+     "opacity": 0.858763,
+     "scale": 1.41502,
+     "blur": 1.4229214814814817
+    },
+    "wordmark": {
+     "opacity": 0.506802,
+     "translateY": 15.185748148148148,
+     "scale": 0.982213
+    }
+   },
+   {
+    "ms": 750,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.63842,
+     "opacity": 0.851653,
+     "brightness": 1.00083,
+     "contrast": 1.05,
+     "blur": 0.49173706296296305
+    },
+    "dark": {
+     "opacity": 0.201917
+    },
+    "glow": {
+     "opacity": 0.765619,
+     "scale": 0.935473
+    },
+    "mark": {
+     "opacity": 0.884475,
+     "scale": 1.34745,
+     "blur": 1.191266925925926
+    },
+    "wordmark": {
+     "opacity": 0.597528,
+     "translateY": 14.992722222222223,
+     "scale": 0.985109
+    }
+   },
+   {
+    "ms": 800,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.57143,
+     "opacity": 0.850707,
+     "brightness": 1.00035,
+     "contrast": 1.05,
+     "blur": 0.4964658074074074
+    },
+    "dark": {
+     "opacity": 0.21421
+    },
+    "glow": {
+     "opacity": 0.779575,
+     "scale": 0.946145
+    },
+    "mark": {
+     "opacity": 0.905946,
+     "scale": 1.28999,
+     "blur": 0.9942398148148149
+    },
+    "wordmark": {
+     "opacity": 0.673978,
+     "translateY": 14.828532962962965,
+     "scale": 0.987572
+    }
+   },
+   {
+    "ms": 850,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.51004,
+     "opacity": 0.85017,
+     "brightness": 1.00009,
+     "contrast": 1.05,
+     "blur": 0.49914785185185184
+    },
+    "dark": {
+     "opacity": 0.2297
+    },
+    "glow": {
+     "opacity": 0.791428,
+     "scale": 0.955209
+    },
+    "mark": {
+     "opacity": 0.923738,
+     "scale": 1.24118,
+     "blur": 0.8269011851851852
+    },
+    "wordmark": {
+     "opacity": 0.737471,
+     "translateY": 14.689116666666669,
+     "scale": 0.989664
+    }
+   },
+   {
+    "ms": 900,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.45386,
+     "opacity": 0.85,
+     "brightness": 1,
+     "contrast": 1.05,
+     "blur": 0.4999996666666667
+    },
+    "dark": {
+     "opacity": 0.25
+    },
+    "glow": {
+     "opacity": 0.801479,
+     "scale": 0.962896
+    },
+    "mark": {
+     "opacity": 0.9384,
+     "scale": 1.19979,
+     "blur": 0.6850021222222222
+    },
+    "wordmark": {
+     "opacity": 0.789642,
+     "translateY": 14.570800370370371,
+     "scale": 0.991437
+    }
+   },
+   {
+    "ms": 950,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.40253,
+     "opacity": 0.816821,
+     "brightness": 0.971561,
+     "contrast": 1.05284,
+     "blur": 0.623235388888889
+    },
+    "dark": {
+     "opacity": 0.250943
+    },
+    "glow": {
+     "opacity": 0.809988,
+     "scale": 0.969402
+    },
+    "mark": {
+     "opacity": 0.950437,
+     "scale": 1.16476,
+     "blur": 0.5648806037037037
+    },
+    "wordmark": {
+     "opacity": 0.832192,
+     "translateY": 14.470770740740742,
+     "scale": 0.992939
+    }
+   },
+   {
+    "ms": 1000,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.35567,
+     "opacity": 0.746664,
+     "brightness": 0.911427,
+     "contrast": 1.05886,
+     "blur": 0.8838164814814815
+    },
+    "dark": {
+     "opacity": 0.25409
+    },
+    "glow": {
+     "opacity": 0.817175,
+     "scale": 0.974899
+    },
+    "mark": {
+     "opacity": 0.960291,
+     "scale": 1.13516,
+     "blur": 0.46340914074074074
+    },
+    "wordmark": {
+     "opacity": 0.866719,
+     "translateY": 14.386136296296296,
+     "scale": 0.994207
+    }
+   },
+   {
+    "ms": 1050,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.31295,
+     "opacity": 0.67034,
+     "brightness": 0.846005,
+     "contrast": 1.0654,
+     "blur": 1.167306703703704
+    },
+    "dark": {
+     "opacity": 0.259962
+    },
+    "glow": {
+     "opacity": 0.823231,
+     "scale": 0.97953
+    },
+    "mark": {
+     "opacity": 0.96834,
+     "scale": 1.11022,
+     "blur": 0.37790881481481486
+    },
+    "wordmark": {
+     "opacity": 0.894636,
+     "translateY": 14.314943333333334,
+     "scale": 0.995276
+    }
+   },
+   {
+    "ms": 1100,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.27405,
+     "opacity": 0.611111,
+     "brightness": 0.795238,
+     "contrast": 1.07048,
+     "blur": 1.3873015555555557
+    },
+    "dark": {
+     "opacity": 0.26917
+    },
+    "glow": {
+     "opacity": 0.828319,
+     "scale": 0.98342
+    },
+    "mark": {
+     "opacity": 0.9749,
+     "scale": 1.08928,
+     "blur": 0.30608675925925927
+    },
+    "wordmark": {
+     "opacity": 0.917147,
+     "translateY": 14.255081851851852,
+     "scale": 0.996174
+    }
+   },
+   {
+    "ms": 1150,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.23868,
+     "opacity": 0.569159,
+     "brightness": 0.759279,
+     "contrast": 1.07407,
+     "blur": 1.5431211481481482
+    },
+    "dark": {
+     "opacity": 0.282455
+    },
+    "glow": {
+     "opacity": 0.832577,
+     "scale": 0.986676
+    },
+    "mark": {
+     "opacity": 0.980232,
+     "scale": 1.07174,
+     "blur": 0.24597754814814815
+    },
+    "wordmark": {
+     "opacity": 0.935253,
+     "translateY": 14.20498888888889,
+     "scale": 0.996925
+    }
+   },
+   {
+    "ms": 1200,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.20659,
+     "opacity": 0.54017,
+     "brightness": 0.734431,
+     "contrast": 1.07656,
+     "blur": 1.6508014814814818
+    },
+    "dark": {
+     "opacity": 0.300748
+    },
+    "glow": {
+     "opacity": 0.836124,
+     "scale": 0.989389
+    },
+    "mark": {
+     "opacity": 0.984553,
+     "scale": 1.05714,
+     "blur": 0.19589552592592593
+    },
+    "wordmark": {
+     "opacity": 0.949775,
+     "translateY": 14.163257777777778,
+     "scale": 0.997551
+    }
+   },
+   {
+    "ms": 1250,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.17754,
+     "opacity": 0.520732,
+     "brightness": 0.717771,
+     "contrast": 1.07822,
+     "blur": 1.7229947407407409
+    },
+    "dark": {
+     "opacity": 0.325277
+    },
+    "glow": {
+     "opacity": 0.839064,
+     "scale": 0.991637
+    },
+    "mark": {
+     "opacity": 0.988042,
+     "scale": 1.04503,
+     "blur": 0.15439026296296296
+    },
+    "wordmark": {
+     "opacity": 0.961383,
+     "translateY": 14.128638148148148,
+     "scale": 0.99807
+    }
+   },
+   {
+    "ms": 1300,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.15132,
+     "opacity": 0.508531,
+     "brightness": 0.707312,
+     "contrast": 1.07927,
+     "blur": 1.768312851851852
+    },
+    "dark": {
+     "opacity": 0.357727
+    },
+    "glow": {
+     "opacity": 0.841485,
+     "scale": 0.993488
+    },
+    "mark": {
+     "opacity": 0.990844,
+     "scale": 1.03506,
+     "blur": 0.12021295185185185
+    },
+    "wordmark": {
+     "opacity": 0.970621,
+     "translateY": 14.100192222222223,
+     "scale": 0.998497
+    }
+   },
+   {
+    "ms": 1350,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.12774,
+     "opacity": 0.501989,
+     "brightness": 0.701705,
+     "contrast": 1.07983,
+     "blur": 1.7926091111111113
+    },
+    "dark": {
+     "opacity": 0.400561
+    },
+    "glow": {
+     "opacity": 0.843463,
+     "scale": 0.995001
+    },
+    "mark": {
+     "opacity": 0.993081,
+     "scale": 1.02692,
+     "blur": 0.09228514814814816
+    },
+    "wordmark": {
+     "opacity": 0.977931,
+     "translateY": 14.076904074074076,
+     "scale": 0.998846
+    }
+   },
+   {
+    "ms": 1400,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.10662,
+     "opacity": 0.5,
+     "brightness": 0.7,
+     "contrast": 1.08,
+     "blur": 1.800001925925926
+    },
+    "dark": {
+     "opacity": 0.457667
+    },
+    "glow": {
+     "opacity": 0.845065,
+     "scale": 0.996226
+    },
+    "mark": {
+     "opacity": 0.994854,
+     "scale": 1.02032,
+     "blur": 0.06967384111111112
+    },
+    "wordmark": {
+     "opacity": 0.983675,
+     "translateY": 14.058070370370372,
+     "scale": 0.999129
+    }
+   },
+   {
+    "ms": 1450,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.08782,
+     "opacity": 0.464597,
+     "brightness": 0.664597,
+     "contrast": 1.08142,
+     "blur": 1.95577462962963
+    },
+    "dark": {
+     "opacity": 0.535917
+    },
+    "glow": {
+     "opacity": 0.846347,
+     "scale": 0.997207
+    },
+    "mark": {
+     "opacity": 0.996244,
+     "scale": 1.01504,
+     "blur": 0.05156972851851852
+    },
+    "wordmark": {
+     "opacity": 0.988147,
+     "translateY": 14.042987777777778,
+     "scale": 0.999355
+    }
+   },
+   {
+    "ms": 1500,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.07117,
+     "opacity": 0.389663,
+     "brightness": 0.589663,
+     "contrast": 1.08441,
+     "blur": 2.2854816666666666
+    },
+    "dark": {
+     "opacity": 0.65
+    },
+    "glow": {
+     "opacity": 0.84736,
+     "scale": 0.997981
+    },
+    "mark": {
+     "opacity": 0.997321,
+     "scale": 1.01087,
+     "blur": 0.037269398888888895
+    },
+    "wordmark": {
+     "opacity": 0.991587,
+     "translateY": 14.031031111111112,
+     "scale": 0.999534
+    }
+   },
+   {
+    "ms": 1550,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.05657,
+     "opacity": 0.295745,
+     "brightness": 0.495745,
+     "contrast": 1.08817,
+     "blur": 2.6987212592592593
+    },
+    "dark": {
+     "opacity": 0.651208
+    },
+    "glow": {
+     "opacity": 0.848147,
+     "scale": 0.998583
+    },
+    "mark": {
+     "opacity": 0.998143,
+     "scale": 1.00763,
+     "blur": 0.02616001444444445
+    },
+    "wordmark": {
+     "opacity": 0.994194,
+     "translateY": 14.02180962962963,
+     "scale": 0.999673
+    }
+   },
+   {
+    "ms": 1600,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.04387,
+     "opacity": 0.212069,
+     "brightness": 0.412069,
+     "contrast": 1.09152,
+     "blur": 3.0669006296296297
+    },
+    "dark": {
+     "opacity": 0.65532
+    },
+    "glow": {
+     "opacity": 0.848746,
+     "scale": 0.999041
+    },
+    "mark": {
+     "opacity": 0.998758,
+     "scale": 1.00516,
+     "blur": 0.017706963703703706
+    },
+    "wordmark": {
+     "opacity": 0.996132,
+     "translateY": 14.014776296296295,
+     "scale": 0.999779
+    }
+   },
+   {
+    "ms": 1650,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.03299,
+     "opacity": 0.147194,
+     "brightness": 0.347194,
+     "contrast": 1.09411,
+     "blur": 3.3523445555555553
+    },
+    "dark": {
+     "opacity": 0.663163
+    },
+    "glow": {
+     "opacity": 0.84919,
+     "scale": 0.99938
+    },
+    "mark": {
+     "opacity": 0.999206,
+     "scale": 1.00334,
+     "blur": 0.011442373703703703
+    },
+    "wordmark": {
+     "opacity": 0.997538,
+     "translateY": 14.009540370370372,
+     "scale": 0.999857
+    }
+   },
+   {
+    "ms": 1700,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.02381,
+     "opacity": 0.0987983,
+     "brightness": 0.298798,
+     "contrast": 1.09605,
+     "blur": 3.565290444444445
+    },
+    "dark": {
+     "opacity": 0.675752
+    },
+    "glow": {
+     "opacity": 0.849507,
+     "scale": 0.999623
+    },
+    "mark": {
+     "opacity": 0.999522,
+     "scale": 1.00203,
+     "blur": 0.00695649025925926
+    },
+    "wordmark": {
+     "opacity": 0.998524,
+     "translateY": 14.005789259259261,
+     "scale": 0.999913
+    }
+   },
+   {
+    "ms": 1750,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.01626,
+     "opacity": 0.0632304,
+     "brightness": 0.26323,
+     "contrast": 1.09747,
+     "blur": 3.7217899259259264
+    },
+    "dark": {
+     "opacity": 0.694405
+    },
+    "glow": {
+     "opacity": 0.849724,
+     "scale": 0.999789
+    },
+    "mark": {
+     "opacity": 0.999736,
+     "scale": 1.00113,
+     "blur": 0.003889675592592593
+    },
+    "wordmark": {
+     "opacity": 0.999186,
+     "translateY": 14.003210370370372,
+     "scale": 0.999951
+    }
+   },
+   {
+    "ms": 1800,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.01023,
+     "opacity": 0.037588,
+     "brightness": 0.237588,
+     "contrast": 1.0985,
+     "blur": 3.834612407407408
+    },
+    "dark": {
+     "opacity": 0.720935
+    },
+    "glow": {
+     "opacity": 0.849864,
+     "scale": 0.999896
+    },
+    "mark": {
+     "opacity": 0.99987,
+     "scale": 1.00056,
+     "blur": 0.0019256875925925928
+    },
+    "wordmark": {
+     "opacity": 0.999602,
+     "translateY": 14.00156925925926,
+     "scale": 0.999976
+    }
+   },
+   {
+    "ms": 1850,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.00566,
+     "opacity": 0.0197705,
+     "brightness": 0.219771,
+     "contrast": 1.09921,
+     "blur": 3.91301062962963
+    },
+    "dark": {
+     "opacity": 0.758009
+    },
+    "glow": {
+     "opacity": 0.849944,
+     "scale": 0.999957
+    },
+    "mark": {
+     "opacity": 0.999948,
+     "scale": 1.00023,
+     "blur": 0.0007861312962962963
+    },
+    "wordmark": {
+     "opacity": 0.99984,
+     "translateY": 14.000631481481484,
+     "scale": 0.99999
+    }
+   },
+   {
+    "ms": 1900,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.00248,
+     "opacity": 0.00826293,
+     "brightness": 0.208263,
+     "contrast": 1.09967,
+     "blur": 3.963642814814815
+    },
+    "dark": {
+     "opacity": 0.809923
+    },
+    "glow": {
+     "opacity": 0.849984,
+     "scale": 0.999988
+    },
+    "mark": {
+     "opacity": 0.999985,
+     "scale": 1.00007,
+     "blur": 0.0002255550925925926
+    },
+    "wordmark": {
+     "opacity": 0.999954,
+     "translateY": 14.000162592592593,
+     "scale": 0.999997
+    }
+   },
+   {
+    "ms": 1950,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1.00061,
+     "opacity": 0.00195187,
+     "brightness": 0.201952,
+     "contrast": 1.09992,
+     "blur": 3.9914088518518525
+    },
+    "dark": {
+     "opacity": 0.884552
+    },
+    "glow": {
+     "opacity": 0.849998,
+     "scale": 0.999999
+    },
+    "mark": {
+     "opacity": 0.999998,
+     "scale": 1.00001,
+     "blur": 0.000027320514444444444
+    },
+    "wordmark": {
+     "opacity": 0.999995,
+     "translateY": 14.000006296296297,
+     "scale": 1
+    }
+   },
+   {
+    "ms": 2000,
+    "k": 1.2796208530805686,
+    "stadium": {
+     "scale": 1,
+     "opacity": 0,
+     "brightness": 0.2,
+     "contrast": 1.1,
+     "blur": 3.9999973333333334
+    },
+    "dark": {
+     "opacity": 1
+    },
+    "glow": {
+     "opacity": 0.85,
+     "scale": 1
+    },
+    "mark": {
+     "opacity": 1,
+     "scale": 1,
+     "blur": 0
+    },
+    "wordmark": {
+     "opacity": 1,
+     "translateY": 14.000006296296297,
+     "scale": 1
+    }
+   }
+  ]
+ }
+}

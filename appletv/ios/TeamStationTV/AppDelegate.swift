@@ -2,6 +2,7 @@ import UIKit
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+import TeamStationSplash
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -65,6 +66,8 @@ enum ServerOverride {
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   var window: UIWindow?
+  /// How many launch splashes this scene has put up; the TV's hosted tests read it.
+  @objc private(set) var splashInstalls = 0
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
@@ -90,6 +93,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 #endif
     factory.startReactNative(withModuleName: "TeamStationTV", in: window,
                              initialProperties: properties, launchOptions: nil)
+    // The launch splash plays over React Native while it starts, and leaves
+    // once it has played and React Native has drawn. A server link's alert,
+    // presented a second later, is drawn above it.
+    SplashOverlay.install(
+      in: window,
+      firstContent: .RCTContentDidAppear,
+      develop: ServerOverride.isDevelopBuild()
+    )
+    splashInstalls += 1
     keepServerLinks(connectionOptions.urlContexts)
   }
 

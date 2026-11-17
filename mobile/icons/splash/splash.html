@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TeamStation Splash</title>
+<!--
+  The launch splash's reference rendering. Every keyframe, curve and colour
+  comes from timeline.json, through the timeline.js that
+  scripts/splash/buildSplashAssets.mjs writes beside it, so this page, the
+  native renderers and design.html (the Stitch design of record) can be
+  compared number for number.
+
+  Query: w and h size the stage in CSS pixels (default: the window); t pauses
+  every animation at t seconds; only=mark|markBlurred|wordmark|wordmarkBlurred
+  draws that one layer on a transparent page, for
+  rasterising (the blurred ones at the logo's starting blur); novignette and
+  nobrand leave those layers out; nobleed sizes the stadium element to the
+  stage itself, so the stage shows the whole element, as the native
+  placeholders, which fill the element, need.
+-->
+<style>
+  @font-face {
+    font-family: 'Plus Jakarta Sans';
+    font-weight: 800;
+    src: url('fonts/PlusJakartaSans-ExtraBold.ttf') format('truetype');
+  }
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  html.transparent, body.transparent { background: transparent; }
+  .stage { position: relative; overflow: hidden; --k: 1; --side: 210px; }
+  .base, .stadium, .dark, .vignette { position: absolute; }
+  .base, .dark, .vignette { inset: 0; pointer-events: none; }
+  .stadium {
+    inset: calc(var(--bleed) * -1px * var(--k));
+    background-image: url('stadium.jpg');
+    background-size: cover;
+    background-position: center calc(var(--fy) * 100%);
+    transform-origin: calc(var(--fx) * 100%) calc(var(--fy) * 100%);
+  }
+  .vignette { z-index: 5; }
+  .glow {
+    position: absolute; z-index: 10; pointer-events: none;
+    width: calc(var(--glow) * 1px * var(--k)); height: calc(var(--glow) * 1px * var(--k));
+  }
+  .logo {
+    position: absolute; z-index: 20; pointer-events: none;
+    width: var(--side); height: var(--side);
+    margin-left: calc(var(--side) / -2); margin-top: calc(var(--side) / -2);
+  }
+  .mark {
+    width: 100%; height: 100%; display: block;
+    filter: drop-shadow(0 0 calc(32px * var(--k)) rgba(118,195,60,0.55))
+            drop-shadow(0 calc(14px * var(--k)) calc(28px * var(--k)) rgba(0,0,0,0.85));
+  }
+  .wordmark { position: absolute; top: 100%; left: 50%; white-space: nowrap; }
+  .wordmark h1 {
+    margin: 0;
+    display: flex; gap: calc(4px * var(--k)); align-items: center; justify-content: center;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 800;
+    font-size: calc(var(--font) * 1px * var(--k));
+    line-height: calc(var(--font) * 1.2px * var(--k));
+    letter-spacing: -0.025em;
+    color: #fff;
+    filter: drop-shadow(0 calc(4px * var(--k)) calc(3px * var(--k)) rgba(0,0,0,0.07))
+            drop-shadow(0 calc(2px * var(--k)) calc(2px * var(--k)) rgba(0,0,0,0.06));
+  }
+  .wordmark span {
+    color: #76c33c;
+    filter: drop-shadow(0 0 calc(18px * var(--k)) rgba(118,195,60,0.65));
+  }
+</style>
+<script src="timeline.js"></script>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="base"></div>
+  <div class="stadium"></div>
+  <div class="dark"></div>
+  <div class="vignette"></div>
+  <div class="glow"></div>
+  <div class="logo">
+    <svg class="mark" fill="none" viewBox="24 24 464 464" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TeamStation">
+      <defs>
+        <linearGradient gradientUnits="userSpaceOnUse" id="markGrad" x1="66" x2="446" y1="66" y2="446">
+          <stop offset="0%" stop-color="#8ce648"/>
+          <stop offset="35%" stop-color="#67a935"/>
+          <stop offset="70%" stop-color="#3d6f21"/>
+          <stop offset="100%" stop-color="#183610"/>
+        </linearGradient>
+        <radialGradient cx="50%" cy="30%" id="innerShine" r="70%">
+          <stop offset="0%" stop-color="#aff777" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <g opacity="0.6" stroke="#040903" stroke-linecap="round" stroke-linejoin="round" stroke-width="52">
+        <path d="M 224.89 66.49 A 44 44 0 0 1 287.11 66.49 L 445.51 224.89 A 44 44 0 0 1 445.51 287.11 L 287.11 445.51 A 44 44 0 0 1 224.89 445.51 L 66.49 287.11 A 44 44 0 0 1 66.49 224.89 Z"/>
+        <path d="M 146 146 Q 236 256 146 366"/>
+        <path d="M 366 146 Q 276 256 366 366"/>
+      </g>
+      <g stroke="url(#markGrad)" stroke-linecap="round" stroke-linejoin="round" stroke-width="48">
+        <path d="M 224.89 66.49 A 44 44 0 0 1 287.11 66.49 L 445.51 224.89 A 44 44 0 0 1 445.51 287.11 L 287.11 445.51 A 44 44 0 0 1 224.89 445.51 L 66.49 287.11 A 44 44 0 0 1 66.49 224.89 Z"/>
+        <path d="M 146 146 Q 236 256 146 366"/>
+        <path d="M 366 146 Q 276 256 366 366"/>
+      </g>
+      <g opacity="0.75" stroke="url(#innerShine)" stroke-linecap="round" stroke-linejoin="round" stroke-width="14">
+        <path d="M 224.89 74 A 36 36 0 0 1 287.11 74 L 438 224.89"/>
+        <path d="M 148 152 Q 220 252 148 358"/>
+      </g>
+    </svg>
+    <div class="wordmark"><h1>Team<span>Station</span></h1></div>
+  </div>
+</div>
+<script>
+  // Builds the page from window.SPLASH_TIMELINE; see the comment at the top.
+  ;(function () {
+    const T = window.SPLASH_TIMELINE
+    const q = new URLSearchParams(location.search)
+    const stage = document.getElementById('stage')
+    const w = Number(q.get('w')) || innerWidth
+    const h = Number(q.get('h')) || innerHeight
+    const side = Math.min((T.design.side * w) / T.design.width, (T.design.side * h) / T.design.height)
+    const L = T.layers
+    stage.style.width = w + 'px'
+    stage.style.height = h + 'px'
+    stage.style.setProperty('--k', String(side / T.design.side))
+    stage.style.setProperty('--side', side + 'px')
+    stage.style.setProperty('--bleed', q.has('nobleed') ? '0' : String(T.stadium.bleed))
+    stage.style.setProperty('--fx', String(T.stadium.focus[0]))
+    stage.style.setProperty('--fy', String(T.stadium.focus[1]))
+    stage.style.setProperty('--glow', String(L.glow.size))
+    stage.style.setProperty('--font', String(L.wordmark.fontSize))
+
+    const pct = n => n * 100 + '%'
+    const rgba = (hex, a) => {
+      const v = parseInt(hex.slice(1), 16)
+      return `rgba(${v >> 16}, ${(v >> 8) & 255}, ${v & 255}, ${a})`
+    }
+    const radial = (shape, l) =>
+      `radial-gradient(${shape} at ${pct(l.center[0])} ${pct(l.center[1])}, ` +
+      l.stops.map(([at, hex, a]) => `${rgba(hex, a)} ${pct(at)}`).join(', ') + ')'
+    const bezier = e => `cubic-bezier(${e.join(', ')})`
+
+    document.querySelector('.base').style.background = radial('circle', L.base)
+    document.querySelector('.dark').style.background = radial('circle', L.dark)
+    document.querySelector('.vignette').style.background = radial('circle', L.vignette)
+    document.querySelector('.glow').style.background =
+      'radial-gradient(circle, ' +
+      L.glow.stops.map(([at, hex, a]) => `${rgba(hex, a)} ${pct(at)}`).join(', ') + ')'
+    for (const [selector, layer] of [['.glow', L.glow], ['.logo', L.mark]]) {
+      const el = document.querySelector(selector)
+      el.style.left = pct(layer.center[0])
+      el.style.top = pct(layer.center[1])
+    }
+
+    // One CSS property per group of tracks; the groups' tracks share offsets.
+    const groups = {
+      stadium: {
+        transform: v => `scale(${v.scale})`,
+        opacity: v => String(v.opacity),
+        filter: v => `brightness(${v.brightness}) contrast(${v.contrast}) blur(calc(${v.blur}px * var(--k)))`
+      },
+      dark: { opacity: v => String(v.opacity) },
+      glow: {
+        opacity: v => String(v.opacity),
+        transform: v => `translate(-50%, -50%) scale(${v.scale})`
+      },
+      mark: {
+        opacity: v => String(v.opacity),
+        transform: v => `scale(${v.scale})`,
+        filter: v => `blur(calc(${v.blur}px * var(--k)))`
+      },
+      wordmark: {
+        opacity: v => String(v.opacity),
+        transform: v => `translateX(-50%) translateY(calc(${v.translateY}px * var(--k))) scale(${v.scale})`
+      }
+    }
+    const members = {
+      stadium: { transform: ['scale'], opacity: ['opacity'], filter: ['brightness', 'contrast', 'blur'] },
+      dark: { opacity: ['opacity'] },
+      glow: { opacity: ['opacity'], transform: ['scale'] },
+      mark: { opacity: ['opacity'], transform: ['scale'], filter: ['blur'] },
+      wordmark: { opacity: ['opacity'], transform: ['translateY', 'scale'] }
+    }
+    const selectorOf = { stadium: '.stadium', dark: '.dark', glow: '.glow', mark: '.logo', wordmark: '.wordmark' }
+    let css = ''
+    for (const name of Object.keys(groups)) {
+      const layer = L[name]
+      const byOffset = new Map()
+      for (const [prop, render] of Object.entries(groups[name])) {
+        const tracks = members[name][prop]
+        for (const [at] of layer.tracks[tracks[0]]) {
+          const values = Object.fromEntries(
+            tracks.map(t => [t, layer.tracks[t].find(([o]) => o === at)[1]])
+          )
+          const list = byOffset.get(at) ?? []
+          list.push(`${prop}: ${render(values)};`)
+          byOffset.set(at, list)
+        }
+      }
+      const frames = [...byOffset.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([at, decls]) => `${pct(at)} { ${decls.join(' ')} }`)
+        .join('\n')
+      const first = [...byOffset.entries()].find(([at]) => at === 0)[1].join(' ')
+      css +=
+        `${selectorOf[name]} { ${first} animation: splash-${name} ${T.durationMs}ms ${bezier(layer.easing)} both; }\n` +
+        `@keyframes splash-${name} {\n${frames}\n}\n`
+    }
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.appendChild(style)
+
+    const only = q.get('only')
+    if (only != null) {
+      document.documentElement.classList.add('transparent')
+      document.body.classList.add('transparent')
+      for (const el of stage.children) el.style.display = 'none'
+      stage.style.overflow = 'visible'
+      {
+        const logo = document.querySelector('.logo')
+        logo.style.display = ''
+        logo.style.animation = 'none'
+        logo.style.opacity = '1'
+        logo.style.transform = 'none'
+        logo.style.filter = only.endsWith('Blurred') ? `blur(calc(${L.mark.tracks.blur[0][1]}px * var(--k)))` : 'none'
+        const wordmarkOnly = only.startsWith('wordmark')
+        document.querySelector('.mark').style.visibility = wordmarkOnly ? 'hidden' : ''
+        const word = document.querySelector('.wordmark')
+        word.style.display = wordmarkOnly ? '' : 'none'
+        word.style.animation = 'none'
+        word.style.opacity = '1'
+        word.style.transform = `translateX(-50%) translateY(calc(${L.wordmark.tracks.translateY.at(-1)[1]}px * var(--k)))`
+      }
+    }
+    if (q.has('novignette')) document.querySelector('.vignette').style.display = 'none'
+    if (q.has('nobrand')) {
+      document.querySelector('.glow').style.display = 'none'
+      document.querySelector('.logo').style.display = 'none'
+    }
+
+    // Paused at t, or played once and replayed by a click.
+    const t = q.get('t')
+    const seek = ms => {
+      for (const a of document.getAnimations()) {
+        a.pause()
+        a.currentTime = ms
+      }
+    }
+    window.splashSeek = seek
+    if (t != null) seek(Number(t) * 1000)
+    else stage.addEventListener('click', () => {
+      for (const a of document.getAnimations()) {
+        a.currentTime = 0
+        a.play()
+      }
+    })
+    window.splashReady = document.fonts.ready.then(() =>
+      new Promise(resolve => {
+        const img = new Image()
+        img.onload = img.onerror = () => resolve()
+        img.src = 'stadium.jpg'
+      })
+    )
+  })()
+</script>
+</body>
+</html>

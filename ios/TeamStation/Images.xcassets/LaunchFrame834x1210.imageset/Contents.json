@@ -1,0 +1,16 @@
+{
+  "images": [
+    {
+      "filename": "LaunchFrame834x1210.jpg",
+      "idiom": "ipad"
+    },
+    {
+      "filename": "LaunchFrame834x1210-iphone.jpg",
+      "idiom": "iphone"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

@@ -169,6 +169,23 @@ tasks.register('observabilityHostCoverage', JacocoReport) {
     reports { xml.required = true }
 }
 
+// The launch splash's lines (app.teamstation.app.splash and MainActivity)
+// from its JVM tests and, when TS_SPLASH_EXEC names one, the instrumented run
+// on an emulator (connectedDebugAndroidTest with TS_OBSERVABILITY_COVERAGE=1),
+// merged.
+tasks.register('splashCoverage', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    executionData.from(layout.buildDirectory.file('jacoco/testDebugUnitTest.exec'))
+    def deviceExec = providers.environmentVariable('TS_SPLASH_EXEC').getOrNull()
+    if (deviceExec) executionData.from(file(deviceExec))
+    sourceDirectories.from(file('src/main/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/splash/**'
+        include 'app/teamstation/app/MainActivity*.class'
+    })
+    reports { xml.required = true }
+}
+
 // StalledConnections' lines from its JVM tests and, when TS_STALLED_EXEC names
 // one, the instrumented run on a device, merged.
 tasks.register('stalledConnectionsCoverage', JacocoReport) {
@@ -208,6 +225,8 @@ dependencies {
     // started/progressed/cancelled callbacks) for the stack navigator's drag;
     // React Native alone brings 1.7, from before they existed.
     implementation("androidx.activity:activity:1.9.3")
+    // The starting window the launch splash takes over from, on every API level the app supports.
+    implementation("androidx.core:core-splashscreen:1.0.1")
     // Share Lineup's QR code camera: CameraX for the picture, and ML Kit's
     // bundled barcode scanner, which needs no Play services, to read it.
     implementation("androidx.camera:camera-camera2:1.6.2")
