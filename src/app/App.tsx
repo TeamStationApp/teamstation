@@ -185,7 +185,6 @@ import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { CreatePlayerScreen } from './screens/CreatePlayerScreen'
-import { DiscoverScreen } from './screens/DiscoverScreen'
 import { EventSettingsScreen } from './screens/EventSettingsScreen'
 import { FieldManagerScreen } from './screens/FieldManagerScreen'
 import { FieldScreen } from './screens/FieldScreen'
@@ -218,6 +217,7 @@ import { PlayingTimeRulesScreen } from './screens/PlayingTimeRulesScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SchedulePreviewScreen } from './screens/SchedulePreviewScreen'
 import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
+import { SearchScreen, type SearchSocketFactory } from './screens/SearchScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SeasonTimeFrameScreen } from './screens/SeasonTimeFrameScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
@@ -319,6 +319,8 @@ export interface AppProps {
    * one.
    */
   documentCache?: OpenDocumentCache
+  /** Makes the Search tab's socket; a test passes one that opens none. */
+  searchSocketFactory?: SearchSocketFactory
 }
 
 type ScoringSettingsRefresh = () => void
@@ -2811,11 +2813,13 @@ function Shell(props: AppProps): React.ReactElement {
           }
         />
       ) : tab === 'search' ? (
-        <DiscoverScreen
+        <SearchScreen
           key="search"
           client={client}
-          onOpen={openGroup}
-          follow={session != null}
+          signedIn={session != null}
+          onOpenGroup={openGroup}
+          onOpenPerson={openPlayer}
+          searchSocketFactory={props.searchSocketFactory}
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen
@@ -2837,12 +2841,17 @@ function Shell(props: AppProps): React.ReactElement {
         />
       )
     ) : top.name === 'discover' ? (
-      <DiscoverScreen
-        key={`${top.kind ?? 'team'}:${top.follow === true}`}
+      // The route's `kind` is from the screen this replaced: one field now
+      // finds every kind.
+      <SearchScreen
+        key={`discover:${top.follow === true}`}
         client={client}
-        onOpen={openGroup}
-        initialKind={top.kind}
+        signedIn={session != null}
+        onOpenGroup={openGroup}
+        onOpenPerson={openPlayer}
+        // Signed out, no row can be followed, so none is offered.
         follow={top.follow === true && session != null}
+        searchSocketFactory={props.searchSocketFactory}
       />
     ) : top.name === 'createGroup' ? (
       <CreateGroupScreen

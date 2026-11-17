@@ -203,6 +203,13 @@ async function main(): Promise<void> {
     await press(plain, 'Add picture')
     await press(plain, 'Use initials')
     await press(plain, 'Save photo')
+    // The sheet closes once the picture is saved. Until then the Name field
+    // is read-only, and a key pressed in it is dropped. (The Save photo
+    // button shows only a spinner while it saves, so wait on the sheet.)
+    await plain.waitForFunction(
+      () =>
+        document.querySelector('[aria-label="Dismiss photo chooser"]') == null
+    )
     await fill(plain, 'Name', 'Demo Browser Owls Renamed')
     await press(plain, 'Save name')
     await text(plain, 'Demo Browser Owls Renamed')
@@ -224,7 +231,11 @@ async function main(): Promise<void> {
       waitUntil: 'networkidle0'
     })
     await press(publicPage, 'Discover leagues, seasons and teams')
-    await fill(publicPage, 'Search by name or city', 'Demo Browser Owls')
+    await fill(
+      publicPage,
+      'Search leagues, seasons, teams and people',
+      'Demo Browser Owls'
+    )
     await press(publicPage, 'Open Demo Browser Owls Renamed')
     await press(publicPage, 'Team', 'tab')
     await text(publicPage, 'Toronto')

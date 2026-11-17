@@ -144,6 +144,10 @@ export const tsDark: Theme = {
   pillTextColor: palette.tsBeige,
   pillActiveBackground: palette.tsLightOlive,
   pillActiveTextColor: palette.tsVeryDarkGreen,
+  pillBeige: palette.tsBeige,
+  pillBeigeTextColor: palette.tsVeryDarkGreen,
+  pillCloseColor: palette.deepGreen,
+  pillCloseMarkColor: palette.white,
 
   headerBackgroundColor: palette.tsVeryDarkGreen,
   headerBorderColor: palette.tsDarkOlive,

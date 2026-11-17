@@ -15,8 +15,10 @@ import {
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
+import { FakeSearchServer } from '../test/fakeSearchSocket'
 import { pageOf, pageOfGames } from '../test/pageOf'
 import { App } from './App'
+import { SEARCH_PLACEHOLDER } from './screens/SearchScreen'
 
 const playerId = userIdOfGumbo(201)
 const team = asTeamSummary({
@@ -227,12 +229,40 @@ describe('a navbar press clears that tab', () => {
   }
   const text = (): string => document.body.textContent ?? ''
 
+  // The Search tab finds the league over its socket.
+  const searchServer = new FakeSearchServer(() => ({
+    results: [
+      {
+        kind: 'league',
+        id: league.id,
+        name: league.name,
+        imageUrl: null,
+        cityLine: null,
+        associations: '',
+        follow: null
+      }
+    ]
+  }))
+  const search = async (value: string): Promise<void> => {
+    await act(async () => {
+      const input = document.querySelector<HTMLInputElement>(
+        `input[aria-label="${SEARCH_PLACEHOLDER}"]`
+      )!
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, value)
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await settle()
+  }
+
   async function render(): Promise<() => Promise<void>> {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(<App />)
+      root.render(<App searchSocketFactory={searchServer.factory} />)
     })
     await settle()
     return async () => {
@@ -286,6 +316,7 @@ describe('a navbar press clears that tab', () => {
       expect(control('Back')).equals(undefined)
 
       await pressNav('Search', 350)
+      await search('Demo League')
       await press('Open Demo League')
       await press('Open Demo Regular')
       expect(window.location.pathname).equals('/groups/season/sea_regular')

@@ -37,6 +37,8 @@ const palette = {
   creamPressed: '#E2E7DB',
   fieldLine: '#E3EBD9',
   stone: '#D3DCCB',
+  // A chosen search location's pill.
+  beige: '#EADFC8',
 
   // Text, warm charcoal rather than black.
   bark: '#1A2116',
@@ -175,6 +177,10 @@ export const tsBallpark: Theme = {
   pillTextColor: palette.bark,
   pillActiveBackground: palette.forest,
   pillActiveTextColor: palette.white,
+  pillBeige: palette.beige,
+  pillBeigeTextColor: palette.bark,
+  pillCloseColor: palette.sage,
+  pillCloseMarkColor: palette.white,
 
   // The header, and the navigation that becomes a sidebar on a wide screen.
   headerBackgroundColor: palette.white,

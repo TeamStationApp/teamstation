@@ -430,8 +430,12 @@ async function main(): Promise<void> {
     })
     await capture(admin.m, artifacts, 'home-leagues-after.png')
     await tap(admin.m, 'Search', 'tab')
-    // Signed in, Search is for following; a team opens followed or not.
-    await contains(admin.page, 'A team opens on its own page, followed or not')
+    // The Search tab finds every kind; only Home's "find something to
+    // follow" opens it with the following hint.
+    await contains(
+      admin.page,
+      'Find leagues, seasons, teams and people. Public profiles show location, parent organizations, schedules and results.'
+    )
     await visit(admin, `/groups/league/${f.leagueA}`)
     await contains(admin.page, 'Demo League A')
     await capture(admin.m, artifacts, 'league-after.png')

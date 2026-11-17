@@ -15,6 +15,7 @@ import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
+import { FakeSearchServer } from '../test/fakeSearchSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { pageOf, pageOfGames } from '../test/pageOf'
 import { manualClock, windowSize } from '../test/tessTestKit'
@@ -202,7 +203,13 @@ describe("Tess in the app's shell", () => {
   ): Promise<void> => {
     restoreWindow = (await windowSize(width, 900)).restore
     showRoute(route, true)
-    await mount(<App initialToken="token-one" />)
+    // The Search tab's socket goes to a stand-in that answers nothing.
+    await mount(
+      <App
+        initialToken="token-one"
+        searchSocketFactory={new FakeSearchServer().factory}
+      />
+    )
     await settle(60)
   }
   const markMenu = 'TeamStation menu'

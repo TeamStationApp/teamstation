@@ -63,7 +63,13 @@ const appSuites = [
   'src/app/screens/TeamPage.test.tsx',
   'src/app/screens/AddPlayerScene.test.tsx',
   'src/app/screens/NodeSettingsCard.test.tsx',
-  'src/app/screens/NodeAdministrationScreen.test.tsx'
+  'src/app/screens/NodeAdministrationScreen.test.tsx',
+  'src/app/App.searchTab.test.tsx',
+  'src/app/components/SearchResultRow.test.tsx',
+  'src/app/components/LocationPill.test.tsx',
+  'src/app/screens/homeAddCreate.test.tsx',
+  'src/app/screens/groupCreation.test.tsx',
+  'src/app/screens/FollowTeamScreen.test.tsx'
 ]
 
 /**

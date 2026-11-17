@@ -14,7 +14,11 @@ describe('group identity composition boundaries', () => {
     ['components/GameHeroCard.tsx', '<TeamEmblem teamId={props.teamId}'],
     ['screens/TeamScreen.tsx', '<TeamEmblem\n            teamId={team.id}'],
     ['screens/SeasonStandings.tsx', 'teamId={row.teamId}'],
-    ['screens/DiscoverScreen.tsx', '<GroupSearchCard'],
+    ['screens/SearchScreen.tsx', '<SearchResultRow'],
+    [
+      'components/SearchResultRow.tsx',
+      '<GroupEmblem\n              kind={result.kind}\n              id={result.id}'
+    ],
     [
       'components/GroupSearchCard.tsx',
       'group={{\n            kind: group.kind,'

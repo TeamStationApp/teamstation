@@ -8,11 +8,13 @@ import { HttpError } from '../../common/errors'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
+import { FakeSearchServer } from '../../test/fakeSearchSocket'
 import { App } from '../App'
 import { routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { FollowTeamScreen, SEARCH_PAUSE_MS } from './FollowTeamScreen'
+import { SEARCH_PLACEHOLDER } from './SearchScreen'
 
 /** U1: finding a team and following it, against a fake client. */
 let root: Root | undefined
@@ -277,9 +279,25 @@ describe('following a team in the app', function () {
   })
 
   /** Current public discovery/follow APIs; team membership remains private. */
-  function fakeApi(): { asked: string[] } {
+  function fakeApi(): { asked: string[]; search: FakeSearchServer } {
     const asked: string[] = []
     let following = false
+    // The search socket answers from the same follows the API keeps.
+    const search = new FakeSearchServer(frame => ({
+      results: 'Hawks'.toLowerCase().startsWith(frame.text.toLowerCase())
+        ? [
+            {
+              kind: 'team',
+              id: 'tem_hawks',
+              name: 'Hawks',
+              imageUrl: null,
+              cityLine: null,
+              associations: 'QPLL Spring 2027',
+              follow: following ? 'following' : 'follow'
+            }
+          ]
+        : []
+    }))
     const group = asPublicGroup({
       id: 'tem_hawks',
       kind: 'team',
@@ -329,12 +347,12 @@ describe('following a team in the app', function () {
       if (path === '/teams/tem_hawks') return Response.json(detail)
       return Response.json([])
     }
-    return { asked }
+    return { asked, search }
   }
 
   async function search(value: string): Promise<void> {
     await act(async () => {
-      const input = labelled('Search by name or city')
+      const input = labelled(SEARCH_PLACEHOLDER)
       Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype,
         'value'
@@ -345,9 +363,9 @@ describe('following a team in the app', function () {
   }
 
   it('goes from Home to Search, follows Hawks, opens its public team page and returns', async function () {
-    const { asked } = fakeApi()
+    const { asked, search: server } = fakeApi()
     showRoute({ name: 'home' }, true)
-    await render(<App />)
+    await render(<App searchSocketFactory={server.factory} />)
     await settle()
     const tabs = [
       ...document.querySelectorAll<HTMLElement>(
@@ -379,21 +397,24 @@ describe('following a team in the app', function () {
   })
 
   it('opens the current following discovery address and uses its current APIs', async function () {
-    const { asked } = fakeApi()
+    const { asked, search: server } = fakeApi()
     const route = {
       name: 'discover' as const,
       kind: 'team' as const,
       follow: true
     }
     showRoute(route, true)
-    await render(<App />)
+    await render(<App searchSocketFactory={server.factory} />)
     await settle()
     expect(currentRoute()).deep.equals(route)
     expect(text()).contains('Discover')
     expect(text()).contains('Follow leagues, seasons and teams')
-    expect(labelled('Search by name or city')).not.equals(null)
-    expect(asked).includes('GET /me/follows')
-    expect(asked).includes('GET /me/groups')
+    expect(labelled(SEARCH_PLACEHOLDER)).not.equals(null)
+    // Follow states come with the search socket's rows, not from REST.
+    await search('Haw')
+    expect(button('Follow Hawks')).not.equals(undefined)
+    expect(server.last).deep.include({ text: 'Haw', mode: 'all' })
     expect(asked).not.includes('GET /teams/search')
+    expect(asked).not.includes('GET /teams')
   })
 })

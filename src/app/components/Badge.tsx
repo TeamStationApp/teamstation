@@ -12,6 +12,11 @@ export interface BadgeProps {
   tone?: BadgeTone
   /** Allow long descriptive labels to wrap within the available width. */
   wrap?: boolean
+  /**
+   * A shorter shell and smaller type, for a pill that shares a line with a
+   * name it must leave room for. Its padding is still half its height.
+   */
+  compact?: boolean
 }
 
 /**
@@ -23,15 +28,24 @@ export interface BadgeProps {
  * green screen, which is enough to find it.
  */
 export function Badge(props: BadgeProps): React.ReactElement {
-  const { label, tone = 'neutral', wrap = false } = props
+  const { label, tone = 'neutral', wrap = false, compact = false } = props
   const styles = getStyles(useTheme())
   return (
     <View
       testID="settings-pill-badge"
-      style={[styles.badge, styles[tone], wrap && styles.wrapped]}
+      style={[
+        styles.badge,
+        compact && styles.compact,
+        styles[tone],
+        wrap && styles.wrapped
+      ]}
     >
       <Text
-        style={[styles.label, styles[`${tone}Text`]]}
+        style={[
+          styles.label,
+          compact && styles.compactLabel,
+          styles[`${tone}Text`]
+        ]}
         numberOfLines={wrap ? undefined : 1}
       >
         {label}
@@ -51,6 +65,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderWidth: 1,
     borderColor: 'transparent'
   },
+  compact: {
+    height: theme.rem(1.25),
+    minHeight: theme.rem(1.25),
+    paddingHorizontal: pillPadding(theme.rem(1.25))
+  },
+  compactLabel: { fontSize: theme.rem(0.75) },
   // Multiline descriptions use a rounded rectangle, not semicircular ends.
   wrapped: {
     borderRadius: theme.rem(0.25),
