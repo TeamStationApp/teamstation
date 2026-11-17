@@ -122,7 +122,10 @@ declare module '@mason/types' {
     publishes?: string[]
     buildNumbers?: string[]
     cache?: Array<{ key: string; paths: string[] }>
-    /** Project secrets the stage's commands get in their environment. */
+    /**
+     * Project secrets the stage may read: values are its commands'
+     * environment, and files come from `ctx.secretFile`.
+     */
     secrets?: string[]
     apple?: {
       distribution: string

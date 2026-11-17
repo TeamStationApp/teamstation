@@ -31,6 +31,7 @@ import {
   DISTRIBUTOR_APP,
   DISTRIBUTOR_DEVELOP_APP,
   GOOGLE_SERVICES,
+  GOOGLE_SERVICES_SECRET,
   MAPS_KEY_CHECK,
   PLAY_NOTES_LIMIT,
   PLAY_PUBLISHER_SECRET,
@@ -445,7 +446,10 @@ describe('TeamStation pipeline Masonfile', () => {
       'ndk;27.1.12297006',
       'cmake;3.22.1'
     ])
-    assert.deepEqual(android[0]?.secrets, ['GOOGLE_MAPS_ANDROID_API_KEY'])
+    assert.deepEqual(android[0]?.secrets, [
+      'GOOGLE_MAPS_ANDROID_API_KEY',
+      GOOGLE_SERVICES_SECRET
+    ])
     assert.deepEqual(android[1]?.secrets, [
       RELEASE_KEYSTORE_SECRET,
       RELEASE_PASSWORD_SECRET
@@ -513,6 +517,8 @@ describe('TeamStation pipeline Masonfile', () => {
         return 'store-password'
       },
       secretFile(name: string) {
+        // A stage outside Mason with no Firebase file: nothing is copied.
+        if (name === GOOGLE_SERVICES_SECRET) return ''
         assert.equal(name, RELEASE_KEYSTORE_SECRET)
         return '/private/secret-1'
       },
@@ -740,13 +746,21 @@ describe('TeamStation pipeline Masonfile', () => {
         }
       }
     }
-    // The builder's Firebase configuration, as Mason holds it.
-    const secret = path.join(workspace, 'builder-google-services.json')
+    // Firebase's configuration, as Mason writes the declared secret file.
+    const secret = path.join(workspace, 'secret-1')
     writeFileSync(secret, '{"project_info":{"project_id":"example"}}')
-    process.env.TS_GOOGLE_SERVICES_JSON = secret
+    const secretFiles: string[] = []
+    const stage = {
+      ...ctx,
+      secretFile(name: string) {
+        secretFiles.push(name)
+        return secret
+      }
+    }
     try {
-      await buildIos(ctx)
-      await compileAndroid(ctx)
+      await buildIos(stage)
+      await compileAndroid(stage)
+      assert.deepEqual(secretFiles, [GOOGLE_SERVICES_SECRET])
       assert.deepEqual(apis, [
         'xcode:https://develop3.teamstation.app/api/v1',
         'stash:ios-adhoc',
@@ -764,12 +778,11 @@ describe('TeamStation pipeline Masonfile', () => {
         '{"project_info":{"project_id":"example"}}'
       )
     } finally {
-      delete process.env.TS_GOOGLE_SERVICES_JSON
       rmSync(workspace, { recursive: true, force: true })
     }
   })
 
-  it('builds Android without push when the builder holds no Firebase configuration', () => {
+  it('builds Android without push when a stage outside Mason has no Firebase configuration', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'google-services-'))
     try {
       mkdirSync(path.join(root, 'android/app'), { recursive: true })
@@ -1038,6 +1051,9 @@ describe('TeamStation pipeline Masonfile', () => {
       getBuildNumber() {
         return '26103101'
       },
+      secretFile() {
+        return ''
+      },
       async stash(name: string) {
         commands.push(`stash:${name}`)
       }
@@ -1253,7 +1269,7 @@ describe('TeamStation pipeline Masonfile', () => {
       'app.teamstation.develop,app.teamstation.develop.notifications',
       DEVELOP_APP,
       DEVELOP_APP,
-      'GOOGLE_MAPS_ANDROID_API_KEY',
+      `GOOGLE_MAPS_ANDROID_API_KEY,${GOOGLE_SERVICES_SECRET}`,
       STABLE_APP,
       TV_APP,
       DIRECTOR_DEVELOP_APP,

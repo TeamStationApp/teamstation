@@ -6,7 +6,7 @@ apply plugin: "com.facebook.react"
 apply plugin: "expo-autolinking"
 apply plugin: "jacoco"
 // Firebase is configured from google-services.json, which Mason copies in
-// from its builder (TS_GOOGLE_SERVICES_JSON) and nothing commits. Without
+// from its project secret file of that name and nothing commits. Without
 // it no FirebaseApp starts: the app builds and runs, and registers no push
 // token.
 if (file("google-services.json").exists()) apply plugin: "com.google.gms.google-services"

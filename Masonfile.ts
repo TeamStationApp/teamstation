@@ -444,9 +444,10 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           publishes: [app],
           buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
-          // Gradle reads it from the environment into the manifest's
-          // com.google.android.geo.API_KEY for the native event map.
-          secrets: [MAPS_KEY_SECRET],
+          // Gradle reads the Maps key from the environment into the manifest's
+          // com.google.android.geo.API_KEY for the native event map, and
+          // compileAndroid copies google-services.json into the app for FCM.
+          secrets: [MAPS_KEY_SECRET, GOOGLE_SERVICES_SECRET],
           run: compileAndroid
         },
         {
@@ -724,17 +725,22 @@ export const MAPS_KEY_CHECK = [
 ].join('\n')
 /** Firebase's configuration for both application ids, which no commit holds. */
 export const GOOGLE_SERVICES = 'android/app/google-services.json'
+/** The Mason project secret file that holds `google-services.json`. */
+export const GOOGLE_SERVICES_SECRET = 'google-services.json'
 
 /**
- * Copies the builder's Firebase configuration, a file it holds as it holds
- * its signing keys (`TS_GOOGLE_SERVICES_JSON`), into the Android app, where
- * `android/app/build.gradle` applies the google-services plugin when it is
- * there. A builder without one copies nothing, and the app builds without
+ * Copies Firebase's configuration, which Mason holds as the project secret
+ * file `GOOGLE_SERVICES_SECRET` and writes to `secret`, into the Android app,
+ * where `android/app/build.gradle` applies the google-services plugin when it
+ * is there. The Android compile stage declares that secret, and Mason starts
+ * no stage whose declared secret the project lacks, so under Mason there is
+ * always a file. A stage run outside Mason (a local checkout's own run, or a
+ * test) may have none: then it copies nothing, and the app builds without
  * push. True when it copied.
  */
 export function copyGoogleServices(
   root: string,
-  secret: string | undefined = process.env.TS_GOOGLE_SERVICES_JSON
+  secret: string | undefined
 ): boolean {
   if (secret == null || secret === '') return false
   copyFileSync(secret, path.join(root, GOOGLE_SERVICES))
@@ -831,7 +837,10 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const app = runApp(ctx)
   if (app === DEVELOP_APP) applyDevelopIdentity(developRoot(ctx))
-  copyGoogleServices(ctx.workspace ?? process.cwd())
+  copyGoogleServices(
+    ctx.workspace ?? process.cwd(),
+    ctx.secretFile(GOOGLE_SERVICES_SECRET)
+  )
   const build = ctx.getBuildNumber(app)
   const version = appVersion(ctx)
   await ctx.sh(

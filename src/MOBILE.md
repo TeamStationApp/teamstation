@@ -631,8 +631,9 @@ None of these are in git, and none should be:
   both in its app records' `apple.bundleIds`, so its archive signs the
   extension with an ad hoc profile of its own.
 - **A Firebase project** whose `google-services.json` covers both Android
-  application ids. Mason's builder holds the file as a secret and points
-  `TS_GOOGLE_SERVICES_JSON` at it. `android/app/build.gradle` applies the
+  application ids. Mason's `teamstation` project holds the file as the secret
+  file `google-services.json`, which the Android `compile` stage declares and
+  `copyGoogleServices` copies into `android/app`. `android/app/build.gradle` applies the
   google-services plugin only when `android/app/google-services.json` exists,
   so a checkout without it builds an app with no FCM token and nothing else
   changes.
@@ -681,7 +682,7 @@ None of these are in git, and none should be:
 | `TS_APS_ENVIRONMENT` | `Masonfile.ts` archive `xcargs` | `production`; the project's default is `development` |
 | `TS_NSE_ENTITLEMENTS` | `Masonfile.ts` archive `xcargs` | The extension's entitlements file: `TeamStationNotifications.entitlements`, or the `.filtering` one once Apple grants it |
 | `TS_APP_BUNDLE_ID` | `project.pbxproj`, rewritten by `applyDevelopIdentity` | The app's id; the extension is `$(TS_APP_BUNDLE_ID).notifications` |
-| `TS_GOOGLE_SERVICES_JSON` | the builder's environment | Path to `google-services.json`, copied into `android/app` by `copyGoogleServices` |
+| `google-services.json` | Mason project secret file, declared by the Android `compile` stage | Firebase's configuration, copied into `android/app` by `copyGoogleServices` from `ctx.secretFile` |
 
 ### Testing it on a simulator and an emulator
 
