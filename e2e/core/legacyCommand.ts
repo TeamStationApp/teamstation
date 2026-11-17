@@ -5,6 +5,8 @@
 
 import { homedir } from 'node:os'
 
+import { daemonNames } from './daemons'
+
 export interface LegacySettings {
   maestroClientRoot?: string
   maestroBin?: string
@@ -157,7 +159,7 @@ export function headerNames(source: string): string[] {
 }
 
 function rewrite(env: Record<string, string>, settings: LegacySettings): void {
-  if ('MAESTRO_D' in env) env.MAESTRO_D = 'e2eSuite'
+  if ('MAESTRO_D' in env) env.MAESTRO_D = daemonNames().web
   if ('MAESTRO_D_CLIENT_ROOT' in env && settings.maestroClientRoot != null) {
     env.MAESTRO_D_CLIENT_ROOT = settings.maestroClientRoot
   }
@@ -187,7 +189,7 @@ function fallback(source: string, file: string): LegacyCommand {
     }
     if (file.endsWith('.ts')) argv.push('--extension', 'ts', file)
     else argv.push(file)
-    return { argv, env: { MAESTRO_D: 'e2eSuite' }, setup: [] }
+    return { argv, env: { MAESTRO_D: daemonNames().web }, setup: [] }
   }
   const script =
     /require\.main\s*===\s*module/.test(source) ||
@@ -197,7 +199,7 @@ function fallback(source: string, file: string): LegacyCommand {
     const argv = file.endsWith('.mjs')
       ? ['node', file]
       : ['node', '-r', 'sucrase/register', file]
-    return { argv, env: { MAESTRO_D: 'e2eSuite' }, setup: [] }
+    return { argv, env: { MAESTRO_D: daemonNames().web }, setup: [] }
   }
   return {
     argv: [],
@@ -243,7 +245,7 @@ export function legacyCommand(
   }
   if (chosen == null) return fallback(source, file)
   rewrite(chosen.env, settings)
-  if (!('MAESTRO_D' in chosen.env)) chosen.env.MAESTRO_D = 'e2eSuite'
+  if (!('MAESTRO_D' in chosen.env)) chosen.env.MAESTRO_D = daemonNames().web
   chosen.argv = chosen.argv.filter(token => !/[<>[\]]/.test(token))
   return { argv: chosen.argv, env: chosen.env, setup }
 }
