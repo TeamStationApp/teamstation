@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import {
   DIRECTORY_MAP,
+  isPrivateName,
   isSourceTool,
   MAP_FIRST,
   SOURCE_LIMITS,
@@ -310,10 +311,16 @@ describe('Tess source tools', function () {
     )
     expect((await read('src/many')).content).includes('startLine 201')
     expect((await read('src/many', 201)).content).includes('220: row 220')
-    await writeFile(join(root, 'wide'), 'X'.repeat(30000))
+    await writeFile(join(root, 'wide'), 'X'.repeat(30000) + '\nafter\n')
     const wide = await read('src/wide')
     expect(wide.content.length).at.most(SOURCE_LIMITS.outputCharacters)
     expect(wide.content).includes('line is clipped')
+    // A line that alone fills a read continues after it, so paging ends.
+    expect(wide.content).includes('startLine 2.]')
+    await writeFile(join(root, 'wide'), `short\n${'X'.repeat(30000)}\nafter\n`)
+    // Otherwise the clipped line is read again in full from its start.
+    expect((await read('src/wide')).content).includes('startLine 2.]')
+    expect((await read('src/wide', 2)).content).includes('startLine 3.]')
   })
 
   it('caps listing, search matches and search output', async () => {
@@ -323,10 +330,35 @@ describe('Tess source tools', function () {
         await writeFile(join(root, 'feature', `file-${i}.ts`), 'match\n')
       })
     )
+    const first = (
+      await browser.run('source_list_directory', { path: 'src/feature' })
+    ).content
+    const names = Array.from(
+      { length: 205 },
+      (_, i) => `src/feature/file-${i}.ts`
+    )
+      .concat('src/feature/example.ts')
+      .sort()
+    expect(first).equals(
+      names.slice(0, 200).join('\n') +
+        '\n[More entries: list again with startEntry 201.]'
+    )
     expect(
-      (await browser.run('source_list_directory', { path: 'src/feature' }))
-        .content
-    ).includes('[Listing limited.]')
+      (
+        await browser.run('source_list_directory', {
+          path: 'src/feature',
+          startEntry: 201
+        })
+      ).content
+    ).equals(names.slice(200).join('\n'))
+    expect(
+      (
+        await browser.run('source_list_directory', {
+          path: 'src/feature',
+          startEntry: 0
+        })
+      ).is_error
+    ).equals(true)
     expect(
       (
         await browser.run('source_search', {
@@ -365,7 +397,9 @@ describe('Tess source tools', function () {
       'release.keystore',
       '.env',
       'node_modules/pkg/index.js',
-      'lib/server/index.js'
+      'lib/server/index.js',
+      'ServerConfig.JSON',
+      'Feature/Node_Modules/pkg/index.js'
     ]) {
       await mkdir(join(root, path, '..'), { recursive: true })
       await writeFile(join(root, path), 'SECRET_VALUE\n')
@@ -384,6 +418,9 @@ describe('Tess source tools', function () {
     })
     expect(searched.content).includes('[No matches.]')
     expect(searched.content).includes('[0 files skipped.]')
+    for (const name of ['ServerConfig.json', 'RELEASE.KEYSTORE', 'DerivedData'])
+      expect(isPrivateName(name)).equals(true)
+    expect(isPrivateName('libraries.ts')).equals(false)
   })
 
   it('skips files too large for the rest of the scan and unreadable directories', async () => {
@@ -394,7 +431,7 @@ describe('Tess source tools', function () {
       Array.from({ length: 9 }, async (_, i) => {
         await writeFile(
           join(root, 'scan', `large${i}`),
-          Buffer.alloc(SOURCE_LIMITS.fileBytes - 10, 65)
+          Buffer.alloc(SOURCE_LIMITS.scannedBytes / 8 - 10, 65)
         )
       })
     )
@@ -409,7 +446,8 @@ describe('Tess source tools', function () {
       })
       expect(result.is_error).not.equals(true)
       expect(result.content).includes('src/scan/b:1: needle')
-      expect(result.content).includes('[2 files skipped.]')
+      // The unreadable directory; the file left for the budget is not counted.
+      expect(result.content).includes('[1 files skipped.]')
       expect(result.content).includes('[Search limited;')
     } finally {
       await chmod(join(root, 'scan', 'closed'), 0o755)
@@ -518,5 +556,26 @@ describe('Tess source tools', function () {
         await fs.access(resolve(match[1]))
       })
     expect(map).includes('src/server/tess/sourceTools.ts')
+    // The API contract the map starts from is read and searched, not skipped.
+    const api = await real.run('source_read_file', {
+      path: 'src/common/api.ts'
+    })
+    expect(api.is_error).not.equals(true)
+    expect(api.content).includes('startLine 201')
+    const found = await real.run('source_search', {
+      path: 'src/common/api.ts',
+      text: 'export'
+    })
+    expect(found.content).includes('src/common/api.ts:')
+    expect(found.content).includes('[0 files skipped.]')
+  })
+
+  it('reports a search of one unreadable file as an error', async () => {
+    await unlock()
+    await writeFile(join(root, 'binary'), Buffer.from([1, 0, 2]))
+    expect(
+      (await browser.run('source_search', { path: 'src/binary', text: 'x' }))
+        .is_error
+    ).equals(true)
   })
 })

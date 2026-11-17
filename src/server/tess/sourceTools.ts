@@ -7,7 +7,7 @@ import type { ToolDefinition } from './messagesApi'
 export const DIRECTORY_MAP = 'src/DIRECTORY_MAP.md'
 export const MAP_FIRST = `Read ${DIRECTORY_MAP} completely first, then use it to choose a source directory or file.`
 export const SOURCE_LIMITS = {
-  fileBytes: 256 * 1024,
+  fileBytes: 1024 * 1024,
   outputCharacters: 20000,
   lines: 200,
   entries: 200,
@@ -36,16 +36,23 @@ const pathProperty = {
 export const SOURCE_TOOLS: ToolDefinition[] = [
   {
     name: 'source_list_directory',
-    description: `Lists immediate files and directories in TeamStation's source, read-only. ${MAP_FIRST} Symbolic links are skipped; large results are limited.`,
+    description: `Lists immediate files and directories in TeamStation's source, read-only, in name order. ${MAP_FIRST} Symbolic links are skipped; at most 200 entries per call, use startEntry to continue.`,
     input_schema: {
       type: 'object',
-      properties: { path: pathProperty },
+      properties: {
+        path: pathProperty,
+        startEntry: {
+          type: 'integer',
+          minimum: 1,
+          description: 'First entry, starting at 1; defaults to 1.'
+        }
+      },
       required: ['path']
     }
   },
   {
     name: 'source_read_file',
-    description: `Reads numbered lines from TeamStation's open-source code, for any user. Start with ${DIRECTORY_MAP}, then choose relevant files. Reads at most 200 lines and 20,000 characters; use startLine to continue. Files over 256 KiB and binary files are refused. No writes or commands.`,
+    description: `Reads numbered lines from TeamStation's open-source code, for any user. Start with ${DIRECTORY_MAP}, then choose relevant files. Reads at most 200 lines and 20,000 characters; use startLine to continue. Files over 1 MiB and binary files are refused. No writes or commands.`,
     input_schema: {
       type: 'object',
       properties: {
@@ -87,9 +94,9 @@ export function sourceRoot(moduleDirectory = __dirname): string {
  * build output, dependencies and hidden tool state. Refused at any depth.
  */
 const PRIVATE_NAMES = new Set([
-  'serverConfig.json',
-  'clientConfig.json',
-  'clientConfig.xcconfig',
+  'serverconfig.json',
+  'clientconfig.json',
+  'clientconfig.xcconfig',
   'local.properties',
   'node_modules',
   'lib',
@@ -98,16 +105,18 @@ const PRIVATE_NAMES = new Set([
   'build-device',
   'build-local',
   'web-build',
-  'Pods',
-  'DerivedData'
+  'pods',
+  'deriveddata'
 ])
 
+/** Case-folded, for case-insensitive filesystems such as macOS's. */
 export function isPrivateName(name: string): boolean {
+  const folded = name.toLowerCase()
   return (
-    name.startsWith('.') ||
-    PRIVATE_NAMES.has(name) ||
-    name.endsWith('.keystore') ||
-    name.endsWith('.xcuserdatad')
+    folded.startsWith('.') ||
+    PRIVATE_NAMES.has(folded) ||
+    folded.endsWith('.keystore') ||
+    folded.endsWith('.xcuserdatad')
   )
 }
 
@@ -115,6 +124,9 @@ interface SourceResult {
   content: string
   is_error?: boolean
 }
+
+/** A search's file left unread for its scan budget, not for itself. */
+class BudgetSkip extends Error {}
 
 interface Budget {
   visited: number
@@ -167,6 +179,14 @@ export function sourceBrowser(root = sourceRoot()): {
       !canonical.startsWith(canonicalRoot + sep)
     )
       throw new Error('boundary')
+    // A typed name in another case can still resolve to a private one.
+    if (
+      canonical
+        .slice(canonicalRoot.length + 1)
+        .split(sep)
+        .some(part => part !== '' && isPrivateName(part))
+    )
+      throw new Error('private')
     return canonical
   }
 
@@ -175,7 +195,13 @@ export function sourceBrowser(root = sourceRoot()): {
     scan?: { bytes: number; limited: boolean }
   ): Promise<{ text: string; bytes: number }> {
     const target = await checkedPath(path)
-    if (!(await lstat(target)).isFile()) throw new Error('file')
+    const first = await lstat(target)
+    if (!first.isFile()) throw new Error('file')
+    // A file too large for what is left of the scan is skipped, not opened.
+    if (scan != null && scan.bytes + first.size > SOURCE_LIMITS.scannedBytes) {
+      scan.limited = true
+      throw new BudgetSkip()
+    }
     const file = await open(
       target,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -190,10 +216,9 @@ export function sourceBrowser(root = sourceRoot()): {
         stat.size > SOURCE_LIMITS.fileBytes
       )
         throw new Error('file')
-      // A file too large for what is left of the scan is skipped, not read.
       if (scan != null && scan.bytes + stat.size > SOURCE_LIMITS.scannedBytes) {
         scan.limited = true
-        throw new Error('scan limit')
+        throw new BudgetSkip()
       }
       // One byte past the stat'd size shows growth since the stat.
       const buffer = Buffer.alloc(
@@ -327,10 +352,14 @@ export function sourceBrowser(root = sourceRoot()): {
             content += line
           }
           const complete = start === 1 && next >= lines.length && !clipped
-          if (clipped)
+          if (clipped) {
             content +=
               '\n[Output limited; this line is clipped. Narrow the question with source_search.]'
-          else if (next < lines.length)
+            // Rereads the clipped line unless it alone filled the read.
+            const resume = next > start - 1 ? next + 1 : next + 2
+            if (resume <= lines.length)
+              content += `\n[More lines: read again with startLine ${resume}.]`
+          } else if (next < lines.length)
             content += `[More lines: read again with startLine ${next + 1}.]`
           else if (start > lines.length) content += '[End of file.]'
           if (path === DIRECTORY_MAP && complete) completeMap = content
@@ -350,21 +379,39 @@ export function sourceBrowser(root = sourceRoot()): {
           return true
         }
         if (name === 'source_list_directory') {
-          for await (const entry of entries(path, false, budget)) {
-            if (
-              output.length >= SOURCE_LIMITS.entries ||
-              !add(entry.path + (entry.directory ? '/' : ''))
-            ) {
-              budget.limited = true
-              break
+          const start = input.startEntry ?? 1
+          if (
+            typeof start !== 'number' ||
+            !Number.isSafeInteger(start) ||
+            start < 1
+          )
+            return {
+              content: 'startEntry must be a positive integer.',
+              is_error: true
             }
-          }
+          // Every name is collected (bounded by visitedEntries) and sorted
+          // before the page is cut, so pages are stable and complete.
+          const names: string[] = []
+          for await (const entry of entries(path, false, budget))
+            names.push(entry.path + (entry.directory ? '/' : ''))
+          const truncated = budget.limited
+          names.sort()
+          let next = start - 1
+          for (
+            ;
+            next < names.length && output.length < SOURCE_LIMITS.entries;
+            next += 1
+          )
+            if (!add(names[next])) break
           return {
             content:
-              output.sort().join('\n') +
-              (budget.limited
-                ? '\n[Listing limited.]'
-                : output.length === 0
+              output.join('\n') +
+              (next < names.length
+                ? `\n[More entries: list again with startEntry ${next + 1}.]`
+                : '') +
+              (truncated
+                ? '\n[Listing limited; the directory has more entries than are read.]'
+                : names.length === 0
                   ? '[Empty directory.]'
                   : '')
           }
@@ -392,8 +439,11 @@ export function sourceBrowser(root = sourceRoot()): {
           let file: Awaited<ReturnType<typeof textFile>>
           try {
             file = await textFile(entry.path, scan)
-          } catch {
-            skipped += 1
+          } catch (error) {
+            // A named file that cannot be read is an error, not "no matches".
+            if (stat.isFile()) throw error
+            // "Search limited" reports these; they are not the files' fault.
+            if (!(error instanceof BudgetSkip)) skipped += 1
             continue
           }
           for (const [index, line] of file.text.split('\n').entries()) {
@@ -427,7 +477,7 @@ export function sourceBrowser(root = sourceRoot()): {
       } catch {
         return {
           content:
-            'Source path unavailable or refused. Use a regular UTF-8 file or directory inside src; links, binary files and files over 256 KiB are not readable.',
+            'Source path unavailable or refused. Use a regular UTF-8 file or directory inside src; links, binary files and files over 1 MiB are not readable.',
           is_error: true
         }
       }
