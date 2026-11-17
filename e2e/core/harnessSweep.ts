@@ -67,6 +67,19 @@ export function harnessRuns(
     )
 }
 
+/**
+ * Why the sweep leaves a harness file out, or null to run it: the streaming
+ * scenarios are owned apart from this suite, as its streaming scripts are.
+ */
+export function harnessDisabled(
+  file: string,
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  return file.startsWith('e2e/tests/streaming/') && env.E2E_STREAMING !== '1'
+    ? 'streaming: owned apart from this suite; E2E_STREAMING=1 runs it'
+    : null
+}
+
 /** The scenarios `e2e/manifest.json` lists. */
 export function manifestScenarios(cwd: string): ManifestScenario[] {
   return (

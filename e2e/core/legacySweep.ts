@@ -17,7 +17,12 @@ import { join } from 'node:path'
 import { readStack, STACKS } from './attach'
 import { chatFixtureEnv } from './chatFixture'
 import { daemonNames } from './daemons'
-import { harnessRuns, manifestScenarios, runHarness } from './harnessSweep'
+import {
+  harnessDisabled,
+  harnessRuns,
+  manifestScenarios,
+  runHarness
+} from './harnessSweep'
 import { headerNames, legacyCommand } from './legacyCommand'
 import {
   BLOCKED,
@@ -340,7 +345,7 @@ async function main(): Promise<void> {
   for (const name of DAEMONS.slice(1)) restartDaemon(bin, name)
   try {
     for (const file of files) {
-      const off = disabledFor(file)
+      const off = disabledFor(file) ?? harnessDisabled(file)
       if (off != null) {
         const line = `disabled\t-\t${file}\t${off}\t0s`
         appendFileSync(results, `${line}\n`)
@@ -368,7 +373,12 @@ async function main(): Promise<void> {
               cwd,
               run,
               legacyArtifacts(file),
-              { ...process.env, ...stack.env },
+              // A sweep that serves its own stack lets each run start one.
+              {
+                ...process.env,
+                ...stack.env,
+                ...(stackId == null ? { E2E_LOCAL_STACK: '1' } : {})
+              },
               Math.max(10, run.minutes * 4) * 60 * 1000
             ))
           })

@@ -1,7 +1,12 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { harnessRuns, type ManifestScenario, sweepStatus } from './harnessSweep'
+import {
+  harnessDisabled,
+  harnessRuns,
+  type ManifestScenario,
+  sweepStatus
+} from './harnessSweep'
 
 const scenario = (
   id: string,
@@ -56,6 +61,15 @@ describe('the sweep of harness scenarios', function () {
     expect(run.skip).equals(
       "plays the app's HEVC video, which this sweep's Chrome cannot decode"
     )
+  })
+
+  it('leaves the streaming scenarios to their own sweep, unless E2E_STREAMING=1', function () {
+    const file = 'e2e/tests/streaming/targeted/drift.e2e.ts'
+    expect(harnessDisabled(file, {})).includes('streaming')
+    expect(harnessDisabled(file, { E2E_STREAMING: '1' })).equals(null)
+    expect(
+      harnessDisabled('e2e/tests/assistant/chat/split-view.e2e.ts', {})
+    ).equals(null)
   })
 
   it('counts a run as passed only when it passed', function () {
