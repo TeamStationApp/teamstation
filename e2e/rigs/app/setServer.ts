@@ -55,6 +55,52 @@ function hostOf(origin: string | null): string {
   return origin == null ? 'this build' : new URL(origin).host
 }
 
+/** A develop build's own link to a page of the app: `groups/league/x/scheduler`. */
+export function appLink(path: string): string {
+  return `${PHONE_SCHEME}://${path.replace(/^\/+/, '')}`
+}
+
+/**
+ * Opens `link` in a phone's app from a stopped app, so the launch reads it:
+ * the app routes only the link it was launched with. An iPhone gets it
+ * handed to the app by its id, since on a phone the system's own handling
+ * of a link stops short of the app it names; a simulator takes it through
+ * simctl.
+ */
+export async function openInApp(options: {
+  platform: 'ios' | 'android'
+  udid: string
+  appId: string
+  link: string
+  device: Pick<ServerDevice, 'stopApp' | 'openLink'>
+  /** An iOS simulator, which takes the link through simctl, not devicectl. */
+  simulator?: boolean
+  run?: Run
+}): Promise<void> {
+  const { platform, udid, appId, link, device } = options
+  await device.stopApp({ appId })
+  if (platform === 'ios' && options.simulator === true) {
+    // A simulator's system hands its own app the link: devicectl sees only
+    // phones.
+    await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
+  } else if (platform === 'ios') {
+    await (options.run ?? realRun)('xcrun', [
+      'devicectl',
+      'device',
+      'process',
+      'launch',
+      '--device',
+      udid,
+      '--terminate-existing',
+      '--payload-url',
+      link,
+      appId
+    ])
+  } else {
+    await device.openLink({ link })
+  }
+}
+
 export async function setServer(options: {
   platform: AppPlatform
   udid: string
@@ -99,29 +145,15 @@ export async function setServer(options: {
   const device = options.device
   if (device == null)
     throw new Error(`setServer on ${platform} needs a maestro-d device`)
-  await device.stopApp({ appId })
-  if (platform === 'ios' && options.simulator === true) {
-    // A simulator's system hands its own app the link: devicectl sees only
-    // phones.
-    await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
-  } else if (platform === 'ios') {
-    // Handed to the develop app by its id: on a phone, the system's own
-    // handling of a link stops short of the app it names.
-    await (options.run ?? realRun)('xcrun', [
-      'devicectl',
-      'device',
-      'process',
-      'launch',
-      '--device',
-      udid,
-      '--terminate-existing',
-      '--payload-url',
-      link,
-      appId
-    ])
-  } else {
-    await device.openLink({ link })
-  }
+  await openInApp({
+    platform,
+    udid,
+    appId,
+    link,
+    device,
+    simulator: options.simulator,
+    run: options.run
+  })
   await device.assertVisible({
     text: `.*${escapeRegExp(hostOf(origin))}.*Restart TeamStation.*`
   })

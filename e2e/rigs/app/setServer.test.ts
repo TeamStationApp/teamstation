@@ -2,6 +2,8 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  appLink,
+  openInApp,
   parseSetServerArgs,
   type ServerDevice,
   serverLink,
@@ -25,6 +27,52 @@ function phone(): { device: ServerDevice; calls: Array<[string, unknown]> } {
 }
 
 describe('setServer', function () {
+  it('opens a page of the app from a stopped app, by its develop link', async function () {
+    expect(appLink('/groups/league/l1/scheduler')).equals(
+      'teamstation-develop://groups/league/l1/scheduler'
+    )
+    const android = phone()
+    await openInApp({
+      platform: 'android',
+      udid: 'phone-1',
+      appId: 'app.teamstation.develop',
+      link: appLink('chat'),
+      device: android.device
+    })
+    expect(android.calls).deep.equals([
+      ['stopApp', { appId: 'app.teamstation.develop' }],
+      ['openLink', { link: 'teamstation-develop://chat' }]
+    ])
+    const iphone = phone()
+    const ran: string[][] = []
+    await openInApp({
+      platform: 'ios',
+      udid: 'phone-2',
+      appId: 'app.teamstation.develop',
+      link: appLink('chat'),
+      device: iphone.device,
+      run: async (file, args) => {
+        ran.push([file, ...args])
+      }
+    })
+    expect(iphone.calls.map(([name]) => name)).deep.equals(['stopApp'])
+    expect(ran).deep.equals([
+      [
+        'xcrun',
+        'devicectl',
+        'device',
+        'process',
+        'launch',
+        '--device',
+        'phone-2',
+        '--terminate-existing',
+        '--payload-url',
+        'teamstation-develop://chat',
+        'app.teamstation.develop'
+      ]
+    ])
+  })
+
   it('names the server in its develop build’s own link', function () {
     expect(serverLink('ios', 'https://e2e-03.teamstation.app')).equals(
       'teamstation-develop://server?origin=https%3A%2F%2Fe2e-03.teamstation.app'
