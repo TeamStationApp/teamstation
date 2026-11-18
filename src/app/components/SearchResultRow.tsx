@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { type LayoutChangeEvent, Pressable, Text, View } from 'react-native'
 
 import type { SearchResult } from '../../common/search/types'
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge } from './Badge'
 import { Button } from './Button'
@@ -186,6 +187,9 @@ export function SearchResultRow({
                   compact
                   kind={following ? 'secondary' : 'primary'}
                   busy={followBusy}
+                  style={styles.followPill}
+                  labelStyle={styles.followLabel}
+                  hitSlop={FOLLOW_SLOP}
                   onPress={() => {
                     onToggleFollow?.()
                   }}
@@ -244,7 +248,21 @@ export function SearchResultRow({
   )
 }
 
+/** The Follow pill's height, in rem: the compact kind pill's 20 points. */
+export const FOLLOW_HEIGHT_REM = 1.25
+
+/** Reaches the Follow pill's target out to 44 points tall at the base size. */
+export const FOLLOW_SLOP = 12
+
 const getStyles = cacheStyles((theme: Theme) => ({
+  // The kind pill's size, which every pill on the Search screen takes.
+  followPill: {
+    height: theme.rem(FOLLOW_HEIGHT_REM),
+    minHeight: theme.rem(FOLLOW_HEIGHT_REM),
+    borderRadius: theme.rem(FOLLOW_HEIGHT_REM) / 2,
+    paddingHorizontal: pillPadding(theme.rem(FOLLOW_HEIGHT_REM))
+  },
+  followLabel: { fontSize: theme.rem(0.75) },
   target: {
     position: 'absolute' as const,
     top: 0,

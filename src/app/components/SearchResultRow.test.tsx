@@ -10,6 +10,8 @@ import type {
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
+  FOLLOW_HEIGHT_REM,
+  FOLLOW_SLOP,
   kindLabel,
   nameLines,
   nameWords,
@@ -110,6 +112,31 @@ describe('a search result row', function () {
       follow.click()
     })
     expect(pressed).deep.equals(['open', 'follow'])
+  })
+
+  it('draws Follow at the kind pill’s 20 points, with a 12-point label and a target 44 points tall', async function () {
+    await mount(
+      <SearchResultRow
+        result={team}
+        accessibilityLabel="Open Demo Hawks"
+        onPress={() => undefined}
+        follow="follow"
+        onToggleFollow={() => undefined}
+      />
+    )
+    const follow = control('Follow Demo Hawks')!
+    // The kind pill: the box around its label, as tall as Follow.
+    const kindHeights = [...document.querySelectorAll<HTMLElement>('div')]
+      .filter(node => node.textContent === 'Team')
+      .map(node => window.getComputedStyle(node).height)
+    expect(window.getComputedStyle(follow).height).equals('20px')
+    expect(kindHeights).includes('20px')
+    expect(FOLLOW_HEIGHT_REM).equals(1.25)
+    const label = [...follow.querySelectorAll<HTMLElement>('div')].find(
+      node => node.textContent === 'Follow' && node.children.length === 0
+    )!
+    expect(window.getComputedStyle(label).fontSize).equals('12px')
+    expect(20 + 2 * FOLLOW_SLOP).greaterThanOrEqual(44)
   })
 
   it('reads Following when followed, and draws no Follow pill for none or for a person', async function () {

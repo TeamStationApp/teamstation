@@ -378,7 +378,7 @@ describe('the Search tab', () => {
     )!
     expect(getComputedStyle(label).minWidth).equals('0px')
     expect(getComputedStyle(label).flexShrink).equals('1')
-    expect(getComputedStyle(pill).height).equals('32px')
+    expect(getComputedStyle(pill).height).equals('20px')
     await press('Clear search')
     expect(server.last).deep.include({ text: '', location: sanDiego })
     expect(rows()).deep.equals(['Open Demo Hawks'])

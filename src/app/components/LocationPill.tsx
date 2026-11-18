@@ -2,24 +2,25 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 import Svg, { Circle, Line } from 'react-native-svg'
 
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 /** The smallest a finger's target may be, in points. */
 const TARGET_MIN = 44
 
-/** The pill's height, in rem: 32 points at the base size. */
-export const LOCATION_PILL_HEIGHT_REM = 2
+/** The pill's height, in rem: the compact kind pill's 20 points. */
+export const LOCATION_PILL_HEIGHT_REM = 1.25
 
 /** Where a chosen location pill draws its circle and X, for its height. */
 export interface LocationPillGeometry {
   height: number
-  /** The green circle's radius: 0.9 × half the height. */
+  /** The circle's radius: 0.3 × the height, so 0.6 of it across. */
   radius: number
   /** The circle's centre in from the pill's right edge: half the height. */
   centreInset: number
   /** The circle's centre down from the pill's top: its vertical midline. */
   centreY: number
-  /** The X's width and height: 45% of the circle's diameter. */
+  /** The X's width and height: 40% of the circle's diameter. */
   markSpan: number
   /** The X's strokes, round-capped: as asked, and never below 1.5. */
   markStroke: number
@@ -27,26 +28,33 @@ export interface LocationPillGeometry {
   target: number
 }
 
+/** A suggested pill's target reaches above and below it to 44 points tall. */
+export function suggestedSlop(height: number): { top: number; bottom: number } {
+  const reach = Math.max(0, (TARGET_MIN - height) / 2)
+  return { top: reach, bottom: reach }
+}
+
 export function locationPillGeometry(
   height: number,
   stroke = 2
 ): LocationPillGeometry {
-  const radius = 0.9 * (height / 2)
+  const radius = 0.3 * height
   return {
     height,
     radius,
     centreInset: height / 2,
     centreY: height / 2,
-    markSpan: 0.45 * radius * 2,
+    markSpan: 0.4 * radius * 2,
     markStroke: Math.max(1.5, stroke),
     target: Math.max(TARGET_MIN, radius * 2)
   }
 }
 
 /**
- * A place a search is narrowed to, as a beige pill.
+ * A place a search is narrowed to, as a pill the size and colors of the
+ * compact kind pill (`Badge`) on a search result.
  *
- * Chosen (`onRemove`), it sits inside the search field with a green circle
+ * Chosen (`onRemove`), it sits inside the search field with a gray circle
  * at its right end holding a white X. Only the X removes it, through a
  * target of at least 44 points centred on the circle; a tap anywhere else on
  * the pill does nothing. Suggested (`onPress`), the whole pill chooses it.
@@ -62,10 +70,8 @@ export function LocationPill({
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
-  const geometry = locationPillGeometry(
-    theme.rem(LOCATION_PILL_HEIGHT_REM),
-    theme.rem(0.125)
-  )
+  const pillHeight = theme.rem(LOCATION_PILL_HEIGHT_REM)
+  const geometry = locationPillGeometry(pillHeight, 0.05 * pillHeight)
   const { height, radius, centreInset, centreY, markSpan, markStroke, target } =
     geometry
   const text = (
@@ -80,9 +86,16 @@ export function LocationPill({
         accessibilityRole="button"
         accessibilityLabel={`Choose ${label}`}
         onPress={onPress}
+        // Pills sit side by side in their row, so only up and down reach to
+        // a finger's target.
+        hitSlop={suggestedSlop(height)}
         style={[
           styles.pill,
-          { height, borderRadius: height / 2, paddingHorizontal: height / 2 }
+          {
+            height,
+            borderRadius: height / 2,
+            paddingHorizontal: pillPadding(height)
+          }
         ]}
       >
         {text}
@@ -97,7 +110,7 @@ export function LocationPill({
         {
           height,
           borderRadius: height / 2,
-          paddingLeft: height / 2,
+          paddingLeft: pillPadding(height),
           // Clear of the circle, with a little air before it.
           paddingRight: centreInset + radius + height / 4
         }
@@ -169,15 +182,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     minWidth: 0,
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    backgroundColor: theme.pillBeige
+    backgroundColor: theme.neutralBadgeBackground,
+    // As the kind pill's, so the two measure the same.
+    borderWidth: 1,
+    borderColor: 'transparent'
   },
   // Shrinks, and ellipsizes, when the field is narrow; the pill's height,
   // padding and circle stay as they are.
   label: {
     flexShrink: 1,
     minWidth: 0,
-    color: theme.pillBeigeTextColor,
+    color: theme.neutralBadgeTextColor,
     fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.875)
+    fontSize: theme.rem(0.75)
   }
 }))
