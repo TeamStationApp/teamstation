@@ -1,3 +1,4 @@
+import AVFoundation
 import PhoneStream
 import SwiftUI
 
@@ -95,6 +96,9 @@ final class HostDriver {
 
   func launch() async {
     listen()
+    if ProcessInfo.processInfo.environment["PHONESTREAM_CAMERA_TESTS"] == "1" {
+      _ = await AVCaptureDevice.requestAccess(for: .video)
+    }
     let settings = self.settings
     guard let rtmpURL = settings["PHONESTREAM_RTMP_URL"], let request,
       let liveStreamId = settings["PHONESTREAM_LIVE_STREAM_ID"],

@@ -87,6 +87,8 @@ async function grid(options: {
   steps?: Array<ReturnType<typeof boardStep>>
   /** Each angle's player is given an address, rather than waiting for one. */
   playable?: boolean
+  gap?: boolean
+  atMs?: number
 }): Promise<void> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -94,6 +96,14 @@ async function grid(options: {
   // its timeline knows.
   server.timelines.set('a', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('b', wallTimelineOf([[0, OVERLAY_T0 + 90_000]]))
+  if (options.gap === true)
+    server.timelines.set(
+      'b',
+      wallTimelineOf([
+        [0, OVERLAY_T0],
+        [40000, OVERLAY_T0 + 60000]
+      ])
+    )
   server.timelines.set('c', wallTimelineOf([[0, OVERLAY_T0]]))
   server.timelines.set('d', wallTimelineOf([[0, OVERLAY_T0]]))
   server.steps.set('g1', options.steps ?? STEPS)
@@ -126,6 +136,7 @@ async function grid(options: {
           order={IDS}
           audioId="b"
           zoomedId={null}
+          atMs={options.atMs}
           onChange={() => undefined}
           onClose={() => undefined}
         />
@@ -138,6 +149,7 @@ async function grid(options: {
   for (const video of document.querySelectorAll('video'))
     Object.defineProperty(video, 'currentTime', {
       configurable: true,
+      writable: options.playable === true,
       value: 20
     })
   await settle()
@@ -202,6 +214,116 @@ function placed(): {
 
 describe('the board over the phone’s grid (C5)', function () {
   afterEach(unmount)
+
+  it('covers a decoder until its seek lands and covers a reloaded source again', async () => {
+    await grid({ Grid: PhoneGrid, width: 402, height: 874, playable: true })
+    const video = document.querySelector('video')!
+    const picture = video.closest('[role="img"]')!
+    const loading = (): Element | undefined =>
+      [...picture.querySelectorAll('div')].find(
+        node =>
+          node.children.length === 0 &&
+          node.textContent === lstrings.angles_tile_loading
+      )
+    await act(async () => {
+      Object.defineProperty(video, 'readyState', {
+        value: 4,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('loadeddata'))
+    })
+    expect(loading()).equals(undefined)
+    // A same-source reload can clear the native seek without a seeked/emptied event.
+    await act(async () => {
+      Object.defineProperty(video, 'seeking', {
+        value: true,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('seeking'))
+    })
+    expect(loading()).not.equals(undefined)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadeddata'))
+    })
+    expect(
+      loading(),
+      'a picture with a pending seek remains covered'
+    ).not.equals(undefined)
+    await act(async () => {
+      Object.defineProperty(video, 'seeking', {
+        value: false,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('loadeddata'))
+    })
+    expect(
+      loading(),
+      'a replacement picture reconciles the completed seek'
+    ).equals(undefined)
+    await act(async () => {
+      Object.defineProperty(video, 'seeking', {
+        value: true,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('seeking'))
+    })
+    expect(
+      window.getComputedStyle(loading()!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+    await act(async () => {
+      Object.defineProperty(video, 'seeking', {
+        value: false,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('seeked'))
+    })
+    expect(loading()).equals(undefined)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('emptied'))
+    })
+    expect(
+      window.getComputedStyle(loading()!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+  })
+
+  it('announces missing footage on the accessible picture and covers its future frame', async () => {
+    await grid({
+      Grid: PhoneGrid,
+      width: 402,
+      height: 874,
+      playable: true,
+      gap: true,
+      atMs: OVERLAY_T0 + 50000
+    })
+    await act(async () => {
+      for (const video of document.querySelectorAll('video')) {
+        Object.defineProperty(video, 'readyState', {
+          value: 4,
+          configurable: true
+        })
+        Object.defineProperty(video, 'duration', {
+          value: 100,
+          configurable: true
+        })
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      }
+      await settle(100)
+    })
+    const picture = document.querySelector(
+      '[role="img"][aria-label="Angle b angle: ' +
+        lstrings.angles_missing_footage +
+        '"]'
+    )
+    expect(picture, 'accessible missing-footage notice').not.equals(null)
+    const notice = [...picture!.querySelectorAll('div')].find(
+      node =>
+        node.textContent === lstrings.angles_missing_footage &&
+        node.children.length === 0
+    )
+    expect(
+      window.getComputedStyle(notice!.parentElement!).backgroundColor
+    ).equals('rgb(0, 0, 0)')
+  })
 
   it('names each tile as a picture of its angle', async function () {
     await grid({ Grid: PhoneGrid, width: 402, height: 874 })

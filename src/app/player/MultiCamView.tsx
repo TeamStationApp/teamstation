@@ -843,7 +843,13 @@ function Tile(props: {
       unplaceable ||
       waiting ||
       !hasPicture ? (
-        <View style={styles.tileParked} pointerEvents="none">
+        <View
+          style={[
+            styles.tileParked,
+            parked === 'gap' ? { backgroundColor: '#000' } : null
+          ]}
+          pointerEvents="none"
+        >
           <Text style={styles.tileParkedText}>
             {tileNotice({
               unsupported,

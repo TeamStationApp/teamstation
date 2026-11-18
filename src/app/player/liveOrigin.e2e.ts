@@ -572,11 +572,10 @@ export async function runOrigin(options: {
     )
   } finally {
     // A disconnected driver must not strand the API children or scratch DB.
-    const closed = await Promise.allSettled([
-      phone?.close(),
-      page?.detach(),
-      daemon?.close()
-    ])
+    const closed = await Promise.allSettled([phone?.close(), page?.detach()])
+    // Closing the transport while detach is in flight cancels that request
+    // and leaves the browser behind for the next run.
+    closed.push(...(await Promise.allSettled([daemon?.close()])))
     for (const result of closed)
       if (result.status === 'rejected')
         console.error('Viewer cleanup failed:', result.reason)

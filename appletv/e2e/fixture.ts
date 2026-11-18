@@ -49,6 +49,7 @@ export async function tvFixture(
     scored?: boolean
     webRoot?: string
     statsInnings?: number
+    gap?: boolean
   } = {}
 ): Promise<
   AccountHarness & {
@@ -77,6 +78,34 @@ export async function tvFixture(
       '-hls_playlist_type',
       'vod',
       path.join(hls, 'master.m3u8')
+    ])
+  }
+  const gapHls = path.join(directory, 'gap')
+  if (options.gap && source !== undefined) {
+    await mkdir(gapHls)
+    execFileSync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      path.resolve(source),
+      '-filter_complex',
+      '[0:v]trim=end=40,setpts=PTS-STARTPTS[a];[0:v]trim=start=60,setpts=PTS-STARTPTS[b];[a][b]concat=n=2:v=1:a=0[v]',
+      '-map',
+      '[v]',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-g',
+      '30',
+      '-hls_time',
+      '4',
+      '-hls_segment_type',
+      'fmp4',
+      '-hls_playlist_type',
+      'vod',
+      path.join(gapHls, 'master.m3u8')
     ])
   }
   const tvMedia = { fail: false, live: false, searchFail: false }
@@ -232,8 +261,12 @@ export async function tvFixture(
         const videoDirectory = path.join(directory, 'work/videos', id)
         await mkdir(videoDirectory, { recursive: true })
         if (source !== undefined) {
-          for (const file of await readdir(hls))
-            await symlink(path.join(hls, file), path.join(videoDirectory, file))
+          const mediaHls = options.gap && i === 0 && angle === 1 ? gapHls : hls
+          for (const file of await readdir(mediaHls))
+            await symlink(
+              path.join(mediaHls, file),
+              path.join(videoDirectory, file)
+            )
         } else {
           await writeFile(
             path.join(videoDirectory, 'master.m3u8'),
@@ -255,6 +288,27 @@ export async function tvFixture(
             duration_sec: 60,
             created_at: new Date(Date.UTC(2026, 9, 30 - (i % 28), 20))
           })
+          .execute()
+      }
+      if (options.gap && i === 0) {
+        await h.db
+          .insertInto('video_wall_anchors')
+          .values([
+            {
+              video_id: 'vid_tv_0_1',
+              media_ms: 0,
+              wall: start,
+              source: 'sei',
+              corrected: true
+            },
+            {
+              video_id: 'vid_tv_0_1',
+              media_ms: 40000,
+              wall: new Date(start.getTime() + 60000),
+              source: 'sei',
+              corrected: true
+            }
+          ])
           .execute()
       }
       for (let n = 0; n < 4; n++)

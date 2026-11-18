@@ -330,6 +330,9 @@ final class FakeRecording: ProgrammeRecordingTarget, @unchecked Sendable {
 
 final class FakeStream: ProgrammeStreamTarget, @unchecked Sendable {
   private let lock = NSLock()
+  private var _keyframes = 0
+  var keyframes: Int { lock.lock(); defer { lock.unlock() }; return _keyframes }
+  func requestKeyframe() { lock.lock(); _keyframes += 1; lock.unlock() }
   var isRunning = true
   private var _frames: [CMTime] = []
   private var _captures: [WallClock?] = []

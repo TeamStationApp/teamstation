@@ -40,7 +40,11 @@ const marker = createRequire(__filename)(
   readMarkerSource: () => string
   unwrapMarker: (low32: number, nearMs: number) => number
 }
-const GEOMETRY = marker.markerGeometry(720)
+// Match a synthetic fixture encoded at a smaller size on a busy test host.
+const mediaHeight = Number(process.env.TS_PLAYER_MEDIA_HEIGHT ?? 720)
+if (!Number.isFinite(mediaHeight) || mediaHeight < 180)
+  throw new Error('TS_PLAYER_MEDIA_HEIGHT must be the fixture video height')
+const GEOMETRY = marker.markerGeometry(mediaHeight)
 
 /** Every video's reading, with the wall clock burned into its picture. */
 async function read(

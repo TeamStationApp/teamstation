@@ -15,6 +15,7 @@ public protocol ProgrammeRecordingTarget: AnyObject, Sendable {
 /// Where the programme's stream frames go: `ProgramStreamer`, or a fake in a test.
 public protocol ProgrammeStreamTarget: AnyObject, Sendable {
   var running: Bool { get }
+  func requestKeyframe()
   /// `captureWall` is when the picture was captured, moved on by the time it has been on air for a
   /// repeat (`ProgrammeHeldPictureWall`).
   func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock?)
@@ -44,6 +45,7 @@ public final class PhoneProgramme: @unchecked Sendable {
   }
 
   private struct Picture {
+    let rotation: UInt64
     let buffer: CVPixelBuffer
     let capture: WallClock?
   }
@@ -67,6 +69,8 @@ public final class PhoneProgramme: @unchecked Sendable {
   private var timer: DispatchSourceTimer?
   private let queue = DispatchQueue(label: "app.teamstation.phonestream.programme", qos: .userInteractive)
   private var soundEnabled = true
+  private var captureRotation: UInt64 = 0
+  private var streamedRotation: UInt64 = 0
   /// Whether the recording takes this programme's pictures. Off while a part is finished: its hold
   /// fill writes the picture out to the stop on its own, and a live picture landing between two of
   /// the fill's would put the track's times out of order and fail the writer.
@@ -161,7 +165,15 @@ public final class PhoneProgramme: @unchecked Sendable {
   /// A picture from the camera, queued for its moment.
   public func add(picture frame: PixelFrame) {
     lock.lock()
-    pictures.add(Picture(buffer: frame.pixelBuffer, capture: frame.captureWallClock), capture: frame.captureWallClock?.seconds)
+    pictures.add(Picture(rotation: captureRotation, buffer: frame.pixelBuffer, capture: frame.captureWallClock), capture: frame.captureWallClock?.seconds)
+    lock.unlock()
+  }
+
+  /// Called on the capture queue before its first buffer at the new orientation. The keyframe
+  /// request travels with that picture through the delay, rather than applying to an old picture.
+  public func captureRotationChanged() {
+    lock.lock()
+    captureRotation &+= 1
     lock.unlock()
   }
 
@@ -243,6 +255,8 @@ public final class PhoneProgramme: @unchecked Sendable {
     let rate = programmeClock.recordingRate
     let streamRate = programmeClock.streamRate
     let feedsRecording = self.feedsRecording
+    let rotationChanged = picture.rotation != streamedRotation
+    if tick.streamFrame != nil, stream.running { streamedRotation = picture.rotation }
     lock.unlock()
 
     var output = TickOutput(pictureSequence: entry.sequence)
@@ -266,6 +280,7 @@ public final class PhoneProgramme: @unchecked Sendable {
       output.recordingFrames.append(frame)
     }
     if let frame = tick.streamFrame, stream.running {
+      if rotationChanged { stream.requestKeyframe() }
       stream.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)),

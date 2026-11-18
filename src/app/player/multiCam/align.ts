@@ -182,7 +182,7 @@ export type Correction =
  * Why a tile is held where it is: the moment is before its camera started,
  * after it stopped, or — live — past the newest footage it has yet.
  */
-export type ParkReason = 'beforeStart' | 'afterEnd' | 'notYet'
+export type ParkReason = 'beforeStart' | 'afterEnd' | 'notYet' | 'gap'
 
 export interface FollowerState {
   video: AngleVideo
@@ -222,6 +222,8 @@ export function correctionFor(options: {
   const target = secondsAt(follower.video, wallMs)
   if (target == null) return { kind: 'hold' }
   if (target < 0) return { kind: 'park', reason: 'beforeStart' }
+  if (follower.video.clock?.()?.inGap?.(wallMs) === true)
+    return { kind: 'park', reason: 'gap' }
   if (
     follower.newestSec != null &&
     target > follower.newestSec + toleranceSec

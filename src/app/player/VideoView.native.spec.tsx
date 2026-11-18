@@ -68,5 +68,6 @@ describe("the phone's picture and its buffer (U33a)", function () {
     })
     expect(tile.preferredForwardBufferDuration).equals(30)
     expect(tile.bufferingStrategy).equals('DependingOnMemory')
+    expect(tile.reportBandwidth).equals(true)
   })
 })

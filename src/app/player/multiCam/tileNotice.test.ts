@@ -30,6 +30,9 @@ describe("a tile's notice", function () {
     expect(said({ parked: 'afterEnd', waiting: true })).equals(
       lstrings.angles_stopped
     )
+    expect(said({ parked: 'gap', waiting: true })).equals(
+      lstrings.angles_missing_footage
+    )
     expect(said({ parked: 'notYet', waiting: true })).equals(
       lstrings.angles_tile_waiting_live
     )

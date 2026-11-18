@@ -251,6 +251,8 @@ public final class PhoneStreamEngine {
     )
     let source = environment.makeSource()
     if let device = source.device {
+      let programme = self.programme
+      device.onCaptureRotationChange = { programme.captureRotationChanged() }
       device.onStateChange = { [weak self] state in self?.cameraChanged(state) }
       device.configure(position: .back, settings: captureSettings)
     }

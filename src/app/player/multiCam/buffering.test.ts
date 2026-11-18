@@ -54,6 +54,13 @@ describe('how much a tile must hold to play', function () {
 })
 
 describe('a tile about to run dry', function () {
+  it('lets a lone ready browser keep loading while playing a shallow buffer', function () {
+    expect(isDry(web(0.1), true)).equals(false)
+    expect(isDry(web(0.1), false)).equals(true)
+    expect(isDry(web(0), true)).equals(true)
+    expect(isDry({ ...web(0.1), readyState: 2 }, true)).equals(true)
+    expect(isDry(phone(2), true)).equals(true)
+  })
   it('is one with under half a second left and more to come', function () {
     expect(isDry(web(0.4))).equals(true)
     expect(isDry(web(0.6))).equals(false)
@@ -192,5 +199,15 @@ describe('what a player holds ahead', function () {
     expect(readyWhereItStands({ ...ready, waitedMs: 0, alone: false })).equals(
       false
     )
+  })
+
+  it('releases a lone ready browser with less than a second without releasing empty or unready players', function () {
+    const tile = { waitedMs: 0, readyState: 3, aheadSec: 0.1, alone: true }
+    expect(readyWhereItStands(tile)).equals(true)
+    expect(readyWhereItStands({ ...tile, aheadSec: 0 })).equals(false)
+    expect(readyWhereItStands({ ...tile, readyState: 2 })).equals(false)
+    expect(
+      readyWhereItStands({ ...tile, alone: false, waitedMs: 3000 })
+    ).equals(false)
   })
 })

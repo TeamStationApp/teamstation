@@ -74,6 +74,8 @@ export interface VideoHandle {
   readonly paused: boolean
   /** Native playback confirmation; a play request alone is not viewing. */
   readonly actuallyPlaying?: boolean
+  /** Native samples only; an optimistic seek/interpolation must not hide a stall. */
+  readonly reportedTime?: number
   muted: boolean
   playbackRate: number
   /**

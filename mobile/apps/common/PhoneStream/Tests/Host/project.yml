@@ -68,6 +68,8 @@ targets:
     platform: iOS
     sources:
       - path: ../PhoneStreamTests
+      - path: ../../../../tsCameraman/Tests/CameramanUnitTests/CameraSessionPreviewTests.swift
+      - path: ../../../../tsCameraman/Tests/CameramanUnitTests/CameraSessionInterruptionTests.swift
     dependencies:
       - target: PhoneStreamHost
       - package: PhoneStream

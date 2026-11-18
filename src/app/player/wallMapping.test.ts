@@ -20,6 +20,32 @@ describe('one player’s mapping onto the wall clock (U20)', function () {
     { start: 12, duration: 4, programDateTime: T0 + 12_000 + 34_000 }
   ]
 
+  it('exposes missing footage without changing nearest-frame seek conversion', () => {
+    const mapping = fromFragments(fragments)
+    expect(mapping.inGap?.(T0 + 7999)).equals(false)
+    expect(mapping.inGap?.(T0 + 8000)).equals(true)
+    expect(mapping.inGap?.(T0 + 41999)).equals(true)
+    expect(mapping.inGap?.(T0 + 42000)).equals(false)
+    expect(mapping.inGap?.(T0 + 90000)).equals(false)
+    expect(mapping.secAt(T0 + 20000)).equals(8)
+    expect(fromFragments([]).inGap?.(T0)).equals(false)
+    const anchors = fromAnchors([
+      [0, T0],
+      [8000, T0 + 42000]
+    ])
+    expect(anchors.inGap?.(T0 + 10000)).equals(true)
+    expect(anchors.inGap?.(T0 + 42000)).equals(false)
+    // A segment an arrival look found a second late is not an outage.
+    const late: Array<[number, number]> = [
+      [0, T0],
+      [2000, T0 + 3200]
+    ]
+    expect(fromAnchors(late).inGap?.(T0 + 2500)).equals(true)
+    expect(fromAnchors(late, undefined, 'arrival').inGap?.(T0 + 2500)).equals(
+      false
+    )
+  })
+
   it('maps fragment by fragment, one second a second inside each, across a gap', function () {
     const mapping = fromFragments(fragments)
     expect(mapping.source).equals('pdt')

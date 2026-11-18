@@ -1,0 +1,273 @@
+import assert from 'node:assert/strict'
+import { type ChildProcess, spawn } from 'node:child_process'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+
+import { tvFixture } from '../../appletv/e2e/fixture'
+
+interface Tree {
+  id?: string
+  text?: string
+  children?: Tree[]
+}
+const find = (tree: Tree, id: string): Tree | undefined =>
+  tree.id === id
+    ? tree
+    : tree.children?.map(child => find(child, id)).find(Boolean)
+const allText = (tree: Tree): string =>
+  [tree.text ?? '', ...(tree.children ?? []).map(allText)].join('\n')
+const delay = async (ms: number): Promise<void> => {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** Finished TV app against isolated synthetic media and authorization routes. */
+export async function tvReliability(testCase: string): Promise<void> {
+  const {
+    TV_SIMULATOR_UDID: device,
+    TV_METRO_URL: metro,
+    TS_E2E_ARTIFACT_DIR: output,
+    MAESTRO_D_CLIENT_ROOT: clientRoot
+  } = process.env
+  assert(
+    device != null && metro != null && output != null && clientRoot != null
+  )
+  assert(
+    ['transport', 'archive', 'gaps', 'recovery'].includes(testCase),
+    'Unsupported TV case'
+  )
+  const before = process.env.TS_EXPECT_BASE_FAILURE === '1'
+  const { MaestroD } = createRequire(join(clientRoot, 'package.json'))(
+    './dist/cjs/index.js'
+  )
+  const daemon = await MaestroD.connect({
+    name: process.env.MAESTRO_D ?? 'streamingReliabilityTv'
+  })
+  const tv = await daemon.attach({ device, platform: 'ios', artifacts: 'none' })
+  const fixture = await tvFixture({ scored: true, gap: testCase === 'gaps' })
+  let recording: ChildProcess | undefined
+  try {
+    await mkdir(output, { recursive: true })
+    fixture.tvMedia.fail = testCase === 'recovery'
+    fixture.tvMedia.live = testCase !== 'gaps'
+    await fixture.db
+      .updateTable('videos')
+      .set({ status: testCase === 'gaps' ? 'ready' : 'live' })
+      .where('game_id', '=', 'gam_tv_0')
+      .execute()
+    await tv.launchApp({
+      appId: 'app.teamstation.tv',
+      stopApp: true,
+      environment: {
+        TV_API_BASE_URL: fixture.origin + '/api/v1',
+        TV_METRO_URL: metro
+      }
+    })
+    await tv.assertVisible({
+      text: 'Your games. On the big screen.',
+      timeout: 60000
+    })
+    const code = /[A-Z]{4}[–-][A-Z]{4}/.exec(allText(await tv.hierarchy()))?.[0]
+    assert(code != null, 'TV pairing code')
+    assert.equal(
+      (await fixture.request('POST', '/auth/tv/approve', { code })).status,
+      204
+    )
+    await tv.assertVisible({ text: 'Recent Games', timeout: 30000 })
+    await tv.tapOn({ id: 'tv-watch-game' })
+    await tv.assertVisible({ id: 'tv-angle-3', timeout: 30000 })
+    if (testCase === 'recovery') {
+      const outageSeconds = Number(process.env.TS_FAULT_SECONDS ?? 180)
+      assert(
+        Number.isFinite(outageSeconds) &&
+          outageSeconds > 0 &&
+          outageSeconds <= 180
+      )
+      await delay(outageSeconds * 1000)
+      await writeFile(join(output, 'tv-outage.png'), await tv.screenshot())
+      recording = spawn(
+        'xcrun',
+        [
+          'simctl',
+          'io',
+          device,
+          'recordVideo',
+          '--force',
+          join(output, 'tv-recovery.mp4')
+        ],
+        { stdio: 'ignore' }
+      )
+      const restored = Date.now()
+      fixture.tvMedia.fail = false
+      let restoredTree: Tree
+      do {
+        await delay(1000)
+        restoredTree = await tv.hierarchy()
+        if (Date.now() - restored > 30000)
+          throw new Error('TV did not recover within 30 seconds')
+      } while (
+        /could not play|unavailable at this moment/i.test(allText(restoredTree))
+      )
+      await tv.pressKey({ key: 'DPAD_LEFT' })
+      const first = find(await tv.hierarchy(), 'tv-current-time')?.text
+      await delay(2000)
+      const second = find(await tv.hierarchy(), 'tv-current-time')?.text
+      // The transport auto-hides during playback. A hidden counter is not a
+      // stalled frame: retain the video for burned-in-clock review in that case.
+      if (first !== undefined && second !== undefined)
+        assert.notEqual(first, second, 'Recovered TV must advance')
+      await writeFile(join(output, 'tv-recovered.png'), await tv.screenshot())
+      await writeFile(
+        join(output, 'recovery.json'),
+        JSON.stringify(
+          {
+            outageSeconds,
+            recoveredWithinMs: Date.now() - restored,
+            advancementRequiresVideoReview:
+              first === undefined || second === undefined,
+            first,
+            second
+          },
+          null,
+          2
+        )
+      )
+      console.log(
+        `PASS: TV automatically restores cameras after a ${outageSeconds}-second media outage; review burned-in clocks for advancement`
+      )
+      return
+    }
+    await delay(6000)
+    await tv.pressKey({ key: 'playPause' })
+    if (testCase === 'gaps') {
+      recording = spawn(
+        'xcrun',
+        [
+          'simctl',
+          'io',
+          device,
+          'recordVideo',
+          '--force',
+          join(output, 'gap-playback.mp4')
+        ],
+        { stdio: 'ignore' }
+      )
+      for (let i = 0; i < 5; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await delay(1500)
+      const gapTree = await tv.hierarchy()
+      await writeFile(join(output, 'gap-observed.png'), await tv.screenshot())
+      await writeFile(
+        join(output, 'gap-observed.json'),
+        JSON.stringify(gapTree, null, 2)
+      )
+      const missing = 'First base: video unavailable at this moment'
+      if (before)
+        assert(
+          !allText(gapTree).includes(missing),
+          'Base incorrectly displays future footage'
+        )
+      else
+        assert(
+          allText(gapTree).includes(missing),
+          'Missing footage must be explicit'
+        )
+      await writeFile(
+        join(output, before ? 'gap-before.png' : 'gap-after.png'),
+        await tv.screenshot()
+      )
+      await writeFile(
+        join(output, 'gap-tree.json'),
+        JSON.stringify(gapTree, null, 2)
+      )
+      for (let i = 0; i < 2; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await delay(1500)
+      assert(
+        !allText(await tv.hierarchy()).includes(missing),
+        'Footage resumes after the gap'
+      )
+      await writeFile(join(output, 'gap-resumed.png'), await tv.screenshot())
+      console.log(
+        before
+          ? 'BASE REPRODUCED: missing footage displays a future frame'
+          : 'PASS: missing footage is covered and resumes after the gap'
+      )
+      return
+    }
+    await tv.pressKey({ key: 'DPAD_LEFT' })
+    const tree = (await tv.hierarchy()) as Tree
+    await writeFile(
+      join(output, before ? 'tv-before.png' : 'tv-after.png'),
+      await tv.screenshot()
+    )
+    await writeFile(
+      join(output, 'tv-transport.json'),
+      JSON.stringify({ synthetic: true, before, tree }, null, 2)
+    )
+    if (before) assert.match(allText(tree), /Seeking unavailable/i)
+    else {
+      assert.doesNotMatch(allText(tree), /Seeking unavailable/i)
+      assert(
+        find(tree, 'tv-current-time') !== undefined,
+        'Live transport shows a finite position'
+      )
+    }
+    if (testCase === 'archive') {
+      const at = find(tree, 'tv-current-time')?.text
+      assert(at !== undefined)
+      recording = spawn(
+        'xcrun',
+        [
+          'simctl',
+          'io',
+          device,
+          'recordVideo',
+          '--force',
+          join(output, 'tv-recovery.mp4')
+        ],
+        { stdio: 'ignore' }
+      )
+      fixture.tvMedia.live = false
+      await fixture.db
+        .updateTable('videos')
+        .set({ status: 'ready' })
+        .where('game_id', '=', 'gam_tv_0')
+        .execute()
+      await delay(13000)
+      await tv.pressKey({ key: 'DPAD_RIGHT' })
+      await tv.pressKey({ key: 'DPAD_LEFT' })
+      const after = (await tv.hierarchy()) as Tree
+      assert.doesNotMatch(
+        allText(after),
+        /could not play|Try again|Seeking unavailable/i
+      )
+      assert.equal(
+        find(after, 'tv-current-time')?.text,
+        at,
+        'Paused viewer retains the same moment across archive publication'
+      )
+      await writeFile(join(output, 'tv-archive.png'), await tv.screenshot())
+      console.log(
+        'PASS: live-to-archive refresh retains a paused rewind and permits seeking'
+      )
+    }
+    console.log(
+      before
+        ? 'BASE REPRODUCED: live seeking unavailable'
+        : 'PASS: live seeking exposes finite transport'
+    )
+  } finally {
+    if (recording?.exitCode === null) {
+      const stopped = new Promise<void>(resolve =>
+        recording!.once('exit', () => {
+          resolve()
+        })
+      )
+      recording.kill('SIGINT')
+      const deadline = setTimeout(() => recording?.kill('SIGKILL'), 5000)
+      await stopped
+      clearTimeout(deadline)
+    }
+    await tv.stopApp({ appId: 'app.teamstation.tv' }).catch(() => undefined)
+    await fixture.close()
+  }
+}

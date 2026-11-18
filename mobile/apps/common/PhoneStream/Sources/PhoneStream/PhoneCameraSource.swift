@@ -52,6 +52,7 @@ public struct CaptureClockMapping: Sendable {
 
 /// What `PhoneCameraSource` captures from: TS Cameraman's `CameraSession`, or a fake in a test.
 public protocol PhoneCaptureDevice: AnyObject, Sendable {
+  var onCaptureRotationChange: (@Sendable () -> Void)? { get set }
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)? { get set }
   var onAudioFrame: (@Sendable (SampleBuffer) -> Void)? { get set }
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)? { get set }

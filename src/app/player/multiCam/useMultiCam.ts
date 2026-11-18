@@ -10,8 +10,10 @@ import {
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { CARD_HIDE_MS } from '../cardScrub'
+import { notifyExplicitSeek } from '../explicitSeek'
 import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
+import { playerTrace } from '../playerTrace'
 import type { PlayIntent } from '../playIntent'
 import {
   type GridZone,
@@ -886,7 +888,7 @@ export function useMultiCam(
       // sound.
       if (correction?.kind === 'park') {
         // A live camera behind the game waits where it opened.
-        if (correction.reason !== 'notYet')
+        if (correction.reason !== 'notYet' && correction.reason !== 'gap')
           element.currentTime =
             correction.reason === 'beforeStart'
               ? 0
@@ -972,10 +974,22 @@ export function useMultiCam(
   const gameNow = (except: string): number | null => {
     const ids = [heardRef.current, ...chosenRef.current.map(video => video.id)]
     for (const id of ids) {
-      if (id == null || id === except || joining.current.has(id)) continue
+      if (
+        id == null ||
+        id === except ||
+        joining.current.has(id) ||
+        restoring.current.has(id)
+      )
+        continue
       const element = elements.current.get(id)
       const video = chosenRef.current.find(one => one.id === id)
-      if (element == null || video == null || element.paused) continue
+      if (
+        element == null ||
+        video == null ||
+        element.paused ||
+        element.readyState < HAVE_CURRENT_DATA
+      )
+        continue
       const there = wallAt(video, element.currentTime)
       if (there != null) return there
     }
@@ -1010,7 +1024,10 @@ export function useMultiCam(
   const joinAhead = (
     video: VideoSummary,
     element: TileHandle,
-    leadSec: number
+    leadSec: number,
+    attemptStarted = Date.now(),
+    /** Where the ten seconds a tile has to become ready are counted from. */
+    readyFrom = attemptStarted
   ): void => {
     stopJoining(video.id)
     const fromMs = gameNow(video.id) ?? atWallRef.current
@@ -1022,6 +1039,7 @@ export function useMultiCam(
     element.currentTime = target + leadSec
     seekedAt.current.set(video.id, Date.now() + leadSec * 1000)
     const begun = Date.now()
+    let notReadyFrom = readyFrom
     const start = (): void => {
       stopJoining(video.id)
       seekedAt.current.set(video.id, Date.now())
@@ -1037,6 +1055,30 @@ export function useMultiCam(
           stopJoining(video.id)
           return
         }
+        const elapsed = Date.now() - attemptStarted
+        // Native's deadline follows completed transfers. Browser seeks get a
+        // bounded download window too, rather than losing their source at 10s.
+        if (
+          element.seeking === true &&
+          (element.checkSeekTimeout != null || elapsed < 120_000)
+        ) {
+          element.checkSeekTimeout?.()
+          seekedAt.current.set(video.id, Date.now())
+          // A seek that downloaded for a while lands before the player says
+          // it is ready (AVPlayer reports that separately): the ten seconds
+          // start at the landing, not at the first attempt.
+          notReadyFrom = Date.now()
+          return
+        }
+        if (
+          (element.seeking === true && elapsed >= 10_000) ||
+          (element.readyState < 3 && Date.now() - notReadyFrom >= 10_000)
+        ) {
+          stopJoining(video.id)
+          seekedAt.current.set(video.id, Date.now() + JOIN_LEAD_SEC * 1000)
+          askAgain(video.id)
+          return
+        }
         const now = gameNow(video.id)
         const there = wallAt(video, element.currentTime)
         // Nothing to follow: as good a guess as any is the lead itself.
@@ -1045,11 +1087,17 @@ export function useMultiCam(
           return
         }
         if (now < there) return
-        const ready = element.seeking !== true && element.readyState >= 3
+        const ready = element.readyState >= 3
         if (ready) {
           start()
         } else if (now - there > 250) {
-          joinAhead(video, element, Math.min(leadSec * 2, JOIN_LEAD_SEC * 4))
+          joinAhead(
+            video,
+            element,
+            Math.min(leadSec * 2, JOIN_LEAD_SEC * 4),
+            attemptStarted,
+            notReadyFrom
+          )
         }
       }, JOIN_POLL_MS)
     )
@@ -1082,12 +1130,20 @@ export function useMultiCam(
       for (const video of chosen) {
         const element = elements.current.get(video.id)
         if (element == null) continue
+        // Preserve the grid's requested moment even when alignment must wait
+        // for native to open: the moment each tile is actually sent to.
+        // Watchdog corrections are not viewer intent.
+        const intended = (seconds: number | null): void => {
+          if (mode === 'exact' && seconds != null)
+            notifyExplicitSeek(element, seconds)
+        }
         // Waiting for the game to reach it: left alone by the watchdog, and
         // overtaken by anything somebody asked for.
         if (joining.current.has(video.id)) {
           if (mode === 'settle') continue
           stopJoining(video.id)
         }
+        if (mode === 'settle' && element.seeking === true) continue
         const run =
           runAll ??
           (playing && flowing.current && !leftOut.current.has(video.id))
@@ -1106,15 +1162,16 @@ export function useMultiCam(
           element.pause()
           // Waiting for its live footage to reach the game: left where it is,
           // with nothing sought, until its mapping says the footage is there.
-          if (correction.reason === 'notYet') {
+          if (correction.reason === 'notYet' || correction.reason === 'gap') {
+            const reason = correction.reason
             setTiles(current =>
-              current[video.id]?.parked === 'notYet'
+              current[video.id]?.parked === reason
                 ? current
                 : {
                     ...current,
                     [video.id]: {
                       ...(current[video.id] ?? freshTile()),
-                      parked: 'notYet'
+                      parked: reason
                     }
                   }
             )
@@ -1128,6 +1185,7 @@ export function useMultiCam(
             correction.reason === 'beforeStart'
               ? 0
               : (mediaLengthOf(element) ?? element.currentTime)
+          intended(edge)
           if (Math.abs(element.currentTime - edge) > 0.5) {
             element.currentTime = edge
           }
@@ -1143,6 +1201,7 @@ export function useMultiCam(
         // A tile a little out, while it plays, is brought back by speed: a
         // seek costs more than the gap everywhere but Chrome (`align.ts`).
         const target = secondsAt(video, wallMs)
+        intended(target)
         const errorSec = target == null ? 0 : target - element.currentTime
         // Joining — starting late, coming back, or too far out to close by
         // speed — it is sent just ahead and started when the game gets there.
@@ -1279,9 +1338,9 @@ export function useMultiCam(
    * seconds it holds, which a seek does not fake, so it is taken at its word.
    */
   const runningDry = useCallback(
-    (video: VideoSummary, now: number): boolean => {
+    (video: VideoSummary, now: number, alone: boolean): boolean => {
       const buffer = bufferOf(elements.current.get(video.id))
-      if (!isDry(buffer)) return false
+      if (!isDry(buffer, alone)) return false
       return (
         buffer.aheadSec != null ||
         !isOurSilence(now, seekedAt.current.get(video.id))
@@ -1397,6 +1456,7 @@ export function useMultiCam(
         if (
           !ready &&
           element != null &&
+          element.seeking !== true &&
           readyWhereItStands({
             waitedMs: now - since,
             readyState: element.readyState,
@@ -1478,7 +1538,10 @@ export function useMultiCam(
     const instant = atWallRef.current
     if (instant == null) return
     const now = Date.now()
-    const dry = awaited(instant).some(video => runningDry(video, now))
+    const waitingFor = awaited(instant)
+    const dry = waitingFor.some(video =>
+      runningDry(video, now, waitingFor.length === 1)
+    )
     if (!dry) return
     hold()
     setWaiting(anyPicture())
@@ -1572,7 +1635,10 @@ export function useMultiCam(
       // every tick, so a frozen picture reports a position that keeps
       // changing.
       const quality = tileElement.getVideoPlaybackQuality?.()
-      const drawn = quality?.totalVideoFrames ?? tileElement.currentTime
+      const drawn =
+        quality?.totalVideoFrames ??
+        tileElement.reportedTime ??
+        tileElement.currentTime
       const lastDrawn = frames.current.get(video.id)
       const progressed = lastDrawn == null || drawn !== lastDrawn
       frames.current.set(video.id, drawn)
@@ -1756,8 +1822,9 @@ export function useMultiCam(
      */
     const waitingNow = playing && covering.length > 0 && showing.length === 0
     if (playing && instant != null) {
-      const dry = awaited(instant, finishedNow).some(video =>
-        runningDry(video, now)
+      const waitingFor = awaited(instant, finishedNow)
+      const dry = waitingFor.some(video =>
+        runningDry(video, now, waitingFor.length === 1)
       )
       if (flowing.current && (waitingNow || dry)) hold()
       if (!flowing.current) {
@@ -1873,20 +1940,26 @@ export function useMultiCam(
    */
   const goTo = useCallback(
     (asked: number): void => {
-      // A drag or a tap at the end of a live bar lands at the live point:
-      // the newest pictures are still arriving, and asked for, every angle
-      // would wait for them. Never behind where the grid already is, though:
-      // the live point moves a segment at a time, and an angle whose camera
-      // has just gone holds it still while the pictures play on, so a move
-      // forward from there would have jumped back.
-      const limit = livePointRef.current()
+      // The opening cushion chooses where playback starts, not where a
+      // viewer may seek. Match the available end shown by the timeline.
+      // Never behind where the grid already is, though: that end moves a
+      // segment at a time while the pictures play on, so a move forward
+      // from past it would have jumped back.
+      const limit = chosenRef.current.some(video => video.status === 'live')
+        ? (takeRef.current?.toMs ?? null)
+        : null
       const here = gameNowRef.current('') ?? atWallRef.current
       const wallMs =
         limit == null || asked <= limit
           ? asked
           : Math.max(limit, Math.min(asked, here ?? limit))
+      playerTrace('grid.seek', { asked, accepted: wallMs, limit, here })
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
+      // A paused grid has no moving leader to update its ended notice.
+      // An explicit rewind owns the moment even while its pictures reload.
+      const end = takeRef.current?.toMs
+      if (end == null || wallMs < end - 1000) setEnded(false)
       shortSince.current.clear()
       if (flowing.current) {
         const held = awaited(wallMs).map(video =>
@@ -1941,21 +2014,22 @@ export function useMultiCam(
         setAtWallMs(there)
       }
     }
-    setPlaying(current => {
-      const next = !current
-      for (const video of chosen) {
-        const element = elements.current.get(video.id)
-        if (element == null) continue
-        if (tiles[video.id]?.parked != null) continue
-        // A grid that is still filling, or a tile left out, plays when the
-        // watchdog lets it.
-        const run = next && flowing.current && !leftOut.current.has(video.id)
-        intents.current.set(video.id, run)
-        if (run) playTile(element)
-        else element.pause()
-      }
-      return next
-    })
+    const next = !playingRef.current
+    playingRef.current = next
+    setPlaying(next)
+    // Native commands update another React component. Keep them outside a
+    // state updater, which React can execute while rendering this component.
+    for (const video of chosen) {
+      const element = elements.current.get(video.id)
+      if (element == null) continue
+      if (tiles[video.id]?.parked != null) continue
+      // A grid that is still filling, or a tile left out, plays when the
+      // watchdog lets it.
+      const run = next && flowing.current && !leftOut.current.has(video.id)
+      intents.current.set(video.id, run)
+      if (run) playTile(element)
+      else element.pause()
+    }
   }, [chosen, playTile, tiles])
 
   /**
@@ -2360,7 +2434,7 @@ export function useMultiCam(
     scrub(Math.max(target, here ?? target))
   }
 
-  // Each angle read as the live point reads it (`newestWallOf`): by its
+  // Each angle is read through `newestWallOf`: by its
   // mapping, or its player's seekable end where it has none, as a phone's
   // tile before the server's timeline arrives.
   const newest = anyLive
