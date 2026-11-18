@@ -153,12 +153,14 @@ export async function teamRoster(
  *
  * - **Admins** and **Staff**: roles given on the season or its league (on
  *   the league alone for a league), the league's carrying its pill.
- * - **Players**: everybody who plays now on a team the level reaches, as
- *   membership and roles reach it (`teamsUnder`), with the teams' names.
- * - **Family members**: their guardians.
+ * - **Family members**: the guardians of everybody who plays now on a team
+ *   the level reaches, as membership and roles reach it (`teamsUnder`).
  * - **Spectators**: members of the season or its league, the league's with
  *   a "League spectator" pill on a season's list.
  * - **Followers**: people who follow this season or league itself.
+ *
+ * Nobody is listed for playing: a player with another tie here is in that
+ * tie's section, still marked a player, and one who only plays is left out.
  *
  * Undefined for a season or league that is not there.
  */
@@ -262,11 +264,22 @@ export async function levelPeople(
       .execute()
   ).map(row => row.user_id)
 
+  // Nobody is listed for playing: somebody who only plays is left out, and
+  // only named, so a guardian's line names the children it guards.
+  const following = new Set(followers)
+  const onlyPlays = (userId: string): boolean =>
+    !given.has(userId) &&
+    !memberLevels.has(userId) &&
+    !family.has(userId) &&
+    !following.has(userId)
+  const listedPlayers = [...players.values()].filter(
+    row => !onlyPlays(row.userId)
+  )
   return await sectionPeople(
     db,
     space,
     [
-      ...players.values(),
+      ...listedPlayers,
       ...(await outsiders(
         db,
         [
@@ -280,6 +293,8 @@ export async function levelPeople(
     ],
     {
       ownLevel: ref.kind,
+      listsPlayers: false,
+      namedOnly: [...players.values()].filter(row => onlyPlays(row.userId)),
       given,
       memberLevels,
       family,
@@ -329,7 +344,11 @@ export async function peopleAt(
     : await teamRoster(db, space, ref.id, false, viewer, cache, reader, scopes)
 }
 
-/** Whether somebody is on a level's people list, in any section. */
+/**
+ * Whether somebody may be opened as a person from a level: they are on its
+ * people list, in any section, or they play on a team it reaches. A season's
+ * or league's list leaves out who only plays, and their profile still opens.
+ */
 export async function onPeopleList(
   db: Kysely<Database>,
   ref: { kind: 'league' | 'season' | 'team'; id: string },
@@ -490,6 +509,16 @@ async function sectionPeople(
   rows: PeopleRow[],
   facts: {
     ownLevel: RoleLevel
+    /**
+     * Whether the list has a Players section: a team's roster does; a season's
+     * or league's places each player by their other tie there.
+     */
+    listsPlayers?: boolean
+    /**
+     * People named with the list, so its names are worked out across both,
+     * but not on it: the players a season's or league's family lines name.
+     */
+    namedOnly?: PeopleRow[]
     /** The roles given here and above, each at the highest level giving it. */
     given: Map<string, Map<Role, RoleLevel>>
     /** Members of this level or one above it, at the highest level. */
@@ -529,7 +558,7 @@ async function sectionPeople(
   // Worked out across the whole list so two children called Jordan do not
   // both come out `Jordan P`. Players take the setting: the team's on its
   // roster, and with no single team, the teams they play for.
-  const people = rows.map(row => ({
+  const people = [...rows, ...(facts.namedOnly ?? [])].map(row => ({
     person: {
       id: row.userId,
       firstName: row.firstName,
@@ -567,7 +596,7 @@ async function sectionPeople(
       ? 'admin'
       : staffRoles.length > 0
         ? 'staff'
-        : row.isPlayer
+        : row.isPlayer && facts.listsPlayers !== false
           ? 'player'
           : family.has(row.userId)
             ? 'family'

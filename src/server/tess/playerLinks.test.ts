@@ -115,6 +115,44 @@ describe("Tess's player links", function () {
       })
     })
 
+    it('takes a season’s or a league’s players, filed by their other tie with their teams', function () {
+      const member = userIdOfGumbo(115)
+      const parent = userIdOfGumbo(116)
+      const names = playerNamesOf([
+        message(1, 'user', [
+          // `GET /seasons/:id/people`: no Players section. Tony plays and is
+          // a member, so he is a spectator who plays; the parent is family.
+          answered({
+            people: [
+              {
+                userId: GWYNN,
+                shortName: 'Tony G',
+                isPlayer: true,
+                section: 'spectator',
+                teamNames: ['Demo Hawks']
+              },
+              {
+                userId: parent,
+                shortName: 'Mom',
+                isPlayer: false,
+                section: 'family',
+                guardianOf: ['Tony G']
+              },
+              {
+                userId: member,
+                shortName: 'Sparky A',
+                isPlayer: false,
+                section: 'spectator'
+              }
+            ],
+            manages: false,
+            admin: false
+          })
+        ])
+      ])
+      expect(Object.fromEntries(names)).deep.equals({ 'Tony G': GWYNN })
+    })
+
     it('takes only players: never a roster’s admins, staff, family, spectators or followers', function () {
       const entry = (
         userId: string,

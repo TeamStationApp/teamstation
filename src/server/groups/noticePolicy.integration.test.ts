@@ -2240,7 +2240,9 @@ describe('adds made with a notice', function () {
     const level = { kind: 'season', id: SEASON } as const
     const listed = async (): Promise<string[]> =>
       (await levelPeople(db!, undefined, level))!.map(row => row.userId)
-    expect(await listed()).includes(ids['Held Season'])
+    // Nobody is on a season's list only for playing: the held player's
+    // name is read from their profile there, which still opens.
+    expect(await listed()).not.includes(ids['Held Season'])
     expect(await listed()).not.includes(ids['Season Parent'])
     await db!
       .insertInto('scope_roles')
@@ -2265,6 +2267,7 @@ describe('adds made with a notice', function () {
     expect(await profile()).equals(null)
     await held.settle()
     expect(await listed()).includes(ids['Season Parent'])
+    expect(await listed()).not.includes(ids['Held Season'])
     expect(await profile()).equals('Held Season')
   })
 

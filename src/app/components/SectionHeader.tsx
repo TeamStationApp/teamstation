@@ -17,16 +17,25 @@ export interface SectionHeaderProps {
    * section in its accessible label, since several headers carry the same
    * words on one page.
    */
-  actions?: Array<{
-    label: string
-    accessibilityLabel?: string
-    onPress: () => void
-  }>
+  actions?: HeaderAction[]
+  /**
+   * Small pills drawn immediately before the `note`, the same as `actions`:
+   * an add beside the count of what it adds to.
+   */
+  noteActions?: HeaderAction[]
   /**
    * The lines the title may take before it is cut short: more than one for
    * a long title beside several actions on a phone.
    */
   titleLines?: number
+}
+
+/** A small header pill, naming its section in its accessible label. */
+export interface HeaderAction {
+  label: string
+  accessibilityLabel?: string
+  testID?: string
+  onPress: () => void
 }
 
 /**
@@ -45,9 +54,36 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
     onAction,
     actionPill = false,
     actions = [],
+    noteActions = [],
     titleLines = 1
   } = props
   const styles = getStyles(useTheme())
+  const pill =
+    (from: 'note' | 'end') =>
+    (action: HeaderAction): React.ReactElement => (
+      <Pressable
+        key={`${from}:${action.label}`}
+        testID={action.testID}
+        accessibilityRole="button"
+        accessibilityLabel={action.accessibilityLabel ?? action.label}
+        onPress={() => {
+          action.onPress()
+        }}
+        hitSlop={8}
+        style={({ pressed }) => [styles.target, pressed && styles.pressed]}
+      >
+        <View
+          testID={
+            from === 'note'
+              ? 'settings-pill-note-action'
+              : 'settings-pill-header-action'
+          }
+          style={styles.smallPill}
+        >
+          <Text style={styles.smallPillText}>{action.label}</Text>
+        </View>
+      </Pressable>
+    )
 
   return (
     <View style={styles.row}>
@@ -55,6 +91,7 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
         {title.toUpperCase()}
       </Text>
       <View style={styles.right}>
+        {noteActions.map(pill('note'))}
         {note != null && (
           <View testID="settings-pill-count" style={styles.note}>
             <Text style={styles.noteLabel}>{note}</Text>
@@ -74,22 +111,7 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
             </View>
           </Pressable>
         )}
-        {actions.map(action => (
-          <Pressable
-            key={action.label}
-            accessibilityRole="button"
-            accessibilityLabel={action.accessibilityLabel ?? action.label}
-            onPress={() => {
-              action.onPress()
-            }}
-            hitSlop={8}
-            style={({ pressed }) => [styles.target, pressed && styles.pressed]}
-          >
-            <View testID="settings-pill-header-action" style={styles.smallPill}>
-              <Text style={styles.smallPillText}>{action.label}</Text>
-            </View>
-          </Pressable>
-        ))}
+        {actions.map(pill('end'))}
       </View>
     </View>
   )

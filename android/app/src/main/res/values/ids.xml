@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launch splash, as UI tests find it (resource-id app.teamstation.app:id/tsSplash). -->
+    <item name="tsSplash" type="id" />
+</resources>

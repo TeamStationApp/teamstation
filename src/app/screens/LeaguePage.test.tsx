@@ -658,7 +658,8 @@ describe('a league’s People tab', () => {
             positions: [],
             isPlayer: true,
             role: 'member',
-            section: 'player',
+            // Nobody is listed for playing: Alfonso is also a member.
+            section: 'spectator',
             staffRoles: [],
             inheritedFrom: null
           }),
@@ -681,10 +682,14 @@ describe('a league’s People tab', () => {
     }
     const players: unknown[] = []
     const persons: unknown[] = []
+    const adds: unknown[] = []
     await mount(
       <GroupScreen
         client={api}
         groupRef={{ kind: 'league', id: league.id }}
+        onAddPeople={group => {
+          adds.push(group)
+        }}
         initialTab="people"
         onOpen={() => {}}
         onCreate={() => {}}
@@ -712,6 +717,24 @@ describe('a league’s People tab', () => {
     expect(players).deep.equals([[userIdOfGumbo(201), 'Alfonso S']])
     expect(persons).deep.equals([
       [{ kind: 'league', id: league.id }, userIdOfGumbo(271)]
+    ])
+    // No Players; Add Staff and Add Spectator open the league's Add People.
+    expect(document.body.textContent).not.includes('PLAYERS')
+    for (const label of [
+      `Add Staff to ${league.name}`,
+      `Add Spectator to ${league.name}`
+    ]) {
+      const add = document.querySelector<HTMLElement>(
+        `[role="button"][aria-label="${label}"]`
+      )
+      expect(add, label).not.equals(null)
+      await act(async () => {
+        add!.click()
+      })
+    }
+    expect(adds).deep.equals([
+      { kind: 'league', id: league.id },
+      { kind: 'league', id: league.id }
     ])
   })
 

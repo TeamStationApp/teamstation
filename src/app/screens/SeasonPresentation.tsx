@@ -110,6 +110,8 @@ export interface SeasonPresentationProps {
   ) => void
   /** Somebody on the People tab who is not a player, as their profile. */
   onOpenPerson?: (userId: string, name: string) => void
+  /** The group's Add People screen, from Add Staff and Add Spectator. */
+  onAddPeople?: (role?: 'admin') => void
   onSettings?: () => void
   initialTab?: string
   onTab?: (tab: string, correcting?: TabCorrection) => void
@@ -1033,6 +1035,8 @@ export function SeasonPresentation(
               id={season.id}
               onOpenPlayer={props.onOpenPlayer}
               onOpenPerson={props.onOpenPerson}
+              name={season.name}
+              onAddPeople={props.onAddPeople}
             />
           )}
         </View>

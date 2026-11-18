@@ -39,6 +39,10 @@ describe('people at a team, a season and a league', function () {
   const FOLLOWER = 205
   const SEASON_MEMBER = 206
   const LEAGUE_MEMBER = 207
+  /** Plays on the Hawks and is a member of their league. */
+  const PLAYING_MEMBER = 221
+  /** Plays on the Hawks and keeps score for their season. */
+  const PLAYING_STAFF = 222
 
   before(async () => {
     f = await groupFixture()
@@ -80,6 +84,8 @@ describe('people at a team, a season and a league', function () {
     await person(FOLLOWER, 'Frank', 'Francisco')
     await person(SEASON_MEMBER, 'Sam', 'Fuld')
     await person(LEAGUE_MEMBER, 'Lee', 'Smith')
+    await person(PLAYING_MEMBER, 'Pete', 'Rose')
+    await person(PLAYING_STAFF, 'Paul', 'Molitor')
     const role = async (
       userId: number,
       kind: 'team' | 'season' | 'league',
@@ -117,6 +123,9 @@ describe('people at a team, a season and a league', function () {
     await member(SCOREKEEPER)
     await member(MEMBER)
     await member(PLAYER, true)
+    await member(PLAYING_MEMBER, true)
+    await member(PLAYING_STAFF, true)
+    await role(PLAYING_STAFF, 'season', f.seasonA, 'scorekeeper')
     await member(NO_LOGIN)
     await db
       .insertInto('user_links')
@@ -152,14 +161,15 @@ describe('people at a team, a season and a league', function () {
         season_id: f.seasonA
       })
       .execute()
-    await db
-      .insertInto('league_members')
-      .values({
-        id: makeId('leagueMember'),
-        user_id: userIdOfGumbo(LEAGUE_MEMBER),
-        league_id: f.leagueA
-      })
-      .execute()
+    for (const leagueMember of [LEAGUE_MEMBER, PLAYING_MEMBER])
+      await db
+        .insertInto('league_members')
+        .values({
+          id: makeId('leagueMember'),
+          user_id: userIdOfGumbo(leagueMember),
+          league_id: f.leagueA
+        })
+        .execute()
     // The Hawks are in the playoffs too: two seasons above one team.
     await db
       .insertInto('season_team_parents')
@@ -200,6 +210,10 @@ describe('people at a team, a season and a league', function () {
 
   it('matches the listed people when checking a single person at each level', async () => {
     const viewer = { userId: userIdOfGumbo(101), isAdmin: false }
+    // Everybody here who plays, all on the Hawks, which both levels reach.
+    const players = new Set(
+      [PLAYER, PLAYING_MEMBER, PLAYING_STAFF].map(userIdOfGumbo)
+    )
     const candidates = [
       101,
       102,
@@ -213,7 +227,9 @@ describe('people at a team, a season and a league', function () {
       NO_LOGIN,
       FOLLOWER,
       SEASON_MEMBER,
-      LEAGUE_MEMBER
+      LEAGUE_MEMBER,
+      PLAYING_MEMBER,
+      PLAYING_STAFF
     ].map(userIdOfGumbo)
     for (const ref of [
       { kind: 'team', id: f.teamA },
@@ -227,7 +243,11 @@ describe('people at a team, a season and a league', function () {
         expect(
           await onPeopleList(f.h.db, ref, id, viewer),
           `${ref.kind} ${id}`
-        ).equals(listed.has(id))
+        ).equals(listed.has(id) || (ref.kind !== 'team' && players.has(id)))
+      // Somebody who only plays is left off a season's or league's list,
+      // and their profile still opens from it.
+      if (ref.kind !== 'team')
+        expect(listed.has(userIdOfGumbo(PLAYER))).equals(false)
     }
   })
   it('returns the same not-found error when clearing an unlisted ordinary or protected person', async () => {
@@ -865,12 +885,24 @@ describe('people at a team, a season and a league', function () {
       const { people, manages, admin } = answer.body as LevelPeople
       expect({ manages, admin }).deep.equals({ manages: true, admin: true })
       expect(sectionOf(people, 101)).equals('admin')
-      expect(sectionOf(people, PLAYER)).equals('player')
+      // Nobody is listed for playing: who only plays is left out, and a
+      // player with another tie is in its section, still a player.
+      expect(people.some(person => person.section === 'player')).equals(false)
+      expect(sectionOf(people, PLAYER)).equals(undefined)
+      const playingMember = people.find(
+        person => person.userId === userIdOfGumbo(PLAYING_MEMBER)
+      )
+      expect(playingMember).includes({ section: 'spectator', isPlayer: true })
+      expect(playingMember?.teamNames).deep.equals(['Demo Hawks'])
       expect(
-        people.find(person => person.userId === userIdOfGumbo(PLAYER))
-          ?.teamNames
-      ).deep.equals(['Demo Hawks'])
-      expect(sectionOf(people, GUARDIAN)).equals('family')
+        people.find(person => person.userId === userIdOfGumbo(PLAYING_STAFF))
+      ).includes({ section: 'staff', isPlayer: true })
+      // A guardian of a child who only plays is still family, naming them.
+      const guardian = people.find(
+        person => person.userId === userIdOfGumbo(GUARDIAN)
+      )
+      expect(guardian?.section).equals('family')
+      expect(guardian?.guardianOf).deep.equals(['Alex Young'])
       expect(sectionOf(people, SEASON_MEMBER)).equals('spectator')
       const leagueMember = people.find(
         person => person.userId === userIdOfGumbo(LEAGUE_MEMBER)
@@ -895,6 +927,10 @@ describe('people at a team, a season and a league', function () {
       expect(
         rows.find(row => row.userId === userIdOfGumbo(COACH))?.self
       ).equals(false)
+      // A team's roster still lists its players.
+      expect(
+        rows.find(row => row.userId === userIdOfGumbo(PLAYER))?.section
+      ).equals('player')
 
       const season = await call(
         'GET',
@@ -907,7 +943,7 @@ describe('people at a team, a season and a league', function () {
           ?.self
       ).equals(true)
       expect(
-        seasonPeople.find(row => row.userId === userIdOfGumbo(PLAYER))?.self
+        seasonPeople.find(row => row.userId === userIdOfGumbo(GUARDIAN))?.self
       ).equals(false)
 
       const league = await call(
@@ -940,7 +976,10 @@ describe('people at a team, a season and a league', function () {
         people.find(person => person.userId === userIdOfGumbo(LEAGUE_MEMBER))
           ?.inheritedFrom
       ).equals(null)
-      expect(sectionOf(people, PLAYER)).equals('player')
+      expect(people.some(person => person.section === 'player')).equals(false)
+      expect(sectionOf(people, PLAYER)).equals(undefined)
+      expect(sectionOf(people, PLAYING_MEMBER)).equals('spectator')
+      expect(sectionOf(people, GUARDIAN)).equals('family')
       expect(sectionOf(people, SEASON_MEMBER)).equals(undefined)
       // A season member reads its season, and the league member reads both.
       expect(

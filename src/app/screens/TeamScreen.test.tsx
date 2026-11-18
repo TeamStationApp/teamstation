@@ -334,7 +334,10 @@ describe('TeamScreen for a fan', function () {
         onOpenGame={() => undefined}
       />
     )
-    expect(text()).contains('Nobody has been added to this team yet.')
+    // An empty team keeps its Admins, Staff, Players and Spectators, each
+    // with 0, and a non-member sees no add.
+    expect(text()).contains('ADMINS0STAFF0PLAYERS0SPECTATORS0')
+    expect(text()).not.contains('Add Staff')
     await press('Schedule')
     expect(text()).contains('No games scheduled.')
   })

@@ -2775,10 +2775,11 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'groupAddPeople' || top.name === 'groupInvites' ? (
       <GroupPeoplePage
-        key={`${top.name}:${top.kind}:${top.id}`}
+        key={`${top.name}:${top.kind}:${top.id}:${top.name === 'groupAddPeople' ? (top.role ?? '') : ''}`}
         client={client}
         group={{ kind: top.kind, id: top.id }}
         invites={top.name === 'groupInvites'}
+        role={top.name === 'groupAddPeople' ? top.role : undefined}
         onDone={notice => {
           if (notice != null)
             setSuccessNotice({ id: Date.now(), message: notice })
@@ -2950,6 +2951,38 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenTeam={openSeasonParticipant}
         onOpenPlayer={openPlayer}
         onOpenPerson={openPerson}
+        onAddPeople={(group, role) => {
+          push({
+            name: 'groupAddPeople',
+            ...group,
+            ...(role == null ? {} : { role }),
+            ...(group.kind === 'team'
+              ? {
+                  teamReturn: {
+                    id: top.id,
+                    address: 'group' as const,
+                    tab: 'team'
+                  }
+                }
+              : {})
+          })
+        }}
+        onAddExistingPlayer={team => {
+          push({
+            name: 'teamAddPlayer',
+            kind: 'team',
+            id: team.id,
+            teamReturn: { id: top.id, address: 'group', tab: 'team' }
+          })
+        }}
+        onCreatePlayer={team => {
+          push({
+            name: 'teamCreatePlayer',
+            kind: 'team',
+            id: team.id,
+            teamReturn: { id: top.id, address: 'group', tab: 'team' }
+          })
+        }}
         onCreate={(kind, parent) => {
           push({ name: 'createGroup', kind, parent })
         }}
@@ -3486,6 +3519,10 @@ function Shell(props: AppProps): React.ReactElement {
       <AccountScreen
         client={client}
         socket={gameSocket}
+        onOpenGroup={openGroup}
+        onOpenPlayer={(userId, name) => {
+          openPlayer(userId, name)
+        }}
         onTeamStationTv={() => {
           push({ name: 'teamStationTv' })
         }}
@@ -3641,6 +3678,31 @@ function Shell(props: AppProps): React.ReactElement {
             teamReturn: { id: top.team.id, address: 'team', tab: top.tab }
           })
         }}
+        onAddPeople={(id, role) => {
+          push({
+            name: 'groupAddPeople',
+            kind: 'team',
+            id,
+            ...(role == null ? {} : { role }),
+            teamReturn: { id: top.team.id, address: 'team', tab: 'team' }
+          })
+        }}
+        onAddExistingPlayer={id => {
+          push({
+            name: 'teamAddPlayer',
+            kind: 'team',
+            id,
+            teamReturn: { id: top.team.id, address: 'team', tab: 'team' }
+          })
+        }}
+        onCreatePlayer={id => {
+          push({
+            name: 'teamCreatePlayer',
+            kind: 'team',
+            id,
+            teamReturn: { id: top.team.id, address: 'team', tab: 'team' }
+          })
+        }}
         initialTab={top.tab}
         onTab={topTab}
         chats={chatsOf('team', top.team.id)}
@@ -3659,6 +3721,14 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onSettings={() => {
           push({ name: 'groupSettings', kind: 'season', id: top.season.id })
+        }}
+        onAddPeople={role => {
+          push({
+            name: 'groupAddPeople',
+            kind: 'season',
+            id: top.season.id,
+            ...(role == null ? {} : { role })
+          })
         }}
         initialTab={top.tab}
         onTab={topTab}

@@ -15,6 +15,7 @@ import {
   type GameSummary,
   type PitchingRow,
   type RosterEntry,
+  type RosterSection,
   type StaffEntry,
   type StandingsRow,
   type TeamStationClient,
@@ -52,6 +53,7 @@ import {
   usePinnedTabs
 } from '../components'
 import { AddEventCard } from '../components/AddEventCard'
+import { ChoiceSheet } from '../components/ChoiceSheet'
 import { FollowButton } from '../components/FollowButton'
 import { PagedList } from '../components/PagedList'
 import {
@@ -61,6 +63,7 @@ import {
 } from '../components/PagedListEnd'
 import {
   inheritedPill,
+  peopleAdds,
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
@@ -70,7 +73,7 @@ import { StatisticsTable } from '../components/StatisticsTable'
 import { ActiveView, TabPages } from '../components/TabPages'
 import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
-import { videoCountLabel } from '../locales/strings'
+import { lstrings, sprintf, videoCountLabel } from '../locales/strings'
 import { rosterKey } from '../sync/documentKeys'
 import { storedSchedule, teamScope } from '../sync/scheduleReads'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -152,6 +155,16 @@ export interface TeamScreenProps {
    * roster opens, a player's page or anybody else's profile.
    */
   managesPeople?: boolean
+  /**
+   * The team's Add People screen, from Add Staff and Add Spectator beside
+   * their sections, for whoever administers the team.
+   */
+  onAddPeople?: (role?: 'admin') => void
+  /** Add Player beside the Players section, for whoever manages the roster. */
+  onAddPlayer?: {
+    existing: () => void
+    create: () => void
+  }
   /** Which section to open on, from the address. */
   initialTab?: string
   /**
@@ -214,6 +227,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     onTab,
     onManage,
     onCreateGame,
+    onAddPeople,
+    onAddPlayer,
     publicDetail,
     nonMemberView = false,
     refreshRevision
@@ -298,6 +313,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   } = schedule
   const { apply: applyVideos, fail: failVideos, paint: paintVideos } = videos
   const [roster, setRoster] = useState<RosterEntry[]>([])
+  // Whether `roster` is the team's, read: until then, and when it is
+  // refused, the Team tab keeps no empty section and offers no add.
+  const [rosterRead, setRosterRead] = useState(false)
+  const [choosingPlayer, setChoosingPlayer] = useState(false)
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [pitching, setPitching] = useState<PitchingRow[]>([])
   const [standing, setStanding] = useState<StandingsRow | undefined>(undefined)
@@ -343,7 +362,10 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       if (cancelled) return
       if (storedGames != null) paintSchedule(storedGames)
       if (storedVideos != null) paintVideos(storedVideos)
-      if (storedRoster != null) setRoster(storedRoster)
+      if (storedRoster != null) {
+        setRoster(storedRoster)
+        setRosterRead(true)
+      }
       // What the phone stored shows now, its reads still out: with no signal
       // each answers the same, but only once its deadline has passed.
       if (storedGames != null || storedVideos != null) setLoading(false)
@@ -382,6 +404,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         ])
       if (cancelled) return
       setRoster(loadedRoster)
+      setRosterRead(true)
       setBatting(loadedBatting)
       setPitching(loadedPitching)
       setStanding(standings.find(row => row.teamId === team.id))
@@ -401,6 +424,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             applySchedule(EMPTY_PAGE).catch(() => undefined)
             applyVideos(EMPTY_PAGE).catch(() => undefined)
             setRoster([])
+            setRosterRead(false)
             setBatting([])
             setPitching([])
             setStanding(undefined)
@@ -653,11 +677,32 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
             {tab === 'team' && (
               <>
-                {roster.length === 0 && (
-                  <Empty text="Nobody has been added to this team yet." />
-                )}
                 <PeopleList
                   people={roster}
+                  kept={rosterRead ? TEAM_KEPT : undefined}
+                  adds={
+                    rosterRead
+                      ? {
+                          ...(onAddPeople == null
+                            ? {}
+                            : peopleAdds(team.name, onAddPeople)),
+                          ...(onAddPlayer == null
+                            ? {}
+                            : {
+                                player: {
+                                  label: lstrings.people_add_player,
+                                  accessibilityLabel: sprintf(
+                                    lstrings.people_add_player_to,
+                                    team.name
+                                  ),
+                                  onPress: () => {
+                                    setChoosingPlayer(true)
+                                  }
+                                }
+                              })
+                        }
+                      : undefined
+                  }
                   onOpen={person => {
                     // A player has a page, for anybody who may see it: a
                     // non-member is answered `404` there, so their rows open
@@ -743,9 +788,42 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         </TabPages>
       )}
       <PinnedSpacer part={pinned.spacer} />
+      {choosingPlayer && onAddPlayer != null && (
+        <ChoiceSheet
+          title={lstrings.people_add_player_title}
+          choices={[
+            {
+              label: lstrings.people_add_existing_player,
+              detail: lstrings.people_add_existing_player_detail,
+              onPress: () => {
+                setChoosingPlayer(false)
+                onAddPlayer.existing()
+              }
+            },
+            {
+              label: lstrings.people_create_player,
+              onPress: () => {
+                setChoosingPlayer(false)
+                onAddPlayer.create()
+              }
+            }
+          ]}
+          onClose={() => {
+            setChoosingPlayer(false)
+          }}
+        />
+      )}
     </Screen>
   )
 }
+
+/** A team's sections drawn even when empty, with their header and count. */
+const TEAM_KEPT: readonly RosterSection[] = [
+  'admin',
+  'staff',
+  'player',
+  'spectator'
+]
 
 /** The row a list opens on, and a screen of those after it. */
 export function rowsKeptDrawn(

@@ -50,6 +50,8 @@ export interface LeaguePageProps {
   onOpenPlayer?: (userId: string, name: string) => void
   /** Anybody else on the People tab, as their profile. */
   onOpenPerson?: (userId: string, name: string) => void
+  /** The group's Add People screen, from Add Staff and Add Spectator. */
+  onAddPeople?: (role?: 'admin') => void
   /** Called after a relationship is broken, to load the page again. */
   onChanged: () => void
   chats?: ChatLink[]
@@ -361,6 +363,8 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               id={group.id}
               onOpenPlayer={props.onOpenPlayer}
               onOpenPerson={props.onOpenPerson}
+              name={group.name}
+              onAddPeople={props.onAddPeople}
             />
           )}
         </View>

@@ -590,6 +590,17 @@ describe('roster sections', function () {
       })
       .execute()
   }
+  /** A season member: listed there, as nobody is only for playing. */
+  const seasonMember = async (userId: number): Promise<void> => {
+    await f.h.db
+      .insertInto('season_members')
+      .values({
+        id: makeId('seasonMember'),
+        user_id: userIdOfGumbo(userId),
+        season_id: f.seasonA
+      })
+      .execute()
+  }
   const give = async (
     userId: number,
     scopeType: 'league' | 'season' | 'team',
@@ -915,6 +926,8 @@ describe('roster sections', function () {
     }
     const hawks = await row(`/teams/${f.teamA}/roster`, f.people.admin)
     const other = await row(`/teams/${comets}/roster`, f.people.admin)
+    // A player is on the season's list only through another tie there.
+    await seasonMember(201)
     const season = await row(`/seasons/${f.seasonA}/people`, f.people.admin)
     // A reader who sees his full name and one who reads his team's format
     // get the one id, which alone colours his tile.
@@ -992,7 +1005,9 @@ describe('roster sections', function () {
     expect(member.get(tim)).equals('Guardian of Alfonso S')
     expect(member.get(alfonso)).equals('Guardians: Tim R')
     // A season's list names the teams the reader may see: the league's
-    // administrator sees both of Alfonso's, and not Willie's.
+    // administrator sees both of Alfonso's, and not Willie's. Alfonso is on
+    // it as a member of the season, as nobody is there only for playing.
+    await seasonMember(201)
     const season = await f.h.request(
       'GET',
       `/seasons/${f.seasonA}/people`,

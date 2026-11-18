@@ -13,6 +13,7 @@ export function RoleSwitches({
   flags,
   inherited = {},
   busy = false,
+  spectator,
   onChange
 }: {
   scopeKind: 'team' | 'season' | 'league'
@@ -21,6 +22,11 @@ export function RoleSwitches({
   flags: RoleFlag[]
   inherited?: Partial<Record<Role, string>>
   busy?: boolean
+  /**
+   * A last row, Spectator, on and locked, with this detail: everybody added
+   * is a member, whatever else they are given.
+   */
+  spectator?: string
   onChange: (roles: { admin: boolean; flags: RoleFlag[] }) => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -89,6 +95,15 @@ export function RoleSwitches({
           />
         </View>
       ))}
+      {spectator != null && (
+        <View style={styles.choice} testID="role-spectator">
+          <View style={styles.words}>
+            <Text style={styles.label}>{lstrings.role_spectator}</Text>
+            <Text style={styles.detail}>{spectator}</Text>
+          </View>
+          <Switch accessibilityLabel={lstrings.role_spectator} value disabled />
+        </View>
+      )}
     </View>
   )
 }

@@ -4177,6 +4177,93 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/me/affiliations': {
+        get: {
+          summary:
+            'The leagues, seasons, teams and players the caller belongs to',
+          description:
+            'Each league, season and team the caller holds a tie to on the ' +
+            'group itself, and nothing a league or season carries down: ' +
+            '`roles` (`admin` and the staff flags set there, with ' +
+            '`headCoach`), `player` (plays on the team), `member` (a ' +
+            'membership with no role) and `following` (the signed-in ' +
+            'account follows it). Owners and managers of a team are ' +
+            '`admin`. Merged and external teams are left out. Groups come ' +
+            'leagues, seasons, then teams, each by name. `players` are the ' +
+            'players the caller is a guardian of, by the short name the ' +
+            'roster gives them, with the names of the teams they play on now.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The groups, then the guarded players',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['groups', 'players'],
+                    properties: {
+                      groups: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: [
+                            'kind',
+                            'id',
+                            'group',
+                            'roles',
+                            'headCoach',
+                            'player',
+                            'member',
+                            'following'
+                          ],
+                          properties: {
+                            kind: {
+                              type: 'string',
+                              enum: ['league', 'season', 'team']
+                            },
+                            id: { type: 'string' },
+                            group: { type: 'object' },
+                            roles: {
+                              type: 'array',
+                              items: { $ref: '#/components/schemas/Role' }
+                            },
+                            headCoach: { type: 'boolean' },
+                            player: { type: 'boolean' },
+                            member: { type: 'boolean' },
+                            following: { type: 'boolean' }
+                          }
+                        }
+                      },
+                      players: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: [
+                            'userId',
+                            'name',
+                            'avatarUrl',
+                            'teamNames'
+                          ],
+                          properties: {
+                            userId: { type: 'string' },
+                            name: { type: 'string' },
+                            avatarUrl: { type: 'string', nullable: true },
+                            teamNames: {
+                              type: 'array',
+                              items: { type: 'string' }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse
+          }
+        }
+      },
       '/auth/me': {
         get: {
           summary: 'Who this token belongs to',
@@ -10147,12 +10234,16 @@ export function openApiDocument(version: string): OpenApiDocument {
               summary: `A ${collection.slice(0, -1)}\u2019s people, in the roster\u2019s sections`,
               description:
                 'Admins and Staff: roles given here and on the league ' +
-                'above. Players: everybody playing now on a team this ' +
-                'level reaches, with `teamNames`. Family members: their ' +
-                'guardians. Spectators: members here and of the league ' +
-                'above. Followers: people following this level. Each ' +
-                'person once, in the first that fits, with a pill for a ' +
-                'level above. For its members and role holders and site ' +
+                'above. Family members: the guardians of everybody ' +
+                'playing now on a team this level reaches. Spectators: ' +
+                'members here and of the league above. Followers: people ' +
+                'following this level. Each person once, in the first ' +
+                'that fits, with a pill for a level above. There is no ' +
+                'Players section: a player with another tie here is in ' +
+                'that section with `isPlayer: true` and `teamNames`, and ' +
+                'one who only plays is left out, though their profile ' +
+                'still opens from this level. For its members and role ' +
+                'holders and site ' +
                 'administrators; anybody else gets 404. `manages` and ' +
                 '`admin` say what this viewer may do with them.',
               security: [{ bearer: [] }],

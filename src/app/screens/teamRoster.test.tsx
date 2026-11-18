@@ -198,14 +198,17 @@ describe('a team’s roster in sections', function () {
     expect(text()).not.includes('OTHER MEMBERS')
   })
 
-  it('leaves out a section with nobody in it', async function () {
+  it('leaves out an empty section other than Admins, Staff, Players and Spectators', async function () {
     await render(
       everybody.filter(
         person => person.section !== 'family' && person.section !== 'admin'
       )
     )
     const [admins, staff, players, family, spectators, followers] = headings()
-    expect(admins).equals(-1)
+    // Admins stays, with its 0; Family members goes.
+    expect(admins).not.equals(-1)
+    expect(admins).lessThan(staff)
+    expect(text()).includes('ADMINS0STAFF')
     expect(family).equals(-1)
     expect(staff).lessThan(players)
     expect(players).lessThan(spectators)
@@ -398,10 +401,10 @@ describe('a season’s and a league’s People tab', function () {
 
   const levelPeople = [
     entry(101, 'Babe R', { section: 'admin' }),
+    // No section of players: Alfonso plays, and is listed as a member.
     entry(201, 'Alfonso S', {
-      section: 'player',
+      section: 'spectator',
       isPlayer: true,
-      positions: ['SS'],
       teamNames: ['Demo Hawks', 'Demo Owls'],
       affiliations: 'Guardians: Tim R · Demo Hawks · Demo Owls'
     }),
@@ -417,11 +420,11 @@ describe('a season’s and a league’s People tab', function () {
 
   it('lists the season’s people in sections, a player with their teams, and opens them for a manager', async function () {
     const { players, people } = await tab('season', true, levelPeople)
+    // Admins, an empty Staff kept with its 0, Family members and Spectators.
     expect(headings().filter(at => at >= 0)).length(4)
-    // The teams are the affiliation line's, under the player's positions;
-    // the line is the server's, not built from `teamNames`.
+    // The teams are the affiliation line's, not built from `teamNames`.
     expect(row('Alfonso S')).includes(
-      'SSGuardians: Tim R · Demo Hawks · Demo Owls'
+      'Guardians: Tim R · Demo Hawks · Demo Owls'
     )
     expect(row('Tim R')).includes(
       'Guardian of Alfonso S · Demo Hawks · Demo Owls'
@@ -438,7 +441,7 @@ describe('a season’s and a league’s People tab', function () {
     expect(people).deep.equals([userIdOfGumbo(106), userIdOfGumbo(101)])
   })
 
-  it('opens only players for anybody else, and says so when nobody or nothing is there', async function () {
+  it('opens only players for anybody else, keeps the empty sections, and says when nothing loads', async function () {
     const { players, people } = await tab('league', false, levelPeople)
     expect(rowNode('Tim R').getAttribute('role')).not.equals('button')
     await act(async () => {
@@ -451,7 +454,11 @@ describe('a season’s and a league’s People tab', function () {
       root?.unmount()
     })
     await tab('league', false, [])
-    expect(text()).includes('Nobody here yet.')
+    // An empty list keeps its Admins, Staff and Spectators, each with 0,
+    // and no Players.
+    expect(text()).includes('ADMINS0STAFF0SPECTATORS0')
+    expect(text()).not.includes('PLAYERS')
+    expect(text()).not.includes('Nobody here yet.')
     await act(async () => {
       root?.unmount()
     })

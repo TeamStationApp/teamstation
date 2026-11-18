@@ -2059,6 +2059,38 @@ export const asHomeLists = asObject({
 })
 export type HomeLists = ReturnType<typeof asHomeLists>
 
+/** A league, season or team the person belongs to directly (`GET /me/affiliations`). */
+export const asAccountAffiliationGroup = asObject({
+  kind: asLiteral('league', 'season', 'team'),
+  id: asString,
+  group: asPublicGroup,
+  roles: asArray(asRole),
+  headCoach: asOptional(asBoolean, false),
+  player: asOptional(asBoolean, false),
+  member: asOptional(asBoolean, false),
+  following: asOptional(asBoolean, false)
+})
+export type AccountAffiliationGroup = ReturnType<
+  typeof asAccountAffiliationGroup
+>
+
+/** A player the person is a guardian of, with the teams they play on now. */
+export const asAccountAffiliationPlayer = asObject({
+  userId: asString,
+  name: asString,
+  avatarUrl: asOptional(asEither(asString, asValue(null)), null),
+  teamNames: asOptional(asArray(asString), [])
+})
+export type AccountAffiliationPlayer = ReturnType<
+  typeof asAccountAffiliationPlayer
+>
+
+export const asAccountAffiliations = asObject({
+  groups: asArray(asAccountAffiliationGroup),
+  players: asOptional(asArray(asAccountAffiliationPlayer), [])
+})
+export type AccountAffiliations = ReturnType<typeof asAccountAffiliations>
+
 export const asSeasonGame = withEventMetadata(
   asObject({
     id: asString,
@@ -5226,6 +5258,11 @@ export class TeamStationClient {
   /** Home's teams, seasons and leagues, direct ties first. */
   async home(): Promise<HomeLists> {
     return await this.request('GET', '/me/home', asHomeLists)
+  }
+
+  /** The account screen's Affiliations: direct ties, then guarded players. */
+  async accountAffiliations(): Promise<AccountAffiliations> {
+    return await this.request('GET', '/me/affiliations', asAccountAffiliations)
   }
 
   async discoverGroups(kind: GroupKind, query = ''): Promise<SearchRow[]> {

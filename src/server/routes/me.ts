@@ -11,6 +11,8 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { distributionSettings } from '../nodeSettings'
 import { activeHuman } from '../oauth/provider'
+import { accountAffiliationsOf } from '../users/accountAffiliations'
+import { readerOf } from '../users/readerNames'
 
 /**
  * What the signed-in person may do, for the few buttons no other answer
@@ -86,6 +88,26 @@ export function meRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       res.json(await homeLists(db, actor.userId, media.space))
+    })
+  )
+
+  // The account screen's Affiliations: direct ties only, then guarded players.
+  router.get(
+    '/me/affiliations',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      res
+        .set('Cache-Control', 'no-store')
+        .json(
+          await accountAffiliationsOf(
+            db,
+            actor.userId,
+            media.space,
+            readerOf(actor)
+          )
+        )
     })
   )
 

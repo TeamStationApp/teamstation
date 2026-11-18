@@ -8,24 +8,24 @@
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0" />
     </dependencies>
     <scenes>
+        <!--The launch splash's frame 0 for the television's 1920x1080 window, vignette included, which TeamStationSplash then animates.-->
         <scene sceneID="EHf-IW-A2E">
             <objects>
                 <viewController id="01J-lp-oVM" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
-                        <rect key="frame" x="0.0" y="0.0" width="375" height="667" />
+                        <rect key="frame" x="0.0" y="0.0" width="1920" height="1080" />
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES" />
                         <subviews>
-                            <label opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="TeamStation" textAlignment="center" lineBreakMode="middleTruncation" baselineAdjustment="alignBaselines" minimumFontSize="18" translatesAutoresizingMaskIntoConstraints="NO" id="GJd-Yh-RWb">
-                                <rect key="frame" x="0.0" y="202" width="375" height="43" />
-                                <fontDescription key="fontDescription" type="boldSystem" pointSize="36" />
-                                <nil key="highlightedColor" />
-                            </label>
-                            </subviews>
-                        <color key="backgroundColor" systemColor="systemBackgroundColor" cocoaTouchSystemColor="whiteColor" />
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFill" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="LaunchFrame" translatesAutoresizingMaskIntoConstraints="NO" id="Fr0-st-Img">
+                                <rect key="frame" x="0.0" y="0.0" width="1920" height="1080" />
+                            </imageView>
+                        </subviews>
+                        <color key="backgroundColor" red="0.050980392156862744" green="0.12156862745098039" blue="0.050980392156862744" alpha="1" colorSpace="custom" customColorSpace="sRGB" />
                         <constraints>
-                            <constraint firstItem="Bcu-3y-fUS" firstAttribute="centerX" secondItem="GJd-Yh-RWb" secondAttribute="centerX" id="Q3B-4B-g5h" />
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="bottom" multiplier="1/3" constant="1" id="moa-c2-u7t" />
-                            <constraint firstItem="GJd-Yh-RWb" firstAttribute="leading" secondItem="Bcu-3y-fUS" secondAttribute="leading" symbolic="YES" id="x7j-FC-K8j" />
+                            <constraint firstItem="Fr0-st-Img" firstAttribute="leading" secondItem="Ze5-6b-2t3" secondAttribute="leading" id="Fr0-ld-Cns" />
+                            <constraint firstItem="Fr0-st-Img" firstAttribute="top" secondItem="Ze5-6b-2t3" secondAttribute="top" id="Fr0-tp-Cns" />
+                            <constraint firstAttribute="trailing" secondItem="Fr0-st-Img" secondAttribute="trailing" id="Fr0-tr-Cns" />
+                            <constraint firstAttribute="bottom" secondItem="Fr0-st-Img" secondAttribute="bottom" id="Fr0-bt-Cns" />
                         </constraints>
                         <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS" />
                     </view>
@@ -35,4 +35,7 @@
             <point key="canvasLocation" x="52.173913043478265" y="375" />
         </scene>
     </scenes>
+    <resources>
+        <image name="LaunchFrame" width="1920" height="1080" />
+    </resources>
 </document>

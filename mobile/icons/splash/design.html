@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TeamStation Splash - Continuous 2.0s Zoom-Out</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700;800;900&family=JetBrains+Mono:wght@500;700&display=swap');
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #030603;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Mobile Device Frame for Desktop Canvas Viewing */
+    .phone-viewport {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      background: radial-gradient(circle at 50% 45%, #0d1f0d 0%, #050a05 60%, #000000 100%);
+      border-radius: 48px;
+      overflow: hidden;
+      box-shadow: 0 25px 70px -15px rgba(0, 0, 0, 0.95), 0 0 0 12px #10160f, 0 0 0 14px rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+    }
+
+    /* Stadium Background: centered pure zoom-out and smooth continuous fade */
+    .stadium-bg-portrait {
+      position: absolute;
+      inset: -10px;
+      background-image: url('stadium.jpg');
+      background-size: cover;
+      background-position: center 54%;
+      transform-origin: 50% 54%;
+      will-change: transform, opacity, filter;
+      transform: scale(2.8);
+      opacity: 0.95;
+    }
+
+    /* Athletic dark green-to-black gradient overlay blending seamlessly */
+    .dark-gradient-overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 45%, rgba(13, 31, 13, 0.92) 0%, rgba(5, 10, 5, 0.98) 60%, #000000 100%);
+      opacity: 0.1;
+      pointer-events: none;
+      will-change: opacity;
+    }
+
+    /* Subtle edge vignette */
+    .vignette-overlay {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.6) 100%);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* 2D Logo Container Centered */
+    .logo-container {
+      position: absolute;
+      top: 45%;
+      left: 50%;
+      width: 210px;
+      height: 210px;
+      margin-left: -105px;
+      margin-top: -105px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      transform-origin: center center;
+      transform: scale(4.5);
+      opacity: 0;
+      will-change: transform, opacity;
+      pointer-events: none;
+      z-index: 20;
+    }
+
+    .logo-mark {
+      width: 100%;
+      height: 100%;
+      filter: drop-shadow(0 0 32px rgba(118, 195, 60, 0.55)) drop-shadow(0 14px 28px rgba(0, 0, 0, 0.85));
+    }
+
+    /* Wordmark beneath the 2D logo */
+    .wordmark-wrap {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%) translateY(24px) scale(0.85);
+      white-space: nowrap;
+      text-align: center;
+      opacity: 0;
+      transform-origin: center center;
+      will-change: transform, opacity;
+    }
+
+    /* Ambient stadium spotlight glow behind logo */
+    .brand-glow {
+      position: absolute;
+      width: 400px;
+      height: 400px;
+      top: 45%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.4);
+      background: radial-gradient(circle, rgba(118, 195, 60, 0.45) 0%, rgba(20, 50, 18, 0.25) 50%, rgba(0, 0, 0, 0) 75%);
+      opacity: 0;
+      pointer-events: none;
+      will-change: opacity, transform;
+      z-index: 10;
+    }
+
+    /* 
+      UNIFIED CONTINUOUS 2.0s TIMELINE:
+      Stadium zoom follows steady cubic-bezier curve while stadium opacity
+      sustains clarity through ~45% before smoothly accelerating fade to 0.
+    */
+    .animating .stadium-bg-portrait {
+      animation: continuousBgZoom 2.0s cubic-bezier(0.25, 0.1, 0.25, 1.0) forwards;
+    }
+
+    .animating .dark-gradient-overlay {
+      animation: continuousDarkFade 2.0s cubic-bezier(0.4, 0, 0.8, 0.15) forwards;
+    }
+
+    .animating .logo-container {
+      animation: continuousLogoSettle 2.0s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    .animating .brand-glow {
+      animation: continuousGlowGrow 2.0s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    .animating .wordmark-wrap {
+      animation: continuousWordmark 2.0s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    /* Stadium zooms smoothly out while sustaining visibility through ~40-50% before ramping down */
+    @keyframes continuousBgZoom {
+      0% {
+        transform: scale(2.8);
+        opacity: 0.95;
+        filter: brightness(1.05) contrast(1.05) blur(0px);
+      }
+      45% {
+        opacity: 0.85;
+        filter: brightness(1.0) contrast(1.05) blur(0.5px);
+      }
+      70% {
+        opacity: 0.5;
+        filter: brightness(0.7) contrast(1.08) blur(1.8px);
+      }
+      100% {
+        transform: scale(1.0);
+        opacity: 0.0;
+        filter: brightness(0.2) contrast(1.1) blur(4px);
+      }
+    }
+
+    @keyframes continuousDarkFade {
+      0% {
+        opacity: 0.15;
+      }
+      45% {
+        opacity: 0.25;
+      }
+      75% {
+        opacity: 0.65;
+      }
+      100% {
+        opacity: 1.0;
+      }
+    }
+
+    /* Single continuous path from scale(4.5), 0 opacity -> resting scale(1.0), full opacity */
+    @keyframes continuousLogoSettle {
+      0% {
+        opacity: 0;
+        transform: scale(4.5);
+        filter: blur(12px);
+      }
+      20% {
+        opacity: 0.6;
+      }
+      100% {
+        opacity: 1;
+        transform: scale(1.0);
+        filter: blur(0px);
+      }
+    }
+
+    @keyframes continuousGlowGrow {
+      0% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.35);
+      }
+      100% {
+        opacity: 0.85;
+        transform: translate(-50%, -50%) scale(1.0);
+      }
+    }
+
+    /* Wordmark seamlessly eases in across the full duration, landing smoothly at 100% */
+    @keyframes continuousWordmark {
+      0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(24px) scale(0.85);
+      }
+      25% {
+        opacity: 0;
+      }
+      100% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(14px) scale(1.0);
+      }
+    }
+
+    /* Dynamic Island */
+    .dynamic-island {
+      position: absolute;
+      top: 13px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 124px;
+      height: 35px;
+      background-color: #000;
+      border-radius: 20px;
+      z-index: 60;
+    }
+
+    /* Mobile Controls Overlay */
+    .mobile-controls {
+      position: absolute;
+      bottom: 24px;
+      left: 0;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      z-index: 50;
+    }
+
+    .replay-pill {
+      background: rgba(15, 36, 15, 0.85);
+      border: 1px solid rgba(118, 195, 60, 0.45);
+      color: #e5fcdb;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(12px);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .replay-pill:hover {
+      background: rgba(118, 195, 60, 0.35);
+      border-color: #8be047;
+      transform: scale(1.04);
+    }
+    .replay-pill:active {
+      transform: scale(0.96);
+    }
+
+    /* Home Indicator */
+    .home-indicator {
+      width: 138px;
+      height: 5px;
+      background-color: rgba(255, 255, 255, 0.35);
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+<div class="phone-viewport" id="phoneStage" title="Tap anywhere to replay animation">
+<!-- Dynamic Island -->
+<div class="dynamic-island"></div>
+<!-- Stadium Background (Catcher POV starting zoomed in at 2.8x, zooms out purely with ease-in fade sustaining visibility through ~45% before smooth drop) -->
+<div class="stadium-bg-portrait" id="stadiumBg"></div>
+<!-- Smooth fade to dark athletic green-to-black gradient -->
+<div class="dark-gradient-overlay"></div>
+<div class="vignette-overlay"></div>
+<!-- Ambient Center Brand Glow -->
+<div class="brand-glow"></div>
+<!-- 2D TeamStation Logo Container (continuous unified zoom-down into center) -->
+<div class="logo-container" id="logoContainer">
+<!-- 2D Clean Vector SVG Logo with stadium athletic green gradient -->
+<svg class="logo-mark" fill="none" viewbox="24 24 464 464" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<lineargradient gradientunits="userSpaceOnUse" id="mobileLogoGrad" x1="66" x2="446" y1="66" y2="446">
+<stop offset="0%" stop-color="#8ce648"></stop>
+<stop offset="35%" stop-color="#67a935"></stop>
+<stop offset="70%" stop-color="#3d6f21"></stop>
+<stop offset="100%" stop-color="#183610"></stop>
+</lineargradient>
+<radialgradient cx="50%" cy="30%" id="innerShine" r="70%">
+<stop offset="0%" stop-color="#aff777" stop-opacity="0.35"></stop>
+<stop offset="100%" stop-color="#000000" stop-opacity="0"></stop>
+</radialgradient>
+</defs>
+<!-- Base shadow silhouette -->
+<g opacity="0.6" stroke="#040903" stroke-linecap="round" stroke-linejoin="round" stroke-width="52">
+<path d="M 224.89 66.49 A 44 44 0 0 1 287.11 66.49 L 445.51 224.89 A 44 44 0 0 1 445.51 287.11 L 287.11 445.51 A 44 44 0 0 1 224.89 445.51 L 66.49 287.11 A 44 44 0 0 1 66.49 224.89 Z"></path>
+<path d="M 146 146 Q 236 256 146 366"></path>
+<path d="M 366 146 Q 276 256 366 366"></path>
+</g>
+<!-- Diamond rounded-corner stroke -->
+<g stroke="url(#mobileLogoGrad)" stroke-linecap="round" stroke-linejoin="round" stroke-width="48">
+<path d="M 224.89 66.49 A 44 44 0 0 1 287.11 66.49 L 445.51 224.89 A 44 44 0 0 1 445.51 287.11 L 287.11 445.51 A 44 44 0 0 1 224.89 445.51 L 66.49 287.11 A 44 44 0 0 1 66.49 224.89 Z"></path>
+<!-- Opposing curved baseball seams -->
+<path d="M 146 146 Q 236 256 146 366"></path>
+<path d="M 366 146 Q 276 256 366 366"></path>
+</g>
+<!-- Subtle inner highlight sheen -->
+<g opacity="0.75" stroke="url(#innerShine)" stroke-linecap="round" stroke-linejoin="round" stroke-width="14">
+<path d="M 224.89 74 A 36 36 0 0 1 287.11 74 L 438 224.89"></path>
+<path d="M 148 152 Q 220 252 148 358"></path>
+</g>
+</svg>
+<!-- Wordmark settling cleanly underneath the emblem without subtitle -->
+<div class="wordmark-wrap" id="wordmark">
+<h1 class="text-3xl font-extrabold tracking-tight text-white flex items-center justify-center gap-1 drop-shadow-md">
+          Team<span class="text-[#76c33c] drop-shadow-[0_0_18px_rgba(118,195,60,0.65)]">Station</span>
+</h1>
+</div>
+</div>
+<!-- Mobile Controls -->
+<div class="mobile-controls">
+<button class="replay-pill flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold tracking-wide cursor-pointer" id="mobileReplayBtn">
+<svg class="w-3.5 h-3.5 text-[#76c33c]" fill="none" stroke="currentColor" viewbox="0 0 24 24">
+<path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"></path>
+</svg>
+        Replay 2.0s Splash
+      </button>
+<div class="home-indicator"></div>
+</div>
+</div>
+<script>
+    const stage = document.getElementById('phoneStage');
+    const replayBtn = document.getElementById('mobileReplayBtn');
+
+    function playSplash() {
+      stage.classList.remove('animating');
+      void stage.offsetWidth; // Force CSS reflow for instant buttery-smooth restart
+      stage.classList.add('animating');
+    }
+
+    // Auto-play on initial load
+    window.addEventListener('DOMContentLoaded', () => {
+      setTimeout(playSplash, 120);
+    });
+
+    // Replay button click
+    replayBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      playSplash();
+    });
+
+    // Tap anywhere on the mobile canvas to replay cleanly
+    stage.addEventListener('click', () => {
+      playSplash();
+    });
+
+    // Keyboard trigger (space / enter)
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' || e.key === ' ' || e.code === 'Enter') {
+        e.preventDefault();
+        playSplash();
+      }
+    });
+  </script>
+</body></html>

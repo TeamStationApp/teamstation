@@ -43,6 +43,11 @@ export interface GroupScreenProps {
   onOpenPlayer?: TeamScreenProps['onOpenPlayer']
   /** Somebody on a team's, season's or league's people list, as a profile. */
   onOpenPerson?: (group: GroupRef, userId: string, name: string) => void
+  /** The group's Add People screen, from a people section's Add Staff or Add Spectator. */
+  onAddPeople?: (group: GroupRef, role?: 'admin') => void
+  /** A team's Add Player: an existing player, or a new one. */
+  onAddExistingPlayer?: (team: GroupRef) => void
+  onCreatePlayer?: (team: GroupRef) => void
   onCreate: (
     kind: GroupKind,
     parent: GroupRef,
@@ -103,6 +108,27 @@ export function GroupScreen(props: GroupScreenProps): React.ReactElement {
         onSettings={id => {
           props.onSettings({ kind: 'team', id })
         }}
+        onAddPeople={
+          props.onAddPeople == null
+            ? undefined
+            : (id, role) => {
+                props.onAddPeople?.({ kind: 'team', id }, role)
+              }
+        }
+        onAddExistingPlayer={
+          props.onAddExistingPlayer == null
+            ? undefined
+            : id => {
+                props.onAddExistingPlayer?.({ kind: 'team', id })
+              }
+        }
+        onCreatePlayer={
+          props.onCreatePlayer == null
+            ? undefined
+            : id => {
+                props.onCreatePlayer?.({ kind: 'team', id })
+              }
+        }
       />
     )
   return (
@@ -120,6 +146,7 @@ function GroupContent({
   onOpenTeam,
   onOpenPlayer,
   onOpenPerson,
+  onAddPeople,
   onCreate,
   onSettings,
   onLink,
@@ -137,7 +164,10 @@ function GroupContent({
   onTab,
   initialWhen,
   onWhen
-}: Omit<GroupScreenProps, 'signedIn' | 'onSignIn'>): React.ReactElement {
+}: Omit<
+  GroupScreenProps,
+  'signedIn' | 'onSignIn' | 'onAddExistingPlayer' | 'onCreatePlayer'
+>): React.ReactElement {
   const styles = getStyles(useTheme())
   const { kind, id } = groupRef
   const [detail, setDetail] = useState<GroupDetail | undefined>()
@@ -246,6 +276,13 @@ function GroupContent({
                 onOpenPerson(canonical, userId, name)
               }
         }
+        onAddPeople={
+          onAddPeople == null
+            ? undefined
+            : role => {
+                onAddPeople(canonical, role)
+              }
+        }
         onOpenGame={onOpenGame ?? (() => undefined)}
         onOpenTeam={team => {
           if (onOpenTeam != null) onOpenTeam(team)
@@ -333,6 +370,13 @@ function GroupContent({
           ? undefined
           : (userId, name) => {
               onOpenPerson(canonical, userId, name)
+            }
+      }
+      onAddPeople={
+        onAddPeople == null
+          ? undefined
+          : role => {
+              onAddPeople(canonical, role)
             }
       }
       onChanged={() => {
