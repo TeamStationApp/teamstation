@@ -5,6 +5,7 @@ import type { GroupRef } from '../../common/groupCreation'
 import { heldByOpenAdd } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
+import { inheritedAdminIds } from './inheritedAdmins'
 import { currentActor, requireGroupAdmin, requirePeopleManager } from './rights'
 
 /** Direct active administrators survive removal of any inherited parent edge. */
@@ -39,9 +40,26 @@ export async function directAdminIds(
   return [...new Set([...granted, ...owners].map(row => row.id))]
 }
 
-export async function requireDirectAdmin(
+/**
+ * Direct administrators, and inherited ones the ownership cutover cannot take
+ * away, excluding site-wide privileges.
+ */
+export async function effectiveAdminIds(
   db: Kysely<Database>,
   ref: GroupRef
+): Promise<string[]> {
+  return [
+    ...new Set([
+      ...(await directAdminIds(db, ref)),
+      ...(await inheritedAdminIds(db, ref, { durable: true }))
+    ])
+  ]
+}
+
+export async function requireAdministrator(
+  db: Kysely<Database>,
+  ref: GroupRef,
+  reason = 'Add another active administrator before removing the last one'
 ): Promise<void> {
   if (
     ref.kind === 'team' &&
@@ -54,10 +72,7 @@ export async function requireDirectAdmin(
     )?.kind === 'external'
   )
     return
-  if ((await directAdminIds(db, ref)).length === 0)
-    throw conflict(
-      'Add another active direct administrator before removing the last one'
-    )
+  if ((await effectiveAdminIds(db, ref)).length === 0) throw conflict(reason)
 }
 
 /**

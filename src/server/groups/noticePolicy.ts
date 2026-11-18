@@ -36,6 +36,7 @@ import { noteScopeChange } from '../socket/syncRevision'
 import { refuseDeleted } from '../users/deleted'
 import { ensureGumboId } from '../users/insertUser'
 import { shortNamesOf } from '../users/nameBook'
+import { effectiveAdminIds } from './adminGuard'
 import {
   type Clock,
   recordRequestRecipient,
@@ -128,6 +129,16 @@ export async function playerAddApprovers(
   if (self?.login_enabled === true)
     return { userIds: [person.userId], standIn: false, told: 'player' }
   const held = await openAddTeams(db, person.userIds)
+  const teams = await db
+    .selectFrom('memberships')
+    .select('team_id')
+    .distinct()
+    .where('user_id', 'in', person.userIds)
+    .where('is_player', '=', true)
+    .where('team_id', '!=', teamId)
+    // An open add does not give that team a say over another add.
+    .where('team_id', 'not in', ['', ...held])
+    .execute()
   const coaches = await db
     .selectFrom('scope_roles')
     .innerJoin('users', 'users.id', 'scope_roles.user_id')
@@ -137,20 +148,18 @@ export async function playerAddApprovers(
     .where('scope_roles.role', 'in', ['admin', 'coach', 'assistant'])
     .where('users.disabled_at', 'is', null)
     .where('users.merged_into', 'is', null)
-    .where('scope_roles.scope_id', 'in', eb =>
-      eb
-        .selectFrom('memberships')
-        .select('team_id')
-        .where('user_id', 'in', person.userIds)
-        .where('is_player', '=', true)
-        .where('team_id', '!=', teamId)
-        // A team holding them only by an open add is not their side, for
-        // this add or the next.
-        .where('team_id', 'not in', ['', ...held])
-    )
+    .where('scope_roles.scope_id', 'in', ['', ...teams.map(row => row.team_id)])
     .orderBy('scope_roles.user_id')
     .execute()
-  const userIds = coaches.map(row => row.userId)
+  const administrators = await Promise.all(
+    teams.map(
+      async row =>
+        await effectiveAdminIds(db, { kind: 'team', id: row.team_id })
+    )
+  )
+  const userIds = [
+    ...new Set([...coaches.map(row => row.userId), ...administrators.flat()])
+  ].sort()
   const standIn = userIds.length > 0
   return { userIds, standIn, told: standIn ? 'coaches' : null }
 }
@@ -1020,7 +1029,11 @@ async function noticeRemoval(
     .where('role', 'in', ['admin', 'coach', 'assistant', 'scorekeeper'])
     .execute()
   const recipients = [
-    ...new Set([request.sender_id, ...managers.map(row => row.user_id)])
+    ...new Set([
+      request.sender_id,
+      ...managers.map(row => row.user_id),
+      ...(await effectiveAdminIds(trx, { kind: 'team', id: terms.teamId }))
+    ])
   ]
   await trx
     .insertInto('notification_events')

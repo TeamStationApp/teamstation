@@ -6,7 +6,7 @@ import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { removeFromScope, setScopeRoles } from '../invites/people'
 import { directAdminIds } from './adminGuard'
 
-describe('active direct administrator replacement', function () {
+describe('active administrator replacement', function () {
   this.timeout(60000)
   let f: GroupFixture
   before(async () => {
@@ -24,21 +24,18 @@ describe('active direct administrator replacement', function () {
     }
     expect(error).property('code', code)
   }
-  it('refuses the last direct admin even with inherited administrators or a pending replacement', async () => {
-    await fails(
-      setScopeRoles(
-        f.h.db,
-        'team',
-        f.teamA,
-        userIdOfGumbo(101),
-        { admin: false, flags: [] },
-        userIdOfGumbo(101)
-      ),
-      'conflict'
+  it('allows inherited coverage but refuses the last effective admin or an inactive replacement', async () => {
+    await setScopeRoles(
+      f.h.db,
+      'team',
+      f.teamA,
+      userIdOfGumbo(101),
+      { admin: false, flags: [] },
+      userIdOfGumbo(101)
     )
     expect(
       await directAdminIds(f.h.db, { kind: 'team', id: f.teamA })
-    ).deep.equals([101].map(userIdOfGumbo))
+    ).deep.equals([])
     await fails(
       removeFromScope(
         f.h.db,
@@ -91,32 +88,32 @@ describe('active direct administrator replacement', function () {
     await setScopeRoles(
       f.h.db,
       'team',
-      f.teamA,
-      userIdOfGumbo(103),
+      f.standaloneTeam,
+      userIdOfGumbo(101),
       { admin: true, flags: ['scorekeeper'] },
-      userIdOfGumbo(101)
+      userIdOfGumbo(103)
     )
     const removals = await Promise.allSettled([
       removeFromScope(
         f.h.db,
         'team',
-        f.teamA,
+        f.standaloneTeam,
         userIdOfGumbo(101),
         userIdOfGumbo(105)
       ),
       removeFromScope(
         f.h.db,
         'team',
-        f.teamA,
+        f.standaloneTeam,
         userIdOfGumbo(103),
         userIdOfGumbo(105)
       )
     ])
     expect(removals.filter(row => row.status === 'fulfilled')).length(1)
     expect(removals.filter(row => row.status === 'rejected')).length(1)
-    expect(await directAdminIds(f.h.db, { kind: 'team', id: f.teamA })).length(
-      1
-    )
+    expect(
+      await directAdminIds(f.h.db, { kind: 'team', id: f.standaloneTeam })
+    ).length(1)
   })
   it('counts active owner/manager memberships and protects node accounts from lower administrators', async () => {
     expect(

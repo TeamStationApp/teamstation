@@ -14,6 +14,7 @@ import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { storeGroupPhoto } from './groupPhoto'
+import { inheritedAdminIds } from './inheritedAdmins'
 import { currentActor, requireGroupAdmin } from './rights'
 
 export interface CreatedGroup {
@@ -141,7 +142,16 @@ export async function createGroup(
           .values({ team_id: id, season_id: body.parent.id })
           .execute()
     }
-    if (body.external !== true)
+    if (
+      body.external !== true &&
+      (
+        await inheritedAdminIds(
+          trx,
+          { kind: body.kind, id },
+          { userId: fresh.userId, durable: true }
+        )
+      ).length === 0
+    )
       await trx
         .insertInto('scope_roles')
         .values({
@@ -160,7 +170,7 @@ export async function createGroup(
         { kind: body.kind, id },
         body.picture.image
       )
-    // The creator's home lists what they made.
+    // Refresh the creator's direct affiliations and inherited access.
     noteScopeChange(trx, {
       userId: fresh.userId,
       ...groupScopeIds(body.kind, id)

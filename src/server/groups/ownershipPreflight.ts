@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { hierarchyReady } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -8,6 +9,7 @@ export interface OwnershipInput {
   teams: Array<{
     id: string
     kind: 'full' | 'external'
+    leagueId?: string | null
     custodianId?: string | null
     custodianType?: 'league' | 'season' | 'team' | null
   }>
@@ -115,23 +117,42 @@ export function analyzeOwnership(
         leagueId: seasons.get(seasonId)!.leagueId
       })
   }
-  for (const [kind, groups] of [
-    ['league', input.leagues],
-    ['season', input.seasons],
-    ['team', input.teams.filter(team => team.kind === 'full')]
-  ] as const) {
-    for (const group of groups) {
-      if (
-        !input.directAdmins.some(
-          admin => admin.kind === kind && admin.id === group.id
-        )
-      )
-        conflicts.push({
-          kind,
-          id: group.id,
-          reason: 'Assign an active direct administrator'
-        })
-    }
+  const direct = (kind: 'league' | 'season' | 'team', id: string): boolean =>
+    input.directAdmins.some(admin => admin.kind === kind && admin.id === id)
+  const leagueAdmin = (id: string | null | undefined): boolean =>
+    id != null && direct('league', id)
+  const seasonAdmin = (id: string): boolean =>
+    direct('season', id) || leagueAdmin(seasons.get(id)?.leagueId)
+  const requireAdmin = (
+    kind: 'league' | 'season' | 'team',
+    id: string,
+    covered: boolean
+  ): void => {
+    if (!covered)
+      conflicts.push({ kind, id, reason: 'Assign an active administrator' })
+  }
+  for (const league of input.leagues)
+    requireAdmin('league', league.id, direct('league', league.id))
+  for (const season of input.seasons)
+    requireAdmin('season', season.id, seasonAdmin(season.id))
+  for (const team of input.teams) {
+    // A rejected parent decision has no chosen parents to judge coverage by.
+    if (
+      team.kind === 'external' ||
+      conflicts.some(row => row.kind === 'team' && row.id === team.id)
+    )
+      continue
+    const chosen = parents.filter(parent => parent.teamId === team.id)
+    // Cutover adopts the selected parent league, or retains a direct league
+    // when there are no selected parents. After cutover the direct edge stays.
+    const leagueId = chosen.length > 0 ? chosen[0].leagueId : team.leagueId
+    requireAdmin(
+      'team',
+      team.id,
+      direct('team', team.id) ||
+        leagueAdmin(leagueId) ||
+        chosen.some(parent => seasonAdmin(parent.seasonId))
+    )
   }
   return { ready: conflicts.length === 0, conflicts, parents }
 }
@@ -145,7 +166,7 @@ export async function ownershipPreflight(
     await lockKeys(trx, ['creation:ownership-cutover', 'creation:parent-graph'])
     const teams = await trx
       .selectFrom('teams')
-      .select(['id', 'kind', 'custodian_id', 'custodian_type'])
+      .select(['id', 'kind', 'league_id', 'custodian_id', 'custodian_type'])
       .where('merged_into', 'is', null)
       .execute()
     const seasons = await trx
@@ -153,15 +174,9 @@ export async function ownershipPreflight(
       .select(['id', 'league_id'])
       .execute()
     const leagues = await trx.selectFrom('leagues').select(['id']).execute()
-    const previous = await trx
-      .selectFrom('system_settings')
-      .select('value')
-      .where('key', '=', 'creation.hierarchyReady')
-      .executeTakeFirst()
+    const alreadyReady = await hierarchyReady(trx)
     const memberships = await trx
-      .selectFrom(
-        previous?.value === true ? 'season_team_parents' : 'season_teams'
-      )
+      .selectFrom(alreadyReady ? 'season_team_parents' : 'season_teams')
       .select(['team_id', 'season_id'])
       .execute()
     const admins = await trx
@@ -187,6 +202,7 @@ export async function ownershipPreflight(
         teams: teams.map(team => ({
           id: team.id,
           kind: team.kind,
+          leagueId: team.league_id,
           custodianId: team.custodian_id,
           custodianType: team.custodian_type
         })),
@@ -207,7 +223,7 @@ export async function ownershipPreflight(
       options.choices
     )
     if (options.dryRun || !report.ready) return report
-    if (previous?.value === true) return { ...report, alreadyApplied: true }
+    if (alreadyReady) return { ...report, alreadyApplied: true }
     await lockKeys(
       trx,
       teams.map(team => `group:team:${team.id}`)

@@ -496,12 +496,12 @@ const accountPaths = {
       security: [{ bearer: [] }],
       summary: 'Delete your account (signed-in sessions only)',
       description:
-        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags and notifications; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last direct administrator of a team, season or league, naming every such group.',
+        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags and notifications; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last effective administrator of a team, season or league, naming every such group.',
       responses: {
         204: { description: 'Deleted' },
         409: {
           description:
-            'The last node administrator, or the last direct administrator of a group, cannot be deleted'
+            'The last node administrator, or the last effective administrator of a group, cannot be deleted'
         }
       }
     }
@@ -9956,7 +9956,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'nobody has verified gets a seven-day invitation (`invited`), ' +
             'applied when somebody signs in with it or verifies it, or ' +
             'accepted from its link. Inviting creates no account. A pending ' +
-            'replacement does not count as an active direct administrator. ' +
+            'replacement does not count as an active administrator. ' +
             'Only an administrator of the level may call; anybody else gets ' +
             '404.',
           security: [{ bearer: [] }],
@@ -10165,7 +10165,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'A role, or with `member` the level\u2019s membership and every ' +
             'role there. What a level above gives stays. Taking away ' +
             '`admin`, or taking an administrator out, is for an ' +
-            'administrator (403), and the last direct administrator stays ' +
+            'administrator (403), and the last effective administrator stays ' +
             '(409). A player of a team is not taken out of it this way ' +
             '(409): their membership is their place on its roster.',
           security: [{ bearer: [] }],
@@ -10186,7 +10186,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Takes away your membership of it and every role you hold ' +
             'there. What a level above gives you is left there, to leave ' +
-            'at that level. The last direct administrator stays (409).',
+            'at that level. The last effective administrator stays (409).',
           security: [{ bearer: [] }],
           parameters: [kindParam, idParam],
           responses: {
@@ -10213,8 +10213,9 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Step down from one of your roles at a level',
           description:
             'Keeps the level\u2019s membership and your other roles. A role ' +
-            'you do not hold there changes nothing. The last direct ' +
-            'administrator stays (409).',
+            'you do not hold there changes nothing. Refuses (409) only when ' +
+            'no active administrator would remain, counting inherited league ' +
+            'and season administrators. Site-wide status alone does not count.',
           security: [{ bearer: [] }],
           parameters: [kindParam, idParam, roleOnlyParam],
           responses: {

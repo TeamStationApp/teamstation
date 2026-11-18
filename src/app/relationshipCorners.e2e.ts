@@ -57,7 +57,7 @@ async function main(): Promise<void> {
       [204, 'Willie Mays', 'team', f.teamA, 'admin'],
       [205, 'Jackie Robinson', 'season', f.seasonB, 'admin'],
       [206, 'Roberto Clemente', 'team', f.teamB, 'admin'],
-      [207, 'Ted Williams', 'team', f.teamA, 'coach']
+      [207, 'Ted Williams', 'team', f.teamA, 'scorekeeper']
     ] as const
     for (const [id, name, kind, scope, role] of people) {
       await insertFixtureUsers(f.h.db, {
@@ -121,7 +121,8 @@ async function main(): Promise<void> {
     let sequence = 0
     const sendGame = async (
       home = f.teamB,
-      away = f.teamA
+      away = f.teamA,
+      sender = 205
     ): Promise<string> => {
       const response = await f.h.request(
         'POST',
@@ -139,7 +140,7 @@ async function main(): Promise<void> {
           },
           idempotencyKey: `corner-game-${sequence}`
         },
-        205
+        sender
       )
       expect(response.status, await response.clone().text()).equals(201)
       return ((await response.json()) as { id: string }).id
@@ -185,7 +186,7 @@ async function main(): Promise<void> {
     })
     await text(plain, 'Not found')
     lines.push(
-      'E6 PASS: league-only, regular-season-only, playoff-only and direct-team administrators independently accept a raw guest game; season-only sender records host/owned opponent consent; coach cannot decide; no enrollment is inferred'
+      'E6 PASS: league-only, regular-season-only, playoff-only and direct-team administrators independently accept a raw guest game; season-only sender records host/owned opponent consent; scorekeeper cannot decide; no enrollment is inferred'
     )
 
     const joinResponse = await f.h.request(
@@ -304,14 +305,20 @@ async function main(): Promise<void> {
     await press(host, 'Teams', 'tab')
     await host.waitForFunction(
       () =>
-        document.body.textContent != null &&
-        !document.body.textContent.includes('Loading')
+        document.body.innerText != null &&
+        !document.body.innerText.includes('Loading')
     )
-    await host.waitForFunction(
-      () =>
-        document.body.textContent != null &&
-        !document.body.textContent.includes('Demo Hawks')
-    )
+    // Historical game participants remain visible after competition membership ends.
+    await text(host, 'Demo Hawks')
+    expect(
+      await f.h.db
+        .selectFrom('season_teams')
+        .select('team_id')
+        .where('season_id', '=', f.seasonB)
+        .where('team_id', '=', f.teamA)
+        .where('active', '=', true)
+        .execute()
+    ).deep.equals([])
     await press(host, 'Schedule', 'tab')
     await press(host, 'All', 'tab')
     await text(host, 'Demo Hawks')
@@ -325,7 +332,7 @@ async function main(): Promise<void> {
     await press(direct, 'Accept invitation')
     await text(direct, 'Accepted')
     lines.push(
-      'E19 PASS: competition entry/exit preserves every game and grants no private access to another host matchup or spectator roster; current season Teams removes the guest after exit while Schedule retains its games; a new raw guest invite remains available after exit'
+      'E19 PASS: competition entry/exit preserves every game and grants no private access to another host matchup or spectator roster; exit ends active season membership while Teams retains the historical participant and Schedule retains its games; a new raw guest invite remains available after exit'
     )
 
     const pending = await sendGame(stub, f.teamA)
@@ -391,7 +398,7 @@ async function main(): Promise<void> {
     await externalAdmin.reload({ waitUntil: 'domcontentloaded' })
     await text(externalAdmin, 'Declined')
     expect(
-      await externalAdmin.evaluate(() => document.body.textContent)
+      await externalAdmin.evaluate(() => document.body.innerText)
     ).not.includes('Accept invitation')
     lines.push(
       'E10 PASS: a season-originated game needing two unrelated team consents is shared; one team decline closes the proposal in the other team’s independent browser context'
@@ -468,6 +475,16 @@ async function main(): Promise<void> {
     await direct.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
       waitUntil: 'domcontentloaded'
     })
+    await direct.waitForSelector('[data-testid="scheduleGame"]')
+    await direct.evaluate(() => {
+      const row = document.querySelector('[data-testid="scheduleGame"]')
+      let node = row == null ? null : row.parentElement
+      while (node != null) {
+        if (['auto', 'scroll'].includes(getComputedStyle(node).overflowY))
+          node.scrollTop = node.scrollHeight
+        node = node.parentElement
+      }
+    })
     await text(direct, 'Regular fixture')
     await text(direct, 'Playoff fixture')
     await text(direct, 'Outside classic')
@@ -483,7 +500,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PUT',
-          `/manage/season/${f.seasonB}/people/205/roles`,
+          `/manage/season/${f.seasonB}/people/${userIdOfGumbo(205)}/roles`,
           { admin: false, flags: [] },
           105
         )
@@ -493,7 +510,7 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded'
     })
     await text(host, 'Pending invitation you sent')
-    expect(await host.evaluate(() => document.body.textContent)).not.includes(
+    expect(await host.evaluate(() => document.body.innerText)).not.includes(
       'Demo Corner Field'
     )
     await direct.goto(f.h.origin + `/notifications/${lostAuthority}`, {
@@ -506,9 +523,27 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded'
     })
     await press(replacementHost, 'Accept invitation')
-    await text(replacementHost, 'Accepted')
+    await text(
+      replacementHost,
+      'A current host administrator must send a new proposal'
+    )
+    expect(
+      (
+        await f.h.db
+          .selectFrom('group_requests')
+          .select('game_id')
+          .where('id', '=', lostAuthority)
+          .executeTakeFirstOrThrow()
+      ).game_id
+    ).equals(null)
+    const renewed = await sendGame(f.teamB, f.teamA, 102)
+    await direct.goto(f.h.origin + `/notifications/${renewed}`, {
+      waitUntil: 'domcontentloaded'
+    })
+    await press(direct, 'Accept invitation')
+    await text(direct, 'Accepted')
     lines.push(
-      'E21 PASS: revoked season-only proposer loses pending details; team consent alone cannot publish; a current host administrator replaces the stale host/opponent consent before one publication'
+      'E21 PASS: revoked season-only proposer loses pending details; stale hosting authorization cannot publish; a fresh proposal from a current host administrator publishes with team consent'
     )
     await applyParents(
       f.h.db,
@@ -535,14 +570,32 @@ async function main(): Promise<void> {
         )
       ).status
     ).equals(200)
-    await direct.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    await direct.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
       waitUntil: 'domcontentloaded'
     })
-    await text(direct, 'Canceled — Demo Hawks withdrew')
-    await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
+    await text(direct, 'Canceled')
+    await text(direct, 'Withdrawal — Demo Hawks withdrew')
+    await replacementHost.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'domcontentloaded'
     })
-    await text(host, 'Canceled — Demo Hawks withdrew')
+    await press(replacementHost, 'Schedule', 'tab')
+    await press(replacementHost, 'All', 'tab')
+    await replacementHost.waitForSelector(
+      '[data-testid="schedule-display-row"]:not([aria-hidden="true"] *)'
+    )
+    await replacementHost.evaluate(() => {
+      const row = document.querySelector(
+        '[data-testid="schedule-display-row"]:not([aria-hidden="true"] *)'
+      )
+      let node = row == null ? null : row.parentElement
+      while (node != null) {
+        if (['auto', 'scroll'].includes(getComputedStyle(node).overflowY))
+          node.scrollTop = node.scrollHeight
+        node = node.parentElement
+      }
+    })
+    await text(replacementHost, 'Canceled')
+    await text(replacementHost, 'Withdrawal — Demo Hawks withdrew')
     lines.push(
       'E17/E19 PASS: a direct-only team administrator withdraws after both competition exit and all inherited parent links are removed; the same canceled game remains on team and host schedules'
     )

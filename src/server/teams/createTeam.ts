@@ -27,6 +27,7 @@ import {
   externalIdLockKey,
   recordExternalId
 } from '../db/externalIds'
+import { inheritedAdminIds } from '../groups/inheritedAdmins'
 import { noteScopeChange } from '../socket/syncRevision'
 import { followMerges } from './followMerges'
 
@@ -84,8 +85,12 @@ function creatorAccess(
  *
  * Anybody may make a standalone team. Putting it in a season takes an
  * administrator of that season or of its league; a season asked for by name
- * is one the caller administers, else a new one. The caller becomes the
- * administrator of the team, and of a season this call makes.
+ * is one the caller administers, else a new one. The caller administers a
+ * season this call makes, and owns the team unless they are a site
+ * administrator. The team joins its season as a competition, which is a
+ * permission parent only before the ownership cutover: until then a season or
+ * league role that covers the team spares an owner the explicit team grant,
+ * and after it every creator gets one.
  *
  * All in one transaction. Each external id, and a season asked for by name,
  * is locked first, so two posts of the same team at once make one team and
@@ -153,7 +158,24 @@ export async function createTeam(
     for (const externalId of body.externalIds) {
       await recordExternalId(trx, 'team', teamId, externalId)
     }
-    await makeAdmin(trx, creator.userId, 'team', teamId)
+    if (season?.created === true)
+      await makeAdmin(trx, creator.userId, 'season', season.id)
+    // The team has no league and joins its season as a competition, so only
+    // that season's coverage before the ownership cutover can reach it. The
+    // owner membership written below is then a direct administrator the
+    // cutover cannot take away; a site administrator gets none, so keeps the
+    // grant.
+    if (
+      creator.isAdmin ||
+      (
+        await inheritedAdminIds(
+          trx,
+          { kind: 'team', id: teamId },
+          { userId: creator.userId }
+        )
+      ).length === 0
+    )
+      await makeAdmin(trx, creator.userId, 'team', teamId)
     // Their own team is one they belong to, so it lists among their teams.
     // A site administrator sees every team already, and belongs to none.
     if (!creator.isAdmin) {
@@ -167,9 +189,6 @@ export async function createTeam(
           joined_at: new Date()
         })
         .execute()
-    }
-    if (season?.created === true) {
-      await makeAdmin(trx, creator.userId, 'season', season.id)
     }
     noteScopeChange(trx, {
       userId: creator.userId,

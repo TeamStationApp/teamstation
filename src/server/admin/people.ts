@@ -10,7 +10,7 @@ import { notifyChatUser } from '../chat/membershipLog'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
+import { effectiveAdminIds, requireAdministrator } from '../groups/adminGuard'
 import { MAX_MERGE_DEPTH, peopleOf } from '../openAdds'
 import { assertMergeScoringSafe } from '../scoring/mergeConflicts'
 import { notifyLiveGamesRenamed } from '../socket/gameChanges'
@@ -208,7 +208,8 @@ export async function closeInto(
         )?.kind === 'external'
       )
         continue
-      if ((await directAdminIds(trx, ref)).some(id => id !== closing)) continue
+      if ((await effectiveAdminIds(trx, ref)).some(id => id !== closing))
+        continue
       const retainedOwner =
         targetActive &&
         ref.kind === 'team' &&
@@ -221,7 +222,7 @@ export async function closeInto(
           .executeTakeFirst()) == null
       if (!retainedOwner)
         throw conflict(
-          'Add another active direct administrator before merging the last one'
+          'Add another active administrator before merging the last one'
         )
     }
     if (
@@ -315,7 +316,7 @@ export async function closeInto(
       for (const row of designated)
         noteScopeChange(trx, { teamId: row.scope_id })
     }
-    for (const ref of refs) await requireDirectAdmin(trx, ref)
+    for (const ref of refs) await requireAdministrator(trx, ref)
     if (
       active &&
       user.is_admin &&

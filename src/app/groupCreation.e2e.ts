@@ -38,14 +38,14 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
   await page.waitForSelector('[aria-label^="Account,"]')
   await text(page, 'Your Home')
 }
-/** The picture opens its menu, whatever else its label says, then the row. */
+/** Notifications are pinned in the desktop sidebar. */
 async function openNotifications(page: Page): Promise<void> {
-  const picture = '[role="button"][aria-label^="Account, "]'
-  await page.waitForSelector(picture)
-  await page.$eval(picture, node => {
+  const selector =
+    '[data-testid="navigation-sidebar"] [aria-label^="Notifications"]'
+  await page.waitForSelector(selector)
+  await page.$eval(selector, node => {
     ;(node as HTMLElement).click()
   })
-  await press(page, 'Notifications')
 }
 async function chooseLocation(
   page: Page,
@@ -267,10 +267,9 @@ async function main(): Promise<void> {
     await press(teamAdmin, 'Team this season manages')
     await fill(teamAdmin, 'Search by name or city', 'Demo Hawks')
     await press(teamAdmin, 'Choose Demo Hawks, Demo City, Demo Region, US')
-    await text(teamAdmin, 'Sending approves for the group')
-    await press(teamAdmin, 'I approve for all affected groups')
-    await press(teamAdmin, 'Confirm relationship')
-    await text(teamAdmin, 'Accepted')
+    await text(teamAdmin, 'You can approve every affected group')
+    await press(teamAdmin, 'Save')
+    await teamAdmin.waitForFunction(() => !location.pathname.includes('/link'))
     await teamAdmin.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
       waitUntil: 'networkidle0'
     })
@@ -449,8 +448,15 @@ async function main(): Promise<void> {
     })
     await login(recipient, f, 103)
     await openNotifications(recipient)
-    await press(recipient, 'Become administrator of Demo Outside Opponent')
-    await press(recipient, 'Accept invitation')
+    await press(
+      recipient,
+      'Accept Become administrator of Demo Outside Opponent'
+    )
+    await recipient.waitForSelector(
+      '[aria-label="Accept Become administrator of Demo Outside Opponent"]',
+      { hidden: true }
+    )
+    await press(recipient, 'History')
     await text(recipient, 'Accepted')
     await recipient.goto(f.h.origin + `/groups/team/${external.id}`, {
       waitUntil: 'networkidle0'
