@@ -1,28 +1,29 @@
-import { constants } from 'node:fs'
-import { lstat, open, opendir, realpath } from 'node:fs/promises'
-import { resolve, sep } from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 
 import type { ToolDefinition } from './messagesApi'
+import { sourceLines } from './sourceIndex/files'
+import { directoryMapProblem, SCHEMA_VERSION } from './sourceIndex/schema'
 
 export const DIRECTORY_MAP = 'src/DIRECTORY_MAP.md'
-export const MAP_FIRST = `Read ${DIRECTORY_MAP} completely first, then use it to choose a source directory or file.`
+export const SOURCE_UNAVAILABLE = 'Source index unavailable on this server.'
+export const SOURCE_QUERY_FAILED =
+  'That source call failed; try a narrower or different call.'
 export const SOURCE_LIMITS = {
-  fileBytes: 1024 * 1024,
   outputCharacters: 20000,
   lines: 200,
   entries: 200,
-  matches: 50,
-  scannedBytes: 2 * 1024 * 1024,
-  visitedEntries: 2000
+  matches: 50
 } as const
-
 const NAMES = [
   'source_list_directory',
   'source_read_file',
-  'source_search'
+  'source_search',
+  'source_outline',
+  'source_find_definition'
 ] as const
-type SourceToolName = (typeof NAMES)[number]
-
+export type SourceToolName = (typeof NAMES)[number]
 export function isSourceTool(name: string): name is SourceToolName {
   return NAMES.some(each => each === name)
 }
@@ -30,36 +31,39 @@ export function isSourceTool(name: string): name is SourceToolName {
 const pathProperty = {
   type: 'string',
   description:
-    'Repository-relative path inside src, such as src/server/tess. Use src for its root.'
+    'Literal file or directory inside src: src/server/tess, or server/tess as the map writes it; src for the root.'
 }
-
+const includeTests = {
+  type: 'boolean',
+  description:
+    'Include test and fixture files. Use for intended behavior, guarantees, edge cases and whether behavior is tested.'
+}
+const startEntry = {
+  type: 'integer',
+  minimum: 1,
+  description: 'First entry, starting at 1; defaults to 1.'
+}
 export const SOURCE_TOOLS: ToolDefinition[] = [
   {
     name: 'source_list_directory',
-    description: `Lists immediate files and directories in TeamStation's source, read-only, in name order. ${MAP_FIRST} Symbolic links are skipped; at most 200 entries per call, use startEntry to continue.`,
+    description:
+      'Lists indexed files and directories in name order, all roles. Read-only, 200 entries per page; use startEntry to continue.',
     input_schema: {
       type: 'object',
-      properties: {
-        path: pathProperty,
-        startEntry: {
-          type: 'integer',
-          minimum: 1,
-          description: 'First entry, starting at 1; defaults to 1.'
-        }
-      },
+      properties: { path: pathProperty, startEntry },
       required: ['path']
     }
   },
   {
     name: 'source_read_file',
-    description: `Reads numbered lines from TeamStation's open-source code, for any user. Start with ${DIRECTORY_MAP}, then choose relevant files. Reads at most 200 lines and 20,000 characters; use startLine to continue. Files over 1 MiB and binary files are refused. No writes or commands.`,
+    description:
+      'Reads numbered lines of indexed public source for any user. At most 200 lines and 20,000 characters; use startLine to continue. No writes or commands.',
     input_schema: {
       type: 'object',
       properties: {
         path: pathProperty,
         startLine: {
-          type: 'integer',
-          minimum: 1,
+          ...startEntry,
           description: 'First line, starting at 1; defaults to 1.'
         }
       },
@@ -68,419 +72,469 @@ export const SOURCE_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'source_search',
-    description: `Finds a literal, case-sensitive single-line string in a chosen source file or directory tree. ${MAP_FIRST} Narrow the path using the map; do not blindly search all src. Returns numbered matches with explicit limits. Binary, large and unreadable files and symbolic links are skipped. No regular expressions or commands.`,
+    description:
+      'Finds a literal case-sensitive single-line string in an indexed file or subtree, code only by default. Returns up to 50 matching lines. Use the cached directory map to narrow the path. No regular expressions or commands.',
     input_schema: {
       type: 'object',
       properties: {
         path: pathProperty,
         text: {
           type: 'string',
-          description:
-            'Nonempty literal text to find, up to 500 characters on one line.'
-        }
+          minLength: 3,
+          maxLength: 500,
+          description: 'Literal text, 3 to 500 Unicode characters on one line.'
+        },
+        includeTests
       },
       required: ['path', 'text']
+    }
+  },
+  {
+    name: 'source_outline',
+    description:
+      'Outlines exported symbols in a file or recursively in a folder, code only by default. An explicit test file is included. Pages of 200, with paths, line spans and declaration signatures.',
+    input_schema: {
+      type: 'object',
+      properties: { path: pathProperty, startEntry, includeTests },
+      required: ['path']
+    }
+  },
+  {
+    name: 'source_find_definition',
+    description:
+      'Finds exported definitions by exact name, code only by default. Returns up to 50 definitions with paths, lines, signatures and documentation.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 500 },
+        includeTests
+      },
+      required: ['name']
     }
   }
 ]
 
-/** The same release's src, from either src/server/tess or lib/server/tess. */
-export function sourceRoot(moduleDirectory = __dirname): string {
-  return resolve(moduleDirectory, '../../../src')
-}
-
-/**
- * Names under src that are not open source: a host's secrets (src/.gitignore),
- * build output, dependencies and hidden tool state. Refused at any depth.
- */
-const PRIVATE_NAMES = new Set([
-  'serverconfig.json',
-  'clientconfig.json',
-  'clientconfig.xcconfig',
-  'local.properties',
-  'node_modules',
-  'lib',
-  'dist',
-  'build',
-  'build-device',
-  'build-local',
-  'web-build',
-  'pods',
-  'deriveddata'
-])
-
-/** Case-folded, for case-insensitive filesystems such as macOS's. */
-export function isPrivateName(name: string): boolean {
-  const folded = name.toLowerCase()
-  return (
-    folded.startsWith('.') ||
-    PRIVATE_NAMES.has(folded) ||
-    folded.endsWith('.keystore') ||
-    folded.endsWith('.xcuserdatad')
-  )
-}
-
-interface SourceResult {
+export interface SourceResult {
   content: string
   is_error?: boolean
 }
-
-/** A search's file left unread for its scan budget, not for itself. */
-class BudgetSkip extends Error {}
-
-interface Budget {
-  visited: number
-  skipped: number
-  limited: boolean
+export interface SourceIndex {
+  readonly prompt: string
+  run: (name: SourceToolName, input: unknown) => SourceResult
+}
+interface FileRow {
+  id: number
+  path: string
+  content: string
+  role: string
+}
+interface SymbolRow {
+  path: string
+  name: string
+  kind: string
+  line: number
+  end_line: number
+  signature: string
+  doc: string | null
 }
 
-/** One response turn's navigation state. Construction does no filesystem I/O. */
-export function sourceBrowser(root = sourceRoot()): {
-  run: (name: SourceToolName, input: unknown) => Promise<SourceResult>
-  acceptMapResult: (result: { content: unknown; is_error?: boolean }) => void
-} {
-  let mapRead = false
-  let completeMap: string | undefined
-  let checkedRoot: Promise<string> | undefined
+/** Same path from both the TypeScript and compiled server modules. */
+export function sourceIndexPath(moduleDirectory = __dirname): string {
+  return resolve(moduleDirectory, '../../../lib/server/tess/source.db')
+}
 
-  // Checked once per turn; every path is still checked against it.
-  async function rootPath(): Promise<string> {
-    const rootStat = await lstat(root)
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink())
-      throw new Error('root')
-    return await realpath(root)
+/** Escape literal GLOB data, including paths, never SQL syntax. */
+export function sourceGlob(text: string): string {
+  return text.replace(/[[?*]/g, character =>
+    character === '[' ? '[[]' : `[${character}]`
+  )
+}
+/** One literal trigram also accelerates punctuation-only GLOB patterns. */
+export function sourceTrigram(text: string): string {
+  return `"${Array.from(text).slice(0, 3).join('').replace(/"/g, '""')}"`
+}
+
+class InputError extends Error {}
+const fail = (content: string): SourceResult => ({ content, is_error: true })
+/** An open index and the file it was opened from, to notice a rebuild. */
+const indexes = new Map<
+  string,
+  { index: SourceIndex; identity: string; close: () => void }
+>()
+
+function fileIdentity(path: string): string | undefined {
+  try {
+    const stat = statSync(path)
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`
+  } catch {
+    return undefined
   }
+}
+const missingWarned = new Set<string>()
+const BUDGET = SOURCE_LIMITS.outputCharacters - 512
+const statements = new WeakMap<DatabaseSync, Map<string, StatementSync>>()
 
-  async function checkedPath(path: string): Promise<string> {
-    const parts = path.split('/')
-    if (
-      parts[0] !== 'src' ||
-      parts.some(part => part === '..') ||
-      /[\\\0]/.test(path)
-    )
-      throw new Error('path')
-    if (checkedRoot == null) {
-      checkedRoot = rootPath()
-      checkedRoot.catch(() => {
-        checkedRoot = undefined
+/** Each handle prepares a statement once, whatever the call. */
+function query(db: DatabaseSync, sql: string): StatementSync {
+  let prepared = statements.get(db)
+  if (prepared == null) statements.set(db, (prepared = new Map()))
+  let statement = prepared.get(sql)
+  if (statement == null) prepared.set(sql, (statement = db.prepare(sql)))
+  return statement
+}
+
+/**
+ * Cache the read-only handle, or a failure to open it, while the file stays
+ * the same. A rebuild replaces the file by rename, so a changed identity
+ * reopens it; a missing file is not cached, so an index built later is
+ * picked up. A query error fails only that call.
+ */
+export function openSourceIndex(path = sourceIndexPath()): SourceIndex {
+  const identity = fileIdentity(path)
+  const cached = indexes.get(path)
+  if (cached != null) {
+    if (cached.identity === identity) return cached.index
+    cached.close()
+    indexes.delete(path)
+  }
+  if (identity == null || !existsSync(path)) {
+    if (!missingWarned.has(path))
+      console.warn(
+        'Tess source index missing; build it with npm run tess.source-index -- build',
+        { path }
+      )
+    missingWarned.add(path)
+    return {
+      prompt: SOURCE_UNAVAILABLE,
+      run: () => fail(SOURCE_UNAVAILABLE)
+    }
+  }
+  let db: DatabaseSync | undefined
+  let warned = false
+  const unavailable = (error: unknown): void => {
+    if (!warned)
+      console.warn('Tess source index unavailable', {
+        path,
+        reason: error instanceof Error ? error.message : String(error)
       })
-    }
-    const canonicalRoot = await checkedRoot
-    let target = canonicalRoot
-    for (const part of parts.slice(1)) {
-      if (part === '' || part === '.') continue
-      if (isPrivateName(part)) throw new Error('private')
-      target = resolve(target, part)
-      if ((await lstat(target)).isSymbolicLink()) throw new Error('link')
-    }
-    const canonical = await realpath(target)
+    warned = true
+    db?.close()
+    db = undefined
+  }
+  let prompt = SOURCE_UNAVAILABLE
+  try {
+    db = new DatabaseSync(path, { readOnly: true })
     if (
-      canonical !== canonicalRoot &&
-      !canonical.startsWith(canonicalRoot + sep)
+      db.prepare('SELECT value FROM meta WHERE key=?').get('schema_version')
+        ?.value !== String(SCHEMA_VERSION)
     )
-      throw new Error('boundary')
-    // A typed name in another case can still resolve to a private one.
-    if (
-      canonical
-        .slice(canonicalRoot.length + 1)
-        .split(sep)
-        .some(part => part !== '' && isPrivateName(part))
+      throw new Error('Unsupported source schema')
+    const commit = db
+      .prepare('SELECT value FROM meta WHERE key=?')
+      .get('commit')?.value
+    const map = db
+      .prepare('SELECT content FROM files WHERE path=?')
+      .get(DIRECTORY_MAP)?.content
+    if (typeof commit !== 'string' || typeof map !== 'string')
+      throw new Error('Missing commit or compact directory map')
+    const problem = directoryMapProblem(map)
+    if (problem != null) throw new Error(problem)
+    // Reject incomplete indexes at open, even when the first request only needs the map.
+    db.prepare('SELECT parent,name,kind FROM entries LIMIT 0').all()
+    db.prepare(
+      'SELECT path,name,kind,line,end_line,signature,doc FROM symbols LIMIT 0'
+    ).all()
+    db.prepare('SELECT rowid FROM search WHERE search MATCH ? LIMIT 0').all(
+      '"abc"'
     )
-      throw new Error('private')
-    return canonical
+    prompt = `## TeamStation source at commit ${commit}\n${map}`
+  } catch (error) {
+    unavailable(error)
   }
-
-  async function textFile(
-    path: string,
-    scan?: { bytes: number; limited: boolean }
-  ): Promise<{ text: string; bytes: number }> {
-    const target = await checkedPath(path)
-    const first = await lstat(target)
-    if (!first.isFile()) throw new Error('file')
-    // A file too large for what is left of the scan is skipped, not opened.
-    if (scan != null && scan.bytes + first.size > SOURCE_LIMITS.scannedBytes) {
-      scan.limited = true
-      throw new BudgetSkip()
-    }
-    const file = await open(
-      target,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-    )
-    try {
-      const stat = await file.stat()
-      const current = await lstat(await checkedPath(path))
-      if (
-        !stat.isFile() ||
-        stat.dev !== current.dev ||
-        stat.ino !== current.ino ||
-        stat.size > SOURCE_LIMITS.fileBytes
-      )
-        throw new Error('file')
-      if (scan != null && scan.bytes + stat.size > SOURCE_LIMITS.scannedBytes) {
-        scan.limited = true
-        throw new BudgetSkip()
-      }
-      // One byte past the stat'd size shows growth since the stat.
-      const buffer = Buffer.alloc(
-        Math.min(stat.size, SOURCE_LIMITS.fileBytes) + 1
-      )
-      let bytes = 0
-      for (;;) {
-        const read = await file.read(
-          buffer,
-          bytes,
-          buffer.length - bytes,
-          bytes
-        )
-        bytes += read.bytesRead
-        if (scan != null) {
-          scan.bytes += read.bytesRead
-          if (scan.bytes > SOURCE_LIMITS.scannedBytes) {
-            scan.limited = true
-            throw new Error('scan limit')
-          }
-        }
-        if (bytes > SOURCE_LIMITS.fileBytes) throw new Error('size')
-        if (read.bytesRead === 0) break
-        if (bytes === buffer.length) throw new Error('changed')
-      }
-      const data = buffer.subarray(0, bytes)
-      if (data.includes(0)) throw new Error('binary')
-      return {
-        text: new TextDecoder('utf-8', { fatal: true }).decode(data),
-        bytes
-      }
-    } finally {
-      await file.close()
-    }
-  }
-
-  async function* entries(
-    path: string,
-    recursive: boolean,
-    budget: Budget,
-    nested = false
-  ): AsyncGenerator<{ path: string; directory: boolean }> {
-    let directory
-    try {
-      directory = await opendir(await checkedPath(path))
-    } catch (error) {
-      // A subdirectory that cannot be opened is skipped, not the whole search.
-      if (!nested) throw error
-      budget.skipped += 1
-      return
-    }
-    for await (const entry of directory) {
-      budget.visited += 1
-      if (budget.visited > SOURCE_LIMITS.visitedEntries) {
-        budget.limited = true
-        return
-      }
-      if (!entry.isDirectory() && !entry.isFile()) continue
-      if (isPrivateName(entry.name)) continue
-      const child = `${path.replace(/\/$/, '')}/${entry.name}`
-      yield { path: child, directory: entry.isDirectory() }
-      if (recursive && entry.isDirectory())
-        yield* entries(child, true, budget, true)
-      if (budget.limited) return
-    }
-  }
-
-  return {
-    // The turn loop calls this only after fitting the results for the next request.
-    // Reading a file alone must not unlock sibling calls in the same model batch.
-    acceptMapResult: result => {
-      if (
-        completeMap != null &&
-        result.content === completeMap &&
-        result.is_error !== true
-      )
-        mapRead = true
-    },
-    run: async (name, raw) => {
-      if (raw == null || typeof raw !== 'object' || Array.isArray(raw))
-        return {
-          content: 'Source tools take an object with a src-relative path.',
-          is_error: true
-        }
-      const input = raw as Record<string, unknown>
-      if (typeof input.path !== 'string' || input.path.length > 4096)
-        return {
-          content: 'Supply a src-relative path of at most 4096 characters.',
-          is_error: true
-        }
-      const path = input.path
-      if (!mapRead && !(name === 'source_read_file' && path === DIRECTORY_MAP))
-        return { content: MAP_FIRST, is_error: true }
+  const index: SourceIndex = {
+    prompt,
+    run: (name, value) => {
+      if (db == null) return fail(SOURCE_UNAVAILABLE)
       try {
-        if (name === 'source_read_file') {
-          const start = input.startLine ?? 1
-          if (
-            typeof start !== 'number' ||
-            !Number.isSafeInteger(start) ||
-            start < 1
-          )
-            return {
-              content: 'startLine must be a positive integer.',
-              is_error: true
-            }
-          const { text } = await textFile(path)
-          const lines = text === '' ? [] : text.replace(/\n$/, '').split('\n')
-          let content = `${path} (${lines.length} lines)\n`
-          let next = start - 1
-          let clipped = false
-          for (
-            ;
-            next < lines.length && next < start - 1 + SOURCE_LIMITS.lines;
-            next += 1
-          ) {
-            const line = `${next + 1}: ${lines[next]}\n`
-            if (
-              content.length + line.length >
-              SOURCE_LIMITS.outputCharacters - 150
-            ) {
-              clipped = true
-              content += line.slice(
-                0,
-                Math.max(
-                  0,
-                  SOURCE_LIMITS.outputCharacters - 150 - content.length
-                )
-              )
-              break
-            }
-            content += line
-          }
-          const complete = start === 1 && next >= lines.length && !clipped
-          if (clipped) {
-            content +=
-              '\n[Output limited; this line is clipped. Narrow the question with source_search.]'
-            // Rereads the clipped line unless it alone filled the read.
-            const resume = next > start - 1 ? next + 1 : next + 2
-            if (resume <= lines.length)
-              content += `\n[More lines: read again with startLine ${resume}.]`
-          } else if (next < lines.length)
-            content += `[More lines: read again with startLine ${next + 1}.]`
-          else if (start > lines.length) content += '[End of file.]'
-          if (path === DIRECTORY_MAP && complete) completeMap = content
-          return { content }
-        }
-
-        const budget = { visited: 0, skipped: 0, limited: false }
-        const output: string[] = []
-        let size = 0
-        const add = (line: string): boolean => {
-          if (size + line.length + 1 > SOURCE_LIMITS.outputCharacters - 200) {
-            budget.limited = true
-            return false
-          }
-          output.push(line)
-          size += line.length + 1
-          return true
-        }
-        if (name === 'source_list_directory') {
-          const start = input.startEntry ?? 1
-          if (
-            typeof start !== 'number' ||
-            !Number.isSafeInteger(start) ||
-            start < 1
-          )
-            return {
-              content: 'startEntry must be a positive integer.',
-              is_error: true
-            }
-          // Every name is collected (bounded by visitedEntries) and sorted
-          // before the page is cut, so pages are stable and complete.
-          const names: string[] = []
-          for await (const entry of entries(path, false, budget))
-            names.push(entry.path + (entry.directory ? '/' : ''))
-          const truncated = budget.limited
-          names.sort()
-          let next = start - 1
-          for (
-            ;
-            next < names.length && output.length < SOURCE_LIMITS.entries;
-            next += 1
-          )
-            if (!add(names[next])) break
-          return {
-            content:
-              output.join('\n') +
-              (next < names.length
-                ? `\n[More entries: list again with startEntry ${next + 1}.]`
-                : '') +
-              (truncated
-                ? '\n[Listing limited; the directory has more entries than are read.]'
-                : names.length === 0
-                  ? '[Empty directory.]'
-                  : '')
-          }
-        }
-
-        if (
-          typeof input.text !== 'string' ||
-          input.text.length === 0 ||
-          input.text.length > 500 ||
-          /[\r\n]/.test(input.text)
-        )
-          return {
-            content:
-              'Search text must be a nonempty literal string of at most 500 characters on one line. Search for one line of a multiline fragment, then read the surrounding source.',
-            is_error: true
-          }
-        const stat = await lstat(await checkedPath(path))
-        const candidates = stat.isFile()
-          ? [{ path, directory: false }]
-          : entries(path, true, budget)
-        const scan = { bytes: 0, limited: false }
-        let skipped = 0
-        for await (const entry of candidates) {
-          if (entry.directory) continue
-          let file: Awaited<ReturnType<typeof textFile>>
-          try {
-            file = await textFile(entry.path, scan)
-          } catch (error) {
-            // A named file that cannot be read is an error, not "no matches".
-            if (stat.isFile()) throw error
-            // "Search limited" reports these; they are not the files' fault.
-            if (!(error instanceof BudgetSkip)) skipped += 1
-            continue
-          }
-          for (const [index, line] of file.text.split('\n').entries()) {
-            const match = line.indexOf(input.text)
-            if (match < 0) continue
-            const offset = Math.max(
-              0,
-              match - Math.min(80, 500 - input.text.length)
-            )
-            const snippet = line.slice(offset, offset + 500)
-            if (
-              output.length >= SOURCE_LIMITS.matches ||
-              !add(
-                `${entry.path}:${index + 1}: ${snippet}${line.length > 500 ? ' [line clipped]' : ''}`
-              )
-            ) {
-              budget.limited = true
-              break
-            }
-          }
-          if (budget.limited) break
-        }
-        return {
-          content:
-            (output.length === 0 ? '[No matches.]' : output.join('\n')) +
-            `\n[${skipped + budget.skipped} files skipped.]` +
-            (budget.limited || scan.limited
-              ? '\n[Search limited; choose a narrower path.]'
-              : '')
-        }
-      } catch {
-        return {
-          content:
-            'Source path unavailable or refused. Use a regular UTF-8 file or directory inside src; links, binary files and files over 1 MiB are not readable.',
-          is_error: true
-        }
+        return { content: querySource(db, name, value) }
+      } catch (error) {
+        if (error instanceof InputError) return fail(error.message)
+        console.warn('Tess source query failed', {
+          path,
+          tool: name,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+        return fail(SOURCE_QUERY_FAILED)
       }
     }
   }
+  indexes.set(path, {
+    index,
+    identity,
+    close: () => {
+      db?.close()
+      db = undefined
+    }
+  })
+  return index
+}
+
+function inputOf(value: unknown): Record<string, unknown> {
+  if (value == null || typeof value !== 'object' || Array.isArray(value))
+    throw new InputError('Supply a source tool input object.')
+  const input = value as Record<string, unknown>
+  if (input.includeTests != null && typeof input.includeTests !== 'boolean')
+    throw new InputError('includeTests must be true or false.')
+  return input
+}
+function first(input: Record<string, unknown>, key: string): number {
+  const value = input[key] ?? 1
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
+    throw new InputError(`${key} must be a positive integer.`)
+  return value
+}
+/** The map writes paths relative to src, so a path without the prefix is under src. */
+function checkedPath(input: Record<string, unknown>): string {
+  const raw = input.path
+  if (
+    typeof raw !== 'string' ||
+    raw.length > 4096 ||
+    raw.startsWith('/') ||
+    raw.includes('..') ||
+    /[\\\0]/.test(raw)
+  )
+    throw new InputError(
+      'Give a literal path under src, such as src/server/tess or server/tess, without a leading slash, parent traversal, backslashes or NUL.'
+    )
+  const path = raw.replace(/\/+$/, '')
+  return path === 'src' || path.startsWith('src/')
+    ? path
+    : path === ''
+      ? 'src'
+      : `src/${path}`
+}
+function fileAt(db: DatabaseSync, path: string): FileRow | undefined {
+  return query(db, 'SELECT id,path,content,role FROM files WHERE path=?').get(
+    path
+  ) as unknown as FileRow | undefined
+}
+function isFile(db: DatabaseSync, path: string): boolean {
+  return query(db, 'SELECT 1 FROM files WHERE path=?').get(path) != null
+}
+function knownPath(db: DatabaseSync, path: string): boolean {
+  return (
+    query(
+      db,
+      'SELECT 1 FROM files WHERE path=? UNION ALL SELECT 1 FROM entries WHERE parent=? LIMIT 1'
+    ).get(path, path) != null
+  )
+}
+/** Beyond this many, the hint says "or more" rather than counting every file. */
+const HINT_COUNT = 100
+const subtree = '(f.path = ? OR f.path GLOB ?)'
+const scope = (path: string): string[] => [path, `${sourceGlob(path)}/*`]
+function omittedHint(n: number): string {
+  if (n === 0) return ''
+  const count = n >= HINT_COUNT ? `${HINT_COUNT} or more` : String(n)
+  return `\n[${count} test or fixture files also match; search again with includeTests.]`
+}
+
+function readLines(file: FileRow, start: number): string {
+  const lines = sourceLines(file.content)
+  if (start > lines.length) return '[End of file.]'
+  const output: string[] = []
+  let length = 0
+  let at = start - 1
+  for (; at < lines.length && at < start - 1 + SOURCE_LIMITS.lines; at++) {
+    const line = `${at + 1}: ${lines[at].replace(/\r$/, '')}`
+    if (length + line.length + 1 > BUDGET) {
+      if (output.length === 0) {
+        output.push(
+          line.slice(0, BUDGET - 60),
+          '[Line clipped; the rest of this line is omitted.]'
+        )
+        at++
+      }
+      break
+    }
+    output.push(line)
+    length += line.length + 1
+  }
+  if (at < lines.length)
+    output.push(`[More lines: read again with startLine ${at + 1}.]`)
+  return output.join('\n')
+}
+/** A doc's first sentence, across wrapped lines, or its first paragraph. */
+export function docSummary(doc: string): string {
+  const paragraph = doc
+    .split(/\n\s*\n/)[0]
+    .replace(/\s+/g, ' ')
+    .trim()
+  return /^.*?[.!?](?=\s|$)/.exec(paragraph)?.[0] ?? paragraph
+}
+function symbolText(row: SymbolRow, definition: boolean): string {
+  const span = definition ? `${row.line}` : `${row.line}-${row.end_line}`
+  const doc = definition && row.doc != null ? ` — ${docSummary(row.doc)}` : ''
+  return `${row.path}:${span} ${row.kind} ${row.name.slice(0, 500)} — ${row.signature}${doc}`.slice(
+    0,
+    BUDGET - 1
+  )
+}
+
+function querySource(
+  db: DatabaseSync,
+  name: SourceToolName,
+  value: unknown
+): string {
+  const input = inputOf(value)
+  const all = input.includeTests === true
+  if (name === 'source_find_definition') {
+    if (
+      typeof input.name !== 'string' ||
+      input.name.length === 0 ||
+      input.name.length > 500 ||
+      /[\r\n\0]/.test(input.name)
+    )
+      throw new InputError(
+        'Give an exact definition name, up to 500 characters on one line.'
+      )
+    const rows = query(
+      db,
+      `SELECT s.* FROM symbols s JOIN files f USING(path) WHERE s.name=? ${all ? '' : "AND f.role='code'"} ORDER BY s.path,s.line LIMIT 51`
+    ).all(input.name) as unknown as SymbolRow[]
+    const lines: string[] = []
+    let size = 0
+    for (const row of rows.slice(0, SOURCE_LIMITS.matches)) {
+      const line = symbolText(row, true)
+      if (size + line.length + 1 > BUDGET) break
+      lines.push(line)
+      size += line.length + 1
+    }
+    // Tests are hinted only when no code defines the name.
+    const n =
+      all || rows.length > 0
+        ? 0
+        : Number(
+            query(
+              db,
+              `SELECT count(*) AS n FROM (SELECT DISTINCT f.path FROM symbols s JOIN files f USING(path) WHERE s.name=? AND f.role!='code' LIMIT ${HINT_COUNT})`
+            ).get(input.name)!.n
+          )
+    if (lines.length === 0) lines.push(`[No definition named ${input.name}.]`)
+    if (rows.length > lines.length)
+      lines.push(
+        '[Definitions limited; use an outline of the relevant folder.]'
+      )
+    return lines.join('\n') + omittedHint(n)
+  }
+  const path = checkedPath(input)
+  if (name === 'source_read_file') {
+    const file = fileAt(db, path)
+    if (file != null) return readLines(file, first(input, 'startLine'))
+    throw new InputError(
+      knownPath(db, path)
+        ? 'That indexed path is a directory, not a file.'
+        : 'No indexed file or directory at that path.'
+    )
+  }
+  if (!knownPath(db, path))
+    throw new InputError('No indexed file or directory at that path.')
+  if (name === 'source_list_directory') {
+    if (isFile(db, path))
+      throw new InputError('That indexed path is a file, not a directory.')
+    const start = first(input, 'startEntry')
+    const rows = query(
+      db,
+      'SELECT name,kind FROM entries WHERE parent=? ORDER BY name LIMIT 201 OFFSET ?'
+    ).all(path, start - 1)
+    const lines: string[] = []
+    let size = 0
+    for (const row of rows.slice(0, SOURCE_LIMITS.entries)) {
+      const line = String(row.name) + (row.kind === 'directory' ? '/' : '')
+      if (size + line.length + 1 > BUDGET) break
+      lines.push(line)
+      size += line.length + 1
+    }
+    const next = start + lines.length
+    if (rows.length > lines.length)
+      lines.push(`[More entries: list again with startEntry ${next}.]`)
+    return lines.length === 0 ? '[Empty directory.]' : lines.join('\n')
+  }
+  if (name === 'source_outline') {
+    const start = first(input, 'startEntry')
+    const explicitFile = isFile(db, path)
+    const rows = query(
+      db,
+      `SELECT s.* FROM symbols s JOIN files f USING(path) WHERE ${subtree} ${all || explicitFile ? '' : "AND f.role='code'"} ORDER BY s.path,s.line,s.name LIMIT 201 OFFSET ?`
+    ).all(...scope(path), start - 1) as unknown as SymbolRow[]
+    const lines: string[] = []
+    let size = 0
+    for (const row of rows.slice(0, SOURCE_LIMITS.entries)) {
+      const line = symbolText(row, false)
+      if (size + line.length + 1 > BUDGET) break
+      lines.push(line)
+      size += line.length + 1
+    }
+    const next = start + lines.length
+    if (rows.length > lines.length)
+      lines.push(`[More symbols: outline again with startEntry ${next}.]`)
+    return lines.length === 0 ? '[No exported symbols.]' : lines.join('\n')
+  }
+  const text = input.text
+  if (
+    typeof text !== 'string' ||
+    Array.from(text).length < 3 ||
+    Array.from(text).length > 500 ||
+    /[\r\n\0]/.test(text)
+  )
+    throw new InputError(
+      'Search text must be literal, 3 to 500 Unicode characters on one line, without NUL.'
+    )
+  const match = sourceTrigram(text)
+  const glob = `*${sourceGlob(text)}*`
+  const where = `search MATCH ? AND search.content GLOB ? AND ${subtree}`
+  const parameters = [match, glob, ...scope(path)]
+  // The build inserts files in path order, so rowid order is path order and
+  // the walk stops at the match limit without sorting every candidate.
+  const ids = query(
+    db,
+    `SELECT f.id,f.path FROM search JOIN files f ON f.id=search.rowid WHERE ${where} ${all ? '' : "AND f.role='code'"} ORDER BY search.rowid`
+  ).iterate(...parameters)
+  const content = query(db, 'SELECT content FROM files WHERE id=?')
+  const lines: string[] = []
+  let size = 0
+  let limited = false
+  for (const row of ids) {
+    const fileText = content.get(row.id)!.content as string
+    for (const [at, line] of sourceLines(fileText).entries()) {
+      const position = line.indexOf(text)
+      if (position < 0) continue
+      // Limited only when a match is left out, not when the 50th is the last.
+      if (lines.length === SOURCE_LIMITS.matches) {
+        limited = true
+        break
+      }
+      const from = Math.max(0, position - 80)
+      const snippet = `${from > 0 ? '…' : ''}${line.slice(from, from + 500)}${line.length > from + 500 ? '…' : ''}`
+      const result = `${String(row.path)}:${at + 1}: ${snippet}`
+      if (size + result.length + 1 > BUDGET) {
+        limited = true
+        break
+      }
+      lines.push(result)
+      size += result.length + 1
+    }
+    if (limited) break
+  }
+  const n = all
+    ? 0
+    : Number(
+        query(
+          db,
+          `SELECT count(*) AS n FROM (SELECT 1 FROM search JOIN files f ON f.id=search.rowid WHERE ${where} AND f.role!='code' LIMIT ${HINT_COUNT})`
+        ).get(...parameters)!.n
+      )
+  if (lines.length === 0) lines.push('[No matches.]')
+  if (limited) lines.push('[Search limited; choose a narrower path.]')
+  return lines.join('\n') + omittedHint(n)
 }

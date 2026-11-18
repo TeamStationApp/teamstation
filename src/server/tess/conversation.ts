@@ -67,6 +67,14 @@ export interface MomentNote extends Moment {
 export interface StoppedMark {
   type: 'stopped'
 }
+/**
+ * Stored with the last tool round's results: Tess was told her next reply
+ * could not use tools. The model reads it as `TOOL_LIMIT_NOTICE`; a summary
+ * records it as a note, never as something the person said.
+ */
+export interface ToolLimitMark {
+  type: 'tool_limit'
+}
 export type StoredBlock =
   | ContentBlock
   | AttachmentRef
@@ -74,6 +82,10 @@ export type StoredBlock =
   | ConfirmationNote
   | MomentNote
   | StoppedMark
+  | ToolLimitMark
+
+export const TOOL_LIMIT_NOTICE =
+  'Tool limit reached: the next reply cannot use tools. Answer now from what you have found, and say what you could not check.'
 
 /**
  * What a stopped reply says to the model. The person often stops her to add
@@ -381,6 +393,8 @@ export function requestMessages(
           return [{ type: 'text', text: momentText(block) }]
         if (block.type === 'stopped')
           return [{ type: 'text', text: STOPPED_NOTE }]
+        if (block.type === 'tool_limit')
+          return [{ type: 'text', text: TOOL_LIMIT_NOTICE }]
         if (block.type === 'attachment') {
           const row = attachments.get(block.id)
           return [

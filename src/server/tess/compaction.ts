@@ -298,6 +298,10 @@ export function transcriptOf(
         lines.push(`Note: ${block.text}`)
       else if (block.type === 'stopped')
         lines.push('Note: The person stopped Tess before she finished.')
+      else if (block.type === 'tool_limit')
+        lines.push(
+          'Note: Tess reached her tool limit and answered from what she had.'
+        )
       else if (block.type === 'tool_use')
         lines.push(
           `Tess used ${block.name} ${clip(JSON.stringify(block.input))}`

@@ -1,581 +1,555 @@
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile
-} from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { expect } from 'chai'
-import { afterEach, beforeEach, describe, it } from 'mocha'
+import { after, before, describe, it } from 'mocha'
 
+import { FIXTURE_MAP, sourceIndexFixture } from '../../test/sourceIndexFixture'
 import {
   DIRECTORY_MAP,
-  isPrivateName,
+  docSummary,
   isSourceTool,
-  MAP_FIRST,
+  openSourceIndex,
   SOURCE_LIMITS,
+  SOURCE_QUERY_FAILED,
   SOURCE_TOOLS,
-  sourceBrowser,
-  sourceRoot
+  SOURCE_UNAVAILABLE,
+  type SourceIndex,
+  sourceIndexPath,
+  type SourceToolName
 } from './sourceTools'
-import { runTool, type ToolContext, TOOLS } from './tools'
+import { runTool, type ToolContext } from './tools'
 
-describe('Tess source tools', function () {
-  this.timeout(20000)
-  let temp: string
-  let root: string
-  let browser: ReturnType<typeof sourceBrowser>
-  type Result = Awaited<ReturnType<typeof browser.run>>
-  const read = async (path: string, startLine?: number): Promise<Result> =>
-    await browser.run('source_read_file', { path, startLine })
-  const unlock = async (): Promise<Result> => {
-    const result = await read(DIRECTORY_MAP)
-    expect(result.is_error).not.equals(true)
-    browser.acceptMapResult(result)
-    return result
+const bulk = Object.fromEntries(
+  Array.from({ length: 205 }, (_, at) => [
+    `src/bulk/f${String(at).padStart(3, '0')}.ts`,
+    `export const shared = "repeat needle"\n`
+  ])
+)
+
+describe('Tess indexed source tools', function () {
+  this.timeout(120000)
+  let f: ReturnType<typeof sourceIndexFixture>, index: SourceIndex
+  before(() => {
+    f = sourceIndexFixture({
+      ...bulk,
+      ...Object.fromEntries(
+        Array.from({ length: 105 }, (_, at) => [
+          `src/wide/${String(at).padStart(3, '0')}${'w'.repeat(210)}.ts`,
+          '/** ' +
+            'D'.repeat(500) +
+            ' */\nexport const longShared = "' +
+            'needle'.repeat(80) +
+            '"\n'
+        ])
+      ),
+      'src/tall.txt': ('x'.repeat(1000) + '\n').repeat(30),
+      'src/center.txt': 'z'.repeat(1000) + ' targetNeedle ' + 'z'.repeat(1000),
+      'src/skipped/binary': Buffer.from([0]),
+      'src/lines.txt': Array.from(
+        { length: 205 },
+        (_, i) => `line ${i + 1}`
+      ).join('\n'),
+      'src/long.txt': 'z'.repeat(30000) + '\nlast line\n',
+      'src/empty.txt': '',
+      'src/binary': Buffer.from([0]),
+      'src/no-symbols.ts': 'const local = 1',
+      'src/test[a]/code.ts':
+        'export const literal = ".* [a] $(touch forbidden) a*b a?b *** abc ABC 🦊YZ \\"ab"\n',
+      'src/only.test.ts': 'export const onlyTest = 1\n',
+      'src/docs.ts':
+        '/** A public declaration.\n * Second line. */\nexport function documented() {}\n',
+      'src/aliases.ts':
+        'const internalValue = 42\nexport { internalValue as publicValue }\n'
+    })
+    f.build()
+    index = openSourceIndex(f.index)
+  })
+  after(() => {
+    f.close()
+  })
+  const run = (name: SourceToolName, input: unknown): string => {
+    const result = index.run(name, input)
+    expect(result.is_error, result.content).not.equals(true)
+    expect(result.content.length).at.most(SOURCE_LIMITS.outputCharacters)
+    return result.content
   }
-  beforeEach(async () => {
-    temp = await mkdtemp(join(tmpdir(), 'tess-source-'))
-    root = join(temp, 'src')
-    await mkdir(join(root, 'feature'), { recursive: true })
-    await writeFile(
-      join(root, 'DIRECTORY_MAP.md'),
-      '# Source map\nRead src/feature/example.ts\n'
+  it('opens once, caches the complete map/commit and finds the same release from TS or JS', () => {
+    expect(openSourceIndex(f.index)).equals(index)
+    expect(index.prompt).equals(
+      `## TeamStation source at commit fixture-release\n${FIXTURE_MAP}`
     )
-    await writeFile(
-      join(root, 'feature/example.ts'),
-      'export const limit = 10\n// literal .* [a] $(touch forbidden)\n'
+    expect(sourceIndexPath(resolve('src/server/tess'))).equals(
+      sourceIndexPath(resolve('lib/server/tess'))
     )
-    await writeFile(join(temp, 'outside.txt'), 'OUTSIDE_ONLY')
-    browser = sourceBrowser(root)
-  })
-  afterEach(async () => {
-    await rm(temp, { recursive: true, force: true })
-  })
-
-  it('lists, reads numbered lines and searches literal text after the map', async () => {
-    for (const name of [
-      'source_read_file',
-      'source_list_directory',
-      'source_search'
-    ] as const)
-      expect(
-        await browser.run(name, {
-          path: 'src/feature/example.ts',
-          text: 'limit'
-        })
-      ).deep.equals({ content: MAP_FIRST, is_error: true })
-    expect((await unlock()).content).includes('1: # Source map')
-    expect(
-      (await browser.run('source_list_directory', { path: 'src/' })).content
-    ).equals('src/DIRECTORY_MAP.md\nsrc/feature/')
-    expect((await read('src/./feature/example.ts', 2)).content).includes(
-      '2: // literal'
-    )
-    for (const text of ['.* [a]', '$(touch forbidden)']) {
-      const result = await browser.run('source_search', {
-        path: 'src/feature',
-        text
-      })
-      expect(result.content).includes('src/feature/example.ts:2:')
-      expect(result.is_error).not.equals(true)
-    }
-    expect(
-      (
-        await browser.run('source_search', {
-          path: 'src/feature/example.ts',
-          text: 'limit'
-        })
-      ).content
-    ).includes(':1: export const limit = 10')
-    expect(isSourceTool('source_read_file')).equals(true)
-    expect(isSourceTool('shell')).equals(false)
-    expect(SOURCE_TOOLS.map(t => t.name)).deep.equals([
+    expect(sourceIndexPath()).equals(resolve('lib/server/tess/source.db'))
+    expect(SOURCE_TOOLS.map(tool => tool.name)).deep.equals([
       'source_list_directory',
       'source_read_file',
-      'source_search'
+      'source_search',
+      'source_outline',
+      'source_find_definition'
     ])
-    expect(TOOLS).includes.members(SOURCE_TOOLS)
-    expect(
-      (await readFile(join(root, 'feature/example.ts'), 'utf8')).startsWith(
-        'export const limit'
-      )
-    ).equals(true)
+    expect(SOURCE_TOOLS.every(tool => isSourceTool(tool.name))).equals(true)
+    expect(isSourceTool('write_file')).equals(false)
   })
-
-  it('unlocks only when the complete map survives fitting for the next request', async () => {
-    browser.acceptMapResult({ content: 'not a map' })
-    const result = await read(DIRECTORY_MAP)
-    expect((await read('src/feature/example.ts')).content).equals(MAP_FIRST)
-    browser.acceptMapResult({ content: result.content, is_error: true })
-    browser.acceptMapResult({ content: 'Result removed for size.' })
-    expect((await read('src/feature/example.ts')).content).equals(MAP_FIRST)
-    browser.acceptMapResult(result)
-    expect((await read('src/feature/example.ts')).is_error).not.equals(true)
-  })
-
-  it('handles empty files, empty directories, no matches and lines past EOF', async () => {
-    await unlock()
-    await writeFile(join(root, 'empty'), '')
-    await mkdir(join(root, 'emptyDir'))
-    expect((await read('src/empty')).content).includes(
-      '(0 lines)\n[End of file.]'
+  it('lists sorted immediate entries across pages with tests and fixtures', () => {
+    const page = run('source_list_directory', { path: 'src/bulk' })
+    expect(page.split('\n').slice(0, 200)).deep.equals(
+      Object.keys(bulk)
+        .slice(0, 200)
+        .map(path => path.split('/').at(-1))
     )
-    expect((await read('src/feature/example.ts', 100)).content).includes(
+    expect(page).includes('startEntry 201')
+    expect(
+      run('source_list_directory', { path: 'src/bulk', startEntry: 201 }).split(
+        '\n'
+      )
+    ).length(5)
+    expect(
+      run('source_list_directory', { path: 'src/bulk', startEntry: 206 })
+    ).equals('[Empty directory.]')
+    const root = run('source_list_directory', { path: 'src/' }).split('\n')
+    expect(root).deep.equals([...root].sort())
+    expect(root).includes('test/').and.includes('only.test.ts')
+    expect(run('source_list_directory', { path: 'src/test' })).equals('data.ts')
+  })
+  it('reads numbered lines, paginates, clips a long line and reads explicit tests', () => {
+    const first = run('source_read_file', { path: 'src/lines.txt' })
+    expect(first)
+      .includes('1: line 1\n')
+      .and.includes('200: line 200')
+      .and.includes('startLine 201')
+    expect(
+      run('source_read_file', { path: 'src/lines.txt', startLine: 201 })
+    ).equals(
+      '201: line 201\n202: line 202\n203: line 203\n204: line 204\n205: line 205'
+    )
+    expect(
+      run('source_read_file', { path: 'src/lines.txt', startLine: 999 })
+    ).equals('[End of file.]')
+    expect(run('source_read_file', { path: 'src/empty.txt' })).equals(
       '[End of file.]'
     )
+    const long = run('source_read_file', { path: 'src/long.txt' })
+    expect(long).includes('Line clipped').and.includes('startLine 2')
     expect(
-      (await browser.run('source_list_directory', { path: 'src/emptyDir' }))
-        .content
-    ).equals('[Empty directory.]')
+      run('source_read_file', { path: 'src/long.txt', startLine: 2 })
+    ).equals('2: last line')
+    expect(run('source_read_file', { path: 'src/only.test.ts' })).includes(
+      'onlyTest'
+    )
+    expect(run('source_read_file', { path: DIRECTORY_MAP })).includes(
+      'Source directory map'
+    )
+  })
+  it('searches case-sensitive literals and literal paths without interpreting commands or patterns', () => {
+    for (const text of [
+      '.* [a] $(touch forbidden)',
+      'a*b',
+      'a?b',
+      '[a]',
+      '***',
+      '🦊YZ',
+      '"ab'
+    ]) {
+      const result = run('source_search', { path: 'src/test[a]', text })
+      expect(result).includes('src/test[a]/code.ts:1:')
+    }
     expect(
-      (
-        await browser.run('source_search', {
-          path: 'src',
-          text: 'absent string'
-        })
-      ).content
-    ).includes('[No matches.]')
+      run('source_search', { path: 'src/test[a]/code.ts', text: 'ABC' })
+    ).includes('code.ts:1:')
+    expect(run('source_search', { path: 'src/test[a]', text: 'Abc' })).equals(
+      '[No matches.]'
+    )
+    expect(
+      index.run('source_search', { path: 'src/*', text: 'abc' }).is_error
+    ).equals(true)
+    expect(
+      run('source_search', {
+        path: 'src/server/tess/agent.ts',
+        text: 'contextLimits'
+      })
+    ).not.includes('agent.test')
   })
-
-  it('does not share the map-read state or unlock on failed or partial map reads', async () => {
-    await unlock()
-    browser = sourceBrowser(root)
-    expect((await read('src/feature/example.ts')).is_error).equals(true)
-    await rm(join(root, 'DIRECTORY_MAP.md'))
-    expect((await read(DIRECTORY_MAP)).is_error).equals(true)
-    expect((await read('src/feature/example.ts')).content).equals(MAP_FIRST)
-    await writeFile(join(root, 'DIRECTORY_MAP.md'), 'line\n'.repeat(201))
-    expect((await read(DIRECTORY_MAP)).content).includes('startLine 201')
-    expect((await read('src/feature/example.ts')).content).equals(MAP_FIRST)
-    await read(DIRECTORY_MAP, 201)
-    expect((await read('src/feature/example.ts')).content).equals(MAP_FIRST)
-    await writeFile(join(root, 'DIRECTORY_MAP.md'), 'x'.repeat(22000))
-    expect((await read(DIRECTORY_MAP)).content).includes('line is clipped')
-    expect((await read('src/feature/example.ts')).content).equals(MAP_FIRST)
-    await writeFile(join(root, 'DIRECTORY_MAP.md'), 'Map')
-    await unlock()
-    expect((await read('src/feature/example.ts')).is_error).not.equals(true)
+  it('searches code by default, hints about tests/fixtures and includes them when asked', () => {
+    const code = run('source_search', { path: 'src', text: 'contextLimits' })
+    expect(code)
+      .includes('src/server/tess/agent.ts:3:')
+      .and.includes('2 test or fixture files also match')
+    expect(code).not.includes('src/test/data.ts:')
+    const all = run('source_search', {
+      path: 'src',
+      text: 'contextLimits',
+      includeTests: true
+    })
+    expect(all).includes('agent.test.ts:').and.includes('src/test/data.ts:')
+    expect(all).not.includes('also match')
+    expect(run('source_search', { path: 'src/only.test.ts', text: 'onlyTest' }))
+      .includes('[No matches.]')
+      .and.includes('1 test or fixture')
+    expect(run('source_search', { path: 'src/bulk', text: 'repeat' })).includes(
+      'Search limited'
+    )
   })
-
-  it('rejects invalid arguments and out-of-bound paths without exposing local paths', async () => {
-    for (const input of [
-      null,
-      [],
-      'src',
-      42,
-      {},
-      { path: 1 },
-      { path: 'x'.repeat(4097) }
+  it('outlines recursive code, explicit tests and paginated declarations', () => {
+    const code = run('source_outline', { path: 'src/server' })
+    expect(code)
+      .includes('function contextLimits')
+      .and.includes('const MAX_TOOL_ROUNDS')
+    expect(code).not.includes('agent.test.ts:')
+    expect(
+      run('source_outline', { path: 'src/server', includeTests: true })
+    ).includes('agent.test.ts:')
+    expect(run('source_outline', { path: 'src/only.test.ts' })).includes(
+      'onlyTest'
+    )
+    expect(run('source_outline', { path: 'src/test[a]' })).includes('literal')
+    expect(run('source_outline', { path: 'src/no-symbols.ts' })).equals(
+      '[No exported symbols.]'
+    )
+    const bulkPage = run('source_outline', { path: 'src/bulk' })
+    const next = /startEntry (\d+)/.exec(bulkPage)!
+    expect(next).not.equals(null)
+    expect(
+      run('source_outline', { path: 'src/bulk', startEntry: Number(next[1]) })
+    ).includes('f204.ts:')
+    expect(
+      run('source_outline', { path: 'src/bulk', startEntry: 1000 })
+    ).equals('[No exported symbols.]')
+  })
+  it('finds exact exported names, first doc lines, test hints and limits', () => {
+    expect(run('source_outline', { path: 'src/aliases.ts' })).includes(
+      'const publicValue'
+    )
+    expect(run('source_find_definition', { name: 'publicValue' })).includes(
+      'src/aliases.ts:1 const publicValue'
+    )
+    expect(run('source_find_definition', { name: 'internalValue' })).equals(
+      '[No definition named internalValue.]'
+    )
+    // Code defines it, so there is no nudge towards tests.
+    expect(run('source_find_definition', { name: 'contextLimits' }))
+      .includes('agent.ts:3 function')
+      .and.not.includes('test or fixture')
+    expect(
+      run('source_find_definition', {
+        name: 'contextLimits',
+        includeTests: true
+      })
+    ).includes('agent.test.ts:')
+    expect(run('source_find_definition', { name: 'onlyTest' }))
+      .includes('[No definition named onlyTest.]')
+      .and.includes('1 test or fixture')
+    expect(run('source_find_definition', { name: 'documented' }))
+      .includes('A public declaration.')
+      .and.not.includes('Second line')
+    expect(run('source_find_definition', { name: 'noSuchName' })).equals(
+      '[No definition named noSuchName.]'
+    )
+    expect(run('source_find_definition', { name: 'shared' })).includes(
+      'Definitions limited'
+    )
+  })
+  it('marks a search limited only when a match is left out, and caps the test hint', () => {
+    const f = sourceIndexFixture({
+      'src/exact/fifty.ts': 'hit\n'.repeat(SOURCE_LIMITS.matches),
+      'src/over/more.ts': 'hit\n'.repeat(SOURCE_LIMITS.matches + 1),
+      ...Object.fromEntries(
+        Array.from({ length: 101 }, (_, i) => [
+          `src/many/case${i}.test.ts`,
+          'hitInTests\n'
+        ])
+      ),
+      'src/many/code.ts': 'hitInTests\n'
+    })
+    try {
+      f.build()
+      const reader = openSourceIndex(f.index)
+      const exact = reader.run('source_search', {
+        path: 'src/exact',
+        text: 'hit'
+      }).content
+      expect(exact.split('\n')).length(SOURCE_LIMITS.matches)
+      expect(exact).not.includes('Search limited')
+      expect(
+        reader.run('source_search', { path: 'src/over', text: 'hit' }).content
+      ).includes('Search limited')
+      expect(
+        reader.run('source_search', { path: 'src/many', text: 'hitInTests' })
+          .content
+      ).includes('[100 or more test or fixture files also match')
+    } finally {
+      f.close()
+    }
+  })
+  it('bounds long listings, declarations, matches and line pages without losing the next entry', () => {
+    const listing = run('source_list_directory', { path: 'src/wide' })
+    const next = Number(/startEntry (\d+)/.exec(listing)![1])
+    expect(next).lessThan(105)
+    expect(
+      run('source_list_directory', { path: 'src/wide', startEntry: next })
+    ).includes('104')
+    expect(run('source_outline', { path: 'src/wide' })).includes('More symbols')
+    expect(run('source_find_definition', { name: 'longShared' })).includes(
+      'Definitions limited'
+    )
+    expect(run('source_search', { path: 'src/wide', text: 'needle' })).includes(
+      'Search limited'
+    )
+    expect(
+      run('source_search', { path: 'src/center.txt', text: 'targetNeedle' })
+    )
+      .includes('…')
+      .and.includes('targetNeedle')
+    const page = run('source_read_file', { path: 'src/tall.txt' })
+    expect(page).includes('More lines').and.not.includes('Line clipped')
+    expect(
+      index.run('source_list_directory', { path: 'src/skipped' }).is_error
+    ).equals(true)
+  })
+  it('summarizes a doc by its first sentence across wrapped lines', () => {
+    expect(
+      docSummary(
+        "One turn of a conversation with Tess: the person's message stored, the\nreply streamed. Then more."
+      )
+    ).equals(
+      "One turn of a conversation with Tess: the person's message stored, the reply streamed."
+    )
+    expect(
+      docSummary('No full stop here\nstill going\n\nNext paragraph.')
+    ).equals('No full stop here still going')
+    expect(docSummary('Version 1.5 is current. Older.')).equals(
+      'Version 1.5 is current.'
+    )
+  })
+  it('reads paths written relative to src, as the map writes them', () => {
+    expect(run('source_list_directory', { path: 'bulk' })).equals(
+      run('source_list_directory', { path: 'src/bulk' })
+    )
+    expect(run('source_read_file', { path: 'common/api.ts' })).equals(
+      run('source_read_file', { path: 'src/common/api.ts' })
+    )
+    expect(run('source_list_directory', { path: '' })).equals(
+      run('source_list_directory', { path: 'src' })
+    )
+    const refused = index.run('source_read_file', { path: '/etc/passwd' })
+    expect(refused.is_error).equals(true)
+    expect(refused.content).includes('server/tess')
+  })
+  it('reopens an index rebuilt while it was open', () => {
+    const g = sourceIndexFixture()
+    try {
+      g.build()
+      const first = openSourceIndex(g.index)
+      expect(first.prompt).includes(FIXTURE_MAP)
+      g.write('src/DIRECTORY_MAP.md', '# Rebuilt map\n')
+      g.build()
+      const second = openSourceIndex(g.index)
+      expect(second).not.equals(first)
+      expect(second.prompt).includes('# Rebuilt map')
+      expect(openSourceIndex(g.index)).equals(second)
+      // The replaced handle is closed, so a turn still holding it is told so.
+      expect(first.run('source_list_directory', { path: 'src' })).deep.equals({
+        content: SOURCE_UNAVAILABLE,
+        is_error: true
+      })
+    } finally {
+      g.close()
+    }
+  })
+  it('refuses malformed input and paths before querying unindexed data', () => {
+    for (const input of [null, [], 'text', 1])
+      expect(index.run('source_search', input).is_error).equals(true)
+    for (const path of [
+      'package.json',
+      '/src/a',
+      'src/../package.json',
+      'src/a\\b',
+      'src/a\0b',
+      'src/' + 'a'.repeat(4096),
+      'src/missing',
+      'src/binary'
     ])
-      expect((await browser.run('source_read_file', input)).is_error).equals(
+      expect(index.run('source_read_file', { path }).is_error, path).equals(
         true
       )
-    await unlock()
-    for (const path of [
-      '../outside.txt',
-      'src/../outside.txt',
-      'src/feature/../../outside.txt',
-      'srcSibling/outside.txt',
-      '/src/feature/example.ts',
-      join(temp, 'outside.txt'),
-      'src\\..\\outside.txt',
-      'src/\0file',
-      '.git/config',
-      'package.json',
-      'src/missing'
-    ]) {
-      for (const name of [
-        'source_read_file',
-        'source_list_directory',
-        'source_search'
-      ] as const) {
-        const result = await browser.run(name, { path, text: 'OUTSIDE_ONLY' })
-        expect(result.is_error, `${name} ${path}`).equals(true)
-        expect(result.content).not.includes(temp)
-        expect(result.content).not.includes('OUTSIDE_ONLY')
-      }
-    }
-    for (const startLine of [
-      0,
-      -1,
-      1.5,
-      '1',
-      Infinity,
-      Number.MAX_SAFE_INTEGER + 1
-    ])
-      expect(
-        (
-          await browser.run('source_read_file', {
-            path: DIRECTORY_MAP,
-            startLine
-          })
-        ).is_error
-      ).equals(true)
     for (const text of [
-      undefined,
       '',
-      1,
-      'x'.repeat(501),
-      'limit\n//',
-      'limit\r//'
+      'ab',
+      '🦊',
+      'a'.repeat(501),
+      'a\nb',
+      'a\rb',
+      'abc\0'
     ])
+      expect(index.run('source_search', { path: 'src', text }).is_error).equals(
+        true
+      )
+    for (const value of [0, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1]) {
       expect(
-        (await browser.run('source_search', { path: 'src', text })).is_error
+        index.run('source_read_file', {
+          path: 'src/common/api.ts',
+          startLine: value
+        }).is_error
       ).equals(true)
-    const multiline = await browser.run('source_search', {
-      path: 'src/feature/example.ts',
-      text: 'export const limit = 10\n// literal'
-    })
-    expect(multiline.is_error).equals(true)
-    expect(multiline.content).includes('one line')
-    expect(multiline.content).not.includes('[No matches.]')
-  })
-
-  it('refuses symlink paths and skips links and loops during traversal', async () => {
-    await symlink(join(temp, 'outside.txt'), join(root, 'outside-link'))
-    await symlink(join(root, 'feature'), join(root, 'inside-link'))
-    await symlink(root, join(root, 'feature/loop'))
-    await symlink(join(temp, 'missing'), join(root, 'dangling'))
-    await unlock()
-    for (const path of [
-      'src/outside-link',
-      'src/inside-link/example.ts',
-      'src/feature/loop/DIRECTORY_MAP.md',
-      'src/dangling'
-    ])
-      expect((await read(path)).is_error, path).equals(true)
-    const listed = (await browser.run('source_list_directory', { path: 'src' }))
-      .content
-    expect(listed).not.match(/outside-link|inside-link|dangling/)
-    const searched = await browser.run('source_search', {
-      path: 'src',
-      text: 'OUTSIDE_ONLY'
-    })
-    expect(searched.content).includes('[No matches.]')
-    expect(searched.is_error).not.equals(true)
-    await symlink(root, join(temp, 'linked-src'))
-    expect(
-      (
-        await sourceBrowser(join(temp, 'linked-src')).run('source_read_file', {
-          path: DIRECTORY_MAP
-        })
-      ).is_error
-    ).equals(true)
-    expect(
-      (
-        await sourceBrowser(join(temp, 'absent')).run('source_read_file', {
-          path: DIRECTORY_MAP
-        })
-      ).is_error
-    ).equals(true)
-  })
-
-  it('refuses directories as files, files as directories, binary/invalid UTF-8 and oversized files', async () => {
-    await unlock()
-    await writeFile(join(root, 'binary'), Buffer.from([1, 0, 2]))
-    await writeFile(join(root, 'invalid'), Buffer.from([0xff, 0xfe]))
-    await writeFile(
-      join(root, 'large'),
-      Buffer.alloc(SOURCE_LIMITS.fileBytes + 1, 65)
-    )
-    for (const path of [
-      'src/feature',
-      'src/binary',
-      'src/invalid',
-      'src/large'
-    ])
-      expect((await read(path)).is_error).equals(true)
-    expect(
-      (await browser.run('source_list_directory', { path: 'src/binary' }))
-        .is_error
-    ).equals(true)
-    const result = await browser.run('source_search', {
-      path: 'src',
-      text: 'export const limit'
-    })
-    expect(result.content).includes('example.ts:1:')
-    expect(result.content).includes('[3 files skipped.]')
-  })
-
-  it('caps reads and paginates lines', async () => {
-    await unlock()
-    await writeFile(
-      join(root, 'many'),
-      Array.from({ length: 220 }, (_, i) => `row ${i + 1}`).join('\n')
-    )
-    expect((await read('src/many')).content).includes('startLine 201')
-    expect((await read('src/many', 201)).content).includes('220: row 220')
-    await writeFile(join(root, 'wide'), 'X'.repeat(30000) + '\nafter\n')
-    const wide = await read('src/wide')
-    expect(wide.content.length).at.most(SOURCE_LIMITS.outputCharacters)
-    expect(wide.content).includes('line is clipped')
-    // A line that alone fills a read continues after it, so paging ends.
-    expect(wide.content).includes('startLine 2.]')
-    await writeFile(join(root, 'wide'), `short\n${'X'.repeat(30000)}\nafter\n`)
-    // Otherwise the clipped line is read again in full from its start.
-    expect((await read('src/wide')).content).includes('startLine 2.]')
-    expect((await read('src/wide', 2)).content).includes('startLine 3.]')
-  })
-
-  it('caps listing, search matches and search output', async () => {
-    await unlock()
-    await Promise.all(
-      Array.from({ length: 205 }, async (_, i) => {
-        await writeFile(join(root, 'feature', `file-${i}.ts`), 'match\n')
-      })
-    )
-    const first = (
-      await browser.run('source_list_directory', { path: 'src/feature' })
-    ).content
-    const names = Array.from(
-      { length: 205 },
-      (_, i) => `src/feature/file-${i}.ts`
-    )
-      .concat('src/feature/example.ts')
-      .sort()
-    expect(first).equals(
-      names.slice(0, 200).join('\n') +
-        '\n[More entries: list again with startEntry 201.]'
-    )
-    expect(
-      (
-        await browser.run('source_list_directory', {
-          path: 'src/feature',
-          startEntry: 201
-        })
-      ).content
-    ).equals(names.slice(200).join('\n'))
-    expect(
-      (
-        await browser.run('source_list_directory', {
-          path: 'src/feature',
-          startEntry: 0
-        })
-      ).is_error
-    ).equals(true)
-    expect(
-      (
-        await browser.run('source_search', {
-          path: 'src/feature',
-          text: 'match'
-        })
-      ).content
-    ).includes('[Search limited;')
-    await writeFile(
-      join(root, 'wide'),
-      ('match' + 'X'.repeat(1000) + '\n').repeat(49)
-    )
-    const result = await browser.run('source_search', {
-      path: 'src/wide',
-      text: 'match'
-    })
-    expect(result.content.length).at.most(SOURCE_LIMITS.outputCharacters)
-    expect(result.content).includes('[line clipped]')
-    expect(result.content).includes('[Search limited;')
-    await writeFile(join(root, 'late-match'), 'X'.repeat(2000) + 'needle')
-    expect(
-      (
-        await browser.run('source_search', {
-          path: 'src/late-match',
-          text: 'needle'
-        })
-      ).content
-    ).includes('needle')
-  })
-
-  it('hides secrets, build output and hidden files from every tool', async () => {
-    await unlock()
-    for (const path of [
-      'serverConfig.json',
-      'feature/clientConfig.json',
-      'release.keystore',
-      '.env',
-      'node_modules/pkg/index.js',
-      'lib/server/index.js',
-      'ServerConfig.JSON',
-      'Feature/Node_Modules/pkg/index.js'
-    ]) {
-      await mkdir(join(root, path, '..'), { recursive: true })
-      await writeFile(join(root, path), 'SECRET_VALUE\n')
-      expect((await read(`src/${path}`)).is_error).equals(true)
-    }
-    for (const path of ['src', 'src/feature'])
       expect(
-        (await browser.run('source_list_directory', { path })).content
-      ).not.match(/serverConfig|clientConfig|keystore|\.env|node_modules|lib/)
-    expect(
-      (await browser.run('source_list_directory', { path: 'src/lib' })).is_error
-    ).equals(true)
-    const searched = await browser.run('source_search', {
-      path: 'src',
-      text: 'SECRET_VALUE'
-    })
-    expect(searched.content).includes('[No matches.]')
-    expect(searched.content).includes('[0 files skipped.]')
-    for (const name of ['ServerConfig.json', 'RELEASE.KEYSTORE', 'DerivedData'])
-      expect(isPrivateName(name)).equals(true)
-    expect(isPrivateName('libraries.ts')).equals(false)
-  })
-
-  it('skips files too large for the rest of the scan and unreadable directories', async () => {
-    await unlock()
-    await mkdir(join(root, 'scan'))
-    // Eight of these fit the scan with 80 bytes to spare; the ninth does not.
-    await Promise.all(
-      Array.from({ length: 9 }, async (_, i) => {
-        await writeFile(
-          join(root, 'scan', `large${i}`),
-          Buffer.alloc(SOURCE_LIMITS.scannedBytes / 8 - 10, 65)
-        )
-      })
-    )
-    await writeFile(join(root, 'scan', 'b'), 'needle\n')
-    await mkdir(join(root, 'scan', 'closed'))
-    await writeFile(join(root, 'scan', 'closed', 'c'), 'needle\n')
-    await chmod(join(root, 'scan', 'closed'), 0)
-    try {
-      const result = await browser.run('source_search', {
-        path: 'src/scan',
-        text: 'needle'
-      })
-      expect(result.is_error).not.equals(true)
-      expect(result.content).includes('src/scan/b:1: needle')
-      // The unreadable directory; the file left for the budget is not counted.
-      expect(result.content).includes('[1 files skipped.]')
-      expect(result.content).includes('[Search limited;')
-    } finally {
-      await chmod(join(root, 'scan', 'closed'), 0o755)
+        index.run('source_list_directory', { path: 'src', startEntry: value })
+          .is_error
+      ).equals(true)
     }
+    for (const name of ['', 3, 'a'.repeat(501), 'a\nb'])
+      expect(index.run('source_find_definition', { name }).is_error).equals(
+        true
+      )
+    expect(
+      index.run('source_search', {
+        path: 'src',
+        text: 'abc',
+        includeTests: 'yes'
+      }).is_error
+    ).equals(true)
+    expect(
+      index.run('source_list_directory', { path: 'src/common/api.ts' }).is_error
+    ).equals(true)
+    expect(
+      index.run('source_read_file', { path: 'src/common' }).is_error
+    ).equals(true)
   })
-
-  it('caps scanned bytes and visited entries even when nothing matches', async () => {
-    await unlock()
-    await mkdir(join(root, 'bytes'))
-    await Promise.all(
-      Array.from({ length: 10 }, async (_, i) => {
-        await writeFile(
-          join(root, 'bytes', String(i)),
-          Buffer.alloc(SOURCE_LIMITS.fileBytes, 65)
-        )
-      })
-    )
-    expect(
-      (
-        await browser.run('source_search', {
-          path: 'src/bytes',
-          text: 'no match'
-        })
-      ).content
-    ).includes('[Search limited;')
-    await Promise.all(
-      Array.from({ length: 10 }, async (_, i) => {
-        await writeFile(
-          join(root, 'bytes', String(i)),
-          Buffer.alloc(SOURCE_LIMITS.fileBytes)
-        )
-      })
-    )
-    expect(
-      (
-        await browser.run('source_search', {
-          path: 'src/bytes',
-          text: 'no match'
-        })
-      ).content
-    ).includes('[Search limited;')
-    await mkdir(join(root, 'entries'))
-    await Promise.all(
-      Array.from({ length: SOURCE_LIMITS.visitedEntries + 1 }, async (_, i) => {
-        await symlink('../missing', join(root, 'entries', String(i)))
-      })
-    )
-    expect(
-      (
-        await browser.run('source_search', {
-          path: 'src/entries',
-          text: 'no match'
-        })
-      ).content
-    ).includes('[Search limited;')
-  })
-
-  it('dispatches source tools without user-role checks and fails safely outside a turn', async () => {
+  it('dispatches all five tools for any user and fails safely without an index', async () => {
     const context: ToolContext = {
-      source: browser,
-      db: undefined as unknown as ToolContext['db'],
-      userId: 'usr_example',
+      db: null as never,
+      userId: 'usr_fixture',
       credentials: {},
       origin: 'http://example.test',
       now: new Date(),
-      proposals: { count: 0 }
+      proposals: { count: 0 },
+      source: index
     }
-    const call = {
-      type: 'tool_use' as const,
-      id: 'source-map',
-      name: 'source_read_file',
-      input: { path: DIRECTORY_MAP }
-    }
-    const result = await runTool(context, call)
-    expect(result.result.content).includes('# Source map')
-    expect(result.result.tool_use_id).equals('source-map')
-    expect(result.changeId).equals(undefined)
-    expect(
-      (await runTool({ ...context, source: undefined }, call)).result.is_error
-    ).equals(true)
-    expect(
-      (await runTool(context, { ...call, name: 'run_shell' })).result.is_error
-    ).equals(true)
-  })
-
-  it('locates the same src from TypeScript and compiled server modules and checks the real map', async () => {
-    expect(sourceRoot(resolve('src/server/tess'))).equals(resolve('src'))
-    expect(sourceRoot(resolve('lib/server/tess'))).equals(resolve('src'))
-    const result = await sourceBrowser().run('source_read_file', {
-      path: DIRECTORY_MAP
-    })
-    expect(result.is_error).not.equals(true)
-    expect(result.content).not.match(/Output limited|More lines/)
-    // The real map must stay within one complete read, or every tool stays locked.
-    const real = sourceBrowser()
-    real.acceptMapResult(
-      await real.run('source_read_file', { path: DIRECTORY_MAP })
-    )
-    expect(
-      (await real.run('source_list_directory', { path: 'src/server/tess' }))
-        .is_error
-    ).not.equals(true)
-    const map = await readFile(join(sourceRoot(), 'DIRECTORY_MAP.md'), 'utf8')
-    for (const match of map.matchAll(/`(src\/[^`]+)`/g))
-      await import('node:fs/promises').then(async fs => {
-        await fs.access(resolve(match[1]))
+    const inputs = [
+      { path: 'src' },
+      { path: 'src/common/api.ts' },
+      { path: 'src', text: 'contextLimits' },
+      { path: 'src/server' },
+      { name: 'contextLimits' }
+    ]
+    for (const [i, tool] of SOURCE_TOOLS.entries()) {
+      const outcome = await runTool(context, {
+        id: 'tool',
+        type: 'tool_use',
+        name: tool.name,
+        input: inputs[i]
       })
-    expect(map).includes('src/server/tess/sourceTools.ts')
-    // The API contract the map starts from is read and searched, not skipped.
-    const api = await real.run('source_read_file', {
-      path: 'src/common/api.ts'
-    })
-    expect(api.is_error).not.equals(true)
-    expect(api.content).includes('startLine 201')
-    const found = await real.run('source_search', {
-      path: 'src/common/api.ts',
-      text: 'export'
-    })
-    expect(found.content).includes('src/common/api.ts:')
-    expect(found.content).includes('[0 files skipped.]')
-  })
-
-  it('reports a search of one unreadable file as an error', async () => {
-    await unlock()
-    await writeFile(join(root, 'binary'), Buffer.from([1, 0, 2]))
+      expect(outcome.result.is_error).not.equals(true)
+    }
     expect(
-      (await browser.run('source_search', { path: 'src/binary', text: 'x' }))
-        .is_error
+      (
+        await runTool(
+          { ...context, source: undefined },
+          {
+            id: 'tool',
+            type: 'tool_use',
+            name: 'source_outline',
+            input: { path: 'src' }
+          }
+        )
+      ).result.is_error
     ).equals(true)
+  })
+  it('reports missing, corrupt, incompatible and incomplete indexes once per path', () => {
+    const warn = console.warn
+    const warnings: unknown[][] = []
+    console.warn = (...args) => warnings.push(args)
+    const fixtures: Array<ReturnType<typeof sourceIndexFixture>> = []
+    try {
+      for (const kind of [
+        'missing',
+        'corrupt',
+        'schema',
+        'map',
+        'longmap',
+        'table'
+      ]) {
+        const bad = sourceIndexFixture()
+        fixtures.push(bad)
+        if (kind !== 'missing') bad.build()
+        if (kind === 'corrupt') writeFileSync(bad.index, 'not sqlite')
+        else if (kind !== 'missing') {
+          const db = new DatabaseSync(bad.index)
+          if (kind === 'schema')
+            db.exec("UPDATE meta SET value='99' WHERE key='schema_version'")
+          if (kind === 'map')
+            db.prepare('DELETE FROM files WHERE path=?').run(DIRECTORY_MAP)
+          if (kind === 'longmap')
+            db.prepare('UPDATE files SET content=? WHERE path=?').run(
+              'x'.repeat(4001),
+              DIRECTORY_MAP
+            )
+          if (kind === 'table') db.exec('DROP TABLE symbols')
+          db.close()
+        }
+        const unavailable = openSourceIndex(bad.index)
+        expect(unavailable.prompt).equals(SOURCE_UNAVAILABLE)
+        for (const tool of SOURCE_TOOLS)
+          expect(unavailable.run(tool.name as SourceToolName, {})).deep.equals({
+            content: SOURCE_UNAVAILABLE,
+            is_error: true
+          })
+        if (kind === 'missing') {
+          // A missing file is retried, so an index built later is picked up.
+          expect(openSourceIndex(bad.index).prompt).equals(SOURCE_UNAVAILABLE)
+          bad.build()
+          expect(openSourceIndex(bad.index).prompt).not.equals(
+            SOURCE_UNAVAILABLE
+          )
+        } else expect(openSourceIndex(bad.index)).equals(unavailable)
+      }
+      expect(warnings).length(6)
+      expect(String(warnings[0][0])).includes('npm run tess.source-index')
+    } finally {
+      console.warn = warn
+      for (const bad of fixtures) bad.close()
+    }
+  })
+  it('uses the trigram even for punctuation patterns, avoiding unrelated external-content reads', () => {
+    const f = sourceIndexFixture({
+      'src/trap.ts': 'unrelated contents without requested punctuation'
+    })
+    try {
+      f.build()
+      const db = new DatabaseSync(f.index)
+      db.exec(`ALTER TABLE files RENAME TO originals;
+        CREATE VIEW files AS SELECT id AS rowid,id,path,directory,role,lines,bytes,
+        CASE WHEN path='src/trap.ts' THEN abs(-9223372036854775808) ELSE content END AS content FROM originals;`)
+      db.close()
+      const reader = openSourceIndex(f.index)
+      for (const text of ['a*b', '[a]', '***', '"ab', '🦊YZ'])
+        expect(reader.run('source_search', { path: 'src', text })).deep.equals({
+          content: '[No matches.]'
+        })
+      // A direct read really reaches the trap. The error fails that call
+      // only, is logged with its tool, and later calls still work.
+      const warn = console.warn
+      const warnings: unknown[][] = []
+      console.warn = (...args) => warnings.push(args)
+      try {
+        expect(
+          reader.run('source_read_file', { path: 'src/trap.ts' })
+        ).deep.equals({ content: SOURCE_QUERY_FAILED, is_error: true })
+        expect(warnings[0][1]).includes({ tool: 'source_read_file' })
+        expect(
+          reader.run('source_search', { path: 'src', text: 'abc' })
+        ).deep.equals({ content: '[No matches.]' })
+        expect(
+          reader.run('source_read_file', { path: 'src/trap.ts' }).content
+        ).equals(SOURCE_QUERY_FAILED)
+        expect(warnings).length(2)
+      } finally {
+        console.warn = warn
+      }
+    } finally {
+      f.close()
+    }
   })
 })

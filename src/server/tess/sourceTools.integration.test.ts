@@ -1,12 +1,8 @@
-import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
+import { FIXTURE_MAP, sourceIndexFixture } from '../../test/sourceIndexFixture'
 import {
   callTools,
   readTurnStream,
@@ -15,43 +11,43 @@ import {
   tessWorld
 } from '../../test/tessFakes'
 import { loadConversation } from './conversation'
-import { DIRECTORY_MAP, MAP_FIRST, sourceBrowser } from './sourceTools'
+import { SOURCE_UNAVAILABLE } from './sourceTools'
 
-describe('Tess source access over HTTP', function () {
+describe('Tess indexed source over HTTP', function () {
   this.timeout(60000)
-  let w: TessWorld
+  let f: ReturnType<typeof sourceIndexFixture>, w: TessWorld
   before(async () => {
-    w = await tessWorld()
+    f = sourceIndexFixture()
+    f.build()
+    w = await tessWorld({ sourceIndex: f.index })
   })
   after(async () => {
     await w?.close()
+    f?.close()
   })
-
-  it('lets a non-admin read the map then targeted source, streams labels and resets next turn', async () => {
+  it('lets an ordinary user search immediately, streams labels and supplies the cached map', async () => {
     expect(w.user(101).isAdmin).equals(false)
-    const call = (
-      id: string,
-      name: string,
-      input: unknown
-    ): ReturnType<typeof callTools> => callTools([{ id, name, input }])
     w.model.reply(
-      call('premature', 'source_search', {
-        path: 'src',
-        text: 'MAX_TOOL_ROUNDS'
-      }),
-      call('map', 'source_read_file', { path: DIRECTORY_MAP }),
-      call('find', 'source_search', {
-        path: 'src/server/tess/agent.ts',
-        text: 'MAX_TOOL_ROUNDS'
-      }),
-      call('read', 'source_read_file', {
-        path: 'src/server/tess/agent.ts',
-        startLine: 40
-      }),
-      call('escape', 'source_read_file', { path: 'src/../package.json' }),
-      say(
-        'In src/server/tess/agent.ts, MAX_TOOL_ROUNDS is 10. Tess closes the tool round when that limit is reached.'
-      )
+      callTools([
+        {
+          id: 'search',
+          name: 'source_search',
+          input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+        }
+      ]),
+      callTools([
+        {
+          id: 'definition',
+          name: 'source_find_definition',
+          input: { name: 'MAX_TOOL_ROUNDS' }
+        },
+        {
+          id: 'outline',
+          name: 'source_outline',
+          input: { path: 'src/server/tess' }
+        }
+      ]),
+      say('src/server/tess/agent.ts:2 defines MAX_TOOL_ROUNDS = 20.')
     )
     const response = await fetch(`${w.h.origin}/api/v1/me/tess/messages`, {
       method: 'POST',
@@ -60,95 +56,82 @@ describe('Tess source access over HTTP', function () {
         accept: 'text/event-stream',
         'content-type': 'application/json'
       },
-      body: JSON.stringify({
-        text: 'How many tool rounds can Tess use? Please cite the source.'
-      })
+      body: JSON.stringify({ text: 'How many tool rounds can Tess use?' })
     })
     expect(response.status).equals(200)
     const events = await readTurnStream(response)
-    const steps = events.filter(e => e.event === 'step').map(e => e.data)
-    expect(steps).deep.includes({
-      id: 'map',
-      label: 'Reading TeamStation source',
-      status: 'done'
-    })
-    expect(steps).deep.includes({
-      id: 'premature',
-      label: 'Searching TeamStation source',
-      status: 'failed'
-    })
-    expect(steps).deep.includes({
-      id: 'escape',
-      label: 'Reading TeamStation source',
-      status: 'failed'
-    })
-    const blocks = (
-      await loadConversation(w.h.db, w.userId(101))
-    ).messages.flatMap(m => m.content)
-    const results = blocks.filter(b => b.type === 'tool_result')
-    expect(results.find(b => b.tool_use_id === 'premature')?.content).equals(
-      MAP_FIRST
-    )
-    expect(results.find(b => b.tool_use_id === 'map')?.content).includes(
-      'Source directory map'
-    )
-    expect(results.find(b => b.tool_use_id === 'find')?.content).match(
-      /src\/server\/tess\/agent.ts:\d+: export const MAX_TOOL_ROUNDS = 10/
-    )
-    expect(results.find(b => b.tool_use_id === 'read')?.content).includes(
-      'MAX_TOOL_ROUNDS = 10'
-    )
-    expect(results.find(b => b.tool_use_id === 'escape')?.is_error).equals(true)
+    const steps = events
+      .filter(event => event.event === 'step')
+      .map(event => event.data)
+    for (const [id, label] of [
+      ['search', 'Searching TeamStation source'],
+      ['definition', 'Finding a definition'],
+      ['outline', 'Outlining source']
+    ])
+      expect(steps).deep.includes({ id, label, status: 'done' })
+    const first = w.model.messageCalls()[0]
+    expect(first.system[1].text)
+      .includes(FIXTURE_MAP)
+      .and.includes('fixture-release')
+    expect(first.system[2].text).not.includes(FIXTURE_MAP)
+    const results = (await loadConversation(w.h.db, w.userId(101))).messages
+      .flatMap(message => message.content)
+      .filter(block => block.type === 'tool_result')
+    expect(results.every(result => result.is_error !== true)).equals(true)
+    expect(
+      results.find(result => result.tool_use_id === 'search')!.content
+    ).includes('MAX_TOOL_ROUNDS = 20')
     expect(
       await w.h.db.selectFrom('tess_changes').selectAll().execute()
     ).length(0)
-
     w.model.reply(
-      call('next-turn', 'source_read_file', {
-        path: 'src/server/tess/agent.ts'
-      }),
-      say('I need to consult the map again.')
+      callTools([
+        {
+          name: 'source_read_file',
+          input: { path: 'src/server/tess/agent.ts' }
+        }
+      ]),
+      say('Still 20.')
     )
     const client = new TeamStationClient({
       baseUrl: `${w.h.origin}/api/v1`,
       token: w.h.tokens.get(101)
     })
-    await client.sendTessMessage('Show the source again.')
-    const next = (await loadConversation(w.h.db, w.userId(101))).messages
-      .flatMap(m => m.content)
-      .filter(b => b.type === 'tool_result')
-    expect(next.find(b => b.tool_use_id === 'next-turn')?.content).equals(
-      MAP_FIRST
-    )
-    expect(w.model.pending()).equals(0)
+    await client.sendTessMessage('Show it again.')
+    expect(
+      w.model.messageCalls().at(-1)!.messages.at(-1).content[0].content
+    ).includes('MAX_TOOL_ROUNDS = 20')
   })
-})
-
-describe('Tess source special files', function () {
-  this.timeout(20000)
-  it('refuses a FIFO without blocking and skips it in listings and search', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tess-source-pipe-'))
+  it('keeps authenticated API reads available through HTTP when the source index is missing', async () => {
+    const missing = await tessWorld({ sourceIndex: f.index + '.missing' })
     try {
-      await writeFile(join(root, 'DIRECTORY_MAP.md'), '# Source map')
-      execFileSync('mkfifo', [join(root, 'pipe')])
-      const browser = sourceBrowser(root)
-      browser.acceptMapResult(
-        await browser.run('source_read_file', { path: DIRECTORY_MAP })
+      missing.model.reply(
+        callTools([{ name: 'source_outline', input: { path: 'src/server' } }]),
+        callTools([{ name: 'api_get', input: { path: '/me/roles' } }]),
+        say('Source is unavailable; account roles are available.')
       )
-      expect(
-        (await browser.run('source_read_file', { path: 'src/pipe' })).is_error
-      ).equals(true)
-      expect(
-        (await browser.run('source_list_directory', { path: 'src' })).content
-      ).not.includes('pipe')
-      const searched = await browser.run('source_search', {
-        path: 'src',
-        text: 'absent'
+      const client = new TeamStationClient({
+        baseUrl: `${missing.h.origin}/api/v1`,
+        token: missing.h.tokens.get(101)
       })
-      expect(searched.is_error).not.equals(true)
-      expect(searched.content).includes('[No matches.]')
+      await client.sendTessMessage('Explain implementation and my roles.')
+      const calls = missing.model.messageCalls()
+      expect(calls[1].messages.at(-1).content[0]).includes({
+        content: SOURCE_UNAVAILABLE,
+        is_error: true
+      })
+      expect(calls[2].messages.at(-1).content[0].content).match(/^HTTP 200/)
+      if (process.env.TS_TESS_BOUNDARY_LOG === '1')
+        console.log(
+          JSON.stringify({
+            request: 'POST /api/v1/me/tess/messages',
+            source_outline: SOURCE_UNAVAILABLE,
+            api_get: 'HTTP 200',
+            finalAnswer: 'Source is unavailable; account roles are available.'
+          })
+        )
     } finally {
-      await rm(root, { recursive: true, force: true })
+      await missing.close()
     }
   })
 })

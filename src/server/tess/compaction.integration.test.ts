@@ -465,7 +465,8 @@ describe("Tess's compaction", function () {
                 source: { type: 'base64', media_type: 'image/png', data: '' }
               }
             ]
-          }
+          },
+          { type: 'tool_limit' }
         ]
       },
       {
@@ -491,6 +492,8 @@ describe("Tess's compaction", function () {
     expect(lines.slice(3)).deep.equals([
       'Tool error: HTTP 404',
       'Tool result: rows [image]',
+      // The tool-limit notice is a note, never something the person said.
+      'Note: Tess reached her tool limit and answered from what she had.',
       'Note: Confirmed',
       'Note: The person stopped Tess before she finished.'
     ])

@@ -20,7 +20,7 @@ import type { ToolUseBlock } from './messagesApi'
  * cached prefix; a stats
  * question reads the API; a chart request draws one; recording a pitch is
  * refused; a fewest-first umpire question pages the leaderboard; a source
- * question reads the directory map and then the relevant implementation. Each case is
+ * question uses the cached source map and reads the relevant implementation. Each case is
  * one message to a fresh conversation, through the real routes, the real API
  * and a scratch database. Not part of `npm test`, and it costs money: about
  * fifteen requests.
@@ -177,7 +177,7 @@ const CASES: Case[] = [
     }
   },
   {
-    name: 'a source question reads the map before targeted source',
+    name: 'a source question uses the index with a narrowed first call',
     text: 'How many tool rounds can Tess use before stopping? Explain from TeamStation source code and quote the relevant constant with its source path.',
     check: turn => {
       const calls = turn.blocks.filter(
@@ -185,34 +185,27 @@ const CASES: Case[] = [
           block.type === 'tool_use' && block.name.startsWith('source_')
       )
       const first = calls[0]
+      if (first == null) return 'no source tool was used'
+      const input = first.input as { path?: string; name?: string }
       if (
-        first?.name !== 'source_read_file' ||
-        (first.input as { path?: string }).path !== 'src/DIRECTORY_MAP.md'
+        first.name !== 'source_find_definition' &&
+        (input.path == null ||
+          input.path === 'src' ||
+          input.path === 'src/DIRECTORY_MAP.md')
       )
-        return 'directory map was not read first'
+        return 'first source call was not narrowed'
       if (
-        !calls
-          .slice(1)
-          .some(
-            block =>
-              (block.input as { path?: string }).path ===
-              'src/server/tess/agent.ts'
-          )
+        calls.some(
+          block =>
+            (block.input as { path?: string }).path === 'src/DIRECTORY_MAP.md'
+        )
       )
-        return 'agent implementation was not read or searched'
-      if (
-        calls
-          .slice(1)
-          .some(
-            block =>
-              block.name === 'source_search' &&
-              (block.input as { path?: string }).path === 'src'
-          )
-      )
-        return 'source search was not narrowed'
+        return 'spent a tool round on the cached map'
+      if (!turn.cacheReads.slice(1).some(count => count > 0))
+        return 'source request did not reuse its cached prefix'
       if (
         !turn.answer.includes('MAX_TOOL_ROUNDS') ||
-        !/\b10\b/.test(turn.answer) ||
+        !/\b20\b/.test(turn.answer) ||
         !turn.answer.includes('src/server/tess/agent.ts')
       )
         return 'answer did not cite the actual limit and source'
