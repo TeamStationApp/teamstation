@@ -15,6 +15,21 @@ backed up remotely. Push changes so maintainers can review them from any worksta
 
 If a change is not ready to push, it is not finished; say so rather than leaving it on disk.
 
+## Update the changelog
+
+Every feature branch adds its changes to `CHANGELOG.md`, under `## Unreleased` at the top, in the
+same branch as the change. A branch is not ready for a PR or a merge without it.
+
+- One line per change, starting `- added:`, `- changed:` or `- fixed:`, kept in that order. Write
+  what a person using the app (or building it) sees, not how the code does it.
+- Add only under `## Unreleased`. Never edit a released version's section.
+- A release moves the `## Unreleased` lines under a new `## <version> (<YYYY-MM-DD>)` heading, and
+  the commit Mason built the published store build from is tagged `v<version>`. The tag goes on
+  the build that is live in the App Store, matched by its build number, not on the commit that set
+  the package version.
+- The same privacy rules apply as everywhere else in this repository: no real names, teams or
+  places.
+
 ## This repository is public: privacy and security
 
 Everything committed here — code, tests, fixtures, docs, comments and commit messages, in every

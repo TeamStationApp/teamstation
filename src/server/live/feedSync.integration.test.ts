@@ -219,6 +219,50 @@ describe('the live controller on the change feed', function () {
     return { ...made, gameId: row.game_id }
   }
 
+  for (const useDefault of [false, true]) {
+    it(`expires a byte-idle stream at its ${useDefault ? 'default' : 'explicit'} game deadline without a feed notice`, async function () {
+      const stream = await addStream()
+      const test = testFeed()
+      await start({ feed: test.feed }, { resyncMs: 60_000 })
+      const before = syncs().length
+      const end = Date.now() + 1500
+      await fixture!.db
+        .updateTable('games')
+        .set({
+          start_at: new Date(end - 10_800_000),
+          end_at: useDefault ? null : new Date(end)
+        })
+        .where('id', '=', stream.gameId)
+        .execute()
+      await fixture!.db
+        .updateTable('live_streams')
+        .set({
+          opens_at: new Date(Date.now() - 1_200_000),
+          last_published_at: new Date(Date.now() - 660_000)
+        })
+        .where('id', '=', stream.id)
+        .execute()
+      test.notify(JSON.stringify({ s: stream.id }))
+      await until(() => syncs().length > before, 'the deadline being scheduled')
+      expect(liveKeys()).includes(stream.key)
+      const finished = await until(
+        async () => {
+          const row = await fixture!.db
+            .selectFrom('live_streams')
+            .select('state')
+            .where('id', '=', stream.id)
+            .executeTakeFirstOrThrow()
+          return row.state === 'ended'
+        },
+        'the byte-idle game deadline',
+        5000
+      )
+      expect(finished).greaterThan(end)
+      expect(finished - end).lessThan(1000)
+      expect(liveKeys()).not.includes(stream.key)
+    })
+  }
+
   it('runs one sync within 150 ms of a notice, and one for a burst of them', async function () {
     const stream = await addStream()
     await start({ feed: await postgresFeed() })
@@ -603,10 +647,10 @@ describe('the live controller on the change feed', function () {
     expect(reads.length).at.most(4)
     expect(reads.every(query => query.sql.includes('"keyCipher"'))).equals(true)
     const statuses = window.filter(query =>
-      query.sql.startsWith('update live_streams set status = v.status')
+      query.sql.startsWith('update live_streams set status =')
     )
     expect(statuses.length).within(14, 16)
-    for (const one of statuses) expect(one.sql.match(/::jsonb/g)).length(2)
+    for (const one of statuses) expect(one.sql.match(/\$\d+::jsonb/g)).length(2)
     const written = await fixture!.db
       .selectFrom('live_streams')
       .select(['status_at', 'last_published_at'])
@@ -637,7 +681,7 @@ describe('the live controller on the change feed', function () {
 
   const statusWrites = (): Array<{ sql: string; at: number }> =>
     queries.filter(query =>
-      query.sql.startsWith('update live_streams set status = v.status')
+      query.sql.startsWith('update live_streams set status =')
     )
 
   it('writes the status reports when every tick outlasts its interval', async function () {
@@ -709,7 +753,9 @@ describe('the live controller on the change feed', function () {
           transformQuery: args => {
             if (
               failing.on &&
-              JSON.stringify(args.node).includes('set status = v.status')
+              JSON.stringify(args.node).includes(
+                'update live_streams set status ='
+              )
             )
               throw new Error('status write failed')
             return args.node

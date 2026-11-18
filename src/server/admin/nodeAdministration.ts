@@ -12,7 +12,7 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { likeLiteral } from '../db/likeText'
-import { requireDirectAdmin } from '../groups/adminGuard'
+import { requireAdministrator } from '../groups/adminGuard'
 import { currentActor } from '../groups/rights'
 import { revokeStreams } from '../live/revokeStreams'
 import { imageUrl } from '../media/imageUrls'
@@ -193,7 +193,7 @@ export async function changeNodeAccount(
         'Add another active node administrator before removing the last one'
       )
     if (disabledAt != null) {
-      for (const ref of refs) await requireDirectAdmin(trx, ref)
+      for (const ref of refs) await requireAdministrator(trx, ref)
       await signOutEverywhere(trx, [userId])
       await revokeStreams(
         trx,

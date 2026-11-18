@@ -27,6 +27,7 @@ import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import {
   createMigratedDatabase,
+  dropScratchDatabase,
   testDatabaseUrl
 } from '../migrate/testDatabase'
 import { hashToken } from '../server/auth/tokens'
@@ -117,8 +118,14 @@ export async function scratchDatabase(
     url,
     drop: async () => {
       await db.destroy()
-      await admin.query(`drop database if exists ${name} with (force)`)
-      await admin.end()
+      try {
+        await dropScratchDatabase(admin, name)
+      } catch {
+        // A pool the test handed `url` to is still open: drop it anyway.
+        await admin.query(`drop database if exists "${name}" with (force)`)
+      } finally {
+        await admin.end()
+      }
     }
   }
 }

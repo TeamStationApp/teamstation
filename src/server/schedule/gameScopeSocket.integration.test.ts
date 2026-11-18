@@ -39,7 +39,8 @@ describe('private socket access follows approved game revisions', function () {
     databaseUrl = url
     server = createServer()
     socket = attachGameSocket(server, f.h.db, url, {
-      pingMs: 0,
+      // Zero is a 1 ms interval in Node, which can kill healthy test sockets.
+      pingMs: 60000,
       recheckMs: 60000,
       log: () => {},
       fanout: { coalesceMs: 10, log: () => {} }

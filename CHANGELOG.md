@@ -1,0 +1,80 @@
+# teamstation
+
+## Unreleased
+
+## 1.3.0 (2026-11-18)
+
+- added: An animated launch splash over the stadium on every cold launch, on iPhone, iPad, Apple TV and Android
+- added: The phone keeps what its screens read and the pictures it drew, opens them with no signal, and scores from its own copy without waiting on the server. The offline banner sits at the bottom of the phone, under the tab bar.
+- added: User Management in Node administration: node administrators page through recent logins and device sessions, look people up, and change a person's name and photo
+- added: The game plan lists each inning's missing and doubled positions, and shares and prints as a one-page Letter PDF
+- added: A team's assistants coach its games and read its game plan
+- added: Add Admins, Staff, Spectators and Players from each people section. Add People ends with a locked Spectator.
+- added: The account screen lists the account's direct affiliations below its email addresses
+- added: Seasons choose their fields, availability takes dated windows, and the Auto-Scheduler has one season table with weekly limits and preferred days
+- added: A develop build's server can be set from a deep link or from About TeamStation
+- added: End-to-end test framework (`npm run e2e`) with streaming end-to-end tests: synthetic cameras, every kind of watcher, soaks and targeted scenarios
+- added: Master production Android bundles are released to Google Play closed testing, as a draft while the app has never been published
+- changed: A stream ends after ten minutes without video once its game has ended. Its recording is kept and its expired ingest key is revoked.
+- changed: Schedules are computed on the device and stored as sent, and the server validates the submitted games
+- changed: Imported games carry TeamStation records on every play, so replay, box score, pitch counts, statistics and editing treat them like scored games. An outside scorer's unknown players are seated as guests.
+- changed: A team's coaching plan stays with its coaches. The scoring screen downloads only the defensive column of the inning in play.
+- changed: A league's and a season's People tabs list no players
+- changed: Creating a league or season inside one you already administer from above adds no separate administrator grant, and grants an inherited one covers are removed. The last-administrator check counts administration inherited from above; a team still keeps its own administrators.
+- changed: The game plan's inning columns grow with the window, up to 1206 points
+- changed: Clear and Help on the coaching and scoring sheets are brighter
+- changed: Node administration sits beside the account instead of inside Account
+- changed: Pictures are stored as public objects under random names and served unsigned
+- changed: Master builds upload to TestFlight without being submitted for beta review
+- changed: Android releases are signed in the Masonfile with the release key from Mason secrets
+- changed: Nomac archives accept Xcode 27.0, 27.1 and 27.2
+- changed: `npm run lint` runs ESLint once per TypeScript project, so it no longer runs out of CI's heap
+- fixed: Dictation keeps a runner who holds short of the hit at the base he held
+- fixed: Dictation scores a swing on a wild pitch as a swinging strike and keeps the wild pitch
+- fixed: Dictation places a ball a named fielder took, with no place said, where that fielder plays
+- fixed: Dictation reads a loop as a bloop, and a hit's trajectory only from its words
+- fixed: A phone's multi-camera grid starts once Android's player is ready
+- fixed: A live segment with no timestamp is placed by when it was written
+- fixed: A scorer's grab of a fielder holds while the screen redraws
+- fixed: The Android release check reads apksigner's per-scheme signer lines
+
+## 1.2.0 (2026-11-14)
+
+- added: A Plan tab on the coaching screen, where a game plan sets the defense for every inning. On the web it edits like a spreadsheet, and innings can be added and deleted.
+- added: Playing Time Rules for seasons and teams, with warnings when a player would fall short
+- added: The scorekeeper's defense moves to the game plan's at the end of each inning
+- added: Several people can score one game. The first server-accepted play wins a conflict, delayed and offline histories are reconciled without replaying a losing timeline, and remote scoring and Undo appear, attributed, in a collapsible panel.
+- added: HBP, pitch (#P) and strike (S) columns on box scores on the web, mobile, replay and TV, with one key beneath both teams. Season, team and player statistics tables have full keys.
+- added: Tap-to-focus on local and remote camera previews, with a persistent lock and an explicit Auto Focus
+- added: The replay plays a stadium crowd and cheers the big plays
+- added: Wide, signed-in windows use labelled left navigation, with Notifications and the account at the sidebar's foot. Tess opens in its own full-height panel on the right.
+- added: An affiliation line under every person a list names
+- added: Live playback can jump to the present, and entering the Videos tab starts playback
+- added: The TV sign-in screen shows the app version and build
+- changed: Anyone allowed to read a person's full name, player or adult, reads it everywhere the app names that person. Everyone else reads the short name, as before.
+- changed: Initials, teams, leagues and seasons are coloured by their id, and a season without a picture draws its league's
+- changed: The replay frames its field like the scoring screen, with one black-on-white volume button, an X to close, a three-line scrolling announcer, and the box score and play card in a side column on tablets and wide windows
+- changed: The remote scoring log is worded on the client from the accepted history, in a scrolling panel, so it can be translated. The server records only who scored each action.
+- changed: Redesigned scoring overrides. Changing halves resets the players.
+- changed: The roster editor's Defense tab lays the field out in six rows with larger names, roster cards are picked up by their grip and dropped onto a vacated position, and Box Score has its own pill
+- changed: Roster and Lineup names draw at full size, wrapping between first and last name instead of shrinking. Fielders on the defensive field show their short name, unshrunk.
+- changed: The coach's plan opens with five innings, with a wider player column
+- changed: A game takes at most four active cameras
+- changed: Pop-up spinners use the native iOS wheel in the app, and Safari's time wheel on iPhone and iPad
+- changed: Public season schedules use the same tappable rows as member schedules
+- changed: League Teams and Season Settings' participating teams each show in one shared list card
+- changed: TV pairing screens have larger artwork and instructions, Apple TV artwork keeps its rounded corners, and TV game dates use the viewer's time zone
+- changed: Upgrade glob to 14.0.4 and minimatch to 11.0.8
+- changed: Unit tests run per commit and integration tests run on their own (`npm run test.integration`)
+- fixed: Android event maps draw Google tiles instead of a blank map. Builds now carry the Google Maps key and check the APK has it.
+- fixed: Ending a half by hand mid at-bat saves the at-bat and leaves that batter due. Older builds are kept from saving plays, and a repair puts back the at-bats they dropped.
+- fixed: Delayed scoring updates no longer remove a game's finalization or leave another scorer stuck on an unfinished play
+- fixed: Shared cards stay readable on dark themes whose card surface matches the canvas text
+- fixed: Native action icons are centered in their buttons
+- fixed: Scoring sheet backgrounds extend through the bottom safe area, and the half-inning and home-away confirmations sit clear of their buttons
+- fixed: A narrow team card keeps its name whole when a place badge shares the corner with Follow
+- fixed: A failed address lookup no longer ends the server
+
+## 1.1.0 (2026-11-11)
+
+- added: First release on the App Store

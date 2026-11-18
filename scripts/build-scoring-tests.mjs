@@ -175,7 +175,8 @@ const bundle = async entry =>
     loader: ASSET_LOADER
   })
 
-await Promise.all(entries.map(bundle))
+// Each bundle loads the app graph; building them together multiplies peak memory.
+for (const entry of entries) await bundle(entry)
 if (chunkBytes > 0)
   writeFileSync(
     `${chunkDir}/scoring-tests-chunks.json`,

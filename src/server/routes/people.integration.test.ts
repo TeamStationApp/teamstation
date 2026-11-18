@@ -861,14 +861,14 @@ describe('people at a team, a season and a league', function () {
       ).equals(404)
     })
 
-    it('keeps the last direct administrator from leaving or stepping down', async () => {
+    it('allows an administrator covered by a parent to leave or step down', async () => {
       expect(
         (await call('DELETE', `/me/groups/team/${f.teamA}`, 101)).status
-      ).equals(409)
+      ).equals(200)
       expect(
         (await call('DELETE', `/me/groups/team/${f.teamA}/roles/admin`, 101))
           .status
-      ).equals(409)
+      ).equals(200)
     })
   })
 
@@ -1160,8 +1160,9 @@ describe('people at a team, a season and a league', function () {
         self: false
       })
       const admin = await profile('team', f.teamA, 101, COACH)
+      // The earlier leave removed the direct team grant; parent roles remain.
       expect(admin.body.sections.map(section => section.roles)).deep.equals([
-        ['admin'],
+        [],
         ['admin'],
         ['admin']
       ])

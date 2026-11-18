@@ -16,6 +16,7 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
+import { effectiveAdminIds, requireAdministrator } from './adminGuard'
 import { canAdminister, currentActor } from './rights'
 
 interface Graph {
@@ -309,6 +310,19 @@ export async function applyParents(
       throw conflict(
         'The affected parent links changed. Review the updated consequences.'
       )
+    const affected = new Map<string, GroupRef>()
+    for (const effect of current.effects) {
+      affected.set(groupKey(effect.child), effect.child)
+      if (effect.child.kind === 'season')
+        for (const [id, team] of now.teams)
+          if (team.parents.has(effect.child.id)) {
+            const ref = { kind: 'team' as const, id }
+            affected.set(groupKey(ref), ref)
+          }
+    }
+    const administered: GroupRef[] = []
+    for (const ref of affected.values())
+      if ((await effectiveAdminIds(trx, ref)).length > 0) administered.push(ref)
     for (const effect of current.effects.filter(
       effect => effect.parent.kind === 'season' && effect.operation === 'detach'
     ))
@@ -375,6 +389,13 @@ export async function applyParents(
         .values({ team_id: effect.child.id, season_id: effect.parent.id })
         .onConflict(oc => oc.columns(['season_id', 'team_id']).doNothing())
         .execute()
+    // A group administered only through a parent loses it with that link.
+    for (const ref of administered)
+      await requireAdministrator(
+        trx,
+        ref,
+        `This change leaves the ${ref.kind} with no administrator, because its parent link carried their authority. Add a direct administrator to the ${ref.kind} first.`
+      )
     // Who sees which team moved: told to those who see either side.
     for (const effect of current.effects)
       noteScopeChange(trx, {

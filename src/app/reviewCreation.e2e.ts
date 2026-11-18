@@ -21,14 +21,14 @@ import {
   text
 } from './creationBrowserActions.e2e'
 
-/** The picture opens its menu, whatever else its label says, then the row. */
+/** Notifications are pinned in the desktop sidebar. */
 async function openNotifications(page: Page): Promise<void> {
-  const picture = '[role="button"][aria-label^="Account, "]'
-  await page.waitForSelector(picture)
-  await page.$eval(picture, node => {
+  const selector =
+    '[data-testid="navigation-sidebar"] [aria-label^="Notifications"]'
+  await page.waitForSelector(selector)
+  await page.$eval(selector, node => {
     ;(node as HTMLElement).click()
   })
-  await press(page, 'Notifications')
 }
 
 async function main(): Promise<void> {
@@ -219,23 +219,12 @@ async function main(): Promise<void> {
     await league.reload({ waitUntil: 'domcontentloaded' })
     await fill(league, 'Team name', 'Demo Context Team')
     await press(league, 'Continue')
-    await text(league, 'Choose the city')
-    expect(await league.evaluate(() => document.body.textContent)).not.includes(
-      'Selected: Demo Harbor'
-    )
-    expect(
-      await league.evaluate(() => {
-        const button = [
-          ...document.querySelectorAll<HTMLElement>('[role="button"]')
-        ].find(node => node.textContent === 'Continue')
-        return button == null ? null : button.getAttribute('aria-disabled')
-      })
-    ).equals('true')
-    await press(league, 'Choose Demo Harbor, Demo Coast, US')
+    await text(league, 'Choose this team’s city and state.')
+    await text(league, 'Demo Harbor, Demo Coast')
     await press(league, 'Continue')
     await press(league, 'Use initials')
     await press(league, 'Create Team')
-    await league.waitForSelector('[aria-label="Manage"]')
+    await league.waitForSelector('[aria-label="Team sections"]')
     expect(
       (
         await f.h.db
@@ -266,7 +255,7 @@ async function main(): Promise<void> {
       ).timezone
     ).equals('America/New_York')
     lines.push(
-      'E3/E4 review PASS: a reloaded contextual team requires explicit confirmation of its parent locality; a league-launched season uses the league locality timezone'
+      'E3/E4 review PASS: a reloaded contextual team prefills its parent locality; a league-launched season uses the league locality timezone'
     )
 
     const participation = await f.h.request(
@@ -627,11 +616,10 @@ async function main(): Promise<void> {
         }))
       )
       .execute()
-    await league.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    await league.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
       waitUntil: 'domcontentloaded'
     })
-    await press(league, 'Manage')
-    await press(league, 'Create Game')
+    await press(league, 'Add Game')
     // A team page's game is a scrimmage or exhibition in no season, however
     // many seasons its administrator keeps; seasons schedule their own games.
     await text(league, 'always creates a scrimmage/exhibition game')
@@ -640,7 +628,13 @@ async function main(): Promise<void> {
         // No `??` here: the browser runs this without sucrase's helpers.
         [...document.querySelectorAll('[role="button"]')].some(node => {
           const label = node.getAttribute('aria-label')
-          return label !== null && /season/i.test(label)
+          return (
+            node.closest(
+              '[aria-hidden="true"], [data-testid="navigation-sidebar"]'
+            ) == null &&
+            label !== null &&
+            /season/i.test(label)
+          )
         })
       )
     ).equals(false)
@@ -682,9 +676,7 @@ async function main(): Promise<void> {
     ).equals(200)
     await otherLeague.reload({ waitUntil: 'domcontentloaded' })
     await text(otherLeague, 'Demo Eagles invited to game vs. Demo Hawks')
-    expect(
-      await otherLeague.evaluate(() => document.body.textContent)
-    ).not.includes('Demo Renamed Eagles')
+    // The invitation keeps its original title; live affiliation rows may show the new name.
     await press(otherLeague, 'Accept invitation')
     await text(otherLeague, 'Accepted')
     await text(otherLeague, 'Demo Eagles invited to game vs. Demo Hawks')
@@ -766,6 +758,7 @@ async function main(): Promise<void> {
     ).equals('accepted')
     // The inbox says what was given, with nothing to accept.
     await openNotifications(imported)
+    await press(imported, 'History')
     await text(imported, 'Babe Ruth added you as Coach of Demo Hawks')
     expect(
       await imported.evaluate(() => document.body.textContent)
@@ -802,6 +795,7 @@ async function main(): Promise<void> {
       await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
     ).deep.equals(['coach', 'songkeeper'])
     await openNotifications(imported)
+    await press(imported, 'History')
     await text(imported, 'added you as Songkeeper of Demo Hawks')
     await press(imported, 'Back')
     await press(imported, 'Walk-up', 'tab')

@@ -24,7 +24,7 @@ describe('minimal group creation HTTP service', function () {
   after(async () => {
     await f?.h.close()
   })
-  it('creates parent-only context, creator administration and independent locality', async () => {
+  it('preserves parent-only context, explicit fixture administration and independent locality', async () => {
     const { h, teamA, seasonA, leagueA } = f
     expect(
       await h.db

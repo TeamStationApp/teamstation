@@ -1,39 +1,46 @@
-/** Both the publisher and the scheduled game must be over by ten minutes. */
+import { endsAt } from '../../common/nextGame'
+
 const QUIET_END_DELAY_MS = 10 * 60 * 1000
 
-/** Eligibility only: the controller must also check the ingest before ending. */
-export function quietStreamCanEnd(
-  row: {
-    state: string
-    lastPublishedAt: Date | string | null
-    opensAt: Date | string
-    gameEndAt: Date | string | null
-  },
-  now: Date
-): boolean {
-  if (row.state !== 'idle' || row.gameEndAt == null) return false
-  const quietSince = new Date(row.lastPublishedAt ?? row.opensAt).getTime()
-  const gameEnd = new Date(row.gameEndAt).getTime()
-  return (
-    now.getTime() - quietSince >= QUIET_END_DELAY_MS &&
-    now.getTime() - gameEnd >= QUIET_END_DELAY_MS
-  )
+interface QuietStream {
+  state: string
+  lastReceivedAt: number | null
+  opensAt: Date | string
+  gameStartAt: Date | string | null
+  gameEndAt: Date | string | null
 }
 
-/**
- * When an idle stream next becomes eligible to end, in milliseconds: ten
- * minutes after the later of its last publish and its game's scheduled end.
- * Undefined when nothing but a write can make it eligible: a stream that is
- * not idle, or a game with no end.
- */
-export function quietStreamEndsAt(row: {
-  state: string
+/** Older snapshots use their last publish once, until the byte clock is saved. */
+export function streamReceivedAt(
+  status: unknown,
   lastPublishedAt: Date | string | null
-  opensAt: Date | string
-  gameEndAt: Date | string | null
-}): number | undefined {
-  if (row.state !== 'idle' || row.gameEndAt == null) return undefined
-  const quietSince = new Date(row.lastPublishedAt ?? row.opensAt).getTime()
-  const gameEnd = new Date(row.gameEndAt).getTime()
-  return Math.max(quietSince, gameEnd) + QUIET_END_DELAY_MS
+): number | null {
+  const received = (status as { ingress?: { lastReceivedAt?: unknown } } | null)
+    ?.ingress?.lastReceivedAt
+  if (received === undefined)
+    return lastPublishedAt == null ? null : new Date(lastPublishedAt).getTime()
+  return received === null || typeof received === 'number' ? received : NaN
+}
+
+/** Eligibility only: the controller also observes bytes and queued ingest work. */
+export function quietStreamCanEnd(row: QuietStream, now: Date): boolean {
+  const deadline = quietStreamEndsAt(row)
+  return deadline != null && now.getTime() >= deadline
+}
+
+/** Ten minutes without bytes, and strictly after the effective game end. */
+export function quietStreamEndsAt(row: QuietStream): number | undefined {
+  if (row.state !== 'idle' && row.state !== 'publishing') return undefined
+  const quietSince = row.lastReceivedAt ?? new Date(row.opensAt).getTime()
+  const gameEnd = endsAt({
+    startAt: isoOf(row.gameStartAt),
+    endAt: isoOf(row.gameEndAt)
+  })
+  const deadline = Math.max(quietSince + QUIET_END_DELAY_MS, gameEnd + 1)
+  return Number.isFinite(deadline) ? deadline : undefined
+}
+
+function isoOf(value: Date | string | null): string | null {
+  if (!(value instanceof Date)) return value
+  return Number.isNaN(value.getTime()) ? '' : value.toISOString()
 }

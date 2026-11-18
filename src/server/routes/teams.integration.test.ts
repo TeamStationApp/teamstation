@@ -770,9 +770,14 @@ describe('teams by external id, and making one', function () {
           .where('team_id', '=', made.body.id)
           .execute()
         expect(joined).deep.equals([{ season_id: season }])
-        expect(await adminsOf('team', made.body.id)).deep.equals([
-          { user_id: userIdOfGumbo(userId), granted_by: userIdOfGumbo(userId) }
-        ])
+        expect(await adminsOf('team', made.body.id)).deep.equals([])
+        expect(
+          await database()
+            .selectFrom('memberships')
+            .select(['user_id', 'role'])
+            .where('team_id', '=', made.body.id)
+            .execute()
+        ).deep.equals([{ user_id: userIdOfGumbo(userId), role: 'owner' }])
         // Nothing is given on a season this call did not make.
         expect(await adminsOf('season', season), token).deep.equals(
           seasonAdmins
@@ -1004,8 +1009,16 @@ describe('teams by external id, and making one', function () {
         .where('team_id', '=', made.body.id)
         .execute()
       expect(joined).deep.equals([{ season_id: made.body.season.id }])
-      // A site administrator administers it, and belongs to no team.
+      // Site administrators keep having no owner membership, so before the
+      // ownership cutover their new team keeps its explicit grant: the
+      // cutover may choose another parent than the new season.
       expect(await adminsOf('team', made.body.id)).deep.equals([
+        {
+          user_id: userIdOfGumbo(admin.userId),
+          granted_by: userIdOfGumbo(admin.userId)
+        }
+      ])
+      expect(await adminsOf('season', made.body.season.id)).deep.equals([
         {
           user_id: userIdOfGumbo(admin.userId),
           granted_by: userIdOfGumbo(admin.userId)

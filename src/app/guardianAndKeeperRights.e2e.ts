@@ -745,9 +745,12 @@ async function people(run: Run): Promise<void> {
   await scrollTap(admin, 'Remove from Demo Hawks')
   await contains(
     admin.page,
-    'Ben C leaves Demo Hawks: off the roster, and every role they hold on it.'
+    'Ben Chapman leaves Demo Hawks: off the roster, and every role they hold on it.'
   )
-  await admin.m.tapOn({ css: '[aria-label="Remove Ben C"]', timeout: 15000 })
+  await admin.m.tapOn({
+    css: '[aria-label="Remove Ben Chapman"]',
+    timeout: 15000
+  })
   await admin.page.waitForFunction(
     teamId => location.pathname === '/teams/' + teamId,
     { timeout: 15000 },
@@ -762,7 +765,7 @@ async function people(run: Run): Promise<void> {
       .executeTakeFirst()) != null
   await until(async () => !(await onHawks(ben.id)))
   expect(await roleRows(ben.id)).deep.equals([])
-  await contains(admin.page, 'Removed Ben C from Demo Hawks')
+  await contains(admin.page, 'Removed Ben Chapman from Demo Hawks')
   await contains(admin.page, 'Alfonso Soriano')
   const rosterNames = await admin.page.evaluate(() => {
     const roster = document.querySelector('[data-testid="teamTabContent"]')
@@ -836,14 +839,14 @@ async function people(run: Run): Promise<void> {
   )
   const refused = await api(
     'PUT',
-    `/manage/team/${f.teamA}/people/${people.follower}/roles/admin`,
+    `/manage/team/${f.teamA}/people/${userIdOfGumbo(people.follower)}/roles/admin`,
     people.teamCoach,
     {}
   )
   expect(refused.status).equals(403)
   const given = await api(
     'PUT',
-    `/manage/team/${f.teamA}/people/${people.follower}/roles/videographer`,
+    `/manage/team/${f.teamA}/people/${userIdOfGumbo(people.follower)}/roles/videographer`,
     people.teamCoach,
     {}
   )
@@ -2590,7 +2593,16 @@ async function pressRole(
 ): Promise<void> {
   const css = `[data-testid="role-${level}-${role}"] [role="switch"]`
   await scrollTo(session, css)
+  const removing = await session.page.$eval(
+    css,
+    node => node.getAttribute('aria-checked') === 'true'
+  )
   await session.m.tapOn({ css, timeout: 15000 })
+  if (removing)
+    await session.m.tapOn({
+      css: '[aria-label="Confirm removal"]',
+      timeout: 15000
+    })
 }
 
 /**

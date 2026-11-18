@@ -77,7 +77,10 @@ async function main(): Promise<void> {
       await page.waitForFunction(
         (word: string) =>
           [...document.querySelectorAll('[role="button"],[role="tab"]')].some(
-            el => (el.textContent || '').includes(word)
+            el =>
+              !(el.getAttribute('aria-label') || '').startsWith('Account, ') &&
+              el.closest('[aria-hidden="true"]') == null &&
+              (el.textContent || '').includes(word)
           ),
         {},
         fragment
@@ -87,7 +90,12 @@ async function main(): Promise<void> {
           ...document.querySelectorAll<HTMLElement>(
             '[role="button"],[role="tab"]'
           )
-        ].find(node => (node.textContent || '').includes(word))
+        ].find(
+          node =>
+            !(node.getAttribute('aria-label') || '').startsWith('Account, ') &&
+            node.closest('[aria-hidden="true"]') == null &&
+            (node.textContent || '').includes(word)
+        )
         if (el != null) el.click()
       }, fragment)
     }
@@ -175,6 +183,13 @@ async function main(): Promise<void> {
 
     await signIn(SCOREKEEPER)
     await visit(`/teams/${teamA}?tab=team`)
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('[data-testid="teamTabContent"]')].some(
+        node =>
+          node.closest('[aria-hidden="true"]') == null &&
+          (node.textContent || '').includes('Ichiro')
+      )
+    )
     await shot('roster-own-row-after.png', 'Ichiro')
     await clickNamed('Ichiro')
     await page.waitForFunction(

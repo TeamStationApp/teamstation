@@ -470,6 +470,16 @@ function emptyScopes(): ScopeSet {
   return { leagueIds: new Set(), seasonIds: new Set(), teamIds: new Set() }
 }
 
+/** Whether the ownership cutover has fixed every team's permission parents. */
+export async function hierarchyReady(db: Kysely<Database>): Promise<boolean> {
+  const ready = await db
+    .selectFrom('system_settings')
+    .select('value')
+    .where('key', '=', 'creation.hierarchyReady')
+    .executeTakeFirst()
+  return ready?.value === true
+}
+
 /**
  * Which seasons a team's roles come down from, as `season_id`/`team_id` rows.
  *

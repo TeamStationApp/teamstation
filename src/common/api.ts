@@ -2407,7 +2407,14 @@ export type LiveOutputStatus = ReturnType<typeof asLiveOutputStatus>
 
 export const asLiveStatus = asObject({
   liveStreamId: asString,
-  ingress: asObject({
+  ingress: asObject<{
+    lastReceivedAt?: number | null
+    publishing: boolean
+    receivingPackets: boolean
+    bytesReceived: number
+    bytesPerSecond: number
+  }>({
+    lastReceivedAt: asAbsentOr(asNullable(asNumber)),
     publishing: asBoolean,
     receivingPackets: asBoolean,
     bytesReceived: asNumber,

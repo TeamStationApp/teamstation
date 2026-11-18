@@ -121,6 +121,10 @@ describe('migrations', function () {
 
   it('rolls back the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    // Removed redundant grants have no safe provenance to restore.
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '123coveredAdmins'
+    ])
     // The records are data: going down removes none of them.
     expect(await migrateDown(pool, migrations)).deep.equals([
       '122importedRecords'
@@ -662,7 +666,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '119deviceScheduling',
           '120devicePreviews',
           '121deviceResultHash',
-          '122importedRecords'
+          '122importedRecords',
+          '123coveredAdmins'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

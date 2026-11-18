@@ -9,7 +9,7 @@ import { signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { requireDirectAdmin } from '../groups/adminGuard'
+import { requireAdministrator } from '../groups/adminGuard'
 import { groupName } from '../invites/grants'
 import { revokeStreams } from '../live/revokeStreams'
 import { eraseAnalytics } from '../observability/analytics'
@@ -39,7 +39,7 @@ export { DELETED_NAME }
  * those addresses are spent for the same reason, and every session, machine
  * token, OAuth grant and stream key of each row is revoked.
  *
- * A person who is the last direct administrator of a team, season or league
+ * A person who is the last effective administrator of a team, season or league
  * cannot delete their account until somebody else administers it, as with
  * suspension; nor can the last node administrator.
  *
@@ -230,7 +230,7 @@ export async function deleteAccount(
     const unattended: string[] = []
     for (const ref of groups) {
       try {
-        await requireDirectAdmin(trx, ref)
+        await requireAdministrator(trx, ref)
       } catch (error) {
         if (!(error instanceof HttpError) || error.code !== 'conflict')
           throw error

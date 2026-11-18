@@ -4,7 +4,7 @@ import {
   mostRestrictive,
   type PlayerNamePrivacy
 } from '../../common/playerNamePrivacy'
-import { settledTeams } from '../access'
+import { hierarchyReady, settledTeams } from '../access'
 import { lockKeys, teamKey } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -13,7 +13,7 @@ import {
   rebuildEventChildren
 } from '../events/eventChildren'
 import { recordNamesTeam, retargetGameTeams } from '../games/retargetTeams'
-import { requireDirectAdmin } from '../groups/adminGuard'
+import { requireAdministrator } from '../groups/adminGuard'
 import { freeLabel, namesOnSide } from '../groups/noticePolicy'
 import { teamFormats } from '../groups/playerNamePrivacy'
 import { mergeParents } from '../groups/teamMerge'
@@ -547,16 +547,8 @@ export async function mergeTeams(
       .set({ team_id: intoTeamId })
       .where('team_id', '=', fromTeamId)
       .execute()
-    if (
-      (
-        await trx
-          .selectFrom('system_settings')
-          .select('value')
-          .where('key', '=', 'creation.hierarchyReady')
-          .executeTakeFirst()
-      )?.value === true
-    )
-      await requireDirectAdmin(trx, { kind: 'team', id: intoTeamId })
+    if (await hierarchyReady(trx))
+      await requireAdministrator(trx, { kind: 'team', id: intoTeamId })
 
     // `memberships` and `season_teams` can now hold the same person or team
     // twice, and both have a unique constraint, so the duplicates go rather

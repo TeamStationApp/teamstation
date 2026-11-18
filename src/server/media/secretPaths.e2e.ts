@@ -419,6 +419,7 @@ describe('E2E-3: unsigned media under the secret path (M5)', function () {
     )
     const id = `vid_seedfinished${randomBytes(2).toString('hex')}`
     const dir = join(scratch, 'seed-finished')
+    await mkdir(dir, { recursive: true })
     await remuxToHls('ffmpeg', { input: sample, outDir: dir })
     for (const name of ['master.m3u8', 'video.m3u8', 'video.mp4'])
       await putObjectFile({

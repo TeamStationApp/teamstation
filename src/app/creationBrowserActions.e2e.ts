@@ -33,7 +33,11 @@ export async function press(
   await page
     .waitForFunction(
       (label, role) =>
-        [...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)].some(
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            `[role="${role}"]:not([aria-hidden="true"] *)`
+          )
+        ].some(
           node =>
             (node.hasAttribute('aria-label')
               ? node.getAttribute('aria-label')
@@ -63,7 +67,9 @@ export async function press(
   await page.evaluate(
     (label, role) => {
       const button = [
-        ...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)
+        ...document.querySelectorAll<HTMLElement>(
+          `[role="${role}"]:not([aria-hidden="true"] *)`
+        )
       ]
         .filter(
           node =>
@@ -84,7 +90,7 @@ export async function fill(
   label: string,
   value: string
 ): Promise<void> {
-  const selector = `:is(input, textarea)[aria-label="${label}"]`
+  const selector = `:is(input, textarea)[aria-label="${label}"]:not([aria-hidden="true"] *)`
   await page.waitForSelector(selector)
   // Routed sheets can retain hidden inputs from the previous visit. Select the
   // visible field, rather than the first matching node left in the document.

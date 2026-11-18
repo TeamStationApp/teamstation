@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import type { Actor } from '../server/auth/sessions'
 import { createSession } from '../server/auth/sessions'
@@ -111,7 +112,27 @@ export async function groupFixture(
         userId
       )
       expect(result.status).equals(201)
-      return ((await result.json()) as { id: string }).id
+      const id = ((await result.json()) as { id: string }).id
+      // These shared fixtures represent existing direct affiliations. Fresh
+      // creation behavior is asserted separately, before any fixture grants.
+      if (parent != null)
+        await h.db
+          .insertInto('scope_roles')
+          .values({
+            id: makeId('scopeRole'),
+            user_id: userIdOfGumbo(userId),
+            scope_type: kind,
+            scope_id: id,
+            role: 'admin',
+            granted_by: userIdOfGumbo(userId)
+          })
+          .onConflict(oc =>
+            oc
+              .columns(['user_id', 'scope_type', 'scope_id', 'role'])
+              .doNothing()
+          )
+          .execute()
+      return id
     }
     const leagueA = await create('league', 'Demo League A', 101)
     const leagueB = await create('league', 'Demo League B', 102)

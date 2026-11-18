@@ -263,7 +263,7 @@ describe('protected node account administration', function () {
       (await f.h.request('GET', '/me/groups', undefined, 106)).status
     ).equals(401)
   })
-  it('refuses suspension of the sole direct group administrator even if a parent or node administrator remains', async () => {
+  it('refuses suspension of a group administrator no other active administrator covers, directly or through a parent; node administrator status does not count', async () => {
     expect(
       (
         await f.h.request(

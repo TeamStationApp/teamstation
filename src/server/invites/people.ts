@@ -11,7 +11,7 @@ import {
   authorizePersonChange,
   type PersonChangeAuthority,
   refuseRoleWhileHeld,
-  requireDirectAdmin
+  requireAdministrator
 } from '../groups/adminGuard'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
 import { shortNamesOf } from '../users/nameBook'
@@ -607,7 +607,7 @@ export async function removeFromScope(
         .executeTakeFirst()
       removed ||= gone != null
     }
-    await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
+    await requireAdministrator(trx, { kind: scopeType, id: scopeId })
     if (removed)
       noteScopeChange(trx, { userId, ...groupScopeIds(scopeType, scopeId) })
     return { removed }
@@ -776,7 +776,7 @@ export async function setScopeRoles(
     await gone.execute()
     noteScopeChange(trx, { userId, ...groupScopeIds(scopeType, scopeId) })
     if (roles.length === 0) {
-      await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
+      await requireAdministrator(trx, { kind: scopeType, id: scopeId })
       return
     }
     await trx
@@ -795,7 +795,7 @@ export async function setScopeRoles(
         oc.columns(['user_id', 'scope_type', 'scope_id', 'role']).doNothing()
       )
       .execute()
-    await requireDirectAdmin(trx, { kind: scopeType, id: scopeId })
+    await requireAdministrator(trx, { kind: scopeType, id: scopeId })
   })
   return roles
 }

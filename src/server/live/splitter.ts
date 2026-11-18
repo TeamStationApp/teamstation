@@ -188,6 +188,8 @@ export interface OutputStatus {
 }
 
 export interface IngressStatus {
+  /** Last observed incoming byte, independent of connection state. */
+  lastReceivedAt?: number | null
   publishing: boolean
   receivingPackets: boolean
   bytesReceived: number
@@ -439,6 +441,9 @@ interface FinalRead {
 }
 
 interface IngressRuntime {
+  lastReceivedAt: number | null
+  /** Separate from rate sampling so status reads cannot consume its delta. */
+  bytesObserved: number
   publishing: boolean
   /**
    * The path the publisher actually used, which is not always the canonical
@@ -629,6 +634,8 @@ export function configureIngest(next: IngestConfig): void {
 
 function makeIngress(): IngressRuntime {
   return {
+    lastReceivedAt: null,
+    bytesObserved: 0,
     publishing: false,
     receivingPackets: false,
     bytesReceived: 0,
@@ -692,10 +699,24 @@ function killByPid(pid: number | undefined, signal: NodeJS.Signals): void {
   }
 }
 
+/**
+ * Observe even between sampler ticks, before deciding whether a key expires.
+ * Only an accepted publish counts: until it has shown HEVC, its bytes may be
+ * the handshake or a refused codec, and they count once it is accepted.
+ */
+function observeReceivedBytes(ingress: IngressRuntime): void {
+  if (ingress.session == null || ingress.accepted !== true) return
+  const bytes = ingress.session.inBytes ?? 0
+  if (bytes > ingress.bytesObserved) ingress.lastReceivedAt = Date.now()
+  ingress.bytesObserved = bytes
+}
+
 function toStatus(entry: LiveEntry): LiveStatus {
+  observeReceivedBytes(entry.ingress)
   return {
     liveStreamId: entry.liveStreamId,
     ingress: {
+      lastReceivedAt: entry.ingress.lastReceivedAt,
       publishing: entry.ingress.publishing,
       receivingPackets: entry.ingress.receivingPackets,
       bytesReceived: entry.ingress.bytesReceived,
@@ -2458,6 +2479,7 @@ function releaseOutputs(
  */
 function forceCloseIngress(entry: LiveEntry, reason: string): void {
   const session = entry.ingress.session
+  observeReceivedBytes(entry.ingress)
   entry.ingress.publishing = false
   entry.ingress.receivingPackets = false
   entry.ingress.bytesPerSecond = 0
@@ -2492,6 +2514,7 @@ function pollSampler(): void {
   for (const entry of entries.values()) {
     const ingress = entry.ingress
     let dirty = false
+    observeReceivedBytes(ingress)
     const currentInBytes = ingress.session?.inBytes ?? 0
     if (ingress.publishing) {
       if (ingress.codecChecked !== true && ingress.session != null) {
@@ -2915,6 +2938,7 @@ function accept(entry: LiveEntry, session: NmsSession): void {
   log(`[live:${entry.liveStreamId}] publisher connected`)
   entry.ingress.path = publishPath(session)
   entry.ingress.session = session
+  entry.ingress.bytesObserved = 0
   entry.ingress.publishing = true
   entry.ingress.codecChecked = false
   entry.ingress.accepted = false
@@ -3068,6 +3092,7 @@ function publishGone(session: NmsSession): void {
   // few seconds of the game. Ending the reader gives it the end of the
   // stream instead, and it closes its own playlist.
   endSubscribers(session)
+  observeReceivedBytes(entry.ingress)
   entry.ingress.publishing = false
   entry.ingress.receivingPackets = false
   entry.ingress.bytesPerSecond = 0

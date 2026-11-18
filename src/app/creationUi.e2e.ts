@@ -169,9 +169,10 @@ async function main(): Promise<void> {
     )
     const admin = await login(101)
     const desktop = await navigation(admin)
+    // Desktop navigation occupies the left sidebar; mobile keeps its tabs below.
     for (let index = 1; index < desktop.length; index++) {
-      expect(desktop[index - 1].right).at.most(desktop[index].left)
-      expect(desktop[index].top).lessThan(60)
+      expect(desktop[index - 1].bottom).at.most(desktop[index].top)
+      expect(desktop[index].right).at.most(256)
     }
     await shot(admin, 'populated-home')
     expect(await admin.evaluate(() => document.body.textContent)).not.includes(
