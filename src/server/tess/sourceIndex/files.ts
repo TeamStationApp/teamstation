@@ -7,6 +7,7 @@ import {
   lstatSync,
   openSync,
   readdirSync,
+  readFileSync,
   readSync
 } from 'node:fs'
 import { basename, join, posix } from 'node:path'
@@ -27,6 +28,55 @@ export function sourceRole(path: string): SourceRole {
   )
     return 'fixture'
   return 'code'
+}
+
+/**
+ * Names that never ship as source: a host's secrets, build output,
+ * dependencies and hidden tool state. Case-folded for case-insensitive disks.
+ */
+const PRIVATE_NAMES = new Set([
+  'serverconfig.json',
+  'clientconfig.json',
+  'clientconfig.xcconfig',
+  'local.properties',
+  'node_modules',
+  'lib',
+  'dist',
+  'build',
+  'build-device',
+  'build-local',
+  'web-build',
+  'pods',
+  'deriveddata'
+])
+
+export function isPrivateName(name: string): boolean {
+  const folded = name.toLowerCase()
+  return (
+    folded.startsWith('.') ||
+    PRIVATE_NAMES.has(folded) ||
+    folded.endsWith('.keystore') ||
+    folded.endsWith('.xcuserdatad')
+  )
+}
+
+/** The literal paths `.gitattributes` marks export-ignore, when it is present. */
+function exportIgnored(root: string): string[] {
+  let text: string
+  try {
+    text = readFileSync(join(root, '.gitattributes'), 'utf8')
+  } catch {
+    return []
+  }
+  return text.split('\n').flatMap(line => {
+    const [pattern, ...attributes] = line.trim().split(/\s+/)
+    return pattern != null &&
+      !pattern.startsWith('#') &&
+      attributes.includes('export-ignore') &&
+      !/[*?[\]!]/.test(pattern)
+      ? [pattern.replace(/^\/+|\/+$/g, '')]
+      : []
+  })
 }
 
 /** Include directories in attribute queries: export-ignore is not inherited. */
@@ -72,14 +122,23 @@ export function sourcePaths(root: string): string[] {
       })
       .sort()
   }
+  // Without git, the tree is normally a `git archive` release. A copied
+  // checkout is not, so its secrets, build output and export-ignored paths
+  // are still kept out.
+  const ignored = exportIgnored(root)
   const paths: string[] = []
   const walk = (path: string): void => {
+    if (
+      ignored.some(prefix => path === prefix || path.startsWith(`${prefix}/`))
+    )
+      return
     const stat = lstatSync(join(root, path))
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       paths.push(path)
       return
     }
-    for (const name of readdirSync(join(root, path))) walk(`${path}/${name}`)
+    for (const name of readdirSync(join(root, path)))
+      if (!isPrivateName(name)) walk(`${path}/${name}`)
   }
   walk('src')
   return paths.sort()
