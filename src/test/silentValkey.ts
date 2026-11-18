@@ -15,6 +15,8 @@ export interface SilentValkey {
   commands: string[]
   /** From now on nothing is answered. */
   silence: () => void
+  /** From now on commands are answered again. */
+  answer: () => void
   close: () => Promise<void>
 }
 
@@ -48,6 +50,9 @@ export async function silentValkey(): Promise<SilentValkey> {
     commands,
     silence: () => {
       answering = false
+    },
+    answer: () => {
+      answering = true
     },
     close: async () => {
       for (const socket of sockets) socket.destroy()

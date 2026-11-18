@@ -170,7 +170,15 @@ describe('a worker’s scoreboard while Redis is away', function () {
 
       // Back, with nobody restarting anything.
       proxy = await relay(port)
-      await until('Redis to be ready', () => scoreboard.store.isReady(), 20000)
+      await until(
+        'Redis to be ready',
+        async () =>
+          await scoreboard.store.whenReady().then(
+            () => true,
+            () => false
+          ),
+        20000
+      )
       scoreboard.onGameWritten(gameId)
       await until(
         'the hook to write',

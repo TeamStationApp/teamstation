@@ -1,10 +1,7 @@
 import { createClient } from 'redis'
 
-import { onceAMinute } from '../cache/valkeyCache'
-import {
-  redisSocketOptions,
-  scoreboardPrefix
-} from '../scoreboard/scoreboardStore'
+import { scoreboardPrefix } from '../scoreboard/scoreboardStore'
+import { onceAMinute, redisSocketOptions } from '../valkey/client'
 import {
   firstTry,
   type NewPushRequest,

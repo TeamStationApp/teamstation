@@ -17,12 +17,12 @@ import {
   testStore
 } from '../../test/scoreboardKit'
 import { asServerConfig, requestDatabaseUrl } from '../serverConfig'
+import { redisSocketOptions } from '../valkey/client'
 import {
   makeScoreboardClient,
   makeScoreboardSubscriber,
   parseScoreboardMessage,
   quit,
-  redisSocketOptions,
   type ScoreboardClient,
   type ScoreboardMessage,
   scoreboardPrefix,
@@ -375,7 +375,7 @@ describe('the scoreboard store', function () {
     const { store: closing } = await testStore(prefix)
     await closing.close()
     await closing.close()
-    expect(closing.isReady()).equals(false)
+    expect(closing.reachable()).equals(false)
     // One still trying to reach a Redis that is not there closes at once.
     const stuck = makeScoreboardClient('redis://127.0.0.1:1', () => undefined)
     const connecting = stuck.connect().catch(() => undefined)

@@ -490,6 +490,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/users/readerNames.js',
   'server/users/rosterCandidates.js',
   'server/users/survivors.js',
+  'server/valkey/client.js',
   'server/venues/fieldWarnings.js',
   'server/venues/occupancy.js',
   'server/venues/ownership.js',

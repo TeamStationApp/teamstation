@@ -724,6 +724,77 @@ describe('the scoreboard hub', function () {
     expect(await closedWith(phone)).equals(SCOREBOARD_CLOSE.closed)
   })
 
+  for (const kind of ['viewer', 'publisher', 'timeline'] as const) {
+    it(`admits a new ${kind} through a fresh command-client reconnect`, async function () {
+      const worker = await startWorker()
+      const { client } = worker
+      const gameId = await newGame()
+      await worker.store.mergeWatcher(gameId, { balls: 2 }, Date.now())
+      let readyAtAdmission: boolean | undefined
+      const handle = worker.hub.handleUpgrade
+      const id = await client.clientId()
+      const admin = await connectedClient()
+      let killed: Promise<number> | undefined
+      const admitting = new Promise<void>((resolve, reject) => {
+        worker.hub.handleUpgrade = (...args) => {
+          // Start real socket admission at the owned connection-loss event,
+          // before node-redis can complete its immediately-started reconnect.
+          client.once('error', () => {
+            readyAtAdmission = client.isReady
+            handle(...args)
+            resolve()
+          })
+          killed = admin.clientKill({ filter: 'ID', id })
+          killed.catch(reject)
+        }
+      })
+      try {
+        const probe =
+          kind === 'viewer'
+            ? viewer(worker, gameId)
+            : kind === 'publisher'
+              ? publisher(worker, gameId, runner)
+              : timeline(worker, gameId, runner)
+        await admitting
+        expect(await killed).equals(1)
+        await probe.opened
+        if (kind === 'viewer') {
+          await until(
+            'the first board or a closed socket',
+            () => probe.messages.length > 0 || probe.closed != null
+          )
+          expect(last(probe)?.balls).equals(2)
+        } else if (kind === 'publisher') {
+          send(probe, { outs: 1 })
+          await until(
+            'the first published update',
+            async () =>
+              (await worker.store.readScoreboard(gameId))?.watcher?.state
+                .outs === 1
+          )
+        } else {
+          await until('a timeline notice after admission', async () => {
+            await worker.store.announceTimeline(gameId)
+            return probe.messages.length > 0
+          })
+          expect(probe.messages.at(-1)).deep.equals({ type: 'changed' })
+        }
+        expect(readyAtAdmission).equals(false)
+        expect(probe.closed).equals(undefined)
+      } finally {
+        await admin.close()
+      }
+    })
+  }
+
+  it('refuses a new timeline socket when the command client is closed', async function () {
+    const worker = await startWorker()
+    const gameId = await newGame()
+    worker.client.destroy()
+    const probe = timeline(worker, gameId, runner)
+    expect(await closedWith(probe)).equals(1011)
+  })
+
   it('sends the current state again after its subscriber reconnects', async function () {
     const a = await startWorker()
     const gameId = await newGame()

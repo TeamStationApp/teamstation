@@ -6,6 +6,13 @@ import {
   quit,
   type ScoreboardClient
 } from '../scoreboard/scoreboardStore'
+import {
+  inPublicationOrder,
+  type PublicationOrder,
+  runValkey,
+  VALKEY_COMMAND_TIMEOUT_MS,
+  ValkeyUnavailable
+} from '../valkey/client'
 import type {
   ChangeFeed,
   FeedChannel,
@@ -73,6 +80,9 @@ export class ValkeyFeed implements ChangeFeed {
   /** The last the connection was heard of, it had failed. */
   private down = false
   private publisherConnecting: Promise<void> | undefined
+  /** The first connection attempt has succeeded or failed. */
+  private publisherSettled = false
+  private readonly publications: PublicationOrder = { last: 0 }
   private heardRelayAt: number | undefined
   private closed = false
 
@@ -111,14 +121,33 @@ export class ValkeyFeed implements ChangeFeed {
 
   /** `PUBLISH`, straight to Valkey: this leaves Postgres out of it. */
   async publishEphemeral(channel: FeedChannel, payload: string): Promise<void> {
-    await this.publisherReady()
-    await this.publisher.publish(feedChannelKey(this.prefix, channel), payload)
+    const budget = this.openPublisher()
+    const send = inPublicationOrder(
+      this.publications,
+      async () =>
+        await this.publisher.publish(
+          feedChannelKey(this.prefix, channel),
+          payload
+        )
+    )
+    await runValkey(
+      this.publisher,
+      async () => {
+        if (this.closed) throw new ValkeyUnavailable()
+        return await send()
+      },
+      budget,
+      // The latest notice sent twice is only a hint more.
+      true
+    )
   }
 
   /** The relay's leader as its key names it, or null when nothing leads. */
   async leader(): Promise<string | null> {
-    await this.publisherReady()
-    return await this.publisher.get(feedLeaderKey(this.prefix))
+    return await this.command(
+      async () => await this.publisher.get(feedLeaderKey(this.prefix)),
+      true
+    )
   }
 
   async close(): Promise<void> {
@@ -130,27 +159,36 @@ export class ValkeyFeed implements ChangeFeed {
   private open(): void {
     if (this.opened) return
     this.opened = true
-    this.subscriber.connect().catch((error: unknown) => {
-      this.log(`feed subscriber: ${String(error)}`)
-    })
+    this.subscriber.connect().catch(() => undefined)
   }
 
-  /** Connects on first use, and waits only so long for it. */
-  private async publisherReady(): Promise<void> {
-    this.publisherConnecting ??= this.publisher.connect().then(
-      () => undefined,
-      (error: unknown) => {
-        this.log(`feed publisher: ${String(error)}`)
-      }
+  /** Use during the first connection includes its setup in a larger budget. */
+  private async command<T>(
+    run: () => Promise<T>,
+    replaySafe = false
+  ): Promise<T> {
+    return await runValkey(
+      this.publisher,
+      run,
+      this.openPublisher(),
+      replaySafe
     )
-    let timer: ReturnType<typeof setTimeout> | undefined
-    await Promise.race([
-      this.publisherConnecting,
-      new Promise(resolve => {
-        timer = setTimeout(resolve, this.connectWaitMs)
+  }
+
+  private openPublisher(): number {
+    if (this.closed) throw new ValkeyUnavailable()
+    this.publisherConnecting ??= this.publisher
+      .connect()
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .finally(() => {
+        this.publisherSettled = true
       })
-    ])
-    clearTimeout(timer)
+    return this.publisherSettled
+      ? VALKEY_COMMAND_TIMEOUT_MS
+      : this.connectWaitMs
   }
 
   /** The connection went: every channel has stopped hearing. */

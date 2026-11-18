@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 
 import {
   asEither,
@@ -8,14 +8,7 @@ import {
   asString,
   type Cleaner
 } from 'cleaners'
-import {
-  ClientClosedError,
-  ClientOfflineError,
-  type CommandParser,
-  createClient,
-  defineScript,
-  SocketClosedUnexpectedlyError
-} from 'redis'
+import { type CommandParser, createClient, defineScript } from 'redis'
 
 import { asLiteral } from '../../common/asLiteral'
 import {
@@ -28,6 +21,20 @@ import {
   type SourceState,
   withoutTeamNames
 } from '../../common/scoreboard'
+import {
+  closeValkey,
+  isConnectionError,
+  reconnectWhenSilent,
+  runValkey,
+  VALKEY_COMMAND_TIMEOUT_MS,
+  valkeyClientName,
+  type ValkeyClientOptions,
+  valkeyClientOptions,
+  valkeyReachable,
+  ValkeyTimeout,
+  ValkeyUnavailable,
+  watchValkeyConnection
+} from '../valkey/client'
 import { WRITE_SCOREBOARD } from './scoreboardScript'
 
 /**
@@ -52,34 +59,19 @@ export class ScoreboardUnavailable extends Error {
 
 const writeScoreboardScript = defineScript({
   SCRIPT: WRITE_SCOREBOARD,
-  NUMBER_OF_KEYS: 1,
-  parseCommand(parser: CommandParser, key: string, args: string[]) {
+  NUMBER_OF_KEYS: 2,
+  parseCommand(
+    parser: CommandParser,
+    key: string,
+    resultKey: string,
+    args: string[]
+  ) {
     parser.pushKey(key)
+    parser.pushKey(resultKey)
     parser.push(...args)
   },
   transformReply: undefined as unknown as () => string
 })
-
-/**
- * How to open the connection, when it needs more than the URL says: with a
- * CA file, TLS checked against that authority, for a server reached as
- * `rediss://` that signs with its own CA, which Node's store does not hold.
- * Empty means the URL alone decides, as it does for a local Redis.
- */
-export function redisSocketOptions(
-  caFile: string
-): { tls: true; ca: string } | undefined {
-  if (caFile === '') return undefined
-  let ca: string
-  try {
-    ca = readFileSync(caFile, 'utf8')
-  } catch (error) {
-    throw new Error(
-      `redis.caFile ${caFile} cannot be read: ${error instanceof Error ? error.message : String(error)}`
-    )
-  }
-  return { tls: true, ca }
-}
 
 /**
  * The command client, which fails a command at once rather than queueing it
@@ -91,20 +83,25 @@ export function makeScoreboardClient(
   url: string,
   log: (message: string) => void,
   name = 'scoreboard',
-  caFile = ''
+  caFile = '',
+  options: ValkeyClientOptions = {}
 ): ScoreboardClient {
-  const client = newClient(url, redisSocketOptions(caFile))
-  watchConnection(client, log, name)
+  const client = newClient(url, name, caFile, options)
+  watchValkeyConnection(client, log, name)
+  reconnectWhenSilent(client, options.silenceGraceMs)
   return client
 }
 
 // The client's type carries its script, as node-redis infers it.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function newClient(url: string, socket?: { tls: true; ca: string }) {
+function newClient(
+  url: string,
+  name: string,
+  caFile: string,
+  options: ValkeyClientOptions
+) {
   return createClient({
-    url,
-    ...(socket == null ? {} : { socket }),
-    disableOfflineQueue: true,
+    ...valkeyClientOptions(url, name, caFile, options),
     scripts: { writeScoreboard: writeScoreboardScript }
   })
 }
@@ -119,40 +116,30 @@ export type ScoreboardClient = ReturnType<typeof newClient>
 export function makeScoreboardSubscriber(
   client: ScoreboardClient,
   log: (message: string) => void,
-  name = 'scoreboard subscriber'
+  name = 'scoreboard subscriber',
+  options: ValkeyClientOptions = {}
 ): ScoreboardClient {
-  const subscriber = client.duplicate({ disableOfflineQueue: false })
-  watchConnection(subscriber, log, name)
+  // Everything else, keepalive included, comes from the command client.
+  const subscriber = client.duplicate({
+    disableOfflineQueue: false,
+    name: options.name ?? valkeyClientName(name),
+    ...(options.pingInterval == null
+      ? {}
+      : {
+          pingInterval: options.pingInterval
+        })
+  })
+  watchValkeyConnection(subscriber, log, name)
+  reconnectWhenSilent(subscriber, options.silenceGraceMs)
   return subscriber
 }
 
-function watchConnection(
-  client: ScoreboardClient,
-  log: (message: string) => void,
-  name: string
-): void {
-  let down = false
-  client.on('error', (error: unknown) => {
-    if (down) return
-    down = true
-    log(
-      `redis ${name}: ${error instanceof Error ? error.message : String(error)}`
-    )
-  })
-  client.on('ready', () => {
-    if (down) log(`redis ${name}: connected again`)
-    down = false
-  })
-}
-
 /**
- * Ends a connection: gracefully when it is up, and at once when it is not,
- * because node-redis's graceful close waits for commands still queued, and
- * with Redis away those would never be answered.
+ * Drains pending commands within one command budget, then closes the socket.
+ * A silent peer may still look ready, including with an unanswered PING.
  */
 export async function quit(client: ScoreboardClient): Promise<void> {
-  if (client.isReady) await client.close().catch(() => undefined)
-  else if (client.isOpen) client.destroy()
+  await closeValkey(client)
 }
 
 /**
@@ -272,8 +259,10 @@ export interface ScoreboardStore {
   readonly prefix: string
   keyOf: (gameId: string) => string
   now: () => number
-  /** Whether a command sent now would reach Redis. */
-  isReady: () => boolean
+  /** Whether a command sent now could be answered, at once or after a reconnect. */
+  reachable: () => boolean
+  /** Waits, within one command budget, for a connection that is coming back. */
+  whenReady: () => Promise<void>
   writeGame: (
     gameId: string,
     state: ScoreboardUpdate,
@@ -325,22 +314,29 @@ export function makeScoreboardStore(options: {
   const timelineChannel = `${prefix}:scoreboardTimeline`
   const keyOf = (gameId: string): string => `${prefix}:scoreboard:${gameId}`
 
-  /** Runs one command, turning a lost connection into `ScoreboardUnavailable`. */
-  async function command<T>(run: () => Promise<T>): Promise<T> {
-    if (!client.isReady) throw new ScoreboardUnavailable()
+  /**
+   * Runs one command, turning a lost connection into `ScoreboardUnavailable`.
+   * It is sent again after a lost connection only when the caller says it is
+   * `replaySafe`: reads and the result-keyed write are, and a PUBLISH is not,
+   * so it never goes out twice.
+   */
+  async function command<T>(
+    run: () => Promise<T>,
+    replaySafe = false
+  ): Promise<T> {
     try {
-      return await run()
+      return await runValkey(client, run, VALKEY_COMMAND_TIMEOUT_MS, replaySafe)
     } catch (error) {
-      if (
-        !client.isReady ||
-        error instanceof ClientOfflineError ||
-        error instanceof ClientClosedError ||
-        error instanceof SocketClosedUnexpectedlyError
-      ) {
-        throw new ScoreboardUnavailable()
-      }
-      throw error
+      throw unavailable(error)
     }
+  }
+
+  function unavailable(error: unknown): unknown {
+    return error instanceof ValkeyUnavailable ||
+      isConnectionError(error) ||
+      !client.isReady
+      ? new ScoreboardUnavailable()
+      : error
   }
 
   async function write(
@@ -352,19 +348,31 @@ export function makeScoreboardStore(options: {
     sourceVersion = ''
   ): Promise<WriteResult> {
     const at = now()
-    const reply = await command(
-      async () =>
-        await client.writeScoreboard(keyOf(gameId), [
-          field,
-          json,
-          mode,
-          String(at),
-          String(startAt),
-          sourceVersion,
-          channel,
-          gameId
-        ])
-    )
+    // The prefix comes first, and the hash tag, the whole game key, puts the
+    // result in that key's cluster slot.
+    const resultKey = `${prefix}:scoreboardResult:{${keyOf(gameId)}}:${randomUUID()}`
+    const run = async (): Promise<string> =>
+      await client.writeScoreboard(keyOf(gameId), resultKey, [
+        field,
+        json,
+        mode,
+        String(at),
+        String(startAt),
+        sourceVersion,
+        channel,
+        gameId
+      ])
+    let reply: string
+    try {
+      reply = await runValkey(client, run, VALKEY_COMMAND_TIMEOUT_MS, true)
+    } catch (error) {
+      if (!(error instanceof ValkeyTimeout && error.what === 'answer'))
+        throw unavailable(error)
+      // A slow write that was sent may still land. Its replay queues behind it
+      // on the same connection and answers with the stored result, so it is
+      // not lost: a write may take two command budgets, never more.
+      reply = await command(run, true)
+    }
     if (reply === 'closed' || reply === 'stale') return { kind: reply }
     return { kind: 'written', message: parseScoreboardMessage(reply), now: at }
   }
@@ -375,7 +383,10 @@ export function makeScoreboardStore(options: {
     prefix,
     keyOf,
     now,
-    isReady: () => client.isReady,
+    reachable: () => valkeyReachable(client),
+    whenReady: async () => {
+      await command(async () => undefined, true)
+    },
     writeGame: async (gameId, state, startAt, sourceVersion) =>
       await write(
         gameId,
@@ -422,7 +433,8 @@ export function makeScoreboardStore(options: {
       ),
     readScoreboard: async gameId => {
       const hash = await command(
-        async () => await client.hGetAll(keyOf(gameId))
+        async () => await client.hGetAll(keyOf(gameId)),
+        true
       )
       if (Object.keys(hash).length === 0) return undefined
       const parse = <T>(field: string, cleaner: Cleaner<T>): T | undefined =>
@@ -442,7 +454,8 @@ export function makeScoreboardStore(options: {
       )
     },
     exists: async gameId =>
-      (await command(async () => await client.exists(keyOf(gameId)))) === 1,
+      (await command(async () => await client.exists(keyOf(gameId)), true)) ===
+      1,
     onReady: listener => {
       client.on('ready', listener)
     },

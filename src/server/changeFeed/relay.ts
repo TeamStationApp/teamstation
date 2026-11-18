@@ -9,6 +9,15 @@ import {
   scoreboardPrefix
 } from '../scoreboard/scoreboardStore'
 import type { ServerConfig } from '../serverConfig'
+import {
+  inPublicationOrder,
+  onceAMinute,
+  type PublicationOrder,
+  runValkey,
+  VALKEY_COMMAND_TIMEOUT_MS,
+  ValkeyTimeout,
+  ValkeyUnavailable
+} from '../valkey/client'
 import { FEED_CHANNELS } from './feed'
 import { feedChannelKey, feedControlKey, feedLeaderKey } from './valkeyFeed'
 
@@ -103,6 +112,7 @@ interface Leadership {
    * that goes out early is only a hint more.
    */
   publishing: boolean
+  publications: PublicationOrder
   /** The key may hold this leader's name. */
   claimed: boolean
   ended: boolean
@@ -141,6 +151,7 @@ class Relay implements FeedRelay {
   private readonly checkWaitMs: number
   private readonly claimMs: number
   private readonly log: (message: string) => void
+  private readonly sayFailure: (message: string) => boolean
   private leadership: Leadership | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
   private polling: Promise<void> | undefined
@@ -163,15 +174,14 @@ class Relay implements FeedRelay {
     this.checkWaitMs = options.checkWaitMs ?? 20_000
     this.claimMs = options.claimMs ?? 10_000
     this.log = log
+    this.sayFailure = onceAMinute(log)
     this.redis = (options.makeClient ?? makeScoreboardClient)(
       config.redis.url,
       log,
       'feed relay',
       config.redis.caFile
     )
-    this.redis.connect().catch((error: unknown) => {
-      log(`feed relay: ${String(error)}`)
-    })
+    this.redis.connect().catch(() => undefined)
     this.schedule()
   }
 
@@ -206,7 +216,10 @@ class Relay implements FeedRelay {
 
   private async poll(): Promise<void> {
     try {
-      const holder = await this.redis.get(feedLeaderKey(this.prefix))
+      const holder = await this.command(
+        async () => await this.redis.get(feedLeaderKey(this.prefix)),
+        { replaySafe: true }
+      )
       // A stop during that read: nothing may start now that it would leave behind.
       if (holder != null) this.lastComplaint = ''
       else if (!this.stopped) await this.tryToLead()
@@ -218,8 +231,8 @@ class Relay implements FeedRelay {
   /** Says a failure once, however many polls it lasts. */
   private complain(why: string): void {
     if (why === this.lastComplaint) return
-    this.lastComplaint = why
-    this.log(`relay candidate: ${why}`)
+    // A reason the limit drops stays unsaid, so a later poll may say it.
+    if (this.sayFailure(`relay candidate: ${why}`)) this.lastComplaint = why
   }
 
   private async tryToLead(): Promise<void> {
@@ -231,6 +244,7 @@ class Relay implements FeedRelay {
     const turn: Leadership = {
       client,
       publishing: false,
+      publications: { last: 0 },
       claimed: false,
       ended: false,
       left,
@@ -256,6 +270,7 @@ class Relay implements FeedRelay {
     // that has gone quiet, and a poll under way keeps this process from another.
     const unlessLeft = async <T>(step: Promise<T>): Promise<T | undefined> =>
       await Promise.race([step, leaving.then(() => undefined)])
+    const deadline = Date.now() + this.claimMs
     const limit = setTimeout(() => {
       this.end(turn, `the claim took over ${this.claimMs} ms`).catch(
         () => undefined
@@ -284,16 +299,26 @@ class Relay implements FeedRelay {
       }
       turn.claimed = true
       await unlessLeft(
-        this.redis.set(feedLeaderKey(this.prefix), this.identity, {
-          PX: this.leaderTtlMs
-        })
+        this.command(
+          async () =>
+            await this.redis.set(feedLeaderKey(this.prefix), this.identity, {
+              PX: this.leaderTtlMs
+            }),
+          // Setting its own name again changes nothing.
+          { budgetMs: deadline - Date.now(), turn, replaySafe: true }
+        )
       )
       if (turn.ended) return
       turn.publishing = true
       await unlessLeft(
-        this.redis.publish(
-          feedControlKey(this.prefix),
-          JSON.stringify({ kind: 'resync' })
+        this.command(
+          async () =>
+            await this.redis.publish(
+              feedControlKey(this.prefix),
+              JSON.stringify({ kind: 'resync' })
+            ),
+          // A resync sent twice is only a hint more.
+          { budgetMs: deadline - Date.now(), turn, replaySafe: true }
         )
       )
     } catch (error) {
@@ -320,26 +345,30 @@ class Relay implements FeedRelay {
     )
     if (turn.renewingSince == null) {
       turn.renewingSince = now
-      this.redis
-        .eval(RENEW_SCRIPT, {
-          keys: [feedLeaderKey(this.prefix)],
-          arguments: [this.identity, String(this.leaderTtlMs)]
-        })
-        .then(
-          renewed => {
-            turn.renewingSince = undefined
-            if (renewed === 0)
-              this.end(turn, 'the leader key is gone').catch(() => undefined)
-          },
-          (error: unknown) => {
-            this.end(turn, `a renewal failed: ${String(error)}`).catch(
-              () => undefined
-            )
-          }
-        )
-    } else if (now - turn.renewingSince >= this.leaderTtlMs) {
-      this.end(turn, 'a renewal went unanswered').catch(() => undefined)
-      return
+      this.command(
+        async () =>
+          await this.redis.eval(RENEW_SCRIPT, {
+            keys: [feedLeaderKey(this.prefix)],
+            arguments: [this.identity, String(this.leaderTtlMs)]
+          }),
+        // A renewal may go unanswered for as long as the key lasts, and the
+        // script renews only this leader's own key.
+        { budgetMs: this.leaderTtlMs, turn, replaySafe: true }
+      ).then(
+        renewed => {
+          turn.renewingSince = undefined
+          if (renewed === 0)
+            this.end(turn, 'the leader key is gone').catch(() => undefined)
+        },
+        (error: unknown) => {
+          this.end(
+            turn,
+            error instanceof ValkeyTimeout
+              ? 'a renewal went unanswered'
+              : `a renewal failed: ${String(error)}`
+          ).catch(() => undefined)
+        }
+      )
     }
     if (turn.checkingSince != null) {
       if (now - turn.checkingSince >= this.checkWaitMs)
@@ -356,12 +385,41 @@ class Relay implements FeedRelay {
     }
   }
 
+  /** A command is sent again after a lost connection only when `replaySafe`. */
+  private async command<T>(
+    run: () => Promise<T>,
+    {
+      budgetMs = VALKEY_COMMAND_TIMEOUT_MS,
+      turn,
+      replaySafe = false
+    }: { budgetMs?: number; turn?: Leadership; replaySafe?: boolean } = {}
+  ): Promise<T> {
+    return await runValkey(
+      this.redis,
+      async () => {
+        if (turn?.ended === true)
+          throw new ValkeyUnavailable('The relay turn ended')
+        return await run()
+      },
+      budgetMs,
+      replaySafe
+    )
+  }
+
   private publish(turn: Leadership, key: string, payload: string): void {
-    this.redis.publish(key, payload).catch((error: unknown) => {
-      this.end(turn, `a publish failed: ${String(error)}`).catch(
-        () => undefined
-      )
-    })
+    // An uncertain older reply ends this turn; the next resync covers it.
+    this.command(
+      inPublicationOrder(
+        turn.publications,
+        async () => await this.redis.publish(key, payload)
+      ),
+      // Only the latest notice is sent again, and twice is only a hint more.
+      { budgetMs: this.leaderTtlMs, turn, replaySafe: true }
+    )
+      .catch(async (error: unknown) => {
+        await this.end(turn, `a publish failed: ${String(error)}`)
+      })
+      .catch(() => undefined)
   }
 
   /** Ends a turn: nothing more goes out, and the process is a candidate again. */
@@ -389,12 +447,15 @@ class Relay implements FeedRelay {
     ])
     clearTimeout(timer)
     if (turn.claimed)
-      await this.redis
-        .eval(RELEASE_SCRIPT, {
-          keys: [feedLeaderKey(this.prefix)],
-          arguments: [this.identity]
-        })
-        .catch(() => undefined)
+      await this.command(
+        async () =>
+          await this.redis.eval(RELEASE_SCRIPT, {
+            keys: [feedLeaderKey(this.prefix)],
+            arguments: [this.identity]
+          }),
+        // The script deletes only this leader's own key.
+        { replaySafe: true }
+      ).catch(() => undefined)
     if (this.leadership === turn) this.leadership = undefined
     this.schedule()
   }

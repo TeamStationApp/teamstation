@@ -539,7 +539,7 @@ export function makeScoreboardHub(
       return undefined
     }
     try {
-      if (!store.isReady()) throw new ScoreboardUnavailable()
+      if (!store.reachable()) throw new ScoreboardUnavailable()
       let runner: Actor | undefined
       if (kind !== 'viewer' || member.timeline) {
         const token = sessionToken(
@@ -570,13 +570,14 @@ export function makeScoreboardHub(
         member.userId = runner.userId
       }
       const record = await gameRecord(db, gameId)
-      const open = member.timeline
-        ? record != null
-        : scoreboardOpen(
-            record,
-            record == null ? false : await store.exists(gameId),
-            now()
-          )
+      let open = false
+      if (record != null && member.timeline) {
+        // A timeline's history can outlive its current scoreboard, so it
+        // waits only for a fresh reconnect.
+        await store.whenReady()
+        open = true
+      } else if (record != null)
+        open = scoreboardOpen(record, await store.exists(gameId), now())
       if (record == null || !open) {
         shut(socket, SCOREBOARD_CLOSE.closed, 'The scoreboard is closed')
         return undefined

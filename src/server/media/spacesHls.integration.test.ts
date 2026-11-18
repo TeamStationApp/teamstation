@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 import { expect } from 'chai'
 import { afterEach, before, beforeEach, describe, it } from 'mocha'
 
@@ -379,6 +381,10 @@ describe('live playlists through Valkey', function () {
     await failing.append(video.id, piece(1), body(2))
     await failing.forget(video.id)
     expect(logged).length(1)
+    // A second outage soon after the first is said too.
+    ;(failing as unknown as { down: boolean }).down = false
+    await failing.replace(video.id, body(1))
+    expect(logged).length(2)
     // A working sink says when Valkey answers again.
     const recovering = new ValkeyPlaylistSink(client, prefix, line =>
       logged.push(line)
@@ -640,12 +646,14 @@ describe('live playlists when Valkey stalls', function () {
         })
     }
     const published: string[] = []
-    const client = {
+    const client = Object.assign(new EventEmitter(), {
+      isReady: true,
+      isOpen: true,
       multi: () => multi,
       publish: async (_channel: string, message: string) => {
         published.push(message)
       }
-    } as unknown as ScoreboardClient
+    }) as unknown as ScoreboardClient
     const sink = new ValkeyPlaylistSink(
       client,
       prefix,
