@@ -58,6 +58,8 @@
 		B5E0A1C10000000000000006 /* TSPhoneStreamPreviewComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000005 /* TSPhoneStreamPreviewComponentView.mm */; };
 		C9B2E4F10000000000000002 /* TSQrScannerComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = C9B2E4F10000000000000001 /* TSQrScannerComponentView.mm */; };
 		AF107DC2F99C16BDC99E1EAC /* NativeChatCrypto.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 513962B8AB54F3D2A1045C0C /* NativeChatCrypto.cpp */; };
+		4819A5000000000000000007 /* SchedulerProvider.mm in Sources */ = {isa = PBXBuildFile; fileRef = 4819A5000000000000000001 /* SchedulerProvider.mm */; };
+		4819A5000000000000000008 /* NativeScheduler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4819A5000000000000000002 /* NativeScheduler.cpp */; };
 		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		D4EEEC93B36A4D25AA681001 /* RCTPlanDocument.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */; };
 		DAF2400A14A8239C28D2D9AF /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */; };
@@ -126,6 +128,9 @@
 		A0B5E8A10000000000000001 /* NativeSentryPrivacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSentryPrivacy.swift; path = ../mobile/apps/common/TeamStationSentry/Sources/TeamStationSentry/NativeSentryPrivacy.swift; sourceTree = SOURCE_ROOT; };
 		0CA8A8955AF78ED8BFDEF03F /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-SemiBold.ttf"; path = "../src/app/assets/fonts/Inter-SemiBold.ttf"; sourceTree = SOURCE_ROOT; };
 		082EAD2A56E0FED3688B7251 /* ChatCryptoProvider.mm */ = {isa = PBXFileReference; includeInIndex = 1; path = ChatCryptoProvider.mm; sourceTree = "<group>"; };
+		4819A5000000000000000001 /* SchedulerProvider.mm */ = {isa = PBXFileReference; includeInIndex = 1; path = SchedulerProvider.mm; sourceTree = "<group>"; };
+		4819A5000000000000000002 /* NativeScheduler.cpp */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.cpp; name = NativeScheduler.cpp; path = ../../../native/scheduler/phone/NativeScheduler.cpp; sourceTree = "<group>"; };
+		4819A5000000000000000003 /* NativeScheduler.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = NativeScheduler.h; path = ../../../native/scheduler/phone/NativeScheduler.h; sourceTree = "<group>"; };
 		12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TSGlassView.mm; path = TeamStation/TSGlassView.mm; sourceTree = SOURCE_ROOT; };
 		13B07F961A680F5B00A75B9A /* TeamStation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TeamStation.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = TeamStation/Images.xcassets; sourceTree = "<group>"; };
@@ -261,6 +266,7 @@
 				C9B2E4F10000000000000003 /* QrScanner */,
 				079C0F7B05299D6A392E2536 /* ChatCrypto */,
 				B7A0C0DE0000000000000G02 /* Push */,
+				4819A5000000000000000006 /* Scheduler */,
 			);
 			name = TeamStation;
 			sourceTree = "<group>";
@@ -324,6 +330,17 @@
 			sourceTree = "<group>";
 			tabWidth = 2;
 			usesTabs = 0;
+		};
+		4819A5000000000000000006 /* Scheduler */ = {
+			isa = PBXGroup;
+			children = (
+				4819A5000000000000000001 /* SchedulerProvider.mm */,
+				4819A5000000000000000002 /* NativeScheduler.cpp */,
+				4819A5000000000000000003 /* NativeScheduler.h */,
+			);
+			name = Scheduler;
+			path = TeamStation/Scheduler;
+			sourceTree = SOURCE_ROOT;
 		};
 		5CE4E0A1000000000000000A /* TeamStationTests */ = {
 			isa = PBXGroup;
@@ -454,6 +471,7 @@
 				C38B50BA6285516D6DCD4F65 /* [CP] Check Pods Manifest.lock */,
 				6AA4A0066FA9B19F54CCEF7C /* [Expo] Configure project */,
 				10EAD6F9FCC5ECC5CD150820 /* Build chat crypto */,
+				4819A500000000000000000A /* Build the scheduler */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
@@ -631,6 +649,28 @@
 			shellPath = /bin/bash;
 			shellScript = "# Builds crates/chat-crypto for this platform's architectures (src/MOBILE.md).\n\"${SRCROOT}/../scripts/chatCryptoNative.sh\" ios\n";
 		};
+		4819A500000000000000000A /* Build the scheduler */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build the scheduler";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/build/highs/$(PLATFORM_NAME)/libhighs.a",
+				"$(SRCROOT)/build/highs/$(PLATFORM_NAME)/libhighs_extras.a",
+				"$(SRCROOT)/build/highs/$(PLATFORM_NAME)/libscheduler_core.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "# Builds the pinned HiGHS and the scheduler engine for this platform's architectures (src/MOBILE.md).\n\"${SRCROOT}/../scripts/highsNative.sh\" ios\n";
+		};
 		6AA4A0066FA9B19F54CCEF7C /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -758,6 +798,8 @@
 				B7A0C0DE0000000000000B06 /* Coverage.swift in Sources */,
 				B7A0C0DE0000000000000B01 /* ChatWakeDecryptor.swift in Sources */,
 				B7A0C0DE0000000000000B0B /* NotificationService.swift in Sources */,
+				4819A5000000000000000007 /* SchedulerProvider.mm in Sources */,
+				4819A5000000000000000008 /* NativeScheduler.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -903,6 +945,10 @@
 					"$(inherited)",
 					"$(SRCROOT)/../native/chatCrypto",
 					"$(SRCROOT)/../crates/chat-crypto/include",
+					"$(SRCROOT)/../native/scheduler",
+					"$(SRCROOT)/../native/scheduler/phone",
+					"$(SRCROOT)/../native/highs/vendor/HiGHS/highs",
+					"$(SRCROOT)/build/highs/$(PLATFORM_NAME)/include",
 				);
 				INFOPLIST_FILE = TeamStation/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -914,6 +960,7 @@
 					"$(SDKROOT)/usr/lib/swift",
 					"$(inherited)",
 					"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)",
+					"$(SRCROOT)/build/highs/$(PLATFORM_NAME)",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
@@ -921,6 +968,9 @@
 					"-ObjC",
 					"-lc++",
 					"-lchat_crypto",
+					"-lscheduler_core",
+					"-lhighs",
+					"-lhighs_extras",
 					"-weak_framework",
 					DeclaredAgeRange,
 				);
@@ -950,6 +1000,10 @@
 					"$(inherited)",
 					"$(SRCROOT)/../native/chatCrypto",
 					"$(SRCROOT)/../crates/chat-crypto/include",
+					"$(SRCROOT)/../native/scheduler",
+					"$(SRCROOT)/../native/scheduler/phone",
+					"$(SRCROOT)/../native/highs/vendor/HiGHS/highs",
+					"$(SRCROOT)/build/highs/$(PLATFORM_NAME)/include",
 				);
 				INFOPLIST_FILE = TeamStation/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
@@ -961,6 +1015,7 @@
 					"$(SDKROOT)/usr/lib/swift",
 					"$(inherited)",
 					"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)",
+					"$(SRCROOT)/build/highs/$(PLATFORM_NAME)",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
@@ -968,6 +1023,9 @@
 					"-ObjC",
 					"-lc++",
 					"-lchat_crypto",
+					"-lscheduler_core",
+					"-lhighs",
+					"-lhighs_extras",
 					"-weak_framework",
 					DeclaredAgeRange,
 				);

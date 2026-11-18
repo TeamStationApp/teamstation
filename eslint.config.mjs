@@ -117,6 +117,7 @@ export default [
     files: [
       'scripts/stampWallClockSei.ts',
       'scripts/packedLeagueCounts.ts',
+      'scripts/highsNativeSmokeModel.ts',
       'scripts/chat-history-recovery-fixtures.ts',
       'scripts/chat-history-recovery-link.ts',
       'scripts/chat-history-recovery-native-scenes.ts',

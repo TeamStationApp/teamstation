@@ -128,6 +128,7 @@ const tsSuites = [
   // wrapper, and the bundled app tests' mapping to the Node engine.
   'src/common/scheduler/engine.web.test.ts',
   'src/app/platform/schedulerWorker.test.ts',
+  'src/app/scheduling/NativeScheduler.test.ts',
   'src/test/chatCoreResolvePlugin.test.ts'
 ]
 

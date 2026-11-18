@@ -19,6 +19,7 @@
     "node_modules",
     "src/common/chatCrypto/core.web.ts",
     "src/common/chatCrypto/core.native.ts",
-    "src/common/chatCrypto/wasmCore.ts"
+    "src/common/chatCrypto/wasmCore.ts",
+    "src/common/scheduler/engine.native.ts"
   ]
 }

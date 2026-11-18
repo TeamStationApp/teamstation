@@ -24,7 +24,8 @@
         "TSPhoneStream": "RCTPhoneStream",
         "CueSounds": "RCTCueSounds",
         "NativeChatCrypto": "ChatCryptoProvider",
-        "TSPush": "RCTPush"
+        "TSPush": "RCTPush",
+        "NativeScheduler": "SchedulerProvider"
       },
       "componentProvider": {
         "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",
