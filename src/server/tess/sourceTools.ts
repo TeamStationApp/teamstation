@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
 
@@ -31,7 +31,7 @@ export function isSourceTool(name: string): name is SourceToolName {
 const pathProperty = {
   type: 'string',
   description:
-    'Literal repository-relative file or directory inside src, or src for the root.'
+    'Literal file or directory inside src: src/server/tess, or server/tess as the map writes it; src for the root.'
 }
 const includeTests = {
   type: 'boolean',
@@ -156,7 +156,20 @@ export function sourceTrigram(text: string): string {
 
 class InputError extends Error {}
 const fail = (content: string): SourceResult => ({ content, is_error: true })
-const indexes = new Map<string, SourceIndex>()
+/** An open index and the file it was opened from, to notice a rebuild. */
+const indexes = new Map<
+  string,
+  { index: SourceIndex; identity: string; close: () => void }
+>()
+
+function fileIdentity(path: string): string | undefined {
+  try {
+    const stat = statSync(path)
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`
+  } catch {
+    return undefined
+  }
+}
 const missingWarned = new Set<string>()
 const BUDGET = SOURCE_LIMITS.outputCharacters - 512
 const statements = new WeakMap<DatabaseSync, Map<string, StatementSync>>()
@@ -171,14 +184,20 @@ function query(db: DatabaseSync, sql: string): StatementSync {
 }
 
 /**
- * Cache the read-only handle, or a failure to open it, for this process's
- * lifetime. A missing file is not cached, so a dev server picks up an index
- * built after it started; a later query error fails only that call.
+ * Cache the read-only handle, or a failure to open it, while the file stays
+ * the same. A rebuild replaces the file by rename, so a changed identity
+ * reopens it; a missing file is not cached, so an index built later is
+ * picked up. A query error fails only that call.
  */
 export function openSourceIndex(path = sourceIndexPath()): SourceIndex {
+  const identity = fileIdentity(path)
   const cached = indexes.get(path)
-  if (cached != null) return cached
-  if (!existsSync(path)) {
+  if (cached != null) {
+    if (cached.identity === identity) return cached.index
+    cached.close()
+    indexes.delete(path)
+  }
+  if (identity == null || !existsSync(path)) {
     if (!missingWarned.has(path))
       console.warn(
         'Tess source index missing; build it with npm run tess.source-index -- build',
@@ -249,7 +268,14 @@ export function openSourceIndex(path = sourceIndexPath()): SourceIndex {
       }
     }
   }
-  indexes.set(path, index)
+  indexes.set(path, {
+    index,
+    identity,
+    close: () => {
+      db?.close()
+      db = undefined
+    }
+  })
   return index
 }
 
@@ -267,19 +293,25 @@ function first(input: Record<string, unknown>, key: string): number {
     throw new InputError(`${key} must be a positive integer.`)
   return value
 }
+/** The map writes paths relative to src, so a path without the prefix is under src. */
 function checkedPath(input: Record<string, unknown>): string {
-  const path = input.path
+  const raw = input.path
   if (
-    typeof path !== 'string' ||
-    path.length > 4096 ||
-    !(path === 'src' || path.startsWith('src/')) ||
-    path.includes('..') ||
-    /[\\\0]/.test(path)
+    typeof raw !== 'string' ||
+    raw.length > 4096 ||
+    raw.startsWith('/') ||
+    raw.includes('..') ||
+    /[\\\0]/.test(raw)
   )
     throw new InputError(
-      'Give a literal path in src without parent traversal, backslashes or NUL.'
+      'Give a literal path under src, such as src/server/tess or server/tess, without a leading slash, parent traversal, backslashes or NUL.'
     )
-  return path.replace(/\/+$/, '')
+  const path = raw.replace(/\/+$/, '')
+  return path === 'src' || path.startsWith('src/')
+    ? path
+    : path === ''
+      ? 'src'
+      : `src/${path}`
 }
 function fileAt(db: DatabaseSync, path: string): FileRow | undefined {
   return query(db, 'SELECT id,path,content,role FROM files WHERE path=?').get(

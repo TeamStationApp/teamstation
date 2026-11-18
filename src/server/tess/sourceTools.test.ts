@@ -308,6 +308,41 @@ describe('Tess indexed source tools', function () {
       index.run('source_list_directory', { path: 'src/skipped' }).is_error
     ).equals(true)
   })
+  it('reads paths written relative to src, as the map writes them', () => {
+    expect(run('source_list_directory', { path: 'bulk' })).equals(
+      run('source_list_directory', { path: 'src/bulk' })
+    )
+    expect(run('source_read_file', { path: 'common/api.ts' })).equals(
+      run('source_read_file', { path: 'src/common/api.ts' })
+    )
+    expect(run('source_list_directory', { path: '' })).equals(
+      run('source_list_directory', { path: 'src' })
+    )
+    const refused = index.run('source_read_file', { path: '/etc/passwd' })
+    expect(refused.is_error).equals(true)
+    expect(refused.content).includes('server/tess')
+  })
+  it('reopens an index rebuilt while it was open', () => {
+    const g = sourceIndexFixture()
+    try {
+      g.build()
+      const first = openSourceIndex(g.index)
+      expect(first.prompt).includes(FIXTURE_MAP)
+      g.write('src/DIRECTORY_MAP.md', '# Rebuilt map\n')
+      g.build()
+      const second = openSourceIndex(g.index)
+      expect(second).not.equals(first)
+      expect(second.prompt).includes('# Rebuilt map')
+      expect(openSourceIndex(g.index)).equals(second)
+      // The replaced handle is closed, so a turn still holding it is told so.
+      expect(first.run('source_list_directory', { path: 'src' })).deep.equals({
+        content: SOURCE_UNAVAILABLE,
+        is_error: true
+      })
+    } finally {
+      g.close()
+    }
+  })
   it('refuses malformed input and paths before querying unindexed data', () => {
     for (const input of [null, [], 'text', 1])
       expect(index.run('source_search', input).is_error).equals(true)
