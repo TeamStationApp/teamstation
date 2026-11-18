@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { dirname, posix, resolve } from 'node:path'
+import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { dirname, join, posix, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+import { readBuildInfo } from '../../../common/distribution'
 import {
   sourceLines,
   sourcePaths,
@@ -13,34 +14,40 @@ import {
 import { sourceSymbols } from './outline'
 import { directoryMapProblem, SCHEMA_VERSION, SOURCE_SCHEMA } from './schema'
 
-/** An empty or unreadable TS_BUILD_INFO falls through to git, like a missing one. */
+/**
+ * The commit the About screen shows, read the same way: TS_BUILD_INFO
+ * through `readBuildInfo`. An empty, malformed or incomplete value falls
+ * through to git, like a missing one.
+ */
 function buildInfoCommit(): string | undefined {
-  const raw = process.env.TS_BUILD_INFO
-  if (raw == null || raw.trim() === '') return undefined
-  let info: unknown
   try {
-    info = JSON.parse(raw)
+    const { commit } = readBuildInfo(process.env.TS_BUILD_INFO?.trim())
+    return commit === '' || commit === '—' ? undefined : commit
   } catch {
     return undefined
   }
-  return info != null &&
-    typeof info === 'object' &&
-    'commit' in info &&
-    typeof info.commit === 'string' &&
-    info.commit !== ''
-    ? info.commit
-    : undefined
 }
 
+/**
+ * Only the root's own checkout names the commit: a tree with no `.git` is
+ * never labelled with an enclosing repository's HEAD. Uncommitted edits to
+ * tracked source are served, so that commit is marked `-dirty`.
+ */
 export function sourceCommit(root: string): string {
   const fromBuild = buildInfoCommit()
   if (fromBuild != null) return fromBuild
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
+  if (!existsSync(join(root, '.git'))) return 'unknown'
+  const git = (...args: string[]): string =>
+    execFileSync('git', args, {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
     }).trim()
+  try {
+    const head = git('rev-parse', 'HEAD')
+    const dirty =
+      git('status', '--porcelain', '--untracked-files=no', '--', 'src') !== ''
+    return dirty ? `${head}-dirty` : head
   } catch {
     return 'unknown'
   }

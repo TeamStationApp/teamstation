@@ -5,7 +5,10 @@ import { mock } from 'node:test'
 import { expect } from 'chai'
 import { it } from 'mocha'
 
-import { sourceIndexFixture } from '../../../test/sourceIndexFixture'
+import {
+  buildInfoJson,
+  sourceIndexFixture
+} from '../../../test/sourceIndexFixture'
 import { sourceIndexCli, sourceIndexMain } from './cli'
 
 it('validates build arguments, creates an index and reports command errors', () => {
@@ -15,7 +18,7 @@ it('validates build arguments, creates an index and reports command errors', () 
   const previous = process.env.TS_BUILD_INFO
   const exitCode = process.exitCode
   try {
-    process.env.TS_BUILD_INFO = '{"commit":"fixture-cli"}'
+    process.env.TS_BUILD_INFO = buildInfoJson('fixture-cli')
     sourceIndexCli(['build', '--root', f.root])
     expect(existsSync(f.index)).equals(true)
     expect(JSON.parse(String(log.mock.calls[0].arguments[0])).commit).equals(

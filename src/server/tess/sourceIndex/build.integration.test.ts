@@ -6,7 +6,10 @@ import { DatabaseSync } from 'node:sqlite'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { sourceIndexFixture as makeFixture } from '../../../test/sourceIndexFixture'
+import {
+  buildInfoJson,
+  sourceIndexFixture as makeFixture
+} from '../../../test/sourceIndexFixture'
 import { buildSourceIndex, sourceCommit } from './build'
 
 const sourceIndexFixture = (
@@ -64,7 +67,7 @@ describe('building the source index through Git and the CLI', function () {
     const f = sourceIndexFixture()
     const previous = process.env.TS_BUILD_INFO
     try {
-      process.env.TS_BUILD_INFO = '{"commit":"metadata-release"}'
+      process.env.TS_BUILD_INFO = buildInfoJson('metadata-release')
       expect(sourceCommit(f.root)).equals('metadata-release')
       process.env.TS_BUILD_INFO = '{}'
       expect(sourceCommit(f.root)).equals('unknown')
@@ -78,7 +81,16 @@ describe('building the source index through Git and the CLI', function () {
         '-qm',
         'Fixture'
       )
-      expect(sourceCommit(f.root)).equals(f.git('rev-parse', 'HEAD').trim())
+      const head = f.git('rev-parse', 'HEAD').trim()
+      expect(sourceCommit(f.root)).equals(head)
+      // A tree without its own .git never takes an enclosing checkout's HEAD.
+      expect(sourceCommit(join(f.root, 'src'))).equals('unknown')
+      // An untracked file is not indexed, so it does not dirty the label.
+      f.write('src/untracked.ts', 'export const u = 1\n')
+      expect(sourceCommit(f.root)).equals(head)
+      f.write('src/DIRECTORY_MAP.md', '# Edited map\n')
+      expect(sourceCommit(f.root)).equals(`${head}-dirty`)
+      f.git('checkout', '--', 'src/DIRECTORY_MAP.md')
       const cli = resolve('src/server/tess/sourceIndex/cli.ts')
       const run = (...args: string[]): ReturnType<typeof spawnSync> =>
         spawnSync(process.execPath, ['-r', 'sucrase/register', cli, ...args], {

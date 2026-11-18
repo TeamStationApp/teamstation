@@ -5,6 +5,18 @@ import { dirname, join } from 'node:path'
 
 import { buildSourceIndex } from '../server/tess/sourceIndex/build'
 
+/** A complete TS_BUILD_INFO, as deploy.sh writes it and `readBuildInfo` accepts. */
+export function buildInfoJson(commit: string): string {
+  return JSON.stringify({
+    app: 'TeamStation',
+    version: '1.0.0',
+    buildNumber: '1',
+    branch: 'fixture',
+    commit,
+    builtAt: '2026-11-18T00:00:00.000Z'
+  })
+}
+
 export const FIXTURE_MAP =
   '# Source directory map\nAPI: `common/api.ts`; Tess: `server/tess/agent.ts`.\n'
 

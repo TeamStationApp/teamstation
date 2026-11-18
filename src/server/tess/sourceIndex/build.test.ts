@@ -14,7 +14,10 @@ import { mock } from 'node:test'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { sourceIndexFixture } from '../../../test/sourceIndexFixture'
+import {
+  buildInfoJson,
+  sourceIndexFixture
+} from '../../../test/sourceIndexFixture'
 import { buildSourceIndex, sourceCommit } from './build'
 import { MAX_SOURCE_BYTES } from './files'
 import { DIRECTORY_MAP_LIMIT } from './schema'
@@ -24,25 +27,38 @@ describe('building the source index', function () {
   it('prefers build metadata and falls back to the Git revision or unknown', () => {
     const previous = process.env.TS_BUILD_INFO
     let gitFails = false
-    const git = mock.method(childProcess, 'execFileSync', () => {
-      if (gitFails) throw new Error('no checkout')
-      return 'fixture-git\n'
-    })
+    let status = ''
+    const git = mock.method(
+      childProcess,
+      'execFileSync',
+      (_file: string, args: readonly string[]) => {
+        if (gitFails) throw new Error('no checkout')
+        return args[0] === 'status' ? status : 'fixture-git\n'
+      }
+    )
     try {
-      process.env.TS_BUILD_INFO = '{"commit":"fixture-build"}'
+      process.env.TS_BUILD_INFO = buildInfoJson('fixture-build')
       expect(sourceCommit('.')).equals('fixture-build')
       expect(git.mock.callCount()).equals(0)
-      process.env.TS_BUILD_INFO = '{}'
-      expect(sourceCommit('.')).equals('fixture-git')
+      // Read as the About screen reads it: an incomplete value is not build metadata.
+      for (const value of [
+        '{}',
+        '{"commit":"partial"}',
+        '',
+        '  ',
+        '{',
+        'null',
+        '"text"'
+      ]) {
+        process.env.TS_BUILD_INFO = value
+        expect(sourceCommit('.'), value).equals('fixture-git')
+      }
       delete process.env.TS_BUILD_INFO
+      status = ' M src/server/tess/agent.ts'
+      expect(sourceCommit('.')).equals('fixture-git-dirty')
+      status = ''
       gitFails = true
       expect(sourceCommit('.')).equals('unknown')
-      // An empty or malformed value falls through to git, never fails the build.
-      gitFails = false
-      for (const value of ['', '  ', '{', 'null', '"text"']) {
-        process.env.TS_BUILD_INFO = value
-        expect(sourceCommit('.')).equals('fixture-git')
-      }
     } finally {
       git.mock.restore()
       if (previous == null) delete process.env.TS_BUILD_INFO
