@@ -27,4 +27,38 @@ describe('explicit game calendar time', () => {
     )
     expect(() => gameTime('2026-01-01', '18:00', 'invalid')).throws()
   })
+
+  it('answers a wall time asked again the same, and refuses it again the same', () => {
+    for (let i = 0; i < 3; i++) {
+      expect(gameTime('2026-07-01', '18:00', 'America/New_York')).equals(
+        '2026-07-01T22:00:00.000Z'
+      )
+      expect(() =>
+        gameTime('2026-03-08', '02:30', 'America/Los_Angeles')
+      ).throws('does not exist')
+      expect(() => gameTime('2026-01-01', '18:00', 'invalid')).throws()
+      expect(
+        gameCalendarDay('2026-07-01T03:00:00.000Z', 'America/New_York')
+      ).equals('2026-06-30')
+    }
+  })
+
+  it('throws a fresh error for each refusal of a cached wall time', () => {
+    const refusal = (): unknown => {
+      try {
+        gameTime('2026-03-08', '02:15', 'America/Los_Angeles')
+      } catch (error) {
+        return error
+      }
+      return undefined
+    }
+    const first = refusal()
+    expect(first).instanceOf(TypeError)
+    // A handler that changes its error changes no one else's.
+    ;(first as TypeError).message = 'changed'
+    const second = refusal()
+    expect(second).instanceOf(TypeError)
+    expect(second).not.equals(first)
+    expect((second as TypeError).message).includes('does not exist')
+  })
 })

@@ -134,7 +134,14 @@ const tsSuites = [
   'src/app/scheduling/buildLog.test.ts',
   // The develop phone build, which alone carries the modal's full log.
   'src/app/platform/developBuild.test.ts',
-  'src/migrate/migrations/125solverLimit.integration.test.ts'
+  'src/migrate/migrations/125solverLimit.integration.test.ts',
+  // Exact only M11: a publication's recipients and rights, read once.
+  'src/server/groups/recipients.unit.test.ts',
+  'src/server/autoScheduler/publishRolesRead.unit.test.ts',
+  'src/server/schedule/proposeGames.unit.test.ts',
+  // The umpire recheck for many published games from one read.
+  'src/server/umpires/assignments.unit.test.ts',
+  'src/server/umpires/revalidation.integration.test.ts'
 ]
 
 if (unitOnly) {

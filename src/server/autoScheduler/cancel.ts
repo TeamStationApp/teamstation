@@ -3,10 +3,10 @@ import type { Kysely } from 'kysely'
 import type { Database } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { schedulingRecipients } from '../groups/rights'
-import { notifyGameChange } from '../socket/gameChanges'
-import { noteGameFigures } from '../socket/syncRevision'
+import { notifyGameChanges } from '../socket/gameChanges'
+import { noteScopeChange } from '../socket/syncRevision'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
-import { recordNotice } from '../venues/venueNotices'
+import { type Notice, recordNotices } from '../venues/venueNotices'
 
 /** What a publication did to one team's games. */
 export interface TeamTally {
@@ -75,10 +75,18 @@ export async function cancelAsRescheduled(
   for (const game of cancelled) {
     tally(tallies, game.home_team_id, game.season_id).removed++
     tally(tallies, game.away_team_id, game.season_id).removed++
-    await notifyGameChange(trx, { game: game.id, kind: 'game' })
-    // Cancelled, it leaves its teams' records and its season's schedule.
-    await noteGameFigures(trx, game.id)
+    // Cancelled, it leaves its teams' records and its season's schedule:
+    // `noteGameFigures`, of the row as the update left it.
+    noteScopeChange(trx, { gameId: game.id })
+    noteScopeChange(trx, { teamId: game.home_team_id })
+    noteScopeChange(trx, { teamId: game.away_team_id })
+    if (game.season_id != null)
+      noteScopeChange(trx, { seasonId: game.season_id })
   }
+  await notifyGameChanges(
+    trx,
+    cancelled.map(game => ({ game: game.id, kind: 'game' as const }))
+  )
   await refreshFieldWarnings(
     trx,
     cancelled.map(game => game.field_id),
@@ -128,6 +136,7 @@ export async function noticeTeams(
             .execute()
         ).map(season => [season.id, season.name])
   )
+  const notices: Notice[] = []
   for (const [teamId, counts] of tallies) {
     const parts = [
       counts.scheduled > 0
@@ -144,7 +153,7 @@ export async function noticeTeams(
     const team = names.get(teamId) ?? 'your team'
     const only =
       counts.seasonIds.size === 1 ? [...counts.seasonIds][0] : undefined
-    await recordNotice(trx, {
+    notices.push({
       type: 'schedulePublished',
       actorId: context.actorId,
       recipients: await schedulingRecipients(trx, [
@@ -158,4 +167,5 @@ export async function noticeTeams(
       metadata: { teamId, ...(only == null ? {} : { seasonId: only }) }
     })
   }
+  await recordNotices(trx, notices)
 }

@@ -12,6 +12,7 @@ import { calendarDateText } from '../../common/groupCreation'
 import { asFieldSize, asWeeklyHours, fieldSizeLabel } from '../../common/venues'
 import { asWindowPeriods } from '../../common/windowPeriods'
 import type { Database, GamesTable } from '../db/database'
+import { readOnce } from '../db/readOnce'
 import { type Clock, realClock } from '../groups/requests'
 import { schedulingRecipients } from '../groups/rights'
 import { collides, occupancy } from './occupancy'
@@ -58,6 +59,20 @@ export async function fieldFacts(
   fieldIds: string[]
 ): Promise<Map<string, FieldFacts>> {
   if (fieldIds.length === 0) return new Map()
+  // A copy, so no caller changes the facts another reads.
+  return new Map(
+    await readOnce(
+      db,
+      `venue_fields:${[...fieldIds].sort().join(',')}:facts`,
+      async () => await readFieldFacts(db, fieldIds)
+    )
+  )
+}
+
+async function readFieldFacts(
+  db: Kysely<Database>,
+  fieldIds: string[]
+): Promise<Map<string, FieldFacts>> {
   const rows = await db
     .selectFrom('venue_fields')
     .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')

@@ -21,8 +21,51 @@ function wallFormatter(timezone: string): Intl.DateTimeFormat {
   return formatter
 }
 
+const dayFormatters = new Map<string, Intl.DateTimeFormat>()
+
+function dayFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = dayFormatters.get(timezone)
+  if (formatter == null) {
+    formatter = new Intl.DateTimeFormat('en', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    })
+    dayFormatters.set(timezone, formatter)
+  }
+  return formatter
+}
+
+/**
+ * Each wall time's instant, or the message of the error it threw, once
+ * worked out: a publication checks every game against each field's hours on
+ * its day, so the same few times come up again and again. Cleared when it
+ * grows large.
+ */
+const instants = new Map<string, { instant: string } | { refused: string }>()
+const INSTANTS_KEPT = 100_000
+
 /** Interpret a calendar date and wall time in an explicit IANA zone, never server-local time. */
 export function gameTime(date: string, time: string, timezone: string): string {
+  const key = `${date} ${time} ${timezone}`
+  let known = instants.get(key)
+  if (known == null) {
+    try {
+      known = { instant: wallInstant(date, time, timezone) }
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error
+      known = { refused: error.message }
+    }
+    if (instants.size >= INSTANTS_KEPT) instants.clear()
+    instants.set(key, known)
+  }
+  // A fresh error for each caller: none shares another's stack or changes.
+  if ('refused' in known) throw new TypeError(known.refused)
+  return known.instant
+}
+
+function wallInstant(date: string, time: string, timezone: string): string {
   asCalendarDate(date)
   if (
     !/^\d{2}:\d{2}$/.test(time) ||
@@ -58,12 +101,7 @@ export function gameTime(date: string, time: string, timezone: string): string {
 }
 export function gameCalendarDay(startAt: string, timezone: string): string {
   const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    })
+    dayFormatter(timezone)
       .formatToParts(new Date(startAt))
       .map(part => [part.type, part.value])
   )

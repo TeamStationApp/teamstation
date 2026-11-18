@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto'
 
-import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
+import {
+  type Insertable,
+  type Kysely,
+  type Selectable,
+  sql,
+  type Transaction
+} from 'kysely'
 
 import {
   badRequest,
@@ -37,7 +43,15 @@ import {
 } from '../autoScheduler/attention'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
-import type { Database, GamesTable } from '../db/database'
+import type {
+  Database,
+  GamesTable,
+  GroupRequestSidesTable,
+  GroupRequestsTable,
+  NotificationEventsTable
+} from '../db/database'
+import { nameOnce, readOnce, withRolesRead } from '../db/readOnce'
+import { runsOf } from '../db/runs'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, readPlays } from '../events/postPlays'
 import { gameSwapEffect } from '../games/swapEffect'
@@ -59,15 +73,26 @@ import {
   requireScheduler,
   schedulingRecipients
 } from '../groups/rights'
-import { snapshotRequestInformation } from '../notifications/requestInformation'
-import { notifyGameChange } from '../socket/gameChanges'
+import {
+  frozenNamesOf,
+  snapshotRequestInformation
+} from '../notifications/requestInformation'
+import {
+  type GameChangePayload,
+  notifyGameChange,
+  notifyGameChanges
+} from '../socket/gameChanges'
 import {
   type GameFigureIds,
   noteGameFigures,
   noteScopeChange
 } from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
-import { recheckUmpireAssignments } from '../umpires/assignments'
+import { teamFacts } from '../teams/teamFacts'
+import {
+  recheckUmpireAssignments,
+  umpireRechecker
+} from '../umpires/assignments'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
 import { seasonGameConsent } from './seasonGameConsent'
 
@@ -416,21 +441,26 @@ async function fieldPlace(
   db: Kysely<Database>,
   fieldId: string
 ): Promise<FieldPlace | null> {
-  const field = await db
-    .selectFrom('venue_fields')
-    .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')
-    .select([
-      'venue_fields.sizes',
-      'venue_fields.deleted_at',
-      'venue_fields.pin_latitude',
-      'venue_fields.pin_longitude',
-      'venues.name',
-      'venues.address',
-      'venues.latitude',
-      'venues.longitude'
-    ])
-    .where('venue_fields.id', '=', fieldId)
-    .executeTakeFirst()
+  const field = await readOnce(
+    db,
+    `venue_fields:${fieldId}:place`,
+    async () =>
+      await db
+        .selectFrom('venue_fields')
+        .innerJoin('venues', 'venues.id', 'venue_fields.venue_id')
+        .select([
+          'venue_fields.sizes',
+          'venue_fields.deleted_at',
+          'venue_fields.pin_latitude',
+          'venue_fields.pin_longitude',
+          'venues.name',
+          'venues.address',
+          'venues.latitude',
+          'venues.longitude'
+        ])
+        .where('venue_fields.id', '=', fieldId)
+        .executeTakeFirst()
+  )
   return field == null
     ? null
     : {
@@ -504,11 +534,7 @@ async function validateGame(
   if (intent.homeTeamId === intent.awayTeamId)
     throw badRequest('Choose two different teams')
   for (const id of [intent.homeTeamId, intent.awayTeamId]) {
-    const team = await db
-      .selectFrom('teams')
-      .select(['id', 'merged_into', 'kind', 'custodian_type', 'custodian_id'])
-      .where('id', '=', id)
-      .executeTakeFirst()
+    const team = await teamFacts(db, id)
     if (team == null || team.merged_into != null)
       throw notFound('Choose a current team')
     if (
@@ -519,13 +545,19 @@ async function validateGame(
         'Assign this placeholder team a custodian before scheduling it'
       )
   }
+  const seasonId = intent.seasonId
   if (
-    intent.seasonId != null &&
-    (await db
-      .selectFrom('seasons')
-      .select('id')
-      .where('id', '=', intent.seasonId)
-      .executeTakeFirst()) == null
+    seasonId != null &&
+    (await readOnce(
+      db,
+      `seasons:${seasonId}:exists`,
+      async () =>
+        await db
+          .selectFrom('seasons')
+          .select('id')
+          .where('id', '=', seasonId)
+          .executeTakeFirst()
+    )) == null
   )
     throw notFound('Choose a current season')
 }
@@ -539,6 +571,18 @@ async function recordedAuthorities(
     .selectAll()
     .where('request_id', '=', requestId)
     .execute()
+  return await authoritiesRecorded(db, request, sides)
+}
+
+/**
+ * Whether each side of a game request was approved, by somebody who may
+ * still approve it: the sides as stored with the request.
+ */
+async function authoritiesRecorded(
+  db: Kysely<Database>,
+  request: StoredRequest,
+  sides: Array<Selectable<GroupRequestSidesTable>>
+): Promise<boolean> {
   for (const ref of relationshipSides(request.terms as GameRequestTerms)) {
     const side = sides.find(
       side => side.scope_type === ref.kind && side.scope_id === ref.id
@@ -665,6 +709,60 @@ async function hostingAuthorized(
   )
 }
 
+/** The refusal of a new game whose hosting season's authority has gone. */
+async function requireHosting(
+  db: Kysely<Database>,
+  request: StoredRequest,
+  terms: GameRequestTerms
+): Promise<void> {
+  if (!(await hostingAuthorized(db, request, terms)))
+    throw conflict(
+      'The hosting season authorization changed. A current host administrator must send a new proposal.'
+    )
+}
+
+/**
+ * Whether a request is ready to publish: still pending, and every side's
+ * authority `recorded`, except a scorekeeper's swap, which asks for no
+ * scheduling authority (`scorerSwap`).
+ */
+async function finishable(
+  request: StoredRequest,
+  clock: Clock,
+  recorded: () => Promise<boolean>
+): Promise<boolean> {
+  const scorer = (request.terms as GameRequestTerms).scorerSwap === true
+  return (
+    requestStatus(request, clock) === 'pending' &&
+    (scorer || (await recorded()))
+  )
+}
+
+/** The `games` row a request for a new game publishes. */
+async function newGameRow(
+  db: Kysely<Database>,
+  terms: GameRequestTerms,
+  gameId: string
+): Promise<Insertable<GamesTable>> {
+  return {
+    id: gameId,
+    home_team_id: terms.game.homeTeamId,
+    away_team_id: terms.game.awayTeamId,
+    season_id: terms.game.seasonId,
+    start_at: new Date(terms.game.startAt),
+    ...eventColumns(terms.game),
+    venue: terms.game.venue,
+    outside_tournament: terms.game.outsideTournament,
+    exhibition: terms.game.exhibition ?? false,
+    timezone:
+      terms.game.timezone ?? (await gameTimezone(db, terms.game.seasonId)),
+    status: terms.game.status,
+    field_id: terms.game.fieldId ?? null,
+    field_size: terms.game.fieldId == null ? null : terms.game.fieldSize,
+    schedule_preview_id: terms.schedulePreviewId ?? null
+  }
+}
+
 /** Publish only after both proposed participants have current consent. */
 export async function finishGameRequest(
   trx: Transaction<Database>,
@@ -673,11 +771,13 @@ export async function finishGameRequest(
 ): Promise<boolean> {
   const request = await requestById(trx, id)
   const terms = request.terms as GameRequestTerms
-  // A scorekeeper's swap asks for no scheduling authority (`scorerSwap`).
   const scorer = terms.scorerSwap === true
   if (
-    requestStatus(request, clock) !== 'pending' ||
-    (!scorer && !(await recordedAuthorities(trx, id)))
+    !(await finishable(
+      request,
+      clock,
+      async () => await recordedAuthorities(trx, id)
+    ))
   )
     return false
   await validateGame(trx, terms.game)
@@ -698,30 +798,11 @@ export async function finishGameRequest(
         throw conflict(
           'The sending organization permissions changed. Resend with a current administrator.'
         )
-    } else if (!(await hostingAuthorized(trx, request, terms)))
-      throw conflict(
-        'The hosting season authorization changed. A current host administrator must send a new proposal.'
-      )
+    } else await requireHosting(trx, request, terms)
     gameId = terms.proposedGameId ?? makeId('game')
     await trx
       .insertInto('games')
-      .values({
-        id: gameId,
-        home_team_id: terms.game.homeTeamId,
-        away_team_id: terms.game.awayTeamId,
-        season_id: terms.game.seasonId,
-        start_at: new Date(terms.game.startAt),
-        ...eventColumns(terms.game),
-        venue: terms.game.venue,
-        outside_tournament: terms.game.outsideTournament,
-        exhibition: terms.game.exhibition ?? false,
-        timezone:
-          terms.game.timezone ?? (await gameTimezone(trx, terms.game.seasonId)),
-        status: terms.game.status,
-        field_id: terms.game.fieldId ?? null,
-        field_size: terms.game.fieldId == null ? null : terms.game.fieldSize,
-        schedule_preview_id: terms.schedulePreviewId ?? null
-      })
+      .values(await newGameRow(trx, terms, gameId))
       .execute()
   } else {
     const current = await trx
@@ -890,6 +971,276 @@ function matchesHistoricalProposalHash(
   return false
 }
 
+/** What a proposal's idempotency record holds of its body. */
+function proposalHash(body: GameProposal): string {
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex')
+}
+
+/** A proposal's body sent before: its request, or a refusal. */
+async function replayProposal(
+  trx: Transaction<Database>,
+  held: { body_hash: string; response: unknown },
+  body: GameProposal,
+  hash: string
+): Promise<StoredRequest> {
+  const cached = held.response as {
+    id: string
+    gameProposalVersion?: number
+  }
+  if (held.body_hash === hash) return await requestById(trx, cached.id)
+  const repeated = await trx
+    .selectFrom('group_requests')
+    .selectAll()
+    .where('id', '=', cached.id)
+    .where('kind', '=', 'game')
+    .forUpdate()
+    .executeTakeFirst()
+  if (
+    repeated == null ||
+    cached.gameProposalVersion !== undefined ||
+    !matchesHistoricalProposalHash(body, held.body_hash, repeated)
+  )
+    throw conflict(
+      'This action was already submitted with different game details'
+    )
+  return repeated
+}
+
+/** What a proposal asks for, once the rules have let it through. */
+interface ProposalTerms {
+  game: GameIntent
+  terms: GameRequestTerms
+  initiatingTeamId: string | null
+  /** An existing game whose team changes need a replacement game instead. */
+  replacement: boolean
+  /** The teams of the game before the change, when it changes one. */
+  originalIds: string[]
+}
+
+/**
+ * The terms of a proposal by the rules every proposal keeps: the game as
+ * proposed, its teams followed through merges, its zone, field and place;
+ * whether the sender may send it; and the teams it touches. `old` is the
+ * game it changes, and `resumedTerms` those of a replacement it resends.
+ * Reads only, and throws the rule's refusal.
+ */
+async function proposalTerms(
+  trx: Transaction<Database>,
+  fresh: Actor,
+  body: GameProposal,
+  old: GameRow | null | undefined,
+  resumedTerms: GameRequestTerms | undefined,
+  options: { schedulePreviewId?: string }
+): Promise<ProposalTerms> {
+  const game = {
+    ...body.game,
+    ...preservedEventFields(body.game, old),
+    homeTeamId: await followMerges(trx, body.game.homeTeamId),
+    awayTeamId: await followMerges(trx, body.game.awayTeamId),
+    timezone: asGameTimezone(
+      body.game.timezone ??
+        old?.timezone ??
+        (await gameTimezone(trx, body.game.seasonId))
+    ),
+    exhibition: body.game.exhibition ?? old?.exhibition ?? false,
+    ...preservedField(body.game, old)
+  }
+  // A field set or changed is checked, and the game takes its venue and
+  // place. A field kept from the stored game is not checked again, but
+  // the game still takes its place from it: a field-linked game's venue
+  // and address are the field's.
+  if (game.fieldId != null) {
+    if (old?.field_id !== game.fieldId || old.field_size !== game.fieldSize)
+      Object.assign(game, await placeOnField(trx, game.fieldId, game.fieldSize))
+    else {
+      const kept = await fieldPlace(trx, game.fieldId)
+      if (kept != null)
+        Object.assign(game, {
+          venue: kept.venue,
+          address: kept.address,
+          latitude: kept.latitude,
+          longitude: kept.longitude
+        })
+    }
+  }
+  await validateGame(trx, game)
+  if (body.sender.kind === 'season' && body.sender.id !== game.seasonId)
+    throw forbidden('Send this game from its hosting season')
+  if (body.gameId != null && old == null) throw notFound()
+  if (systemCancelled(old?.cancellation_reason))
+    throw conflict('A canceled withdrawal or replacement cannot be restored')
+  if (old != null && !(await matchesVersion(trx, old, body.expected)))
+    throw conflict('Review the current game before changing its schedule')
+  if (old != null && old.season_id !== game.seasonId)
+    throw badRequest('Game settings keep the hosting season unchanged')
+  if (
+    old != null &&
+    !(await originalAdministrator(trx, fresh.userId, materialGame(old)))
+  )
+    throw forbidden(
+      'Only an original participating team administrator can change this game'
+    )
+  if (old != null) await requireEditableTeams(trx, old, game)
+  if (
+    old == null &&
+    resumedTerms == null &&
+    game.seasonId != null &&
+    !(await canScheduleFor(trx, fresh, { kind: 'season', id: game.seasonId }))
+  )
+    throw forbidden(
+      'A hosting season administrator must authorize season placement'
+    )
+  const prior =
+    old == null ? (resumedTerms?.previous ?? null) : materialGame(old)
+  const originalIds = prior == null ? [] : [prior.homeTeamId, prior.awayTeamId]
+  const proposedIds = [game.homeTeamId, game.awayTeamId]
+  const affectedTeamIds = [...new Set([...proposedIds, ...originalIds])].sort()
+  const administered: string[] = []
+  for (const teamId of affectedTeamIds)
+    if (await canScheduleFor(trx, fresh, { kind: 'team', id: teamId }))
+      administered.push(teamId)
+  const hostOnlyCreation = old == null && body.sender.kind === 'season'
+  if (administered.length === 0 && !hostOnlyCreation)
+    throw forbidden(
+      'A participating team administrator, coach or assistant must send this game'
+    )
+  if (body.sender.kind === 'team' && !affectedTeamIds.includes(body.sender.id))
+    throw forbidden(
+      'The sending team must be an original or proposed participant'
+    )
+  const replacement =
+    old != null &&
+    originalIds.some(
+      id => !proposedIds.includes(id) && !administered.includes(id)
+    )
+  const initiatingTeamId =
+    body.sender.kind === 'team'
+      ? body.sender.id
+      : (body.initiatingTeamId ?? null)
+  if (
+    initiatingTeamId != null &&
+    (!affectedTeamIds.includes(initiatingTeamId) ||
+      !(await canScheduleFor(trx, fresh, {
+        kind: 'team',
+        id: initiatingTeamId
+      })))
+  )
+    throw forbidden(
+      'Only a team administrator, coach or assistant can represent the inviting team'
+    )
+  const terms: GameRequestTerms = {
+    kind: 'game',
+    game,
+    gameId: replacement ? null : (old?.id ?? null),
+    proposedGameId:
+      replacement || old == null
+        ? (resumedTerms?.proposedGameId ?? makeId('game'))
+        : old.id,
+    replacesGameId: replacement
+      ? old.id
+      : (resumedTerms?.replacesGameId ?? null),
+    consentTeamIds: proposedIds,
+    expected:
+      replacement || old == null ? null : gameVersion(materialGame(old)),
+    previous: prior,
+    affectedTeamIds,
+    hostSeasonIds: [
+      ...new Set(
+        [game.seasonId, old?.season_id].filter((id): id is string => id != null)
+      )
+    ].sort(),
+    ...(old == null && resumedTerms == null && game.seasonId != null
+      ? {
+          hostingAuthorizerUserId: fresh.userId,
+          hostingAuthorizationSource: 'initiator' as const
+        }
+      : {}),
+    ...(options.schedulePreviewId == null
+      ? {}
+      : { schedulePreviewId: options.schedulePreviewId })
+  }
+  return { game, terms, initiatingTeamId, replacement, originalIds }
+}
+
+/** A proposal's `group_requests` row, as it is sent. */
+function requestRow(
+  fresh: Actor,
+  body: GameProposal,
+  proposal: ProposalTerms,
+  id: string,
+  sent: Date
+): Insertable<GroupRequestsTable> {
+  return {
+    id,
+    kind: 'game',
+    sender_id: fresh.userId,
+    sender_scope_type: body.sender.kind,
+    sender_scope_id: body.sender.id,
+    terms: proposal.terms,
+    sent_at: sent,
+    expires_at: new Date(sent.getTime() + 7 * 24 * 3600 * 1000),
+    game_id: proposal.terms.gameId,
+    initiating_team_id: proposal.initiatingTeamId
+  }
+}
+
+/**
+ * A proposal's sides, each approved at once when the sender may approve
+ * it: the sender's own approval of a side it speaks for.
+ */
+async function sideRows(
+  trx: Transaction<Database>,
+  fresh: Actor,
+  terms: GameRequestTerms,
+  id: string,
+  sent: Date
+): Promise<Array<Insertable<GroupRequestSidesTable>>> {
+  const rows: Array<Insertable<GroupRequestSidesTable>> = []
+  for (const side of relationshipSides(terms)) {
+    const approved = await approvesSide(trx, fresh, side, {
+      kind: 'game',
+      terms
+    })
+    rows.push({
+      request_id: id,
+      scope_type: side.kind,
+      scope_id: side.id,
+      approved_by: approved ? fresh.userId : null,
+      approved_at: approved ? sent : null
+    })
+  }
+  return rows
+}
+
+/** The name of the team or season a proposal is sent from. */
+export async function senderName(
+  trx: Transaction<Database>,
+  sender: GameProposal['sender']
+): Promise<string> {
+  const name = await nameOnce(trx, sender.kind, sender.id)
+  if (name == null) throw new Error(`No ${sender.kind} ${sender.id}`)
+  return name
+}
+
+/** The sender's own notice of a request it sent. */
+function sentNotice(
+  fresh: Actor,
+  id: string,
+  organization: string,
+  sent: Date
+): Insertable<NotificationEventsTable> {
+  return {
+    id: makeId('audit'),
+    source_type: 'groupRequest',
+    source_id: id,
+    revision: 1,
+    actor_id: fresh.userId,
+    metadata: { senderGroupName: organization },
+    recorded_recipients: [fresh.userId],
+    created_at: sent
+  }
+}
+
 export async function proposeGame(
   db: Kysely<Database>,
   actor: Actor,
@@ -915,36 +1266,14 @@ export async function proposeGame(
     ])
     await lockForSwap(trx, body.gameId, body.game)
     const fresh = await currentActor(trx, actor)
-    const hash = createHash('sha256').update(JSON.stringify(body)).digest('hex')
+    const hash = proposalHash(body)
     const held = await trx
       .selectFrom('creation_idempotency')
       .select(['body_hash', 'response'])
       .where('user_id', '=', fresh.userId)
       .where('key', '=', body.idempotencyKey)
       .executeTakeFirst()
-    if (held != null) {
-      const cached = held.response as {
-        id: string
-        gameProposalVersion?: number
-      }
-      if (held.body_hash === hash) return await requestById(trx, cached.id)
-      const repeated = await trx
-        .selectFrom('group_requests')
-        .selectAll()
-        .where('id', '=', cached.id)
-        .where('kind', '=', 'game')
-        .forUpdate()
-        .executeTakeFirst()
-      if (
-        repeated == null ||
-        cached.gameProposalVersion !== undefined ||
-        !matchesHistoricalProposalHash(body, held.body_hash, repeated)
-      )
-        throw conflict(
-          'This action was already submitted with different game details'
-        )
-      return repeated
-    }
+    if (held != null) return await replayProposal(trx, held, body, hash)
     if (resumingRequestId == null) {
       const swapped = await scorerSwap(trx, fresh, body, hash, clock)
       if (swapped != null) {
@@ -989,147 +1318,18 @@ export async function proposeGame(
             .where('id', '=', body.gameId)
             .forUpdate()
             .executeTakeFirst()
-    const game = {
-      ...body.game,
-      ...preservedEventFields(body.game, old),
-      homeTeamId: await followMerges(trx, body.game.homeTeamId),
-      awayTeamId: await followMerges(trx, body.game.awayTeamId),
-      timezone: asGameTimezone(
-        body.game.timezone ??
-          old?.timezone ??
-          (await gameTimezone(trx, body.game.seasonId))
-      ),
-      exhibition: body.game.exhibition ?? old?.exhibition ?? false,
-      ...preservedField(body.game, old)
-    }
-    // A field set or changed is checked, and the game takes its venue and
-    // place. A field kept from the stored game is not checked again, but
-    // the game still takes its place from it: a field-linked game's venue
-    // and address are the field's.
-    if (game.fieldId != null) {
-      if (old?.field_id !== game.fieldId || old.field_size !== game.fieldSize)
-        Object.assign(
-          game,
-          await placeOnField(trx, game.fieldId, game.fieldSize)
-        )
-      else {
-        const kept = await fieldPlace(trx, game.fieldId)
-        if (kept != null)
-          Object.assign(game, {
-            venue: kept.venue,
-            address: kept.address,
-            latitude: kept.latitude,
-            longitude: kept.longitude
-          })
-      }
-    }
-    await validateGame(trx, game)
-    if (body.sender.kind === 'season' && body.sender.id !== game.seasonId)
-      throw forbidden('Send this game from its hosting season')
-    if (body.gameId != null && old == null) throw notFound()
-    if (systemCancelled(old?.cancellation_reason))
-      throw conflict('A canceled withdrawal or replacement cannot be restored')
-    if (old != null && !(await matchesVersion(trx, old, body.expected)))
-      throw conflict('Review the current game before changing its schedule')
-    if (old != null && old.season_id !== game.seasonId)
-      throw badRequest('Game settings keep the hosting season unchanged')
-    if (
-      old != null &&
-      !(await originalAdministrator(trx, fresh.userId, materialGame(old)))
+    const proposal = await proposalTerms(
+      trx,
+      fresh,
+      body,
+      old,
+      resumedTerms,
+      options
     )
-      throw forbidden(
-        'Only an original participating team administrator can change this game'
-      )
-    if (old != null) await requireEditableTeams(trx, old, game)
-    if (
-      old == null &&
-      resumedTerms == null &&
-      game.seasonId != null &&
-      !(await canScheduleFor(trx, fresh, { kind: 'season', id: game.seasonId }))
-    )
-      throw forbidden(
-        'A hosting season administrator must authorize season placement'
-      )
-    const prior =
-      old == null ? (resumedTerms?.previous ?? null) : materialGame(old)
-    const originalIds =
-      prior == null ? [] : [prior.homeTeamId, prior.awayTeamId]
-    const proposedIds = [game.homeTeamId, game.awayTeamId]
-    const affectedTeamIds = [
-      ...new Set([...proposedIds, ...originalIds])
-    ].sort()
-    const administered: string[] = []
-    for (const teamId of affectedTeamIds)
-      if (await canScheduleFor(trx, fresh, { kind: 'team', id: teamId }))
-        administered.push(teamId)
-    const hostOnlyCreation = old == null && body.sender.kind === 'season'
-    if (administered.length === 0 && !hostOnlyCreation)
-      throw forbidden(
-        'A participating team administrator, coach or assistant must send this game'
-      )
-    if (
-      body.sender.kind === 'team' &&
-      !affectedTeamIds.includes(body.sender.id)
-    )
-      throw forbidden(
-        'The sending team must be an original or proposed participant'
-      )
-    const replacement =
-      old != null &&
-      originalIds.some(
-        id => !proposedIds.includes(id) && !administered.includes(id)
-      )
-    const initiatingTeamId =
-      body.sender.kind === 'team'
-        ? body.sender.id
-        : (body.initiatingTeamId ?? null)
-    if (
-      initiatingTeamId != null &&
-      (!affectedTeamIds.includes(initiatingTeamId) ||
-        !(await canScheduleFor(trx, fresh, {
-          kind: 'team',
-          id: initiatingTeamId
-        })))
-    )
-      throw forbidden(
-        'Only a team administrator, coach or assistant can represent the inviting team'
-      )
-    const terms: GameRequestTerms = {
-      kind: 'game',
-      game,
-      gameId: replacement ? null : (old?.id ?? null),
-      proposedGameId:
-        replacement || old == null
-          ? (resumedTerms?.proposedGameId ?? makeId('game'))
-          : old.id,
-      replacesGameId: replacement
-        ? old.id
-        : (resumedTerms?.replacesGameId ?? null),
-      consentTeamIds: proposedIds,
-      expected:
-        replacement || old == null ? null : gameVersion(materialGame(old)),
-      previous: prior,
-      affectedTeamIds,
-      hostSeasonIds: [
-        ...new Set(
-          [game.seasonId, old?.season_id].filter(
-            (id): id is string => id != null
-          )
-        )
-      ].sort(),
-      ...(old == null && resumedTerms == null && game.seasonId != null
-        ? {
-            hostingAuthorizerUserId: fresh.userId,
-            hostingAuthorizationSource: 'initiator' as const
-          }
-        : {}),
-      ...(options.schedulePreviewId == null
-        ? {}
-        : { schedulePreviewId: options.schedulePreviewId })
-    }
+    const { game, terms, replacement, originalIds } = proposal
     const id = makeId('invite')
     const sent = clock.now()
-    if (replacement) {
+    if (replacement && old != null) {
       const recipients = await schedulingRecipients(
         trx,
         originalIds.map(id => ({ kind: 'team' as const, id }))
@@ -1182,52 +1382,13 @@ export async function proposeGame(
     }
     await trx
       .insertInto('group_requests')
-      .values({
-        id,
-        kind: 'game',
-        sender_id: fresh.userId,
-        sender_scope_type: body.sender.kind,
-        sender_scope_id: body.sender.id,
-        terms,
-        sent_at: sent,
-        expires_at: new Date(sent.getTime() + 7 * 24 * 3600 * 1000),
-        game_id: terms.gameId,
-        initiating_team_id: initiatingTeamId
-      })
+      .values(requestRow(fresh, body, proposal, id, sent))
       .execute()
-    for (const side of relationshipSides(terms)) {
-      const approved = await approvesSide(trx, fresh, side, {
-        kind: 'game',
-        terms
-      })
-      await trx
-        .insertInto('group_request_sides')
-        .values({
-          request_id: id,
-          scope_type: side.kind,
-          scope_id: side.id,
-          approved_by: approved ? fresh.userId : null,
-          approved_at: approved ? sent : null
-        })
-        .execute()
-    }
-    const organization = await trx
-      .selectFrom(body.sender.kind === 'team' ? 'teams' : 'seasons')
-      .select('name')
-      .where('id', '=', body.sender.id)
-      .executeTakeFirstOrThrow()
+    for (const side of await sideRows(trx, fresh, terms, id, sent))
+      await trx.insertInto('group_request_sides').values(side).execute()
     await trx
       .insertInto('notification_events')
-      .values({
-        id: makeId('audit'),
-        source_type: 'groupRequest',
-        source_id: id,
-        revision: 1,
-        actor_id: fresh.userId,
-        metadata: { senderGroupName: organization.name },
-        recorded_recipients: [fresh.userId],
-        created_at: sent
-      })
+      .values(sentNotice(fresh, id, await senderName(trx, body.sender), sent))
       .execute()
     await snapshotRequestInformation(trx, id)
     await trx
@@ -1250,6 +1411,259 @@ export async function proposeGame(
   })
   if (acceptedGame != null) options.onAccepted?.(acceptedGame)
   return request
+}
+
+/** One new game's proposal, as `proposeGames` sends it. */
+interface Sending {
+  body: GameProposal
+  hash: string
+  proposal: ProposalTerms
+  id: string
+  sides: Array<Insertable<GroupRequestSidesTable>>
+  organization: string
+  sent: Date
+  /** Its request as stored, and then once it is published. */
+  request?: StoredRequest
+  gameId?: string
+}
+
+/**
+ * `proposeGame` of each of these new games, in order, as though each were
+ * proposed alone in turn, in one transaction: the same rules decide each
+ * game (`proposalTerms`, `sideRows`, `finishable`, `requireHosting`), the
+ * same rows are written and the same changes told, and the answer is each
+ * game's request. What every game reads alike (its sender's rights, its
+ * teams, season and field) is read once (`withRolesRead`); the rows are
+ * written a statement for many at a time. The field warnings of every
+ * field and game touched are brought up to date once, after them all,
+ * which leaves what one refresh after each game leaves: games only ever
+ * join the fields here, so no warning told on the way is taken back.
+ *
+ * Only for new games: a body naming a game, or two with one idempotency
+ * key, is proposed one at a time by `proposeGame`.
+ */
+export async function proposeGames(
+  db: Kysely<Database>,
+  actor: Actor,
+  bodies: GameProposal[],
+  clock: Clock = realClock,
+  options: { schedulePreviewId?: string } = {}
+): Promise<StoredRequest[]> {
+  if (
+    bodies.some(body => body.gameId != null) ||
+    new Set(bodies.map(body => body.idempotencyKey)).size !== bodies.length
+  ) {
+    const requests: StoredRequest[] = []
+    for (const body of bodies)
+      requests.push(
+        await proposeGame(db, actor, body, clock, undefined, options)
+      )
+    return requests
+  }
+  if (bodies.length === 0) return []
+  return await atomic(
+    db,
+    async trx =>
+      await withRolesRead(
+        trx,
+        async () => await sendProposals(trx, actor, bodies, clock, options)
+      )
+  )
+}
+
+async function sendProposals(
+  trx: Transaction<Database>,
+  actor: Actor,
+  bodies: GameProposal[],
+  clock: Clock,
+  options: { schedulePreviewId?: string }
+): Promise<StoredRequest[]> {
+  await lockKeys(trx, [
+    'creation:parent-graph',
+    ...bodies.map(
+      body => `creation:game:${actor.userId}:${body.idempotencyKey}`
+    )
+  ])
+  const fresh = await currentActor(trx, actor)
+  const held = new Map<string, { body_hash: string; response: unknown }>()
+  for (const run of runsOf(bodies))
+    for (const row of await trx
+      .selectFrom('creation_idempotency')
+      .select(['key', 'body_hash', 'response'])
+      .where('user_id', '=', fresh.userId)
+      .where(
+        'key',
+        'in',
+        run.map(body => body.idempotencyKey)
+      )
+      .execute())
+      held.set(row.key, row)
+  // Each game by the rules, in order, as `proposeGame` would decide it.
+  const answers: Array<StoredRequest | Sending> = []
+  for (const body of bodies) {
+    const hash = proposalHash(body)
+    const before = held.get(body.idempotencyKey)
+    if (before != null) {
+      answers.push(await replayProposal(trx, before, body, hash))
+      continue
+    }
+    await requireScheduler(trx, fresh, body.sender)
+    const proposal = await proposalTerms(
+      trx,
+      fresh,
+      body,
+      null,
+      undefined,
+      options
+    )
+    const id = makeId('invite')
+    const sent = clock.now()
+    answers.push({
+      body,
+      hash,
+      proposal,
+      id,
+      sides: await sideRows(trx, fresh, proposal.terms, id, sent),
+      organization: await senderName(trx, body.sender),
+      sent
+    })
+  }
+  const sending = answers.filter(
+    (answer): answer is Sending => 'proposal' in answer
+  )
+  if (sending.length > 0) await sendAll(trx, fresh, sending, clock)
+  return answers.map(answer =>
+    'proposal' in answer ? answer.request! : answer
+  )
+}
+
+/** Writes and publishes the proposals `sendProposals` decided. */
+async function sendAll(
+  trx: Transaction<Database>,
+  fresh: Actor,
+  sending: Sending[],
+  clock: Clock
+): Promise<void> {
+  const byId = new Map(sending.map(each => [each.id, each]))
+  for (const run of runsOf(sending))
+    for (const row of await trx
+      .insertInto('group_requests')
+      .values(
+        run.map(each =>
+          requestRow(fresh, each.body, each.proposal, each.id, each.sent)
+        )
+      )
+      .returningAll()
+      .execute())
+      byId.get(row.id)!.request = row
+  const sides = new Map<string, Array<Selectable<GroupRequestSidesTable>>>()
+  for (const run of runsOf(sending.flatMap(each => each.sides)))
+    for (const row of await trx
+      .insertInto('group_request_sides')
+      .values(run)
+      .returningAll()
+      .execute())
+      sides.set(row.request_id, [...(sides.get(row.request_id) ?? []), row])
+  // Each sender's notice, with the names its text reads frozen as
+  // `snapshotRequestInformation` freezes them.
+  const notices: Array<Insertable<NotificationEventsTable>> = []
+  for (const each of sending) {
+    const notice = sentNotice(fresh, each.id, each.organization, each.sent)
+    notices.push({
+      ...notice,
+      metadata: {
+        ...(notice.metadata as object),
+        frozen: await frozenNamesOf(trx, each.request!)
+      }
+    })
+  }
+  for (const run of runsOf(notices))
+    await trx.insertInto('notification_events').values(run).execute()
+  for (const run of runsOf(sending))
+    await trx
+      .insertInto('creation_idempotency')
+      .values(
+        run.map(each => ({
+          user_id: fresh.userId,
+          key: each.body.idempotencyKey,
+          body_hash: each.hash,
+          response: { id: each.id, gameProposalVersion: 2 }
+        }))
+      )
+      .execute()
+  // Published once every side has approved, as `finishGameRequest` does.
+  const games: Array<Insertable<GamesTable>> = []
+  for (const each of sending) {
+    const request = each.request!
+    const { terms } = each.proposal
+    if (
+      !(await finishable(
+        request,
+        clock,
+        async () =>
+          await authoritiesRecorded(trx, request, sides.get(each.id) ?? [])
+      ))
+    )
+      continue
+    await validateGame(trx, terms.game)
+    await requireHosting(trx, request, terms)
+    // A new game's terms always propose its id (`proposalTerms`).
+    each.gameId = terms.proposedGameId!
+    games.push(await newGameRow(trx, terms, each.gameId))
+  }
+  for (const run of runsOf(games))
+    await trx.insertInto('games').values(run).execute()
+  const published = sending.filter(each => each.gameId != null)
+  for (const run of runsOf(published)) {
+    const resolved = clock.now()
+    for (const row of await trx
+      .updateTable('group_requests')
+      .set({
+        status: 'accepted',
+        // Each game's id is its request's proposed one (`gameId` above).
+        game_id: sql<string>`terms->>'proposedGameId'`,
+        resolved_at: resolved
+      })
+      .where(
+        'id',
+        'in',
+        run.map(each => each.id)
+      )
+      .returningAll()
+      .execute())
+      byId.get(row.id)!.request = row
+  }
+  // A proposal left pending holds its field too.
+  await refreshFieldWarnings(
+    trx,
+    sending.map(each => each.proposal.game.fieldId),
+    clock,
+    published.map(each => each.gameId!)
+  )
+  // Each published game's umpire recheck, as `finishGameRequest` makes it,
+  // from one read of the assignments and the games they could touch.
+  const recheck = await umpireRechecker(
+    trx,
+    published.map(each => each.gameId!)
+  )
+  const told: GameChangePayload[] = []
+  for (const each of sending) {
+    const { terms } = each.proposal
+    if (each.gameId != null) {
+      await recheck(each.gameId)
+      told.push({ game: each.gameId, kind: 'game' })
+      // Published: its season's row and its teams' lists.
+      noteScopeChange(trx, { gameId: each.gameId })
+      noteScopeChange(trx, { teamId: terms.game.homeTeamId })
+      noteScopeChange(trx, { teamId: terms.game.awayTeamId })
+      if (terms.game.seasonId != null)
+        noteScopeChange(trx, { seasonId: terms.game.seasonId })
+    }
+    told.push({ game: terms.proposedGameId!, kind: 'game' })
+    noteScopeChange(trx, { gameId: terms.proposedGameId! })
+    noteProposedGame(trx, terms)
+  }
+  await notifyGameChanges(trx, told)
 }
 
 export async function decideGameRequest(

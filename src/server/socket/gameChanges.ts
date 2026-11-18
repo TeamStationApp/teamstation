@@ -146,6 +146,20 @@ export async function notifyGameChange(
 }
 
 /**
+ * `notifyGameChange` of each of these, in order, in one statement: Postgres
+ * evaluates the select list after the sort, so they are sent in `n` order.
+ */
+export async function notifyGameChanges(
+  db: Kysely<Database>,
+  payloads: readonly GameChangePayload[]
+): Promise<void> {
+  if (payloads.length === 0) return
+  await sql`select pg_notify(${GAME_CHANGES_CHANNEL}, payload) from unnest(${payloads.map(payload => JSON.stringify(payload))}::text[]) with ordinality as told(payload, n) order by n`.execute(
+    db
+  )
+}
+
+/**
  * Announces that a game's plays changed and are to be read again, with the
  * game's play generation as the transaction leaves it, in one statement.
  */

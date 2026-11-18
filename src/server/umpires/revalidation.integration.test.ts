@@ -12,7 +12,11 @@ import { closeInto } from '../admin/people'
 import { atomic } from '../db/atomic'
 import { updateEventInfo } from '../events/eventInfo'
 import { setScopeRoles } from '../invites/people'
-import { leaderboard, recheckUmpireAssignments } from './assignments'
+import {
+  leaderboard,
+  recheckUmpireAssignments,
+  umpireRechecker
+} from './assignments'
 
 describe('umpire assignment revalidation through game editors', function () {
   this.timeout(60000)
@@ -169,6 +173,72 @@ describe('umpire assignment revalidation through game editors', function () {
     expect(remaining).deep.equals([
       { game_id: 'gam_other_umpiring', credit_team_id: f.teamA }
     ])
+  })
+  it('rechecks many games from one read as it rechecks each alone, an edited game against every game it overlaps', async () => {
+    await f.h.db
+      .insertInto('games')
+      .values([
+        {
+          id: 'gam_other_umpiring',
+          home_team_id: f.teamB,
+          away_team_id: f.standaloneTeam,
+          season_id: f.seasonA,
+          start_at: new Date('2027-04-03T10:00:00Z'),
+          end_at: new Date('2027-04-03T12:00:00Z')
+        },
+        {
+          // No end: it runs the default length, into the edited game, and
+          // the umpire plays in it; nobody umpires it, so only the edited
+          // game's own window finds it.
+          id: 'gam_open_ended',
+          home_team_id: f.teamA,
+          away_team_id: f.standaloneTeam,
+          season_id: f.seasonA,
+          start_at: new Date('2027-04-02T22:30:00Z'),
+          end_at: null
+        }
+      ])
+      .execute()
+    await f.h.db
+      .insertInto('umpire_assignments')
+      .values({
+        game_id: 'gam_other_umpiring',
+        slot: 'uty_plate:1',
+        user_id: person,
+        assigned_by: userIdOfGumbo(101),
+        credit_team_id: f.teamA
+      })
+      .execute()
+    const ids = ['gam_playing', 'gam_umpire', 'gam_other_umpiring']
+    const rolledBack = new Error('rolled back')
+    const remaining = async (together: boolean): Promise<unknown[]> => {
+      let rows: unknown[] = []
+      await atomic(f.h.db, async trx => {
+        await trx
+          .updateTable('games')
+          .set({ end_at: new Date('2027-04-03T05:00:00Z') })
+          .where('id', '=', 'gam_umpire')
+          .execute()
+        if (together) {
+          const recheck = await umpireRechecker(trx, ids)
+          for (const id of ids) await recheck(id)
+        } else for (const id of ids) await recheckUmpireAssignments(trx, id)
+        rows = await trx
+          .selectFrom('umpire_assignments')
+          .select(['game_id', 'slot', 'user_id'])
+          .orderBy('game_id')
+          .execute()
+        throw rolledBack
+      }).catch((error: unknown) => {
+        if (error !== rolledBack) throw error
+      })
+      return rows
+    }
+    const alone = await remaining(false)
+    expect(alone).deep.equals([
+      { game_id: 'gam_other_umpiring', slot: 'uty_plate:1', user_id: person }
+    ])
+    expect(await remaining(true)).deep.equals(alone)
   })
   it('rechecks overlapping playing games created through the bulk scheduling API', async () => {
     await setScopeRoles(

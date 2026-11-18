@@ -5,6 +5,7 @@ import type { GroupRef } from '../../common/groupCreation'
 import type { PlayerAddTerms, RequestTerms } from '../../common/notifications'
 import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
+import { nameOnce, readOnce } from '../db/readOnce'
 import { isGuardianRequest } from '../groups/guardianLimits'
 import { publicNames } from '../groups/playerNamePrivacy'
 import type { StoredRequest } from '../groups/requests'
@@ -32,26 +33,19 @@ interface Lookups {
 function liveLookups(db: Kysely<Database>): Lookups {
   return {
     group: async ref =>
-      (
-        await db
-          .selectFrom(
-            ref.kind === 'league'
-              ? 'leagues'
-              : ref.kind === 'season'
-                ? 'seasons'
-                : 'teams'
-          )
-          .select('name')
-          .where('id', '=', ref.id)
-          .executeTakeFirst()
-      )?.name ?? 'Unavailable group',
+      (await nameOnce(db, ref.kind, ref.id)) ?? 'Unavailable group',
     zone: async seasonId =>
       (
-        await db
-          .selectFrom('seasons')
-          .select('timezone')
-          .where('id', '=', seasonId)
-          .executeTakeFirst()
+        await readOnce(
+          db,
+          `season:${seasonId}:timezone`,
+          async () =>
+            await db
+              .selectFrom('seasons')
+              .select('timezone')
+              .where('id', '=', seasonId)
+              .executeTakeFirst()
+        )
       )?.timezone ?? 'UTC'
   }
 }

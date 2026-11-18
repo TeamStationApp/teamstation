@@ -1,7 +1,11 @@
-import { expect } from 'chai'
-import { sql } from 'kysely'
-import { afterEach, beforeEach, describe, it } from 'mocha'
+import { performance } from 'node:perf_hooks'
 
+import { expect } from 'chai'
+import { Kysely, PostgresDialect, sql } from 'kysely'
+import { after, afterEach, before, beforeEach, describe, it } from 'mocha'
+import { Pool } from 'pg'
+
+import { makeId } from '../../common/ids'
 import {
   asPreparedPreview,
   asSchedulePreview,
@@ -10,6 +14,13 @@ import {
 } from '../../common/schedulePreviews'
 import { buildSchedule, engineResult } from '../../common/scheduler/engine'
 import { userIdOfGumbo } from '../../common/userId'
+import { migrations } from '../../migrate/migrations'
+import {
+  createMigratedDatabase,
+  dropScratchDatabase,
+  testDatabaseUrl,
+  testDatabaseUrlOf
+} from '../../migrate/testDatabase'
 import {
   G1,
   SEASON_A_SETTINGS,
@@ -19,7 +30,15 @@ import { demoLocality } from '../../test/groupFixtures'
 import { type SchedulerWorld, schedulerWorld } from '../../test/schedulerWorld'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
+import { type Database, makePool } from '../db/database'
+import { makeNonce } from '../dev/fixtures/accounts'
+import { NODE_SETTINGS } from '../dev/fixtures/nodeSettings'
+import { runPackedLeague } from '../dev/fixtures/packedLeague'
 import { decideGameRequest } from '../schedule/gameApprovals'
+import { createTeam } from '../teams/createTeam'
+import { insertUser } from '../users/insertUser'
+import { completePreview, preparePreview } from './previews'
+import { publishPreview } from './publish'
 
 describe('publishing a schedule preview', function () {
   this.timeout(240000)
@@ -1462,5 +1481,255 @@ describe('publishing a schedule preview', function () {
     }
     const published = await publish(again.body.id)
     expect(published.body).include({ scheduled: 21, removed: 2 })
+  })
+})
+
+/**
+ * The most queries a publication of the packed league may run, however many
+ * of its games it publishes: headroom over the 201 the 338 games run, 212
+ * with umpire assignments to recheck (1,236 when each game reread them). They
+ * are read and written a statement for many games, so the count follows the
+ * league's teams, seasons and fields, not its games. Before, it ran 62,885,
+ * as every game's notice and every team's summary read every scheduling
+ * candidate's roles again for each group; with each person's roles read once
+ * 18,902; and with its teams, seasons and fields read once, 11,880, about 35
+ * for each game proposed one at a time.
+ */
+const PACKED_PUBLISH_QUERIES = 250
+/** What the same publication ran before it proposed its games together. */
+const PACKED_PUBLISH_QUERIES_ONE_BY_ONE = 11_880
+/**
+ * The most further queries each further game may cost: none, so a
+ * publication of twice the games runs about the same statements.
+ */
+const PACKED_PUBLISH_QUERIES_PER_GAME = 0.05
+/**
+ * How long the publication may take: 38 s at first, 1.6 s one game at a
+ * time, and about 0.25 s together on a development machine, with room for
+ * one running the other integration suites beside it.
+ */
+const PACKED_PUBLISH_MS = 3_000
+
+describe('packed league publish', function () {
+  this.timeout(300000)
+  const stamp = `${process.pid}_${Date.now()}`
+  const names = {
+    whole: `teamstation_packed_publish_${stamp}`,
+    half: `teamstation_packed_publish_half_${stamp}`,
+    wholeUmpires: `teamstation_packed_publish_umpires_${stamp}`,
+    halfUmpires: `teamstation_packed_publish_umpires_half_${stamp}`
+  }
+  let admin: Pool | undefined
+  const dbs: Partial<Record<keyof typeof names, Kysely<Database>>> = {}
+  let counting = false
+  let queries = 0
+  const counted = (name: string): Kysely<Database> =>
+    new Kysely<Database>({
+      dialect: new PostgresDialect({ pool: makePool(testDatabaseUrlOf(name)) }),
+      log: () => {
+        if (counting) queries++
+      }
+    })
+  const clock = { now: () => new Date('2026-11-16T08:00:00Z') }
+  let actor: { userId: string; isAdmin: boolean; scopes: [] }
+  let previewId: string
+  let result: ReturnType<typeof engineResult>
+  // The league built once, then copied before its preview is completed, so
+  // both publications start from the same rows.
+  before(async function () {
+    admin = new Pool({ connectionString: testDatabaseUrl })
+    await createMigratedDatabase(admin, names.whole, migrations)
+    const seed = counted(names.whole)
+    try {
+      for (const [key, value] of Object.entries(NODE_SETTINGS))
+        await seed
+          .insertInto('system_settings')
+          .values({ key, value: value as never })
+          .onConflict(oc =>
+            oc.column('key').doUpdateSet({ value: value as never })
+          )
+          .execute()
+      const m = await runPackedLeague({
+        db: seed,
+        mailbox: 'testmailbox@example.test',
+        nonce: makeNonce()
+      })
+      actor = { userId: m.accounts.admin.userId, isAdmin: false, scopes: [] }
+      const prepared = await preparePreview(
+        seed,
+        actor,
+        m.ids.league,
+        { mode: 'full' },
+        clock
+      )
+      previewId = prepared.id
+      result = engineResult(await buildSchedule({ input: prepared.input }))
+    } finally {
+      await seed.destroy()
+    }
+    for (const copy of [names.half, names.wholeUmpires])
+      await admin.query(`create database "${copy}" template "${names.whole}"`)
+    const umpired = counted(names.wholeUmpires)
+    try {
+      umpires = await seedUmpires(umpired)
+    } finally {
+      await umpired.destroy()
+    }
+    await admin.query(
+      `create database "${names.halfUmpires}" template "${names.wholeUmpires}"`
+    )
+    for (const key of Object.keys(names) as Array<keyof typeof names>)
+      dbs[key] = counted(names[key])
+  })
+
+  /**
+   * Two umpires assigned to a game outside the league at the first built
+   * game's time: one plays for its home team, so publishing it takes that
+   * assignment away, and one plays for nobody, so hers stays.
+   */
+  const seedUmpires = async (
+    db: Kysely<Database>
+  ): Promise<{ game: string; playing: string; free: string }> => {
+    const first = result.options[0].games[0]
+    const team = async (name: string): Promise<string> =>
+      (
+        await createTeam(
+          db,
+          { name: `Demo Umpire ${name} ${stamp}`, externalIds: [] },
+          { userId: actor.userId, isAdmin: false }
+        )
+      ).id
+    const game = makeId('game')
+    await db
+      .insertInto('games')
+      .values({
+        id: game,
+        home_team_id: await team('Home'),
+        away_team_id: await team('Away'),
+        season_id: null,
+        start_at: new Date(first.startAt),
+        end_at: new Date(first.endAt),
+        timezone: 'UTC',
+        venue: 'Demo Umpire Park',
+        status: 'scheduled'
+      })
+      .execute()
+    const umpire = async (name: string): Promise<string> =>
+      await insertUser(db, {
+        display_name: `Demo Umpire ${name}`,
+        first_name: 'Demo',
+        last_name: `Umpire ${name}`
+      })
+    const playing = await umpire('Playing')
+    const free = await umpire('Free')
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: playing,
+        team_id: first.homeTeamId,
+        role: 'member',
+        is_player: true,
+        jersey: null,
+        joined_at: new Date(),
+        granted_by_link_id: null
+      })
+      .execute()
+    for (const [slot, user] of [
+      ['plate:1', playing],
+      ['base:1', free]
+    ] as const)
+      await db
+        .insertInto('umpire_assignments')
+        .values({
+          game_id: game,
+          slot,
+          user_id: user,
+          assigned_by: actor.userId,
+          credit_team_id: null
+        })
+        .execute()
+    return { game, playing, free }
+  }
+  let umpires: { game: string; playing: string; free: string }
+  after(async function () {
+    for (const db of Object.values(dbs)) await db.destroy()
+    if (admin != null) {
+      for (const name of Object.values(names))
+        await dropScratchDatabase(admin, name)
+      await admin.end()
+    }
+  })
+
+  /** Publishes the first `count` of the built games, and what it took. */
+  const publishing = async (
+    db: Kysely<Database>,
+    count: number
+  ): Promise<{ queries: number; ms: number }> => {
+    const games = result.options[0].games.slice(0, count)
+    await completePreview(
+      db,
+      actor,
+      previewId,
+      { ...result, options: [{ ...result.options[0], games }] },
+      clock
+    )
+    queries = 0
+    counting = true
+    const started = performance.now()
+    const published = await publishPreview(db, actor, previewId, 0, clock)
+    const ms = Math.round(performance.now() - started)
+    counting = false
+    const assigned = await db
+      .selectFrom('umpire_assignments')
+      .select('game_id')
+      .limit(1)
+      .executeTakeFirst()
+    console.log(
+      `    packed league publish: ${published.scheduled + published.awaiting} games (${published.scheduled} scheduled, ${published.awaiting} awaiting) in ${ms} ms, ${queries} queries${assigned == null ? '' : ', with umpire assignments'}`
+    )
+    expect(published.scheduled).equals(count)
+    expect(published.awaiting).equals(0)
+    return { queries, ms }
+  }
+
+  it('publishes 338 games, and half of them, in the same bounded number of queries, within seconds', async function () {
+    expect(result.options[0].games).lengthOf(338)
+    const whole = await publishing(dbs.whole!, 338)
+    const half = await publishing(dbs.half!, 169)
+    const slope = (whole.queries - half.queries) / (338 - 169)
+    console.log(
+      `    packed league publish: ${slope.toFixed(3)} further queries for each further game`
+    )
+    for (const each of [whole, half]) {
+      expect(each.queries).below(PACKED_PUBLISH_QUERIES)
+      expect(each.ms).below(PACKED_PUBLISH_MS)
+    }
+    expect(whole.queries).below(PACKED_PUBLISH_QUERIES_ONE_BY_ONE / 40)
+    expect(Math.abs(slope)).below(PACKED_PUBLISH_QUERIES_PER_GAME)
+  })
+
+  it('publishes them in the same bounded number of queries with umpire assignments, taking away the one a published game overlaps', async function () {
+    const whole = await publishing(dbs.wholeUmpires!, 338)
+    const half = await publishing(dbs.halfUmpires!, 169)
+    const slope = (whole.queries - half.queries) / (338 - 169)
+    console.log(
+      `    packed league publish: ${slope.toFixed(3)} further queries for each further game, with umpire assignments`
+    )
+    for (const each of [whole, half]) {
+      expect(each.queries).below(PACKED_PUBLISH_QUERIES)
+      expect(each.ms).below(PACKED_PUBLISH_MS)
+    }
+    expect(Math.abs(slope)).below(PACKED_PUBLISH_QUERIES_PER_GAME)
+    for (const db of [dbs.wholeUmpires!, dbs.halfUmpires!])
+      expect(
+        (
+          await db
+            .selectFrom('umpire_assignments')
+            .select('user_id')
+            .where('game_id', '=', umpires.game)
+            .execute()
+        ).map(row => row.user_id)
+      ).deep.equals([umpires.free])
   })
 })
