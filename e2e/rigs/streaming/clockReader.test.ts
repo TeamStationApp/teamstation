@@ -6,6 +6,7 @@ import { describe, it } from 'mocha'
 import { PNG } from 'pngjs'
 
 import {
+  benchClock,
   findPicture,
   frameIn,
   MIN_CONFIDENCE,
@@ -151,21 +152,56 @@ describe('the clock reader', function () {
     })
   })
 
-  it('places a reading on the bench day nearest the moment it was taken', function () {
-    const offset = -480
+  it('places a bench clock reading on the latest bench day that is not after the picture', function () {
+    const bench = benchClock(-480)
     const near = Date.UTC(2026, 10, 14, 1, 0, 0)
     // 17:00 on the bench (UTC−8) the day before is 01:00 UTC on the 14th.
-    expect(readingEpochMs({ msOfDay: 17 * 3_600_000 }, near, offset)).equals(
+    expect(readingEpochMs({ msOfDay: 17 * 3_600_000 }, near, bench)).equals(
       Date.UTC(2026, 10, 14, 1, 0, 0)
     )
     // Just before the bench's midnight, taken just after it: the day before.
     const afterMidnight = Date.UTC(2026, 10, 14, 8, 0, 1)
     expect(
-      readingEpochMs({ msOfDay: 86_400_000 - 1000 }, afterMidnight, offset)
+      readingEpochMs({ msOfDay: 86_400_000 - 1000 }, afterMidnight, bench)
     ).equals(Date.UTC(2026, 10, 14, 7, 59, 59))
+    // A frame a moment ahead of this machine's clock is the publisher's skew, not tomorrow.
     expect(
-      readingEpochMs({ msOfDay: 0 }, Date.UTC(2026, 10, 14, 23, 59, 59))
+      readingEpochMs(
+        { msOfDay: 0 },
+        Date.UTC(2026, 10, 14, 23, 59, 59),
+        benchClock()
+      )
     ).equals(Date.UTC(2026, 10, 15))
+  })
+
+  it('places a fixture reading in the latest loop whose frame is not after the picture', function () {
+    const start = Date.UTC(2026, 10, 16, 20, 0, 0)
+    const fixture = { startedAtMs: start, loopMs: 30 * 60_000 }
+    const minute = 60_000
+    // The first loop, live.
+    expect(
+      readingEpochMs(
+        { msOfDay: 5 * minute },
+        start + 5 * minute + 3000,
+        fixture
+      )
+    ).equals(start + 5 * minute)
+    // The third loop.
+    expect(
+      readingEpochMs({ msOfDay: minute }, start + 61 * minute + 2000, fixture)
+    ).equals(start + 61 * minute)
+    // Scrubbed back 20 minutes, across the loop's start: the earlier loop.
+    expect(
+      readingEpochMs({ msOfDay: 25 * minute }, start + 45 * minute, fixture)
+    ).equals(start + 25 * minute)
+    // On a loop's boundary.
+    expect(readingEpochMs({ msOfDay: 0 }, start + 30 * minute, fixture)).equals(
+      start + 30 * minute
+    )
+    // A picture before the camera began is still in its first loop.
+    expect(readingEpochMs({ msOfDay: 1000 }, start - minute, fixture)).equals(
+      start + 1000
+    )
   })
 
   it('finds a frame from its ink, wherever and at whatever size a page shows it', function () {

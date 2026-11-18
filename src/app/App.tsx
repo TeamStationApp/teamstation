@@ -328,8 +328,8 @@ export type Pushed =
       title: string
       /** Which half of the game screen to open on. */
       tab?: 'info' | 'boxScore' | 'watch' | 'score'
-      /** Start the video rather than waiting to be asked. */
-      autoPlay?: boolean
+      /** Start the video rather than waiting to be asked; `'live'` only a live one. */
+      autoPlay?: boolean | 'live'
       /** Which video, and where in it, from a link to a moment. */
       videoId?: string
       at?: number
@@ -4589,7 +4589,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
           gameId: route.gameId,
           title: '',
           tab: route.tab,
-          autoPlay: route.at != null,
+          // A link to a moment plays it; one to a game's Videos plays it if live.
+          autoPlay:
+            route.at != null ? true : route.tab === 'watch' ? 'live' : false,
           videoId: route.videoId,
           at: route.at,
           angles: route.angles,

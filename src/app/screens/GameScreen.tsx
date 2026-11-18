@@ -174,8 +174,11 @@ export interface GameScreenProps {
   onSettings?: () => void
   /** An explicit section. Bare addresses use the event's current default. */
   initialTab?: Tab
-  /** Start the video, silent, as the videos page's picture always plays. */
-  autoPlay?: boolean
+  /**
+   * Start the video, silent, as the videos page's picture always plays;
+   * `'live'` starts it only when the video it opens on is live.
+   */
+  autoPlay?: boolean | 'live'
   /**
    * Tells the shell what this game is called once it is known.
    *
@@ -446,7 +449,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const requestedTab =
     initialTab ??
-    (autoPlay ||
+    (autoPlay === true ||
+    autoPlay === 'live' ||
     initialVideoId != null ||
     startAtSec != null ||
     (angles?.length ?? 0) > 0
@@ -1076,7 +1080,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, addressAttempt])
+  }, [client, videoId])
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
@@ -1113,7 +1117,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, nonMemberView, props.signedIn])
+    // A player that gave up on its address asks for a new one.
+  }, [client, videoId, nonMemberView, props.signedIn, addressAttempt])
 
   // A live video is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then the server
@@ -1235,6 +1240,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(props.autoPlay)
   autoPlayRef.current = props.autoPlay
+  // The game's own copy of the row when it has one: the selected entry is a
+  // snapshot, and a recording that has finished must not be watched as live.
+  const freshStatus = (
+    game?.videos.find(item => item.id === video?.id) ?? video
+  )?.status
+  // Whether the video the player opens on is live, for `autoPlay: 'live'`.
+  const playingLive = useRef(false)
+  playingLive.current = freshStatus === 'live'
   const placeFor = useRef<{
     video?: VideoSummary
     videoId?: string
@@ -1242,11 +1255,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     /** Asks the server, for a video that was live when it was opened. */
     isLive?: () => Promise<boolean>
   }>({})
-  // The game's own copy of the row when it has one: the selected entry is a
-  // snapshot, and a recording that has finished must not be watched as live.
-  const freshStatus = (
-    game?.videos.find(item => item.id === video?.id) ?? video
-  )?.status
   placeFor.current = {
     video,
     videoId: video?.id,
@@ -1296,6 +1304,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const suspended = useRef(false)
   suspended.current = standDown
   /**
+   * The attached player is loading itself afresh: a pause now is the reset's,
+   * not the viewer's, and must not stop what recovers it from playing again.
+   */
+  const recovering = useRef(false)
+  /**
    * Where the single player had got to, sampled as it plays.
    *
    * Read from the element when the angles open, it was always zero: React runs
@@ -1305,6 +1318,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * is the one that comes back.
    */
   const lastTime = useRef(0)
+  /** The video `lastTime` was sampled from. */
+  const lastTimeFor = useRef<string | undefined>(undefined)
+  /** The video whose first attach `autoPlay` has had: a new address for it does not autoplay again. */
+  const autoPlayedFor = useRef<string | undefined>(undefined)
   /** The picture's own mapping onto the wall clock, from its stream's dates. */
   const mappingRef = useRef<WallMapping | null>(null)
   /** The server's wall timeline for it, as its board has it. */
@@ -1351,13 +1368,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const onTime = (): void => {
       if (!suspended.current && element.currentTime > 0) {
         lastTime.current = element.currentTime
+        lastTimeFor.current = placeFor.current.videoId
       }
     }
     const onPlay = (): void => {
       viewerWants.current = true
     }
     const onPause = (): void => {
-      if (!suspended.current) viewerWants.current = false
+      if (!suspended.current && !recovering.current) viewerWants.current = false
     }
     element.addEventListener('timeupdate', onTime)
     element.addEventListener('play', onPlay)
@@ -1428,6 +1446,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * was opened at (`startAtSec`) rather than standing down at 0.
    */
   const attached = useRef(false)
+  /**
+   * The video playing when its player gave up on the address, and whether the
+   * viewer was watching it: the new address picks up as it was. A recording
+   * resumes at its moment; a live game rejoins at its live point, which the
+   * first play gives.
+   */
+  const gaveUpOn = useRef<{ videoId: string; live: boolean } | null>(null)
+  gaveUpOn.current =
+    videoId == null ? null : { videoId, live: freshStatus === 'live' }
+  const playAfterAddress = useRef(false)
   useLayoutEffect(() => {
     const element = playerNode
     covered.current =
@@ -1466,6 +1494,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const playOnEntry = watchPlayRequest.current === gameId
     watchPlayRequest.current = null
     if (playOnEntry) viewerWants.current = true
+    const playAgain = playAfterAddress.current
+    playAfterAddress.current = false
     attached.current = true
     // Only this attachment may answer a refused play. A detached picture
     // must not restart after its metadata or play promise arrives late.
@@ -1504,10 +1534,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       element,
       playbackUrl,
       () => {
+        const gaveUp = gaveUpOn.current
+        if (gaveUp?.live === true)
+          playAfterAddress.current = viewerWants.current
+        // Only once it has played: before that, a link's moment or a resume
+        // still pending is where the new address goes, not the start.
+        else if (gaveUp != null && lastTimeFor.current === gaveUp.videoId) {
+          setResumeAt({
+            videoId: gaveUp.videoId,
+            sec: lastTime.current,
+            playing: viewerWants.current
+          })
+        }
         setAddressAttempt(attempt => attempt + 1)
       },
       {
         wantsToPlay: () => !suspended.current && viewerWants.current,
+        onRecovery: now => {
+          if (current) recovering.current = now
+        },
         onWallMapping: mapping => {
           mappingRef.current = mapping
           if (mapping == null) noDates()
@@ -1530,6 +1575,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
     const stand = (): void => {
       current = false
+      recovering.current = false
       if (playAttached.current === play) playAttached.current = null
       detach()
     }
@@ -1651,7 +1697,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       }
     }
 
-    if (playOnEntry || autoPlayRef.current === true) {
+    // A live game reached by its Videos address plays as it would from a tap
+    // on Videos: a viewer following a link to a game in progress came to
+    // watch it, and a still first picture looks like a broken stream.
+    // The first attach of a video only: a new address for it (the player gave
+    // up) plays as the viewer had it, `playAgain`, paused or not.
+    const firstAttach = autoPlayedFor.current !== placeFor.current.videoId
+    autoPlayedFor.current = placeFor.current.videoId
+    const asked =
+      firstAttach &&
+      (autoPlayRef.current === true ||
+        (autoPlayRef.current === 'live' && playingLive.current))
+    if (playOnEntry || playAgain || asked) {
       // Silent unless a highlight brought it here, which every browser lets
       // start on its own; heard, it falls back to silent if refused. If it
       // will not start at all, a tap opens the player, and saying so would

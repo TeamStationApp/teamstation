@@ -175,7 +175,11 @@ export interface NativeHlsVideo {
   muted: boolean
   currentTime: number
   readonly readyState: number
-  readonly seekable: { readonly length: number; end: (index: number) => number }
+  readonly seekable: {
+    readonly length: number
+    start: (index: number) => number
+    end: (index: number) => number
+  }
   load: () => void
   play: () => Promise<void>
   pause: () => void
@@ -283,6 +287,12 @@ const realClock: RetryClock = {
 const MEDIA_ERR_ABORTED = 1
 
 /**
+ * How long a live position put back after a reload has to start playing
+ * before the player rejoins the live point instead.
+ */
+export const RESTORE_PROGRESS_MS = 10_000
+
+/**
  * The browser's own HLS player, with the same patience as hls.js gets.
  *
  * The browser loads the segments, refreshes a live playlist and rides out a
@@ -315,11 +325,21 @@ export function attachNativeHls(
   let timer: unknown
   /** Where the playhead was when the trouble started, to put it back. */
   let resumeAtSec = 0
+  /** Where a live reload put the playhead back, until it is seen to play. */
+  let restoredAt: number | null = null
+  let restoreTimer: unknown
+  const live = intent?.isLive != null
 
   // The same split as the hls.js path: a pause during a recovery is the
   // recovery's doing, any other is the viewer's.
   let ownWantsToPlay = !video.paused
   let recovering = false
+  /** Whether a recovery is under way, told to the owner as it changes. */
+  const setRecovering = (now: boolean): void => {
+    if (recovering === now) return
+    recovering = now
+    intent?.onRecovery?.(now)
+  }
   const wantsToPlay = (): boolean =>
     intent == null ? ownWantsToPlay : intent.wantsToPlay()
   const onPlay = (): void => {
@@ -329,20 +349,87 @@ export function attachNativeHls(
     if (!recovering) ownWantsToPlay = false
   }
 
+  /**
+   * Where a reload puts it back: where it stands, unless it stands where a
+   * recovery put it. A restored position that has played on since is the
+   * viewer's again: a second error in the restore's check went back to the
+   * first restore point, and the viewer saw those seconds again.
+   */
+  const noteResumeAt = (): void => {
+    if (video.currentTime <= 0) return
+    if (
+      !recovering ||
+      (restoredAt != null && video.currentTime - restoredAt >= 1)
+    ) {
+      resumeAtSec = video.currentTime
+    }
+  }
+
   const giveUp = (): void => {
     if (gaveUp) return
     gaveUp = true
     onGiveUp?.()
   }
 
+  const cancelRestoreCheck = (): void => {
+    if (restoreTimer != null) clock.clearTimeout(restoreTimer)
+    restoreTimer = undefined
+    restoredAt = null
+  }
+
+  /**
+   * The restored live position has had its time. A publisher cut leaves a
+   * hole in the timeline where the player stood, and Safari reloaded there
+   * waits in it for good, black — paused or "playing" — while only a jump to
+   * live brought the picture back. So a position that has not played on is
+   * given up for the live point; one that has (a viewer's rewind) is kept, and
+   * so is one the viewer has since moved.
+   */
+  const checkRestored = (): void => {
+    restoreTimer = undefined
+    const at = restoredAt
+    restoredAt = null
+    if (at == null) return
+    const wanted = wantsToPlay()
+    const ranges = video.seekable
+    if (wanted && Math.abs(video.currentTime - at) < 1 && ranges.length > 0) {
+      const index = ranges.length - 1
+      const start = ranges.start(index)
+      const end = ranges.end(index)
+      if (Number.isFinite(end) && end > start) {
+        video.currentTime = Math.max(start, end - LIVE_DELAY_SEC)
+      }
+    }
+    const resume = shouldResumeAfterRecovery({
+      recovering,
+      wantsToPlay: wanted,
+      paused: video.paused
+    })
+    setRecovering(false)
+    resumeAtSec = 0
+    if (resume) video.play().catch(() => undefined)
+  }
+
   const seekBack = (): void => {
-    if (resumeAtSec > 0) video.currentTime = resumeAtSec
+    if (resumeAtSec <= 0) return
+    video.currentTime = resumeAtSec
+    if (!live) return
+    cancelRestoreCheck()
+    restoredAt = resumeAtSec
+    restoreTimer = clock.setTimeout(checkRestored, RESTORE_PROGRESS_MS)
   }
 
   const reload = (): void => {
+    cancelRestoreCheck()
     video.removeEventListener('loadedmetadata', seekBack)
     video.addEventListener('loadedmetadata', seekBack, { once: true })
+    // Asked before the load: a reset element is paused.
+    const wanted = wantsToPlay()
     video.load()
+    // An iPhone loads nothing into an element that has not been played: a
+    // reload left there sat blank, paused and without an error for good, and
+    // its `canplay` — which `recovered` waits on to play it — never came.
+    if (wanted) video.play().catch(() => undefined)
   }
 
   /** Pictures again: the trouble has passed, and it may resume. */
@@ -356,8 +443,12 @@ export function attachNativeHls(
       wantsToPlay: wantsToPlay(),
       paused: video.paused
     })
-    recovering = false
-    resumeAtSec = 0
+    // A restored live position stays a recovery until it is seen to play,
+    // so a pause in it is still the reload's and not the viewer's.
+    if (restoredAt == null) {
+      setRecovering(false)
+      resumeAtSec = 0
+    }
     if (wanted) video.play().catch(() => undefined)
   }
 
@@ -372,8 +463,11 @@ export function attachNativeHls(
       giveUp()
       return
     }
-    if (!recovering && video.currentTime > 0) resumeAtSec = video.currentTime
-    recovering = true
+    noteResumeAt()
+    // The reload this schedules arms a check of its own; the last one, firing
+    // first, would clear where it is to go back to.
+    cancelRestoreCheck()
+    setRecovering(true)
     timer = clock.setTimeout(() => {
       timer = undefined
       if (clock.now() - firstFailureAt > patience) {
@@ -407,10 +501,8 @@ export function attachNativeHls(
           wantsToPlay,
           reload: () => {
             if (timer != null) return
-            if (!recovering && video.currentTime > 0) {
-              resumeAtSec = video.currentTime
-            }
-            recovering = true
+            noteResumeAt()
+            setRecovering(true)
             reload()
           },
           clock
@@ -423,6 +515,8 @@ export function attachNativeHls(
     stopWatching?.()
     if (timer != null) clock.clearTimeout(timer)
     timer = undefined
+    cancelRestoreCheck()
+    setRecovering(false)
     video.removeEventListener('play', onPlay)
     video.removeEventListener('pause', onPause)
     video.removeEventListener('canplay', recovered)

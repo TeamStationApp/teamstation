@@ -22,10 +22,24 @@ import { measureBoxes } from '../test/measureBoxes'
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { pageOfGames } from '../test/pageOf'
 import { App, stackFor } from './App'
+import type { Route } from './navigation/routes'
 
 describe('team route frames', () => {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
+  it('plays a game opened at a moment, and a live one opened at its Videos', () => {
+    const opened = (
+      route: Omit<Extract<Route, { name: 'game' }>, 'name' | 'gameId'>
+    ): unknown =>
+      stackFor({ name: 'game', gameId: 'gam1', ...route }).home!.at(-1)
+    expect(opened({ tab: 'watch' })).deep.include({
+      tab: 'watch',
+      autoPlay: 'live'
+    })
+    expect(opened({ videoId: 'v1', at: 30 })).deep.include({ autoPlay: true })
+    expect(opened({ tab: 'info' })).deep.include({ autoPlay: false })
+  })
+
   it('puts season settings under a season’s date-range screen opened by its address', () => {
     const route = {
       name: 'seasonTimeFrame' as const,

@@ -51,6 +51,14 @@ export interface PlayIntent {
    * video, as it always has.
    */
   isLive?: () => boolean | Promise<boolean>
+  /**
+   * The player is loading itself afresh (true) and has pictures again
+   * (false). A pause between the two is the player's own — a reset element
+   * is paused — not the viewer's, and an owner that reads its pauses as the
+   * viewer's wish must not take that one as a wish to stop: the reload plays
+   * on only if the viewer still wants it.
+   */
+  onRecovery?: (recovering: boolean) => void
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
   /**

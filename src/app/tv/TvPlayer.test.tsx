@@ -1247,6 +1247,102 @@ describe('TV game playback entry', () => {
     expect(document.querySelectorAll('video')).length(2)
     expect(document.body.textContent).not.contains('Retry video')
   })
+  it('opens a failed live camera again while the others play, and clears its notice once it loads', async () => {
+    live = true
+    await render()
+    const before = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of before) {
+        Object.defineProperty(video, 'duration', {
+          configurable: true,
+          value: 60
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    await act(async () => {
+      Object.defineProperty(before[0], 'error', {
+        configurable: true,
+        value: { code: -12888, message: 'playlist unchanged' }
+      })
+      before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+      await pause()
+    })
+    expect(document.body.textContent).contains(
+      'Angle 0: video unavailable at this moment'
+    )
+    expect(document.body.textContent).not.contains('Angle 1: video unavailable')
+    expect(document.body.textContent).not.contains('cameras could not play')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 2100))
+    })
+    const after = [...document.querySelectorAll('video')]
+    expect(after).length(4)
+    expect(after[0]).not.equals(before[0])
+    expect(after.slice(1)).deep.equals(before.slice(1))
+    await act(async () => {
+      Object.defineProperty(after[0], 'duration', {
+        configurable: true,
+        value: 60
+      })
+      after[0].dispatchEvent(
+        new window.Event('durationchange', { bubbles: true })
+      )
+      await pause()
+    })
+    expect(document.body.textContent).not.contains('video unavailable')
+    expect(document.body.textContent).not.contains('Retry video')
+  })
+
+  it('backs a live camera that loads and fails again off further, rather than from the start', async () => {
+    live = true
+    await render()
+    const loadAll = async (videos: HTMLVideoElement[]): Promise<void> => {
+      await act(async () => {
+        for (const video of videos) {
+          Object.defineProperty(video, 'duration', {
+            configurable: true,
+            value: 60
+          })
+          video.dispatchEvent(
+            new window.Event('durationchange', { bubbles: true })
+          )
+        }
+        await pause()
+      })
+    }
+    const fail = async (video: HTMLVideoElement): Promise<void> => {
+      await act(async () => {
+        Object.defineProperty(video, 'error', {
+          configurable: true,
+          value: { code: -12888, message: 'playlist unchanged' }
+        })
+        video.dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+    }
+    const wait = async (ms: number): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, ms))
+      })
+    }
+    const first = [...document.querySelectorAll('video')]
+    await loadAll(first)
+    await fail(first[0])
+    await wait(2100)
+    const second = document.querySelectorAll('video')[0]
+    expect(second).not.equals(first[0])
+    // It loads, and fails again at once: the next wait is the second, 4 s.
+    await loadAll([second])
+    await fail(second)
+    await wait(2100)
+    expect(document.querySelectorAll('video')[0]).equals(second)
+    await wait(2100)
+    expect(document.querySelectorAll('video')[0]).not.equals(second)
+  })
   it('plays available cameras when another URL fails or is still preparing', async () => {
     mixed = true
     await render()

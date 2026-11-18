@@ -1,4 +1,4 @@
-import { Script } from 'node:vm'
+import { runInNewContext, Script } from 'node:vm'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
@@ -54,6 +54,53 @@ describe("Chrome's frame log", function () {
     )
     // drawnPicture shows 17:04:05.678.
     expect(digits.join('')).equals('170405678')
+  })
+
+  it("reads each frame's clock from its box alone, not the whole frame", function () {
+    const picture = drawnPicture('SYNTHA', 4)
+    const reads: number[][] = []
+    let onFrame: (now: number, meta: Record<string, number>) => void = () => {}
+    const video = {
+      requestVideoFrameCallback: (callback: typeof onFrame) => {
+        onFrame = callback
+      },
+      getBoundingClientRect: () => ({})
+    }
+    const tile = {
+      getAttribute: () => 'SynthA angle',
+      getBoundingClientRect: () => ({}),
+      querySelector: () => video
+    }
+    const context = {
+      drawImage: () => undefined,
+      getImageData: (x: number, y: number, w: number, h: number) => {
+        reads.push([x, y, w, h])
+        const data = new Uint8ClampedArray(w * h * 4)
+        for (let row = 0; row < h; row++) {
+          const from = ((y + row) * picture.width + x) * 4
+          data.set(picture.data.subarray(from, from + w * 4), row * w * 4)
+        }
+        return { data }
+      }
+    }
+    const window: Record<string, unknown> = {}
+    runInNewContext(frameLogScript(), {
+      window,
+      document: {
+        createElement: () => ({ getContext: () => context }),
+        querySelectorAll: (selector: string) =>
+          selector === 'video' ? [video] : [tile]
+      },
+      performance: { timeOrigin: 0 },
+      setInterval: () => 0
+    })
+    onFrame(0, { presentedFrames: 1, mediaTime: 0, expectedDisplayTime: 0 })
+    // drawnPicture shows 17:04:05.678.
+    expect((window.__tsFrames as unknown[][])[0][4]).equals(
+      ((17 * 60 + 4) * 60 + 5) * 1000 + 678
+    )
+    const [[, , w, h]] = reads
+    expect(w * h).lessThan((320 * 180) / 4)
   })
 
   it('installs a logger that parses, and a drain that hands over and empties the log', function () {
@@ -119,6 +166,34 @@ describe("Chrome's frame log", function () {
     expect(
       analysis.spreads.every(s => s.atMs < 14_000 || s.atMs >= 18_000)
     ).equals(true)
+  })
+
+  it('compares the moments cameras show, when their clocks started apart', function () {
+    // Fixture clocks: SynthB's camera started 300 ms after SynthA's, so its
+    // clock reads 300 ms less for the same moment.
+    const started = { SynthA: 1_000_000, SynthB: 1_000_300 }
+    const fixture = (start: number) => (ms: number) => ms + 1_000_000 - start
+    const frames = [
+      ...run('SynthA', 0, 4_000, fixture(started.SynthA)),
+      ...run('SynthB', 0, 4_000, fixture(started.SynthB))
+    ].map(f => ({ ...f, displayMs: f.displayMs + 1_000_000 }))
+    const raw = analyseFrames(frames)
+    expect(raw.spreads[1].spreadMs).closeTo(300, 40)
+    const placed = analyseFrames(frames, [], {
+      clockBase: angle => ({
+        startedAtMs: started[angle as 'SynthA' | 'SynthB'],
+        loopMs: 1_800_000
+      })
+    })
+    expect(placed.spreads[1].spreadMs).closeTo(0, 40)
+    // An angle whose publisher gave no base is left out of the spread, not compared raw.
+    const half = analyseFrames(frames, [], {
+      clockBase: angle =>
+        angle === 'SynthA'
+          ? { startedAtMs: started.SynthA, loopMs: 1_800_000 }
+          : undefined
+    })
+    expect(half.spreads).deep.equals([])
   })
 
   it('stalls an angle that stops for good until the end, and one that never presented a frame', function () {

@@ -459,6 +459,30 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     }
   })
 
+  it('in a browser, plays a live game opened at its Videos, and leaves a finished one still', async function () {
+    // A link to a game's Videos asks for play only when the video is live.
+    for (const [status, plays] of [
+      ['live', true],
+      ['ready', false]
+    ] as const) {
+      await page([{ ...videoOf('v1', START), status }], {
+        initialTab: 'watch',
+        autoPlay: 'live'
+      })
+      const video = inline()
+      const { played } = drive(video, 0)
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(played() > 0, status).equals(plays)
+      // Silent, as every browser lets a picture start on its own.
+      if (plays) expect(video.muted, status).equals(true)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
   it('in a browser, keeps to a highlight chosen before a linked moment has loaded', async function () {
     await page(
       [videoOf('v1', START)],
@@ -956,6 +980,165 @@ describe('Videos tab autoplay', function () {
         expect(video.paused).equals(false)
         expect(video.muted).equals(true)
       })
+
+  it('gives up on a recording before it played, and still opens the new address at the link’s moment', async function () {
+    this.timeout(20000)
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    try {
+      ready = 0
+      let asks = 0
+      await page(
+        [videoOf('v1', START)],
+        { autoPlay: false, startAtSec: 600 },
+        {
+          playback: async videoId => {
+            asks += 1
+            return {
+              ...playable(videoId),
+              url: `/media/${videoId}/master.m3u8?ask=${asks}`
+            }
+          }
+        }
+      )
+      const first = inline()
+      Object.defineProperty(first, 'error', {
+        configurable: true,
+        get: () => ({ code: 2 })
+      })
+      // It fails before any metadata, so before any position of its own.
+      for (const waitMs of [1100, 2100, 4100, 0]) {
+        await act(async () => {
+          first.dispatchEvent(new window.Event('error'))
+          await new Promise(resolve => setTimeout(resolve, waitMs))
+        })
+      }
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+      expect(asks).equals(2)
+      const video = inline()
+      expect(video.src).includes('ask=2')
+      await act(async () => {
+        ready = 4
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(video.currentTime, 'the link’s moment, not the start').equals(600)
+    } finally {
+      if (canPlay != null) Object.defineProperty(proto, 'canPlayType', canPlay)
+      else Reflect.deleteProperty(proto, 'canPlayType')
+    }
+  })
+
+  for (const autoPlay of [false, 'live'] as const)
+    for (const watching of [true, false])
+      it(`asks for a new address when Safari's player gives up on a live game${autoPlay === 'live' ? ' opened at its Videos' : ''}, and ${watching ? 'plays it as the viewer was' : 'leaves it paused as the viewer had it'}`, async function () {
+        this.timeout(20000)
+        const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+        Object.defineProperty(proto, 'canPlayType', {
+          configurable: true,
+          value: () => 'maybe'
+        })
+        try {
+          let asks = 0
+          await page(
+            [{ ...videoOf('v1', START), status: 'live' }],
+            { autoPlay },
+            {
+              playback: async videoId => {
+                asks += 1
+                return {
+                  ...playable(videoId),
+                  url: `/media/${videoId}/master.m3u8?ask=${asks}`
+                }
+              }
+            }
+          )
+          const first = inline()
+          expect(first.src).includes('ask=1')
+          await act(async () => {
+            if (watching) first.dispatchEvent(new window.Event('play'))
+            else {
+              // Paused by the viewer, though it started on its own.
+              first.pause()
+              first.dispatchEvent(new window.Event('pause'))
+            }
+          })
+          // Four failures, each after the wait the player gives the one
+          // before, and it gives up on the address.
+          Object.defineProperty(first, 'error', {
+            configurable: true,
+            get: () => ({ code: 2 })
+          })
+          const before = plays.length
+          for (const waitMs of [1100, 2100, 4100, 0]) {
+            await act(async () => {
+              first.dispatchEvent(new window.Event('error'))
+              await new Promise(resolve => setTimeout(resolve, waitMs))
+            })
+          }
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 50))
+          })
+          expect(asks).equals(2)
+          const video = inline()
+          expect(video.src).includes('ask=2')
+          expect(plays.length > before).equals(watching)
+          expect(video.paused).equals(!watching)
+        } finally {
+          if (canPlay != null)
+            Object.defineProperty(proto, 'canPlayType', canPlay)
+          else Reflect.deleteProperty(proto, 'canPlayType')
+        }
+      })
+
+  it("plays a live game on after Safari's player reloads itself, though the reset said pause", async function () {
+    this.timeout(10000)
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    try {
+      await page([{ ...videoOf('v1', START), status: 'live' }], {
+        autoPlay: false
+      })
+      const video = inline()
+      await act(async () => {
+        await video.play()
+        video.dispatchEvent(new window.Event('play'))
+      })
+      Object.defineProperty(video, 'error', {
+        configurable: true,
+        get: () => ({ code: 2 })
+      })
+      const before = plays.length
+      await act(async () => {
+        video.dispatchEvent(new window.Event('error'))
+        // The element resets itself, and says it is paused.
+        video.pause()
+        video.dispatchEvent(new window.Event('pause'))
+        await new Promise(resolve => setTimeout(resolve, 1100))
+      })
+      expect(plays.length, 'played with the reload').greaterThan(before)
+      expect(video.paused).equals(false)
+      // Once it has pictures again, a pause is the viewer's.
+      await act(async () => {
+        video.dispatchEvent(new window.Event('canplay'))
+        video.pause()
+        video.dispatchEvent(new window.Event('pause'))
+        video.dispatchEvent(new window.Event('error'))
+        await new Promise(resolve => setTimeout(resolve, 2100))
+      })
+      expect(video.paused).equals(true)
+    } finally {
+      if (canPlay != null) Object.defineProperty(proto, 'canPlayType', canPlay)
+      else Reflect.deleteProperty(proto, 'canPlayType')
+    }
+  })
 
   it('starts a paused recording at its saved position when Videos is selected again', async function () {
     await page([videoOf('v1', START)], { initialTab: 'boxScore' })

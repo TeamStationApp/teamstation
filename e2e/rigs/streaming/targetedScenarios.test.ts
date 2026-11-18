@@ -22,6 +22,7 @@ import {
   type WatcherRole
 } from './targeted'
 import {
+  ALIGN_AFTER_MS,
   angleEnds,
   coldJoin,
   drift,
@@ -30,6 +31,7 @@ import {
   panelRowScript,
   publisherOutage,
   receiverOutage,
+  streamCuts,
   tvCameras
 } from './targetedScenarios'
 
@@ -54,6 +56,10 @@ type Bug =
   | 'notRecordingYet'
   /** A camera that is out or ended loses its tile, rather than saying so. */
   | 'hidesOut'
+  /** Its camera shows again 8 s after the hole ends. */
+  | 'slowBack'
+  /** Its player bridges a hole: it never shows the camera out. */
+  | 'bridges'
 
 interface FakeWatcher extends Watcher {
   calls: string[]
@@ -110,9 +116,13 @@ function watcher(
     const at = shown(head, t)
     const tiles = world.labels.map((angle): LookTile => {
       const endedAt = world.ended.get(angle)
-      const out = (world.holes.get(angle) ?? []).some(
-        ([start, end]) => (at >= start && at < end) || (t >= start && t < end)
-      )
+      const late = bugs.includes('slowBack') ? 8000 : 0
+      const out =
+        !bugs.includes('bridges') &&
+        (world.holes.get(angle) ?? []).some(
+          ([start, end]) =>
+            (at >= start && at < end + late) || (t >= start && t < end + late)
+        )
       if (bugs.includes('silent')) {
         return { angle, advancing: false, notice: null, wallMs: at }
       }
@@ -231,6 +241,7 @@ function session(
       },
       // The hole ends on the event loop's next turn: the scenario's own work
       // meanwhile (its sleeps and looks on this clock) is all done by then.
+      clockBase: () => undefined,
       cut: async (seconds: number): Promise<void> => {
         const start = now()
         const end = start + seconds * 1000
@@ -265,7 +276,7 @@ function session(
     owner,
     record,
     takeStartMs: T0,
-    offsetMinutes: 0,
+    clockBase: () => undefined,
     streamId: label => `id-${label}`,
     look: async w => byWatcher.get(w)!.look(),
     seekTo: async (w, targetMs) => {
@@ -853,4 +864,353 @@ describe('the TV scenario', function () {
       fake.steps.find(step => step.step === 'tv-skip-inside')?.verdict
     ).equals('blocked')
   })
+})
+
+describe('the stream-cuts scenario', function () {
+  const FOUR = ['SynthA', 'SynthB', 'SynthC', 'SynthD']
+
+  it('cuts SynthA for 4 to 64 s in turn, and passes watchers that are back at once', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [
+      watcher(world, 'chrome'),
+      watcher(world, 'iphone')
+    ])
+    await streamCuts(4).run(fake.session)
+    expect(world.publisherCalls.slice(0, 5)).deep.equals([
+      'cut SynthA 4',
+      'cut SynthA 8',
+      'cut SynthA 16',
+      'cut SynthA 32',
+      'cut SynthA 64'
+    ])
+    expect(new Set(fake.steps.map(step => step.verdict))).deep.equals(
+      new Set(['passed'])
+    )
+    expect(fake.steps.length).equals(4 * world.publisherCalls.length)
+    expect(fake.steps.map(step => step.step).slice(0, 4)).deep.equals([
+      'cut-4s-1',
+      'cut-4s-1',
+      'aligned-after-cut-4s-1',
+      'aligned-after-cut-4s-1'
+    ])
+    expect(fake.steps[0].observed).includes(
+      'back before the other angles reached'
+    )
+  })
+
+  it('fails a watcher that never shows the camera again, and names what it showed', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [
+      watcher(world, 'chrome'),
+      watcher(world, 'android', ['stalled'])
+    ])
+    await streamCuts(1).run(fake.session)
+    expect(verdictsOf(fake.steps).slice(0, 2)).deep.equals([
+      ['chrome', 'cut-4s-1', 'passed'],
+      ['android', 'cut-4s-1', 'failed']
+    ])
+    expect(fake.steps[1].observed).includes('SynthA not back after 90 s')
+  })
+
+  it('passes a watcher with no clock that plays through the hole', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'tv', ['noClocks', 'bridges'])])
+    await streamCuts(0.1).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([['tv', 'cut-4s-1', 'passed']])
+    expect(fake.steps[0].observed).includes('no stall seen')
+  })
+
+  it('times a watcher with no clock from its stall at the hole', async function () {
+    const world = makeWorld(FOUR)
+    const tv = watcher(world, 'tv', ['noClocks'])
+    tv.head.anchor = T0 - 10_000
+    tv.head.anchorAt = T0
+    const fake = session(world, [tv])
+    await streamCuts(0.1).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([['tv', 'cut-4s-1', 'passed']])
+    expect(fake.steps[0].observed).includes(
+      'stalled at the hole and moved again'
+    )
+  })
+
+  it('takes neither one still look nor a missing tile for a stall', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'tv', ['noClocks', 'bridges'])])
+    const look = fake.session.look
+    let looks = 0
+    fake.session.look = async w => {
+      const seen = await look(w)
+      if (world.publisherCalls.length === 0) return seen
+      looks += 1
+      // A missed motion read, and later a look with the tile gone.
+      if (looks === 2) {
+        return {
+          ...seen,
+          tiles: (seen.tiles ?? []).map(t =>
+            t.angle === 'SynthA' ? { ...t, advancing: false } : t
+          )
+        }
+      }
+      if (looks === 5) {
+        return {
+          ...seen,
+          tiles: (seen.tiles ?? []).filter(t => t.angle !== 'SynthA')
+        }
+      }
+      return seen
+    }
+    await streamCuts(0.1).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([['tv', 'cut-4s-1', 'passed']])
+    expect(fake.steps[0].observed).includes('no stall seen')
+  })
+
+  it('times a watcher with no clock from a stall that began during the cut', async function () {
+    const world = makeWorld(FOUR)
+    // Live, it stalls as the cut starts, and shows the camera 8 s after the
+    // 4 s cut ends: 8 s late. Timed from the return, it looked 4 s late.
+    const fake = session(world, [
+      watcher(world, 'tv', ['noClocks', 'slowBack'])
+    ])
+    await streamCuts(0.1).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([['tv', 'cut-4s-1', 'failed']])
+    expect(fake.steps[0].observed).match(/moved again [6-9]\.\d s after/)
+  })
+
+  it('fails a watcher with no clock that stalls and never moves again', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'tv', ['noClocks', 'stalled'])])
+    await streamCuts(0.1).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([['tv', 'cut-4s-1', 'failed']])
+    expect(fake.steps[0].observed).includes('stalled and not back after 94 s')
+  })
+
+  it('fails a watcher whose camera comes back out of step with the rest', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'chrome')])
+    const look = fake.session.look
+    // SynthA skips its hole and runs 4.4 s ahead of the others once back.
+    fake.session.look = async w => {
+      const seen = await look(w)
+      return world.publisherCalls.length === 0
+        ? seen
+        : {
+            ...seen,
+            tiles: (seen.tiles ?? []).map(t =>
+              t.angle === 'SynthA' && t.wallMs != null
+                ? { ...t, wallMs: t.wallMs + 4400 }
+                : t
+            )
+          }
+    }
+    await streamCuts(0.1).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([
+      ['chrome', 'cut-4s-1', 'passed'],
+      ['chrome', 'aligned-after-cut-4s-1', 'failed']
+    ])
+    expect(fake.steps[1].observed).includes('spread 4400 ms')
+  })
+
+  it('fails a watcher with an angle left still after the cut, though the rest line up', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'iphone')])
+    const look = fake.session.look
+    fake.session.look = async w => {
+      const seen = await look(w)
+      return world.publisherCalls.length === 0
+        ? seen
+        : {
+            ...seen,
+            tiles: (seen.tiles ?? []).map(t =>
+              t.angle === 'SynthA'
+                ? { ...t, advancing: false, wallMs: null }
+                : t
+            )
+          }
+    }
+    await streamCuts(0.1).run(fake.session)
+    console.log(
+      JSON.stringify(
+        fake.steps.map(s => [s.step, s.verdict, s.observed]),
+        null,
+        1
+      ),
+      JSON.stringify(world.holes.get('SynthA'))
+    )
+    const aligned = fake.steps.find(s => s.step.startsWith('aligned-'))!
+    expect(aligned.verdict).equals('failed')
+    expect(aligned.observed).includes('SynthA still')
+  })
+
+  it('judges a grid that fell further behind during the cut once its own picture reaches the return', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'chrome')])
+    const look = fake.session.look
+    // Once the cut starts the grid is 20 s further behind. SynthA shows its
+    // first picture after the hole as the stream returns, then waits, still,
+    // while the grid's moment is inside its hole.
+    fake.session.look = async w => {
+      const seen = await look(w)
+      if (world.publisherCalls.length === 0) return seen
+      const behind = seen.atMs - 20_000
+      const end = world.holes.get('SynthA')![0][1]
+      return {
+        ...seen,
+        tiles: (seen.tiles ?? []).map(t => {
+          if (t.angle !== 'SynthA' || behind >= end) {
+            return { ...t, advancing: true, notice: null, wallMs: behind }
+          }
+          return behind < end - 18_000
+            ? { ...t, advancing: true, notice: null, wallMs: end }
+            : { ...t, advancing: false, notice: null, wallMs: null }
+        })
+      }
+    }
+    await streamCuts(0.1).run(fake.session)
+    const aligned = fake.steps.find(s => s.step.startsWith('aligned-'))
+    expect(aligned?.verdict).equals('passed')
+  })
+
+  it('finishes a whole ladder, the 64 s cut included, however long its rounds take', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'chrome')])
+    await streamCuts(0.1, { fullLadders: 1 }).run(fake.session)
+    expect(world.publisherCalls).deep.equals([
+      'cut SynthA 4',
+      'cut SynthA 8',
+      'cut SynthA 16',
+      'cut SynthA 32',
+      'cut SynthA 64'
+    ])
+  })
+
+  it('does not count a single picture back while its clock cannot be read', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'chrome')])
+    const look = fake.session.look
+    let firstAfter: number | null = null
+    // Safari's one picture: for 20 s after the cut it reloads, "moving" with
+    // no clock to read, then plays.
+    fake.session.look = async w => {
+      const seen = await look(w)
+      // 10 s behind live: a 4 s cut is inside its cushion, held to 5 s.
+      const tiles = (seen.tiles ?? [])
+        .filter(t => t.angle === 'SynthA')
+        .map(t => ({
+          ...t,
+          wallMs: t.wallMs == null ? null : t.wallMs - 10_000
+        }))
+      if (world.publisherCalls.length === 0) return { ...seen, tiles }
+      firstAfter ??= seen.atMs
+      return {
+        ...seen,
+        tiles:
+          seen.atMs < firstAfter + 20_000
+            ? tiles.map(t => ({ ...t, advancing: true, wallMs: null }))
+            : tiles
+      }
+    }
+    await streamCuts(0.1).run(fake.session)
+    expect(fake.steps[0].verdict).equals('failed')
+    expect(fake.steps[0].observed).includes('SynthA back 1')
+  })
+
+  it('looks again at an angle still on one look before failing its alignment', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'iphone')])
+    const look = fake.session.look
+    let flagged = false
+    fake.session.look = async w => {
+      const seen = await look(w)
+      const end = world.holes.get('SynthA')?.[0][1]
+      // SynthB reads still once, on the first look 10 s after the return.
+      if (!flagged && end != null && seen.atMs >= end + ALIGN_AFTER_MS) {
+        flagged = true
+        return {
+          ...seen,
+          tiles: (seen.tiles ?? []).map(t =>
+            t.angle === 'SynthB' ? { ...t, advancing: false } : t
+          )
+        }
+      }
+      return seen
+    }
+    await streamCuts(0.1).run(fake.session)
+    expect(flagged).equals(true)
+    const aligned = fake.steps.find(s => s.step.startsWith('aligned-'))!
+    expect(aligned.verdict).equals('passed')
+  })
+
+  it('asks a single picture only to come back once a cut outlasts its cushion', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'chrome')])
+    const look = fake.session.look
+    let firstAfter: number | null = null
+    // One picture, 2 s behind live before a 4 s cut: back 12 s after.
+    fake.session.look = async w => {
+      const seen = await look(w)
+      const tiles = (seen.tiles ?? [])
+        .filter(t => t.angle === 'SynthA')
+        .map(t => ({ ...t, wallMs: t.wallMs == null ? null : t.wallMs - 2000 }))
+      if (world.publisherCalls.length === 0) return { ...seen, tiles }
+      firstAfter ??= seen.atMs
+      return {
+        ...seen,
+        tiles:
+          seen.atMs < firstAfter + 12_000
+            ? tiles.map(t => ({ ...t, advancing: false, wallMs: null }))
+            : tiles
+      }
+    }
+    await streamCuts(0.1).run(fake.session)
+    expect(fake.steps[0].verdict).equals('passed')
+    expect(fake.steps[0].observed).includes('cushion used up')
+  })
+
+  it('takes off the delay a single picture ran behind before the cut', async function () {
+    const world = makeWorld(FOUR)
+    const behind = watcher(world, 'chrome')
+    behind.head.anchor = T0 - 3000
+    behind.head.anchorAt = T0
+    const fake = session(world, [behind])
+    // Safari's one picture: SynthA alone.
+    const look = fake.session.look
+    fake.session.look = async w => {
+      const seen = await look(w)
+      return {
+        ...seen,
+        tiles: (seen.tiles ?? []).filter(t => t.angle === 'SynthA')
+      }
+    }
+    await streamCuts(0.1).run(fake.session)
+    expect(fake.steps.map(step => step.verdict)).deep.equals(['passed'])
+    expect(fake.steps[0].observed).includes('beyond the 3.0 s it ran behind')
+  })
+
+  for (const [pastMs, verdict] of [
+    [8000, 'failed'],
+    [4000, 'passed']
+  ] as const)
+    it(`judges a grid by its other angles: SynthA missing while they get ${pastMs / 1000} s past the return is ${verdict}`, async function () {
+      const world = makeWorld(FOUR)
+      const fake = session(world, [watcher(world, 'iphone')])
+      const look = fake.session.look
+      fake.session.look = async w => {
+        const seen = await look(w)
+        if (world.publisherCalls.length === 0) return seen
+        const end = world.holes.get('SynthA')![0][1]
+        const shownBack = seen.atMs >= end + pastMs
+        return {
+          ...seen,
+          tiles: (seen.tiles ?? []).map(t =>
+            t.angle !== 'SynthA' || shownBack
+              ? t
+              : { ...t, advancing: false, wallMs: null }
+          )
+        }
+      }
+      await streamCuts(0.1).run(fake.session)
+      const cut = fake.steps.find(s => s.step === 'cut-4s-1')!
+      expect(cut.verdict).equals(verdict)
+      expect(cut.observed).includes("past the stream's return without it")
+    })
 })

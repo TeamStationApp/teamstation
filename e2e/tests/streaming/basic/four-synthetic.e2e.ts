@@ -12,7 +12,8 @@ import { defineTargeted } from '../../../rigs/streaming/targetedSpec'
  * scrubbed on a schedule. It records whether every angle keeps
  * moving, recovers within 10 s of each scrub and lines up within a second,
  * every frame Chrome presents, and memory per process. `SOAK_MINUTES` sets
- * its length, and `BASIC_WATCHERS` (a comma list) leaves watchers out. See
+ * its length, `BASIC_WATCHERS` (a comma list) leaves watchers out, and
+ * `SOAK_FRAME_LOG=0` stops Chrome logging every frame. See
  * e2e/tests/streaming/README.md.
  */
 export default defineTargeted({
@@ -25,12 +26,15 @@ export default defineTargeted({
   covers: [
     'e2e/rigs/streaming/**',
     'src/app/player/**',
+    'src/app/tv/**',
+    'src/app/screens/GameScreen.tsx',
     'src/server/live/**',
     'src/server/ingest/**'
   ],
   steps: basicScrub({
     minutes: minutesFromEnv(process.env) ?? 30,
-    watchers: watchersFromEnv(process.env)
+    watchers: watchersFromEnv(process.env),
+    frameLog: process.env.SOAK_FRAME_LOG !== '0'
   }),
   judge: ({ failed, steps }) => {
     expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])

@@ -37,6 +37,7 @@ const HANDLE: StreamingHandle = {
   hlsRoot: '/example/hls',
   databaseUrl: 'postgres://u:p@db.example.test/ts?sslmode=require',
   rtmp: 'rtmp://203.0.113.7:1935/live/',
+  publisher: { url: 'https://pub.example.test/__e2e/publishers', token: 'pt' },
   serverConfig: { sessionSecret: 's', live: { rtmpPort: 1935 } }
 }
 
@@ -102,23 +103,24 @@ describe('the soak wiring', function () {
       tvRemote: { command: ['python3', 'remote.py'], env: { TEAM: 't' } },
       ndiCapture: { command: ['python3', 'ndi.py', '{out}'] },
       tvJoinSteps: ['app:app.teamstation.tv', 'select'],
+      // Read no more: the cameras are on the publisher droplet, and their clocks count from their start.
       ffmpeg: '/opt/ffmpeg',
       offsetMinutes: -480
     })
     expect(settings.tvRemote.env).deep.equals({ TEAM: 't' })
-    expect(settings.offsetMinutes).equals(-480)
+    expect(settings).not.have.property('ffmpeg')
+    expect(settings).not.have.property('offsetMinutes')
     expect(
       soakSettings({
         tvRemote: { command: ['r'] },
         ndiCapture: { command: ['n'] },
-        tvJoinSteps: [],
-        ffmpeg: 'f'
+        tvJoinSteps: []
       }).tvRemote.env
     ).deep.equals({})
     const error = thrown(() => soakSettings(undefined))
     expect(error).instanceOf(BlockedError)
     expect(error.message).includes(
-      'no tvRemote.command, ndiCapture.command, tvJoinSteps, ffmpeg'
+      'no tvRemote.command, ndiCapture.command, tvJoinSteps'
     )
   })
 
@@ -126,8 +128,7 @@ describe('the soak wiring', function () {
     const base = {
       tvRemote: { command: ['r'] },
       ndiCapture: { command: ['n'] },
-      tvJoinSteps: [],
-      ffmpeg: 'f'
+      tvJoinSteps: []
     }
     expect(
       soakSettings({
@@ -423,9 +424,7 @@ function partsRig(): {
     settings: {
       tvRemote: { command: ['r'], env: {} },
       ndiCapture: { command: ['n'] },
-      tvJoinSteps: [],
-      ffmpeg: '/opt/ffmpeg',
-      offsetMinutes: -480
+      tvJoinSteps: []
     },
     world: {
       gameId: 'g1',
