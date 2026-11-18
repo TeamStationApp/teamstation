@@ -23,6 +23,7 @@ import {
   STOPPED_BEFORE_RUN,
   TOO_LARGE_NOW,
   TOOL_LIMIT,
+  TOOL_LIMIT_NOTICE,
   type TurnEvent
 } from './agent'
 import { storeAttachment } from './attachments'
@@ -370,6 +371,17 @@ describe("Tess's agent loop", function () {
     const finalResult = closing.messages.at(-1).content[0]
     expect(finalResult.content).match(/^HTTP 200/)
     expect(finalResult.is_error).not.equals(true)
+    // Only the last tool round tells her the next reply has no tools.
+    expect(closing.messages.at(-1).content.at(-1)).deep.include({
+      type: 'text',
+      text: TOOL_LIMIT_NOTICE
+    })
+    for (const call of calls.slice(1, -1))
+      expect(
+        (call.messages.at(-1).content as Array<{ type: string }>).every(
+          block => block.type === 'tool_result'
+        )
+      ).equals(true)
     expectValidRequest(closing.messages)
     const messages = await stored()
     expect(messages.at(-1)).deep.equals({
