@@ -77,6 +77,9 @@ it.
   sorted by `eslint-config-standard-kit`.
 - Tests are `<subject>.test.ts` beside their subject, run by mocha through
   sucrase — `npm test` from this directory sweeps `src/**`.
+- **Every feature branch updates `CHANGELOG.md`** under `## Unreleased`, one
+  `- added:`, `- changed:` or `- fixed:` line per change. See `AGENTS.md`,
+  "Update the changelog".
 
 ## Running it
 
