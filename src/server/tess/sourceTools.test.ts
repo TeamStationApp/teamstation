@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'mocha'
 import { FIXTURE_MAP, sourceIndexFixture } from '../../test/sourceIndexFixture'
 import {
   DIRECTORY_MAP,
+  docSummary,
   isSourceTool,
   openSourceIndex,
   SOURCE_LIMITS,
@@ -307,6 +308,21 @@ describe('Tess indexed source tools', function () {
     expect(
       index.run('source_list_directory', { path: 'src/skipped' }).is_error
     ).equals(true)
+  })
+  it('summarizes a doc by its first sentence across wrapped lines', () => {
+    expect(
+      docSummary(
+        "One turn of a conversation with Tess: the person's message stored, the\nreply streamed. Then more."
+      )
+    ).equals(
+      "One turn of a conversation with Tess: the person's message stored, the reply streamed."
+    )
+    expect(
+      docSummary('No full stop here\nstill going\n\nNext paragraph.')
+    ).equals('No full stop here still going')
+    expect(docSummary('Version 1.5 is current. Older.')).equals(
+      'Version 1.5 is current.'
+    )
   })
   it('reads paths written relative to src, as the map writes them', () => {
     expect(run('source_list_directory', { path: 'bulk' })).equals(

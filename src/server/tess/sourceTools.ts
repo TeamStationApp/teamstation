@@ -364,10 +364,17 @@ function readLines(file: FileRow, start: number): string {
     output.push(`[More lines: read again with startLine ${at + 1}.]`)
   return output.join('\n')
 }
+/** A doc's first sentence, across wrapped lines, or its first paragraph. */
+export function docSummary(doc: string): string {
+  const paragraph = doc
+    .split(/\n\s*\n/)[0]
+    .replace(/\s+/g, ' ')
+    .trim()
+  return /^.*?[.!?](?=\s|$)/.exec(paragraph)?.[0] ?? paragraph
+}
 function symbolText(row: SymbolRow, definition: boolean): string {
   const span = definition ? `${row.line}` : `${row.line}-${row.end_line}`
-  const doc =
-    definition && row.doc != null ? ` — ${row.doc.split('\n')[0]}` : ''
+  const doc = definition && row.doc != null ? ` — ${docSummary(row.doc)}` : ''
   return `${row.path}:${span} ${row.kind} ${row.name.slice(0, 500)} — ${row.signature}${doc}`.slice(
     0,
     BUDGET - 1
