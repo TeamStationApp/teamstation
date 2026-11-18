@@ -5,7 +5,8 @@ import { describe, it } from 'mocha'
 
 const {
   chatCoreResolvePlugin,
-  resolveChatCore
+  resolveChatCore,
+  resolveSolver
 }: {
   chatCoreResolvePlugin: (root?: string) => {
     name: string
@@ -17,6 +18,11 @@ const {
     }) => void
   }
   resolveChatCore: (
+    resolveDir: string,
+    importPath: string,
+    root?: string
+  ) => string | undefined
+  resolveSolver: (
     resolveDir: string,
     importPath: string,
     root?: string
@@ -53,6 +59,20 @@ describe('the chat core resolver for bundles that run in Node', function () {
     )
   })
 
+  it('sends the Auto-Scheduler engine to engine.ts, and leaves its twins alone', function () {
+    const engine = join(root, 'src', 'common', 'scheduler', 'engine')
+    expect(
+      resolveSolver(join(root, 'src/common'), './scheduler/engine', root)
+    ).equals(`${engine}.ts`)
+    for (const twin of ['./engine.web', './engine.native', './nativeEngine'])
+      expect(
+        resolveSolver(join(root, 'src/common/scheduler'), twin, root)
+      ).equals(undefined)
+    expect(resolveSolver(join(root, 'src/app'), './engine', root)).equals(
+      undefined
+    )
+  })
+
   it('as a plugin: resolves the core, and keeps .node files external', function () {
     const hooks: Array<{
       filter: RegExp
@@ -65,7 +85,8 @@ describe('the chat core resolver for bundles that run in Node', function () {
         hooks.push({ filter: options.filter, callback })
       }
     })
-    const [coreHook, addonHook] = hooks
+    expect(hooks).lengthOf(3)
+    const [coreHook, engineHook, addonHook] = hooks
     expect(coreHook.filter.test('../chatCrypto/core')).equals(true)
     expect(coreHook.filter.test('./score')).equals(false)
     expect(
@@ -77,9 +98,25 @@ describe('the chat core resolver for bundles that run in Node', function () {
     expect(
       coreHook.callback({ path: './core', resolveDir: join(root, 'src/app') })
     ).equals(undefined)
+    const engine = join(root, 'src', 'common', 'scheduler', 'engine')
+    expect(engineHook.filter.test('../common/scheduler/engine')).equals(true)
+    expect(engineHook.filter.test('./engine.web')).equals(false)
+    expect(
+      engineHook.callback({
+        path: './scheduler/engine',
+        resolveDir: join(root, 'src/common')
+      })
+    ).deep.equals({ path: `${engine}.ts` })
+    expect(
+      engineHook.callback({ path: './engine', resolveDir: join(root, 'src') })
+    ).equals(undefined)
     expect(addonHook.filter.test('chat_crypto.node')).equals(true)
+    expect(addonHook.filter.test('scheduler.node')).equals(true)
     expect(
       addonHook.callback({ path: '/x/chat_crypto.node', resolveDir: root })
     ).deep.equals({ path: '/x/chat_crypto.node', external: true })
+    expect(
+      addonHook.callback({ path: '/x/scheduler.node', resolveDir: root })
+    ).deep.equals({ path: '/x/scheduler.node', external: true })
   })
 })

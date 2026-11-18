@@ -123,7 +123,12 @@ const tsSuites = [
   // is under the glob above); the pinned sources, doctest's and
   // Emscripten's among them.
   'src/common/scheduler/engine.test.ts',
-  'src/test/highsSource.integration.test.ts'
+  'src/test/highsSource.integration.test.ts',
+  // Exact only M6: the web's worker and wrapper, the phones' module and
+  // wrapper, and the bundled app tests' mapping to the Node engine.
+  'src/common/scheduler/engine.web.test.ts',
+  'src/app/platform/schedulerWorker.test.ts',
+  'src/test/chatCoreResolvePlugin.test.ts'
 ]
 
 if (unitOnly) {

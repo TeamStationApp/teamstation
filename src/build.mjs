@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 
 import buildInfoTools from '../scripts/build-info.cjs'
 import { buildWasm, findCargo } from '../scripts/chatCryptoBuild.mjs'
+import { buildWasm as buildSchedulerWasm } from '../scripts/schedulerBuild.mjs'
 import { buildServiceWorker } from '../scripts/serviceWorkerBuild.mjs'
 import { webSettings } from '../scripts/web-build-settings.mjs'
 import {
@@ -141,6 +142,48 @@ if (serve) {
   await workerContext.watch()
 }
 
+/**
+ * The Auto-Scheduler's engine and HiGHS, as our own WebAssembly
+ * (`scripts/schedulerBuild.mjs wasm`, with the pinned Emscripten), which the
+ * page asks for only when it builds a schedule: a worker of its own carrying
+ * Emscripten's glue ahead of `schedulerWorker.ts`, and the module beside it
+ * under a hashed name (plain `scheduler.wasm` under `--serve`). The bundle is
+ * told both and the module's sha384; `engine.web.ts` fetches the module,
+ * checks it, and posts it to the worker, which always instantiates from the
+ * posted bytes. Under `--serve` a change to the engine needs a restart.
+ */
+const scheduler = await buildSchedulerWasm()
+const schedulerWasmBytes = await readFile(scheduler.wasm)
+const schedulerWasmFile = serve
+  ? 'scheduler.wasm'
+  : `scheduler-${createHash('sha256').update(schedulerWasmBytes).digest('hex').slice(0, 16)}.wasm`
+const schedulerWorkerOptions = {
+  entryPoints: ['src/app/platform/schedulerWorker.ts'],
+  bundle: true,
+  outdir: out,
+  entryNames: serve ? 'scheduler-worker' : 'scheduler-worker-[hash]',
+  format: 'iife',
+  target: ['es2021'],
+  minify: !serve,
+  sourcemap: true,
+  metafile: true,
+  // The glue first, so `createSchedulerModule` is a global of the worker.
+  banner: { js: await readFile(scheduler.glue, 'utf8') }
+}
+for (const name of await readdirSafe(out))
+  if (/^(highs|scheduler)-worker-[A-Z0-9]+\.js(\.map)?$/i.test(name))
+    await rm(`${out}/${name}`)
+const schedulerWorkerBuild = await build(schedulerWorkerOptions)
+const schedulerWorkerFile = Object.keys(
+  schedulerWorkerBuild.metafile.outputs
+).find(name => name.endsWith('.js'))
+if (schedulerWorkerFile == null)
+  throw new Error('Scheduler worker build failed')
+if (serve) {
+  const schedulerContext = await context(schedulerWorkerOptions)
+  await schedulerContext.watch()
+}
+
 const options = {
   ...webSettings,
   entryPoints: ['src/app/web/index.tsx'],
@@ -178,6 +221,13 @@ const options = {
     TS_CHAT_WASM_INTEGRITY: JSON.stringify(integrityOf(wasmBytes)),
     TS_PASSWORD_WORKER_URL: JSON.stringify(
       '/' + workerFile.replace(/^dist\//, '')
+    ),
+    TS_SCHEDULER_WORKER_URL: JSON.stringify(
+      `/${path.basename(schedulerWorkerFile)}`
+    ),
+    TS_SCHEDULER_WASM_URL: JSON.stringify(`/${schedulerWasmFile}`),
+    TS_SCHEDULER_WASM_INTEGRITY: JSON.stringify(
+      integrityOf(schedulerWasmBytes)
     ),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // A dev-server stand-in for Apple's age-range answer. Production and a
@@ -274,6 +324,13 @@ for (const name of await readdirSafe(out)) {
   }
 }
 await writeFile(`${out}/${wasmFile}`, wasmBytes)
+for (const name of await readdirSafe(out))
+  if (
+    /^(highs|scheduler)-[0-9a-f]+\.wasm$/.test(name) &&
+    name !== schedulerWasmFile
+  )
+    await rm(`${out}/${name}`)
+await writeFile(`${out}/${schedulerWasmFile}`, schedulerWasmBytes)
 
 if (serve) {
   // No integrity here: the watch rebuilds `app.js` after this page is
