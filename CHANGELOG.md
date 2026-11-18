@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.0 (2026-11-18)
+
 - added: An animated launch splash over the stadium on every cold launch, on iPhone, iPad, Apple TV and Android
 - added: The phone keeps what its screens read and the pictures it drew, opens them with no signal, and scores from its own copy without waiting on the server. The offline banner sits at the bottom of the phone, under the tab bar.
 - added: User Management in Node administration: node administrators page through recent logins and device sessions, look people up, and change a person's name and photo
@@ -18,6 +20,7 @@
 - changed: Imported games carry TeamStation records on every play, so replay, box score, pitch counts, statistics and editing treat them like scored games. An outside scorer's unknown players are seated as guests.
 - changed: A team's coaching plan stays with its coaches. The scoring screen downloads only the defensive column of the inning in play.
 - changed: A league's and a season's People tabs list no players
+- changed: Creating a league or season inside one you already administer from above adds no separate administrator grant, and grants an inherited one covers are removed. The last-administrator check counts administration inherited from above; a team still keeps its own administrators.
 - changed: The game plan's inning columns grow with the window, up to 1206 points
 - changed: Clear and Help on the coaching and scoring sheets are brighter
 - changed: Node administration sits beside the account instead of inside Account
