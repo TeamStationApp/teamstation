@@ -5,6 +5,7 @@ import { after, before, beforeEach, describe, it } from 'mocha'
 import { TESS_MAX_IMAGE_BYTES } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { sseOf, streamEvents } from '../../test/anthropicStream'
+import { sourceIndexFixture } from '../../test/sourceIndexFixture'
 import {
   callTools,
   expectValidRequest,
@@ -33,7 +34,7 @@ import {
   SUMMARY_SYSTEM
 } from './compaction'
 import { loadConversation, STOPPED_NOTE } from './conversation'
-import { DIRECTORY_MAP, MAP_FIRST } from './sourceTools'
+import { SOURCE_UNAVAILABLE } from './sourceTools'
 import { READING_API, stepLabel } from './stepLabels'
 import { PROPOSED, TOOLS } from './tools'
 import { stopTurn, TURN_RUNNING, TURN_STOP_POLL_MS } from './turns'
@@ -111,6 +112,8 @@ describe("Tess's agent loop", function () {
       'source_list_directory',
       'source_read_file',
       'source_search',
+      'source_outline',
+      'source_find_definition',
       'api_get',
       'graphql_query',
       'confirmChange'
@@ -329,7 +332,7 @@ describe("Tess's agent loop", function () {
     ).deep.equals([])
   })
 
-  it('closes the round at the tenth tool response, so the next turn is valid', async () => {
+  it('executes 20 tool rounds, including round 11, then asks for a final answer', async () => {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1)
       model.reply(
         callTools([{ name: 'api_get', input: { path: '/me/roles' } }])
@@ -337,15 +340,36 @@ describe("Tess's agent loop", function () {
     model.reply(say('Here is what I found.'))
     await runTurn(w.deps(), w.user(101), { text: 'Look everything up' })
     const calls = model.messageCalls()
+    expect(MAX_TOOL_ROUNDS).equals(20)
     expect(calls).length(MAX_TOOL_ROUNDS + 1)
+    for (const round of [10, 11, 20])
+      expect(calls[round].messages.at(-1).content[0].content).match(/^HTTP 200/)
     expect(
       calls.slice(0, -1).every(call => call.tool_choice.type === 'auto')
     ).equals(true)
+    expect(
+      calls
+        .slice(1, 21)
+        .every(call =>
+          String(call.messages.at(-1).content[0].content).startsWith('HTTP 200')
+        )
+    ).equals(true)
+    if (process.env.TS_TESS_BOUNDARY_LOG === '1')
+      console.log(
+        JSON.stringify({
+          request: 'Look everything up',
+          executedToolRounds: calls.slice(1, 21).length,
+          rounds11Through20: 'HTTP 200',
+          toolLimit: MAX_TOOL_ROUNDS,
+          closingChoice: calls.at(-1)!.tool_choice
+        })
+      )
     const closing = calls.at(-1) as Block
     expect(closing.tool_choice).deep.equals({ type: 'none' })
     expect(closing.tools).length(TOOLS.length)
-    const limited = closing.messages.at(-1).content[0]
-    expect(limited).deep.include({ content: TOOL_LIMIT, is_error: true })
+    const finalResult = closing.messages.at(-1).content[0]
+    expect(finalResult.content).match(/^HTTP 200/)
+    expect(finalResult.is_error).not.equals(true)
     expectValidRequest(closing.messages)
     const messages = await stored()
     expect(messages.at(-1)).deep.equals({
@@ -503,95 +527,125 @@ describe("Tess's agent loop", function () {
     expect(result).deep.include({ content: TOO_LARGE_NOW, is_error: true })
   })
 
-  it('keeps source exploration locked in the map-read batch, then unlocks the next round', async () => {
-    const search = {
-      name: 'source_search',
-      input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+  it('uses targeted source in the first batch with the compact map in the cached prompt', async () => {
+    const f = sourceIndexFixture()
+    f.build()
+    try {
+      model.reply(
+        callTools([
+          {
+            id: 'find',
+            name: 'source_find_definition',
+            input: { name: 'MAX_TOOL_ROUNDS' }
+          },
+          {
+            id: 'search',
+            name: 'source_search',
+            input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+          }
+        ]),
+        say('The limit is 20.')
+      )
+      await runTurn({ ...w.deps(), sourceIndex: f.index }, w.user(101), {
+        text: 'Explain the limit.'
+      })
+      const calls = model.messageCalls()
+      expect(calls[0].system[1].text).includes(
+        'TeamStation source at commit fixture-release'
+      )
+      expect(calls[1].system).deep.equals(calls[0].system)
+      const results = calls[1].messages.at(-1).content as Block[]
+      expect(results.every(result => result.is_error !== true)).equals(true)
+      expect(results[1].content).includes('MAX_TOOL_ROUNDS = 20')
+      model.reply(
+        callTools([
+          {
+            name: 'source_read_file',
+            input: { path: 'src/server/tess/agent.ts' }
+          }
+        ]),
+        say('20 again.')
+      )
+      await runTurn({ ...w.deps(), sourceIndex: f.index }, w.user(101), {
+        text: 'Show it again.'
+      })
+      expect(
+        model.messageCalls().at(-1)!.messages.at(-1).content[0].content
+      ).includes('MAX_TOOL_ROUNDS = 20')
+    } finally {
+      f.close()
     }
-    model.reply(
-      callTools([
-        { id: 'map', name: 'source_read_file', input: { path: DIRECTORY_MAP } },
-        { ...search, id: 'same-batch' }
-      ]),
-      callTools([{ ...search, id: 'next-round' }]),
-      say('The limit is 10.')
-    )
-    await runTurn(w.deps(), w.user(101), {
-      text: 'Explain the tool-round limit.'
-    })
-    const first = model.messageCalls()[1].messages.at(-1).content as Block[]
-    expect(first.find(b => b.tool_use_id === 'map')?.content).includes(
-      'Source directory map'
-    )
-    expect(first.find(b => b.tool_use_id === 'same-batch')).deep.include({
-      content: MAP_FIRST,
-      is_error: true
-    })
-    const next = model.messageCalls()[2].messages.at(-1).content[0]
-    expect(next.is_error).not.equals(true)
-    expect(next.content).includes('MAX_TOOL_ROUNDS = 10')
   })
 
-  it('keeps source locked when fitting discards the map, until another complete map is retained', async () => {
-    const map = { name: 'source_read_file', input: { path: DIRECTORY_MAP } }
-    const search = {
-      name: 'source_search',
-      input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+  it('fits source results without a navigation gate, and retains the cached map across compaction', async () => {
+    const f = sourceIndexFixture()
+    f.build()
+    const deps = { ...w.deps(), sourceIndex: f.index }
+    try {
+      for (const text of ['one', 'two', 'three']) {
+        model.reply(say(text))
+        await runTurn(deps, w.user(101), { text })
+      }
+      model.calls.length = 0
+      model.reply(
+        callTools(
+          [
+            {
+              name: 'source_read_file',
+              input: { path: 'src/server/tess/agent.ts' }
+            }
+          ],
+          { input_tokens: inputCeiling - 18 }
+        ),
+        TOO_LONG,
+        say('Earlier context summarized.'),
+        callTools([
+          {
+            name: 'source_search',
+            input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+          }
+        ]),
+        say('The limit is 20.')
+      )
+      model.count(40000)
+      await runTurn(deps, w.user(101), { text: 'Explain the limit.' })
+      expect(model.messageCalls()[1].messages.at(-1).content[0]).includes({
+        content: TOO_LARGE_NOW,
+        is_error: true
+      })
+      const last = model.messageCalls().at(-1)!
+      expect(last.messages.at(-1).content[0].content).includes(
+        'MAX_TOOL_ROUNDS = 20'
+      )
+      expect(last.system[1].text).includes('fixture-release')
+    } finally {
+      f.close()
     }
-    model.reply(
-      callTools([{ ...map, id: 'discarded-map' }], {
-        input_tokens: inputCeiling - 18
-      }),
-      callTools([{ ...search, id: 'blocked' }]),
-      callTools([{ ...map, id: 'retained-map' }]),
-      callTools([{ ...search, id: 'allowed' }]),
-      say('The limit is 10.')
-    )
-    await runTurn(w.deps(), w.user(101), {
-      text: 'Explain the tool-round limit.'
-    })
-    const calls = model.messageCalls()
-    expect(calls[1].messages.at(-1).content[0]).deep.include({
-      content: TOO_LARGE_NOW,
-      is_error: true
-    })
-    expect(calls[2].messages.at(-1).content[0]).deep.include({
-      content: MAP_FIRST,
-      is_error: true
-    })
-    expect(calls[3].messages.at(-1).content[0].content).includes(
-      'Source directory map'
-    )
-    expect(calls[4].messages.at(-1).content[0].content).includes(
-      'MAX_TOOL_ROUNDS = 10'
-    )
   })
 
-  it('keeps the map read this turn after a rejected request compacts earlier turns', async () => {
-    for (const text of ['one', 'two', 'three']) {
-      model.reply(say(`About ${text}`))
-      await runTurn(w.deps(), w.user(101), { text })
+  it('reports a missing index and continues with an authenticated non-source tool', async () => {
+    const f = sourceIndexFixture()
+    try {
+      model.reply(
+        callTools([
+          { name: 'source_search', input: { path: 'src', text: 'missing' } }
+        ]),
+        callTools([{ name: 'api_get', input: { path: '/me/roles' } }]),
+        say('The source is unavailable; your roles are available.')
+      )
+      await runTurn({ ...w.deps(), sourceIndex: f.index }, w.user(101), {
+        text: 'Explain source and my roles.'
+      })
+      const calls = model.messageCalls()
+      expect(calls[0].system[1].text).includes(SOURCE_UNAVAILABLE)
+      expect(calls[1].messages.at(-1).content[0]).includes({
+        content: SOURCE_UNAVAILABLE,
+        is_error: true
+      })
+      expect(calls[2].messages.at(-1).content[0].content).match(/^HTTP 200/)
+    } finally {
+      f.close()
     }
-    model.calls.length = 0
-    model.reply(
-      callTools([{ name: 'source_read_file', input: { path: DIRECTORY_MAP } }]),
-      TOO_LONG,
-      say('Earlier context summarized.'),
-      callTools([
-        {
-          name: 'source_search',
-          input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
-        }
-      ]),
-      say('The limit is 10.')
-    )
-    model.count(40000)
-    await runTurn(w.deps(), w.user(101), {
-      text: 'Explain the tool-round limit.'
-    })
-    const searched = model.messageCalls().at(-1)!.messages.at(-1).content[0]
-    expect(searched.is_error).not.equals(true)
-    expect(searched.content).includes('MAX_TOOL_ROUNDS = 10')
   })
 
   it('counts a round that takes the request near the ceiling, and drops the largest result until it fits', async () => {
@@ -1351,8 +1405,8 @@ describe("Tess's agent loop", function () {
     expect(model.messageCalls().at(-1)!.stream).equals(true)
   })
 
-  it('tells each call at the round cap as a failed step', async () => {
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1)
+  it('refuses a provider tool call that violates the final tool-free request', async () => {
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1)
       model.reply(
         callTools([
           { name: 'api_get', input: { path: '/me' }, id: `t${round}` }
@@ -1363,7 +1417,17 @@ describe("Tess's agent loop", function () {
     await runTurn(w.deps(), w.user(101), { text: 'Look everywhere' }, event => {
       events.push(event)
     })
-    const last = `t${MAX_TOOL_ROUNDS - 1}`
+    expect(
+      model
+        .messageCalls()
+        .slice(MAX_TOOL_ROUNDS)
+        .map(call => call.tool_choice)
+    ).deep.equals([{ type: 'none' }, { type: 'none' }])
+    expect(model.messageCalls().at(-1)!.messages.at(-1).content[0]).includes({
+      content: TOOL_LIMIT,
+      is_error: true
+    })
+    const last = `t${MAX_TOOL_ROUNDS}`
     expect(
       kinds(events).filter(kind => kind.includes(` ${last} `))
     ).deep.equals([`step ${last} failed`])

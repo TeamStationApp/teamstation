@@ -265,6 +265,8 @@ export async function tessWorld(
      * hold, a request on its way to them.
      */
     mountExtra?: MountExtra
+    /** Optional release index override for isolated tests. */
+    sourceIndex?: string
     /** How often a streamed turn sends its keep-alive comment. */
     keepAliveMs?: number
   } = {}
@@ -287,6 +289,7 @@ export async function tessWorld(
         '/api/v1',
         tessRoutes(db, {
           settings,
+          sourceIndex: options.sourceIndex,
           origin: () => origin,
           fetch: model.fetch,
           now: () => now ?? new Date(),
@@ -307,6 +310,7 @@ export async function tessWorld(
       credentials: { authorization: `Bearer ${h.tokens.get(gumbo) ?? ''}` }
     }),
     deps: () => ({
+      sourceIndex: options.sourceIndex,
       db: h.db,
       settings: settings ?? TEST_SETTINGS,
       origin: () => origin,

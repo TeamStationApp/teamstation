@@ -17,7 +17,9 @@ describe("Tess's step labels", function () {
     for (const [name, label] of [
       ['source_list_directory', 'Listing source files'],
       ['source_read_file', 'Reading TeamStation source'],
-      ['source_search', 'Searching TeamStation source']
+      ['source_search', 'Searching TeamStation source'],
+      ['source_outline', 'Outlining source'],
+      ['source_find_definition', 'Finding a definition']
     ])
       expect(
         stepLabel({ name, input: { path: 'untrusted', text: 'untrusted' } })

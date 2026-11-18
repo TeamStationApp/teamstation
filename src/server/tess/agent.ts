@@ -43,7 +43,7 @@ import {
   type ToolUseBlock
 } from './messagesApi'
 import { systemBlocks } from './prompt'
-import { sourceBrowser } from './sourceTools'
+import { openSourceIndex, sourceIndexPath } from './sourceTools'
 import { stepLabel } from './stepLabels'
 import { runTool, type ToolOutcome, TOOLS } from './tools'
 import { withTurn } from './turns'
@@ -58,7 +58,7 @@ import { userContext } from './userContext'
  */
 
 /** How many responses of one turn may ask for tools. */
-export const MAX_TOOL_ROUNDS = 10
+export const MAX_TOOL_ROUNDS = 20
 
 export const TOOL_LIMIT = 'Tool limit reached; answer with what you have'
 export const TOO_LARGE_NOW =
@@ -69,6 +69,8 @@ export const STOPPED_BEFORE_RUN = 'Not run: the person stopped Tess first'
 export interface TessDeps extends ModelDeps {
   /** This server's own origin, read when a tool runs: see `loopback.ts`. */
   origin: () => string
+  /** Optional index override for isolated tests. */
+  sourceIndex?: string
 }
 
 /** Who Tess is answering, and the credentials her tools act with. */
@@ -323,7 +325,8 @@ async function systemFor(
   user: TessUser
 ): Promise<SystemBlock[]> {
   return systemBlocks({
-    user: await userContext(deps.db, user.userId, user.isAdmin)
+    user: await userContext(deps.db, user.userId, user.isAdmin),
+    source: openSourceIndex(deps.sourceIndex ?? sourceIndexPath())
   })
 }
 
@@ -426,9 +429,9 @@ async function guard(
 
 /**
  * Tess answers the stored conversation: call, run the tools asked for, call
- * again, until she answers in text. At the tenth response that still asks for
- * tools the round is closed: each call is answered with an error and one last
- * call, which may use no tool, gives her answer. A call the provider refuses
+ * again, until she answers in text. After MAX_TOOL_ROUNDS tool batches, the
+ * next call permits no tools and asks for her final answer. Any tool calls
+ * returned despite that choice receive an error. A call the provider refuses
  * for its length is sent again, once, after the conversation is compacted;
  * one it refuses for its bytes, once, after its attachments are described.
  * The size of the last request and its answer is saved; above the model's
@@ -495,7 +498,6 @@ async function respond(
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
       if (isTooLong(error)) {
-        // Compaction keeps the current turn, so a map it read stays read.
         known = await compact(deps, userId, measure)
       } else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
@@ -505,10 +507,10 @@ async function respond(
   let last: MessagesResponse
   // The changes the turn has proposed, which one hold confirms together.
   const proposals = { count: 0 }
-  const source = sourceBrowser()
+  const source = openSourceIndex(deps.sourceIndex ?? sourceIndexPath())
   try {
     for (let round = 1; ; round += 1) {
-      const response = await call()
+      const response = await call(round > MAX_TOOL_ROUNDS ? 'none' : undefined)
       last = response
       const calls = response.content.filter(
         (block): block is ToolUseBlock => block.type === 'tool_use'
@@ -517,7 +519,8 @@ async function respond(
         await storeAnswer(deps, userId, response)
         break
       }
-      if (round >= MAX_TOOL_ROUNDS) {
+      if (round > MAX_TOOL_ROUNDS) {
+        // Defend against a provider returning tool calls despite toolChoice:none.
         const results: ToolResultBlock[] = calls.map(call => ({
           type: 'tool_result',
           tool_use_id: call.id,
@@ -579,8 +582,6 @@ async function respond(
       )
       // A result too large to keep failed after all.
       for (const [at, result] of results.entries()) {
-        if (calls[at].name === 'source_read_file')
-          source.acceptMapResult(result)
         if (result.content === TOO_LARGE_NOW)
           await step(calls[at].id, stepLabel(calls[at]), 'failed')
       }

@@ -12,7 +12,7 @@ import type {
   ToolResultBlock,
   ToolUseBlock
 } from './messagesApi'
-import { isSourceTool, SOURCE_TOOLS, type sourceBrowser } from './sourceTools'
+import { isSourceTool, SOURCE_TOOLS, type SourceIndex } from './sourceTools'
 
 /**
  * Tess's tools. `api_get` reads the API as the person, and `graphql_query`
@@ -170,8 +170,8 @@ export interface ToolContext {
   now: Date
   /** How many changes this turn has proposed so far, over all its rounds. */
   proposals: { count: number }
-  /** Shared across this turn's rounds; never shared between users or turns. */
-  source?: ReturnType<typeof sourceBrowser>
+  /** Read-only release index; holds no user or per-turn state. */
+  source?: SourceIndex
 }
 
 /** One tool call's result, and the change it proposed, if any. */
@@ -200,7 +200,7 @@ export async function runTool(
       result: {
         type: 'tool_result',
         tool_use_id: call.id,
-        ...(await context.source.run(call.name, call.input))
+        ...context.source.run(call.name, call.input)
       }
     }
   }
