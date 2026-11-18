@@ -12,9 +12,11 @@ import { withQueryReplies } from '../../test/queryReplies'
 import * as rights from '../groups/rights'
 import {
   completePreview,
+  discardPreparation,
   editPreview,
   preparePreview,
-  type PreviewRow
+  type PreviewRow,
+  SOLVER_LIMIT_MS
 } from './previews'
 import * as reschedules from './reschedule'
 import type { Snapshot } from './snapshot'
@@ -62,17 +64,28 @@ const pending = (id: string): PreviewRow => ({
   published_option: null,
   published_at: null,
   removed_games: null,
-  result_hash: null
+  result_hash: null,
+  proven_optimal: null
 })
 
 /** A storage-boundary stub; transactions and query generation still run through Kysely. */
 async function stored(
   rows: Map<string, PreviewRow>,
   work: Parameters<typeof withQueryReplies>[1],
-  seen: string[] = []
+  seen: string[] = [],
+  /** Each league's own solver limit, as `league_schedule_setups` holds it. */
+  limits = new Map<string, number | null>()
 ): Promise<void> {
   await withQueryReplies(query => {
     seen.push(query.sql)
+    if (query.sql.includes('from "league_schedule_setups"')) {
+      const league = String(query.parameters[0])
+      return limits.has(league) ? [{ solver_limit_ms: limits.get(league) }] : []
+    }
+    if (query.sql.startsWith('delete from "schedule_previews" where "id"')) {
+      rows.delete(String(query.parameters[0]))
+      return []
+    }
     if (query.sql.startsWith('select'))
       return [rows.get(String(query.parameters[0]))].filter(row => row != null)
     if (query.sql.startsWith('insert')) {
@@ -182,6 +195,57 @@ describe('device preview state transitions without a database', () => {
         clock
       ).catch((error: unknown) => error)
       expect(refused).instanceOf(Error)
+    })
+  })
+  it('gives the device two minutes, or a test server the league’s own limit, and discards a build still waiting', async () => {
+    authorize()
+    mock.method(reschedules, 'gamesToReschedule', async () => [])
+    mock.method(snapshotModule, 'snapshot', async () => snapshot())
+    const rows = new Map<string, PreviewRow>([
+      ['built', { ...pending('built'), status: 'open' }]
+    ])
+    const request = { mode: 'full', existing: 'workAround' } as const
+    const limit = async (
+      limits: Map<string, number | null>,
+      testSettings?: boolean
+    ): Promise<{ id: string; solverLimitMs: number }> => {
+      let prepared: { id: string; solverLimitMs: number } | undefined
+      await stored(
+        rows,
+        async db => {
+          prepared = await preparePreview(
+            db,
+            actor,
+            'league',
+            request,
+            clock,
+            testSettings == null ? undefined : { testSettings }
+          )
+        },
+        [],
+        limits
+      )
+      return prepared!
+    }
+    const own = new Map([['league', 3000]])
+    expect(SOLVER_LIMIT_MS).equals(120000)
+    expect((await limit(own)).solverLimitMs).equals(SOLVER_LIMIT_MS)
+    expect((await limit(own, false)).solverLimitMs).equals(SOLVER_LIMIT_MS)
+    expect((await limit(own, true)).solverLimitMs).equals(3000)
+    expect(
+      (await limit(new Map([['league', null]]), true)).solverLimitMs
+    ).equals(SOLVER_LIMIT_MS)
+    const waiting = await limit(new Map(), true)
+    expect(waiting.solverLimitMs).equals(SOLVER_LIMIT_MS)
+    await stored(rows, async db => {
+      await discardPreparation(db, actor, waiting.id)
+      expect(rows.has(waiting.id)).equals(false)
+      // One already built is kept.
+      const refused = await discardPreparation(db, actor, 'built').catch(
+        (error: unknown) => error
+      )
+      expect(refused).include({ status: 409 })
+      expect(rows.has('built')).equals(true)
     })
   })
   it('refuses editing a building preview, missing preparation and stale sources without changing the source', async () => {

@@ -211,6 +211,8 @@ export const asSchedulePreview = asObject({
   createdAt: asString,
   options: asArray(asWireOption),
   blocking: asEither(asNull, asString),
+  /** False when the admin took the best schedule found at the time limit. */
+  provenOptimal: asOptional(asBoolean, true),
   edits: asObject({
     option: asNumber,
     rejectedGameKeys: asArray(asString),
@@ -366,7 +368,12 @@ export function rescheduleReasonLabel(reason: RescheduleReason): string {
 /** Authorized input prepared by the server for this device. */
 export const asPreparedPreview = asObject({
   id: asString,
-  input: (raw: unknown): EngineInput => asUnknown(raw) as EngineInput
+  input: (raw: unknown): EngineInput => asUnknown(raw) as EngineInput,
+  /**
+   * How long the device's solver may run before it asks whether to go on:
+   * two minutes, or a test server's limit for the league.
+   */
+  solverLimitMs: asOptional(asNumber, 120_000)
 })
 export type PreparedPreview = ReturnType<typeof asPreparedPreview>
 
@@ -428,5 +435,9 @@ export function asPreviewResult(raw: unknown): EngineResult {
     throw new TypeError('A blocked schedule cannot contain options')
   if (options.length === 0 && (blocking == null || blocking === ''))
     throw new TypeError('Explain why the schedule has no options')
-  return { options, blocking }
+  if (raw.provenOptimal !== undefined && typeof raw.provenOptimal !== 'boolean')
+    throw new TypeError('Say whether the schedule was proven the best')
+  return raw.provenOptimal === false
+    ? { options, blocking, provenOptimal: false }
+    : { options, blocking }
 }

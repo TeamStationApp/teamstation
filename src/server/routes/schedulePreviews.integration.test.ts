@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import type { PlannedGame } from '../../common/autoScheduler/types'
 import { eventLocalFields } from '../../common/eventTime'
 import {
+  asPreparedPreview,
   editedGames,
   type Publication,
   type SchedulePreview
 } from '../../common/schedulePreviews'
+import { buildSchedule, engineResult } from '../../common/scheduler/engine'
 import { fieldSizeLabel } from '../../common/venues'
 import {
   forceSeasonZone,
@@ -384,6 +386,102 @@ describe('schedule preview routes', function () {
       rejected.body.published.find(game => game.gameKey === listed[0].key)
         ?.state
     ).equals('rejected')
+  })
+
+  it('gives the device its solver limit, and cancels a build still waiting for it', async () => {
+    const prepare = async (): Promise<{
+      id: string
+      solverLimitMs: number
+    }> => {
+      const response = await w.fx.f.h.request(
+        'POST',
+        `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
+        { mode: 'full', existing: 'workAround' },
+        101
+      )
+      expect(response.status).equals(201)
+      return (await response.json()) as { id: string; solverLimitMs: number }
+    }
+    const discard = async (id: string, user = 101): Promise<number> =>
+      (
+        await w.fx.f.h.request(
+          'DELETE',
+          `/schedule-previews/${id}/preparation`,
+          undefined,
+          user
+        )
+      ).status
+    const exists = async (id: string): Promise<boolean> =>
+      (await w.fx.f.h.db
+        .selectFrom('schedule_previews')
+        .select('id')
+        .where('id', '=', id)
+        .executeTakeFirst()) != null
+    // Two minutes, unless this test server is given the league's own.
+    const first = await prepare()
+    expect(first.solverLimitMs).equals(120000)
+    await w.fx.f.h.db
+      .updateTable('league_schedule_setups')
+      .set({ solver_limit_ms: 3000 })
+      .where('league_id', '=', w.fx.f.leagueA)
+      .execute()
+    const limited = await prepare()
+    expect(limited.solverLimitMs).equals(3000)
+    // Only the league's admins cancel, and a canceled build leaves nothing.
+    expect(await discard(limited.id, 102)).equals(403)
+    expect(await discard(limited.id)).equals(200)
+    expect(await exists(limited.id)).equals(false)
+    expect(await discard(limited.id)).equals(404)
+    // A built one is kept.
+    const built = await build({ mode: 'full', existing: 'workAround' })
+    expect(built.body.provenOptimal).equals(true)
+    expect(await discard(built.body.id)).equals(409)
+    expect(await exists(built.body.id)).equals(true)
+    expect(await exists(first.id)).equals(true)
+  })
+
+  it('records a schedule taken at the time limit as not proven the best', async () => {
+    const response = await w.fx.f.h.request(
+      'POST',
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
+      { mode: 'full', existing: 'workAround' },
+      101
+    )
+    const prepared = asPreparedPreview(await response.json())
+    const result = engineResult(await buildSchedule({ input: prepared.input }))
+    const completed = await w.fx.f.h.request(
+      'PUT',
+      `/schedule-previews/${prepared.id}/result`,
+      { ...result, provenOptimal: false },
+      101
+    )
+    expect(completed.status).equals(200)
+    expect(((await completed.json()) as SchedulePreview).provenOptimal).equals(
+      false
+    )
+    const read = await w.call<SchedulePreview>(
+      101,
+      'GET',
+      `/schedule-previews/${prepared.id}`
+    )
+    expect(read.body.provenOptimal).equals(false)
+    const bad = await w.fx.f.h.request(
+      'POST',
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
+      { mode: 'full', existing: 'workAround' },
+      101
+    )
+    const next = asPreparedPreview(await bad.json())
+    expect(
+      (
+        await w.fx.f.h.request(
+          'PUT',
+          `/schedule-previews/${next.id}/result`,
+          { ...result, provenOptimal: 'no' },
+          101
+        )
+      ).status
+    ).equals(400)
   })
 
   it('shows a blocking message, and no option, when no game fits', async () => {

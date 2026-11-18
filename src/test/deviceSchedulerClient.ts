@@ -24,7 +24,12 @@ export async function deviceSchedulerResponse(
   const completed = await request(
     'PUT',
     `/schedule-previews/${prepared.id}/result`,
-    engineResult(await buildSchedule({ input: prepared.input }))
+    engineResult(
+      await buildSchedule({
+        input: prepared.input,
+        limitMs: prepared.solverLimitMs
+      })
+    )
   )
   return new Response(await completed.text(), {
     status: completed.ok ? 201 : completed.status,

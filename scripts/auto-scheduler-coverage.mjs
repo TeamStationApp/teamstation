@@ -129,7 +129,9 @@ const tsSuites = [
   'src/common/scheduler/engine.web.test.ts',
   'src/app/platform/schedulerWorker.test.ts',
   'src/app/scheduling/NativeScheduler.test.ts',
-  'src/test/chatCoreResolvePlugin.test.ts'
+  'src/test/chatCoreResolvePlugin.test.ts',
+  // Exact only M8: the build modal's log, and the solver limit's column.
+  'src/migrate/migrations/125solverLimit.integration.test.ts'
 ]
 
 if (unitOnly) {

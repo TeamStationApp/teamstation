@@ -1231,6 +1231,11 @@ export interface SchedulePreviewsTable {
   removed_games: number | null
   /** The completed device result's hash, so a retry of it is recognized. */
   result_hash: string | null
+  /**
+   * Whether the solver proved its options the best schedule; false when the
+   * admin took one at the time limit, null for a preview from before.
+   */
+  proven_optimal: Generated<boolean | null>
 }
 
 /** A game a publication proposed. */
@@ -1283,6 +1288,11 @@ export interface LeagueScheduleSetupsTable {
   /** Fields added from other venues, listed whether chosen or not. */
   added_field_ids: Generated<string[]>
   updated_at: Generated<Date>
+  /**
+   * A test server's limit on the device solver's time for this league's
+   * builds (`125solverLimit`); null keeps the two minutes.
+   */
+  solver_limit_ms: Generated<number | null>
 }
 
 /** A warning about a game's field, once it has been announced. */

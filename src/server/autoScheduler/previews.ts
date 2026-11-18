@@ -110,6 +110,7 @@ export async function previewView(
     createdAt: row.created_at.toISOString(),
     options: optionsOf(row),
     blocking: row.blocking,
+    provenOptimal: row.proven_optimal !== false,
     edits: {
       option: edits.option,
       rejectedGameKeys: edits.rejectedGameKeys,
@@ -150,13 +151,18 @@ export async function previewView(
 /** How long a prepared build waits for its device's result. */
 const BUILD_EXPIRY_MS = 24 * 60 * 60 * 1000
 
+/** How long a device's solver may run before it asks whether to go on. */
+export const SOLVER_LIMIT_MS = 120_000
+
 /** Prepare authorized input for the device; keep the snapshot for result validation. */
 export async function preparePreview(
   db: Db,
   actor: Actor,
   leagueId: string,
   request: PreviewRequest,
-  clock: Clock
+  clock: Clock,
+  /** A test server, whose per-league solver limit is honoured. */
+  options: { testSettings?: boolean } = {}
 ): Promise<PreparedPreview> {
   await requireGroupAdmin(db, actor, { kind: 'league', id: leagueId })
   const plan = await atomic(db, async trx => {
@@ -322,7 +328,38 @@ export async function preparePreview(
       status: 'building'
     })
     .execute()
-  return { id, input: deviceInput(snap.engine) }
+  return {
+    id,
+    input: deviceInput(snap.engine),
+    solverLimitMs:
+      options.testSettings === true
+        ? ((
+            await db
+              .selectFrom('league_schedule_setups')
+              .select('solver_limit_ms')
+              .where('league_id', '=', leagueId)
+              .executeTakeFirst()
+          )?.solver_limit_ms ?? SOLVER_LIMIT_MS)
+        : SOLVER_LIMIT_MS
+  }
+}
+
+/**
+ * Discards a preview still waiting for its device's result, as when the
+ * admin cancels the build, so nothing of it is left behind. One already
+ * built is kept.
+ */
+export async function discardPreparation(
+  db: Db,
+  actor: Actor,
+  previewId: string
+): Promise<void> {
+  await atomic(db, async trx => {
+    const row = await previewFor(trx, actor, previewId, { forUpdate: true })
+    if (row.status !== 'building')
+      throw conflict('This schedule was already built')
+    await trx.deleteFrom('schedule_previews').where('id', '=', row.id).execute()
+  })
 }
 
 /** A device result's fingerprint, to recognise a retry of the same result. */
@@ -431,7 +468,8 @@ export async function completePreview(
           status: 'open',
           result_hash: hash,
           options: JSON.stringify(options),
-          blocking: result.blocking
+          blocking: result.blocking,
+          proven_optimal: result.provenOptimal !== false
         })
         .where('id', '=', row.id)
         .execute()

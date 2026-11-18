@@ -128,6 +128,7 @@ function previewOf(overrides: Partial<SchedulePreview> = {}): SchedulePreview {
       option({ reasons: ['Demo Hawks plays 4 of its 5 games on Saturdays'] })
     ],
     blocking: null,
+    provenOptimal: true,
     edits: { option: 0, rejectedGameKeys: [], addedGames: [] },
     replacing: 2,
     publishedOption: null,

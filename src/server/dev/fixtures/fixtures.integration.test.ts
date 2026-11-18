@@ -30,7 +30,7 @@ import {
 } from './cli'
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
-import { runPackedLeague } from './packedLeague'
+import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -107,6 +107,7 @@ describe('the fixtures script', function () {
     expect(Object.keys(WORLDS)).includes('team-with-roster')
     expect(Object.keys(WORLDS)).includes('streaming')
     expect(Object.keys(WORLDS)).includes('packed-league')
+    expect(Object.keys(WORLDS)).includes('packed-league-limit')
   })
 })
 
@@ -311,6 +312,54 @@ describe('fixture worlds', function () {
     expect(
       built.targets.map(target => target.regular).sort((x, y) => x - y)
     ).deep.equals([10, 10, 12, 14, 16, 16])
+  })
+
+  it('packed-league-limit is the packed league with a 3 s solver limit', async function () {
+    const m = await runPackedLeagueLimit({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    expect(m.world).equals('packed-league-limit')
+    const setup = await the()
+      .selectFrom('league_schedule_setups')
+      .select(['season_ids', 'solver_limit_ms'])
+      .where('league_id', '=', m.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(setup.season_ids).lengthOf(6)
+    expect(setup.solver_limit_ms).equals(3000)
+    const admin = {
+      userId: m.accounts.admin.userId,
+      isAdmin: false,
+      scopes: []
+    }
+    const clock = { now: () => new Date('2026-11-16T08:00:00Z') }
+    // Only a test server gives the device the league's own limit.
+    expect(
+      (
+        await preparePreview(
+          the(),
+          admin,
+          m.ids.league,
+          { mode: 'full' },
+          clock,
+          {
+            testSettings: true
+          }
+        )
+      ).solverLimitMs
+    ).equals(3000)
+    expect(
+      (
+        await preparePreview(
+          the(),
+          admin,
+          m.ids.league,
+          { mode: 'full' },
+          clock
+        )
+      ).solverLimitMs
+    ).equals(120000)
   })
 
   it('streaming gives the coach the home team, an empty game and one with two videos', async function () {

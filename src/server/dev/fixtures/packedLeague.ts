@@ -34,10 +34,11 @@ const SURNAMES = [
 ]
 
 export async function runPackedLeague(
-  context: WorldContext
+  context: WorldContext,
+  options: { world?: string; solverLimitMs?: number } = {}
 ): Promise<FixtureManifest> {
   const { db, nonce } = context
-  const world = 'packed-league'
+  const world = options.world ?? 'packed-league'
   const run = packedLeagueRun()
   const admin = await createAccount(context, world, 'admin', {
     first: 'Dave',
@@ -239,8 +240,23 @@ export async function runPackedLeague(
       league_id: league,
       avoid_head_coach_conflicts: true,
       season_ids: seasonIds,
-      field_ids: [...fieldIds.values()]
+      field_ids: [...fieldIds.values()],
+      solver_limit_ms: options.solverLimitMs ?? null
     })
     .execute()
   return { world, nonce, accounts: { admin }, ids }
+}
+
+/**
+ * The packed league with a 3 s solver limit, which a test server honours:
+ * its first solve takes longer than that, so a build reaches the limit and
+ * the admin is asked whether to go on.
+ */
+export async function runPackedLeagueLimit(
+  context: WorldContext
+): Promise<FixtureManifest> {
+  return await runPackedLeague(context, {
+    world: 'packed-league-limit',
+    solverLimitMs: 3000
+  })
 }

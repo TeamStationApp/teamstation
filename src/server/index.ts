@@ -947,7 +947,10 @@ function runWorker(): void {
   )
   app.use('/api/v1', venueRoutes(db, mediaContext, { places: placesProvider }))
   app.use('/api/v1', schedulingSetupRoutes(db))
-  app.use('/api/v1', schedulePreviewRoutes(db))
+  app.use(
+    '/api/v1',
+    schedulePreviewRoutes(db, { testSettings: serverConfig.testSettings })
+  )
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {
