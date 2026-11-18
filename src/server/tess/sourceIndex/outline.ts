@@ -59,7 +59,8 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
       node: ts.Node,
       name: string,
       kind: string,
-      end: number
+      end: number,
+      start = node.getStart(file)
     ): void => {
       const docs = (statement as ts.Node & { jsDoc?: ts.JSDoc[] }).jsDoc
       const doc = docs
@@ -81,14 +82,15 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
           name: publicName,
           kind:
             /\.[jt]sx$/.test(path) &&
-            /^[A-Z]/.test(publicName) &&
+            // PascalCase, not an ALL_CAPS constant.
+            /^[A-Z](?![A-Z0-9_]*$)/.test(publicName) &&
             ['function', 'const'].includes(kind)
               ? 'component'
               : kind,
           line:
             file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
           endLine: file.getLineAndCharacterOfPosition(node.end).line + 1,
-          signature: compact(content.slice(node.getStart(file), end), 300),
+          signature: compact(content.slice(start, end), 300),
           doc: doc == null || doc === '' ? null : doc.slice(0, 500)
         })
     }
@@ -110,17 +112,18 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
           : (flags & ts.NodeFlags.Let) !== 0
             ? 'let'
             : 'var'
-      for (const declaration of statement.declarationList.declarations)
+      for (const [
+        at,
+        declaration
+      ] of statement.declarationList.declarations.entries())
         for (const name of names(declaration.name))
           add(
             declaration,
             name,
             kind,
-            // A short literal is the constant's meaning, so it stays in the signature.
-            declaration.initializer != null &&
-              !isShortLiteral(declaration.initializer, file)
-              ? declaration.initializer.getStart(file)
-              : declaration.end
+            variableSignatureEnd(declaration, file),
+            // The first declaration keeps `export const`, as other kinds keep theirs.
+            at === 0 ? statement.getStart(file) : declaration.getStart(file)
           )
     } else if (ts.isFunctionDeclaration(statement)) {
       const name = statement.name?.text ?? 'default'
@@ -157,6 +160,26 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
     }
   }
   return symbols
+}
+
+/**
+ * A function value keeps its parameters and return type, through `=>` or to
+ * its body; a short literal keeps its value, since that is the constant's
+ * meaning; any other initializer is cut.
+ */
+function variableSignatureEnd(
+  declaration: ts.VariableDeclaration,
+  file: ts.SourceFile
+): number {
+  const initializer = declaration.initializer
+  if (initializer == null) return declaration.end
+  let value = initializer
+  while (ts.isParenthesizedExpression(value) || ts.isAsExpression(value))
+    value = value.expression
+  if (ts.isArrowFunction(value)) return value.equalsGreaterThanToken.end
+  if (ts.isFunctionExpression(value)) return value.body.getStart(file)
+  if (isShortLiteral(initializer, file)) return declaration.end
+  return initializer.getStart(file)
 }
 
 function isShortLiteral(node: ts.Expression, file: ts.SourceFile): boolean {

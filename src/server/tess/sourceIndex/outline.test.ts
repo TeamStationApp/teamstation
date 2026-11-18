@@ -87,8 +87,10 @@ describe('source declaration outlines', () => {
     expect(symbols[2].signature).equals('export interface Shape')
     expect(symbols[4].signature).equals('export enum Mode')
     // A short literal stays; any other initializer is cut.
-    expect(symbols[5].signature).equals('a: number = 1')
-    expect(symbols[8].signature).equals('legacy =')
+    // The first declaration keeps `export const`; a later one starts at its name.
+    expect(symbols[5].signature).equals('export const a: number = 1')
+    expect(symbols[6].signature).equals('b = 2')
+    expect(symbols[8].signature).equals('export var legacy =')
     expect(symbols.every(s => !s.signature.includes('return'))).equals(true)
   })
   it('lists an overloaded function once and keeps short literal constants', () => {
@@ -114,14 +116,41 @@ describe('source declaration outlines', () => {
       ].join('\n')
     ).map(s => s.signature)
     expect(signatures).deep.equals([
-      'MAX = 20',
-      'NAME = "tess"',
-      'NEGATIVE = -1',
-      'READY = true as const',
-      'EMPTY = null',
-      'TEMPLATE = `plain`',
-      'LONG =',
-      'CALL ='
+      'export const MAX = 20',
+      'export const NAME = "tess"',
+      'export const NEGATIVE = -1',
+      'export const READY = true as const',
+      'export const EMPTY = null',
+      'export const TEMPLATE = `plain`',
+      'export const LONG =',
+      'export const CALL ='
+    ])
+  })
+  it("keeps a function value's parameters and return type, and labels only PascalCase components", () => {
+    const symbols = sourceSymbols(
+      'src/a.tsx',
+      [
+        'export const useThing = (id: string): Thing => {\n  return find(id)\n}',
+        'export const Card = function Card(props: Props) { return null }',
+        'export const handler: Handler = async (req, res) => {}',
+        'export const wrapped = (async (x: number) => x) as Fn',
+        'export const memoized = memo(() => null)',
+        'export const MAX_ITEMS = 20',
+        'export const UI = 1'
+      ].join('\n')
+    )
+    expect(symbols.map(s => [s.name, s.kind, s.signature])).deep.equals([
+      ['useThing', 'const', 'export const useThing = (id: string): Thing =>'],
+      ['Card', 'component', 'export const Card = function Card(props: Props)'],
+      [
+        'handler',
+        'const',
+        'export const handler: Handler = async (req, res) =>'
+      ],
+      ['wrapped', 'const', 'export const wrapped = (async (x: number) =>'],
+      ['memoized', 'const', 'export const memoized ='],
+      ['MAX_ITEMS', 'const', 'export const MAX_ITEMS = 20'],
+      ['UI', 'const', 'export const UI = 1']
     ])
   })
   it('covers default declarations, components, recovery and bounded signatures/docs', () => {
@@ -168,7 +197,7 @@ describe('source declaration outlines', () => {
     expect(
       sourceSymbols('src/a.ts', 'export declare const value: string')[0]
         .signature
-    ).equals('value: string')
+    ).equals('export declare const value: string')
     expect(
       sourceSymbols(
         'src/a.ts',
