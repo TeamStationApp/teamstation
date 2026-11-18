@@ -14,6 +14,7 @@ import {
   completePreview,
   discardPreparation,
   editPreview,
+  latestPreview,
   preparePreview,
   type PreviewRow,
   SOLVER_LIMIT_MS
@@ -81,6 +82,32 @@ async function stored(
     if (query.sql.includes('from "league_schedule_setups"')) {
       const league = String(query.parameters[0])
       return limits.has(league) ? [{ solver_limit_ms: limits.get(league) }] : []
+    }
+    if (query.sql.includes('order by "created_at" desc')) {
+      const [league, ...statuses] = query.parameters
+      return [...rows.values()]
+        .filter(
+          row => row.league_id === league && statuses.includes(row.status)
+        )
+        .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
+        .slice(0, 1)
+        .map(row => {
+          // Only the listed columns, and the snapshot's season ids as the
+          // JSON path reads them.
+          expect(query.sql).not.include('"input"')
+          expect(query.sql).include(
+            `jsonb_path_query_array(input, '$.engine.seasons[*].id')`
+          )
+          return {
+            id: row.id,
+            status: row.status,
+            created_at: row.created_at,
+            published_at: row.published_at,
+            season_ids: (
+              row.input as { engine: { seasons: Array<{ id: string }> } }
+            ).engine.seasons.map(season => season.id)
+          }
+        })
     }
     if (query.sql.startsWith('delete from "schedule_previews" where "id"')) {
       rows.delete(String(query.parameters[0]))
@@ -246,6 +273,43 @@ describe('device preview state transitions without a database', () => {
       )
       expect(refused).include({ status: 409 })
       expect(rows.has('built')).equals(true)
+    })
+  })
+  it('gives the league’s latest open or published preview, or none', async () => {
+    authorize()
+    const engine = input()
+    const at = (day: string): Date => new Date(`2027-01-${day}T12:00:00Z`)
+    const rows = new Map<string, PreviewRow>([
+      ['building', { ...pending('building'), created_at: at('09') }],
+      [
+        'published',
+        {
+          ...pending('published'),
+          status: 'published',
+          created_at: at('05'),
+          published_at: at('06')
+        }
+      ]
+    ])
+    await stored(rows, async db => {
+      expect(await latestPreview(db, actor, 'league')).deep.equals({
+        id: 'published',
+        status: 'published',
+        createdAt: at('05').toISOString(),
+        seasonIds: engine.seasons.map(season => season.id),
+        publishedAt: at('06').toISOString()
+      })
+      rows.set('open', {
+        ...pending('open'),
+        status: 'open',
+        created_at: at('07')
+      })
+      expect(await latestPreview(db, actor, 'league')).include({
+        id: 'open',
+        status: 'open',
+        publishedAt: null
+      })
+      expect(await latestPreview(db, actor, 'elsewhere')).equals(null)
     })
   })
   it('refuses editing a building preview, missing preparation and stale sources without changing the source', async () => {

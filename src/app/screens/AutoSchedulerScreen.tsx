@@ -12,6 +12,7 @@ import { HttpError } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import {
   type GameToReschedule,
+  type LatestPreview,
   type PreviewRequest,
   rescheduleReasonLabel
 } from '../../common/schedulePreviews'
@@ -50,6 +51,27 @@ import {
   SeasonScheduleGrid,
   type SeasonScheduleGridHandle
 } from './SeasonScheduleGrid'
+
+const BUILT_AT = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+})
+const PUBLISHED_ON = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric'
+})
+
+/**
+ * When the league's previous preview was made, in the viewer's time:
+ * "Built Mar 2, 3:15 PM", or "Published Mar 2" once it is published.
+ */
+export function latestLabel(latest: LatestPreview): string {
+  return latest.status === 'published' && latest.publishedAt != null
+    ? `Published ${PUBLISHED_ON.format(new Date(latest.publishedAt))}`
+    : `Built ${BUILT_AT.format(new Date(latest.createdAt))}`
+}
 
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
@@ -98,6 +120,8 @@ export function AutoSchedulerScreen({
     column: GridColumn
   }>()
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
+  // The league's last preview, built or published, to open again.
+  const [latest, setLatest] = useState<LatestPreview | null>(null)
   const [asking, setAsking] = useState<{ existing: number }>()
   // A build runs in the modal, which shows its log and its time limit.
   const scheduleBuild = useScheduleBuild(client, leagueId)
@@ -141,9 +165,13 @@ export function AutoSchedulerScreen({
     stored.current.clear()
     reading.current = Promise.all([
       client.scheduleSetup(leagueId),
-      client.gamesToReschedule(leagueId)
+      client.gamesToReschedule(leagueId),
+      // Without it the screen still works; there is just no button.
+      Promise.resolve()
+        .then(async () => await client.latestSchedulePreview(leagueId))
+        .catch(() => null)
     ]).then(
-      ([found, listed]) => {
+      ([found, listed, last]) => {
         if (!current()) return true
         const merged = {
           ...found,
@@ -155,6 +183,7 @@ export function AutoSchedulerScreen({
         setupNow.current = merged
         setSetup(merged)
         setToReschedule(listed)
+        setLatest(last)
         return true
       },
       () => {
@@ -578,6 +607,18 @@ export function AutoSchedulerScreen({
               ))}
             </View>
           )}
+          {latest != null && (
+            <View style={styles.previous}>
+              <Button
+                label="Show previous schedule preview"
+                kind="secondary"
+                onPress={() => {
+                  onOpenPreview(latest.id)
+                }}
+              />
+              <Text style={styles.meta}>{latestLabel(latest)}</Text>
+            </View>
+          )}
           <Button
             label="Build schedule"
             disabled={busy || building || !buildable(checks)}
@@ -706,6 +747,7 @@ export function AutoSchedulerScreen({
 export const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
   section: { gap: theme.rem(1) },
+  previous: { gap: theme.rem(0.25) },
   narrow: { width: '100%' as const, alignSelf: 'center' as const },
   tableSection: { alignSelf: 'center' as const, maxWidth: '100%' as const },
   title: {

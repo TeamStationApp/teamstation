@@ -8,6 +8,7 @@ import { HttpError } from '../../common/errors'
 import type {
   BuildSession,
   GameToReschedule,
+  LatestPreview,
   PreviewRequest
 } from '../../common/schedulePreviews'
 import { EngineFailureError } from '../../common/scheduler/wire'
@@ -36,7 +37,11 @@ import {
   venueDetail,
   venueField
 } from '../../test/venueDom'
-import { AutoSchedulerScreen, chosenSeasons } from './AutoSchedulerScreen'
+import {
+  AutoSchedulerScreen,
+  chosenSeasons,
+  latestLabel
+} from './AutoSchedulerScreen'
 
 const SETTINGS: ScheduleSettings = {
   fieldSize: '50/70',
@@ -142,6 +147,8 @@ function fakeClient(
     failBuild?: boolean
     /** The device's build, given the modal's session, before it answers. */
     engine?: (session: BuildSession) => Promise<void>
+    /** The league's previous preview; an Error fails its read. */
+    latest?: LatestPreview | null | Error
     listed?: GameToReschedule[]
     /** Fields of other venues, listed once chosen, as the server does. */
     registry?: SetupField[]
@@ -190,6 +197,10 @@ function fakeClient(
         ]
       }),
     gamesToReschedule: async () => options.listed ?? [],
+    latestSchedulePreview: async () => {
+      if (options.latest instanceof Error) throw options.latest
+      return options.latest ?? null
+    },
     buildSchedulePreview: async (
       _leagueId: string,
       request: PreviewRequest,
@@ -1254,5 +1265,67 @@ describe('the Auto-Scheduler setup', () => {
     await tapText('Close')
     await settle(20)
     expect(text()).not.includes('This device can’t run the scheduler')
+  })
+
+  it('offers the league’s previous preview above Build schedule, and opens it', async () => {
+    const latest: LatestPreview = {
+      id: 'spv_last',
+      status: 'open',
+      createdAt: '2027-03-02T20:15:00.000Z',
+      seasonIds: ['sea_a'],
+      publishedAt: null
+    }
+    const opened: string[] = []
+    await mount(
+      <AutoSchedulerScreen
+        client={fakeClient(setupOf(), { latest }).client}
+        leagueId="lea_a"
+        leagueName="Demo League A"
+        onFieldManager={() => undefined}
+        onOpenSeason={() => undefined}
+        onOpenSeasonPage={() => undefined}
+        onOpenPreview={id => {
+          opened.push(id)
+        }}
+      />
+    )
+    await settle(50)
+    const labels = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].map(node => node.textContent)
+    const previous = labels.indexOf('Show previous schedule preview')
+    expect(previous).at.least(0)
+    expect(previous).below(labels.indexOf('Build schedule'))
+    expect(text()).matches(/Built Mar 2, \d{1,2}:\d{2} [AP]M/)
+    await tapText('Show previous schedule preview')
+    expect(opened).deep.equals(['spv_last'])
+  })
+
+  it('hides the previous preview when the league has none, or it can’t be read', async () => {
+    for (const latest of [null, new Error('down')]) {
+      await show(fakeClient(setupOf(), { latest }).client, {
+        fieldManager: 0,
+        seasons: [],
+        builds: 0
+      })
+      expect(text()).includes('Build schedule')
+      expect(text()).not.includes('Show previous schedule preview')
+      await unmount()
+    }
+  })
+
+  it('says when the previous preview was built or published', () => {
+    const latest: LatestPreview = {
+      id: 'spv_last',
+      status: 'published',
+      createdAt: '2027-03-01T20:15:00.000Z',
+      seasonIds: [],
+      publishedAt: '2027-03-02T20:15:00.000Z'
+    }
+    expect(latestLabel(latest)).equals('Published Mar 2')
+    expect(latestLabel({ ...latest, publishedAt: null })).matches(
+      /^Built Mar 1, \d{1,2}:15 [AP]M$/
+    )
+    expect(latestLabel({ ...latest, status: 'open' })).matches(/^Built Mar 1/)
   })
 })

@@ -13,6 +13,7 @@ import {
   completePreview,
   discardPreparation,
   editPreview,
+  latestPreview,
   preparePreview,
   previewFor,
   previewView
@@ -128,6 +129,13 @@ export function schedulePreviewRoutes(
       const leagueId = param(req.params.leagueId)
       await requireGroupAdmin(db, actor(req), { kind: 'league', id: leagueId })
       res.json({ items: await gamesToReschedule(db, leagueId, clock) })
+    })
+  )
+  router.get(
+    '/leagues/:leagueId/schedule-previews/latest',
+    requireActor,
+    withAsync(async (req, res) => {
+      res.json(await latestPreview(db, actor(req), param(req.params.leagueId)))
     })
   )
   router.get(

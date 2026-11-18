@@ -464,6 +464,24 @@ describe('api client scheduling setup', () => {
     ])
   })
 
+  it('reads the league’s previous preview, or none', async () => {
+    const latest = {
+      id: 'spv/1',
+      status: 'published',
+      createdAt: '2026-10-22T12:00:00.000Z',
+      seasonIds: ['sea_a'],
+      publishedAt: '2026-10-23T12:00:00.000Z'
+    }
+    const { api, calls } = client([latest, null])
+    expect(await api.latestSchedulePreview('lea/a')).deep.equals(latest)
+    expect(await api.latestSchedulePreview('lea/a')).equals(null)
+    expect(calls[0]).deep.equals([
+      'GET',
+      '/api/v1/leagues/lea%2Fa/schedule-previews/latest',
+      undefined
+    ])
+  })
+
   it('reads each preview season’s first day, and a season without one', async () => {
     const season = {
       id: 'sea_a',

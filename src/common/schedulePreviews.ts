@@ -303,6 +303,22 @@ export function editedGames(
   )
 }
 
+/**
+ * The league's most recent open or published preview
+ * (`GET /leagues/:leagueId/schedule-previews/latest`), or null.
+ */
+export const asLatestPreview = asEither(
+  asNull,
+  asObject({
+    id: asString,
+    status: asLiteral('open', 'published'),
+    createdAt: asString,
+    seasonIds: asArray(asString),
+    publishedAt: asEither(asNull, asString)
+  })
+)
+export type LatestPreview = NonNullable<ReturnType<typeof asLatestPreview>>
+
 /** A publication's outcome. */
 export const asPublication = asObject({
   preview: asSchedulePreview,

@@ -159,6 +159,22 @@ export function schedulePreviewPaths(
         }
       }
     },
+    '/leagues/{leagueId}/schedule-previews/latest': {
+      get: {
+        summary: 'The league’s most recent schedule preview',
+        security: [{ bearer: [] }],
+        description:
+          'For an admin of the league. The most recent open or published preview, so a build made earlier can be opened again, or null when the league has none.',
+        parameters: [pathId('leagueId')],
+        responses: {
+          200: {
+            description:
+              '{ id, status (open or published), createdAt, seasonIds, publishedAt } or null'
+          },
+          ...errors
+        }
+      }
+    },
     '/schedule-previews/{previewId}': {
       get: {
         summary: 'Read a schedule preview',

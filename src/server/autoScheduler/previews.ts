@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
-import type { Kysely, Selectable, Transaction } from 'kysely'
+import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import type {
   EngineBooking,
@@ -15,6 +15,7 @@ import { makeId } from '../../common/ids'
 import {
   type AddedGame,
   editedGames,
+  type LatestPreview,
   type PreparedPreview,
   type PreviewEdits,
   type PreviewRequest,
@@ -69,6 +70,45 @@ export async function previewFor(
   if (row == null) throw notFound()
   await requireGroupAdmin(db, actor, { kind: 'league', id: row.league_id })
   return row
+}
+
+/**
+ * The league's most recent open or published preview, so an admin can go
+ * back to a build made earlier; null when it has none. For an admin of the
+ * league.
+ */
+export async function latestPreview(
+  db: Db,
+  actor: Actor,
+  leagueId: string
+): Promise<LatestPreview | null> {
+  await requireGroupAdmin(db, actor, { kind: 'league', id: leagueId })
+  // Only the season ids of the snapshot, which can be megabytes.
+  const row = await db
+    .selectFrom('schedule_previews')
+    .select([
+      'id',
+      'status',
+      'created_at',
+      'published_at',
+      sql<string[]>`jsonb_path_query_array(input, '$.engine.seasons[*].id')`.as(
+        'season_ids'
+      )
+    ])
+    .where('league_id', '=', leagueId)
+    .where('status', 'in', ['open', 'published'])
+    .orderBy('created_at', 'desc')
+    .orderBy('id', 'desc')
+    .limit(1)
+    .executeTakeFirst()
+  if (row == null) return null
+  return {
+    id: row.id,
+    status: row.status === 'published' ? 'published' : 'open',
+    createdAt: row.created_at.toISOString(),
+    seasonIds: row.season_ids,
+    publishedAt: row.published_at?.toISOString() ?? null
+  }
 }
 
 /** Serialize calendar writes, then check the authority that still holds under the lock. */

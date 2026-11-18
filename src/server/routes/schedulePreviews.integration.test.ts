@@ -484,6 +484,57 @@ describe('schedule preview routes', function () {
     ).equals(400)
   })
 
+  it('gives the league’s latest open or published preview, to its admins only', async () => {
+    type Latest = {
+      id: string
+      status: string
+      createdAt: string
+      seasonIds: string[]
+      publishedAt: string | null
+    } | null
+    const latest = async (
+      user = 101
+    ): Promise<{ status: number; body: Latest }> =>
+      await w.call<Latest>(
+        user,
+        'GET',
+        `/leagues/${w.fx.f.leagueA}/schedule-previews/latest`
+      )
+    // None yet.
+    expect(await latest()).deep.include({ status: 200, body: null })
+    const first = await build({ mode: 'full', existing: 'workAround' })
+    const open = await latest()
+    expect(open.status).equals(200)
+    expect(open.body).deep.include({
+      id: first.body.id,
+      status: 'open',
+      createdAt: first.body.createdAt,
+      publishedAt: null
+    })
+    expect(open.body?.seasonIds).deep.equals(
+      first.body.seasons.map(season => season.id)
+    )
+    // Published, it is still the latest, now with when it was published.
+    await w.call<Publication>(
+      101,
+      'POST',
+      `/schedule-previews/${first.body.id}/publications`,
+      { option: 0 }
+    )
+    const published = await latest()
+    expect(published.body).include({ id: first.body.id, status: 'published' })
+    expect(published.body?.publishedAt).a('string')
+    // A later build is the latest.
+    w.fx.f.advance(60_000)
+    const second = await build({ mode: 'full', existing: 'workAround' })
+    expect((await latest()).body).include({
+      id: second.body.id,
+      status: 'open'
+    })
+    // Not for someone who isn't an admin of the league.
+    expect((await latest(102)).status).equals(403)
+  })
+
   it('shows a blocking message, and no option, when no game fits', async () => {
     await w.call(101, 'PUT', `/venues/${w.venueId}/fields/${w.fieldId}`, {
       startsOn: '2027-03-06',

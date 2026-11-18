@@ -134,10 +134,12 @@ import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
+  asLatestPreview,
   asPublication,
   asSchedulePreview,
   type BuildSession,
   type GameToReschedule,
+  type LatestPreview,
   type PreviewRequest,
   type Publication,
   type SchedulePreview
@@ -5974,6 +5976,15 @@ export class TeamStationClient {
       'DELETE',
       `/schedule-previews/${encodeURIComponent(previewId)}/preparation`,
       asUnknown
+    )
+  }
+
+  /** The league's most recent open or published preview, or null. */
+  async latestSchedulePreview(leagueId: string): Promise<LatestPreview | null> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/latest`,
+      asLatestPreview
     )
   }
 
