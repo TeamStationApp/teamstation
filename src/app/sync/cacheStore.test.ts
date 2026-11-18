@@ -23,9 +23,19 @@ describe('the phone document cache', function () {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('names one file per user id', function () {
-    expect(cacheFileName('usr_42')).equals('teamstation-usr_42.sqlite')
-    expect(cacheFileName('a/b c')).equals('teamstation-a_b_c.sqlite')
+  it('names a bounded file for the exact user and API origin', function () {
+    const name = cacheFileName('usr_42', 'https://api.example.test/api/v1')
+    expect(name).matches(/^teamstation-v2-[a-f0-9]{64}-[a-f0-9]{64}\.sqlite$/)
+    expect(cacheFileName('usr_42', 'https://API.example.test:443/')).equals(
+      name
+    )
+    expect(cacheFileName('usr_42', 'https://other.example.test')).not.equals(
+      name
+    )
+    expect(cacheFileName('usr_43', 'https://api.example.test')).not.equals(name)
+    expect(cacheFileName('a/b c', 'https://api.example.test')).not.equals(
+      cacheFileName('a_b_c', 'https://api.example.test')
+    )
   })
 
   it('stores an answer with its revision and digest, and replaces it with the next', async function () {
@@ -514,7 +524,7 @@ describe('the phone document cache', function () {
   })
 
   it('deletes the database file on sign-out (Sign-out)', async function () {
-    const path = join(dir, cacheFileName('usr_7'))
+    const path = join(dir, cacheFileName('usr_7', 'https://api.example.test'))
     const store = await openCacheStore(nodeSqliteExecutor(path))
     await store.store('home.teams', {
       body: '[]',
@@ -530,7 +540,9 @@ describe('the phone document cache', function () {
     // The coach's answers name players in full; the next person to sign in
     // on the phone opens a file of their own, empty.
     const coach = await openCacheStore(
-      nodeSqliteExecutor(join(dir, cacheFileName('usr_7')))
+      nodeSqliteExecutor(
+        join(dir, cacheFileName('usr_7', 'https://api.example.test'))
+      )
     )
     await coach.store('events.g1', {
       body: '{"plays":[],"readerNames":{"7":"Mookie Betts"}}',
@@ -539,21 +551,25 @@ describe('the phone document cache', function () {
     })
     await coach.close()
     const next = await openCacheStore(
-      nodeSqliteExecutor(join(dir, cacheFileName('usr_8')))
+      nodeSqliteExecutor(
+        join(dir, cacheFileName('usr_8', 'https://api.example.test'))
+      )
     )
     expect(await next.read('events.g1')).equals(undefined)
     const held = await next.atomically(async tx => await tx.outbox())
     expect(held).deep.equals([])
     await next.close()
     const again = await openCacheStore(
-      nodeSqliteExecutor(join(dir, cacheFileName('usr_7')))
+      nodeSqliteExecutor(
+        join(dir, cacheFileName('usr_7', 'https://api.example.test'))
+      )
     )
     expect(await again.read('events.g1')).property('serverDigest', 'd1')
     await again.close()
   })
 
   it('keeps nothing on the web', async function () {
-    const web = await openDocumentCache('usr_1')
+    const web = await openDocumentCache('usr_1', '/api/v1')
     const document = { body: '[]', revision: '1', serverDigest: null }
     expect(await web.store('home.teams', document)).deep.equals({
       ...document,

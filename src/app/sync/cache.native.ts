@@ -5,13 +5,10 @@ import {
   open
 } from '@op-engineering/op-sqlite'
 import { Platform } from 'react-native'
+import ReactNativeBlobUtil from 'react-native-blob-util'
 
-import {
-  cacheFileName,
-  type DocumentStore,
-  openCacheStore,
-  type SqlExecutor
-} from './cacheStore'
+import { type CacheFiles, deleteFileCaches, openFileCache } from './cacheFiles'
+import type { DocumentStore, SqlExecutor } from './cacheStore'
 
 /** op-sqlite as the cache's executor: every statement inside `transaction`. */
 function executorOf(db: DB): SqlExecutor {
@@ -34,19 +31,31 @@ function executorOf(db: DB): SqlExecutor {
   }
 }
 
-/**
- * The signed-in person's cache on the phone: `teamstation-<userId>.sqlite`
- * in the app's documents on iOS and its databases directory on Android.
- */
+function nativeCacheFiles(): CacheFiles {
+  const location =
+    Platform.OS === 'ios'
+      ? (IOS_DOCUMENT_PATH as string)
+      : (ANDROID_DATABASE_PATH as string)
+  const { fs } = ReactNativeBlobUtil
+  return {
+    list: async () =>
+      (await fs.exists(location)) ? await fs.ls(location) : [],
+    remove: async name => {
+      await fs.unlink(`${location}/${name}`)
+    },
+    open: name => executorOf(open({ name, location }))
+  }
+}
+
+/** One API origin, in iOS documents or Android's databases directory. */
 export async function openDocumentCache(
-  userId: string
+  userId: string,
+  apiBaseUrl: string
 ): Promise<DocumentStore> {
-  const db = open({
-    name: cacheFileName(userId),
-    location:
-      Platform.OS === 'ios'
-        ? (IOS_DOCUMENT_PATH as string)
-        : (ANDROID_DATABASE_PATH as string)
-  })
-  return await openCacheStore(executorOf(db))
+  return await openFileCache(userId, apiBaseUrl, nativeCacheFiles())
+}
+
+/** Delete all this account's stores without opening a possibly corrupt file. */
+export async function deleteDocumentCaches(userId: string): Promise<void> {
+  await deleteFileCaches(userId, nativeCacheFiles())
 }

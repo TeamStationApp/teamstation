@@ -31,6 +31,7 @@ import {
   olderSaveFoldsAlike,
   rebuildGameEvents
 } from '../scoring/scoringSource'
+import { deleteDocumentCaches } from './cache'
 import {
   type CacheTransaction,
   type DocumentStore,
@@ -79,11 +80,16 @@ interface Opened {
   store: Promise<DocumentStore | undefined>
 }
 
-/** Opens one person's cache file. */
-export type OpenDocumentCache = (userId: string) => Promise<DocumentStore>
+/** Opens one person's cache for the API origin this client sends to. */
+export type OpenDocumentCache = (
+  userId: string,
+  apiBaseUrl: string
+) => Promise<DocumentStore>
 
 export interface CachingClientOptions extends ClientOptions {
   openCache: OpenDocumentCache
+  /** Account-wide file cleanup, independent of opening; defaults to the platform. */
+  deleteCache?: (userId: string) => Promise<void>
   /** The outbox's clock, chance and timers, swapped out in tests. */
   outbox?: Pick<OutboxOptions, 'now' | 'random' | 'setTimer' | 'clearTimer'>
   /** The person's picture files; the platform's own unless a test swaps it. */
@@ -306,6 +312,8 @@ export function expiredSignature(body: string, now: number): boolean {
  */
 export class CachingClient extends TeamStationClient {
   private readonly openCache: OpenDocumentCache
+  private readonly deleteCache: (userId: string) => Promise<void>
+  private readonly cacheCleanups = new Map<string, Promise<void>>()
   private opened: Opened | undefined
 
   private prefetching: Promise<void> | undefined
@@ -353,6 +361,7 @@ export class CachingClient extends TeamStationClient {
   constructor(options: CachingClientOptions) {
     super(options)
     this.openCache = options.openCache
+    this.deleteCache = options.deleteCache ?? deleteDocumentCaches
     this.refreshRetryMs = options.refreshRetryMs ?? REFRESH_RETRY_MS
     // The signal back: what the phone showed with none is read again.
     this.subscribeOffline(offline => {
@@ -683,13 +692,19 @@ export class CachingClient extends TeamStationClient {
     this.forgetUnrefreshed()
     this.pictureFiles.open(userId)
     const previous = this.opened
+    // Capture only cleanup already pending. A later sign-out may itself
+    // await this open, so looking up its barrier later would deadlock.
+    const cleanup = this.cacheCleanups.get(userId)
     this.opened = {
       userId,
       store: (async () => {
         await this.closeQuietly(previous?.store)
+        await cleanup?.catch(() => undefined)
         try {
-          return await this.openCache(userId)
-        } catch {
+          return await this.openCache(userId, this.baseUrl)
+        } catch (error) {
+          // The session runs uncached; say why, or it looks like a cache bug.
+          console.warn('Offline document cache unavailable:', error)
           return undefined
         }
       })()
@@ -709,9 +724,30 @@ export class CachingClient extends TeamStationClient {
     this.outbox.reset()
     this.forgetUnrefreshed()
     const pictures = opened?.userId ?? this.pictureFiles.userId
-    if (pictures != null) await this.pictureFiles.remove(pictures)
-    const store = await opened?.store
-    await store?.destroy().catch(() => undefined)
+    if (pictures == null) return
+    await this.cleanupCache(pictures, async () => {
+      await this.pictureFiles.remove(pictures)
+      const store = await opened?.store
+      await store?.destroy().catch(() => undefined)
+      await this.deleteCache(pictures).catch(() => undefined)
+    })
+  }
+
+  /** Register before yielding so a new session cannot open into this sweep. */
+  private async cleanupCache(
+    userId: string,
+    work: () => Promise<void>
+  ): Promise<void> {
+    const previous = this.cacheCleanups.get(userId)
+    const pending = (async () => {
+      await previous?.catch(() => undefined)
+      await work()
+    })()
+    this.cacheCleanups.set(userId, pending)
+    await pending.finally(() => {
+      if (this.cacheCleanups.get(userId) === pending)
+        this.cacheCleanups.delete(userId)
+    })
   }
 
   /**
@@ -738,14 +774,17 @@ export class CachingClient extends TeamStationClient {
       await this.signedOut()
       return
     }
-    await this.pictureFiles.remove(userId)
-    let store: DocumentStore | undefined
-    try {
-      store = await this.openCache(userId)
-    } catch {
-      return
-    }
-    await store.destroy().catch(() => undefined)
+    await this.cleanupCache(userId, async () => {
+      await this.pictureFiles.remove(userId)
+      let store: DocumentStore | undefined
+      try {
+        store = await this.openCache(userId, this.baseUrl)
+      } catch {
+        // The file may be corrupt; account-wide removal does not need it open.
+      }
+      await store?.destroy().catch(() => undefined)
+      await this.deleteCache(userId).catch(() => undefined)
+    })
   }
 
   override async cached<T>(

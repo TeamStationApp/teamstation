@@ -173,9 +173,20 @@ describe('CachingClient', function () {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  const openCache = async (userId: string): Promise<DocumentStore> => {
+  const openCache = async (
+    userId: string,
+    apiBaseUrl: string
+  ): Promise<DocumentStore> => {
     opened.push(userId)
-    const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+    const executor = nodeSqliteExecutor(
+      join(
+        dir,
+        cacheFileName(
+          userId,
+          new URL(apiBaseUrl, 'https://app.example.test').href
+        )
+      )
+    )
     stores.set(userId, executor)
     return await openCacheStore(executor)
   }
@@ -1177,10 +1188,16 @@ describe('CachingClient', function () {
     await client.signedOut()
     expect(client.cacheUser).equals(undefined)
     const { existsSync } = await import('node:fs')
-    expect(existsSync(join(dir, cacheFileName('usr_2')))).equals(false)
-    expect(existsSync(join(dir, cacheFileName('usr_1')))).equals(true)
+    expect(existsSync(join(dir, cacheFileName('usr_2', 'http://x')))).equals(
+      false
+    )
+    expect(existsSync(join(dir, cacheFileName('usr_1', 'http://x')))).equals(
+      true
+    )
     await client.discard('usr_1')
-    expect(existsSync(join(dir, cacheFileName('usr_1')))).equals(false)
+    expect(existsSync(join(dir, cacheFileName('usr_1', 'http://x')))).equals(
+      false
+    )
     client.openFor('usr_3')
     await client.discard('usr_3')
     expect(client.cacheUser).equals(undefined)
@@ -1188,11 +1205,16 @@ describe('CachingClient', function () {
 
   it('misses, and answers from the server, when the file will not open or write', async function () {
     const net = server({ '/teams': { body: [team('tem_hawks', 'Hawks')] } })
+    const deleted: string[] = []
     const broken = new CachingClient({
       baseUrl: 'http://x/api/v1',
       fetch: net.fetch,
       openCache: async () => {
         throw new Error('disk full')
+      },
+      deleteCache: async userId => {
+        deleted.push(userId)
+        throw new Error('cleanup refused')
       }
     })
     broken.openFor('usr_1')
@@ -1200,6 +1222,7 @@ describe('CachingClient', function () {
     expect(await broken.cached('home.teams', raw => raw)).equals(undefined)
     await broken.discard('usr_9')
     await broken.signedOut()
+    expect(deleted).deep.equals(['usr_9', 'usr_1'])
 
     const failing: DocumentStore = {
       read: async () => {
@@ -1221,10 +1244,14 @@ describe('CachingClient', function () {
         throw new Error('locked')
       }
     }
+    const lockedDeleted: string[] = []
     const locked = new CachingClient({
       baseUrl: 'http://x/api/v1',
       fetch: net.fetch,
-      openCache: async () => failing
+      openCache: async () => failing,
+      deleteCache: async userId => {
+        lockedDeleted.push(userId)
+      }
     })
     locked.openFor('usr_1')
     expect(await locked.teams()).length(1)
@@ -1239,6 +1266,8 @@ describe('CachingClient', function () {
     }
     expect(failure).property('code', 'offline')
     await locked.signedOut()
+    await locked.discard('usr_3')
+    expect(lockedDeleted).deep.equals(['usr_2', 'usr_3'])
   })
 
   it('throws the offline error for a stored body this version cannot read', async function () {
