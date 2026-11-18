@@ -29,11 +29,7 @@ async function main(): Promise<void> {
         await f.tick()
         res.end('reset')
       } else if (path === '/__quiet/expire' && req.method === 'POST') {
-        await f.db
-          .updateTable('live_streams')
-          .set({ last_published_at: new Date(Date.now() - 660_000) })
-          .where('id', '=', stream.id)
-          .execute()
+        await f.silence(stream.id, 660_000)
         await f.tick()
         res.end('ended')
       } else if (

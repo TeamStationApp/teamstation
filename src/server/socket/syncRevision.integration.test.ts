@@ -348,9 +348,10 @@ describe('announcing screen scope changes', function () {
         noteScopeChange(trx, { teamId: 'tem_notes_b' })
       })
       const { rows } = await sql<{ waiting: number }>`
-        select count(*)::integer as waiting from pg_locks where not granted`.execute(
-        db
-      )
+        select count(*)::integer as waiting from pg_locks
+        where not granted and pid in (
+          select pid from pg_stat_activity where datname = current_database()
+        )`.execute(db)
       expect(rows[0].waiting).equals(0)
       await heardNamed({ teamId: 'tem_notes_b' }, count)
       // A's notice is not out until A commits.

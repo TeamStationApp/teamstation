@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { sql } from 'kysely'
+
 import { userIdOfGumbo } from '../common/userId'
 import {
   type LiveControllerOptions,
@@ -25,6 +27,9 @@ import { creationHarness } from './creationHarness'
 
 interface StreamInput {
   quietMs?: number
+  startAgoMs?: number
+  gameId?: string
+  slot?: number
   endAgoMs?: number | null
   openedAgoMs?: number
   published?: boolean
@@ -43,6 +48,7 @@ interface QuietStreamFixture {
   addStream: (input?: StreamInput) => Promise<FixtureStream>
   request: (path: string, method?: string) => Promise<any>
   tick: () => Promise<void>
+  silence: (id: string, quietMs: number) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -107,28 +113,29 @@ export async function quietStreamFixture(
   let serial = 0
   async function addStream(input: StreamInput = {}): Promise<FixtureStream> {
     const now = Date.now()
-    const gameId = `gam_quiet_${++serial}`
-    await db
-      .insertInto('games')
-      .values({
-        id: gameId,
-        home_team_id: 'tem_account',
-        away_team_id: 'tem_quiet_away',
-        start_at: new Date(now - 3_600_000),
-        home_score: 3,
-        away_score: 2,
-        end_at:
-          input.endAgoMs === null
-            ? null
-            : new Date(now - (input.endAgoMs ?? 660_000))
-      })
-      .execute()
+    const gameId = input.gameId ?? `gam_quiet_${++serial}`
+    if (input.gameId == null)
+      await db
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: 'tem_account',
+          away_team_id: 'tem_quiet_away',
+          start_at: new Date(now - (input.startAgoMs ?? 3_600_000)),
+          home_score: 3,
+          away_score: 2,
+          end_at:
+            input.endAgoMs === null
+              ? null
+              : new Date(now - (input.endAgoMs ?? 660_000))
+        })
+        .execute()
     const stream = await createLiveStream(db, {
       gameId,
       teamId: 'tem_account',
       startAt: new Date(now - 3_600_000),
       userId: owner,
-      slot: 1,
+      slot: input.slot ?? 1,
       live: LIVE,
       sessionSecret: SECRET,
       videoTitle: 'Demo Owls at Demo Hawks'
@@ -138,6 +145,17 @@ export async function quietStreamFixture(
       .updateTable('live_streams')
       .set({
         state: input.state ?? 'idle',
+        status: {
+          liveStreamId: stream.id,
+          ingress: {
+            publishing: input.state === 'publishing',
+            receivingPackets: false,
+            bytesReceived: 0,
+            bytesPerSecond: 0,
+            lastReceivedAt: published ? now - (input.quietMs ?? 660_000) : null
+          },
+          outputs: []
+        },
         opens_at: new Date(now - (input.openedAgoMs ?? 3_600_000)),
         first_published_at: published ? new Date(now - 3_600_000) : null,
         last_published_at: published
@@ -214,6 +232,15 @@ export async function quietStreamFixture(
     mediaRoot,
     addStream,
     request,
+    silence: async (id, quietMs) => {
+      await db
+        .updateTable('live_streams')
+        .set({
+          status: sql`jsonb_set(status, '{ingress,lastReceivedAt}', ${JSON.stringify(Date.now() - quietMs)}::jsonb)`
+        })
+        .where('id', '=', id)
+        .execute()
+    },
     tick: async () => {
       await sync(options)
       await settleLiveWork()

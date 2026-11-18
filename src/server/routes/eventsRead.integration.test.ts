@@ -244,9 +244,10 @@ describe('reading a game without taking its row', function () {
       const posted = await atOnce(post(second, [play(0)]))
       expect(posted.status).equals(200)
       const { rows } = await sql<{ waiting: number }>`
-        select count(*)::integer as waiting from pg_locks where not granted`.execute(
-        db
-      )
+        select count(*)::integer as waiting from pg_locks
+        where not granted and pid in (
+          select pid from pg_stat_activity where datname = current_database()
+        )`.execute(db)
       return rows[0].waiting
     })
     expect(waiting).equals(0)
