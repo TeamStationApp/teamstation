@@ -1,0 +1,41 @@
+{
+  "highs": {
+    "version": "1.15.1",
+    "tag": "v1.15.1",
+    "commit": "04024d701f79feb8e2f18bc3df0dffc04ef05088",
+    "url": "https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v1.15.1.tar.gz",
+    "sha256": "a840d269dff2fafb371dd247df13ad5e026d7ce3b35ad3dc1eedd59bf0c2fb16"
+  },
+  "doctest": {
+    "version": "2.4.11",
+    "url": "https://raw.githubusercontent.com/doctest/doctest/v2.4.11/doctest/doctest.h",
+    "sha256": "44faa038e9c3f9728efbda143748d01124ea0a27f4bf78f35a15d8fab2e039fb"
+  },
+  "cmake": {
+    "version": "3.31.6",
+    "hosts": {
+      "mac": {
+        "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz",
+        "sha256": "330b9514f5112e5ed4fb08b8b05803b776fd9b539a6ae12927d14dcc0ee2ba8d"
+      },
+      "linux-x64": {
+        "url": "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.tar.gz",
+        "sha256": "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf"
+      }
+    }
+  },
+  "emscripten": {
+    "version": "6.0.13",
+    "releaseHash": "eb132757325583b787fe9414b09afea9442b72ad",
+    "hosts": {
+      "mac-arm64": {
+        "url": "https://storage.googleapis.com/webassembly/emscripten-releases-builds/mac/eb132757325583b787fe9414b09afea9442b72ad/wasm-binaries-arm64.tar.xz",
+        "sha256": "3d8ced05935fbef5b3edda4252dce260004860bf8d579617f13d417338aa4cac"
+      },
+      "linux-x64": {
+        "url": "https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/eb132757325583b787fe9414b09afea9442b72ad/wasm-binaries.tar.xz",
+        "sha256": "cda6801012ff3319a539111826ed02a9abd7eff135c2ef261c8941caf5a3763e"
+      }
+    }
+  }
+}
