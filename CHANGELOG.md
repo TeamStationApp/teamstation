@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
+- changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
+
 ## 1.3.0 (2026-11-18)
 
 - added: An animated launch splash over the stadium on every cold launch, on iPhone, iPad, Apple TV and Android

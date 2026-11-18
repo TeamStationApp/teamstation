@@ -231,9 +231,20 @@ async function main(): Promise<void> {
     const expectNoHeaderButtons = async (): Promise<void> => {
       for (const label of ['Tess', 'Notifications'])
         expect(
-          await page.$(`[role="button"][aria-label="${label}"]`),
+          await page.evaluate(
+            label =>
+              [
+                ...document.querySelectorAll(
+                  `[role="button"][aria-label="${label}"]`
+                )
+              ].filter(
+                node =>
+                  node.closest('[data-testid="navigation-sidebar"]') == null
+              ).length,
+            label
+          ),
           label
-        ).equals(null)
+        ).equals(0)
     }
     // W1: the header's mark and picture, as user 101 (an umpire) and user 102.
     await identity(t, 101)

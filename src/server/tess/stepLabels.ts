@@ -75,6 +75,11 @@ const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /** The label of one tool call Tess made. */
 export function stepLabel(call: { name: string; input: unknown }): string {
+  if (call.name === 'source_list_directory') return 'Listing source files'
+  if (call.name === 'source_read_file') return 'Reading TeamStation source'
+  if (call.name === 'source_search') return 'Searching TeamStation source'
+  if (call.name === 'source_outline') return 'Outlining source'
+  if (call.name === 'source_find_definition') return 'Finding a definition'
   const input =
     call.input != null && typeof call.input === 'object'
       ? (call.input as Record<string, unknown>)

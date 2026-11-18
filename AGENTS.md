@@ -1,5 +1,14 @@
 # Agent guidelines for teamstation
 
+## Source directory map
+
+Read `src/DIRECTORY_MAP.md` before exploring the source. Whenever files or directories
+under `src/` are added, moved, renamed, deleted, or otherwise structurally changed,
+check whether `src/DIRECTORY_MAP.md` needs updating. Include any required map update
+in the same commit as the structural change. Keep the map within 4,000 characters,
+with paths relative to `src/` and naming only files or folders in the shipped source
+index. Tess receives this compact map in her cached system prompt.
+
 ## Push your work
 
 **Do not leave code on the local machine, committed or uncommitted.** Local commits are not
