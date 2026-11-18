@@ -100,7 +100,10 @@ export async function connectToMaestroChromium(
     .split('\n')
   const browser = await puppeteer.connect({
     browserWSEndpoint: `ws://127.0.0.1:${port}${path}`,
-    defaultViewport: null
+    defaultViewport: null,
+    // Maestro observes requests. This read-only connection needs no duplicate
+    // network events or renderer cache of downloaded response bodies.
+    networkEnabled: false
   })
   const page = (await browser.pages()).find(p => p.url() === targetUrl)
   if (page == null) throw new Error(`No browser target at ${targetUrl}`)

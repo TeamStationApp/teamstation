@@ -1159,6 +1159,33 @@
       "file": "e2e/tests/people/search/reach.e2e.ts"
     },
     {
+      "id": "platform/browser/observation#network",
+      "title": "Browser observations read the page without capturing network responses",
+      "kind": "integration",
+      "covers": [
+        "e2e/core/browserCdp.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 1,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/browser/observation",
+      "file": "e2e/tests/platform/browser/observation.integration.ts"
+    },
+    {
       "id": "platform/node-admin/jev-key#set-and-clear",
       "title": "The node administrator sets and removes the Jev key, which no route or log shows",
       "kind": "e2e",
