@@ -6,6 +6,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { buildSchedule } from '../../../common/scheduler/engine'
 import { migrations } from '../../../migrate/migrations'
 import { migrateUp } from '../../../migrate/runner'
 import {
@@ -13,6 +14,7 @@ import {
   testDatabaseUrl
 } from '../../../migrate/testDatabase'
 import { readPasswordRecord } from '../../auth/passwords'
+import { preparePreview } from '../../autoScheduler/previews'
 import { type Database, makeDatabase } from '../../db/database'
 import { accountMailEnabled } from '../../email/accountMail'
 import { serverConfig } from '../../serverConfig'
@@ -28,6 +30,7 @@ import {
 } from './cli'
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
+import { runPackedLeague } from './packedLeague'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -103,6 +106,7 @@ describe('the fixtures script', function () {
     ).deep.equals({ world: 'baseline', mailbox: MAILBOX })
     expect(Object.keys(WORLDS)).includes('team-with-roster')
     expect(Object.keys(WORLDS)).includes('streaming')
+    expect(Object.keys(WORLDS)).includes('packed-league')
   })
 })
 
@@ -241,6 +245,72 @@ describe('fixture worlds', function () {
       .where('id', '=', a.ids.team)
       .executeTakeFirstOrThrow()
     expect(team.name).includes(a.nonce)
+  })
+
+  it('packed-league gives its admin a league of six seasons, ready to schedule, under each nonce', async function () {
+    const run = async (): Promise<FixtureManifest> =>
+      await runPackedLeague({
+        db: the(),
+        mailbox: MAILBOX,
+        nonce: makeNonce()
+      })
+    const [a, b] = [await run(), await run()]
+    expect(a.world).equals('packed-league')
+    expect(a.ids.league).not.equals(b.ids.league)
+    const teamsOf = (m: FixtureManifest): string[] =>
+      Object.entries(m.ids)
+        .filter(([key]) => key.startsWith('tem_'))
+        .map(([, id]) => id)
+    expect(teamsOf(a)).lengthOf(51)
+    expect(teamsOf(a).filter(id => teamsOf(b).includes(id))).deep.equals([])
+    expect(a.accounts.admin.userId).not.equals(b.accounts.admin.userId)
+    expect(isTestAddress(MAILBOX, a.accounts.admin.email)).equals(true)
+    const administers = await the()
+      .selectFrom('scope_roles')
+      .select('role')
+      .where('user_id', '=', a.accounts.admin.userId)
+      .where('scope_type', '=', 'league')
+      .where('scope_id', '=', a.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(administers.role).equals('admin')
+    const setup = await the()
+      .selectFrom('league_schedule_setups')
+      .select(['season_ids', 'field_ids', 'avoid_head_coach_conflicts'])
+      .where('league_id', '=', a.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(setup.season_ids).lengthOf(6)
+    expect(setup.field_ids).lengthOf(5)
+    expect(setup.avoid_head_coach_conflicts).equals(true)
+    const settings = await the()
+      .selectFrom('season_schedule_settings')
+      .select(['season_id', 'field_ids'])
+      .where('season_id', 'in', setup.season_ids)
+      .execute()
+    expect(settings).lengthOf(6)
+    for (const row of settings) expect(row.field_ids).lengthOf(1)
+    // Six head coaches coach a team in two seasons.
+    const coaches = await the()
+      .selectFrom('scope_roles')
+      .select('user_id')
+      .where('is_head_coach', '=', true)
+      .where('scope_id', 'in', teamsOf(a))
+      .execute()
+    expect(coaches).lengthOf(51)
+    expect(new Set(coaches.map(row => row.user_id)).size).equals(45)
+    // The server's own preparation reads it as the packed league: built by
+    // the engine, its seasons get 10, 10, 12, 14, 16 and 16 games per team.
+    const prepared = await preparePreview(
+      the(),
+      { userId: a.accounts.admin.userId, isAdmin: false, scopes: [] },
+      a.ids.league,
+      { mode: 'full' },
+      { now: () => new Date('2026-11-16T08:00:00Z') }
+    )
+    const built = await buildSchedule({ input: prepared.input })
+    if (built.kind !== 'options') expect.fail(built.message)
+    expect(
+      built.targets.map(target => target.regular).sort((x, y) => x - y)
+    ).deep.equals([10, 10, 12, 14, 16, 16])
   })
 
   it('streaming gives the coach the home team, an empty game and one with two videos', async function () {

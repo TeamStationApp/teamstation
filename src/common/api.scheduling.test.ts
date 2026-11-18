@@ -2,9 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { TeamStationClient } from './api'
-import { buildOptions } from './autoScheduler'
-import { input } from './autoScheduler/fixtures.test'
+import { input, season } from './autoScheduler/fixtures.test'
 import type { GameToReschedule, SchedulePreview } from './schedulePreviews'
+import {
+  buildSchedule,
+  EngineFailureError,
+  engineResult
+} from './scheduler/engine'
 import type { ScheduleSettings, ScheduleSetup } from './seasonScheduling'
 
 const SETTINGS: ScheduleSettings = {
@@ -256,7 +260,11 @@ describe('api client scheduling setup', () => {
         '/api/v1/leagues/lea%2Fa/schedule-previews/preparations',
         { mode: 'full', existing: 'workAround' }
       ],
-      ['PUT', '/api/v1/schedule-previews/spv%2F1/result', buildOptions(engine)],
+      [
+        'PUT',
+        '/api/v1/schedule-previews/spv%2F1/result',
+        engineResult(await buildSchedule({ input: engine }))
+      ],
       ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
       [
         'PUT',
@@ -266,6 +274,85 @@ describe('api client scheduling setup', () => {
       ['POST', '/api/v1/schedule-previews/spv%2F1/publications', { option: 0 }],
       ['GET', '/api/v1/leagues/lea%2Fa/games-to-reschedule', undefined]
     ])
+  })
+
+  it('builds with this platform’s engine', async () => {
+    const engine = input({
+      seasons: [
+        season(
+          {
+            regularGames: 2,
+            exhibitionGames: 0,
+            windows: [
+              {
+                from: '2027-03-01',
+                hours: [{ weekday: 6, start: '08:00', end: '18:00' }]
+              }
+            ]
+          },
+          { exhibitionTeams: [] }
+        )
+      ]
+    })
+    const preview: SchedulePreview = {
+      id: 'spv/1',
+      leagueId: 'lea',
+      mode: 'full',
+      existing: 'workAround',
+      status: 'open',
+      createdAt: '2026-10-22T12:00:00.000Z',
+      options: [],
+      blocking: null,
+      edits: { option: 0, rejectedGameKeys: [], addedGames: [] },
+      replacing: 0,
+      publishedOption: null,
+      publishedAt: null,
+      published: [],
+      teams: [],
+      seasons: [],
+      fields: []
+    }
+    const { api, calls } = client([{ id: 'spv/1', input: engine }, preview])
+    await api.buildSchedulePreview('lea', { mode: 'full' })
+    const sent = calls[1][2] as { options: Array<{ games: unknown[] }> }
+    expect(sent.options[0].games.length).greaterThan(0)
+    expect(sent).deep.equals(
+      engineResult(await buildSchedule({ input: engine }))
+    )
+  }).timeout(60_000)
+
+  it('sends nothing when the engine fails, and throws its typed failure', async () => {
+    const engine = input({ seasons: [], fields: [] })
+    const path = require.resolve('./scheduler/engine')
+    const real = require.cache[path]
+    require.cache[path] = {
+      ...real,
+      exports: {
+        ...(real?.exports as object),
+        buildSchedule: async () => ({
+          kind: 'failure',
+          failure: 'noSolver',
+          message: 'This browser has no WebAssembly'
+        })
+      }
+    } as unknown as NodeJS.Module
+    try {
+      const { api, calls } = client([{ id: 'spv/1', input: engine }])
+      let thrown: unknown
+      try {
+        await api.buildSchedulePreview('lea', { mode: 'full' })
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).instanceOf(EngineFailureError)
+      expect(thrown).include({
+        failure: 'noSolver',
+        message: 'This browser has no WebAssembly'
+      })
+      expect(calls).lengthOf(1)
+    } finally {
+      require.cache[path] = real
+    }
   })
 
   it('sends the same result again while offline or the server fails, and stops at a refusal of the result', async () => {

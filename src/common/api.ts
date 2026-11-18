@@ -5850,10 +5850,13 @@ export class TeamStationClient {
       asPreparedPreview,
       request
     )
-    const { buildOptionsAsync } = await import('./autoScheduler')
-    // The options are stored as built, summaries and all.
-    const result = await buildOptionsAsync(prepared.input)
-    // A search can take minutes, so while the device is offline or the
+    // This platform's engine: the web's worker, the phones' native module.
+    const { buildSchedule, engineResult } = await import('./scheduler/engine')
+    // The options are stored as built, summaries and all. A build the
+    // engine cannot make, or a device that cannot run it, throws its typed
+    // failure (`EngineFailureError`), and nothing is sent.
+    const result = engineResult(await buildSchedule({ input: prepared.input }))
+    // A build can take minutes, so while the device is offline or the
     // server fails (a deploy, a proxy, a fault) the same result is sent
     // again, which the server accepts once. A refusal of the result itself
     // is final.

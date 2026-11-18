@@ -5,6 +5,7 @@ import { makeNonce } from './accounts'
 import { splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
+import { runPackedLeague } from './packedLeague'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -23,7 +24,8 @@ export const WORLDS: Record<
 > = {
   'team-with-roster': runTeamWithRoster,
   streaming: runStreaming,
-  'coach-game': runCoachGame
+  'coach-game': runCoachGame,
+  'packed-league': runPackedLeague
 }
 
 export function refuseWithoutTestSettings(testSettings: boolean): void {

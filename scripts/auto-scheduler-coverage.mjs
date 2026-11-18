@@ -86,6 +86,8 @@ const tsSuites = [
   'src/common/api.scheduling.test.ts',
   // M6: the scheduler.
   'src/migrate/migrations/080schedulePreviews.integration.test.ts',
+  // The Auto-Scheduler's kept TypeScript: context, slots, rules, scores and
+  // the cause wording.
   'src/common/autoScheduler/*.test.ts',
   'src/server/routes/schedulePreviews.integration.test.ts',
   'src/server/autoScheduler/publish.integration.test.ts',
@@ -116,7 +118,12 @@ const tsSuites = [
   'src/app/platform/eventDirections.test.ts',
   'src/app/platform/eventDirections.web.test.ts',
   // Preview calendar M3: filters, field labels and the weeks.
-  'src/app/screens/schedulePreviewCalendar.test.ts'
+  'src/app/screens/schedulePreviewCalendar.test.ts',
+  // Exact only M5: the C++ engine through its Node addon (capacity.test.ts
+  // is under the glob above); the pinned sources, doctest's and
+  // Emscripten's among them.
+  'src/common/scheduler/engine.test.ts',
+  'src/test/highsSource.integration.test.ts'
 ]
 
 if (unitOnly) {

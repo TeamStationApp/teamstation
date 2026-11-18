@@ -686,7 +686,10 @@ export function SchedulePreviewScreen({
                   <SectionHeader title="What couldn’t be met" />
                   <View style={styles.warnings} testID="preview-unmet">
                     {shownOption.unmet.map(unmet => (
-                      <View key={unmet.message} style={styles.section}>
+                      <View
+                        key={`${unmet.seasonId}|${unmet.message}`}
+                        style={styles.section}
+                      >
                         <Text style={styles.warning}>
                           {seasons.get(unmet.seasonId)?.name ?? 'A season'}:{' '}
                           {unmet.message}.

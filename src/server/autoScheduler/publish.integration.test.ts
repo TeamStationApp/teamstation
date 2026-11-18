@@ -2,13 +2,13 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { buildOptions } from '../../common/autoScheduler'
 import {
   asPreparedPreview,
   asSchedulePreview,
   type Publication,
   type SchedulePreview
 } from '../../common/schedulePreviews'
+import { buildSchedule, engineResult } from '../../common/scheduler/engine'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   G1,
@@ -112,7 +112,7 @@ describe('publishing a schedule preview', function () {
     )
     expect(response.status).equals(201)
     const prepared = asPreparedPreview(await response.json())
-    const result = buildOptions(prepared.input)
+    const result = engineResult(await buildSchedule({ input: prepared.input }))
     const game = result.options[0].games[0]
     game.key = 'live_after_prepare'
     await f.h.db
@@ -783,8 +783,12 @@ describe('publishing a schedule preview', function () {
   it('releases a replaced game and its pending change from manager commitments', async () => {
     const { f, teams } = w.fx
     const first = (await build({ mode: 'full', existing: 'replace' })).body
-    const game = first.options[0].games.find(g =>
-      [g.homeTeamId, g.awayTeamId].includes(teams.Hawks)
+    // A Hawks game against a team other than Visitors, which leaves the
+    // season below.
+    const game = first.options[0].games.find(
+      g =>
+        [g.homeTeamId, g.awayTeamId].includes(teams.Hawks) &&
+        ![g.homeTeamId, g.awayTeamId].includes(teams.Visitors)
     )!
     const current = await w.call<{
       version: string

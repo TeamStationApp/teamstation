@@ -178,4 +178,10 @@ export interface EngineResult {
    * every team 30 games"
    */
   blocking: string | null
+  /**
+   * False when the solver stopped at its time limit and the admin used the
+   * best schedule found, so it is not proven the best; true or absent when
+   * proven.
+   */
+  provenOptimal?: boolean
 }

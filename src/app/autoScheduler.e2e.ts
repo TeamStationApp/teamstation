@@ -16,8 +16,8 @@ import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
-import { buildOptions } from '../common/autoScheduler'
 import { asPreparedPreview } from '../common/schedulePreviews'
+import { buildSchedule, engineResult } from '../common/scheduler/engine'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
   api,
@@ -1766,7 +1766,7 @@ async function e10(run: Run): Promise<void> {
     lines,
     'PUT',
     `/schedule-previews/${preparation.id}/result`,
-    buildOptions(preparation.input)
+    engineResult(await buildSchedule({ input: preparation.input }))
   )
   const first = JSON.parse(completed.replace(/\nHTTP \d+\n$/, '')) as {
     id: string
@@ -1794,7 +1794,7 @@ async function e10(run: Run): Promise<void> {
     lines,
     'PUT',
     `/schedule-previews/${nextPreparation.id}/result`,
-    buildOptions(nextPreparation.input)
+    engineResult(await buildSchedule({ input: nextPreparation.input }))
   )
   const built = JSON.parse(nextCompleted.replace(/\nHTTP \d+\n$/, '')) as {
     id: string
