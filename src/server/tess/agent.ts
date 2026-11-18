@@ -24,7 +24,8 @@ import {
   type ModelDeps,
   requestMessages,
   saveContextTokens,
-  type StoredBlock
+  type StoredBlock,
+  TOOL_LIMIT_NOTICE
 } from './conversation'
 import type { Credentials } from './loopback'
 import {
@@ -62,9 +63,7 @@ import { userContext } from './userContext'
 export const MAX_TOOL_ROUNDS = 20
 
 export const TOOL_LIMIT = 'Tool limit reached; answer with what you have'
-/** Sent with the last tool round's results, so the tool-free answer is a real one. */
-export const TOOL_LIMIT_NOTICE =
-  'Tool limit reached: the next reply cannot use tools. Answer now from what you have found, and say what you could not check.'
+export { TOOL_LIMIT_NOTICE }
 export const TOO_LARGE_NOW =
   'That answer is too large for the conversation now. Ask for less, or answer with what you have.'
 /** The result of a tool call left unrun when the person stopped the turn. */
@@ -595,16 +594,23 @@ async function respond(
           : [{ type: 'change' as const, id: outcome.changeId }]
       )
       // After the last tool round she is told why the next call has no tools.
-      const answered: Array<ToolResultBlock | TextBlock> =
-        round === MAX_TOOL_ROUNDS
-          ? [...results, { type: 'text', text: TOOL_LIMIT_NOTICE }]
-          : results
+      // It is stored as a mark, so a summary never credits it to the person.
+      const closing = round === MAX_TOOL_ROUNDS
       await appendMessages(db, userId, [
         { role: 'assistant', content: [...response.content, ...changes] },
-        { role: 'user', content: answered }
+        {
+          role: 'user',
+          content: closing ? [...results, { type: 'tool_limit' }] : results
+        }
       ])
       known = sizeAfter(response, results)
-      request = withExchange(request, response.content, answered)
+      request = withExchange(
+        request,
+        response.content,
+        closing
+          ? [...results, { type: 'text', text: TOOL_LIMIT_NOTICE }]
+          : results
+      )
     }
   } catch (error) {
     // Still too long once compacted: the next message compacts again first.

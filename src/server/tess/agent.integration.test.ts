@@ -388,6 +388,15 @@ describe("Tess's agent loop", function () {
       role: 'assistant',
       content: [{ type: 'text', text: 'Here is what I found.' }]
     })
+    // Stored as a mark rather than the person's text, so a summary can tell.
+    expect(messages.at(-2)!.content.at(-1)).deep.equals({ type: 'tool_limit' })
+    expect(
+      messages.some(message =>
+        message.content.some(
+          block => block.type === 'text' && block.text === TOOL_LIMIT_NOTICE
+        )
+      )
+    ).equals(false)
 
     model.reply(say('Anything else?'))
     await runTurn(w.deps(), w.user(101), { text: 'Thanks' })
