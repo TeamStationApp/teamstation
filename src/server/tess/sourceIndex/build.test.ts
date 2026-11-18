@@ -4,7 +4,8 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  symlinkSync
+  symlinkSync,
+  writeFileSync
 } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -16,12 +17,17 @@ import { describe, it } from 'mocha'
 import { sourceIndexFixture } from '../../../test/sourceIndexFixture'
 import { buildSourceIndex, sourceCommit } from './build'
 import { MAX_SOURCE_BYTES } from './files'
+import { DIRECTORY_MAP_LIMIT } from './schema'
 
 describe('building the source index', function () {
   this.timeout(120000)
   it('prefers build metadata and falls back to the Git revision or unknown', () => {
     const previous = process.env.TS_BUILD_INFO
-    const git = mock.method(childProcess, 'execFileSync', () => 'fixture-git\n')
+    let gitFails = false
+    const git = mock.method(childProcess, 'execFileSync', () => {
+      if (gitFails) throw new Error('no checkout')
+      return 'fixture-git\n'
+    })
     try {
       process.env.TS_BUILD_INFO = '{"commit":"fixture-build"}'
       expect(sourceCommit('.')).equals('fixture-build')
@@ -29,12 +35,14 @@ describe('building the source index', function () {
       process.env.TS_BUILD_INFO = '{}'
       expect(sourceCommit('.')).equals('fixture-git')
       delete process.env.TS_BUILD_INFO
-      git.mock.mockImplementation(() => {
-        throw new Error('no checkout')
-      })
+      gitFails = true
       expect(sourceCommit('.')).equals('unknown')
-      process.env.TS_BUILD_INFO = '{'
-      expect(() => sourceCommit('.')).throws()
+      // An empty or malformed value falls through to git, never fails the build.
+      gitFails = false
+      for (const value of ['', '  ', '{', 'null', '"text"']) {
+        process.env.TS_BUILD_INFO = value
+        expect(sourceCommit('.')).equals('fixture-git')
+      }
     } finally {
       git.mock.restore()
       if (previous == null) delete process.env.TS_BUILD_INFO
@@ -122,6 +130,29 @@ describe('building the source index', function () {
         buildSourceIndex({ root: f.root, out: join(f.root, 'empty.db') })
       ).throws()
       expect(existsSync(join(f.root, 'empty.db'))).equals(false)
+    } finally {
+      f.close()
+    }
+  })
+  it('refuses a map the server could not serve, and ignores a stale journal', () => {
+    const f = sourceIndexFixture()
+    try {
+      f.build()
+      const original = readFileSync(f.index)
+      for (const [map, reason] of [
+        ['x'.repeat(DIRECTORY_MAP_LIMIT + 1), 'the limit is 4000'],
+        [' \n', 'is empty']
+      ]) {
+        f.write('src/DIRECTORY_MAP.md', map)
+        expect(() => f.build()).throws(reason)
+        expect(readFileSync(f.index)).deep.equals(original)
+      }
+      f.write('src/DIRECTORY_MAP.md', 'x'.repeat(DIRECTORY_MAP_LIMIT))
+      // A killed build's hot journal must not be replayed into the next one.
+      writeFileSync(f.index + '.tmp-journal', 'not a journal')
+      f.build()
+      for (const suffix of ['', '-journal', '-wal', '-shm'])
+        expect(existsSync(f.index + '.tmp' + suffix)).equals(false)
     } finally {
       f.close()
     }

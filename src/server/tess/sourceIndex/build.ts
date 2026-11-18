@@ -11,20 +11,30 @@ import {
   sourceText
 } from './files'
 import { sourceSymbols } from './outline'
-import { SCHEMA_VERSION, SOURCE_SCHEMA } from './schema'
+import { directoryMapProblem, SCHEMA_VERSION, SOURCE_SCHEMA } from './schema'
+
+/** An empty or unreadable TS_BUILD_INFO falls through to git, like a missing one. */
+function buildInfoCommit(): string | undefined {
+  const raw = process.env.TS_BUILD_INFO
+  if (raw == null || raw.trim() === '') return undefined
+  let info: unknown
+  try {
+    info = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  return info != null &&
+    typeof info === 'object' &&
+    'commit' in info &&
+    typeof info.commit === 'string' &&
+    info.commit !== ''
+    ? info.commit
+    : undefined
+}
 
 export function sourceCommit(root: string): string {
-  if (process.env.TS_BUILD_INFO != null) {
-    const info: unknown = JSON.parse(process.env.TS_BUILD_INFO)
-    if (
-      info != null &&
-      typeof info === 'object' &&
-      'commit' in info &&
-      typeof info.commit === 'string' &&
-      info.commit !== ''
-    )
-      return info.commit
-  }
+  const fromBuild = buildInfoCommit()
+  if (fromBuild != null) return fromBuild
   try {
     return execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: root,
@@ -34,6 +44,12 @@ export function sourceCommit(root: string): string {
   } catch {
     return 'unknown'
   }
+}
+
+/** SQLite's side files; a journal left by a killed build would be replayed. */
+function removeDatabase(path: string): void {
+  for (const suffix of ['', '-journal', '-wal', '-shm'])
+    rmSync(`${path}${suffix}`, { force: true })
 }
 
 /** A failed build cannot replace the last usable release index. */
@@ -55,7 +71,7 @@ export function buildSourceIndex(options: {
   const out = resolve(options.out)
   const temp = `${out}.tmp`
   mkdirSync(dirname(out), { recursive: true })
-  rmSync(temp, { force: true })
+  removeDatabase(temp)
   let db: DatabaseSync | undefined
   try {
     db = new DatabaseSync(temp)
@@ -92,7 +108,12 @@ export function buildSourceIndex(options: {
       )
       files += 1
       roles[role] += 1
-      hasMap ||= path === 'src/DIRECTORY_MAP.md'
+      if (path === 'src/DIRECTORY_MAP.md') {
+        // The server refuses a map it cannot put in the prompt, so the build does too.
+        const problem = directoryMapProblem(text.content)
+        if (problem != null) throw new Error(problem)
+        hasMap = true
+      }
       let entry = path
       let kind = 'file'
       while (entry !== 'src') {
@@ -140,6 +161,6 @@ export function buildSourceIndex(options: {
     }
   } finally {
     db?.close()
-    rmSync(temp, { force: true })
+    removeDatabase(temp)
   }
 }

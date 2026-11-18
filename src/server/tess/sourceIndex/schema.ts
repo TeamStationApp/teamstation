@@ -1,6 +1,17 @@
 /** The build and reader must agree before serving any source. */
 export const SCHEMA_VERSION = 1
 
+/** The compact map travels in every cached system prompt, so it stays small. */
+export const DIRECTORY_MAP_LIMIT = 4000
+
+/** Why a map cannot travel in the prompt, or undefined when it can. */
+export function directoryMapProblem(map: string): string | undefined {
+  if (map.trim() === '') return 'src/DIRECTORY_MAP.md is empty'
+  if (map.length > DIRECTORY_MAP_LIMIT)
+    return `src/DIRECTORY_MAP.md is ${map.length} characters; the limit is ${DIRECTORY_MAP_LIMIT}`
+  return undefined
+}
+
 export const SOURCE_SCHEMA = `
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE files (
