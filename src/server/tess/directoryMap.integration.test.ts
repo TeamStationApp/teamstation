@@ -1,40 +1,33 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 
 import { expect } from 'chai'
 import { it } from 'mocha'
 
-import { buildSourceIndex } from './sourceIndex/build'
+import { REAL_INDEX_TIMEOUT, realSourceIndex } from '../../test/realSourceIndex'
+import { DIRECTORY_MAP_LIMIT } from './sourceIndex/schema'
 
 it('keeps the compact source map within 4000 characters and names only indexed paths', function () {
-  this.timeout(120000)
+  this.timeout(REAL_INDEX_TIMEOUT)
   const map = readFileSync('src/DIRECTORY_MAP.md', 'utf8')
-  expect(map.length).at.most(4000)
-  const temp = mkdtempSync(join(tmpdir(), 'tess-map-index-'))
+  expect(map.length).at.most(DIRECTORY_MAP_LIMIT)
+  const { out } = realSourceIndex()
+  const db = new DatabaseSync(out, { readOnly: true })
   try {
-    const out = join(temp, 'source.db')
-    buildSourceIndex({ root: process.cwd(), out })
-    const db = new DatabaseSync(out, { readOnly: true })
-    try {
-      const paths = [...map.matchAll(/`([^`]+)`/g)].map(
-        match => `src/${match[1].replace(/\/$/, '')}`
-      )
-      expect(paths.length).greaterThan(30)
-      for (const path of paths)
-        expect(
-          db
-            .prepare(
-              'SELECT 1 FROM files WHERE path=? UNION ALL SELECT 1 FROM entries WHERE parent=? LIMIT 1'
-            )
-            .get(path, path),
-          path
-        ).not.equals(undefined)
-    } finally {
-      db.close()
-    }
+    const paths = [...map.matchAll(/`([^`]+)`/g)].map(
+      match => `src/${match[1].replace(/\/$/, '')}`
+    )
+    expect(paths.length).greaterThan(30)
+    for (const path of paths)
+      expect(
+        db
+          .prepare(
+            'SELECT 1 FROM files WHERE path=? UNION ALL SELECT 1 FROM entries WHERE parent=? LIMIT 1'
+          )
+          .get(path, path),
+        path
+      ).not.equals(undefined)
   } finally {
-    rmSync(temp, { force: true, recursive: true })
+    db.close()
   }
 })
