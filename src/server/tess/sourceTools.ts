@@ -1,12 +1,15 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 
 import type { ToolDefinition } from './messagesApi'
 import { sourceLines } from './sourceIndex/files'
-import { SCHEMA_VERSION } from './sourceIndex/schema'
+import { directoryMapProblem, SCHEMA_VERSION } from './sourceIndex/schema'
 
 export const DIRECTORY_MAP = 'src/DIRECTORY_MAP.md'
 export const SOURCE_UNAVAILABLE = 'Source index unavailable on this server.'
+export const SOURCE_QUERY_FAILED =
+  'That source call failed; try a narrower or different call.'
 export const SOURCE_LIMITS = {
   outputCharacters: 20000,
   lines: 200,
@@ -154,12 +157,39 @@ export function sourceTrigram(text: string): string {
 class InputError extends Error {}
 const fail = (content: string): SourceResult => ({ content, is_error: true })
 const indexes = new Map<string, SourceIndex>()
+const missingWarned = new Set<string>()
 const BUDGET = SOURCE_LIMITS.outputCharacters - 512
+const statements = new WeakMap<DatabaseSync, Map<string, StatementSync>>()
 
-/** Cache the read-only handle or its failure for this release's process lifetime. */
+/** Each handle prepares a statement once, whatever the call. */
+function query(db: DatabaseSync, sql: string): StatementSync {
+  let prepared = statements.get(db)
+  if (prepared == null) statements.set(db, (prepared = new Map()))
+  let statement = prepared.get(sql)
+  if (statement == null) prepared.set(sql, (statement = db.prepare(sql)))
+  return statement
+}
+
+/**
+ * Cache the read-only handle, or a failure to open it, for this process's
+ * lifetime. A missing file is not cached, so a dev server picks up an index
+ * built after it started; a later query error fails only that call.
+ */
 export function openSourceIndex(path = sourceIndexPath()): SourceIndex {
   const cached = indexes.get(path)
   if (cached != null) return cached
+  if (!existsSync(path)) {
+    if (!missingWarned.has(path))
+      console.warn(
+        'Tess source index missing; build it with npm run tess.source-index -- build',
+        { path }
+      )
+    missingWarned.add(path)
+    return {
+      prompt: SOURCE_UNAVAILABLE,
+      run: () => fail(SOURCE_UNAVAILABLE)
+    }
+  }
   let db: DatabaseSync | undefined
   let warned = false
   const unavailable = (error: unknown): void => {
@@ -186,13 +216,10 @@ export function openSourceIndex(path = sourceIndexPath()): SourceIndex {
     const map = db
       .prepare('SELECT content FROM files WHERE path=?')
       .get(DIRECTORY_MAP)?.content
-    if (
-      typeof commit !== 'string' ||
-      typeof map !== 'string' ||
-      map.length > 4000 ||
-      map.trim() === ''
-    )
+    if (typeof commit !== 'string' || typeof map !== 'string')
       throw new Error('Missing commit or compact directory map')
+    const problem = directoryMapProblem(map)
+    if (problem != null) throw new Error(problem)
     // Reject incomplete indexes at open, even when the first request only needs the map.
     db.prepare('SELECT parent,name,kind FROM entries LIMIT 0').all()
     db.prepare(
@@ -213,8 +240,12 @@ export function openSourceIndex(path = sourceIndexPath()): SourceIndex {
         return { content: querySource(db, name, value) }
       } catch (error) {
         if (error instanceof InputError) return fail(error.message)
-        unavailable(error)
-        return fail(SOURCE_UNAVAILABLE)
+        console.warn('Tess source query failed', {
+          path,
+          tool: name,
+          reason: error instanceof Error ? error.message : String(error)
+        })
+        return fail(SOURCE_QUERY_FAILED)
       }
     }
   }
@@ -251,25 +282,29 @@ function checkedPath(input: Record<string, unknown>): string {
   return path.replace(/\/+$/, '')
 }
 function fileAt(db: DatabaseSync, path: string): FileRow | undefined {
-  return db
-    .prepare('SELECT id,path,content,role FROM files WHERE path=?')
-    .get(path) as unknown as FileRow | undefined
+  return query(db, 'SELECT id,path,content,role FROM files WHERE path=?').get(
+    path
+  ) as unknown as FileRow | undefined
+}
+function isFile(db: DatabaseSync, path: string): boolean {
+  return query(db, 'SELECT 1 FROM files WHERE path=?').get(path) != null
 }
 function knownPath(db: DatabaseSync, path: string): boolean {
   return (
-    db
-      .prepare(
-        'SELECT 1 FROM files WHERE path=? UNION ALL SELECT 1 FROM entries WHERE parent=? LIMIT 1'
-      )
-      .get(path, path) != null
+    query(
+      db,
+      'SELECT 1 FROM files WHERE path=? UNION ALL SELECT 1 FROM entries WHERE parent=? LIMIT 1'
+    ).get(path, path) != null
   )
 }
+/** Beyond this many, the hint says "or more" rather than counting every file. */
+const HINT_COUNT = 100
 const subtree = '(f.path = ? OR f.path GLOB ?)'
 const scope = (path: string): string[] => [path, `${sourceGlob(path)}/*`]
 function omittedHint(n: number): string {
-  return n > 0
-    ? `\n[${n} test or fixture files also match; search again with includeTests.]`
-    : ''
+  if (n === 0) return ''
+  const count = n >= HINT_COUNT ? `${HINT_COUNT} or more` : String(n)
+  return `\n[${count} test or fixture files also match; search again with includeTests.]`
 }
 
 function readLines(file: FileRow, start: number): string {
@@ -324,11 +359,10 @@ function querySource(
       throw new InputError(
         'Give an exact definition name, up to 500 characters on one line.'
       )
-    const rows = db
-      .prepare(
-        `SELECT s.* FROM symbols s JOIN files f USING(path) WHERE s.name=? ${all ? '' : "AND f.role='code'"} ORDER BY s.path,s.line LIMIT 51`
-      )
-      .all(input.name) as unknown as SymbolRow[]
+    const rows = query(
+      db,
+      `SELECT s.* FROM symbols s JOIN files f USING(path) WHERE s.name=? ${all ? '' : "AND f.role='code'"} ORDER BY s.path,s.line LIMIT 51`
+    ).all(input.name) as unknown as SymbolRow[]
     const lines: string[] = []
     let size = 0
     for (const row of rows.slice(0, SOURCE_LIMITS.matches)) {
@@ -337,15 +371,16 @@ function querySource(
       lines.push(line)
       size += line.length + 1
     }
-    const n = all
-      ? 0
-      : Number(
-          db
-            .prepare(
-              "SELECT count(DISTINCT f.path) AS n FROM symbols s JOIN files f USING(path) WHERE s.name=? AND f.role!='code'"
-            )
-            .get(input.name)!.n
-        )
+    // Tests are hinted only when no code defines the name.
+    const n =
+      all || rows.length > 0
+        ? 0
+        : Number(
+            query(
+              db,
+              `SELECT count(*) AS n FROM (SELECT DISTINCT f.path FROM symbols s JOIN files f USING(path) WHERE s.name=? AND f.role!='code' LIMIT ${HINT_COUNT})`
+            ).get(input.name)!.n
+          )
     if (lines.length === 0) lines.push(`[No definition named ${input.name}.]`)
     if (rows.length > lines.length)
       lines.push(
@@ -354,23 +389,25 @@ function querySource(
     return lines.join('\n') + omittedHint(n)
   }
   const path = checkedPath(input)
-  if (!knownPath(db, path))
-    throw new InputError('No indexed file or directory at that path.')
   if (name === 'source_read_file') {
     const file = fileAt(db, path)
-    if (file == null)
-      throw new InputError('That indexed path is a directory, not a file.')
-    return readLines(file, first(input, 'startLine'))
+    if (file != null) return readLines(file, first(input, 'startLine'))
+    throw new InputError(
+      knownPath(db, path)
+        ? 'That indexed path is a directory, not a file.'
+        : 'No indexed file or directory at that path.'
+    )
   }
+  if (!knownPath(db, path))
+    throw new InputError('No indexed file or directory at that path.')
   if (name === 'source_list_directory') {
-    if (fileAt(db, path) != null)
+    if (isFile(db, path))
       throw new InputError('That indexed path is a file, not a directory.')
     const start = first(input, 'startEntry')
-    const rows = db
-      .prepare(
-        'SELECT name,kind FROM entries WHERE parent=? ORDER BY name LIMIT 201 OFFSET ?'
-      )
-      .all(path, start - 1)
+    const rows = query(
+      db,
+      'SELECT name,kind FROM entries WHERE parent=? ORDER BY name LIMIT 201 OFFSET ?'
+    ).all(path, start - 1)
     const lines: string[] = []
     let size = 0
     for (const row of rows.slice(0, SOURCE_LIMITS.entries)) {
@@ -386,12 +423,11 @@ function querySource(
   }
   if (name === 'source_outline') {
     const start = first(input, 'startEntry')
-    const explicitFile = fileAt(db, path) != null
-    const rows = db
-      .prepare(
-        `SELECT s.* FROM symbols s JOIN files f USING(path) WHERE ${subtree} ${all || explicitFile ? '' : "AND f.role='code'"} ORDER BY s.path,s.line,s.name LIMIT 201 OFFSET ?`
-      )
-      .all(...scope(path), start - 1) as unknown as SymbolRow[]
+    const explicitFile = isFile(db, path)
+    const rows = query(
+      db,
+      `SELECT s.* FROM symbols s JOIN files f USING(path) WHERE ${subtree} ${all || explicitFile ? '' : "AND f.role='code'"} ORDER BY s.path,s.line,s.name LIMIT 201 OFFSET ?`
+    ).all(...scope(path), start - 1) as unknown as SymbolRow[]
     const lines: string[] = []
     let size = 0
     for (const row of rows.slice(0, SOURCE_LIMITS.entries)) {
@@ -419,22 +455,26 @@ function querySource(
   const glob = `*${sourceGlob(text)}*`
   const where = `search MATCH ? AND search.content GLOB ? AND ${subtree}`
   const parameters = [match, glob, ...scope(path)]
-  // Select IDs first so sorting does not materialize every matched file's content.
-  const ids = db
-    .prepare(
-      `SELECT f.id,f.path FROM search JOIN files f ON f.id=search.rowid WHERE ${where} ${all ? '' : "AND f.role='code'"} ORDER BY f.path`
-    )
-    .iterate(...parameters)
+  // The build inserts files in path order, so rowid order is path order and
+  // the walk stops at the match limit without sorting every candidate.
+  const ids = query(
+    db,
+    `SELECT f.id,f.path FROM search JOIN files f ON f.id=search.rowid WHERE ${where} ${all ? '' : "AND f.role='code'"} ORDER BY search.rowid`
+  ).iterate(...parameters)
+  const content = query(db, 'SELECT content FROM files WHERE id=?')
   const lines: string[] = []
   let size = 0
   let limited = false
   for (const row of ids) {
-    const content = db
-      .prepare('SELECT content FROM files WHERE id=?')
-      .get(row.id)!.content as string
-    for (const [at, line] of sourceLines(content).entries()) {
+    const fileText = content.get(row.id)!.content as string
+    for (const [at, line] of sourceLines(fileText).entries()) {
       const position = line.indexOf(text)
       if (position < 0) continue
+      // Limited only when a match is left out, not when the 50th is the last.
+      if (lines.length === SOURCE_LIMITS.matches) {
+        limited = true
+        break
+      }
       const from = Math.max(0, position - 80)
       const snippet = `${from > 0 ? '…' : ''}${line.slice(from, from + 500)}${line.length > from + 500 ? '…' : ''}`
       const result = `${String(row.path)}:${at + 1}: ${snippet}`
@@ -444,21 +484,16 @@ function querySource(
       }
       lines.push(result)
       size += result.length + 1
-      if (lines.length === SOURCE_LIMITS.matches) {
-        limited = true
-        break
-      }
     }
     if (limited) break
   }
   const n = all
     ? 0
     : Number(
-        db
-          .prepare(
-            `SELECT count(*) AS n FROM search JOIN files f ON f.id=search.rowid WHERE ${where} AND f.role!='code'`
-          )
-          .get(...parameters)!.n
+        query(
+          db,
+          `SELECT count(*) AS n FROM (SELECT 1 FROM search JOIN files f ON f.id=search.rowid WHERE ${where} AND f.role!='code' LIMIT ${HINT_COUNT})`
+        ).get(...parameters)!.n
       )
   if (lines.length === 0) lines.push('[No matches.]')
   if (limited) lines.push('[Search limited; choose a narrower path.]')

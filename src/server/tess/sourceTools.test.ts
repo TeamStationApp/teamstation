@@ -11,6 +11,7 @@ import {
   isSourceTool,
   openSourceIndex,
   SOURCE_LIMITS,
+  SOURCE_QUERY_FAILED,
   SOURCE_TOOLS,
   SOURCE_UNAVAILABLE,
   type SourceIndex,
@@ -227,9 +228,10 @@ describe('Tess indexed source tools', function () {
     expect(run('source_find_definition', { name: 'internalValue' })).equals(
       '[No definition named internalValue.]'
     )
+    // Code defines it, so there is no nudge towards tests.
     expect(run('source_find_definition', { name: 'contextLimits' }))
       .includes('agent.ts:3 function')
-      .and.includes('2 test or fixture')
+      .and.not.includes('test or fixture')
     expect(
       run('source_find_definition', {
         name: 'contextLimits',
@@ -248,6 +250,38 @@ describe('Tess indexed source tools', function () {
     expect(run('source_find_definition', { name: 'shared' })).includes(
       'Definitions limited'
     )
+  })
+  it('marks a search limited only when a match is left out, and caps the test hint', () => {
+    const f = sourceIndexFixture({
+      'src/exact/fifty.ts': 'hit\n'.repeat(SOURCE_LIMITS.matches),
+      'src/over/more.ts': 'hit\n'.repeat(SOURCE_LIMITS.matches + 1),
+      ...Object.fromEntries(
+        Array.from({ length: 101 }, (_, i) => [
+          `src/many/case${i}.test.ts`,
+          'hitInTests\n'
+        ])
+      ),
+      'src/many/code.ts': 'hitInTests\n'
+    })
+    try {
+      f.build()
+      const reader = openSourceIndex(f.index)
+      const exact = reader.run('source_search', {
+        path: 'src/exact',
+        text: 'hit'
+      }).content
+      expect(exact.split('\n')).length(SOURCE_LIMITS.matches)
+      expect(exact).not.includes('Search limited')
+      expect(
+        reader.run('source_search', { path: 'src/over', text: 'hit' }).content
+      ).includes('Search limited')
+      expect(
+        reader.run('source_search', { path: 'src/many', text: 'hitInTests' })
+          .content
+      ).includes('[100 or more test or fixture files also match')
+    } finally {
+      f.close()
+    }
   })
   it('bounds long listings, declarations, matches and line pages without losing the next entry', () => {
     const listing = run('source_list_directory', { path: 'src/wide' })
@@ -411,9 +445,17 @@ describe('Tess indexed source tools', function () {
             content: SOURCE_UNAVAILABLE,
             is_error: true
           })
-        expect(openSourceIndex(bad.index)).equals(unavailable)
+        if (kind === 'missing') {
+          // A missing file is retried, so an index built later is picked up.
+          expect(openSourceIndex(bad.index).prompt).equals(SOURCE_UNAVAILABLE)
+          bad.build()
+          expect(openSourceIndex(bad.index).prompt).not.equals(
+            SOURCE_UNAVAILABLE
+          )
+        } else expect(openSourceIndex(bad.index)).equals(unavailable)
       }
       expect(warnings).length(6)
+      expect(String(warnings[0][0])).includes('npm run tess.source-index')
     } finally {
       console.warn = warn
       for (const bad of fixtures) bad.close()
@@ -435,16 +477,23 @@ describe('Tess indexed source tools', function () {
         expect(reader.run('source_search', { path: 'src', text })).deep.equals({
           content: '[No matches.]'
         })
-      // A direct read really reaches the trap: query errors make the index unavailable.
+      // A direct read really reaches the trap. The error fails that call
+      // only, is logged with its tool, and later calls still work.
       const warn = console.warn
-      console.warn = () => {}
+      const warnings: unknown[][] = []
+      console.warn = (...args) => warnings.push(args)
       try {
         expect(
-          reader.run('source_read_file', { path: 'src/trap.ts' }).is_error
-        ).equals(true)
+          reader.run('source_read_file', { path: 'src/trap.ts' })
+        ).deep.equals({ content: SOURCE_QUERY_FAILED, is_error: true })
+        expect(warnings[0][1]).includes({ tool: 'source_read_file' })
         expect(
-          reader.run('source_search', { path: 'src', text: 'abc' }).content
-        ).equals(SOURCE_UNAVAILABLE)
+          reader.run('source_search', { path: 'src', text: 'abc' })
+        ).deep.equals({ content: '[No matches.]' })
+        expect(
+          reader.run('source_read_file', { path: 'src/trap.ts' }).content
+        ).equals(SOURCE_QUERY_FAILED)
+        expect(warnings).length(2)
       } finally {
         console.warn = warn
       }
