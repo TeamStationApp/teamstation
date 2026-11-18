@@ -93,6 +93,15 @@ describe('source declaration outlines', () => {
     expect(symbols[8].signature).equals('export var legacy =')
     expect(symbols.every(s => !s.signature.includes('return'))).equals(true)
   })
+  it('takes the declaration JSDoc, not a detached file comment above it', () => {
+    const [symbol] = sourceSymbols(
+      'src/a.ts',
+      "/**\n * One turn of a conversation with Tess: the person's message stored, the\n * reply streamed.\n */\n\n/** How many responses of one turn may ask for tools. */\nexport const MAX_TOOL_ROUNDS = 20\n"
+    )
+    expect(symbol.doc).equals(
+      'How many responses of one turn may ask for tools.'
+    )
+  })
   it('lists an overloaded function once and keeps short literal constants', () => {
     const overloads = sourceSymbols(
       'src/a.ts',

@@ -62,15 +62,15 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
       end: number,
       start = node.getStart(file)
     ): void => {
-      const docs = (statement as ts.Node & { jsDoc?: ts.JSDoc[] }).jsDoc
-      const doc = docs
-        ?.map(doc => {
-          const comment = doc.comment
-          return typeof comment === 'string'
-            ? comment
-            : (comment?.map(part => part.text).join('') ?? '')
-        })
-        .join('\n')
+      // The last JSDoc is the declaration's own; an earlier one is a detached
+      // file or section comment that TypeScript attaches to the first export.
+      const comment = (statement as ts.Node & { jsDoc?: ts.JSDoc[] }).jsDoc?.at(
+        -1
+      )?.comment
+      const doc =
+        typeof comment === 'string'
+          ? comment
+          : comment?.map(part => part.text).join('')
       const publicNames = ts.isExportAssignment(statement)
         ? [name]
         : new Set([
