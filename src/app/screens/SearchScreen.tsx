@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -24,7 +23,7 @@ import type {
 import { Screen, useScreenBottom } from '../components'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { LocationPill } from '../components/LocationPill'
-import { useSceneReveals } from '../components/sceneShown'
+import { useSceneReveals, useSceneShown } from '../components/sceneShown'
 import { useColumnSide } from '../components/Screen'
 import { SearchResultRow } from '../components/SearchResultRow'
 import { useTitleHandoff } from '../components/useTitleHandoff'
@@ -34,6 +33,7 @@ import {
   type SearchSocketFactory
 } from '../hooks/searchSocketFactory'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { dismissKeyboard, KeyboardSpacer, SearchDock } from './SearchDock'
 
 /** The field's placeholder, which is also its accessibility label. */
 export const SEARCH_PLACEHOLDER = 'Search leagues, seasons, teams and people'
@@ -44,7 +44,7 @@ export type { SearchSocketFactory }
 export const SEARCH_SIGNED_OUT_MESSAGE =
   'Your session has ended. Sign in again to search.'
 
-/** The field's height before it is measured, and the gap above it. */
+/** The dock's height before it is measured, and the gap above it. */
 const FIELD_HEIGHT = 48
 const FIELD_GAP = 12
 
@@ -90,8 +90,10 @@ export function openLabel(
  * socket at once. The server answers each with its lexicographic results,
  * and a second after the typing pauses with Jev's order, which replaces
  * them; an answer for older typing never reaches the screen. Suggested
- * location pills sit above the results; choosing one clears the text and
- * puts it in the field, and its X takes it out again.
+ * location pills sit right next to the field: under it in a browser, above it
+ * in the dock on a phone or tablet, where the dock rides the keyboard and a
+ * drag of the results puts the keyboard away (`SearchDock`). Choosing one
+ * clears the text and puts it in the field, and its X takes it out again.
  *
  * A socket the server closes for a session it no longer takes
  * (`unauthorized`) shows nothing found before and says to sign in again,
@@ -127,6 +129,7 @@ export function SearchScreen({
   const bottom = useScreenBottom()
   const side = useColumnSide()
   const reveals = useSceneReveals()
+  const shown = useSceneShown()
   const [text, setText] = useState('')
   const [location, setLocation] = useState<Location | null>(null)
   const [socket, setSocket] = useState<SearchSocket>()
@@ -303,17 +306,14 @@ export function SearchScreen({
     </ScrollView>
   )
   return (
-    <KeyboardAvoidingView
-      behavior={
-        Platform.OS === 'ios'
-          ? 'padding'
-          : Platform.OS === 'android'
-            ? 'height'
-            : undefined
-      }
-      style={styles.fill}
-    >
-      <Screen onScroll={handoff.handleScroll}>
+    <View style={styles.fill}>
+      <Screen
+        onScroll={handoff.handleScroll}
+        // `Screen` already drops the keyboard on a drag; this puts it away
+        // through the keyboard controller, whose dismissal the dock follows
+        // frame by frame on Android too.
+        onScrollBeginDrag={top ? undefined : dismissKeyboard}
+      >
         <View style={styles.page}>
           <View ref={handoff.ref} collapsable={false}>
             <Text style={styles.title} accessibilityRole="header">
@@ -344,7 +344,6 @@ export function SearchScreen({
               {followError}
             </Text>
           )}
-          {!top && pills}
           {!offline &&
             !empty &&
             answered &&
@@ -383,14 +382,17 @@ export function SearchScreen({
                 />
               )
             })}
-          {/* The last row clears the floating field. */}
+          {/* The last row clears the floating dock, and the keyboard. */}
           {!top && <View style={{ height: fieldHeight + FIELD_GAP }} />}
+          {!top && <KeyboardSpacer />}
         </View>
       </Screen>
       {!top && (
-        <View
-          pointerEvents="box-none"
-          style={[styles.dock, { bottom }]}
+        <SearchDock
+          bottom={bottom}
+          gap={FIELD_GAP}
+          active={shown}
+          style={styles.dock}
           onLayout={event => {
             setFieldHeight(event.nativeEvent.layout.height)
           }}
@@ -401,11 +403,16 @@ export function SearchScreen({
               { paddingLeft: side.left, paddingRight: side.right }
             ]}
           >
-            {field}
+            {/* One tree whether pills show or not: moving the field would
+                remount its input, and drop its focus and keyboard. */}
+            <View style={pills !== false && styles.dockGround}>
+              {pills !== false && <View style={styles.dockPills}>{pills}</View>}
+              {field}
+            </View>
           </View>
-        </View>
+        </SearchDock>
       )}
-    </KeyboardAvoidingView>
+    </View>
   )
 }
 
@@ -423,7 +430,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor
   },
   error: { fontSize: theme.rem(0.875), color: theme.dangerColor },
-  suggestions: { flexDirection: 'row' as const, gap: theme.rem(0.5) },
+  // The row is a finger's 44 points tall, the 20-point pills centred in it:
+  // a scroll view clips touches to its bounds, so their reach above and below
+  // (`hitSlop`) has to fall inside it.
+  suggestions: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: theme.rem(0.5),
+    minHeight: 44
+  },
   dock: {
     position: 'absolute' as const,
     left: 0,
@@ -433,6 +448,17 @@ const getStyles = cacheStyles((theme: Theme) => ({
   dockColumn: {
     width: '100%' as const,
     maxWidth: theme.rem(theme.maxContentWidthRem)
+  },
+  // The pills ride directly above the field, and both sit on the page's own
+  // ground, rounded under the field as it is, so the results scrolling
+  // beneath never show between them.
+  dockGround: {
+    backgroundColor: theme.backgroundColor,
+    borderBottomLeftRadius: FIELD_HEIGHT / 2,
+    borderBottomRightRadius: FIELD_HEIGHT / 2
+  },
+  dockPills: {
+    paddingBottom: theme.rem(0.25)
   },
   field: {
     minHeight: FIELD_HEIGHT,

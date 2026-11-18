@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import { asRosterEntry, asSessionUser, TeamStationClient } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
@@ -410,10 +411,50 @@ describe('the Search tab', () => {
     expect(before(title, searchField), 'title, then the field').equals(true)
     expect(before(searchField, suggestions), 'then its pills').equals(true)
     expect(before(suggestions, row), 'then the results').equals(true)
+    // A finger's row: the pills' reach above and below falls inside it.
+    const pillRow = suggestions.querySelector<HTMLElement>(
+      '[data-testid="location-pill"]'
+    )!.parentElement!
+    expect(getComputedStyle(pillRow).minHeight).equals('44px')
+    expect(getComputedStyle(pillRow).alignItems).equals('center')
     // In the page's flow, not floating over it.
     expect(getComputedStyle(searchField.parentElement!).position).not.equals(
       'absolute'
     )
+  })
+
+  it('on a phone, docks the pills above the field and keeps the same focused input when they appear', async () => {
+    const server = new FakeSearchServer(frame =>
+      frame.location == null
+        ? { results: [hawks], locations: [sanDiego] }
+        : { results: [hawks] }
+    )
+    const os = Platform.OS
+    ;(Platform as { OS: string }).OS = 'ios'
+    try {
+      await openSearch(server)
+      const input = field()!
+      await act(async () => {
+        input.focus()
+      })
+      await type('san die')
+      const dock = document.querySelector('[data-testid="search-dock"]')!
+      const suggestions = dock.querySelector(
+        '[data-testid="location-suggestions"]'
+      )!
+      expect(suggestions, 'the pills ride in the dock').not.equals(null)
+      expect(
+        (suggestions.compareDocumentPosition(field()!) &
+          Node.DOCUMENT_POSITION_FOLLOWING) !==
+          0,
+        'pills above the field'
+      ).equals(true)
+      // Not remounted: the keyboard stays up as the pills arrive.
+      expect(field(), 'the same input').equals(input)
+      expect(document.activeElement).equals(input)
+    } finally {
+      ;(Platform as { OS: string }).OS = os
+    }
   })
 
   it('follows at once, flips back when the follow fails, and draws no Follow on the reader’s own group', async () => {

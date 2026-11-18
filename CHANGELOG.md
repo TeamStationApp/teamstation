@@ -34,6 +34,9 @@
 - changed: A team's coaching plan stays with its coaches. The scoring screen downloads only the defensive column of the inning in play.
 - changed: A league's and a season's People tabs list no players
 - changed: Creating a league or season inside one you already administer from above adds no separate administrator grant, and grants an inherited one covers are removed. The last-administrator check counts administration inherited from above; a team still keeps its own administrators.
+- changed: Every pill on Search is the size of a result's kind pill, in the same neutral colours; a chosen place's pill takes it out with a small gray circle and a white X
+- changed: In a browser, Search's field sits at the top under its title, with the suggested places right under it and the results below
+- changed: On a phone or tablet, Search's field stays at the bottom with the suggested places above it, and both rise and fall with the keyboard as it opens and closes; dragging the results puts the keyboard away
 - changed: The game plan's inning columns grow with the window, up to 1206 points
 - changed: Clear and Help on the coaching and scoring sheets are brighter
 - changed: Node administration sits beside the account instead of inside Account
