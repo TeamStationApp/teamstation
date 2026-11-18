@@ -15,6 +15,46 @@ describe('local settings', function () {
     expect(expandHome(3, '/home/x')).equals(3)
   })
 
+  it('expands ~/ one level into an object, so a hub token file and the webcam block are absolute', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-settings-'))
+    try {
+      const file = join(dir, 'local.json')
+      writeFileSync(
+        file,
+        JSON.stringify({
+          maestroHub: {
+            address: '192.0.2.1:7433',
+            tokenFile: '~/.config/teamstation-e2e/maestro-hub-token'
+          },
+          webcam: {
+            url: 'rtsps://camera/x',
+            crops: { 'p@hub': '1:2:3:4:1:ccw' }
+          },
+          stackProvider: { command: ['npm', '~/kept'] },
+          seatCommand: '~/seat'
+        })
+      )
+      expect(loadSettings(file)).deep.equals({
+        maestroHub: {
+          address: '192.0.2.1:7433',
+          tokenFile: join(
+            homedir(),
+            '.config/teamstation-e2e/maestro-hub-token'
+          )
+        },
+        webcam: {
+          url: 'rtsps://camera/x',
+          crops: { 'p@hub': '1:2:3:4:1:ccw' }
+        },
+        // Deeper than one level, values pass through as they are.
+        stackProvider: { command: ['npm', '~/kept'] },
+        seatCommand: join(homedir(), 'seat')
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('expands the paths of a settings file, and answers nothing without one', function () {
     const dir = mkdtempSync(join(tmpdir(), 'e2e-settings-'))
     try {

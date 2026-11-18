@@ -1,6 +1,162 @@
 {
   "scenarios": [
     {
+      "id": "app-shell/chat/composer-keyboard#rides-keyboard",
+      "title": "A conversation’s composer rides the keyboard on a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/ChatHistoryList.native.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [
+        "searchKeyboardChatAccount"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/chat/composer-keyboard",
+      "file": "e2e/tests/app-shell/chat/composer-keyboard.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/keyboard-dock#rides-keyboard",
+      "title": "Search’s dock rides the keyboard up and down on a phone, with its location pills above the field",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/screens/SearchDock.native.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts",
+        "src/app/components/LocationPill.tsx"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/keyboard-dock",
+      "file": "e2e/tests/app-shell/search/keyboard-dock.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/keyboard-dock#sign-in-field",
+      "title": "Search’s dock rides the keyboard up and down on a phone, with its location pills above the field",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/screens/SearchDock.native.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts",
+        "src/app/components/LocationPill.tsx"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/keyboard-dock",
+      "file": "e2e/tests/app-shell/search/keyboard-dock.e2e.ts"
+    },
+    {
       "id": "app-shell/search/live-jev#real-ranking",
       "title": "The real Jev model ranks a search and names its model",
       "kind": "e2e",

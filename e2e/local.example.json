@@ -11,5 +11,13 @@
   "secretsFile": "~/.keys/e2e-secrets.json",
   "judgeBudgetUsd": 1,
   "sweepRef": "origin/master",
-  "ledger": "~/.config/teamstation-e2e/ledger.jsonl"
+  "ledger": "~/.config/teamstation-e2e/ledger.jsonl",
+  "maestroHub": {
+    "address": "hub.example.test:7433",
+    "tokenFile": "~/.config/teamstation-e2e/maestro-hub-token"
+  },
+  "webcam": {
+    "url": "rtsps://camera.example.test:7441/stream",
+    "crops": { "phone-udid@hub": "540:1170:1200:300:1000" }
+  }
 }
