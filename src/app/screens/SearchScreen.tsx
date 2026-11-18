@@ -83,8 +83,8 @@ export function openLabel(
 
 /**
  * The Search tab: one field that finds leagues, seasons, teams and people,
- * floating at the bottom (`docs/ui-rules.md`, "A search field floats at the
- * bottom").
+ * floating at the bottom on a phone or tablet and at the top in a browser
+ * (`docs/ui-rules.md`, "A search field floats at the bottom").
  *
  * Every change to the text or the chosen location is asked over the search
  * socket at once. The server answers each with its lexicographic results,
@@ -239,6 +239,69 @@ export function SearchScreen({
   const signedOut = status === 'unauthorized'
   // Nothing found before is shown while searching cannot go on.
   const offline = status === 'offline' || signedOut
+  // A browser has no keyboard to rise over and a pointer is not a thumb: the
+  // field sits at the top there, under the title, with its pills under it.
+  const top = Platform.OS === 'web'
+  const field = (
+    <View testID="Search field" style={styles.field}>
+      <ButtonIcon name="search" size={1.25} color={theme.secondaryTextColor} />
+      {location != null && (
+        <LocationPill
+          label={location.label}
+          onRemove={() => {
+            setLocation(null)
+          }}
+        />
+      )}
+      <TextInput
+        accessibilityLabel={SEARCH_PLACEHOLDER}
+        placeholder={location == null ? SEARCH_PLACEHOLDER : undefined}
+        placeholderTextColor={theme.placeholderTextColor}
+        value={text}
+        onChangeText={setText}
+        autoCorrect={false}
+        autoCapitalize="none"
+        returnKeyType="search"
+        style={styles.input}
+      />
+      {text !== '' && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear search"
+          onPress={() => {
+            setText('')
+          }}
+          style={styles.clear}
+        >
+          <ButtonIcon
+            name="close"
+            size={1.125}
+            color={theme.secondaryTextColor}
+          />
+        </Pressable>
+      )}
+    </View>
+  )
+  const pills = !offline && suggestions.length > 0 && (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      testID="location-suggestions"
+      contentContainerStyle={styles.suggestions}
+    >
+      {suggestions.slice(0, 4).map(suggestion => (
+        <LocationPill
+          key={suggestion.id}
+          label={suggestion.label}
+          onPress={() => {
+            setText('')
+            setLocation(suggestion)
+          }}
+        />
+      ))}
+    </ScrollView>
+  )
   return (
     <KeyboardAvoidingView
       behavior={
@@ -262,6 +325,8 @@ export function SearchScreen({
               ? 'Follow leagues, seasons and teams to keep them on your Home. A team opens on its own page, followed or not: its schedule, results and roster, with videos and player stats for its members.'
               : 'Find leagues, seasons, teams and people. Public profiles show location, parent organizations, schedules and results.'}
           </Text>
+          {top && field}
+          {top && pills}
           {offline && (
             <Text accessibilityRole="alert" style={styles.hint}>
               {signedOut
@@ -279,26 +344,7 @@ export function SearchScreen({
               {followError}
             </Text>
           )}
-          {!offline && suggestions.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              testID="location-suggestions"
-              contentContainerStyle={styles.suggestions}
-            >
-              {suggestions.slice(0, 4).map(suggestion => (
-                <LocationPill
-                  key={suggestion.id}
-                  label={suggestion.label}
-                  onPress={() => {
-                    setText('')
-                    setLocation(suggestion)
-                  }}
-                />
-              ))}
-            </ScrollView>
-          )}
+          {!top && pills}
           {!offline &&
             !empty &&
             answered &&
@@ -338,66 +384,27 @@ export function SearchScreen({
               )
             })}
           {/* The last row clears the floating field. */}
-          <View style={{ height: fieldHeight + FIELD_GAP }} />
+          {!top && <View style={{ height: fieldHeight + FIELD_GAP }} />}
         </View>
       </Screen>
-      <View
-        pointerEvents="box-none"
-        style={[styles.dock, { bottom }]}
-        onLayout={event => {
-          setFieldHeight(event.nativeEvent.layout.height)
-        }}
-      >
+      {!top && (
         <View
-          style={[
-            styles.dockColumn,
-            { paddingLeft: side.left, paddingRight: side.right }
-          ]}
+          pointerEvents="box-none"
+          style={[styles.dock, { bottom }]}
+          onLayout={event => {
+            setFieldHeight(event.nativeEvent.layout.height)
+          }}
         >
-          <View testID="Search field" style={styles.field}>
-            <ButtonIcon
-              name="search"
-              size={1.25}
-              color={theme.secondaryTextColor}
-            />
-            {location != null && (
-              <LocationPill
-                label={location.label}
-                onRemove={() => {
-                  setLocation(null)
-                }}
-              />
-            )}
-            <TextInput
-              accessibilityLabel={SEARCH_PLACEHOLDER}
-              placeholder={location == null ? SEARCH_PLACEHOLDER : undefined}
-              placeholderTextColor={theme.placeholderTextColor}
-              value={text}
-              onChangeText={setText}
-              autoCorrect={false}
-              autoCapitalize="none"
-              returnKeyType="search"
-              style={styles.input}
-            />
-            {text !== '' && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Clear search"
-                onPress={() => {
-                  setText('')
-                }}
-                style={styles.clear}
-              >
-                <ButtonIcon
-                  name="close"
-                  size={1.125}
-                  color={theme.secondaryTextColor}
-                />
-              </Pressable>
-            )}
+          <View
+            style={[
+              styles.dockColumn,
+              { paddingLeft: side.left, paddingRight: side.right }
+            ]}
+          >
+            {field}
           </View>
         </View>
-      </View>
+      )}
     </KeyboardAvoidingView>
   )
 }

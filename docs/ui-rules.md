@@ -65,6 +65,10 @@ the thumb and right above the keyboard it opens.
 - The scene's title and red Cancel stay at the top.
 - Typing asks the server once it pauses for half a second
   (`useDebouncedValue`), never on every keystroke.
+- In a browser the field sits at the top of its screen instead, under the
+  title, with its suggestions directly under it and the results below: a
+  browser has no keyboard to rise over and a pointer is not a thumb. The
+  Search tab is the example.
 
 `ScoringPlayerSearchField` (scoring colours, in `ExistingPlayerSheet`) is the
 example. A screen with a search field at the top moves to this the next time

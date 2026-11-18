@@ -389,6 +389,33 @@ describe('the Search tab', () => {
     expect(rows()).deep.equals([])
   })
 
+  it('in a browser, puts the field under the title, its pills under it and the results below', async () => {
+    const server = new FakeSearchServer(frame =>
+      frame.location == null
+        ? { results: [hawks], locations: [sanDiego] }
+        : { results: [hawks] }
+    )
+    await openSearch(server)
+    await type('san die')
+    const title = [...document.querySelectorAll('[role="heading"]')].find(
+      node => node.textContent === 'Discover'
+    )!
+    const searchField = document.querySelector('[data-testid="Search field"]')!
+    const suggestions = document.querySelector(
+      '[data-testid="location-suggestions"]'
+    )!
+    const row = document.querySelector('[data-testid="search-result-row"]')!
+    const before = (a: Node, b: Node): boolean =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    expect(before(title, searchField), 'title, then the field').equals(true)
+    expect(before(searchField, suggestions), 'then its pills').equals(true)
+    expect(before(suggestions, row), 'then the results').equals(true)
+    // In the page's flow, not floating over it.
+    expect(getComputedStyle(searchField.parentElement!).position).not.equals(
+      'absolute'
+    )
+  })
+
   it('follows at once, flips back when the follow fails, and draws no Follow on the reader’s own group', async () => {
     let follows: 'follow' | 'following' = 'follow'
     const server = new FakeSearchServer(() => ({
