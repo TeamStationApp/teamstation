@@ -29,6 +29,17 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
       namedExports.set(local, names)
     }
   }
+  // An overloaded function is listed once, by its implementation.
+  const implemented = new Set(
+    file.statements.flatMap(statement =>
+      ts.isFunctionDeclaration(statement) &&
+      statement.body != null &&
+      statement.name != null
+        ? [statement.name.text]
+        : []
+    )
+  )
+  const listed = new Set<string>()
   const symbols: SourceSymbol[] = []
   const compact = (text: string, max: number): string =>
     text.replace(/\s+/g, ' ').trim().slice(0, max)
@@ -92,19 +103,30 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
       continue
     }
     if (ts.isVariableStatement(statement)) {
+      const flags = statement.declarationList.flags
       const kind =
-        (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+        (flags & ts.NodeFlags.Const) !== 0
           ? 'const'
-          : 'let'
+          : (flags & ts.NodeFlags.Let) !== 0
+            ? 'let'
+            : 'var'
       for (const declaration of statement.declarationList.declarations)
         for (const name of names(declaration.name))
           add(
             declaration,
             name,
             kind,
-            declaration.initializer?.getStart(file) ?? declaration.end
+            // A short literal is the constant's meaning, so it stays in the signature.
+            declaration.initializer != null &&
+              !isShortLiteral(declaration.initializer, file)
+              ? declaration.initializer.getStart(file)
+              : declaration.end
           )
     } else if (ts.isFunctionDeclaration(statement)) {
+      const name = statement.name?.text ?? 'default'
+      if ((statement.body == null && implemented.has(name)) || listed.has(name))
+        continue
+      listed.add(name)
       add(
         statement,
         statement.name?.text ?? 'default',
@@ -135,4 +157,24 @@ export function sourceSymbols(path: string, content: string): SourceSymbol[] {
     }
   }
   return symbols
+}
+
+function isShortLiteral(node: ts.Expression, file: ts.SourceFile): boolean {
+  let value = node
+  while (ts.isAsExpression(value) || ts.isParenthesizedExpression(value))
+    value = value.expression
+  if (
+    ts.isPrefixUnaryExpression(value) &&
+    value.operator === ts.SyntaxKind.MinusToken
+  )
+    value = value.operand
+  return (
+    (ts.isStringLiteral(value) ||
+      ts.isNumericLiteral(value) ||
+      ts.isNoSubstitutionTemplateLiteral(value) ||
+      value.kind === ts.SyntaxKind.TrueKeyword ||
+      value.kind === ts.SyntaxKind.FalseKeyword ||
+      value.kind === ts.SyntaxKind.NullKeyword) &&
+    node.getText(file).length <= 80
+  )
 }

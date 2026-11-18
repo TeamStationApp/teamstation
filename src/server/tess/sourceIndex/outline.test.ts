@@ -57,7 +57,7 @@ describe('source declaration outlines', () => {
   })
   it('records exported kinds, bound names, docs and exact line spans without bodies', () => {
     const content =
-      '/** Adds a value. */\nexport function add(x: number) {\n return x + 1\n}\nexport class Box { value = 1 }\nexport interface Shape { x: number }\nexport type Size = number\nexport enum Mode { On }\nexport const a: number = 1, b = 2\nexport let mutable = 3\nexport const { nested: { leaf }, ...rest } = input\nexport const [first, , last] = input\nconst hidden = 1\nexport default a\n'
+      '/** Adds a value. */\nexport function add(x: number) {\n return x + 1\n}\nexport class Box { value = 1 }\nexport interface Shape { x: number }\nexport type Size = number\nexport enum Mode { On }\nexport const a: number = 1, b = 2\nexport let mutable = 3\nexport var legacy = f()\nexport const { nested: { leaf }, ...rest } = input\nexport const [first, , last] = input\nconst hidden = 1\nexport default a\n'
     const symbols = sourceSymbols('src/a.ts', content)
     expect(symbols.map(s => [s.name, s.kind])).deep.equals([
       ['add', 'function'],
@@ -68,6 +68,7 @@ describe('source declaration outlines', () => {
       ['a', 'const'],
       ['b', 'const'],
       ['mutable', 'let'],
+      ['legacy', 'var'],
       ['leaf', 'const'],
       ['rest', 'const'],
       ['first', 'const'],
@@ -85,8 +86,43 @@ describe('source declaration outlines', () => {
     expect(symbols[1].signature).equals('export class Box')
     expect(symbols[2].signature).equals('export interface Shape')
     expect(symbols[4].signature).equals('export enum Mode')
-    expect(symbols[5].signature).equals('a: number =')
+    // A short literal stays; any other initializer is cut.
+    expect(symbols[5].signature).equals('a: number = 1')
+    expect(symbols[8].signature).equals('legacy =')
     expect(symbols.every(s => !s.signature.includes('return'))).equals(true)
+  })
+  it('lists an overloaded function once and keeps short literal constants', () => {
+    const overloads = sourceSymbols(
+      'src/a.ts',
+      'export function f(x: string): string\nexport function f(x: number): number\nexport function f(x: unknown) { return x }\nexport declare function g(x: string): void\nexport declare function g(x: number): void'
+    )
+    expect(overloads.map(s => [s.name, s.line, s.signature])).deep.equals([
+      ['f', 3, 'export function f(x: unknown)'],
+      ['g', 4, 'export declare function g(x: string): void']
+    ])
+    const signatures = sourceSymbols(
+      'src/a.ts',
+      [
+        'export const MAX = 20',
+        'export const NAME = "tess"',
+        'export const NEGATIVE = -1',
+        'export const READY = true as const',
+        'export const EMPTY = null',
+        'export const TEMPLATE = `plain`',
+        'export const LONG = "' + 'x'.repeat(100) + '"',
+        'export const CALL = make()'
+      ].join('\n')
+    ).map(s => s.signature)
+    expect(signatures).deep.equals([
+      'MAX = 20',
+      'NAME = "tess"',
+      'NEGATIVE = -1',
+      'READY = true as const',
+      'EMPTY = null',
+      'TEMPLATE = `plain`',
+      'LONG =',
+      'CALL ='
+    ])
   })
   it('covers default declarations, components, recovery and bounded signatures/docs', () => {
     expect(
