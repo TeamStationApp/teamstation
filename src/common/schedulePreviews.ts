@@ -18,6 +18,7 @@ import type {
   ScheduleOption
 } from './autoScheduler/types'
 import { isRecord } from './groupCreation'
+import type { EngineDecision, EngineEvent, EngineLimit } from './scheduler/wire'
 import { asFieldSize, type FieldSize } from './venues'
 
 /** What happens to a season's upcoming games when a schedule is built. */
@@ -376,6 +377,36 @@ export const asPreparedPreview = asObject({
   solverLimitMs: asOptional(asNumber, 120_000)
 })
 export type PreparedPreview = ReturnType<typeof asPreparedPreview>
+
+/**
+ * A step of a build the client times around the engine: the server's
+ * preparation before it, and the upload of the result after.
+ */
+export interface ClientPhase {
+  kind: 'phase'
+  phase: 'preparing' | 'upload'
+  ms: number
+}
+
+/** One of the client's steps has started; its `phase` event follows. */
+export interface ClientPhaseStart {
+  kind: 'phase-start'
+  phase: 'preparing' | 'upload'
+}
+
+/** What a build reports while it runs: the client's steps and the engine's events. */
+export type BuildEvent = ClientPhaseStart | ClientPhase | EngineEvent
+
+/**
+ * How the device's build of a preview is followed and steered: each event
+ * as it happens, the answer at each time limit, and the abort that cancels
+ * it, discarding the preparation.
+ */
+export interface BuildSession {
+  onProgress?: (event: BuildEvent) => void
+  onLimit?: (limit: EngineLimit) => Promise<EngineDecision>
+  signal?: AbortSignal
+}
 
 /** ISO 8601 date-times that name their offset, so they mean one instant. */
 const ZONED_INSTANT =

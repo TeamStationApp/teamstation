@@ -46,6 +46,7 @@ import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { CalendarPicker, TimePicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
+import { useScheduleBuild } from '../components/ScheduleBuildModal'
 import { useConfirmedAction } from '../components/useConfirmedAction'
 import { clockLabel, WEEKDAYS } from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -233,6 +234,8 @@ export function SchedulePreviewScreen({
     []
   )
   const begin = useLatestRequest()
+  // Recalculate builds in the modal, which shows its log and its time limit.
+  const scheduleBuild = useScheduleBuild(client, leagueId)
   const confirmation = useConfirmedAction(client, previewId)
   const published = preview?.status === 'published'
   const title = published ? 'Published schedule' : 'Schedule preview'
@@ -383,12 +386,12 @@ export function SchedulePreviewScreen({
   }
   const recalculate = (): void => {
     run(async () => {
-      const next = await client.buildSchedulePreview(leagueId, {
+      const next = await scheduleBuild.run({
         mode: 'partial',
         fromPreviewId: preview.id,
         option
       })
-      onOpenPreview(next.id)
+      if (next != null) onOpenPreview(next.id)
     }).catch(() => undefined)
   }
   const confirmReject = (game: PlannedGame): void => {
@@ -787,6 +790,7 @@ export function SchedulePreviewScreen({
       </PinnedContent>
       <PinnedSpacer part={pinned.spacer} />
       {confirmation.sheet}
+      {scheduleBuild.modal}
       {adding && (
         <AddGameSheet
           preview={preview}

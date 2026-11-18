@@ -131,6 +131,9 @@ const tsSuites = [
   'src/app/scheduling/NativeScheduler.test.ts',
   'src/test/chatCoreResolvePlugin.test.ts',
   // Exact only M8: the build modal's log, and the solver limit's column.
+  'src/app/scheduling/buildLog.test.ts',
+  // The develop phone build, which alone carries the modal's full log.
+  'src/app/platform/developBuild.test.ts',
   'src/migrate/migrations/125solverLimit.integration.test.ts'
 ]
 
@@ -176,7 +179,9 @@ const appSuites = [
   'src/app/platform/eventDirections.native.test.tsx',
   // Preview calendar M2: the small, stacked filter pills.
   'src/app/components/PillTabs.test.tsx',
-  'src/app/components/pillGeometry.test.tsx'
+  'src/app/components/pillGeometry.test.tsx',
+  // Exact only M8: the schedule build modal.
+  'src/app/components/ScheduleBuildModal.test.tsx'
 ]
 
 if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
