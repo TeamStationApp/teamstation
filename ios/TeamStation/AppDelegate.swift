@@ -3,6 +3,7 @@ import ObjectiveC
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+import SafariServices
 import TeamStationSplash
 import UserNotifications
 
@@ -169,7 +170,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     _ application: UIApplication,
     supportedInterfaceOrientationsFor window: UIWindow?
   ) -> UIInterfaceOrientationMask {
-    CameraGeometry.applicationMask
+    // A full-screen Safari controller otherwise rotates the chat underneath it.
+    // When it closes, the rewrapped rows leave the reader on a different message.
+    if let scene = (window ?? self.window)?.windowScene,
+       presentationChain(of: scene).contains(where: { $0 is SFSafariViewController }) {
+      return CameraGeometry.mask
+    }
+    return CameraGeometry.applicationMask
   }
 }
 
