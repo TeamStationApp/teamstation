@@ -7992,7 +7992,8 @@ describe('lineup clear', function () {
       expect(Math.abs(clear.right - header.right)).lessThan(2)
       expect(Math.abs(clear.top - lineup.top)).lessThan(4)
       expect(clear.clipped || lineup.clipped).equals(false)
-      expect(clear.color).equals('rgb(168, 53, 53)')
+      // The sheet's own red, scoringSurface.danger (55c74b3f4).
+      expect(clear.color).equals('rgb(248, 113, 113)')
       const rows = (await order(page)).length
       expect(rows).equals(9)
       expect(
@@ -8270,7 +8271,8 @@ describe('fielder drag', function () {
         expect(field.right - clear!.right).closeTo(4, 1)
         expect(help!.top - field.top).closeTo(4, 1)
         expect(clear!.top - field.top).closeTo(4, 1)
-        expect(clear!.color).equals('rgb(168, 53, 53)')
+        // The sheet's own red, scoringSurface.danger (55c74b3f4).
+        expect(clear!.color).equals('rgb(248, 113, 113)')
         expect(cards).has.length(9)
         for (const control of [help!, clear!])
           for (const card of cards)
