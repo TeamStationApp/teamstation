@@ -36,6 +36,10 @@ import {
   setup,
   signApkScript,
   signCameraman,
+  archiveSpeedy,
+  compileSpeedy,
+  signSpeedy,
+  SPEEDY_APP,
   writeFieldClientConfig
 } from '../../Masonfile'
 
@@ -187,7 +191,7 @@ describe('field app builds', function () {
           workflows[name] = recorded
         }
       })
-      for (const name of ['director', 'cameraman', 'distributor']) {
+      for (const name of ['director', 'cameraman', 'speedy', 'distributor']) {
         assert.deepEqual(workflows[name]?.options.triggers, [{ request: true }])
         assert.equal(workflows[name]?.options.timeout, '8h')
       }
@@ -214,6 +218,25 @@ describe('field app builds', function () {
           name: 'sign',
           type: 'macos-arm64',
           publishes: [cameraApp],
+          secrets: [RELEASE_KEYSTORE_SECRET, RELEASE_PASSWORD_SECRET]
+        }
+      ])
+      // Speedy has no develop identity: every branch builds the one app id.
+      assert.equal(workflows.speedy?.parallel, true)
+      assert.equal(workflows.speedy?.ios?.apple?.app, SPEEDY_APP)
+      assert.equal(workflows.speedy?.ios?.on?.type, 'macos-arm64')
+      assert.equal(workflows.speedy?.ios?.tools?.xcode, '26.6')
+      assert.deepEqual(workflows.speedy?.android, [
+        {
+          name: 'compile',
+          type: 'do-linux',
+          publishes: undefined,
+          secrets: undefined
+        },
+        {
+          name: 'sign',
+          type: 'macos-arm64',
+          publishes: [SPEEDY_APP],
           secrets: [RELEASE_KEYSTORE_SECRET, RELEASE_PASSWORD_SECRET]
         }
       ])
@@ -252,6 +275,8 @@ describe('field app builds', function () {
       'mobile/apps/tsDirector/App',
       'mobile/apps/tsCameraman/App',
       'mobile/apps/tsCameramanAndroid/app/src/main/res/values',
+      'mobile/apps/tsSpeedy',
+      'mobile/apps/tsSpeedyAndroid',
       'mobile/apps/tsDistributor'
     ])
       mkdirSync(path.join(dir, appDir), { recursive: true })
@@ -331,7 +356,8 @@ describe('field app builds', function () {
             CAMERAMAN_APP,
             CAMERAMAN_DEVELOP_APP,
             DISTRIBUTOR_APP,
-            DISTRIBUTOR_DEVELOP_APP
+            DISTRIBUTOR_DEVELOP_APP,
+            SPEEDY_APP
           ].includes(app)
         )
         return '26110801'
@@ -359,12 +385,10 @@ describe('field app builds', function () {
         }
       },
       fs: {
-        async glob() {
+        async glob(pattern: string) {
           return archive?.ipa == null
             ? []
-            : [
-                'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release/app.apk'
-              ]
+            : [`${path.posix.dirname(pattern)}/app.apk`]
         }
       }
     }
@@ -599,6 +623,73 @@ describe('field app builds', function () {
       compileCameraman(run.ctx),
       /No Cameraman release APK was built/
     )
+  })
+
+  it('archives Speedy with no entitlements under its one app id, on any branch', async function () {
+    const ios = stage('paul/speedy', { ipa: 'Speedy.ipa' })
+    await archiveSpeedy(ios.ctx)
+    assert.deepEqual(ios.commands, [
+      'bash mobile/apps/tsSpeedy/scripts/bootstrap.sh',
+      'node scripts/clientConfig.mjs mobile/apps/tsSpeedy'
+    ])
+    assert.deepEqual(
+      JSON.parse(
+        readFileSync(
+          path.join(dir, 'mobile/apps/tsSpeedy/clientConfig.json'),
+          'utf8'
+        )
+      ),
+      { appleTeamId: FIELD_TEAM }
+    )
+    assert.deepEqual(ios.saved, ['speedy-ipa', 'speedy-dsym'])
+    assert.deepEqual(ios.box.published, {
+      app: SPEEDY_APP,
+      platform: 'ios',
+      path: 'Speedy.ipa',
+      version: '1.0',
+      buildNumber: '26110801'
+    })
+  })
+
+  it('compiles Speedy for Android, then signs and publishes it', async function () {
+    const android = stage('master', { ipa: 'ignored' })
+    await compileSpeedy(android.ctx)
+    assert.equal(android.box.gradleEnv?.MASON_BUILD_NUMBER, '26110801')
+    assert.equal(android.box.published, undefined)
+    assert.equal(
+      android.box.stashed,
+      'speedy-release mobile/apps/tsSpeedyAndroid/app/build/outputs/apk/release/*.apk'
+    )
+    await signSpeedy(android.ctx)
+    assert.equal(android.box.unstashed, 'speedy-release')
+    assert.ok(
+      android.commands.includes(
+        signApkScript(
+          'mobile/apps/tsSpeedyAndroid/app/build/outputs/apk/release'
+        )
+      )
+    )
+    assert.deepEqual(android.box.published, {
+      app: SPEEDY_APP,
+      platform: 'android',
+      path: 'mobile/apps/tsSpeedyAndroid/app/build/outputs/apk/release/app.apk',
+      version: '1.0',
+      buildNumber: '26110801'
+    })
+    assert.deepEqual(android.saved, ['speedy-apk'])
+  })
+
+  it('refuses a Speedy compile that produced no APK, and an unsigned one', async function () {
+    const run = stage('master', null)
+    await assert.rejects(
+      compileSpeedy(run.ctx),
+      /No Speedy release APK was built/
+    )
+    await assert.rejects(
+      signSpeedy(run.ctx),
+      /No Speedy release APK was signed/
+    )
+    assert.equal(run.box.published, undefined)
   })
 
   it('packs the Distributor app as a disk image and publishes it for macOS', async function () {
