@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   Animated,
   BackHandler,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -93,6 +94,7 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
   const close = useRef(onClose)
   close.current = onClose
   useEffect(() => {
+    if (Platform.OS !== 'android') return
     const subscription = BackHandler.addEventListener(
       'hardwareBackPress',
       () => {
@@ -100,7 +102,12 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
         return true
       }
     )
-    const stop = bindPopupKeys(
+    return () => {
+      subscription.remove()
+    }
+  }, [])
+  useEffect(() => {
+    return bindPopupKeys(
       panel.current,
       () => {
         close.current()
@@ -109,10 +116,6 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
       initialField === true,
       keyboardRows
     )
-    return () => {
-      subscription.remove()
-      stop()
-    }
   }, [initialField, keyboardRows])
   if (props.scene === true)
     return (
