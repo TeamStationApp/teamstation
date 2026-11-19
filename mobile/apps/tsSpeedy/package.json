@@ -1,0 +1,15 @@
+{
+  "name": "@teamstation/speedy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TS Speedy — a TAG One radar's pitch and exit speeds, large and spoken. Node scripts only; the app itself is built with xcodebuild.",
+  "scripts": {
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "build:sim": "bash scripts/build-sim.sh",
+    "build:device": "bash scripts/build-device.sh",
+    "test:unit": "bash scripts/test-unit.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
