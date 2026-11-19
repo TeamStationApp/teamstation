@@ -54,6 +54,15 @@ function traced(): number {
 }
 
 /**
+ * The hold's own timers still waiting: none of them is longer than the hold.
+ * The clock takes every long timer in the process, so another module's (a
+ * request's deadline, say) can be waiting beside them.
+ */
+function holdTimers(): number[] {
+  return clock!.pending().filter(ms => ms <= HOLD_MS)
+}
+
+/**
  * The pill, on a clock that takes every timer from `fromMs`: lower than the
  * default for reduced motion, whose quarter steps are 500 ms apart.
  */
@@ -99,7 +108,7 @@ describe('HoldToConfirm', function () {
     await clock!.advance(1900)
     await pointer('mouseup')
     expect(confirms).deep.equals([])
-    expect(clock!.pending()).deep.equals([])
+    expect(holdTimers()).deep.equals([])
     expect(traced()).closeTo(0, 0.001)
     await clock!.advance(1000)
     expect(confirms).deep.equals([])
@@ -130,7 +139,7 @@ describe('HoldToConfirm', function () {
         new window.Event('contextmenu', { bubbles: true })
       )
     })
-    expect(clock!.pending()).deep.equals([])
+    expect(holdTimers()).deep.equals([])
     expect(traced()).closeTo(0, 0.001)
     await clock!.advance(3000)
     expect(confirms).deep.equals([])
