@@ -3,6 +3,8 @@
 ## Unreleased
 
 - added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
+- added: TS Speedy, for iPhone and Android: pair a TAG One radar and the phone shows its pitch speed in big digits with the exit velocity under it, and says each one out loud ("56", "53 exit", "56 and 52 exit"); a gear opens radar pairing, and a speaker button turns the voice off
+- added: A request-only Mason `speedy` workflow builds TS Speedy for iOS and Android
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
 - changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 - fixed: Offline documents and unsent edits stay with the server and account that created them.
