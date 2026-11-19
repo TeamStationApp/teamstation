@@ -13,6 +13,7 @@ mobile/
     tsNdiProbe/           an NDI receive probe
     tsPreview/            TS Preview
     tsSpeedy/             TS Speedy, iPhone
+    tsSpeedyAndroid/      TS Speedy, Android
   icons/                  the app icons' sources and their generator
   test/                   the maestro-d client the apps' e2e tests share
   tools/                  bench tools
