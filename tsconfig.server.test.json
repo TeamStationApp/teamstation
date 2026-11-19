@@ -34,6 +34,7 @@
     "src/common/chatCrypto/core.web.test.ts",
     "src/common/chatCrypto/core.native.ts",
     "src/common/chatCrypto/wasmCore.ts",
-    "src/common/chatCrypto/wasmCore.test.ts"
+    "src/common/chatCrypto/wasmCore.test.ts",
+    "src/common/scheduler/engine.native.ts"
   ]
 }

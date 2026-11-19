@@ -11,6 +11,7 @@ import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { onePeople, type OnePerson, onePerson } from './admin/people'
 import { anyOf } from './db/anyOf'
 import type { Database } from './db/database'
+import { rolesReadIn } from './db/readOnce'
 import { openAddsOf, openAddTeams, openArrivalsOf } from './openAdds'
 
 export {
@@ -628,9 +629,23 @@ export async function roleScopes(
 /**
  * `roleScopes` of each of these rows at once, in one set of reads however many
  * there are, each answer as though it had been asked for alone. Somebody who
- * has no open row holds nothing.
+ * has no open row holds nothing. Inside `withRolesRead`, a row read before is
+ * not read again.
  */
 export async function roleScopesForUsers(
+  db: Kysely<Database>,
+  userIds: readonly string[]
+): Promise<Map<string, RoleScopes>> {
+  const read = rolesReadIn<RoleScopes>(db)
+  if (read == null) return await readRoleScopes(db, userIds)
+  const unread = userIds.filter(id => !read.has(id))
+  if (unread.length > 0)
+    for (const [id, scopes] of await readRoleScopes(db, unread))
+      read.set(id, scopes)
+  return new Map(userIds.map(id => [id, read.get(id)!]))
+}
+
+async function readRoleScopes(
   db: Kysely<Database>,
   userIds: readonly string[]
 ): Promise<Map<string, RoleScopes>> {

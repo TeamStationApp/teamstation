@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import vm from 'node:vm'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
@@ -23,6 +24,8 @@ import {
   withCsp,
   withIntegrity
 } from './buildCsp.mjs'
+import { input as engineInput } from './common/autoScheduler/fixtures.test'
+import { readResult, wireRequest } from './common/scheduler/wire'
 
 const run = promisify(execFile)
 
@@ -125,7 +128,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
   })
 
   describe('a real build', function () {
-    this.timeout(240000)
+    // A host's first build fetches Emscripten and builds HiGHS with it.
+    this.timeout(900000)
     const root = process.cwd()
     let once: string
     let served: string
@@ -136,6 +140,9 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       served = mkdtempSync(join(tmpdir(), 'ts-web-serve-'))
       // A module an earlier deploy left, which this build must prune.
       writeFileSync(join(once, 'chat-crypto-0123456789abcdef.wasm'), 'old')
+      // And the HiGHS module and worker the scheduler's replace.
+      writeFileSync(join(once, 'highs-0123456789abcdef.wasm'), 'old')
+      writeFileSync(join(once, 'highs-worker-ABCDEFGH.js'), 'old')
       await run(process.execPath, ['src/build.mjs'], {
         cwd: root,
         env: {
@@ -206,6 +213,110 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(readFileSync('src/app/scoring/microphone.ts', 'utf8')).contains(
         `WORKLET_URL = '/pcm16kWorklet.js'`
       )
+    })
+
+    it('ships the scheduler as a worker and a module of their own that build with no network', async function () {
+      const files = readdirSync(once)
+      const worker = files.find(name =>
+        /^scheduler-worker-[A-Z0-9]+\.js$/i.test(name)
+      )
+      const module = files.find(name =>
+        /^scheduler-[0-9a-f]{16}\.wasm$/.test(name)
+      )
+      expect(worker, 'the worker').not.equals(undefined)
+      expect(module, 'the module').not.equals(undefined)
+      // One of each: no HiGHS module or worker of an earlier build is left.
+      expect(files.filter(name => name.startsWith('highs-'))).deep.equals([])
+      const bytes = readFileSync(join(once, String(module)))
+      expect(module).equals(
+        `scheduler-${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}.wasm`
+      )
+      const app = files.find(name => /^app-[A-Z0-9]+\.js$/i.test(name))
+      const bundle = readFileSync(join(once, String(app)), 'utf8')
+      // The bundle names both and the module's integrity, and holds no glue.
+      expect(bundle).includes(`/${worker}`)
+      expect(bundle).includes(`/${module}`)
+      expect(bundle).includes(integrityOf(bytes))
+      expect(bundle).not.includes('createSchedulerModule')
+      const workerText = readFileSync(join(once, String(worker)), 'utf8')
+      expect(workerText).includes('createSchedulerModule')
+      // No build-host path in either.
+      for (const text of [bytes.toString('latin1'), workerText])
+        for (const needle of ['/Users/', '/root/'])
+          expect(text).not.includes(needle)
+      // The built worker, in a worker-like context with no network and no
+      // process, loads the module from posted bytes and builds a request.
+      const replies: Array<{ type: string; id?: number; result?: string }> = []
+      let requests = 0
+      const scope: Record<string, unknown> = {
+        WorkerGlobalScope: function WorkerGlobalScope() {},
+        location: { href: 'https://example.test/scheduler-worker.js' },
+        console,
+        setTimeout,
+        clearTimeout,
+        WebAssembly,
+        TextDecoder,
+        TextEncoder,
+        performance,
+        URL,
+        fetch: () => {
+          requests++
+          throw new Error('no network')
+        },
+        XMLHttpRequest: function XMLHttpRequest() {
+          requests++
+          throw new Error('no network')
+        },
+        postMessage: (reply: (typeof replies)[number]) => replies.push(reply)
+      }
+      scope.self = scope
+      scope.globalThis = scope
+      vm.createContext(scope)
+      vm.runInContext(workerText, scope)
+      const post = (data: unknown): void => {
+        ;(scope.onmessage as (event: { data: unknown }) => void)({ data })
+      }
+      const settle = async (count: number): Promise<void> => {
+        for (let i = 0; i < 400 && replies.length < count; i++)
+          await new Promise(resolve => setTimeout(resolve, 25))
+      }
+      const resulted = async (): Promise<(typeof replies)[number]> => {
+        for (let i = 0; i < 400; i++) {
+          const found = replies.find(reply => reply.type === 'result')
+          if (found != null) return found
+          await new Promise(resolve => setTimeout(resolve, 25))
+        }
+        return expect.fail('no result')
+      }
+      post({ type: 'init', bytes: new Uint8Array(bytes).buffer })
+      await settle(1)
+      expect(replies[0]).deep.equals({ type: 'ready' })
+      const run = engineInput()
+      post({
+        type: 'build',
+        id: 1,
+        request: JSON.stringify(wireRequest({ input: run }))
+      })
+      const result = await resulted()
+      expect(result).include({ type: 'result', id: 1 })
+      // The engine's phases come first, as the build reaches each.
+      const phases = replies
+        .filter(reply => reply.type === 'progress')
+        .map(
+          reply =>
+            (
+              JSON.parse(String((reply as { event?: string }).event)) as {
+                phase?: string
+              }
+            ).phase
+        )
+      expect(phases[0]).equals('context')
+      expect(phases.at(-1)).equals('options')
+      const built = readResult(String(result.result), run)
+      if (built.kind !== 'options') expect.fail(built.message)
+      expect(built.options.length).greaterThan(0)
+      expect(built.options[0].games.length).greaterThan(0)
+      expect(requests).equals(0)
     })
 
     it('serves the map frame as a page of its own, with no policy', function () {

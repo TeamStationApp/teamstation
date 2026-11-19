@@ -142,7 +142,10 @@ export async function creationHarness(
         })
       )
       app.use('/api/v1', schedulingSetupRoutes(db, { clock }))
-      app.use('/api/v1', schedulePreviewRoutes(db, { clock }))
+      app.use(
+        '/api/v1',
+        schedulePreviewRoutes(db, { clock, testSettings: true })
+      )
       app.use(
         '/api/v1',
         liveRoutes(db, {

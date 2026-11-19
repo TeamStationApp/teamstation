@@ -3,8 +3,20 @@ import type { Kysely } from 'kysely'
 import { makeId } from '../../common/ids'
 import type { SchedulingNews } from '../../common/notifications'
 import type { Database } from '../db/database'
+import { runsOf } from '../db/runs'
 import { adminRecipients } from '../groups/rights'
 import type { ClaimRow } from './ownership'
+
+/** One scheduling notice, for the people it names. */
+export interface Notice {
+  type: SchedulingNews
+  actorId: string | null
+  recipients: string[]
+  title: string
+  /** None when the inbox renders it as it is read. */
+  description?: string
+  metadata: Record<string, string>
+}
 
 /**
  * Records one scheduling notice for the people it names. Every notice has an
@@ -14,38 +26,44 @@ import type { ClaimRow } from './ownership'
  */
 export async function recordNotice(
   db: Kysely<Database>,
-  notice: {
-    type: SchedulingNews
-    actorId: string | null
-    recipients: string[]
-    title: string
-    /** None when the inbox renders it as it is read. */
-    description?: string
-    metadata: Record<string, string>
-  }
+  notice: Notice
 ): Promise<void> {
-  const recipients = [...new Set(notice.recipients)]
-  if (recipients.length === 0) return
-  const id = makeId('audit')
-  await db
-    .insertInto('notification_events')
-    .values({
-      id,
-      source_type: notice.type,
-      source_id: id,
-      revision: 1,
-      actor_id: notice.actorId,
-      metadata: {
-        title: notice.title,
-        ...(notice.description == null
-          ? {}
-          : { description: notice.description }),
-        ...notice.metadata
-      },
-      recorded_recipients: recipients,
-      created_at: new Date()
-    })
-    .execute()
+  await recordNotices(db, [notice])
+}
+
+/**
+ * `recordNotice` of each of these, in one statement for many: a notice that
+ * names nobody is not recorded.
+ */
+export async function recordNotices(
+  db: Kysely<Database>,
+  notices: readonly Notice[]
+): Promise<void> {
+  const rows = notices.flatMap(notice => {
+    const recipients = [...new Set(notice.recipients)]
+    if (recipients.length === 0) return []
+    const id = makeId('audit')
+    return [
+      {
+        id,
+        source_type: notice.type,
+        source_id: id,
+        revision: 1,
+        actor_id: notice.actorId,
+        metadata: {
+          title: notice.title,
+          ...(notice.description == null
+            ? {}
+            : { description: notice.description }),
+          ...notice.metadata
+        },
+        recorded_recipients: recipients,
+        created_at: new Date()
+      }
+    ]
+  })
+  for (const run of runsOf(rows))
+    await db.insertInto('notification_events').values(run).execute()
 }
 
 /** The site administrators who can sign in. */

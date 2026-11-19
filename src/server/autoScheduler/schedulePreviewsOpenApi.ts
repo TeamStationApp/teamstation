@@ -80,7 +80,7 @@ export function schedulePreviewPaths(
         responses: {
           201: {
             description:
-              'Prepared preview id and authorized EngineInput; no schedule options are computed.'
+              'Prepared preview id, authorized EngineInput, and solverLimitMs: how long the device’s solver may run before it asks the admin whether to go on (120 000, or a test server’s limit for the league); no schedule options are computed.'
           },
           ...errors
         }
@@ -135,10 +135,44 @@ export function schedulePreviewPaths(
                 }
               }
             },
-            blocking: { type: ['string', 'null'], maxLength: 1000 }
+            blocking: { type: ['string', 'null'], maxLength: 1000 },
+            provenOptimal: {
+              type: 'boolean',
+              description:
+                'false when the solver stopped at its time limit and the admin used the best schedule found'
+            }
           }
         }),
         responses: { 200: preview, ...errors }
+      }
+    },
+    '/schedule-previews/{previewId}/preparation': {
+      delete: {
+        summary: 'Discard a build still waiting for its device',
+        security: [{ bearer: [] }],
+        description:
+          'For an admin of the preview’s league, when the build is canceled: a preview still in building state is deleted, so nothing of it is left. One already built answers 409.',
+        parameters: [pathId('previewId')],
+        responses: {
+          200: { description: '{ discarded: true }' },
+          ...errors
+        }
+      }
+    },
+    '/leagues/{leagueId}/schedule-previews/latest': {
+      get: {
+        summary: 'The league’s most recent schedule preview',
+        security: [{ bearer: [] }],
+        description:
+          'For an admin of the league. The most recent open or published preview, so a build made earlier can be opened again, or null when the league has none.',
+        parameters: [pathId('leagueId')],
+        responses: {
+          200: {
+            description:
+              '{ id, status (open or published), createdAt, seasonIds, publishedAt } or null'
+          },
+          ...errors
+        }
       }
     },
     '/schedule-previews/{previewId}': {

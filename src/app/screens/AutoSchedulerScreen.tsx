@@ -12,6 +12,7 @@ import { HttpError } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import {
   type GameToReschedule,
+  type LatestPreview,
   type PreviewRequest,
   rescheduleReasonLabel
 } from '../../common/schedulePreviews'
@@ -39,6 +40,7 @@ import {
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import type { NumberColumn } from '../components/GridNumberCell'
 import { useSceneReveals } from '../components/sceneShown'
+import { useScheduleBuild } from '../components/ScheduleBuildModal'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
@@ -49,6 +51,27 @@ import {
   SeasonScheduleGrid,
   type SeasonScheduleGridHandle
 } from './SeasonScheduleGrid'
+
+const BUILT_AT = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit'
+})
+const PUBLISHED_ON = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric'
+})
+
+/**
+ * When the league's previous preview was made, in the viewer's time:
+ * "Built Mar 2, 3:15 PM", or "Published Mar 2" once it is published.
+ */
+export function latestLabel(latest: LatestPreview): string {
+  return latest.status === 'published' && latest.publishedAt != null
+    ? `Published ${PUBLISHED_ON.format(new Date(latest.publishedAt))}`
+    : `Built ${BUILT_AT.format(new Date(latest.createdAt))}`
+}
 
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
@@ -97,8 +120,16 @@ export function AutoSchedulerScreen({
     column: GridColumn
   }>()
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
+  // The league's last preview, built or published, to open again.
+  const [latest, setLatest] = useState<LatestPreview | null>(null)
   const [asking, setAsking] = useState<{ existing: number }>()
-  const [building, setBuilding] = useState(false)
+  // A build runs in the modal, which shows its log and its time limit.
+  const scheduleBuild = useScheduleBuild(client, leagueId)
+  // A build being readied (the flush, the pending saves and the checks)
+  // before its modal opens; the ref stops a second tap before the render.
+  const [readying, setReadying] = useState(false)
+  const readyingRef = useRef(false)
+  const building = readying || scheduleBuild.running
   // Each season's save in flight, which its next save waits for, and the
   // settings its last save stored, which that next save builds on,
   // so a sheet's save can't send back a number a cell's save just changed.
@@ -134,9 +165,13 @@ export function AutoSchedulerScreen({
     stored.current.clear()
     reading.current = Promise.all([
       client.scheduleSetup(leagueId),
-      client.gamesToReschedule(leagueId)
+      client.gamesToReschedule(leagueId),
+      // Without it the screen still works; there is just no button.
+      Promise.resolve()
+        .then(async () => await client.latestSchedulePreview(leagueId))
+        .catch(() => null)
     ]).then(
-      ([found, listed]) => {
+      ([found, listed, last]) => {
         if (!current()) return true
         const merged = {
           ...found,
@@ -148,6 +183,7 @@ export function AutoSchedulerScreen({
         setupNow.current = merged
         setSetup(merged)
         setToReschedule(listed)
+        setLatest(last)
         return true
       },
       () => {
@@ -160,11 +196,14 @@ export function AutoSchedulerScreen({
     )
   }, [client, leagueId, revision, reveals, begin])
   /**
-   * Builds a preview and opens it. A first build of seasons that already
-   * have upcoming games asks whether to replace them or work around them.
+   * Builds a preview in the modal and opens it. A first build of seasons
+   * that already have upcoming games asks whether to replace them or work
+   * around them.
    */
   const build = async (request: PreviewRequest): Promise<void> => {
-    setBuilding(true)
+    if (readyingRef.current) return
+    readyingRef.current = true
+    setReadying(true)
     setError('')
     try {
       if (!(await flush())) return
@@ -184,8 +223,11 @@ export function AutoSchedulerScreen({
         const fields = selectedFields(setup.fields, seasons)
         if (!buildable(schedulingChecks(seasons, fields))) return
       }
-      const preview = await client.buildSchedulePreview(leagueId, request)
-      onOpenPreview(preview.id)
+      const run = scheduleBuild.run(request)
+      readyingRef.current = false
+      setReadying(false)
+      const preview = await run
+      if (preview != null) onOpenPreview(preview.id)
     } catch (failure) {
       const details =
         failure instanceof HttpError && isRecord(failure.details)
@@ -195,7 +237,8 @@ export function AutoSchedulerScreen({
         setAsking({ existing: details.existingGames })
       else failed(failure)
     } finally {
-      setBuilding(false)
+      readyingRef.current = false
+      setReadying(false)
     }
   }
   const failed = (failure: unknown): void => {
@@ -564,8 +607,20 @@ export function AutoSchedulerScreen({
               ))}
             </View>
           )}
+          {latest != null && (
+            <View style={styles.previous}>
+              <Button
+                label="Show previous schedule preview"
+                kind="secondary"
+                onPress={() => {
+                  onOpenPreview(latest.id)
+                }}
+              />
+              <Text style={styles.meta}>{latestLabel(latest)}</Text>
+            </View>
+          )}
           <Button
-            label={building ? 'Building schedule…' : 'Build schedule'}
+            label="Build schedule"
             disabled={busy || building || !buildable(checks)}
             onPress={() => {
               build({ mode: 'full' }).catch(() => undefined)
@@ -619,6 +674,7 @@ export function AutoSchedulerScreen({
           )}
         </View>
       </View>
+      {scheduleBuild.modal}
       {asking != null && (
         <ChoiceSheet
           title={`These seasons already have ${asking.existing === 1 ? 'an upcoming game' : `${asking.existing} upcoming games`}`}
@@ -691,6 +747,7 @@ export function AutoSchedulerScreen({
 export const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
   section: { gap: theme.rem(1) },
+  previous: { gap: theme.rem(0.25) },
   narrow: { width: '100%' as const, alignSelf: 'center' as const },
   tableSection: { alignSelf: 'center' as const, maxWidth: '100%' as const },
   title: {

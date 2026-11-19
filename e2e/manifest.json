@@ -458,6 +458,472 @@
       "file": "e2e/tests/platform/push/phone.e2e.ts"
     },
     {
+      "id": "schedule/auto-scheduler/build-modal#limit-accept",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#limit-continue",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#log-and-cancel",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#no-solver",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#previous-preview",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#publish",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#no-webassembly",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#packed-league",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#tampered-module",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#worker-reuse",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/native-solver#packed-league",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts with the C++ engine compiled into the app, logging the build in its modal",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/screens/schedulePreviewCalendar.ts",
+        "native/scheduler/**",
+        "native/highs/**",
+        "ios/TeamStation/Scheduler/**",
+        "android/app/src/main/jni/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "preferred"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/native-solver",
+      "file": "e2e/tests/schedule/auto-scheduler/native-solver.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

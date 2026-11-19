@@ -7,6 +7,8 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { withRolesRead } from '../db/readOnce'
+import { runsOf } from '../db/runs'
 import type { Clock } from '../groups/requests'
 import { cancelAsRescheduled, noticeTeams, type Tallies } from './cancel'
 import {
@@ -21,7 +23,7 @@ import {
   rescheduleKey,
   snapshotOf
 } from './previews'
-import { proposePlanned } from './propose'
+import { type ProposeOptions, proposePlanned } from './propose'
 import { gamesToReschedule } from './reschedule'
 import { ruleProblem } from './rules'
 import {
@@ -235,19 +237,41 @@ async function placedAgain(
     .map(item => ({ previewId: item.preview_id, gameKey: item.game_key }))
 }
 
+/** Marks these listed games resolved, those of each preview at once. */
+async function resolveListed(
+  trx: Db,
+  refs: RescheduleRef[],
+  clock: Clock
+): Promise<void> {
+  const keys = new Map<string, string[]>()
+  for (const ref of refs)
+    keys.set(ref.previewId, [...(keys.get(ref.previewId) ?? []), ref.gameKey])
+  for (const [previewId, gameKeys] of keys)
+    for (const run of runsOf(gameKeys))
+      await trx
+        .updateTable('schedule_preview_games')
+        .set({ resolved_at: clock.now() })
+        .where('preview_id', '=', previewId)
+        .where('game_key', 'in', run)
+        .where('resolved_at', 'is', null)
+        .execute()
+}
+
 /**
  * Publishes one option of an open preview, once: it rechecks every game,
  * takes the replaced games off the schedules, proposes the option's games
  * as their seasons, resolves the listed games it placed again, and tells
  * each team's staff what happened to its games. A preview already
- * published answers with what it published.
+ * published answers with what it published. `options` choose how the
+ * games are proposed (`ProposeOptions`), never what is proposed.
  */
 export async function publishPreview(
   db: Db,
   actor: Actor,
   previewId: string,
   optionIndex: number,
-  clock: Clock
+  clock: Clock,
+  options: ProposeOptions = {}
 ): Promise<Publication> {
   return await atomic(db, async trx => {
     await lockKeys(trx, [`schedule-preview:${previewId}`])
@@ -285,51 +309,58 @@ export async function publishPreview(
         { stale }
       )
     const snap = snapshotOf(row)
-    const tallies: Tallies = new Map()
-    // Only the games still scheduled are replaced; a rainout since is not.
-    const removed = await cancelAsRescheduled(
-      trx,
-      snap.replaceGameIds,
-      clock,
-      actor.userId,
-      tallies
-    )
-    await proposePlanned(trx, actor, row.id, snap, games, clock, tallies)
-    // A full build places again every listed game of its seasons that it
-    // was built with; one listed since stays listed. A partial build
-    // resolves the listed games it places again: one listed game for each
-    // game of the same two teams, whether the engine placed it or an admin
-    // added it by hand.
-    const builtWith = new Set(
-      snap.reschedules.map(ref => `${ref.previewId}\u0000${ref.gameKey}`)
-    )
-    const resolve =
-      row.mode === 'full'
-        ? (await gamesToReschedule(trx, row.league_id, clock)).filter(
-            game =>
-              snap.seasons.some(season => season.id === game.seasonId) &&
-              builtWith.has(`${game.previewId}\u0000${game.gameKey}`)
-          )
-        : await placedAgain(trx, snap.reschedules, games)
-    for (const ref of resolve)
+    // Every game checks the same people's rights, and reads the same teams,
+    // seasons, fields and accounts, none of which a publication changes: each
+    // is read once.
+    await withRolesRead(trx, async () => {
+      const tallies: Tallies = new Map()
+      // Only the games still scheduled are replaced; a rainout since is not.
+      const removed = await cancelAsRescheduled(
+        trx,
+        snap.replaceGameIds,
+        clock,
+        actor.userId,
+        tallies
+      )
+      await proposePlanned(
+        trx,
+        actor,
+        row.id,
+        snap,
+        games,
+        clock,
+        tallies,
+        options
+      )
+      // A full build places again every listed game of its seasons that it
+      // was built with; one listed since stays listed. A partial build
+      // resolves the listed games it places again: one listed game for each
+      // game of the same two teams, whether the engine placed it or an admin
+      // added it by hand.
+      const builtWith = new Set(
+        snap.reschedules.map(ref => `${ref.previewId}\u0000${ref.gameKey}`)
+      )
+      const resolve =
+        row.mode === 'full'
+          ? (await gamesToReschedule(trx, row.league_id, clock)).filter(
+              game =>
+                snap.seasons.some(season => season.id === game.seasonId) &&
+                builtWith.has(`${game.previewId}\u0000${game.gameKey}`)
+            )
+          : await placedAgain(trx, snap.reschedules, games)
+      await resolveListed(trx, resolve, clock)
       await trx
-        .updateTable('schedule_preview_games')
-        .set({ resolved_at: clock.now() })
-        .where('preview_id', '=', ref.previewId)
-        .where('game_key', '=', ref.gameKey)
-        .where('resolved_at', 'is', null)
+        .updateTable('schedule_previews')
+        .set({
+          status: 'published',
+          published_option: optionIndex,
+          published_at: clock.now(),
+          removed_games: removed.length
+        })
+        .where('id', '=', row.id)
         .execute()
-    await trx
-      .updateTable('schedule_previews')
-      .set({
-        status: 'published',
-        published_option: optionIndex,
-        published_at: clock.now(),
-        removed_games: removed.length
-      })
-      .where('id', '=', row.id)
-      .execute()
-    await noticeTeams(trx, tallies, { actorId: actor.userId })
+      await noticeTeams(trx, tallies, { actorId: actor.userId })
+    })
     return await counts()
   })
 }

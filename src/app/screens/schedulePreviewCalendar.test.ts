@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { PlannedGame } from '../../common/autoScheduler/types'
 import {
@@ -409,5 +409,65 @@ describe('the schedule preview calendar', () => {
     expect(dayHeader('2027-03-02')).equals('Tue · Mar · 02')
     expect(dayHeader('2027-12-26')).equals('Sun · Dec · 26')
     expect(dayHeader('2027-01-11')).equals('Mon · Jan · 11')
+  })
+
+  describe('on Hermes, whose formatToParts leaves out weekday and month', () => {
+    const prototype = Intl.DateTimeFormat.prototype
+    // Kept to be called on each formatter, and put back after.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const real = prototype.formatToParts
+    beforeEach(() => {
+      prototype.formatToParts = function (date) {
+        const options = this.resolvedOptions()
+        return real
+          .call(this, date)
+          .filter(
+            part =>
+              !(
+                (part.type === 'weekday' && options.weekday === 'short') ||
+                (part.type === 'month' && options.month === 'short')
+              )
+          )
+      }
+    })
+    afterEach(() => {
+      prototype.formatToParts = real
+    })
+
+    it('still heads each column with every weekday and month', () => {
+      expect(dayHeader('2027-03-02')).equals('Tue · Mar · 02')
+      // 2027-02-28 is a Sunday; a week from it covers every weekday.
+      expect(
+        Array.from({ length: 7 }, (_, i) =>
+          dayHeader(`2027-03-0${i + 1}`).slice(0, 3)
+        )
+      ).deep.equals(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+      expect(
+        Array.from({ length: 12 }, (_, i) =>
+          dayHeader(`2027-${String(i + 1).padStart(2, '0')}-15`).slice(6, 9)
+        )
+      ).deep.equals([
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec'
+      ])
+    })
+
+    it('files games under the same days, reading numeric parts', () => {
+      const [week] = calendarWeeks([game('2027-03-14T01:30:00.000Z')], {
+        firstDay: '2027-03-08',
+        zone: 'America/Los_Angeles'
+      })
+      expect(week.rows[0][5]).not.equals(undefined)
+    })
   })
 })

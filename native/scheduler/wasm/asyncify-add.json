@@ -1,0 +1,6 @@
+[
+  "teamstation::scheduler::Session::pause(*)",
+  "HighsCallback::callbackAction(*)",
+  "std::__2::__function::__func<void (*)(int, *)>::operator()(*)",
+  "teamstation::scheduler::(anonymous namespace)::run(*)"
+]

@@ -305,6 +305,47 @@ variable is an input of Gradle's bundle task, and `metro.config.js` keys
 Metro's cache on both, so a transform made for the bench is never reused by
 another build.
 
+## The Auto-Scheduler's engine (C++ over HiGHS)
+
+The Auto-Scheduler builds every schedule exactly with its C++ engine
+(`native/scheduler`), which solves its models with HiGHS. The phones carry it
+compiled in, as a pure C++ TurboModule, `NativeScheduler`
+(`native/scheduler/phone/`, spec `src/app/scheduling/NativeScheduler.ts`):
+`build(request, onProgress)` runs one build on a thread of its own, with an
+8 MB stack and a high priority (`QOS_CLASS_USER_INITIATED` on iOS, nice -8 on
+Android), and answers `{ promise, cancel, decide }`. The web runs the same
+engine as our own WebAssembly in a worker, loaded only when a schedule is
+built, and Node uses the engine's addon (`scripts/schedulerBuild.mjs node`).
+`src/common/scheduler/engine.native.ts`, `engine.web.ts` and `engine.ts` wrap
+each.
+
+- **Source**: `native/highs/highs-source.json` pins HiGHS (version, commit,
+  archive URL and sha256), a CMake release for the Mac and for Linux x64,
+  and, for the web, Emscripten. `scripts/highsSource.mjs` fetches and checks
+  HiGHS into `native/highs/vendor/` (git-ignored), and fetches this host's
+  CMake only when the host has none on `PATH`, as Mason's NoMac hosts and the
+  Linux droplets that build the server and the web do not.
+- **iOS**: the TeamStation target's "Build the scheduler" phase runs
+  `scripts/highsNative.sh ios`, which builds HiGHS and the engine for every
+  architecture in `ARCHS` and joins them into
+  `ios/build/highs/<platform>/libhighs.a`, `libhighs_extras.a` and
+  `libscheduler_core.a`; the target links all three and compiles
+  `NativeScheduler.cpp`. `SchedulerProvider.mm` hands the module to React
+  Native through `codegenConfig.ios.modulesProvider`, so a change to the spec
+  needs `pod install`.
+- **Android**: Gradle's `fetchHighsSource` runs `scripts/highsSource.mjs`
+  before CMake, and `src/main/jni/CMakeLists.txt` builds the pinned HiGHS with
+  `add_subdirectory` and links it, with the engine's sources and
+  `NativeScheduler.cpp`, into `libappmodules.so`. `OnLoad.cpp` returns the
+  module by name.
+- **Check the engine on the Mac**: `node scripts/highsNativeSmoke.mjs` builds
+  the engine's sources against the pinned HiGHS as the module does, builds the
+  synthetic packed league with it and with the Node addon, and fails if their
+  counts differ.
+
+An app built without the module answers every build with the `noSolver`
+failure: the device cannot run the scheduler, and nothing is built.
+
 ## Walk-up music: the app's own TurboModule
 
 `WalkUpMusic` is the one native module the app writes itself. Its spec is

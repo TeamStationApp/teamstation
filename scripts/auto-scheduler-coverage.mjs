@@ -86,6 +86,8 @@ const tsSuites = [
   'src/common/api.scheduling.test.ts',
   // M6: the scheduler.
   'src/migrate/migrations/080schedulePreviews.integration.test.ts',
+  // The Auto-Scheduler's kept TypeScript: context, slots, rules, scores and
+  // the cause wording.
   'src/common/autoScheduler/*.test.ts',
   'src/server/routes/schedulePreviews.integration.test.ts',
   'src/server/autoScheduler/publish.integration.test.ts',
@@ -116,7 +118,30 @@ const tsSuites = [
   'src/app/platform/eventDirections.test.ts',
   'src/app/platform/eventDirections.web.test.ts',
   // Preview calendar M3: filters, field labels and the weeks.
-  'src/app/screens/schedulePreviewCalendar.test.ts'
+  'src/app/screens/schedulePreviewCalendar.test.ts',
+  // Exact only M5: the C++ engine through its Node addon (capacity.test.ts
+  // is under the glob above); the pinned sources, doctest's and
+  // Emscripten's among them.
+  'src/common/scheduler/engine.test.ts',
+  'src/test/highsSource.integration.test.ts',
+  // Exact only M6: the web's worker and wrapper, the phones' module and
+  // wrapper, and the bundled app tests' mapping to the Node engine.
+  'src/common/scheduler/engine.web.test.ts',
+  'src/app/platform/schedulerWorker.test.ts',
+  'src/app/scheduling/NativeScheduler.test.ts',
+  'src/test/chatCoreResolvePlugin.test.ts',
+  // Exact only M8: the build modal's log, and the solver limit's column.
+  'src/app/scheduling/buildLog.test.ts',
+  // The develop phone build, which alone carries the modal's full log.
+  'src/app/platform/developBuild.test.ts',
+  'src/migrate/migrations/125solverLimit.integration.test.ts',
+  // Exact only M11: a publication's recipients and rights, read once.
+  'src/server/groups/recipients.unit.test.ts',
+  'src/server/autoScheduler/publishRolesRead.unit.test.ts',
+  'src/server/schedule/proposeGames.unit.test.ts',
+  // The umpire recheck for many published games from one read.
+  'src/server/umpires/assignments.unit.test.ts',
+  'src/server/umpires/revalidation.integration.test.ts'
 ]
 
 if (unitOnly) {
@@ -161,7 +186,9 @@ const appSuites = [
   'src/app/platform/eventDirections.native.test.tsx',
   // Preview calendar M2: the small, stacked filter pills.
   'src/app/components/PillTabs.test.tsx',
-  'src/app/components/pillGeometry.test.tsx'
+  'src/app/components/pillGeometry.test.tsx',
+  // Exact only M8: the schedule build modal.
+  'src/app/components/ScheduleBuildModal.test.tsx'
 ]
 
 if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {

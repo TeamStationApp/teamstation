@@ -345,8 +345,15 @@ tasks.register('buildChatCryptoRust', Exec) {
     commandLine "${rootDir}/../scripts/chatCryptoNative.sh", 'android', chatCryptoAbis.join(',')
     environment 'ANDROID_NDK_HOME', android.ndkDirectory.absolutePath
 }
+// The pinned HiGHS source (native/highs/highs-source.json), which CMake
+// builds into libappmodules.so with the engine for the NativeScheduler module.
+tasks.register('fetchHighsSource', Exec) {
+    workingDir rootDir
+    commandLine 'node', "${rootDir}/../scripts/highsSource.mjs"
+}
 tasks.configureEach { task ->
     if (task.name.startsWith('configureCMake') || task.name.startsWith('buildCMake')) {
         task.dependsOn('buildChatCryptoRust')
+        task.dependsOn('fetchHighsSource')
     }
 }

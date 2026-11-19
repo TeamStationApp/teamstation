@@ -1,495 +1,116 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { wallInstant } from '../fieldAvailability'
 import {
-  blockingCause,
-  capacityCause,
-  fieldCapacity,
-  requestedTargets,
-  seasonMatchups,
-  teamCapacity
+  type Cause,
+  causeLine,
+  equalLine,
+  requiredLine,
+  totalsLine
 } from './capacity'
-import { buildContext } from './context'
-import { field, fixedGame, hoursOn, input, season, ZONE } from './fixtures.test'
-import { buildOptions } from './index'
-import { dayNumber } from './slots'
-import type { EngineBooking, EngineInput } from './types'
 
-const SATURDAYS = hoursOn([6], '08:00', '18:00')
+// The C++ engine computes every cause (native/scheduler/Capacity.cpp, its
+// doctest cases, and engine.test.ts through the addon); these are the words.
 
-/** Saturdays only, the field open the hours given. */
-function saturdays(
-  settings: Parameters<typeof season>[0] = {},
-  fieldChanges: Partial<ReturnType<typeof field>['availability']> = {},
-  changes: Partial<EngineInput> = {}
-): EngineInput {
-  return input({
-    seasons: [
-      season({
-        endsOn: '2027-03-31',
-        windows: [{ from: '2027-03-01', hours: SATURDAYS }],
-        ...settings
-      })
-    ],
-    fields: [
-      field({
-        availability: {
-          ...field().availability,
-          hours: SATURDAYS,
-          ...fieldChanges
-        }
-      })
-    ],
+describe('causeLine', () => {
+  const cause = (changes: Partial<Cause>): Cause => ({
+    seasonId: 'sea_demo',
+    kind: 'regular',
+    rule: 'fieldTime',
+    requested: 8,
+    size: '50/70',
     ...changes
   })
-}
+  const context = { teamNames: { tem_hawks: 'Demo Hawks' } }
 
-const at = (date: string, time: string): number => wallInstant(date, time, ZONE)
-
-function hawksBooked(date: string): EngineBooking {
-  return {
-    key: `bkg_${date}`,
-    fieldId: null,
-    size: null,
-    teamIds: ['tem_hawks'],
-    start: at(date, '07:00'),
-    end: at(date, '19:00')
-  }
-}
-
-describe('capacityCause', () => {
-  it('names the manager whose outside game blocks the only open date', () => {
-    const run = saturdays(
-      { regularGames: 1, exhibitionGames: 0 },
-      { startsOn: '2027-03-06', endsOn: '2027-03-06' }
+  it('words each rule of a structured cause with today’s sentences', () => {
+    expect(causeLine(cause({}), context)).equals(
+      'not enough 50/70 field time to give every team 8 games'
     )
-    const [home, away] = run.seasons[0].participants
-    run.seasons[0].participants = [home, away]
-    run.headCoaches = { [home]: 'manager', outside: 'manager' }
-    run.bookings = [{ ...hawksBooked('2027-03-06'), teamIds: ['outside'] }]
-    const cause =
-      'Demo Hawks’s Manager/Head Coach is booked during otherwise available game times'
-    expect(buildOptions(run)).includes({ blocking: cause })
-    run.seasons[0].settings.maxGamesOnWeekend = 0
-    expect(buildOptions(run)).includes({
-      blocking:
-        'this season’s weekday/weekend game maximums leave too few available games'
-    })
-    run.seasons[0].settings.maxGamesOnWeekend = 200
-    run.required = [
-      {
-        key: 'replace',
-        seasonId: run.seasons[0].id,
-        homeTeamId: home,
-        awayTeamId: away,
-        exhibition: false
-      }
-    ]
-    expect(buildOptions(run)).includes({ blocking: cause })
-    expect(buildOptions({ ...run, headCoaches: undefined }).blocking).equals(
-      null
-    )
-    run.bookings[0].teamIds = [home]
-    expect(buildOptions(run).blocking).equals(
-      'Demo Hawks’s existing games leave too few open dates'
-    )
-  })
-  it('names the manager held by a game placed in the selected option on another field', () => {
-    const run = saturdays(
-      { regularGames: 1, exhibitionGames: 0 },
-      {
-        startsOn: '2027-03-06',
-        endsOn: '2027-03-06',
-        hours: hoursOn([6], '08:00', '09:30')
-      }
-    )
-    run.fields.push({ ...run.fields[0], id: 'second' })
-    run.seasons[0].settings.fieldIds = run.fields.map(field => field.id)
-    const [home, away, other, visitor] = run.seasons[0].participants
-    run.headCoaches = { [home]: 'coach', [other]: 'coach' }
-    run.seed = 1
-    run.seasons[0].participants = [home, away, other, visitor]
-    const ordinary = buildOptions(run).options[0]
-    expect(ordinary.games).length(2)
     expect(
-      ordinary.games.some(
-        g =>
-          [g.homeTeamId, g.awayTeamId].includes(home) &&
-          [g.homeTeamId, g.awayTeamId].includes(other)
+      causeLine(
+        cause({ rule: 'capacity', requested: 1, size: 'T-ball' }),
+        context
       )
-    ).equals(true)
-    const allShare = buildOptions({
-      ...run,
-      headCoaches: Object.fromEntries(
-        run.seasons[0].participants.map(team => [team, 'coach'])
-      )
-    }).options[0]
-    expect(allShare.unmet[0].cause).includes('Manager/Head Coach')
-    run.required = [
-      [home, away],
-      [other, visitor]
-    ].map(([homeTeamId, awayTeamId], i) => ({
-      key: `required-${i}`,
-      seasonId: run.seasons[0].id,
-      homeTeamId,
-      awayTeamId,
-      exhibition: false
-    }))
-    const options = buildOptions(run).options
-    expect(options.length).greaterThan(0)
-    for (const option of options) {
-      expect(option.games).length(1)
-      expect(option.unmet[0].cause).includes('Manager/Head Coach')
-    }
+    ).equals('not enough T-ball field time to give every team 1 game')
     expect(
-      buildOptions({ ...run, headCoaches: undefined }).options[0].games
-    ).length(2)
-  })
-
-  it('explains a reduced count when the manager still has one available date', () => {
-    const days = ['2027-03-06', '2027-03-13', '2027-03-20']
-    const run = saturdays(
-      { regularGames: 3, exhibitionGames: 0, doubleheaders: 'never' },
-      {},
-      {
-        bookings: days.map(day => ({
-          ...hawksBooked(day),
-          teamIds: ['outside']
-        }))
-      }
+      causeLine(cause({ kind: 'exhibition', requested: 2 }), context)
+    ).equals(
+      'not enough 50/70 field time to give every team 2 exhibition games'
     )
-    const [home, away] = run.seasons[0].participants
-    run.seasons[0].participants = [home, away]
-    run.headCoaches = { [home]: 'coach', outside: 'coach' }
-    const { options, blocking } = buildOptions(run)
-    expect(blocking).equals(null)
-    expect(options[0].games.length).equals(1)
-    expect(options[0].unmet[0].cause).equals(
+    expect(
+      causeLine(
+        cause({ kind: 'required', rule: 'requiredUnplaced', requested: 1 }),
+        context
+      )
+    ).equals('not enough 50/70 field time to place 1 game again')
+    expect(causeLine(cause({ rule: 'weekParts' }), context)).equals(
+      'this season’s weekday/weekend game maximums leave too few available games'
+    )
+    expect(causeLine(cause({ rule: 'doubleheaders' }), context)).equals(
+      'teams may not play twice in a day'
+    )
+    expect(
+      causeLine(
+        cause({ rule: 'manager', teamId: 'tem_hawks', managerId: 'coach' }),
+        context
+      )
+    ).equals(
       'Demo Hawks’s Manager/Head Coach is booked during otherwise available game times'
     )
+    expect(
+      causeLine(cause({ rule: 'teamOpenDates', teamId: 'tem_owls' }), context)
+    ).equals('tem_owls’s existing games leave too few open dates')
+    expect(causeLine(cause({ rule: 'teamOpenDates' }), context)).equals(
+      '’s existing games leave too few open dates'
+    )
   })
-
-  it('leaves the old field at full capacity for a manager-only interval', () => {
-    const run = saturdays(
-      { regularGames: 1, exhibitionGames: 0 },
-      {
-        startsOn: '2027-03-06',
-        endsOn: '2027-03-06',
-        hours: hoursOn([6], '08:00', '11:10')
-      }
-    )
-    run.seasons[0].participants = run.seasons[0].participants.slice(0, 4)
-    const normal = buildOptions(run).options[0].games
-    expect(normal.length).equals(2)
-    const retained =
-      buildOptions({
-        ...run,
-        bookings: [
-          {
-            ...hawksBooked('2027-03-06'),
-            fieldId: run.fields[0].id,
-            teamIds: ['outside'],
-            managerOnly: true
-          }
-        ]
-      }).options[0]?.games ?? []
-    expect(retained).deep.equals(normal)
-  })
-
-  it('phrases a lowered target’s cause against the requested count', () => {
-    const { options, blocking } = buildOptions(saturdays({ regularGames: 8 }))
-    expect(blocking).equals(null)
-    expect(options[0].unmet).deep.equals([
-      {
-        seasonId: 'sea_demo',
-        message: 'every team gets 4 of the 8 requested regular-season games',
-        cause: 'not enough 50/70 field time to give every team 8 games'
-      }
-    ])
-  }).timeout(30_000)
-
-  it('names T-ball and 46/60 as two sizes', () => {
-    const tBall = buildContext(
-      saturdays({ fieldSize: 'T-ball', regularGames: 8 })
-    )
-    expect(capacityCause(tBall, tBall.seasons[0], 'regular', 8)).equals(
-      'not enough T-ball field time to give every team 8 games'
-    )
-    expect(capacityCause(tBall, tBall.seasons[0], 'regular', 1)).equals(
-      'not enough T-ball field time to give every team 1 game'
-    )
-    const small = buildContext(
-      saturdays({ fieldSize: '46/60', regularGames: 8 })
-    )
-    expect(capacityCause(small, small.seasons[0], 'regular', 8)).equals(
-      'not enough 46/60 field time to give every team 8 games'
-    )
-  }).timeout(30_000)
-
-  it('names a team whose own games leave it too few open dates', () => {
-    const run = saturdays(
-      { doubleheaders: 'never', regularGames: 4, exhibitionGames: 0 },
-      {},
-      {
-        bookings: ['2027-03-06', '2027-03-13'].map(hawksBooked)
-      }
-    )
-    const context = buildContext(run)
-    expect(capacityCause(context, context.seasons[0], 'regular', 4)).equals(
-      'Demo Hawks’s existing games leave too few open dates'
-    )
-    const { options } = buildOptions(run)
-    expect(options[0].unmet[0]).deep.equals({
-      seasonId: 'sea_demo',
-      message: 'every team gets 2 of the 4 requested regular-season games',
-      cause: 'Demo Hawks’s existing games leave too few open dates'
-    })
-  }).timeout(30_000)
-
-  it('falls back to field time when no team is held back by its own games', () => {
-    const context = buildContext(
-      saturdays({ doubleheaders: 'never', regularGames: 6, exhibitionGames: 0 })
-    )
-    // Four Saturdays, one game a day each: field time enough, dates not.
-    expect(capacityCause(context, context.seasons[0], 'regular', 6)).equals(
-      'not enough 50/70 field time to give every team 6 games'
-    )
-  }).timeout(30_000)
 })
 
-describe('blockingCause', () => {
-  // E10's last step: one Saturday, open 08:00–09:00, shorter than a game.
-  const noSlot = (changes: Partial<EngineInput> = {}): EngineInput =>
-    saturdays(
-      { regularGames: 30 },
-      {
-        startsOn: '2027-03-06',
-        endsOn: '2027-03-06',
-        hours: hoursOn([6], '08:00', '09:00')
-      },
-      changes
+describe('unmet lines', () => {
+  it('words equal and uneven totals, and the games left to place again', () => {
+    expect(equalLine('regular', 11, 12)).equals(
+      'every team gets 11 of the 12 requested regular-season games'
     )
-
-  it('blocks when no new game fits, even with fixed games and pending proposals', () => {
-    const result = buildOptions(
-      noSlot({
-        fixed: [
-          // A played game, and a proposal still waiting for consent.
-          fixedGame(
-            'g1',
-            'tem_hawks',
-            'tem_owls',
-            '2027-03-06T14:00:00.000Z',
-            60
-          ),
-          fixedGame(
-            'g2',
-            'tem_foxes',
-            'tem_bears',
-            '2027-03-07T15:00:00.000Z',
-            90,
-            {
-              fieldId: null
-            }
-          )
-        ]
-      })
-    )
-    expect(result).deep.equals({
-      options: [],
-      blocking: 'not enough 50/70 field time to give every team 30 games'
-    })
-  }).timeout(30_000)
-
-  it('gives an option, not a block, when one game fits', () => {
-    const oneSlot = (fixed: EngineInput['fixed']): EngineInput =>
-      saturdays(
-        { regularGames: 30 },
-        {
-          startsOn: '2027-03-06',
-          endsOn: '2027-03-06',
-          hours: hoursOn([6], '08:00', '09:30')
-        },
-        { fixed }
-      )
-    // The Hawks and Owls already have a game, so the floor is one: the one
-    // slot goes to two other teams and the totals are uneven.
-    const result = buildOptions(
-      oneSlot([
-        fixedGame(
-          'g1',
-          'tem_hawks',
-          'tem_owls',
-          '2027-03-07T15:00:00.000Z',
-          90,
-          {
-            fieldId: null
-          }
-        )
-      ])
-    )
-    expect(result.blocking).equals(null)
-    expect(result.options).length(1)
-    expect(result.options[0].games).length(1)
-    expect(result.options[0].unmet).length(2)
-    expect(result.options[0].unmet[1].message).equals(
-      'every team gets 0 of the 1 requested exhibition game'
-    )
-    expect(result.options[0].unmet[0].message).match(
-      /^Demo \w+ gets 0 of 30 regular-season games; .*the others get 1 of 30$/
-    )
-    expect(result.options[0].unmet[0].cause).equals(
-      'not enough 50/70 field time to give every team 30 games'
-    )
-    // With no fixed games the floor is zero, and equal counts give none.
-    const none = buildOptions(oneSlot([]))
-    expect(none.blocking).equals(null)
-    expect(none.options).length(1)
-    expect(none.options[0].games).length(0)
-    expect(none.options[0].unmet[0].message).equals(
-      'every team gets 0 of the 30 requested regular-season games'
-    )
-  }).timeout(30_000)
-
-  it('does not block a run that needs nothing, and names exhibition counts', () => {
-    const none = buildContext(noSlot({}))
-    none.seasons[0].season.settings.regularGames = 0
-    none.seasons[0].season.settings.exhibitionGames = 0
-    expect(blockingCause(none)).equals(null)
-    const exhibitionOnly = buildContext(noSlot({}))
-    exhibitionOnly.seasons[0].season.settings.regularGames = 0
-    expect(blockingCause(exhibitionOnly)).equals(
-      'not enough 50/70 field time to give every team 1 exhibition game'
-    )
-  }).timeout(30_000)
-})
-
-describe('capacity helpers', () => {
-  it('counts the games the field time holds around what is already there', () => {
-    const one = (changes: Partial<EngineInput> = {}): number => {
-      const context = buildContext(
-        saturdays({ endsOn: '2027-03-06' }, {}, changes)
-      )
-      return fieldCapacity(context, context.seasons[0])
-    }
-    expect(one()).equals(6)
     expect(
-      one({
-        bookings: [
-          {
-            key: 'bkg_noon',
-            fieldId: 'fld_one',
-            size: '50/70',
-            teamIds: [],
-            start: at('2027-03-06', '12:00'),
-            end: at('2027-03-06', '13:00')
-          },
-          {
-            key: 'bkg_elsewhere',
-            fieldId: 'fld_other',
-            size: '50/70',
-            teamIds: [],
-            start: at('2027-03-06', '08:00'),
-            end: at('2027-03-06', '18:00')
-          }
-        ]
-      })
-    ).equals(5)
-    expect(
-      one({
-        fixed: [
-          fixedGame(
-            'g1',
-            'tem_hawks',
-            'tem_owls',
-            new Date(at('2027-03-06', '07:00')).toISOString(),
-            660
-          )
-        ]
-      })
-    ).equals(0)
-  }).timeout(30_000)
-
-  it('counts a field’s time in its own zone, wherever the field is', () => {
-    // Saturdays 08:00–18:00 in Tokyo: the season's window is read there
-    // too, so the field holds the same six games as one in Chicago.
-    const tokyo = buildContext(
-      saturdays({ endsOn: '2027-03-06' }, { timezone: 'Asia/Tokyo' })
+      totalsLine('exhibition', [{ name: 'Demo Hawks', total: 1 }], 1)
+    ).equals('every team gets 1 of the 1 requested exhibition game')
+    expect(totalsLine('regular', [], 4)).equals(
+      'every team gets 0 of the 4 requested regular-season games'
     )
-    const [demo] = tokyo.seasons
-    expect(fieldCapacity(tokyo, demo)).equals(6)
     expect(
-      demo.windows.map(window => new Date(window.start).toISOString())
-    ).deep.equals(['2027-03-05T23:00:00.000Z'])
-  }).timeout(30_000)
-
-  it('reads a fixed game’s day in its field’s zone, or the run’s for a field outside it', () => {
-    const run = (fields: EngineInput['fields']): EngineInput =>
-      input({
-        fields,
-        notBefore: Date.parse('2027-03-02T03:00:00Z'),
-        fixed: [
-          // 01:00Z on March 7 is Saturday evening in Chicago.
-          fixedGame('g1', 'tem_hawks', 'tem_owls', '2027-03-07T01:00:00Z'),
-          fixedGame(
-            'g2',
-            'tem_hawks',
-            'tem_foxes',
-            '2027-03-07T01:00:00Z',
-            90,
-            { fieldId: 'fld_elsewhere' }
-          ),
-          // And Sunday morning in Tokyo.
-          fixedGame('g3', 'tem_owls', 'tem_foxes', '2027-03-07T01:00:00Z', 90, {
-            fieldId: 'fld_tokyo'
-          })
-        ]
-      })
-    const tokyo = field({
-      id: 'fld_tokyo',
-      availability: { ...field().availability, timezone: 'Asia/Tokyo' }
-    })
-    const [demo] = buildContext(run([field(), tokyo])).seasons
-    expect(demo.zoneOf('fld_tokyo')).equals('Asia/Tokyo')
-    expect(demo.zoneOf('fld_elsewhere')).equals(ZONE)
-    expect(demo.zoneOf(null)).equals(ZONE)
-    expect(demo.fixed.map(entry => entry.point.date)).deep.equals([
-      '2027-03-06',
-      '2027-03-06',
-      '2027-03-07'
-    ])
-    // Late on March 1 in Chicago it is already March 2 in Tokyo, so the
-    // season can still get games from Chicago's March 1.
-    expect(demo.firstDay).equals(dayNumber('2027-03-01'))
-    // A season with no field of its size reads the run's first field.
-    const [big] = buildContext(
-      run([field({ sizes: ['60/90'], availability: tokyo.availability })])
-    ).seasons
-    expect(big.zoneOf(null)).equals('Asia/Tokyo')
-    expect(big.firstDay).equals(dayNumber('2027-03-02'))
-    expect(buildContext(run([])).seasons[0].zoneOf(null)).equals('UTC')
-  }).timeout(30_000)
-
-  it('counts the games a team could play with and without its own commitments', () => {
-    const context = buildContext(
-      saturdays(
-        { endsOn: '2027-03-13', doubleheaders: 'never' },
-        {},
-        { bookings: [hawksBooked('2027-03-06')] }
+      totalsLine(
+        'regular',
+        [
+          { name: 'Demo Owls', total: 10 },
+          { name: 'Demo Hawks', total: 9 },
+          { name: 'Demo Bears', total: 10 },
+          { name: 'Demo Foxes', total: 9 },
+          { name: 'Demo Wolves', total: 10 }
+        ],
+        12
       )
+    ).equals(
+      'Demo Foxes gets 9 of 12 regular-season games; Demo Hawks gets 9 of 12; the others get 10 of 12'
     )
-    const [demo] = context.seasons
-    expect(teamCapacity(demo, 'tem_hawks', true)).equals(1)
-    expect(teamCapacity(demo, 'tem_hawks', false)).equals(2)
-    demo.season.settings.doubleheaders = 'allowed'
-    expect(teamCapacity(demo, 'tem_owls', true)).equals(12)
-  }).timeout(30_000)
-
-  it('reads the requested counts and builds the matchups for them', () => {
-    const context = buildContext(saturdays())
-    const [demo] = context.seasons
-    expect(requestedTargets(demo)).deep.equals({ regular: 4, exhibition: 1 })
-    expect(seasonMatchups(context, demo, requestedTargets(demo), 1)).length(21)
-  }).timeout(30_000)
+    // Every group alone: each is named, the fewest games first.
+    expect(
+      totalsLine(
+        'regular',
+        [
+          { name: 'Demo Owls', total: 10 },
+          { name: 'Demo Hawks', total: 9 }
+        ],
+        12
+      )
+    ).equals(
+      'Demo Hawks gets 9 of 12 regular-season games; Demo Owls gets 10 of 12'
+    )
+    expect(requiredLine(1, 3)).equals(
+      '1 of the 3 games to place again couldn’t be placed'
+    )
+    expect(requiredLine(1, 1)).equals(
+      '1 of the 1 game to place again couldn’t be placed'
+    )
+  })
 })

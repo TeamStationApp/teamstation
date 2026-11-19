@@ -134,9 +134,12 @@ import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
+  asLatestPreview,
   asPublication,
   asSchedulePreview,
+  type BuildSession,
   type GameToReschedule,
+  type LatestPreview,
   type PreviewRequest,
   type Publication,
   type SchedulePreview
@@ -5834,37 +5837,113 @@ export class TeamStationClient {
     )
   }
 
-  /** Builds a preview of the league's schedule. See `PreviewRequest`. */
+  /**
+   * Builds a preview on this device: the server prepares the run, this
+   * platform's engine builds it, and the result is stored. The session
+   * hears each step with its time and the engine's progress, answers each
+   * time limit, and aborts the build, which discards the preparation and
+   * rejects with the `canceled` failure, until the result is stored. A
+   * build the engine cannot make, or a device that cannot run it, discards
+   * the preparation and throws its typed failure (`EngineFailureError`),
+   * and nothing is sent; so does any other error from the engine or the
+   * upload. Once a result has been sent, the server may have stored it
+   * though its answer was lost: when the discard is refused because the
+   * preview is built, that preview is opened instead, since it was kept,
+   * unless the server discarded it (a recalculation that placed nothing).
+   * Cancel during a wait between uploads discards at once.
+   */
   async buildSchedulePreview(
     leagueId: string,
     request: PreviewRequest,
+    session: BuildSession = {},
     /**
      * The waits before each retry while the device is offline or the server
      * fails, about a minute and a half in all.
      */
     retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000, 30000, 30000]
   ): Promise<SchedulePreview> {
+    const { onProgress, signal } = session
+    // This platform's engine: the web's worker, the phones' native module.
+    const engine = await import('./scheduler/engine')
+    // Read afresh at each step: the admin cancels while the build runs.
+    const aborted = (): boolean => signal?.aborted === true
+    const canceled = (): Error =>
+      new engine.EngineFailureError('canceled', engine.CANCELED.message)
+    if (aborted()) throw canceled()
+    onProgress?.({ kind: 'phase-start', phase: 'preparing' })
+    let started = Date.now()
     const prepared = await this.request(
       'POST',
       `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/preparations`,
       asPreparedPreview,
       request
     )
-    const { buildOptionsAsync } = await import('./autoScheduler')
+    onProgress?.({
+      kind: 'phase',
+      phase: 'preparing',
+      ms: Date.now() - started
+    })
+    // Whether a result has been sent, which the server may have stored.
+    let sent = false
+    // A canceled or failed build leaves nothing behind on the server.
+    const discard = async (
+      failure: unknown = canceled()
+    ): Promise<SchedulePreview> => {
+      try {
+        await this.cancelSchedulePreparation(prepared.id)
+      } catch (error) {
+        // The result arrived though its answer did not, so the server kept
+        // the preview: open it rather than call it discarded. A preview the
+        // server discarded itself, as a recalculation that placed nothing
+        // again, is not opened: the build's own failure says why.
+        if (sent && error instanceof HttpError && error.code === 'conflict') {
+          const kept = await this.schedulePreview(prepared.id)
+          if (kept.status === 'open' || kept.status === 'published') return kept
+        }
+        // The discard's own failure is not the build's.
+      }
+      throw failure
+    }
+    if (aborted()) return await discard()
+    let built: Awaited<ReturnType<typeof engine.buildSchedule>>
+    try {
+      built = await engine.buildSchedule(
+        { input: prepared.input, limitMs: prepared.solverLimitMs },
+        { onProgress, onLimit: session.onLimit, signal }
+      )
+    } catch (error) {
+      return await discard(error)
+    }
+    if (aborted() || (built.kind === 'failure' && built.failure === 'canceled'))
+      return await discard()
+    if (built.kind === 'failure')
+      return await discard(
+        new engine.EngineFailureError(built.failure, built.message)
+      )
     // The options are stored as built, summaries and all.
-    const result = await buildOptionsAsync(prepared.input)
-    // A search can take minutes, so while the device is offline or the
+    const result = engine.engineResult(built)
+    // A build can take minutes, so while the device is offline or the
     // server fails (a deploy, a proxy, a fault) the same result is sent
     // again, which the server accepts once. A refusal of the result itself
     // is final.
+    onProgress?.({ kind: 'phase-start', phase: 'upload' })
+    started = Date.now()
     for (let attempt = 0; ; attempt++) {
+      if (aborted()) return await discard()
       try {
-        return await this.request(
+        sent = true
+        const preview = await this.request(
           'PUT',
           `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
           asSchedulePreview,
           result
         )
+        onProgress?.({
+          kind: 'phase',
+          phase: 'upload',
+          ms: Date.now() - started
+        })
+        return preview
       } catch (error) {
         const wait = retryDelaysMs[attempt]
         if (
@@ -5872,10 +5951,41 @@ export class TeamStationClient {
           !(error instanceof HttpError) ||
           !['offline', 'unavailable', 'internal'].includes(error.code)
         )
-          throw error
-        await new Promise(resolve => setTimeout(resolve, wait))
+          return await discard(error)
+        // Cancel during the wait discards at once.
+        await new Promise<void>(resolve => {
+          const done = (): void => {
+            clearTimeout(timer)
+            signal?.removeEventListener('abort', done)
+            resolve()
+          }
+          const timer = setTimeout(done, wait)
+          signal?.addEventListener('abort', done)
+          if (aborted()) done()
+        })
       }
     }
+  }
+
+  /**
+   * Discards a preview's preparation while its build has not been stored,
+   * as when the admin cancels it.
+   */
+  async cancelSchedulePreparation(previewId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/schedule-previews/${encodeURIComponent(previewId)}/preparation`,
+      asUnknown
+    )
+  }
+
+  /** The league's most recent open or published preview, or null. */
+  async latestSchedulePreview(leagueId: string): Promise<LatestPreview | null> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/latest`,
+      asLatestPreview
+    )
   }
 
   async schedulePreview(previewId: string): Promise<SchedulePreview> {

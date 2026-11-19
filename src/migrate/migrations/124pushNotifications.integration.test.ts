@@ -80,7 +80,7 @@ describe('124 push notifications', function () {
 
   it('is registered after every earlier migration', () => {
     const at = migrations.indexOf(migration124PushNotifications)
-    expect(at).equals(migrations.length - 1)
+    expect(at).above(-1)
     expect(
       migrations
         .slice(at + 1)

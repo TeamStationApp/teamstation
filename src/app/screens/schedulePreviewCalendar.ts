@@ -277,21 +277,30 @@ export function calendarWeeks(
   return [...weeks.values()]
 }
 
-const HEADER = new Intl.DateTimeFormat('en', {
-  timeZone: 'UTC',
-  weekday: 'short',
-  month: 'short'
-})
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec'
+]
 
-/** A column's header: `Tue · Mar · 02`. */
+/**
+ * A column's header: `Tue · Mar · 02`. Built from the day itself, not
+ * `Intl`, because Hermes leaves the weekday and month out of
+ * `formatToParts`.
+ */
 export function dayHeader(day: string): string {
-  const parts = Object.fromEntries(
-    HEADER.formatToParts(new Date(`${day}T12:00:00Z`)).map(part => [
-      part.type,
-      part.value
-    ])
-  )
-  return `${parts.weekday} · ${parts.month} · ${day.slice(8, 10)}`
+  const date = new Date(`${day}T12:00:00Z`)
+  return `${WEEKDAYS[date.getUTCDay()]} · ${MONTHS[date.getUTCMonth()]} · ${day.slice(8, 10)}`
 }
 
 /** A week's title: `Week 4 · Mar 23 – Mar 29`. */

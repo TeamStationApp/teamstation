@@ -119,8 +119,9 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals(['125solverLimit'])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '124pushNotifications'
     ])
@@ -671,7 +672,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '121deviceResultHash',
           '122importedRecords',
           '123coveredAdmins',
-          '124pushNotifications'
+          '124pushNotifications',
+          '125solverLimit'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

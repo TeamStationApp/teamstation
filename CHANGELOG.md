@@ -4,6 +4,7 @@
 
 - added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
+- changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 
 ## 1.3.0 (2026-11-18)
 
