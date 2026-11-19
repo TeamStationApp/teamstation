@@ -44,6 +44,7 @@ import {
   GlassView,
   HandoffView,
   LivePill,
+  LivePillHeld,
   PillTabs,
   Screen,
   SettingsGear,
@@ -2734,77 +2735,82 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      <View style={styles.watch}>
-        <View style={styles.tabPane} testID="gameSection">
-          {/*
+      {/* Every live pill on the page holds still while it stands down:
+          under the angles it is still the screen on show, and a pulse
+          nobody sees still commits the tree every frame on Android. */}
+      <LivePillHeld value={standDown}>
+        <View style={styles.watch}>
+          <View style={styles.tabPane} testID="gameSection">
+            {/*
             Watch is a layout of its own, a full-height scroller like the
             sections' Screen, with the same hero and pills in the same place:
             crossing it slides only what is under the pills, as Info and Box
             Score do between themselves. Held sideways it shows no hero, so
             the two have no head in common and slide whole.
           */}
-          <TabPages
-            fill
-            keepHead={!short}
-            page={tab === 'watch' ? 'watch' : 'sections'}
-            index={tabIndex}
-          >
-            {tab === 'watch' ? (
-              <GameWatchLayout
-                key="watch"
-                pinned={pinned}
-                head={scoreboard}
-                player={player}
-                description={description}
-                sections={sections}
-                // A game nothing was recorded of has nothing to have
-                // highlights of: "No videos." is the whole of the tab.
-                highlightList={video == null ? null : highlightList}
-                footer={
-                  <>
-                    <StreamFooter
-                      client={client}
-                      gameId={gameId}
-                      onPublishing={setPublishing}
-                      signedIn={props.signedIn}
-                      hasVideo={video != null}
-                      onPlay={playVideo}
-                    />
-                  </>
-                }
-                layout={layout}
-                short={short}
-                sideBySide={sideBySide && !noVideoHere}
-                headerHeight={headerHeight}
-                tabsHeight={tabsHeight}
-                height={height}
-                pagedList
-                style={styles.tabPane}
-                contentStyle={[
-                  styles.watchContent,
-                  styles.watchStacked,
-                  { paddingBottom: screenBottom }
-                ]}
-              />
-            ) : (
-              <Screen key="sections" {...pinned.screen} wide>
-                <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
-                <PillBand part={pinned.pillBand}>{tabs}</PillBand>
-                <TabPages page={tab} index={tabIndex}>
-                  <PinnedContent
-                    key={tab}
-                    part={pinned.content}
-                    testID="eventTabContent"
-                  >
-                    {below}
-                  </PinnedContent>
-                </TabPages>
-                <PinnedSpacer part={pinned.spacer} />
-              </Screen>
-            )}
-          </TabPages>
+            <TabPages
+              fill
+              keepHead={!short}
+              page={tab === 'watch' ? 'watch' : 'sections'}
+              index={tabIndex}
+            >
+              {tab === 'watch' ? (
+                <GameWatchLayout
+                  key="watch"
+                  pinned={pinned}
+                  head={scoreboard}
+                  player={player}
+                  description={description}
+                  sections={sections}
+                  // A game nothing was recorded of has nothing to have
+                  // highlights of: "No videos." is the whole of the tab.
+                  highlightList={video == null ? null : highlightList}
+                  footer={
+                    <>
+                      <StreamFooter
+                        client={client}
+                        gameId={gameId}
+                        onPublishing={setPublishing}
+                        signedIn={props.signedIn}
+                        hasVideo={video != null}
+                        onPlay={playVideo}
+                      />
+                    </>
+                  }
+                  layout={layout}
+                  short={short}
+                  sideBySide={sideBySide && !noVideoHere}
+                  headerHeight={headerHeight}
+                  tabsHeight={tabsHeight}
+                  height={height}
+                  pagedList
+                  style={styles.tabPane}
+                  contentStyle={[
+                    styles.watchContent,
+                    styles.watchStacked,
+                    { paddingBottom: screenBottom }
+                  ]}
+                />
+              ) : (
+                <Screen key="sections" {...pinned.screen} wide>
+                  <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
+                  <PillBand part={pinned.pillBand}>{tabs}</PillBand>
+                  <TabPages page={tab} index={tabIndex}>
+                    <PinnedContent
+                      key={tab}
+                      part={pinned.content}
+                      testID="eventTabContent"
+                    >
+                      {below}
+                    </PinnedContent>
+                  </TabPages>
+                  <PinnedSpacer part={pinned.spacer} />
+                </Screen>
+              )}
+            </TabPages>
+          </View>
         </View>
-      </View>
+      </LivePillHeld>
       {membershipWarning && props.signedIn !== null && (
         <VideoMembershipSheet
           client={client}

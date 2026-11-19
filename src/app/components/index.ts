@@ -51,7 +51,7 @@ export { initialsOf, personInitialsOf } from './initials'
 export { ListRow } from './ListRow'
 export { ManageGear, type ManageGearProps } from './ManageGear'
 export { SettingsGear } from './SettingsGear'
-export { LivePill, type LivePillProps } from './LivePill'
+export { LivePill, LivePillHeld, type LivePillProps } from './LivePill'
 export {
   adminLabel,
   flagLabel,

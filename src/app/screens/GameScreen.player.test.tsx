@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { AccessibilityInfo, Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -766,6 +766,64 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     await waitToLand()
     expect(video.currentTime).closeTo(40, 0.001)
     expect(played()).greaterThan(0)
+  })
+
+  it('in the app, holds the page’s live pill still under the angles, and pulses it once they close (issue 317)', async function () {
+    asApp()
+    // Motion allowed, so the pill on show pulses; this suite's browser would
+    // otherwise answer that the viewer asked for less.
+    // Kept to put back as they were, not called here.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const query = AccessibilityInfo.isReduceMotionEnabled
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const subscribe = AccessibilityInfo.addEventListener
+    AccessibilityInfo.isReduceMotionEnabled = async () => false
+    AccessibilityInfo.addEventListener = () => ({
+      remove: () => undefined
+    })
+    try {
+      const view = await page(
+        [{ ...videoOf('v1', START), status: 'live', receiving: true }],
+        {
+          angles: ['v1'],
+          audioId: 'v1',
+          from: { videoId: 'v1', sec: 40 }
+        }
+      )
+      const pills = (): HTMLElement[] => [
+        ...document.querySelectorAll<HTMLElement>('[aria-label="Live now"]')
+      ]
+      const opacities = async (): Promise<Set<string>> => {
+        const seen = new Set<string>()
+        for (let i = 0; i < 6; i++) {
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 60))
+          })
+          for (const pill of pills()) seen.add(pill.style.opacity)
+        }
+        return seen
+      }
+      expect(pills().length).greaterThan(0)
+      // Under the angles: every pill on the page holds at full.
+      expect([...(await opacities())]).deep.equals(['1'])
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(
+            `[aria-label="${lstrings.angles_close}"]`
+          )!
+          .click()
+      })
+      await view.rerender({
+        angles: undefined,
+        audioId: undefined,
+        from: undefined
+      })
+      // Shown again: the pulse runs.
+      expect([...(await opacities())].some(value => value !== '1')).equals(true)
+    } finally {
+      AccessibilityInfo.isReduceMotionEnabled = query
+      AccessibilityInfo.addEventListener = subscribe
+    }
   })
 
   it('in a browser, keeps the page player’s address while the angles are up (issue 317)', async function () {
