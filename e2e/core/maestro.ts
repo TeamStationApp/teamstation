@@ -17,6 +17,8 @@ export interface MaestroDevice {
 }
 
 export interface MaestroDaemon {
+  readonly hub?: boolean
+  close?: () => Promise<unknown>
   attach: (options: Record<string, unknown>) => Promise<MaestroDevice>
   shutdown: () => Promise<unknown>
 }
@@ -197,7 +199,21 @@ async function connectLocal(
   // To stderr: `run` and `detect` print their result as JSON on stdout.
   console.error(execFileSync(bin, ['ps'], { encoding: 'utf8' }).trim())
   const { MaestroD } = maestroClient(settings)
-  return await MaestroD.connect({ name, bin })
+  const daemon = await MaestroD.connect({ name, bin })
+  if (process.env.MAESTRO_D_HUB == null) return daemon
+  if (daemon.hub !== true || daemon.close == null) {
+    throw new BlockedError(
+      'The configured maestro-d client must support hub leases'
+    )
+  }
+  // The caller already leased this device. Run directories belong to this
+  // machine, and the shared hub outlives the scenario.
+  const close = daemon.close.bind(daemon)
+  return {
+    attach: async ({ flowDir: _localDir, ...options }) =>
+      await daemon.attach(options),
+    shutdown: close
+  }
 }
 
 /**
