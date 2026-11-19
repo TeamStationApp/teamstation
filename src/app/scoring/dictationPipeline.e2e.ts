@@ -93,13 +93,17 @@ function scoringGame(games = 1): Fixture {
       .filter(line => line.startsWith(`${key}=`))
       .map(line => line.slice(key.length + 1))
   // The fixture makes its league, season and teams afresh and names nobody
-  // their scorekeeper, so the scorer is made one of each game's season, as
-  // scoringServer does: without it the game page offers no Score.
+  // their scorekeeper, so the scorer is made one of each game's two teams:
+  // without it the game page offers no Score. On a stack, a season's roles
+  // reach only teams it parents (season_team_parents, 3cbcb71f2), and the
+  // fixture's teams are in the season with no such parent.
   for (const game of value('GAME_ID'))
     sql(
       `INSERT INTO scope_roles (id, user_id, scope_type, scope_id, role)
-       SELECT 'rol_e2e' || md5(random()::text), e.user_id, 'season', g.season_id, 'scorekeeper'
-       FROM games g, user_emails e
+       SELECT 'rol_e2e' || md5(random()::text), e.user_id, 'team', t.team_id, 'scorekeeper'
+       FROM games g
+       CROSS JOIN LATERAL (VALUES (g.home_team_id), (g.away_team_id)) AS t(team_id)
+       CROSS JOIN user_emails e
        WHERE g.id = '${game}' AND e.email = '${SCORER.email.toLowerCase()}'
        ON CONFLICT DO NOTHING`
     )

@@ -132,6 +132,16 @@ describe('E1: the time each scoring action was taken', function () {
   async function tap(label: string): Promise<Tap> {
     const css = `[aria-label="${label}"]`
     await browser.assertVisible({ css, timeout: 15000 })
+    // A pitch button is disabled while a play animates; it is timed from
+    // when it can be pressed.
+    for (const until = Date.now() + 15000; ;) {
+      const disabled = await probe<boolean>(
+        `document.querySelector(${JSON.stringify(css)})?.getAttribute('aria-disabled') === 'true'`
+      )
+      if (!disabled) break
+      if (Date.now() > until) throw new Error(`${label} stayed disabled`)
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
     const from = Date.now()
     await browser.tapOn({ css, timeout: 15000 })
     return { label, from, to: Date.now() }
