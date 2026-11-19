@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
 - added: Develop, branch and seat builds of the web and phone apps report how each video plays: how long it takes to start, every stall and seek with how far behind live it was, errors and the recoveries that followed, bitrate and dropped frames, so a slow start or a stall can be measured
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
