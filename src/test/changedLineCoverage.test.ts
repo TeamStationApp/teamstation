@@ -5,17 +5,50 @@ import { describe, it } from 'mocha'
 
 const {
   changedLines,
+  executableLines,
   istanbulCounts,
   jacocoCounts,
   lcovCounts,
   lineReport,
   lineReportFromCounts,
+  mappedV8LineCounts,
+  withoutModuleDeclarationLines,
   resolveSpecs,
+  withoutTriviaLines,
   withoutTypeOnlyLines,
   xccovCounts
 } = require('../../scripts/changed-line-coverage.cjs')
 
 describe('changed executable line coverage gate', function () {
+  it('requires source expressions even when a report omits their statements', function () {
+    const source = [
+      'import { URL } from "url-parser"',
+      'type Parser = typeof URL',
+      '// The exported parser executes even without a reported statement.',
+      'export const CacheUrl: Parser = URL',
+      'export const ready = true',
+      ''
+    ].join('\n')
+    const required = executableLines('source.ts', source)
+    expect([...required]).deep.equals([4, 5])
+    const partial = istanbulCounts({
+      statementMap: { a: { start: { line: 5 }, end: { line: 5 } } },
+      s: { a: 1 }
+    })
+    const report = lineReportFromCounts(
+      { 'source.ts': required },
+      {
+        'source.ts': Object.fromEntries(
+          [...required].map(line => [line, partial[line] ?? 0])
+        )
+      },
+      () => true,
+      { min: 95, perFileMin: 95 }
+    )
+    expect(report).includes({ covered: 1, total: 2, percent: 50, pass: false })
+    expect(report.files['source.ts'].uncovered).deep.equals([4])
+  })
+
   it('selects hunk lines and excludes deleted-only hunks', function () {
     const rows = changedLines(
       '+++ b/a.ts\n@@ -1,2 +1,0 @@\n@@ -4 +3,2 @@\n+++ b/b.ts\n@@ -0,0 +1 @@'
@@ -79,7 +112,7 @@ describe('compiler-proven erased TypeScript coverage lines', () => {
       source.split('\n').map((_line, index) => [index + 1, index === 6 ? 0 : 1])
     )
     const actual = withoutTypeOnlyLines('source.ts', source, original)
-    expect(actual).deep.equals({ 1: 1, 2: 1, 6: 1, 7: 0, 8: 1 })
+    expect(actual).deep.equals({ 1: 1, 2: 1, 7: 0, 8: 1 })
     const report = lineReportFromCounts(
       { 'source.ts': new Set([1, 2, 3, 4, 5, 6, 7, 8]) },
       { 'source.ts': actual },
@@ -88,6 +121,74 @@ describe('compiler-proven erased TypeScript coverage lines', () => {
     )
     expect(report.pass).equals(false)
     expect(report.files['source.ts'].uncovered).deep.equals([7])
+  })
+
+  it('excludes erased import/export forms and specifiers, including trailing separators', () => {
+    const source = [
+      'import type Default, { A } from "./module"',
+      'import {',
+      '  type B, // annotation only',
+      '  value,',
+      '  type C as D',
+      '} from "./module"',
+      'export type { A }',
+      'export {',
+      '  type B,',
+      '  value',
+      '}',
+      'import type Alias = require("./module")',
+      'export type * from "./module"',
+      'import type { X } from "./module"; run()'
+    ].join('\n')
+    expect(
+      withoutTypeOnlyLines('source.ts', source, counts(source))
+    ).deep.equals({
+      2: 1,
+      4: 1,
+      6: 1,
+      8: 1,
+      10: 1,
+      11: 0,
+      14: 1
+    })
+  })
+
+  it('excludes static linkage while retaining adjacent runtime statements', () => {
+    const source = [
+      'import { value } from "./module"',
+      'import "./side-effect"',
+      'export { value }',
+      'export * from "./module"',
+      'import { other } from "./module"; run(other)',
+      'export default run(value)',
+      'import Alias = require("./module")'
+    ].join('\n')
+    expect(
+      withoutModuleDeclarationLines('source.ts', source, counts(source))
+    ).deep.equals({
+      5: 0,
+      6: 1,
+      7: 0
+    })
+  })
+
+  it('excludes field type declarations while preserving initializers and computed names', () => {
+    const source = [
+      'class State {',
+      '  private readonly value: string',
+      '  ready = start();',
+      '  [key()]: string',
+      '}'
+    ].join('\n')
+    const raw = Object.fromEntries(
+      source.split('\n').map((_line, i) => [i + 1, 1])
+    )
+    expect(withoutTypeOnlyLines('source.ts', source, raw)).deep.equals({
+      1: 1,
+      3: 1,
+      4: 1,
+      5: 1
+    })
   })
 
   it('keeps executable class base expressions, enums and namespaces', () => {
@@ -140,6 +241,421 @@ describe('compiler-proven erased TypeScript coverage lines', () => {
         9: 0
       })
     ).deep.equals({ 0: 0, 2: 0, 9: 0 })
+  })
+})
+
+describe('runtime coverage excludes trivia', () => {
+  it('does not let added comments or blank lines dilute an uncovered statement', () => {
+    const source = [
+      // eslint-disable-next-line no-template-curly-in-string -- source fixture
+      'const value = `hello ${name}`',
+      ...Array(100).fill('/** description */'),
+      '',
+      'missed()'
+    ].join('\n')
+    const original = Object.fromEntries(
+      source.split('\n').map((_line, i) => [i + 1, i === 102 ? 0 : 1])
+    )
+    const counts = withoutTriviaLines('source.ts', source, original)
+    expect(counts).deep.equals({ 1: 1, 103: 0 })
+    for (const newFiles of [[], ['source.ts']]) {
+      const report = lineReportFromCounts(
+        { 'source.ts': new Set(Object.keys(original).map(Number)) },
+        { 'source.ts': counts },
+        () => true,
+        { min: 95, perFileMin: 95, newFileMin: 95, newFiles }
+      )
+      expect(report).includes({
+        covered: 1,
+        total: 2,
+        percent: 50,
+        pass: false
+      })
+    }
+    expect(original[2]).equals(1)
+  })
+
+  it('does not let closing punctuation dilute an uncovered statement', () => {
+    const source = [
+      'first(' + '('.repeat(99) + '0',
+      ...Array(100).fill(')'),
+      'missing()'
+    ].join('\n')
+    const raw = Object.fromEntries(
+      source
+        .split('\n')
+        .map((_line, index) => [index + 1, index === 101 ? 0 : 1])
+    )
+    const filtered = withoutTriviaLines('source.ts', source, raw)
+    expect(filtered).deep.equals({ 1: 1, 102: 0 })
+    const report = lineReportFromCounts(
+      { 'source.ts': new Set(Object.keys(raw).map(Number)) },
+      { 'source.ts': filtered },
+      () => true,
+      { min: 95 }
+    )
+    expect(report.percent).equals(50)
+    expect(report.pass).equals(false)
+  })
+
+  it('excludes plain parameter lines while preserving defaults, rest and expressions', () => {
+    const source = [
+      'function run(',
+      '  plain: string,',
+      '  fallback = read(),',
+      '  ...rest: string[]',
+      ') {',
+      '  return [plain, fallback, ...rest]',
+      '}'
+    ].join('\n')
+    const raw = Object.fromEntries(
+      source.split('\n').map((_line, i) => [i + 1, 1])
+    )
+    expect(
+      withoutTypeOnlyLines(
+        'source.ts',
+        source,
+        withoutTriviaLines('source.ts', source, raw)
+      )
+    ).deep.equals({ 1: 1, 3: 1, 4: 1, 6: 1 })
+  })
+
+  it('retains strings, multiline literals and code beside comments', () => {
+    const source = [
+      '/** comment',
+      ' * still comment */',
+      'const text = `// literal',
+      '/* also literal */`',
+      '/* prefix */ run() // suffix',
+      'const url = "https://example.test"',
+      '  // only trivia',
+      ' '
+    ].join('\n')
+    const counts = Object.fromEntries(
+      source.split('\n').map((_line, i) => [i + 1, i])
+    )
+    expect(withoutTriviaLines('source.ts', source, counts)).deep.equals({
+      3: 2,
+      4: 3,
+      5: 4,
+      6: 5
+    })
+  })
+  it('keeps nested template and regex contents while dropping surrounding trivia', () => {
+    const source = [
+      // eslint-disable-next-line no-template-curly-in-string -- source fixture
+      'const value = `outer ${`inner ${name}`} ${',
+      '  /* comment inside interpolation */',
+      '  name',
+      '}`',
+      '// after template',
+      '',
+      'const pattern = /[/*]/',
+      '/** documentation */',
+      'const divided = amount / count',
+      '// after division',
+      'finish()'
+    ].join('\n')
+    const counts = Object.fromEntries(
+      source.split('\n').map((_line, i) => [i + 1, i])
+    )
+    expect(withoutTriviaLines('source.ts', source, counts)).deep.equals({
+      1: 0,
+      3: 2,
+      4: 3,
+      7: 6,
+      9: 8,
+      11: 10
+    })
+  })
+})
+
+describe('native mapped V8 coverage evidence', () => {
+  const source = 'first()\nsecond()'
+  const map = {
+    version: 3,
+    sources: ['/src/native-a.ts', '/src/native-b.ts'],
+    names: [],
+    mappings: 'AAAA;ACAA',
+    sourcesContent: ['first()', 'second()']
+  }
+  const required = {
+    '/src/native-a.ts': new Set([1]),
+    '/src/native-b.ts': new Set([1])
+  }
+  const scripts = [
+    {
+      functions: [
+        { ranges: [{ startOffset: 0, endOffset: source.length, count: 1 }] }
+      ]
+    }
+  ]
+
+  it('requires mappings and real counters for every scored native line', () => {
+    expect(mappedV8LineCounts(source, map, scripts, required)).deep.equals({
+      '/src/native-a.ts': { 1: 1 },
+      '/src/native-b.ts': { 1: 1 }
+    })
+    expect(() => mappedV8LineCounts(source, map, [], required)).throws(
+      'counter missing'
+    )
+    expect(() =>
+      mappedV8LineCounts(
+        source,
+        { ...map, mappings: 'AAAA;A' },
+        scripts,
+        required
+      )
+    ).throws('native-b.ts:1')
+  })
+
+  it('rejects partial mapping loss within an otherwise measured source', () => {
+    const sameSource = {
+      ...map,
+      sources: ['/src/native-a.ts'],
+      sourcesContent: [source],
+      mappings: 'AAAA;AACA'
+    }
+    const lines = { '/src/native-a.ts': new Set([1, 2]) }
+    expect(mappedV8LineCounts(source, sameSource, scripts, lines)).deep.equals({
+      '/src/native-a.ts': { 1: 1, 2: 1 }
+    })
+    expect(() =>
+      mappedV8LineCounts(
+        source,
+        { ...sameSource, mappings: 'AAAA;A' },
+        scripts,
+        lines
+      )
+    ).throws('native-a.ts:2')
+  })
+
+  it('ignores whitespace boundary mappings from a following executed statement', () => {
+    const generated = 'first()\n  second()'
+    const boundaryMap = { ...map, mappings: 'AAAA;AAAA,ECAA' }
+    const ranges = [
+      {
+        functions: [
+          {
+            ranges: [
+              { startOffset: 0, endOffset: generated.length, count: 1 },
+              { startOffset: 0, endOffset: 7, count: 0 }
+            ]
+          }
+        ]
+      }
+    ]
+    expect(
+      mappedV8LineCounts(generated, boundaryMap, ranges, required)
+    ).deep.equals({
+      '/src/native-a.ts': { 1: 0 },
+      '/src/native-b.ts': { 1: 1 }
+    })
+    expect(() =>
+      mappedV8LineCounts(
+        generated,
+        {
+          ...boundaryMap,
+          mappings: ';AAAA,ECAA'
+        },
+        ranges,
+        required
+      )
+    ).throws('native-a.ts:1')
+  })
+
+  it('does not borrow an outer count from an original end-of-expression mapping', () => {
+    const generated = 'first();second()'
+    const boundaryMap = {
+      ...map,
+      sources: ['/src/native-a.ts'],
+      sourcesContent: ['first()'],
+      mappings: 'AAAA,QAAO'
+    }
+    const ranges = [
+      {
+        functions: [
+          {
+            ranges: [
+              { startOffset: 0, endOffset: generated.length, count: 1 },
+              { startOffset: 0, endOffset: 7, count: 0 }
+            ]
+          }
+        ]
+      }
+    ]
+    expect(
+      mappedV8LineCounts(generated, boundaryMap, ranges, {
+        '/src/native-a.ts': new Set([1])
+      })
+    ).deep.equals({ '/src/native-a.ts': { 1: 0 } })
+  })
+
+  it('uses recorded generated tokens when a line-preserving compiler has imprecise columns', () => {
+    const generated = '  throw error'
+    const columnMap = {
+      ...map,
+      sources: ['/src/native-a.ts'],
+      sourcesContent: [generated],
+      mappings: 'AAAiB'
+    }
+    const ranges = [
+      {
+        functions: [
+          {
+            ranges: [{ startOffset: 0, endOffset: generated.length, count: 0 }]
+          }
+        ]
+      }
+    ]
+    const lines = { '/src/native-a.ts': new Set([1]) }
+    expect(
+      mappedV8LineCounts(generated, columnMap, ranges, lines, {
+        linePreserving: true
+      })
+    ).deep.equals({ '/src/native-a.ts': { 1: 0 } })
+    expect(() =>
+      mappedV8LineCounts(
+        generated,
+        {
+          ...columnMap,
+          sourcesContent: ['before()\n  throw error'],
+          mappings: 'AACA'
+        },
+        ranges,
+        { '/src/native-a.ts': new Set([2]) },
+        {
+          linePreserving: true
+        }
+      )
+    ).throws('native-a.ts:2')
+  })
+
+  it('rejects a missing owning-function counter instead of borrowing the module count', () => {
+    const generated = 'function hidden() { return 1 }\nhidden()'
+    const end = generated.indexOf('\n')
+    const functionMap = {
+      ...map,
+      sources: ['/src/native-a.ts'],
+      sourcesContent: [generated],
+      mappings: 'AAAA;AACA'
+    }
+    const moduleCounter = {
+      ranges: [{ startOffset: 0, endOffset: generated.length, count: 1 }]
+    }
+    const functionCounter = {
+      ranges: [{ startOffset: 0, endOffset: end, count: 0 }]
+    }
+    const lines = { '/src/native-a.ts': new Set([1, 2]) }
+    expect(
+      mappedV8LineCounts(
+        generated,
+        functionMap,
+        [
+          {
+            functions: [moduleCounter, functionCounter]
+          }
+        ],
+        lines
+      )
+    ).deep.equals({ '/src/native-a.ts': { 1: 0, 2: 1 } })
+    expect(() =>
+      mappedV8LineCounts(
+        generated,
+        functionMap,
+        [
+          {
+            functions: [moduleCounter]
+          }
+        ],
+        lines
+      )
+    ).throws('native-a.ts:1')
+    // An unexecuted enclosing range is actual evidence of zero; V8 need not
+    // instantiate a nested function that its containing code never reached.
+    expect(
+      mappedV8LineCounts(
+        generated,
+        functionMap,
+        [
+          {
+            functions: [
+              {
+                ranges: [
+                  { startOffset: 0, endOffset: generated.length, count: 0 }
+                ]
+              }
+            ]
+          }
+        ],
+        lines
+      )
+    ).deep.equals({ '/src/native-a.ts': { 1: 0, 2: 0 } })
+  })
+
+  it('rejects a missing parent function even when its nested callback shares a covered source line', () => {
+    const generated = 'function hidden() { return (() => 1)() }\nhidden()'
+    const functionMap = {
+      ...map,
+      sources: ['/src/native-a.ts'],
+      sourcesContent: [generated],
+      mappings: 'AAAA;AACA'
+    }
+    expect(() =>
+      mappedV8LineCounts(
+        generated,
+        functionMap,
+        [
+          {
+            functions: [
+              {
+                ranges: [
+                  { startOffset: 0, endOffset: generated.length, count: 1 }
+                ]
+              },
+              {
+                ranges: [
+                  {
+                    startOffset: generated.indexOf('() =>'),
+                    endOffset: generated.indexOf('1') + 1,
+                    count: 1
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        { '/src/native-a.ts': new Set([1]) }
+      )
+    ).throws('owning-function counter missing')
+  })
+
+  it('preserves an unexecuted block range as zero, not its enclosing count', () => {
+    const withUncalled = [
+      {
+        functions: [
+          {
+            ranges: [
+              ...scripts[0].functions[0].ranges,
+              { startOffset: 8, endOffset: source.length, count: 0 }
+            ]
+          }
+        ]
+      }
+    ]
+    const counts = mappedV8LineCounts(source, map, withUncalled, required)
+    expect(counts['/src/native-b.ts']).deep.equals({ 1: 0 })
+    expect(
+      lineReportFromCounts(required, counts, () => true, {
+        min: 95,
+        perFileMin: 95
+      }).pass
+    ).equals(false)
+    expect(
+      mappedV8LineCounts(source, map, [...withUncalled, ...scripts], required)[
+        '/src/native-b.ts'
+      ]
+    ).deep.equals({ 1: 1 })
   })
 })
 

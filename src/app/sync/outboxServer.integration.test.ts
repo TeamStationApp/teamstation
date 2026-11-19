@@ -143,9 +143,17 @@ function phoneOn(
     baseUrl: `${f.h.origin}/api/v1`,
     token: f.h.tokens.get(user),
     fetch: fetchThrough,
-    openCache: async userId =>
+    openCache: async (userId, apiBaseUrl) =>
       await openCacheStore(
-        nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+        nodeSqliteExecutor(
+          join(
+            dir,
+            cacheFileName(
+              userId,
+              new URL(apiBaseUrl, 'https://app.example.test').href
+            )
+          )
+        )
       ),
     outbox: {
       setTimer: () => 0,
@@ -273,7 +281,7 @@ describe('the outbox against the server', function () {
       ours.close()
       await a.client.sessionRefused()
       const file = nodeSqliteExecutor(
-        join(ownDir, cacheFileName(userIdOfGumbo(101)))
+        join(ownDir, cacheFileName(userIdOfGumbo(101), f.h.origin))
       )
       try {
         const kept = file.db.prepare('SELECT * FROM outbox').all()
@@ -626,7 +634,7 @@ describe('the outbox against the server', function () {
     session.close()
     await a.client.sessionRefused()
     const file = nodeSqliteExecutor(
-      join(ownDir, cacheFileName(userIdOfGumbo(101)))
+      join(ownDir, cacheFileName(userIdOfGumbo(101), f.h.origin))
     )
     let row: { path: string; body: string; idempotency_key: string }
     try {

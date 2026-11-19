@@ -256,8 +256,19 @@ describe('the phone outbox', function () {
         status: answer.status ?? 200
       })
     }) as unknown as typeof globalThis.fetch
-    const openCache = async (userId: string): Promise<DocumentStore> => {
-      const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+    const openCache = async (
+      userId: string,
+      apiBaseUrl: string
+    ): Promise<DocumentStore> => {
+      const executor = nodeSqliteExecutor(
+        join(
+          dir,
+          cacheFileName(
+            userId,
+            new URL(apiBaseUrl, 'https://app.example.test').href
+          )
+        )
+      )
       executors.push(executor)
       const store = await openCacheStore(executor)
       return wrap == null ? store : wrap(store)

@@ -1,3 +1,5 @@
+import { sha256Hex, utf8 } from '../walkup/localFileId'
+import { CacheUrl } from './cacheUrl'
 import {
   GAMES_ALL,
   GAMES_ALL_PAGE,
@@ -19,7 +21,7 @@ import {
  * The phone's document cache: the SQL, and where each transaction begins and
  * ends, over whatever runs the statements. On the phone that is op-sqlite
  * (`cache.native.ts`); in the tests it is `node:sqlite`. One file belongs to
- * one signed-in person, and sign-out deletes it.
+ * one signed-in person on one API origin, and sign-out deletes their files.
  */
 
 /** A value a statement binds or a row holds. */
@@ -285,9 +287,34 @@ export interface DocumentStore {
   destroy: () => Promise<void>
 }
 
-/** The file one person's cache lives in. */
-export function cacheFileName(userId: string): string {
+/** Only used to discard files whose server was never recorded. */
+export function legacyCacheFileName(userId: string): string {
   return `teamstation-${userId.replace(/[^A-Za-z0-9_-]/g, '_')}.sqlite`
+}
+
+/** An exact account's bounded, filesystem-safe namespace across servers. */
+export function cacheFilePrefix(userId: string): string {
+  return `teamstation-v2-${sha256Hex(utf8(userId))}-`
+}
+
+/** One account on one API origin; never reuse an unscoped cache. */
+export function cacheFileName(userId: string, apiBaseUrl: string): string {
+  // The native adapter supplies a standard parser: React Native's global
+  // URL does not reliably normalize or validate origins.
+  const url = new CacheUrl(apiBaseUrl)
+  if (url.protocol !== 'https:' && url.protocol !== 'http:')
+    throw new Error('A document cache needs an HTTP or HTTPS API origin')
+  // Some native parsers leave internationalized hosts unnormalized. Fail
+  // closed instead of giving one transport origin multiple cache identities.
+  if (/[^ -~]/.test(url.hostname))
+    throw new Error('A document cache needs an ASCII API hostname')
+  // WHATWG accepts legacy numeric IPv4 forms that native transports can
+  // route differently. Only canonical dotted decimal is safe to persist.
+  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/\\?#]+)/i.exec(apiBaseUrl)?.[1]
+  const rawHost = authority?.split('@').pop()?.split(':')[0]
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname) && rawHost !== url.hostname)
+    throw new Error('A document cache needs a canonical IPv4 hostname')
+  return `${cacheFilePrefix(userId)}${sha256Hex(utf8(url.origin))}.sqlite`
 }
 
 const SCHEMA = [

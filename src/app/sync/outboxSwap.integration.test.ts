@@ -72,9 +72,17 @@ function phoneOn(
     baseUrl: `${f.h.origin}/api/v1`,
     token: f.h.tokens.get(101),
     fetch: fetchThrough,
-    openCache: async userId =>
+    openCache: async (userId, apiBaseUrl) =>
       await openCacheStore(
-        nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+        nodeSqliteExecutor(
+          join(
+            dir,
+            cacheFileName(
+              userId,
+              new URL(apiBaseUrl, 'https://app.example.test').href
+            )
+          )
+        )
       ),
     // The queue's timers wait for the test, which runs them.
     outbox: {

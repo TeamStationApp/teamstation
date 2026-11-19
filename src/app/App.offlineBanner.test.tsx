@@ -124,8 +124,21 @@ describe('the phone shell offline', () => {
     sentWith?: string[]
   }
 
-  const openCache = async (userId: string): Promise<DocumentStore> =>
-    await openCacheStore(nodeSqliteExecutor(join(dir, cacheFileName(userId))))
+  const openCache = async (
+    userId: string,
+    apiBaseUrl: string
+  ): Promise<DocumentStore> =>
+    await openCacheStore(
+      nodeSqliteExecutor(
+        join(
+          dir,
+          cacheFileName(
+            userId,
+            new URL(apiBaseUrl, 'https://app.example.test').href
+          )
+        )
+      )
+    )
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'teamstation-banner-'))
@@ -434,7 +447,7 @@ describe('the phone shell offline', () => {
   })
   /** How many writes the person's file still holds, read beside the app. */
   function queuedOnDisk(): number | undefined {
-    const file = join(dir, cacheFileName(BETTS.id))
+    const file = join(dir, cacheFileName(BETTS.id, 'https://app.example.test'))
     if (!existsSync(file)) return undefined
     const reader = nodeSqliteExecutor(file)
     try {
