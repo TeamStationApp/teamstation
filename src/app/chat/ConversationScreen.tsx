@@ -52,6 +52,7 @@ import {
   ChatBlockConfirmation,
   type ChatSafetyAction
 } from './ChatBlockConfirmation'
+import { chatBrowserVisible, watchChatBrowser } from './chatBrowserVisibility'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -118,6 +119,7 @@ export interface ConversationFiles extends ChatFileOps {
 }
 
 export interface ConversationScreenProps {
+  onOpenLink?: (address: string) => Promise<void>
   engine: ChatScreenEngine
   conversationId: string
   /** The signed-in person, who is never asked to approve their own reset. */
@@ -145,7 +147,7 @@ export interface ConversationScreenProps {
  * and an app in the foreground on a phone.
  */
 function readableNow(): boolean {
-  return readDocumentActive() && inForeground()
+  return readDocumentActive() && inForeground() && !chatBrowserVisible()
 }
 
 /**
@@ -488,9 +490,11 @@ export function ConversationScreen(
     }
     const stopDocument = watchReadDocumentActive(update)
     const stopApp = watchForeground(update)
+    const stopBrowser = watchChatBrowser(update)
     return () => {
       stopDocument()
       stopApp()
+      stopBrowser()
     }
   }, [])
   // On screen in the foreground: this device shows no notification for it.
@@ -1966,6 +1970,7 @@ export function ConversationScreen(
       attentionSession.current == null ||
       props.active === false ||
       !documentActive ||
+      !readableNow() ||
       menu != null ||
       mentionChoosing != null ||
       pinsOpen ||
@@ -2827,6 +2832,11 @@ export function ConversationScreen(
     >
       {notices.get(index)?.map(renderNotice)}
       <MessageBubble
+        onOpenLink={address => {
+          props.onOpenLink?.(address).catch(() => {
+            setError(lstrings.chat_link_failed)
+          })
+        }}
         bodyRef={node => {
           if (node == null) bodyRefs.current.delete(message.id)
           else bodyRefs.current.set(message.id, node)

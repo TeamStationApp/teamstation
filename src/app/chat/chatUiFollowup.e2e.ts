@@ -471,6 +471,23 @@ async function s4(daemon: Daemon): Promise<void> {
   }
 }
 
+async function assertFixtureBody(
+  device: Device,
+  id: string,
+  text: string
+): Promise<void> {
+  const selector = `[data-testid="chat-message-body-${id}"]`
+  await device.assertVisible({ css: selector, timeout: 60000 })
+  // Text selectors interpret fixture punctuation as a regular expression.
+  const result = (await device.evalBrowserScript({
+    script: `return document.querySelector(${JSON.stringify(selector)})?.textContent === ${JSON.stringify(text)}`
+  })) as { data?: unknown }
+  assert(
+    result.data === true || result.data === 'true',
+    'The displayed message must exactly match the fixture body'
+  )
+}
+
 async function s5(daemon: Daemon): Promise<void> {
   const id = required('CHAT_UI_MESSAGE')
   const target = required('CHAT_UI_TARGET_TEXT')
@@ -488,12 +505,26 @@ async function s5(daemon: Daemon): Promise<void> {
       userDataDir: required('CHAT_UI_PROFILE_DIR')
     }
   })
+  const pinnedByTest = new Set<string>()
+  const setPin = async (
+    messageId: string,
+    action: 'Pin' | 'Unpin'
+  ): Promise<void> => {
+    const message = `[data-testid="chat-message-${messageId}"]`
+    await m.evalBrowserScript({
+      script: `const row=document.querySelector(${JSON.stringify(message)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter'));return true`
+    })
+    await m.tapOn({ css: message + ' [aria-label="More message actions"]' })
+    await m.tapOn({ text: action })
+    if (action === 'Pin') pinnedByTest.add(messageId)
+    else pinnedByTest.delete(messageId)
+  }
   try {
     await signIn(m, 'Hc')
     await m.openLink({
       link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
     })
-    await m.assertVisible({ text: target, timeout: 60000 })
+    await assertFixtureBody(m, id, target)
     console.log(
       '$ S5 hover actual original message, inspect named controls, anchored menu and clipboard body'
     )
@@ -531,31 +562,57 @@ async function s5(daemon: Daemon): Promise<void> {
     )
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     console.log('$ S8 personal message pin badge/header/list and verified jump')
-    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
-    await m.tapOn({ text: 'Pin' })
+    await setPin(id, 'Pin')
     await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
     writeFileSync(
       join(artifacts, 'desktop-message-pins-after.png'),
       await m.screenshot()
     )
-    await m.tapOn({ text: 'Pinned messages: 1' })
+    // One pin jumps directly. The original and its fixture reply open the list.
+    await m.tapOn({ css: '[data-testid="chat-pinned-summary"]' })
+    await m.assertVisible({ css: row })
+    const { data: replyId } = (await m.evalBrowserScript({
+      script: `const quotes=[...document.querySelectorAll('[aria-label^="Jump to message from "]')];const quote=quotes.find(node=>node.textContent.includes(${JSON.stringify(Array.from(target).slice(0, 200).join(''))}));return quote?.closest('[data-testid^="chat-message-msg_"]')?.getAttribute('data-testid')?.slice('chat-message-'.length)`
+    })) as { data?: string }
+    assert(
+      replyId?.startsWith('msg_') === true && replyId !== id,
+      'Expected a separate fixture reply'
+    )
+    await setPin(replyId, 'Pin')
+    await m.assertVisible({ text: 'Pinned messages: 2' })
+    await m.tapOn({ css: '[data-testid="chat-pinned-summary"]' })
+    await m.assertVisible({ css: `[data-testid="chat-pin-${replyId}"]` })
     writeFileSync(
       join(artifacts, 'desktop-pinned-messages-after.png'),
       await m.screenshot()
     )
-    // One pin jumps straight to its message; no list opens (develop
-    // 8cd994cef).
-    await m.assertVisible({ text: target })
+    await m.tapOn({ css: `[data-testid="chat-pin-${id}"]` })
+    await assertFixtureBody(m, id, target)
     console.log(
       await m.evalBrowserScript({
         script: `const row=document.querySelector(${JSON.stringify(row)});if(!row)throw new Error('Pin jump original missing');return JSON.stringify({pinBadgeHeaderList:true,originalJump:true});`
       })
     )
-    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
-    await m.tapOn({ text: 'Unpin' })
+    await setPin(replyId, 'Unpin')
+    await setPin(id, 'Unpin')
     console.log('S5/S7/S8 wide core PASS')
   } finally {
-    await m.detach()
+    try {
+      // Restore the fixture if an assertion interrupted a pin or its jump.
+      for (const messageId of pinnedByTest) {
+        const url =
+          API +
+          '/chat/conversations/' +
+          required('CHAT_UI_CONVERSATION') +
+          '/pins/' +
+          messageId
+        await m.evalBrowserScript({
+          script: `const r=await fetch(${JSON.stringify(url)},{method:'DELETE',credentials:'include'});if(!r.ok)throw Error('Could not restore the fixture pin');return true`
+        })
+      }
+    } finally {
+      await m.detach()
+    }
   }
 }
 
@@ -641,9 +698,11 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
 }
 
 async function s6(daemon: Daemon): Promise<void> {
+  const conversation = required('CHAT_UI_CONVERSATION')
+  const row = chatRowById(conversation)
   const id = required('CHAT_UI_MESSAGE')
   const target = required('CHAT_UI_TARGET_TEXT')
-  const row = `[data-testid="chat-message-${id}"]`
+  const bubble = `[data-testid="chat-bubble-${id}"]`
   const m = await daemon.attach({
     device: 'chat-ui-mobile-web',
     platform: 'web',
@@ -658,25 +717,24 @@ async function s6(daemon: Daemon): Promise<void> {
   })
   const hold = async (): Promise<void> => {
     await m.evalBrowserScript({
-      script: `const bubble=document.querySelector(${JSON.stringify(row + ' [tabindex="0"]')});if(!bubble)throw new Error('Target bubble missing');bubble.scrollIntoView({block:'center'});await new Promise(resolve=>setTimeout(resolve,350));return true`
+      script: `const bubble=document.querySelector(${JSON.stringify(bubble)});if(!bubble)throw new Error('Target bubble missing');bubble.scrollIntoView({block:'center'});await new Promise(resolve=>setTimeout(resolve,350));return true`
     })
-    await m.longPressOn({ css: row + ' [tabindex="0"]' })
+    await m.longPressOn({ css: bubble })
   }
   try {
     await signIn(m, 'Hs')
-    await m.openLink({
-      link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
-    })
-    await m.assertVisible({ text: target, timeout: 60000 })
-    console.log(
-      '$ S6 390px real browser with coarse-pointer media emulation; actual hold, blur, exact actions'
-    )
+    await m.openLink({ link: WEB + '/chat' })
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=query=>query.includes('pointer')&&query.includes('fine')?new Proxy(original(query),{get(target,key){if(key==='matches')return false;const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value}}):original(query);return true`
     })
-    // The conversation's own menu is its row's (develop 2bc27808d removed
-    // the header's), by the conversation's id.
-    await rowMenu(m, required('CHAT_UI_CONVERSATION'))
+    await rowMenu(m, required('CHAT_UI_CONVERSATION'), true)
+    await m.tapOn({ css: row, timeout: 60000 })
+    await m.assertVisible({ css: bubble, timeout: 60000 })
+    await assertFixtureBody(m, id, target)
+    await dismissNotificationAskOn(m)
+    console.log(
+      '$ S6 390px real browser with coarse-pointer media emulation; actual hold, blur, exact actions'
+    )
     await hold()
     await m.assertVisible({ text: 'Copy' })
     await m.assertVisible({ text: 'Reply' })
@@ -705,18 +763,26 @@ async function s6(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Replying to Hank C' })
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     await hold()
-    await m.tapOn({ text: 'Pin' })
+    await m.tapOn({ text: '^Pin$' })
     await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
     await hold()
-    await m.tapOn({ text: 'Unpin' })
-    await m.tapOn({ text: 'Back' })
-    await m.longPressOn({ css: MEMBERS_ROW })
+    await m.tapOn({ text: '^Unpin$' })
+    const pins = API + '/chat/conversations/' + conversation + '/pins'
+    await m.evalBrowserScript({
+      script: `for(let attempt=0;attempt<50;attempt++){const r=await fetch(${JSON.stringify(pins)},{credentials:'include'});if(!r.ok)throw Error('Personal pin list unavailable');if(!(await r.json()).some(pin=>pin.messageId===${JSON.stringify(id)}))return true;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('The fixture original remained pinned')`
+    })
+    await m.openLink({ link: WEB + '/chat' })
+    await m.assertVisible({ css: row, timeout: 30000 })
+    await m.longPressOn({ css: row })
     await m.assertVisible({ text: 'Mark unread' })
     writeFileSync(
       join(required('CHAT_UI_ARTIFACTS'), 'narrow-conversation-menu-after.png'),
       await m.screenshot()
     )
     await m.pressKey({ key: 'Escape' })
+    await m.evalBrowserScript({
+      script: `for(let attempt=0;attempt<40;attempt++){if(!document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))return true;await new Promise(resolve=>setTimeout(resolve,50))}throw new Error('Conversation actions did not dismiss')`
+    })
     console.log(
       'S3/S6/S7/S8 narrow core PASS; media query emulated, app/clipboard/pin paths real'
     )
@@ -946,6 +1012,7 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       if (!atInfo) await new Promise(resolve => setTimeout(resolve, 250))
     }
     assert(atInfo, 'Info must navigate outside the workspace')
+    await m.assertVisible({ css: '[data-testid="chat-info-members"]' })
     await m.setNetworkConditions({
       latency: 1200,
       downloadSpeed: -1,
@@ -3431,6 +3498,9 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
   try {
     await signIn(m, 'Hs')
     await m.openLink({ link: WEB + '/chat' })
+    await m.evalBrowserScript({
+      script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
+    })
     await m.assertVisible({ text: 'Team Members', timeout: 60000 })
     console.log(
       '$ Actual Chrome raw TouchEvent list movement>10px cancels row hold and release navigation; no nativeEvent.pageX shortcut'
@@ -3440,19 +3510,17 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
         script: `const row=document.querySelector(${JSON.stringify(MEMBERS_ROW)});if(!row)throw new Error('Hawks Members row unavailable');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
       })
     )
-    await m.evalBrowserScript({
-      script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
-    })
-    // The conversation's own menu is its row's (develop 2bc27808d removed
-    // the header's), opened while the list is the top screen: once the
-    // conversation is pushed over it at this width, the covered list stays
-    // mounted but takes no taps (develop f6d21316d).
     await rowMenu(m, required('CHAT_UI_CONVERSATION'), true)
+    await m.longPressOn({ css: MEMBERS_ROW })
+    await m.assertVisible({ text: 'Mark unread' })
+    await m.pressKey({ key: 'Escape' })
     await m.tapOn({ css: MEMBERS_ROW })
-    await m.assertVisible({
-      text: required('CHAT_UI_TARGET_TEXT'),
-      timeout: 60000
-    })
+    await assertFixtureBody(
+      m,
+      required('CHAT_UI_MESSAGE'),
+      required('CHAT_UI_TARGET_TEXT')
+    )
+    await dismissNotificationAskOn(m)
     console.log(
       '$ Actual Chrome coarse media + rawTouchEvent bubble500ms recognizes exactly one menu'
     )
@@ -3460,7 +3528,7 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     // settles a moment after the conversation is pushed, so the press waits
     // until the history has stopped moving.
     await m.evalBrowserScript({
-      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-message-' + required('CHAT_UI_MESSAGE') + '"] [tabindex="0"]')});bubble.scrollIntoView({block:'center'});let still=bubble.parentElement;while(still&&!/auto|scroll/.test(getComputedStyle(still).overflowY))still=still.parentElement;still=still||document.scrollingElement;let last=-1,stable=0;while(stable<5){await new Promise(r=>setTimeout(r,100));stable=still.scrollTop===last?stable+1:0;last=still.scrollTop}const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
+      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + required('CHAT_UI_MESSAGE') + '"]')});bubble.scrollIntoView({block:'center'});let still=bubble.parentElement;while(still&&!/auto|scroll/.test(getComputedStyle(still).overflowY))still=still.parentElement;still=still||document.scrollingElement;let last=-1,stable=0;while(stable<5){await new Promise(r=>setTimeout(r,100));stable=still.scrollTop===last?stable+1:0;last=still.scrollTop}const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
     })
     await m.assertVisible({ text: 'Copy' })
     await m.assertVisible({ text: 'Reply' })
