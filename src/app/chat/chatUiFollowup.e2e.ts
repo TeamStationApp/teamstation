@@ -687,10 +687,15 @@ async function s6(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Replying to Hank C' })
     await m.tapOn({ text: 'Cancel reply' })
     await hold()
-    await m.tapOn({ text: 'Pin' })
+    await m.tapOn({ text: '^Pin$' })
     await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
     await hold()
-    await m.tapOn({ text: 'Unpin' })
+    await m.tapOn({ text: '^Unpin$' })
+    const pins =
+      API + '/chat/conversations/' + required('CHAT_UI_CONVERSATION') + '/pins'
+    await m.evalBrowserScript({
+      script: `for(let attempt=0;attempt<50;attempt++){const r=await fetch(${JSON.stringify(pins)},{credentials:'include'});if(!r.ok)throw Error('Personal pin list unavailable');if(!(await r.json()).some(pin=>pin.messageId===${JSON.stringify(id)}))return true;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('The fixture original remained pinned')`
+    })
     await m.openLink({ link: WEB + '/chat' })
     await m.assertVisible({ css: MEMBERS_ROW, timeout: 30000 })
     await m.longPressOn({ css: MEMBERS_ROW })
