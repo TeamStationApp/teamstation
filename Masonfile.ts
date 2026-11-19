@@ -58,6 +58,8 @@ export const CAMERAMAN_DEVELOP_NAME = 'Cameraman Develop'
 // tsdirector:// or tscameraman:// link reaches the master build beside it.
 export const DIRECTOR_DEVELOP_SCHEME = 'tsdirector-develop'
 export const CAMERAMAN_DEVELOP_SCHEME = 'tscameraman-develop'
+// TS Speedy has one app id on every branch: no develop build installs beside it.
+export const SPEEDY_APP = 'app.teamstation.speedy'
 export const DISTRIBUTOR_APP = 'app.teamstation.distributor'
 export const DISTRIBUTOR_DEVELOP_APP = 'app.teamstation.distributor-develop'
 export const DISTRIBUTOR_NAME = 'TS Distributor'
@@ -76,6 +78,8 @@ export const FIELD_VERSION = '1.0'
 const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
 const CAMERAMAN_APK_DIR =
   'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
+const SPEEDY_APK_DIR =
+  'mobile/apps/tsSpeedyAndroid/app/build/outputs/apk/release'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
 // Nomac ships one Xcode and cannot install another. 27.0, 27.1, and 27.2
 // all place; the node uses the newest of those it has.
@@ -353,6 +357,60 @@ export function setup(m: Setup): void {
       )
     }
   )
+  m.buildNumber(SPEEDY_APP, {
+    format: 'YYMMDDCC',
+    timeZone: 'America/Los_Angeles'
+  })
+  m.workflow('speedy', { triggers: [{ request: true }], timeout: '8h' }, w => {
+    w.parallel(
+      'build',
+      {
+        ios: [
+          {
+            name: 'archive',
+            on: APPLE,
+            tools: { node: '24', xcode: '26.6', brew: ['xcodegen'] },
+            timeout: '6h',
+            apple: { distribution: 'adHoc', app: SPEEDY_APP },
+            publishes: [SPEEDY_APP],
+            buildNumbers: [SPEEDY_APP],
+            run: archiveSpeedy
+          }
+        ],
+        android: [
+          {
+            name: 'compile',
+            on: ANDROID,
+            tools: {
+              node: '24',
+              java: '17',
+              android: ['platforms;android-37.0', 'build-tools;37.0.0'],
+              androidLicenses: 'accept'
+            },
+            timeout: '6h',
+            buildNumbers: [SPEEDY_APP],
+            run: compileSpeedy
+          },
+          {
+            name: 'sign',
+            on: SIGN,
+            tools: {
+              node: '24',
+              java: '17',
+              android: ['build-tools;37.0.0'],
+              androidLicenses: 'accept'
+            },
+            timeout: '1h',
+            publishes: [SPEEDY_APP],
+            buildNumbers: [SPEEDY_APP],
+            secrets: [...RELEASE_SIGNING_SECRETS],
+            run: signSpeedy
+          }
+        ]
+      },
+      { failFast: false }
+    )
+  })
   const distributorApp = fieldAppId(
     DISTRIBUTOR_APP,
     DISTRIBUTOR_DEVELOP_APP,
@@ -1321,10 +1379,14 @@ export function fieldLinkSettings(
   ]
 }
 
+/**
+ * Archives a field app. `entitlements` is the app target's entitlements for
+ * its link host; null for an app that claims none.
+ */
 async function archiveFieldApp(
   ctx: Stage,
   appDir: string,
-  entitlements: string,
+  entitlements: string | null,
   project: string,
   scheme: string,
   app: string
@@ -1332,7 +1394,9 @@ async function archiveFieldApp(
   const root = developRoot(ctx)
   writeFieldClientConfig(path.join(root, appDir), app)
   await ctx.sh(
-    `node scripts/clientConfig.mjs ${appDir} --entitlements ${entitlements}`
+    entitlements == null
+      ? `node scripts/clientConfig.mjs ${appDir}`
+      : `node scripts/clientConfig.mjs ${appDir} --entitlements ${entitlements}`
   )
   const build = ctx.getBuildNumber(app)
   const archived = await ctx.apple.archive({
@@ -1398,14 +1462,24 @@ export async function archiveCameraman(ctx: Stage): Promise<void> {
   })
 }
 
-export async function compileCameraman(ctx: Stage): Promise<void> {
-  const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
-  const root = developRoot(ctx)
-  if (app === CAMERAMAN_DEVELOP_APP)
-    applyFieldDevelopIdentity(root, 'cameraman')
-  const dir = 'mobile/apps/tsCameramanAndroid'
-  writeFieldClientConfig(path.join(root, dir), app)
-  const build = ctx.getBuildNumber(app)
+/** Where a field app's Android release is built, and what its stages call it. */
+interface FieldApk {
+  app: string
+  dir: string
+  apkDir: string
+  /** The stash and the artifact are `<key>-release` and `<key>-apk`. */
+  key: string
+  name: string
+}
+
+/**
+ * Compiles a field app's Android release with the build number and version
+ * Mason gives it, signed with a keystore of the compile node's own, and
+ * stashes the APK for the sign stage.
+ */
+async function compileFieldApk(ctx: Stage, apk: FieldApk): Promise<void> {
+  writeFieldClientConfig(path.join(developRoot(ctx), apk.dir), apk.app)
+  const build = ctx.getBuildNumber(apk.app)
   const host = new URL(fieldOrigin(ctx.run.branch)).host
   await ctx.sh(
     [
@@ -1415,7 +1489,7 @@ export async function compileCameraman(ctx: Stage): Promise<void> {
       '-storepass android -keypass android',
       "-dname 'CN=Android Debug,O=Android,C=US'"
     ].join(' '),
-    { cwd: dir }
+    { cwd: apk.dir }
   )
   await ctx.sh(
     [
@@ -1432,7 +1506,7 @@ export async function compileCameraman(ctx: Stage): Promise<void> {
       './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease'
     ].join('\n'),
     {
-      cwd: dir,
+      cwd: apk.dir,
       env: {
         MASON_BUILD_NUMBER: build,
         MASON_APP_VERSION: FIELD_VERSION,
@@ -1440,29 +1514,89 @@ export async function compileCameraman(ctx: Stage): Promise<void> {
       }
     }
   )
-  const apks = await ctx.fs.glob(`${CAMERAMAN_APK_DIR}/*.apk`)
-  if (apks[0] == null) throw new Error('No Cameraman release APK was built')
-  await ctx.stash('cameraman-release', `${CAMERAMAN_APK_DIR}/*.apk`)
+  const apks = await ctx.fs.glob(`${apk.apkDir}/*.apk`)
+  if (apks[0] == null) throw new Error(`No ${apk.name} release APK was built`)
+  await ctx.stash(`${apk.key}-release`, `${apk.apkDir}/*.apk`)
+}
+
+/** Signs a compiled field APK with the release key and publishes it. */
+async function signFieldApk(ctx: Stage, apk: FieldApk): Promise<void> {
+  await ctx.unstash(`${apk.key}-release`)
+  await ctx.sh(signApkScript(apk.apkDir), {
+    env: releaseSigningEnv(ctx)
+  })
+  const apks = await ctx.fs.glob(`${apk.apkDir}/*.apk`)
+  const signed = apks[0]
+  if (signed == null) throw new Error(`No ${apk.name} release APK was signed`)
+  await ctx.artifacts.save(`${apk.key}-apk`, signed)
+  await ctx.publish({
+    app: apk.app,
+    platform: 'android',
+    path: signed,
+    version: FIELD_VERSION,
+    buildNumber: ctx.getBuildNumber(apk.app)
+  })
+}
+
+function cameramanApk(app: string): FieldApk {
+  return {
+    app,
+    dir: 'mobile/apps/tsCameramanAndroid',
+    apkDir: CAMERAMAN_APK_DIR,
+    key: 'cameraman',
+    name: 'Cameraman'
+  }
+}
+
+export async function compileCameraman(ctx: Stage): Promise<void> {
+  const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
+  if (app === CAMERAMAN_DEVELOP_APP)
+    applyFieldDevelopIdentity(developRoot(ctx), 'cameraman')
+  await compileFieldApk(ctx, cameramanApk(app))
 }
 
 /** Signs the compiled Cameraman APK with the release key and publishes it. */
 export async function signCameraman(ctx: Stage): Promise<void> {
   const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
-  await ctx.unstash('cameraman-release')
-  await ctx.sh(signApkScript(CAMERAMAN_APK_DIR), {
-    env: releaseSigningEnv(ctx)
-  })
-  const apks = await ctx.fs.glob(`${CAMERAMAN_APK_DIR}/*.apk`)
-  const apk = apks[0]
-  if (apk == null) throw new Error('No Cameraman release APK was signed')
-  await ctx.artifacts.save('cameraman-apk', apk)
+  await signFieldApk(ctx, cameramanApk(app))
+}
+
+const SPEEDY_APK: FieldApk = {
+  app: SPEEDY_APP,
+  dir: 'mobile/apps/tsSpeedyAndroid',
+  apkDir: SPEEDY_APK_DIR,
+  key: 'speedy',
+  name: 'Speedy'
+}
+
+/** TS Speedy for iOS: no link host, so no entitlements, and one app id on every branch. */
+export async function archiveSpeedy(ctx: Stage): Promise<void> {
+  await ctx.sh('bash mobile/apps/tsSpeedy/scripts/bootstrap.sh')
+  const { ipa, dsyms, build } = await archiveFieldApp(
+    ctx,
+    'mobile/apps/tsSpeedy',
+    null,
+    'mobile/apps/tsSpeedy/Speedy.xcodeproj',
+    'Speedy',
+    SPEEDY_APP
+  )
+  await ctx.artifacts.save('speedy-ipa', ipa)
+  await ctx.artifacts.save('speedy-dsym', dsyms)
   await ctx.publish({
-    app,
-    platform: 'android',
-    path: apk,
+    app: SPEEDY_APP,
+    platform: 'ios',
+    path: ipa,
     version: FIELD_VERSION,
-    buildNumber: ctx.getBuildNumber(app)
+    buildNumber: build
   })
+}
+
+export async function compileSpeedy(ctx: Stage): Promise<void> {
+  await compileFieldApk(ctx, SPEEDY_APK)
+}
+
+export async function signSpeedy(ctx: Stage): Promise<void> {
+  await signFieldApk(ctx, SPEEDY_APK)
 }
 
 /**

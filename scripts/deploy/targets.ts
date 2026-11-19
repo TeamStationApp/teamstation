@@ -67,6 +67,20 @@ const targets: Target[] = [
     kind: 'kotlin'
   },
   {
+    // No link host, so no entitlements.
+    app: 'app.teamstation.speedy',
+    platform: 'ios',
+    path: 'mobile/apps/tsSpeedy',
+    kind: 'swift',
+    scheme: 'Speedy'
+  },
+  {
+    app: 'app.teamstation.speedy',
+    platform: 'android',
+    path: 'mobile/apps/tsSpeedyAndroid',
+    kind: 'kotlin'
+  },
+  {
     app: 'app.teamstation.director',
     platform: 'ios',
     path: 'mobile/apps/tsDirector',
