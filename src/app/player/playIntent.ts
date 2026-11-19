@@ -1,3 +1,4 @@
+import type { PlaybackSurface } from '../../common/observability/contract'
 import type { WallMapping } from './wallMapping'
 
 /**
@@ -59,6 +60,11 @@ export interface PlayIntent {
    * on only if the viewer still wants it.
    */
   onRecovery?: (recovering: boolean) => void
+  /**
+   * Where this player shows, for its playback telemetry. Left out, it is
+   * read from the rest: a buffered tile, a preview card, else the game page.
+   */
+  surface?: PlaybackSurface
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
   /**

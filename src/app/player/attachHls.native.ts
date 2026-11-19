@@ -3,6 +3,13 @@ import { joinLiveWithCushion } from './liveCushion'
 import { readRealEndSec } from './livePlaylistEnd'
 import { reloadStalledLive } from './liveReload'
 import { NativeVideoHandle } from './nativeVideoHandle'
+import {
+  markSeek,
+  startOf,
+  startPlayback,
+  surfaceOf,
+  videoIdOf
+} from './playbackSession'
 import type { PlayIntent } from './playIntent'
 import { addressIsWrong } from './videoError'
 import type { VideoHandle } from './videoHandle'
@@ -60,6 +67,13 @@ export function attachHls(
   // A phone's player reads no dates from the stream: the owner places it by
   // the server's wall timeline, or its start (`wallMapping.ts`).
   intent?.onWallMapping?.(null)
+  const session = startPlayback(handle, {
+    videoId: videoIdOf(url),
+    engine: handle.engine,
+    surface: surfaceOf(intent, handle),
+    live: intent?.isLive != null,
+    start: startOf(intent)
+  })
 
   const patience = 5 * 60_000
   /** After this many, the address is the suspect whatever the error said. */
@@ -107,7 +121,9 @@ export function attachHls(
   const putBack = (): void => {
     const at = resumeAtSec
     resumeAtSec = null
-    if (at != null && at > 0) handle.currentTime = at
+    if (at == null || at <= 0) return
+    markSeek(handle, 'reload_restore')
+    handle.currentTime = at
   }
   handle.addEventListener('loadedmetadata', putBack)
   // A seek of the viewer's own while the stream reopens is where they want to be.
@@ -124,8 +140,15 @@ export function attachHls(
     if (handle.currentTime > 0) resumeAtSec = handle.currentTime
     handle.reload()
   }
-  /** Loads the stream again now, and plays it, in place of any reload due. */
-  const restart = (): void => {
+  /**
+   * Loads the stream again now, and plays it, in place of any reload due:
+   * for a stall (the live watch's), or because a failed player was asked to
+   * play, which the telemetry tells apart.
+   */
+  const restart = (
+    reason: 'stall_reload' | 'reload' = 'stall_reload'
+  ): void => {
+    session?.recovery(reason)
     failed = false
     if (timer != null) clearTimeout(timer)
     timer = undefined
@@ -139,14 +162,16 @@ export function attachHls(
     ? reloadStalledLive(
         handle,
         () => intent.wantsToPlay(),
-        restart,
+        () => {
+          restart('stall_reload')
+        },
         undefined,
         hasFailed
       )
     : undefined
   const onPlay = (): void => {
     wantsToPlay = true
-    if (failed) restart()
+    if (failed) restart('reload')
   }
   const onPause = (): void => {
     if (!recovering) wantsToPlay = false
@@ -174,6 +199,7 @@ export function attachHls(
   const giveUp = (): void => {
     if (gaveUp) return
     gaveUp = true
+    session?.recovery('give_up', reloads)
     onGiveUp?.()
   }
 
@@ -185,6 +211,7 @@ export function attachHls(
       // A give-up for want of patience leaves it running: the network may be
       // what failed, and it is what brings the picture back when it returns.
       stopReloading?.()
+      session?.recovery('new_address')
       giveUp()
       return
     }
@@ -216,6 +243,7 @@ export function attachHls(
         return
       }
       wait = Math.min(wait * 2, 10_000)
+      session?.recovery('reload', reloads)
       reloadKeepingPlace()
     }, wait)
   }
@@ -228,7 +256,9 @@ export function attachHls(
       ? joinLiveWithCushion(handle, async () => await readRealEndSec(url))
       : undefined
 
+  session?.sourceSet()
   return () => {
+    session?.detach()
     stopJoining?.()
     stopReloading?.()
     stopExplicitSeek()

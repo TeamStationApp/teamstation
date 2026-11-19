@@ -1,5 +1,6 @@
 import { onExplicitSeek } from './explicitSeek'
 import { LIVE_DELAY_SEC } from './liveDelay'
+import { markSeek } from './playbackSession'
 
 export { LIVE_DELAY_SEC }
 
@@ -44,6 +45,7 @@ export function joinLiveOnFirstPlay(video: LiveVideo): () => void {
     const end = ranges.end(index)
     if (!Number.isFinite(end) || end <= start) return
     joined = true
+    markSeek(video, 'cushion_join')
     video.currentTime = Math.max(start, end - LIVE_DELAY_SEC)
   }
   const play = (): void => {

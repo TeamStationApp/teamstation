@@ -7,6 +7,14 @@ import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
 import { AHEAD_SEC, BEHIND_SEC } from './multiCam/buffering'
 import { HEVC_TYPE } from './playable'
+import {
+  markSeek,
+  playbackOf,
+  startOf,
+  startPlayback,
+  surfaceOf,
+  videoIdOf
+} from './playbackSession'
 import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import { seekableEndOf, type VideoHandle } from './videoHandle'
@@ -77,9 +85,18 @@ export function attachHls(
     mediaSource: Hls.isSupported(),
     hevc: mediaSourceTakesHevc()
   })
+  const session = startPlayback(handle, {
+    videoId: videoIdOf(url),
+    engine:
+      engine === 'native' ? 'native' : engine === 'hls.js' ? 'hlsjs' : 'none',
+    surface: surfaceOf(intent, handle),
+    live: intent?.isLive != null,
+    start: startOf(intent)
+  })
   // Nothing here can play it. The element is left alone rather than handed a
   // URL it cannot read, and the owner says so in place of the picture.
   if (engine === 'none') {
+    session?.detach()
     intent?.onUnsupported?.()
     return () => undefined
   }
@@ -110,6 +127,8 @@ export function attachHls(
       })
     : undefined
   return () => {
+    // Before the player is emptied, so the closing tally carries where it was.
+    session?.detach()
     stopDiagnostics?.()
     stopJoining?.()
     stopRecovery?.()
@@ -368,6 +387,7 @@ export function attachNativeHls(
   const giveUp = (): void => {
     if (gaveUp) return
     gaveUp = true
+    playbackOf(video)?.recovery('give_up', reloads)
     onGiveUp?.()
   }
 
@@ -397,6 +417,8 @@ export function attachNativeHls(
       const start = ranges.start(index)
       const end = ranges.end(index)
       if (Number.isFinite(end) && end > start) {
+        playbackOf(video)?.recovery('restore_abandoned')
+        markSeek(video, 'cushion_join')
         video.currentTime = Math.max(start, end - LIVE_DELAY_SEC)
       }
     }
@@ -412,6 +434,7 @@ export function attachNativeHls(
 
   const seekBack = (): void => {
     if (resumeAtSec <= 0) return
+    markSeek(video, 'reload_restore')
     video.currentTime = resumeAtSec
     if (!live) return
     cancelRestoreCheck()
@@ -475,6 +498,7 @@ export function attachNativeHls(
         return
       }
       wait = Math.min(wait * 2, 10_000)
+      playbackOf(video)?.recovery('reload', reloads)
       reload()
     }, wait)
   }
@@ -487,6 +511,7 @@ export function attachNativeHls(
   const stopDates =
     onWallMapping == null ? undefined : reportStartDate(video, onWallMapping)
   video.src = url
+  playbackOf(video)?.sourceSet()
   const stopPriming =
     intent?.buffer == null
       ? undefined
@@ -501,6 +526,7 @@ export function attachNativeHls(
           wantsToPlay,
           reload: () => {
             if (timer != null) return
+            playbackOf(video)?.recovery('playlist_watch_reload')
             noteResumeAt()
             setRecovering(true)
             reload()
@@ -696,10 +722,13 @@ function attachHlsJs(
     handle.play().catch(() => undefined)
   }
 
+  const session = playbackOf(handle)
   hls.on(Hls.Events.ERROR, (event, data) => {
+    session?.hlsError(data.type, data.details, data.fatal)
     if (!data.fatal) return
     if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
       recovering = true
+      session?.recovery('media_recover')
       hls.recoverMediaError()
       return
     }
@@ -713,12 +742,14 @@ function attachHlsJs(
       hls.stopLoad()
       if (!gaveUp) {
         gaveUp = true
+        session?.recovery('give_up')
         onGiveUp?.()
       }
       return
     }
     if (timer != null) return
     recovering = true
+    session?.recovery('network_retry')
     timer = setTimeout(() => {
       timer = undefined
       wait = Math.min(wait * 2, 10_000)
@@ -730,6 +761,11 @@ function attachHlsJs(
   hls.on(Hls.Events.FRAG_LOADED, () => {
     firstFailureAt = 0
     wait = 1000
+    session?.bandwidth(hls.bandwidthEstimate)
+  })
+  hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+    const bitrate = hls.levels[data.level]?.bitrate
+    if (bitrate != null) session?.bitrate(bitrate)
   })
   // Buffered, not merely loaded: there are now pictures to show, which is the
   // moment it is worth asking the element to play them again.
@@ -767,6 +803,7 @@ function attachHlsJs(
           fetchPlaylist: async () =>
             await (await fetch(url, { cache: 'no-store' })).text(),
           rejoin: () => {
+            session?.recovery('rejoin')
             rejoining = true
             recovering = true
             hls.config.startPosition = following() ? -1 : video.currentTime
@@ -787,6 +824,7 @@ function attachHlsJs(
   }
   hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
     const { details } = data
+    session?.targetDuration(details.targetduration)
     if (details.live) return
     closedAt =
       Number.isFinite(details.edge) && Number.isFinite(details.targetduration)
@@ -804,6 +842,7 @@ function attachHlsJs(
 
   hls.loadSource(url)
   hls.attachMedia(video)
+  session?.sourceSet()
   return () => {
     if (timer != null) clearTimeout(timer)
     rejoiner?.stop()

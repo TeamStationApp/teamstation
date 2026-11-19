@@ -12,6 +12,7 @@ import {
   reportsLiveStalls,
   type RetryClock
 } from './attachHls'
+import { playbackOf } from './playbackSession'
 import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
@@ -1139,6 +1140,111 @@ describe('a live game whose playlist was closed under the player', function () {
     })
     return { detach, hls: loads[0].hls }
   }
+
+  it('closes its playback session before it empties the player', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video, () => true)
+    const session = playbackOf(video)
+    if (session == null) throw new Error('no playback session')
+    const order: string[] = []
+    session.detach = () => {
+      order.push('session')
+    }
+    const running = hls as unknown as { destroy: () => void }
+    const destroy = running.destroy.bind(running)
+    running.destroy = () => {
+      order.push('player')
+      destroy()
+    }
+    detach()
+    expect(order).deep.equals(['session', 'player'])
+  })
+
+  it('tells its playback session what hls.js reports', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const proto = Hls.prototype as unknown as Stubbed
+    const saved = {
+      recoverMediaError: proto.recoverMediaError,
+      startLoad: proto.startLoad,
+      stopLoad: proto.stopLoad
+    }
+    proto.recoverMediaError = () => undefined
+    proto.startLoad = () => undefined
+    proto.stopLoad = () => undefined
+    const realNow = Date.now
+    try {
+      const { detach, hls } = attach(video, () => true)
+      const session = playbackOf(video)
+      expect(session).not.equals(undefined)
+      const said: unknown[][] = []
+      if (session == null) return
+      session.hlsError = (...args: unknown[]) => {
+        said.push(['error', ...args])
+      }
+      session.recovery = (kind: string) => {
+        said.push(['recovery', kind])
+      }
+      session.bandwidth = (bps: number) => {
+        said.push(['bandwidth', bps])
+      }
+      session.bitrate = (bps: number) => {
+        said.push(['bitrate', bps])
+      }
+      session.targetDuration = (sec: number) => {
+        said.push(['target', sec])
+      }
+      Object.defineProperty(hls, 'levels', { value: [{ bitrate: 4_300_000 }] })
+      Object.defineProperty(hls, 'bandwidthEstimate', { value: 8_000_000 })
+      emit(hls, Hls.Events.ERROR, {
+        type: 'networkError',
+        details: 'fragLoadError',
+        fatal: false
+      })
+      emit(hls, Hls.Events.ERROR, {
+        type: 'mediaError',
+        details: 'bufferStalledError',
+        fatal: true
+      })
+      emit(hls, Hls.Events.ERROR, {
+        type: 'networkError',
+        details: 'levelLoadError',
+        fatal: true
+      })
+      Date.now = () => realNow() + 10 * 60_000
+      emit(hls, Hls.Events.ERROR, {
+        type: 'networkError',
+        details: 'levelLoadError',
+        fatal: true
+      })
+      emit(hls, Hls.Events.FRAG_LOADED)
+      emit(hls, Hls.Events.LEVEL_SWITCHED, { level: 0 })
+      emit(hls, Hls.Events.LEVEL_SWITCHED, { level: 3 })
+      emit(hls, Hls.Events.LEVEL_LOADED, {
+        details: { live: true, targetduration: 6 }
+      })
+      expect(said).deep.equals([
+        ['error', 'networkError', 'fragLoadError', false],
+        ['error', 'mediaError', 'bufferStalledError', true],
+        ['recovery', 'media_recover'],
+        ['error', 'networkError', 'levelLoadError', true],
+        ['recovery', 'network_retry'],
+        ['error', 'networkError', 'levelLoadError', true],
+        ['recovery', 'give_up'],
+        ['bandwidth', 8_000_000],
+        ['bitrate', 4_300_000],
+        ['target', 6]
+      ])
+      detach()
+      expect(playbackOf(video)).equals(undefined)
+    } finally {
+      Date.now = realNow
+      proto.recoverMediaError = saved.recoverMediaError
+      proto.startLoad = saved.startLoad
+      proto.stopLoad = saved.stopLoad
+    }
+  })
 
   it('rejoins the live edge of a game it was following, playing again', async function () {
     stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')

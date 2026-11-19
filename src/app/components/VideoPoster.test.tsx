@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { playedFromStart } from '../../test/liveJoin'
 import { LIVE_DELAY_SEC } from '../player/liveDelay'
+import { playbackOf } from '../player/playbackSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { applyCoverCrop, VideoPoster } from './VideoPoster'
 
@@ -228,6 +229,61 @@ describe('VideoPoster playing a live game', function () {
         video.dispatchEvent(new window.Event('playing'))
       })
       expect(asked).deep.equals(['play'])
+    })
+  })
+
+  it('tells its playback session, as a card, when Safari refuses to play it', async function () {
+    await onSafari(async () => {
+      const proto = window.HTMLMediaElement.prototype
+      Object.defineProperty(proto, 'play', {
+        configurable: true,
+        value: async () => {
+          throw Object.assign(new Error('refused'), { name: 'NotAllowedError' })
+        }
+      })
+      const container = await render(
+        <VideoPoster size="hero" videoUrl="https://media/game.m3u8" />
+      )
+      const video = container.querySelector('video')!
+      const session = playbackOf(video)
+      expect(session).not.equals(undefined)
+      let refusals = 0
+      if (session == null) return
+      session.refused = () => {
+        refusals += 1
+      }
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+        video.dispatchEvent(new window.Event('canplay'))
+      })
+      expect(refusals).equals(2)
+    })
+  })
+
+  it('does not call an interrupted play a refusal', async function () {
+    await onSafari(async () => {
+      const proto = window.HTMLMediaElement.prototype
+      Object.defineProperty(proto, 'play', {
+        configurable: true,
+        value: async () => {
+          throw Object.assign(new Error('interrupted'), { name: 'AbortError' })
+        }
+      })
+      const container = await render(
+        <VideoPoster size="hero" videoUrl="https://media/game.m3u8" />
+      )
+      const video = container.querySelector('video')!
+      const session = playbackOf(video)
+      if (session == null) throw new Error('no playback session')
+      let refusals = 0
+      session.refused = () => {
+        refusals += 1
+      }
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+        video.dispatchEvent(new window.Event('canplay'))
+      })
+      expect(refusals).equals(0)
     })
   })
 

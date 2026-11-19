@@ -8,6 +8,7 @@ import React, {
 import { Image, Pressable, Text, View } from 'react-native'
 
 import { attachHls } from '../player/attachHls'
+import { nameSurface, playbackOf } from '../player/playbackSession'
 import type { VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -119,6 +120,16 @@ export function applyCoverCrop(root: unknown): (() => void) | undefined {
 }
 
 /**
+ * A `play()` the browser refused, told to the video's playback session. Only
+ * a refusal (`NotAllowedError`) is one: a play a new load interrupted
+ * (`AbortError`) was not refused, and the next start asks again.
+ */
+function reportRefusal(video: VideoHandle, error: unknown): void {
+  if (error instanceof Error && error.name === 'NotAllowedError')
+    playbackOf(video)?.refused()
+}
+
+/**
  * A frame of a video, with the things that are always drawn on one.
  *
  * The bottom of the picture is darkened with a gradient and the time is set on
@@ -190,6 +201,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       teardown.current = undefined
       if (video == null || videoUrl == null || videoUrl === '') return
 
+      nameSurface(video, 'card')
       const detach = attachHls(
         video,
         videoUrl,
@@ -207,9 +219,10 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       const start = (): void => {
         if (!video.paused) return
         setMoving(true)
-        video.play().catch(() => {
+        video.play().catch((error: unknown) => {
           // Refused even muted. The poster is already there, so there is
           // nothing to say and nothing to put right.
+          reportRefusal(video, error)
           setMoving(false)
         })
       }
@@ -224,7 +237,9 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       // as soon as it knows what it is, and shown once it is moving.
       const ask = (): void => {
         if (!video.paused) return
-        video.play().catch(() => undefined)
+        video.play().catch((error: unknown) => {
+          reportRefusal(video, error)
+        })
       }
       const shown = (): void => {
         setMoving(true)

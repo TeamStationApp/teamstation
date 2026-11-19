@@ -88,6 +88,8 @@ import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { playableHere } from '../player/playable'
+import { playbackOutcome, startFetchLog } from '../player/playbackFetchLog'
+import { markSeek, playbackOf } from '../player/playbackSession'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
 import { isStillLive } from '../player/stillLive'
@@ -1092,6 +1094,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * a spinner that would never end.
    */
   const [playbackFailedFor, setPlaybackFailedFor] = useState<string>()
+  /** When the selected video's address was first answered pending, for its telemetry. */
+  const pendingSince = useRef<{ videoId: string; at: number } | undefined>(
+    undefined
+  )
   useEffect(() => {
     if (videoId == null || nonMemberView || props.signedIn !== true) return
     const forVideoId = videoId
@@ -1102,14 +1108,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // Each video's asks back off from the first wait, not from where the
     // last video's had got to.
     setPlaybackAsks(0)
+    pendingSince.current = undefined
+    const asked = startFetchLog({
+      kind: 'playback',
+      surface: 'game',
+      videoId: forVideoId,
+      attempt: addressAttempt
+    })
     client
       .playback(forVideoId)
       .then(found => {
+        asked.answered(playbackOutcome(found))
         if (!live) return
+        if (found.url == null && found.pending === true)
+          pendingSince.current = { videoId: forVideoId, at: Date.now() }
         setPlayback(found)
         setPlaybackFor(forVideoId)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        asked.failed(error)
         if (!live) return
         setPlayback(undefined)
         setPlaybackFailedFor(forVideoId)
@@ -1146,14 +1163,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       if (live) setPlaybackAsks(asks => asks + 1)
     }
     const timer = setTimeout(() => {
+      const asked = startFetchLog({
+        kind: 'playback',
+        surface: 'game',
+        videoId: forVideoId,
+        attempt: playbackAsks + 1,
+        retryDelayMs: wait
+      })
       client
         .playback(forVideoId)
         .then(found => {
+          asked.answered(playbackOutcome(found))
           if (!live) return
           setPlayback(found)
           if (found.url == null) askAgain()
         })
-        .catch(askAgain)
+        .catch((error: unknown) => {
+          asked.failed(error)
+          askAgain()
+        })
     }, wait)
     return () => {
       live = false
@@ -1505,6 +1533,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       Promise.resolve(element.play()).catch((error: unknown) => {
         const refused =
           error instanceof Error && error.name === 'NotAllowedError'
+        if (refused) playbackOf(element)?.refused()
         if (!refused || !current || element.muted) return
         element.muted = true
         setCardSound(false)
@@ -1567,6 +1596,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
     const resume = resumeAtRef.current
     const { videoId, playbackFor: forId } = placeFor.current
+    const waited = pendingSince.current
+    if (waited != null && waited.videoId === videoId) {
+      playbackOf(element)?.pending(Date.now() - waited.at)
+      pendingSince.current = undefined
+    }
 
     const stop = (): void => {
       clearTimeout(datesTimer)
@@ -1638,8 +1672,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           element.removeEventListener('loadedmetadata', loaded)
           stop()
           // As the viewer's own seek, so nothing that joins a live stream at
-          // its edge takes it back.
-          seekTo(element, target)
+          // its edge takes it back; reported as the restore it is.
+          seekTo(element, target, 'restore')
           if (resume.playing || playOnEntry) play()
           setResumeAt(undefined)
         }
@@ -1659,6 +1693,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         }
       }
       const apply = (): void => {
+        markSeek(element, 'restore')
         element.currentTime =
           resume.sec ?? resumeSecondsAt(placed, resume.wallMs, element.duration)
         if (resume.playing || playOnEntry) play()

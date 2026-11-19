@@ -1,5 +1,6 @@
 import { onExplicitSeek } from './explicitSeek'
 import { LIVE_DELAY_SEC } from './liveDelay'
+import { markSeek } from './playbackSession'
 import type { VideoEventName } from './videoHandle'
 
 /** A phone's player, as far as joining a live game needs it. */
@@ -60,6 +61,7 @@ export function joinLiveWithCushion(
     done = true
     const target = Math.max(0, end - LIVE_DELAY_SEC)
     if (Math.abs(player.currentTime - target) <= SLACK_SEC) return
+    markSeek(player, 'cushion_join')
     player.currentTime = target
   }
   /**
@@ -74,6 +76,7 @@ export function joinLiveWithCushion(
     const behind = LIVE_DELAY_SEC - HOLD_BACK_SEC
     const ahead = edge - player.currentTime
     if (ahead >= behind - SLACK_SEC) return
+    markSeek(player, 'cushion_join')
     player.currentTime = Math.max(
       0,
       player.currentTime - (behind - Math.max(0, ahead))

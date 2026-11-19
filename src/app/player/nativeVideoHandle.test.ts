@@ -33,6 +33,68 @@ function seeked(seekTime: number): OnSeekData {
 }
 
 describe('NativeVideoHandle', function () {
+  it('keeps what the playback telemetry reads: bandwidth estimate, buffered end and last error', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    expect(handle.engine).equals('avplayer')
+    handle.handleBandwidth({ bitrate: 0 })
+    handle.handleBandwidth({ bitrate: Number.NaN })
+    expect(handle.bandwidthEstimate).equals(null)
+    expect(handle.streamBitrate).equals(null)
+    // AVPlayer's report is its variant's declared bitrate, not the line's.
+    handle.handleBandwidth({ bitrate: 4_300_000 })
+    expect(handle.streamBitrate).equals(4_300_000)
+    expect(handle.bandwidthEstimate).equals(null)
+    // ExoPlayer's is its meter's throughput estimate.
+    handle.engine = 'exoplayer'
+    handle.handleBandwidth({ bitrate: 9_000_000 })
+    expect(handle.bandwidthEstimate).equals(9_000_000)
+    handle.handleProgress({
+      currentTime: 10,
+      playableDuration: 22,
+      seekableDuration: 60
+    })
+    expect(handle.bufferedEnd).equals(22)
+    handle.handleProgress({
+      currentTime: 10,
+      playableDuration: Number.NaN,
+      seekableDuration: 60
+    })
+    expect(handle.bufferedEnd).equals(22)
+    const error = { error: { code: -12660 } }
+    handle.handleError(error)
+    expect(handle.lastError).equals(error)
+  })
+
+  it("forgets the last source's telemetry readings on a new source, and its buffer on a reload", function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const { ref } = fakePlayer()
+    handle.attach(ref)
+    handle.source = 'https://media.example.test/a.m3u8'
+    handle.engine = 'exoplayer'
+    handle.handleBandwidth({ bitrate: 9_000_000 })
+    handle.handleProgress({
+      currentTime: 880,
+      playableDuration: 900,
+      seekableDuration: 900
+    })
+    handle.handleError({ error: { code: -1 } })
+    handle.reload()
+    expect(handle.bufferedEnd).equals(null)
+    expect(handle.bandwidthEstimate).equals(9_000_000)
+    handle.handleProgress({
+      currentTime: 880,
+      playableDuration: 900,
+      seekableDuration: 900
+    })
+    handle.engine = 'avplayer'
+    handle.handleBandwidth({ bitrate: 4_000_000 })
+    handle.reset()
+    expect(handle.bufferedEnd).equals(null)
+    expect(handle.bandwidthEstimate).equals(null)
+    expect(handle.streamBitrate).equals(null)
+    expect(handle.lastError).equals(null)
+  })
+
   it('starts a playing video again after a seek, which iOS leaves paused', async function () {
     const handle = new NativeVideoHandle(() => undefined)
     const { ref, calls } = fakePlayer()
