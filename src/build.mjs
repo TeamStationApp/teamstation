@@ -75,11 +75,16 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
 /**
  * The page's Content-Security-Policy (`buildCsp.mjs`), written into every
  * build: the API and its socket from `TS_API_BASE_URL` when that is absolute,
- * and the media origins the deploy names in `TS_MEDIA_ORIGINS`
- * (space-separated; `src/deploy/mediaOrigins.mjs` prints them).
+ * the media origins the deploy names in `TS_MEDIA_ORIGINS`
+ * (space-separated; `src/deploy/mediaOrigins.mjs` prints them), and the log
+ * collector `TS_SENTRY_DSN` names, so the bundle may post its logs.
  */
 const policy = cspFor(
-  originsFor(apiBaseUrl, process.env.TS_MEDIA_ORIGINS ?? '')
+  originsFor(
+    apiBaseUrl,
+    process.env.TS_MEDIA_ORIGINS ?? '',
+    process.env.TS_SENTRY_DSN ?? ''
+  )
 )
 
 /**
