@@ -24,6 +24,7 @@ import {
   pressStamp
 } from './chatInteractionModel'
 import { captureMessageBounds, type MessageSource } from './chatMessageSource'
+import { ChatMessageText } from './ChatMessageText'
 import {
   type MessageAction,
   messagePreview,
@@ -55,6 +56,7 @@ export interface MessageBubbleProps {
     anchor?: unknown,
     source?: MessageSource
   ) => void
+  onOpenLink?: (address: string) => void
   onReply: (message: MessageView) => void
   onToggleReaction: (message: MessageView, emoji: string, mine: boolean) => void
   onReact?: (message: MessageView) => void
@@ -417,12 +419,15 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 <Text style={styles.status}>{said}</Text>
               ) : (
                 message.body !== '' && (
-                  <Text
+                  <ChatMessageText
+                    body={message.body}
                     style={styles.body}
                     selectable={desktop && props.selected !== true}
-                  >
-                    {message.body}
-                  </Text>
+                    gesture={messageGesture}
+                    onOpen={
+                      props.selected === true ? undefined : props.onOpenLink
+                    }
+                  />
                 )
               )}
               {message.attachments.map(attachment => {

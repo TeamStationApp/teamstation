@@ -167,6 +167,7 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
     }
   }, [measure])
   useEffect(() => {
+    if (Platform.OS !== 'android') return
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
       if (!latest.current.closing) latest.current.onClose()
       return true

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV

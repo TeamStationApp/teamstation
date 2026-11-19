@@ -960,6 +960,7 @@ export const enUs = {
   chat_reaction_label: '%s, %s',
   chat_open_attachment: 'Open %s',
   chat_save_file: 'Save %s',
+  chat_link_failed: 'This link could not be opened.',
   chat_attachment_failed: 'That attachment could not be opened.',
   chat_send_failed: 'That did not send. Try again.',
   chat_send_blocked:

@@ -3837,6 +3837,67 @@
       "file": "e2e/tests/assistant/chat/weekly-usage.e2e.ts"
     },
     {
+      "id": "messaging/chat/message-links#open",
+      "title": "Chat links in text and file captions open their displayed destination",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/chatMessageLinks.ts",
+        "src/app/chat/ChatMessageText.tsx",
+        "src/app/chat/chatBrowser*",
+        "src/app/chat/NativeChatBrowser.ts",
+        "src/app/chat/MessageBubble.tsx",
+        "src/app/chat/ChatWorkspace.tsx",
+        "src/app/chat/ConversationScreen.tsx",
+        "ios/TeamStation/RCTChatBrowser.mm",
+        "android/app/src/main/java/app/teamstation/app/browser/**"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/message-links",
+      "file": "e2e/tests/messaging/chat/message-links.e2e.ts"
+    },
+    {
       "id": "people/add-existing/add-player-device#keyboard",
       "title": "Add Player’s field rides the keyboard on a phone while its header stays put, and Add to Roster stays above it",
       "kind": "e2e",

@@ -22,6 +22,7 @@ import type { ConversationListItem } from './engine/engine'
 import type { ChatScreenEngine } from './screenEngine'
 
 export interface ChatWorkspaceProps {
+  onOpenLink?: (address: string) => Promise<void>
   engine: ChatScreenEngine
   userId: string
   state: ChatWorkspaceState
@@ -225,6 +226,7 @@ function WorkspaceContent(
             </View>
           ) : (
             <ConversationScreen
+              onOpenLink={props.onOpenLink}
               key={selected}
               engine={props.engine}
               conversationId={selected}
