@@ -102,7 +102,9 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
         return true
       }
     )
-    return () => subscription.remove()
+    return () => {
+      subscription.remove()
+    }
   }, [])
   useEffect(() => {
     return bindPopupKeys(
