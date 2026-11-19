@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A26200000000000000000001 /* GlassViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26200000000000000000002 /* GlassViewTests.swift */; };
+		F831D567321D434490F52BE5 /* ChatBrowserTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = F831D567321D434490F52BE6 /* ChatBrowserTests.mm */; };
 		B7A0C0DE0000000000000B01 /* ChatWakeDecryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */; };
 		B7A0C0DE0000000000000B02 /* ChatWakeDecryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */; };
 		B7A0C0DE0000000000000B03 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F02 /* NotificationService.swift */; };
@@ -62,6 +63,7 @@
 		4819A5000000000000000008 /* NativeScheduler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4819A5000000000000000002 /* NativeScheduler.cpp */; };
 		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		D4EEEC93B36A4D25AA681001 /* RCTPlanDocument.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */; };
+		F831D567321D434490F52BE3 /* RCTChatBrowser.mm in Sources */ = {isa = PBXBuildFile; fileRef = F831D567321D434490F52BE4 /* RCTChatBrowser.mm */; };
 		DAF2400A14A8239C28D2D9AF /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */; };
 		DB8130B58995142585D450C9 /* Quicksand-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5A8D1C865B62BA762B9C3380 /* Quicksand-Medium.ttf */; };
 		C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */ = {isa = PBXBuildFile; fileRef = C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */; };
@@ -72,6 +74,8 @@
 		F3A7C1D20000000000000002 /* PhoneStream in Frameworks */ = {isa = PBXBuildFile; productRef = F3A7C1D20000000000000003 /* PhoneStream */; };
 		5A1A5C000000000000000002 /* TeamStationSplash in Frameworks */ = {isa = PBXBuildFile; productRef = 5A1A5C000000000000000003 /* TeamStationSplash */; };
 		5A1A5C000000000000000005 /* SplashInstallTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1A5C000000000000000004 /* SplashInstallTests.swift */; };
+		F831D567321D434490F52BE8 /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F831D567321D434490F52BE7 /* SafariServices.framework */; };
+		F831D567321D434490F52BE9 /* SafariServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F831D567321D434490F52BE7 /* SafariServices.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,6 +111,7 @@
 
 /* Begin PBXFileReference section */
 		A26200000000000000000002 /* GlassViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassViewTests.swift; sourceTree = "<group>"; };
+		F831D567321D434490F52BE6 /* ChatBrowserTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ChatBrowserTests.mm; sourceTree = "<group>"; };
 		B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatWakeDecryptor.swift; sourceTree = "<group>"; };
 		B7A0C0DE0000000000000F02 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		B7A0C0DE0000000000000F03 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -175,10 +180,12 @@
 		D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-Regular.ttf"; path = "../src/app/assets/fonts/Inter-Regular.ttf"; sourceTree = SOURCE_ROOT; };
 		E62A480C138F4F68BF682000 /* RCTHaptics.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTHaptics.mm; path = TeamStation/RCTHaptics.mm; sourceTree = SOURCE_ROOT; };
 		E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTPlanDocument.mm; path = TeamStation/RCTPlanDocument.mm; sourceTree = SOURCE_ROOT; };
+		F831D567321D434490F52BE4 /* RCTChatBrowser.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTChatBrowser.mm; path = TeamStation/RCTChatBrowser.mm; sourceTree = SOURCE_ROOT; };
 		C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTCameraOrientation.mm; path = TeamStation/RCTCameraOrientation.mm; sourceTree = SOURCE_ROOT; };
 		C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = RCTCueSounds.mm; path = TeamStation/RCTCueSounds.mm; sourceTree = SOURCE_ROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		FFCD8157B944819BB558ECB1 /* chat_crypto.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = chat_crypto.h; path = "../../../crates/chat-crypto/include/chat_crypto.h"; sourceTree = "<group>"; };
+		F831D567321D434490F52BE7 /* SafariServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SafariServices.framework; path = System/Library/Frameworks/SafariServices.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +200,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F831D567321D434490F52BE9 /* SafariServices.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -200,6 +208,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F831D567321D434490F52BE8 /* SafariServices.framework in Frameworks */,
 				0C80B921A6F3F58F76C31292 /* libPods-TeamStation.a in Frameworks */,
 				F3A7C1D20000000000000002 /* PhoneStream in Frameworks */,
 				5A1A5C000000000000000002 /* TeamStationSplash in Frameworks */,
@@ -274,6 +283,7 @@
 		2D16E6871FA4F8E400B85C8A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				F831D567321D434490F52BE7 /* SafariServices.framework */,
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-TeamStation.a */,
 			);
@@ -321,6 +331,7 @@
 				12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */,
 				E62A480C138F4F68BF682000 /* RCTHaptics.mm */,
 				E62A480C138F4F68BF682001 /* RCTPlanDocument.mm */,
+				F831D567321D434490F52BE4 /* RCTChatBrowser.mm */,
 				C4A0E11A2B3C4D5E6F708001 /* RCTCameraOrientation.mm */,
 				C0E5A0D1C0E5A0D1C0E5A001 /* RCTCueSounds.mm */,
 				6F1B2D3E4A5C6B7A89D2E3F4 /* TSExpoModules.mm */,
@@ -349,6 +360,7 @@
 				5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */,
 				5A1A5C000000000000000004 /* SplashInstallTests.swift */,
 				A26200000000000000000002 /* GlassViewTests.swift */,
+				F831D567321D434490F52BE6 /* ChatBrowserTests.mm */,
 				D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */,
 				C0EC71A10000000000000004 /* ConnectionsTests.swift */,
 				B7A0C0DE0000000000000F0B /* ChatWakeDecryptorTests.swift */,
@@ -755,6 +767,7 @@
 				5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */,
 				5A1A5C000000000000000005 /* SplashInstallTests.swift in Sources */,
 				A26200000000000000000001 /* GlassViewTests.swift in Sources */,
+				F831D567321D434490F52BE5 /* ChatBrowserTests.mm in Sources */,
 				D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */,
 				C0EC71A10000000000000005 /* ConnectionsTests.swift in Sources */,
 				B7A0C0DE0000000000000B09 /* ChatWakeDecryptorTests.swift in Sources */,
@@ -773,6 +786,7 @@
 				E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */,
 				D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */,
 				D4EEEC93B36A4D25AA681001 /* RCTPlanDocument.mm in Sources */,
+				F831D567321D434490F52BE3 /* RCTChatBrowser.mm in Sources */,
 				C4A0E11A2B3C4D5E6F708002 /* RCTCameraOrientation.mm in Sources */,
 				C0E5A0D1C0E5A0D1C0E5A002 /* RCTCueSounds.mm in Sources */,
 				5E0A1C2D3F4B5A6978C1D2E3 /* TSExpoModules.mm in Sources */,
@@ -900,6 +914,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)/XCFrameworkIntermediates/React-Core-prebuilt",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Pods/Headers/Public/React-Core-prebuilt",
+				);
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -918,6 +940,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)/XCFrameworkIntermediates/React-Core-prebuilt",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Pods/Headers/Public/React-Core-prebuilt",
+				);
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
