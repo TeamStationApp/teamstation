@@ -20,6 +20,8 @@ import {
   type Build,
   catalogPlace,
   findPlaces,
+  type GeoPoint,
+  milesToNearest,
   type Place,
   placeCatalog,
   runCooperatively,
@@ -31,7 +33,8 @@ import {
  * The location pills a search suggests, from the GeoNames catalog the city
  * lookup reads: cities by `findPlaces`, and regions and countries whose name
  * or abbreviation each typed word starts. They are ranked by how well they
- * match, then by population: the first `LOCATIONS_SHOWN` are the
+ * match, then by population (given where the reader is, by population
+ * falling with distance): the first `LOCATIONS_SHOWN` are the
  * lexicographic answer's, and the first `LOCATIONS_FOR_JEV` are Jev's to
  * re-rank.
  */
@@ -238,10 +241,103 @@ export function cityLocation(place: Place): Location {
   }
 }
 
-function compareFound(a: FoundLocation, b: FoundLocation): number {
+/**
+ * Where a reader is, for ranking pills: a point, and the region and country
+ * (catalog form: `California`, `US`) it lies in when they are known.
+ */
+export interface NearPoint extends GeoPoint {
+  region?: string
+  country?: string
+}
+
+/**
+ * Miles from a pill to the reader: a city's to the nearest of their points;
+ * a region or country 0 when one of their points lies in it, else
+ * `AREA_AWAY_MILES`.
+ */
+export function milesFromReader(
+  location: Location,
+  near: readonly NearPoint[]
+): number {
+  const { latitude, longitude } = location
+  if (latitude != null && longitude != null)
+    return milesToNearest({ latitude, longitude }, near)
+  // DB-IP spells a region as GeoNames does but for case and accents.
+  const region = fold(location.region ?? '')
+  const holds = near.some(
+    point =>
+      point.country === location.country &&
+      (location.kind === 'country' || fold(point.region ?? '') === region)
+  )
+  return holds ? 0 : AREA_AWAY_MILES
+}
+
+/** How far off a region or country the reader is not in counts as being. */
+const AREA_AWAY_MILES = Infinity
+/** The miles at which a place's pull on the reader falls to a quarter. */
+const PULL_MILES = 50
+/**
+ * The reader's reach: places within it are ranked by their pull on the
+ * reader, ahead of farther ones, which keep the order they have for a
+ * reader nobody can place.
+ */
+export const REACH_MILES = 500
+/**
+ * The least pull a place in reach needs to be ranked by it: a town of a
+ * thousand at the reader's door, or a city of 121,000 at the edge of reach.
+ * A hamlet nearby keeps its place behind a well-known city farther off.
+ */
+export const PULL_MIN = 1000
+
+/**
+ * How strongly a place draws a reader: its population, falling with the
+ * square of its distance from them. A city of a million 400 miles off still
+ * outweighs a town of 50,000 down the road; a town of 100,000 nearby
+ * outweighs a city of a million an ocean away.
+ */
+export function pullOn(
+  location: Location,
+  population: number,
+  near: readonly NearPoint[]
+): number {
+  const away = 1 + milesFromReader(location, near) / PULL_MILES
+  return population / (away * away)
+}
+
+/**
+ * Best first: the most typed words matched, then how they matched. Among
+ * pills matched as well, one whose own name holds typed letters comes before
+ * one matched only through its region or country words. Given where the
+ * reader is, a pill whose whole name was typed comes next, then those within
+ * `REACH_MILES` of the reader (a region or country holding them) that draw
+ * them at least `PULL_MIN`, strongest pull first (`pullOn`: population
+ * falling with distance). Every other pill
+ * keeps the order it has for a reader nobody can place: the most of the
+ * name typed, then the most populous. Then the label and id.
+ */
+function compareFound(
+  a: FoundLocation,
+  b: FoundLocation,
+  near: readonly NearPoint[]
+): number {
+  const named = (found: FoundLocation): number =>
+    found.score.coverage > 0 ? 1 : 0
+  const whole = (found: FoundLocation): number =>
+    found.score.coverage >= 1 ? 1 : 0
+  const pull = (found: FoundLocation): number =>
+    pullOn(found.location, found.population, near)
+  const within = (found: FoundLocation): number =>
+    milesFromReader(found.location, near) <= REACH_MILES &&
+    pull(found) >= PULL_MIN
+      ? 1
+      : 0
+  const reached = near.length > 0 && within(a) + within(b) === 2
   const order = [
     b.score.matched - a.score.matched,
     b.score.points - a.score.points,
+    named(b) - named(a),
+    ...(near.length === 0 ? [] : [whole(b) - whole(a), within(b) - within(a)]),
+    reached ? pull(b) - pull(a) : 0,
     b.score.coverage - a.score.coverage,
     b.population - a.population,
     a.location.label < b.location.label
@@ -261,7 +357,8 @@ function compareFound(a: FoundLocation, b: FoundLocation): number {
  */
 export function findLocations(
   text: string,
-  rows: Place[] = placeCatalog()
+  rows: Place[] = placeCatalog(),
+  near: readonly NearPoint[] = []
 ): FoundLocation[] {
   const typed = wordsOf(text)
   const longest = typed.reduce(
@@ -271,7 +368,7 @@ export function findLocations(
   if (longest.length < 2) return []
   const { byStart, countryWords } = areas(rows)
   const found: FoundLocation[] = []
-  for (const locality of findPlaces(text, rows)) {
+  for (const locality of findPlaces(text, rows, near)) {
     const place =
       locality.placeId == null
         ? undefined
@@ -301,7 +398,9 @@ export function findLocations(
         score
       })
   }
-  const best = found.sort(compareFound).slice(0, LOCATIONS_FOR_JEV)
+  const best = found
+    .sort((a, b) => compareFound(a, b, near))
+    .slice(0, LOCATIONS_FOR_JEV)
   const labels = distinctLabels(
     best.map(each => each.location),
     rows

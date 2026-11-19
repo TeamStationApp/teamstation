@@ -68,6 +68,7 @@ const appSuites = [
   'src/app/screens/SearchDock.test.tsx',
   'src/app/components/SearchResultRow.test.tsx',
   'src/app/components/LocationPill.test.tsx',
+  'src/app/components/BuildInfoModal.test.tsx',
   'src/app/screens/homeAddCreate.test.tsx',
   'src/app/screens/groupCreation.test.tsx',
   'src/app/screens/FollowTeamScreen.test.tsx'

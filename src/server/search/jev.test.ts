@@ -51,7 +51,8 @@ function stateOf(names: string[], places: string[] = []): JevState {
     ),
     locations: Object.fromEntries(
       places.map((label, at) => [`l${at + 1}`, place(label)])
-    )
+    ),
+    reader: { place: 'San Diego, CA' }
   }
 }
 
@@ -101,6 +102,12 @@ describe('jevRank', function () {
     )
     expect(request.body.questions?.l1?.instructions).equals(
       'Is location `l1` the place this user means by the search `query`?'
+    )
+    // Where the reader is goes in the state, and decides between places
+    // that match as well.
+    expect(request.body.state?.reader).deep.equals({ place: 'San Diego, CA' })
+    expect(request.body.questions?.l1?.criteria?.true).contains(
+      'Among places that match equally well, one near the reader (`reader.place`) ranks first.'
     )
     expect(JSON.stringify(request.body)).not.contains(KEY)
     // The versioned model is logged; the key never is.

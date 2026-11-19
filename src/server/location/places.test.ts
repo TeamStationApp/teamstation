@@ -6,11 +6,14 @@ import { fold } from '../../common/search/match'
 import {
   coordinateColumns,
   findPlaces,
+  milesBetween,
+  milesToNearest,
   nearestPlace,
   parseRows,
   type Place,
   placeCatalog,
   placeCoordinates,
+  placeNear,
   placesReady,
   runCooperatively,
   runNow,
@@ -188,6 +191,114 @@ describe('public locality lookup', () => {
           medianMs(() => findPlaces(query)),
           query
         ).lessThan(20)
+    })
+  })
+
+  describe('near a reader', () => {
+    // Twenty populous Springfields far away, then two small towns by the
+    // reader: one named for the term, one holding it only in its region.
+    const far: Place[] = Array.from({ length: 20 }, (_, at) => [
+      `f${at}`,
+      `Springfield ${at}`,
+      'Far Region',
+      'US',
+      40,
+      -90,
+      'UTC',
+      100_000 - at
+    ])
+    const rows: Place[] = [
+      ...far,
+      [
+        'n1',
+        'Little Springfield',
+        'Near Region',
+        'US',
+        32.8,
+        -117.1,
+        'UTC',
+        10
+      ],
+      ['n2', 'Otherton', 'Springfield County', 'US', 32.7, -117.2, 'UTC', 20],
+      ['n3', 'Springfield Flats', 'Near Region', 'US', 34.5, -117.1, 'UTC', 5],
+      ['n4', 'Springfield Way', 'Distant Region', 'US', 45, -117, 'UTC', 30]
+    ]
+    const reader = { latitude: 32.7157, longitude: -117.1611 }
+    const ids = (near: Array<typeof reader>): string[] =>
+      findPlaces('springfield', rows, near).map(place => place.placeId ?? '')
+
+    it('adds the towns by the reader whose own name matches, nearest first', () => {
+      const near = ids([reader])
+      expect(near.slice(0, 15)).deep.equals(ids([]))
+      expect(near.slice(15)).deep.equals(['n1', 'n3'])
+    })
+
+    it('adds none for words of two letters, which match too many places to look through', () => {
+      const short: Place[] = [
+        ...far.map((place, at): Place => [
+          `s${at}`,
+          `Sp ${at}`,
+          'Far Region',
+          'US',
+          40,
+          -90,
+          'UTC',
+          100_000 - at
+        ]),
+        ['sn', 'Sp Little', 'Near Region', 'US', 32.8, -117.1, 'UTC', 10]
+      ]
+      expect(
+        findPlaces('sp', short, [reader]).map(place => place.placeId)
+      ).not.includes('sn')
+      expect(
+        findPlaces('sp li', short, [reader]).map(place => place.placeId)
+      ).includes('sn')
+    })
+
+    it('finds a town by a reader across the antimeridian', () => {
+      const pacific: Place[] = [
+        ...far,
+        ['fj', 'Springfield Fiji', 'Near Region', 'FJ', -17.8, 179.9, 'UTC', 10]
+      ]
+      const fiji = { latitude: -17.8, longitude: -179.9 }
+      expect(
+        findPlaces('springfield', pacific, [fiji]).map(place => place.placeId)
+      ).includes('fj')
+    })
+
+    it('answers as it did with no point', () => {
+      expect(ids([])).deep.equals(scanPlaces('springfield', rows))
+    })
+
+    it('adds at most fifteen', () => {
+      const many: Place[] = [
+        ...far,
+        ...Array.from({ length: 20 }, (_, at): Place => [
+          `m${at}`,
+          `Springfield Hamlet ${at}`,
+          'Near Region',
+          'US',
+          32.7 + at / 100,
+          -117.1,
+          'UTC',
+          1
+        ])
+      ]
+      expect(findPlaces('springfield', many, [reader])).length(30)
+    })
+
+    it('names the catalog city at or nearest a point, within a degree', () => {
+      expect(
+        placeNear({ latitude: 32.8, longitude: -117.1 }, rows)?.placeId
+      ).equals('n1')
+      expect(placeNear({ latitude: 0, longitude: 0 }, rows)).equals(null)
+    })
+
+    it('measures miles on the globe', () => {
+      expect(
+        milesBetween(reader, { latitude: 33.4936, longitude: -117.1484 })
+      ).closeTo(54, 1)
+      expect(milesToNearest(reader, [])).equals(Infinity)
     })
   })
 

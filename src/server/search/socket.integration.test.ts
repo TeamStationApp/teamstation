@@ -26,6 +26,7 @@ import { databaseUrlOf } from '../../test/screenScopeNotices'
 import { createSession, revokeSession } from '../auth/sessions'
 import { SESSION_COOKIE } from '../auth/tokens'
 import type { Database } from '../db/database'
+import type { IpPlace } from '../location/ipPlaces'
 import { bindUpgrades, claimUpgrade } from '../socket/bindUpgrades'
 import { attachGameSocket } from '../socket/gameSocket'
 import {
@@ -251,6 +252,87 @@ describe('search socket', function () {
     ).equals(true)
     search(client, 2, 'mookie betts')
     expect(names(await client.next())).deep.equals([])
+  })
+
+  it('ranks a signed-out reader’s place pills near their forwarded address, looked up once and never logged', async () => {
+    const looked: string[] = []
+    const logged: string[] = []
+    const places: Record<string, IpPlace> = {
+      '203.0.113.9': {
+        latitude: 32.7157,
+        longitude: -117.1611,
+        city: 'San Diego',
+        region: 'California',
+        country: 'US'
+      },
+      '198.51.100.4': {
+        latitude: 47.8445,
+        longitude: 88.1393,
+        city: 'Altay',
+        region: 'Xinjiang',
+        country: 'CN'
+      }
+    }
+    mount({
+      ipPlaces: {
+        lookup: ip => {
+          looked.push(ip)
+          return places[ip] ?? null
+        }
+      },
+      log: line => {
+        logged.push(line)
+      }
+    })
+    const pills = async (client: Client, seq: number): Promise<string[]> => {
+      search(client, seq, 'teme')
+      const frame = (await client.next()) as SearchResultsFrame
+      expect(frame).include({ seq, stage: 'lexicographic' })
+      return frame.locations.map(location => location.label)
+    }
+    // Through the proxy on this machine, the client is its forwarded address.
+    const sanDiego = await connect({ 'x-forwarded-for': '203.0.113.9' })
+    expect((await pills(sanDiego, 1))[0]).equals('Temecula, CA')
+    expect((await pills(sanDiego, 2))[0]).equals('Temecula, CA')
+    expect(looked).deep.equals(['203.0.113.9'])
+
+    const altay = await connect({ 'x-forwarded-for': '198.51.100.4' })
+    expect((await pills(altay, 1))[0]).matches(/^Temeke/)
+    // An address with no place ranks as before, near nowhere.
+    const nowhere = await connect()
+    expect((await pills(nowhere, 1))[0]).not.equals('Temecula, CA')
+    expect(looked).deep.equals(['203.0.113.9', '198.51.100.4', '127.0.0.1'])
+    for (const line of logged)
+      for (const ip of Object.keys(places)) expect(line).not.contains(ip)
+  })
+
+  it('asks again for an address the primary did not place in time, and keeps one once placed', async () => {
+    const answers: Array<IpPlace | null> = [
+      null,
+      {
+        latitude: 32.7157,
+        longitude: -117.1611,
+        city: 'San Diego',
+        region: 'California',
+        country: 'US'
+      }
+    ]
+    let asked = 0
+    mount({
+      ipPlaces: {
+        lookup: async () => answers[Math.min(asked++, answers.length - 1)]
+      }
+    })
+    const client = await connect({ 'x-forwarded-for': '203.0.113.12' })
+    const first = async (seq: number): Promise<string> => {
+      search(client, seq, 'teme')
+      const frame = (await client.next()) as SearchResultsFrame
+      return frame.locations[0]?.label ?? ''
+    }
+    expect(await first(1)).not.equals('Temecula, CA')
+    expect(await first(2)).equals('Temecula, CA')
+    expect(await first(3)).equals('Temecula, CA')
+    expect(asked).equals(2)
   })
 
   it('answers a signed-in reader, by bearer or cookie, with people in reach and Follow pills', async () => {

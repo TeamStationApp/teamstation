@@ -432,10 +432,13 @@ let warming: Promise<void> | undefined
 export async function warmPlaces(rows?: Place[]): Promise<void> {
   if (rows != null) {
     await runCooperatively(searchBuild(rows))
+    await runCooperatively(gridBuild(rows))
     return
   }
   warming ??= (async () => {
-    await runCooperatively(searchBuild(await loadCatalog()))
+    const catalog = await loadCatalog()
+    await runCooperatively(searchBuild(catalog))
+    await runCooperatively(gridBuild(catalog))
   })()
   await warming
 }
@@ -469,15 +472,145 @@ function placesHolding(term: string, search: PlaceSearch): Int32Array {
   return fewest
 }
 
+/** A point on the globe, in degrees. */
+export interface GeoPoint {
+  latitude: number
+  longitude: number
+}
+
+/** A place within this many miles of a reader is in their area. */
+export const NEAR_MILES = 150
+
+/** A typed word needs this many letters before towns near a reader are sought. */
+const NEAR_TERM_MIN = 3
+
+interface Box {
+  south: number
+  north: number
+  west: number
+  east: number
+}
+
+/** The latitudes and longitudes within `NEAR_MILES` of a point, at most. */
+function boxAround(point: GeoPoint): Box {
+  const degrees = NEAR_MILES / 69
+  const across =
+    degrees / Math.max(0.01, Math.cos((point.latitude * Math.PI) / 180))
+  return {
+    south: point.latitude - degrees,
+    north: point.latitude + degrees,
+    west: point.longitude - across,
+    east: point.longitude + across
+  }
+}
+
+function inBox(box: Box, latitude: number, longitude: number): boolean {
+  if (latitude < box.south || latitude > box.north) return false
+  // A box across the antimeridian reaches past ±180.
+  return (
+    (longitude >= box.west && longitude <= box.east) ||
+    (longitude - 360 >= box.west && longitude - 360 <= box.east) ||
+    (longitude + 360 >= box.west && longitude + 360 <= box.east)
+  )
+}
+
+/** The catalog by whole degrees of latitude and longitude, and its folded city names. */
+interface Grid {
+  cells: Map<number, number[]>
+  names: string[]
+}
+
+const grids = new WeakMap<Place[], Grid>()
+
+const cellKey = (latitude: number, longitude: number): number =>
+  (Math.floor(latitude) + 90) * 360 +
+  (((Math.floor(longitude) % 360) + 540) % 360)
+
+/**
+ * Built once per catalog: by `warmPlaces`, a stretch at a time, or else by
+ * the first search of a reader's area.
+ */
+function gridOf(rows: Place[]): Grid {
+  return grids.get(rows) ?? runNow(gridBuild(rows))
+}
+
+function* gridBuild(rows: Place[]): Build<Grid> {
+  const cells = new Map<number, number[]>()
+  const names: string[] = []
+  for (let at = 0; at < rows.length; ++at) {
+    if (at % STEP === 0) yield
+    const place = rows[at]
+    names.push(fold(place[1]))
+    const key = cellKey(place[4], place[5])
+    const cell = cells.get(key)
+    if (cell == null) cells.set(key, [at])
+    else cell.push(at)
+  }
+  // A first use while this was building built its own: that one stands.
+  const built = grids.get(rows)
+  if (built != null) return built
+  const grid = { cells, names }
+  grids.set(rows, grid)
+  return grid
+}
+
+/** The keys of the grid cells a box touches. */
+function cellsOf(box: Box): number[] {
+  const keys = new Set<number>()
+  for (
+    let latitude = Math.floor(Math.max(-90, box.south));
+    latitude <= Math.min(89, box.north);
+    ++latitude
+  )
+    for (
+      let longitude = Math.floor(box.west);
+      longitude <= box.east && longitude < Math.floor(box.west) + 360;
+      ++longitude
+    )
+      keys.add(cellKey(latitude, longitude))
+  return [...keys]
+}
+
+/** Great-circle miles between two points. */
+export function milesBetween(a: GeoPoint, b: GeoPoint): number {
+  const radians = Math.PI / 180
+  const deltaLat = (b.latitude - a.latitude) * radians
+  const deltaLon = (b.longitude - a.longitude) * radians
+  const h =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(a.latitude * radians) *
+      Math.cos(b.latitude * radians) *
+      Math.sin(deltaLon / 2) ** 2
+  return 2 * 3958.8 * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+/** Miles from a place to the nearest of these points; Infinity for none. */
+export function milesToNearest(
+  place: GeoPoint,
+  near: readonly GeoPoint[]
+): number {
+  let nearest = Infinity
+  for (const point of near)
+    nearest = Math.min(nearest, milesBetween(place, point))
+  return nearest
+}
+
 /**
  * Search public reference locations, never a user/device directory: the 15
  * most populous places whose folded `city region country` text holds every
  * typed term, then by id. Only the places that hold the rarest letter or
  * letter pair of a term are tested, most populous first, until 15 match.
+ *
+ * Given points a reader is near, and a typed word of three letters or more,
+ * it also returns, nearest first, up to 15 more cities within `NEAR_MILES`
+ * of one whose own name holds every term: a small town by the reader that
+ * the populous 15 leave out. A city that holds a term only in its region or
+ * country is not added.
  */
 export function findPlaces(
   query: string,
-  rows: Place[] = catalogPlaces()
+  rows: Place[] = catalogPlaces(),
+  near: readonly GeoPoint[] = []
 ): Locality[] {
   const terms = fold(query.trim())
     .split(/[\s,]+/)
@@ -496,7 +629,62 @@ export function findPlaces(
     found.push(locality(search.ordered[at]))
     if (found.length === 15) break
   }
+  // A reader's own area, once a word has three letters (two match too many
+  // places to look through on every keystroke): read from the cells of the
+  // grid that their points' boxes cover, not from the whole catalog.
+  if (near.length === 0 || !terms.some(term => term.length >= NEAR_TERM_MIN))
+    return found
+  const taken = new Set(found.map(each => each.placeId))
+  const grid = gridOf(rows)
+  const nearby: Array<{ place: Place; miles: number }> = []
+  for (const box of near.map(boxAround))
+    for (const cell of cellsOf(box))
+      for (const at of grid.cells.get(cell) ?? []) {
+        const place = rows[at]
+        if (taken.has(place[0]) || !inBox(box, place[4], place[5])) continue
+        if (!terms.every(term => grid.names[at].includes(term))) continue
+        const miles = milesToNearest(
+          { latitude: place[4], longitude: place[5] },
+          near
+        )
+        if (miles > NEAR_MILES) continue
+        taken.add(place[0])
+        nearby.push({ place, miles })
+      }
+  nearby.sort((a, b) => a.miles - b.miles)
+  for (const { place } of nearby.slice(0, 15)) found.push(locality(place))
   return found
+}
+
+/**
+ * The catalog city at or nearest a point among those within a degree of it,
+ * from the grid: a league's or team's coordinates are its catalog city's,
+ * so this names its locality as the catalog does (`US`, `California`),
+ * whatever form it was written in. Null with none that near.
+ */
+export function placeNear(
+  point: GeoPoint,
+  rows: Place[] = catalogPlaces()
+): Locality | null {
+  const grid = gridOf(rows)
+  let nearest: Place | undefined
+  let least = Infinity
+  for (let dy = -1; dy <= 1; ++dy)
+    for (let dx = -1; dx <= 1; ++dx)
+      for (const at of grid.cells.get(
+        cellKey(point.latitude + dy, point.longitude + dx)
+      ) ?? []) {
+        const place = rows[at]
+        const miles = milesBetween(point, {
+          latitude: place[4],
+          longitude: place[5]
+        })
+        if (miles < least) {
+          least = miles
+          nearest = place
+        }
+      }
+  return nearest == null ? null : locality(nearest)
 }
 
 /** Only the public locality leaves this function; device coordinates are not retained. */

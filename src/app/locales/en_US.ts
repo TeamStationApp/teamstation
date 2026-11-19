@@ -37,6 +37,8 @@ export const enUs = {
   about_close: 'Close',
   about_close_button: 'Close build information',
   about_open_failed: 'Could not open the download site. Please try again.',
+  about_credits: 'Credits',
+  about_ip_credit: 'IP geolocation by DB-IP',
   about_test_error: 'Send a test error',
   about_test_render_error: 'Test a render error',
   about_test_native_crash: 'Test a native crash',

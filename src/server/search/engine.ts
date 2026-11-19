@@ -44,6 +44,7 @@ import {
 } from './locations'
 import { emptyReach, inReach } from './reach'
 import type { ReaderCache, ReaderReads } from './readerCache'
+import type { ReaderPoint } from './readerPlace'
 
 /**
  * The search engine the search socket and Add Existing Player answer from.
@@ -74,12 +75,23 @@ export interface SearchDeps {
    * search reads it.
    */
   reader?: ReaderCache
+  /**
+   * Where the reader is (`readerPoints`), the search socket's for its
+   * connection: equally good place pills nearest it come first. Without it,
+   * none are ranked by nearness.
+   */
+  readerPoints?: () => Promise<ReaderPoint[]>
 }
+
+const placeName = (label: string | undefined): string | null =>
+  label == null || label === '' ? null : label
 
 /** What `searchOnce` found, for `searchJev` to re-rank. */
 export interface SearchContext extends FactsInput {
   /** The row of each of `ordered`, at the same index. */
   results: SearchResult[]
+  /** The reader's home area's label, for Jev; null when it is not known. */
+  readerPlace: string | null
 }
 
 export interface SearchAnswer {
@@ -360,7 +372,8 @@ function emptyContext(ask: SearchAsk): SearchContext {
     ordered: [],
     locations: [],
     followed: new Set(),
-    results: []
+    results: [],
+    readerPlace: null
   }
 }
 
@@ -420,6 +433,14 @@ export async function searchOnce(
     groupLines = groupFacts(db, actor, groups)
     groupLines.catch(() => undefined)
   }
+  // Where the reader is ranks the pills; a failure to tell ranks none by it.
+  const near: Promise<ReaderPoint[]> =
+    ask.location != null || ask.mode !== 'all' || deps.readerPoints == null
+      ? Promise.resolve([])
+      : deps.readerPoints().catch((error: unknown) => {
+          deps.log?.(`search reader place unread: ${String(error)}`)
+          return []
+        })
   // The pills are found once gather's reads have gone out, while the
   // database answers them.
   const [gathered, locations] = await Promise.all([
@@ -433,7 +454,7 @@ export async function searchOnce(
       if (ask.location != null || ask.mode !== 'all') return []
       // A worker still warming the catalog finishes it first.
       await locationsReady()
-      return findLocations(ask.text)
+      return findLocations(ask.text, undefined, await near)
     })()
   ])
   const ordered = [...gathered.candidates].sort(candidateOrder(ask))
@@ -473,7 +494,9 @@ export async function searchOnce(
       ordered,
       locations,
       followed,
-      results
+      results,
+      // A place nothing names is no place to tell Jev.
+      readerPlace: placeName((await near)[0]?.label)
     }
   }
 }
@@ -507,7 +530,8 @@ export async function searchJev(
       location: ask.location,
       today: (deps.now?.() ?? new Date()).toISOString().slice(0, 10),
       candidates: facts.candidates,
-      locations: facts.locations
+      locations: facts.locations,
+      reader: { place: context.readerPlace }
     },
     key,
     deps.jevBaseUrl,

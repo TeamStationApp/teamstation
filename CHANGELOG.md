@@ -29,6 +29,7 @@
 - added: After you RSVP or open messaging, TeamStation offers once to turn on notifications for that device
 - added: A message you're reading doesn't notify you, and reading a conversation on one device clears its notifications on your others
 - added: Backspace in Search's empty field takes out the chosen place
+- added: Search suggests the places near you first among those that match as well: near your own teams and leagues, or, signed out, near the city DB-IP's free database places your connection in. The server keeps that database in its state directory (`ipPlaces` in the server config moves it, `false` turns it off), refreshes it monthly and holds one copy in memory for all its workers, and About TeamStation credits DB-IP
 - changed: A stream ends after ten minutes without video once its game has ended. Its recording is kept and its expired ingest key is revoked.
 - changed: Schedules are computed on the device and stored as sent, and the server validates the submitted games
 - changed: Imported games carry TeamStation records on every play, so replay, box score, pitch counts, statistics and editing treat them like scored games. An outside scorer's unknown players are seated as guests.

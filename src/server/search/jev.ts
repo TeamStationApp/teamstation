@@ -93,6 +93,11 @@ export interface JevState {
   candidates: Record<string, JevCandidateFacts>
   /** The location pills keyed `l1`…`lN`, in lexicographic order. */
   locations: Record<string, JevLocationFacts>
+  /**
+   * Roughly where the reader is (`City, RG`: their own groups' area, or
+   * their IP address's city), or null when it is not known.
+   */
+  reader: { place: string | null }
 }
 
 export interface JevRanking {
@@ -121,7 +126,7 @@ const CANDIDATE_TRUE =
 const CANDIDATE_FALSE =
   'A weak or partial name match, or a team or season whose last event was years ago, a past season, or a place far from the chosen location.'
 const LOCATION_TRUE =
-  'The place name matches the typed words closely (a perfect word match over starts-with over substring, more typed words over fewer), and it is the well-known or more populous place of that name.'
+  'The place name matches the typed words closely (a perfect word match over starts-with over substring, more typed words over fewer), and it is the well-known or more populous place of that name. Among places that match equally well, one near the reader (`reader.place`) ranks first.'
 const LOCATION_FALSE =
   'A weak or partial name match, or a small place that shares its name with a better-known one.'
 

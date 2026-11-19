@@ -33,6 +33,10 @@ import {
   type FoundLocation,
   LOCATIONS_FOR_JEV,
   locationsReady,
+  milesFromReader,
+  PULL_MIN,
+  pullOn,
+  REACH_MILES,
   regionSpellings,
   warmLocations,
   warmLocationsInBackground
@@ -226,6 +230,20 @@ describe('search location pills', () => {
         )
     })
 
+    it('takes under 20 ms a search near twenty of a reader’s places', function () {
+      this.timeout(30_000)
+      const twenty = Array.from({ length: 20 }, (_, at) => ({
+        latitude: 25 + at,
+        longitude: -120 + 2 * at
+      }))
+      findLocations('warm', undefined, twenty)
+      for (const text of ['an', 'sa', 'san', 'ana', 'spr', 'san d'])
+        expect(
+          medianMs(() => findLocations(text, undefined, twenty)),
+          text
+        ).lessThan(20)
+    })
+
     it('takes under 20 ms a search on the warm catalog', function () {
       this.timeout(30_000)
       findLocations('warm')
@@ -234,6 +252,146 @@ describe('search location pills', () => {
           medianMs(() => findLocations(text)),
           text
         ).lessThan(20)
+    })
+  })
+
+  describe('near the reader', () => {
+    const sanDiego = {
+      latitude: 32.7157,
+      longitude: -117.1611,
+      region: 'California',
+      country: 'US'
+    }
+    const altay = { latitude: 47.8445, longitude: 88.1393 }
+    const labels = (text: string, near: Array<typeof altay>): string[] =>
+      findLocations(text, undefined, near)
+        .slice(0, 4)
+        .map(found => found.location.label)
+
+    it('puts Temecula first for teme typed in San Diego, Temeke from Altay, and today’s order with no point', () => {
+      expect(labels('teme', [sanDiego])[0]).equals('Temecula, CA')
+      expect(labels('teme', [altay])[0]).matches(/^Temeke/)
+      expect(labels('teme', [])).deep.equals(
+        findLocations('teme')
+          .slice(0, 4)
+          .map(found => found.location.label)
+      )
+      expect(labels('teme', [])).not.includes('Temecula, CA')
+    })
+
+    it('reorders only pills matched as well: those in the reader’s reach by their pull, the rest as for nobody', () => {
+      const near = findLocations('teme', undefined, [sanDiego])
+      const reached = (found: FoundLocation): boolean =>
+        milesFromReader(found.location, [sanDiego]) <= REACH_MILES &&
+        pullOn(found.location, found.population, [sanDiego]) >= PULL_MIN
+      for (let at = 1; at < near.length; ++at) {
+        const [a, b] = [near[at - 1], near[at]]
+        if (
+          a.score.matched !== b.score.matched ||
+          a.score.points !== b.score.points ||
+          a.score.coverage > 0 !== b.score.coverage > 0 ||
+          a.score.coverage >= 1 !== b.score.coverage >= 1
+        )
+          continue
+        if (reached(b)) {
+          expect(
+            reached(a),
+            `${a.location.label} before ${b.location.label}`
+          ).equals(true)
+          expect(
+            pullOn(a.location, a.population, [sanDiego])
+          ).greaterThanOrEqual(pullOn(b.location, b.population, [sanDiego]))
+        }
+      }
+      // A better match stays ahead of a nearer one.
+      const typed = findLocations('temecula', undefined, [altay])
+      expect(typed[0].location.label).equals('Temecula, CA')
+    })
+
+    it('keeps the order a reader nobody can place gets for places out of reach, and a hamlet behind a known city', () => {
+      const newYork = {
+        latitude: 40.7128,
+        longitude: -74.006,
+        region: 'New York',
+        country: 'US'
+      }
+      const chicago = {
+        latitude: 41.8781,
+        longitude: -87.6298,
+        region: 'Illinois',
+        country: 'US'
+      }
+      for (const text of ['san', 'san d', 'santa'])
+        expect(labels(text, [newYork]), text).deep.equals(labels(text, []))
+      expect(labels('san d', [newYork])[0]).equals('San Diego, CA')
+      // San Jose, IL is near Chicago but a village: San Jose, CA first.
+      expect(labels('san jose', [chicago])[0]).equals('San Jose, CA')
+      // A town by the reader, once a word has three letters.
+      expect(labels('spr', [chicago])[0]).matches(/, IL$/)
+    })
+
+    it('keeps a whole typed name and a big city ahead of a nearby hamlet', () => {
+      expect(labels('san jose', [sanDiego])[0]).equals('San Jose, CA')
+      expect(labels('san j', [sanDiego])[0]).equals('San Jose, CA')
+      expect(labels('san', [sanDiego])[0]).equals('San Diego, CA')
+    })
+
+    it('keeps the reader’s own state ahead of the cities that match only through it', () => {
+      expect(labels('californ', [sanDiego])[0]).equals('California')
+      expect(labels('texa', [sanDiego])[0]).equals('Texas')
+    })
+
+    it('measures a city’s miles from the reader, an area’s as none when it holds them and out of reach when not, and pulls by population over distance', () => {
+      const city = (latitude: number, longitude: number): Location => ({
+        kind: 'city',
+        id: 'geonames:1',
+        label: 'X',
+        city: 'X',
+        region: 'R',
+        country: 'US',
+        latitude,
+        longitude
+      })
+      expect(milesFromReader(city(33.4936, -117.1484), [sanDiego])).closeTo(
+        54,
+        1
+      )
+      const california: Location = {
+        kind: 'region',
+        id: regionLocationId('US', 'California'),
+        label: 'California',
+        region: 'California',
+        country: 'US'
+      }
+      const usa: Location = {
+        kind: 'country',
+        id: countryLocationId('US'),
+        label: 'USA',
+        country: 'US'
+      }
+      expect(milesFromReader(california, [sanDiego])).equals(0)
+      // A region spelled with other accents or case still holds the reader.
+      expect(
+        milesFromReader({ ...california, region: 'Québec', country: 'CA' }, [
+          {
+            latitude: 46.81,
+            longitude: -71.21,
+            region: 'quebec',
+            country: 'CA'
+          }
+        ])
+      ).equals(0)
+      expect(milesFromReader(usa, [sanDiego])).equals(0)
+      expect(
+        milesFromReader({ ...california, region: 'Texas' }, [sanDiego])
+      ).equals(Infinity)
+      expect(milesFromReader(california, [altay])).equals(Infinity)
+      // A quarter of its population 50 miles off, a ninth at 100.
+      expect(pullOn(city(32.7157, -117.1611), 1000, [sanDiego])).closeTo(
+        1000,
+        1e-6
+      )
+      expect(pullOn(usa, 900, [altay])).equals(0)
     })
   })
 

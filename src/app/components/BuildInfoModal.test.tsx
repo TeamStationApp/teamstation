@@ -131,6 +131,29 @@ describe('BuildInfoModal rows', function () {
     host = undefined
   })
 
+  it('credits DB-IP for IP geolocation, linking to its site', async function () {
+    const opened: string[] = []
+    const realOpen = window.open.bind(window)
+    window.open = ((url: string) => {
+      opened.push(url)
+      return null
+    }) as typeof window.open
+    try {
+      await render(<BuildInfoModal info={info} onClose={() => undefined} />)
+      expect(document.body.textContent).contains('Credits')
+      const credit = Array.from(
+        document.querySelectorAll<HTMLElement>('[role="link"]')
+      ).find(node => node.textContent === 'IP geolocation by DB-IP')
+      expect(credit).not.equals(undefined)
+      await act(async () => {
+        credit!.click()
+      })
+      expect(opened).deep.equals(['https://db-ip.com'])
+    } finally {
+      window.open = realOpen
+    }
+  })
+
   it('shows the first six characters of the commit, and no more', async function () {
     const commit = '0123456789abcdef0123456789abcdef01234567'
     await render(

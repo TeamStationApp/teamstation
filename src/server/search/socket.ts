@@ -19,6 +19,7 @@ import {
 import { type Actor, actorForToken } from '../auth/sessions'
 import { bearerToken, sessionToken } from '../auth/tokens'
 import { type Database, isConnectionUnavailable } from '../db/database'
+import type { IpLookup, IpPlace } from '../location/ipPlaces'
 import type { UpgradeClaim } from '../socket/bindUpgrades'
 import {
   asksAnything,
@@ -28,6 +29,7 @@ import {
   searchOnce
 } from './engine'
 import { type ReaderCache, readerCache, warmReader } from './readerCache'
+import { ipPoint, type ReaderPoint, readerPoints } from './readerPlace'
 
 /**
  * `WS /api/v1/search` — the search field's socket.
@@ -87,6 +89,39 @@ export interface SearchSocketOptions {
   /** How often to ping. A socket that misses two is closed. */
   pingMs?: number
   log?: (message: string) => void
+  /**
+   * Where an IP address is (`startIpPlaces`): a reader with no placed
+   * group of their own is ranked near their connection's address. Absent,
+   * they are ranked near nowhere.
+   */
+  ipPlaces?: IpLookup
+}
+
+const isLoopback = (address: string): boolean =>
+  address === '::1' || address.startsWith('127.')
+
+const unmapped = (address: string): string =>
+  address.toLowerCase().startsWith('::ffff:') ? address.slice(7) : address
+
+/**
+ * The client's address for an upgrade, as Express's `trust proxy:
+ * 'loopback'` reads a request's: the socket's own, or, when that is the
+ * proxy on this machine, the right-most `X-Forwarded-For` entry it did not
+ * add itself. Null with none.
+ */
+export function upgradeClientIp(request: IncomingMessage): string | null {
+  const remote = request.socket.remoteAddress
+  if (remote == null) return null
+  const direct = unmapped(remote)
+  if (!isLoopback(direct)) return direct
+  const header = request.headers['x-forwarded-for']
+  const forwarded = (Array.isArray(header) ? header.join(',') : (header ?? ''))
+    .split(',')
+    .map(entry => unmapped(entry.trim()))
+    .filter(entry => entry !== '')
+  for (let at = forwarded.length - 1; at >= 0; --at)
+    if (!isLoopback(forwarded[at])) return forwarded[at]
+  return direct
 }
 
 export interface SearchSocketHandle {
@@ -353,15 +388,40 @@ export function attachSearchSocket(
   const connected = (
     ws: WebSocket,
     actor: Actor | null,
-    token: string | null
+    token: string | null,
+    ip: string | null
   ): void => {
     const reader = readerCache()
+    // The reader's own places are read once for the connection, whose
+    // reader never changes (a sign-in as someone else closes it). The
+    // address's place is kept once found; no answer (none, or none in time
+    // from the primary) is asked again by the next search. The address is
+    // only looked up, never logged or written anywhere.
+    let own: Promise<ReaderPoint[]> | undefined
+    let place: IpPlace | null = null
+    const pointsOf = async (): Promise<ReaderPoint[]> => {
+      own ??= readerPoints(
+        db,
+        connection.actor == null
+          ? null
+          : async () => await reader.of(db, connection.actor!).reach(),
+        () => null
+      )
+      // A failed read is read again by the next search.
+      own.catch(() => {
+        own = undefined
+      })
+      const groups = await own
+      if (groups.length > 0 || ip == null) return groups
+      place ??= (await options.ipPlaces?.lookup(ip)) ?? null
+      return place == null ? [] : [ipPoint(place)]
+    }
     const connection: Connection = {
       ws,
       token,
       actor,
       reader,
-      deps: { ...deps, reader },
+      deps: { ...deps, reader, readerPoints: pointsOf },
       arrived: 0,
       answered: 0,
       jevTimer: undefined,
@@ -400,19 +460,20 @@ export function attachSearchSocket(
     const token =
       sessionToken(request.headers.authorization, request.headers.cookie) ??
       null
+    const ip = upgradeClientIp(request)
     const actor: Promise<Actor | undefined> =
       token == null ? Promise.resolve(undefined) : actorForToken(db, token)
     actor.then(
       found => {
         wss.handleUpgrade(request, socket, head, ws => {
-          if (found != null) connected(ws, found, token)
+          if (found != null) connected(ws, found, token, ip)
           // A bearer token that signs nobody in (expired, or revoked before
           // the socket opened) is refused: the client is told to sign in
           // again. A session cookie that signs nobody in is read as signed
           // out, as `withActor` reads it: the browser keeps a revoked
           // cookie it cannot clear, and its reader is signed out.
           else if (bearer) ws.close(SIGNED_OUT_CLOSE, 'Sign in again')
-          else connected(ws, null, null)
+          else connected(ws, null, null, ip)
         })
       },
       (error: unknown) => {

@@ -1,9 +1,16 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { get as httpGet } from 'node:http'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { createServer as createHttpServer, get as httpGet } from 'node:http'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { gzipSync } from 'node:zlib'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
@@ -40,6 +47,36 @@ async function freePort(): Promise<number> {
       })
     })
   })
+}
+
+/** One signed-out search through the server's search socket: its first frame. */
+async function searchSignedOut(
+  base: string
+): Promise<{ type: string; seq?: number }> {
+  const ws = new WebSocket(
+    `${base.replace(/^http/, 'ws')}${SEARCH_SOCKET_PATH}`
+  )
+  try {
+    return await new Promise((resolve, reject) => {
+      ws.once('error', reject)
+      ws.once('message', data => {
+        resolve(JSON.parse((data as Buffer).toString('utf8')))
+      })
+      ws.once('open', () => {
+        ws.send(
+          JSON.stringify({
+            type: 'search',
+            seq: 1,
+            text: 'nobody here',
+            location: null,
+            mode: 'all'
+          })
+        )
+      })
+    })
+  } finally {
+    ws.close()
+  }
 }
 
 describe('the server process', function () {
@@ -314,29 +351,7 @@ describe('the server process', function () {
         const unknown = await fetch(`${base}/api/v1/no-such-route`)
         expect(unknown.status).equals(404)
         // The search socket takes its upgrade, signed out too.
-        const ws = new WebSocket(
-          `${base.replace(/^http/, 'ws')}${SEARCH_SOCKET_PATH}`
-        )
-        const frame = await new Promise<{ type: string; seq?: number }>(
-          (resolve, reject) => {
-            ws.once('error', reject)
-            ws.once('message', data => {
-              resolve(JSON.parse((data as Buffer).toString('utf8')))
-            })
-            ws.once('open', () => {
-              ws.send(
-                JSON.stringify({
-                  type: 'search',
-                  seq: 1,
-                  text: 'nobody here',
-                  location: null,
-                  mode: 'all'
-                })
-              )
-            })
-          }
-        )
-        ws.close()
+        const frame = await searchSignedOut(base)
         expect(frame).include({ type: 'results', seq: 1 })
         // Each worker builds the place catalog's search indexes once it
         // listens, without waiting for a search.
@@ -348,6 +363,62 @@ describe('the server process', function () {
         expect(ready()).equals(workers)
       })
       expect(code).equals(0)
+    })
+
+    it(`downloads the IP database from ${workers === 1 ? 'the one process' : 'the primary alone'}, and keeps searching when it is unreadable`, async function () {
+      const asked: string[] = []
+      const standIn = createHttpServer((request, response) => {
+        asked.push(request.url ?? '')
+        response.end(gzipSync('not a database'))
+      })
+      await new Promise<void>(resolve => {
+        standIn.listen(0, '127.0.0.1', resolve)
+      })
+      const address = standIn.address()
+      const standInPort =
+        typeof address === 'object' && address != null ? address.port : 0
+      const ipDir = join(dir, `ip-places-${workers}`)
+      try {
+        const code = await start(
+          workers,
+          async (base, said) => {
+            const deadline = Date.now() + 20000
+            while (
+              !said().includes('no database from') &&
+              Date.now() < deadline
+            )
+              await new Promise(resolve => setTimeout(resolve, 50))
+            expect(said().match(/IP places: no database from/g)).length(1)
+            const now = new Date()
+            const month = now.toISOString().slice(0, 7)
+            const last = new Date(
+              Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)
+            )
+              .toISOString()
+              .slice(0, 7)
+            // Both broken: this month's, then last month's, and no more.
+            expect(asked).deep.equals([
+              `/dbip-city-lite-${month}.mmdb.gz`,
+              `/dbip-city-lite-${last}.mmdb.gz`
+            ])
+            // Nothing unreadable is swapped in.
+            expect(readdirSync(ipDir)).deep.equals([])
+            expect(await searchSignedOut(base)).include({
+              type: 'results',
+              seq: 1
+            })
+          },
+          {
+            ipPlaces: {
+              dir: ipDir,
+              source: `http://127.0.0.1:${standInPort}/dbip-city-lite-{month}.mmdb.gz`
+            }
+          }
+        )
+        expect(code).equals(0)
+      } finally {
+        standIn.close()
+      }
     })
 
     it(`runs background jobs only where the flag is on, with ${workers === 1 ? 'one process' : 'a primary and two workers'}`, async function () {

@@ -18,6 +18,7 @@ import {
 } from '../../test/insertFixtureUsers'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
+import type { IpPlace } from '../location/ipPlaces'
 import {
   PERSON_ASSOCIATIONS_MAX,
   type SearchDeps,
@@ -27,6 +28,7 @@ import {
 import { ACTIVITY_ROWS, PEOPLE_ONLY_MAX, PER_KIND } from './gather'
 import { searchReach } from './reach'
 import { type ReaderCache, readerCache } from './readerCache'
+import { readerPoints } from './readerPlace'
 
 /**
  * The search engine against a real database.
@@ -1300,6 +1302,150 @@ describe('search engine', function () {
       expect(ranked!.locations.length).lessThanOrEqual(4)
       const facts = jev.requests[0].body.state?.locations ?? {}
       expect(Object.keys(facts)).length(pills.length)
+    })
+  })
+
+  describe('near the reader', () => {
+    const tables = ['teams', 'leagues'] as const
+    const ids = {
+      teams: ['tem_srchPadres', 'tem_srchRoyals', 'tem_srchTigers'],
+      leagues: ['lea_srchOne', 'lea_srchThree', 'lea_srchTwo']
+    }
+    let saved: Array<{
+      table: (typeof tables)[number]
+      id: string
+      latitude: number | null
+      longitude: number | null
+    }> = []
+    const nearDeps = (actor: Actor | null, ip: IpPlace | null): SearchDeps => ({
+      ...deps,
+      readerPoints: async () =>
+        await readerPoints(
+          db,
+          actor == null ? null : async () => await searchReach(db, actor),
+          () => ip
+        )
+    })
+
+    before(async () => {
+      saved = []
+      for (const table of tables)
+        for (const row of await db
+          .selectFrom(table)
+          .select(['id', 'latitude', 'longitude'])
+          .where('id', 'in', ids[table])
+          .execute())
+          saved.push({ table, ...row })
+      // Only the reader's Padres have a place: San Diego.
+      for (const table of tables)
+        await db
+          .updateTable(table)
+          .set({ latitude: null, longitude: null })
+          .where('id', 'in', ids[table])
+          .execute()
+      await db
+        .updateTable('teams')
+        .set({
+          latitude: 32.7157,
+          longitude: -117.1611,
+          locality: JSON.stringify({
+            city: 'San Diego',
+            region: 'California',
+            country: 'US',
+            placeId: null,
+            timezone: 'America/Los_Angeles'
+          })
+        })
+        .where('id', '=', 'tem_srchPadres')
+        .execute()
+    })
+
+    after(async () => {
+      for (const { table, id, latitude, longitude } of saved)
+        await db
+          .updateTable(table)
+          .set({ latitude, longitude })
+          .where('id', '=', id)
+          .execute()
+    })
+
+    it('ranks a reader’s place pills near their own groups, and tells Jev where they are', async () => {
+      await setKey()
+      const text = ask('teme')
+      const once = await searchOnce(db, reader, text, nearDeps(reader, null))
+      expect(once.locations[0].label).equals('Temecula, CA')
+      expect(once.context.readerPlace).equals('San Diego, CA')
+      await searchJev(db, reader, text, once.context, deps)
+      expect(jev.requests[0].body.state?.reader).deep.equals({
+        place: 'San Diego, CA'
+      })
+      // Without a place, today's order, and Jev hears none.
+      const plain = await searchOnce(db, reader, text, deps)
+      expect(plain.locations.map(location => location.label)).not.includes(
+        'Temecula, CA'
+      )
+      expect(plain.context.readerPlace).equals(null)
+    })
+
+    it('ranks a reader with no placed group, or signed out, near their address', async () => {
+      const altay: IpPlace = {
+        latitude: 47.8445,
+        longitude: 88.1393,
+        city: 'Altay',
+        region: 'Xinjiang',
+        country: 'CN'
+      }
+      const signedOut = await searchOnce(
+        db,
+        null,
+        ask('teme'),
+        nearDeps(null, altay)
+      )
+      expect(signedOut.locations[0].label).matches(/^Temeke/)
+      expect(signedOut.context.readerPlace).equals('Altay, Xinjiang')
+      // Jev is told no place when nothing names the reader's.
+      const unnamed = await searchOnce(
+        db,
+        null,
+        ask('teme'),
+        nearDeps(null, { ...altay, city: '', region: '', country: '' })
+      )
+      expect(unnamed.context.readerPlace).equals(null)
+      // The reader's own groups outrank their address.
+      const member = await searchOnce(
+        db,
+        reader,
+        ask('teme'),
+        nearDeps(reader, altay)
+      )
+      expect(member.locations[0].label).equals('Temecula, CA')
+    })
+
+    it('ranks nothing by nearness when where the reader is cannot be read, and logs it', async () => {
+      const lines: string[] = []
+      const failing: SearchDeps = {
+        ...deps,
+        log: line => {
+          lines.push(line)
+        },
+        readerPoints: async () => {
+          throw new Error('reach unreadable')
+        }
+      }
+      const once = await searchOnce(db, reader, ask('teme'), failing)
+      expect(once.locations.length).greaterThan(0)
+      expect(once.context.readerPlace).equals(null)
+      expect(lines.join('\n')).contains('reach unreadable')
+      // A chosen pill asks for no place pills, nor where the reader is.
+      let asked = 0
+      await searchOnce(db, reader, ask('', { location: demoCity }), {
+        ...deps,
+        readerPoints: async () => {
+          asked++
+          return []
+        }
+      })
+      expect(asked).equals(0)
     })
   })
 })
