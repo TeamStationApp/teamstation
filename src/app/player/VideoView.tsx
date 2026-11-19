@@ -39,6 +39,10 @@ export function VideoView(props: VideoViewProps): React.ReactElement {
   return (
     <video
       ref={take}
+      // For the tests only: whether the page handed this picture an
+      // address. `attachHls` gives the element its stream, so nothing here
+      // reads it; a test reads it to see what a phone's player would be given.
+      data-has-source={props.source != null && props.source !== ''}
       muted={muted}
       controls={controls}
       playsInline

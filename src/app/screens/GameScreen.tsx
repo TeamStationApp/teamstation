@@ -83,6 +83,7 @@ import { landingSec, sameMoment, switchTarget } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { playerEngine } from '../player/engine'
 import { seekTo } from '../player/explicitSeek'
+import { heldSource } from '../player/heldSource'
 import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
@@ -2392,7 +2393,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             // phone's audio session to whatever was playing.
             <>
               <VideoView
-                source={playback.url}
+                // A phone's detach leaves its player holding the stream, so
+                // the angles take the address away; the resume brings the
+                // moment back when they close.
+                source={heldSource(playback.url, {
+                  anglesUp: showAngles,
+                  platform: Platform.OS
+                })}
                 onHandle={takePlayer}
                 controls={false}
                 muted={!cardSound}

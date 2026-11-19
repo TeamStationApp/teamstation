@@ -727,6 +727,68 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(video.currentTime).closeTo(40, 0.001)
   })
 
+  it('in the app, lands a picture that comes back from nothing at the grid’s moment, playing (issue 317)', async function () {
+    // The app hands its own player no source while the angles are up, so it
+    // returns as a fresh player: at its start, until its metadata says so.
+    asApp()
+    const from = { videoId: 'v1', sec: 40 }
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from
+    })
+    const video = inline()
+    // No address for the page's own player while the angles are up.
+    expect(video.getAttribute('data-has-source')).equals('false')
+    const { played } = drive(video, 40)
+    const tile = [...document.querySelectorAll('video')].at(-1)!
+    drive(tile, 40)
+    Object.defineProperty(tile, 'paused', { configurable: true, value: false })
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    video.currentTime = 0
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+    // The address back once they close, for a fresh player to load.
+    expect(video.getAttribute('data-has-source')).equals('true')
+    const landing = (): Element | null =>
+      document.querySelector('[data-testid="gameVideoLanding"]')
+    expect(landing()).not.equals(null)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    await waitToLand()
+    expect(video.currentTime).closeTo(40, 0.001)
+    expect(played()).greaterThan(0)
+  })
+
+  it('in a browser, keeps the page player’s address while the angles are up (issue 317)', async function () {
+    // A browser's detach already lets hls.js and its buffers go.
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from: { videoId: 'v1', sec: 40 }
+    })
+    expect(inline().getAttribute('data-has-source')).equals('true')
+    // Closed, as a viewer leaves them, before the page goes.
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+  })
+
   it('puts the picture back at the player’s moment, playing as the player was, when Back takes the player away', async function () {
     const from = { videoId: 'v1', sec: 40 }
     const view = await page([videoOf('v1', START)], {
