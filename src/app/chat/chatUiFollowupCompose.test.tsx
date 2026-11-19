@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -5,7 +7,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AppState, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
+import { activeConversation } from '../push/activeConversation'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { whileChatBrowserOpen } from './chatBrowserVisibility'
 import { ChatDropTarget } from './ChatDropTarget'
 import { ChatDropTarget as NativeDropTarget } from './ChatDropTarget.native'
 import * as browserFiles from './chatFiles'
@@ -841,6 +845,62 @@ describe('chat read sessions preserve personal unread', function () {
       if (originalHidden == null) Reflect.deleteProperty(document, 'hidden')
       else Object.defineProperty(document, 'hidden', originalHidden)
     }
+  })
+
+  it('keeps delivery unread and notifications enabled while Safari covers the conversation', async function () {
+    const { engine, reads } = unreadSessionEngine()
+    const id = 'cnv_aurora'
+    await screen(engine)
+    expect(activeConversation()).equals(id)
+    let dismiss!: () => void
+    const sheet = new Promise<void>(resolve => {
+      dismiss = resolve
+    })
+    let opening!: Promise<void>
+    try {
+      await act(async () => {
+        opening = whileChatBrowserOpen(async () => {
+          await sheet
+        })
+        await wait()
+      })
+      expect(activeConversation()).equals(null)
+      const visibleReads = reads.length
+      await whileChatBrowserOpen(async () => {
+        throw new Error('Repeated tap opened another sheet')
+      })
+      await act(async () => {
+        const opened = engine.views.get(id)!
+        engine.update(id, {
+          messages: [
+            ...opened.messages,
+            message({ id: 'msg_under_browser', seq: 2, body: 'While browsing' })
+          ],
+          conversation: { ...opened.conversation, unread: 1 }
+        })
+        await wait()
+      })
+      expect(reads.length).equals(visibleReads)
+      expect(engine.views.get(id)?.conversation.unread).equals(1)
+    } finally {
+      await act(async () => {
+        dismiss()
+        await opening
+        await wait()
+      })
+    }
+    expect(activeConversation()).equals(id)
+    expect(engine.views.get(id)?.conversation.unread).equals(0)
+    await act(async () => {
+      await assert.rejects(
+        whileChatBrowserOpen(async () => {
+          throw new Error('Unavailable presenter')
+        }),
+        /Unavailable presenter/
+      )
+      await wait()
+    })
+    expect(activeConversation()).equals(id)
   })
 
   it('reads nothing while iOS covers the app (inactive), and reads once it is active again', async function () {
