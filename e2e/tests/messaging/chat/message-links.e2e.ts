@@ -503,18 +503,20 @@ async function open(ctx: E2eContext): Promise<void> {
         if (web != null) await m.pressKey({ key: 'Enter' })
         else await m.tapOn({ text: '^Send$', timeout: 8000 })
         const deadline = Date.now() + 20000
-        let sent = false
-        while (!sent && Date.now() < deadline) {
+        let sentId: string | undefined
+        while (sentId == null && Date.now() < deadline) {
           const latest = await observer.engine.open(f.conversationId)
-          sent = latest.messages.some(
+          sentId = latest.messages.find(
             message => message.mine && message.body === body
-          )
-          if (!sent) await delay(350)
+          )?.id
+          if (sentId == null) await delay(350)
         }
         assert(
-          sent,
+          sentId != null,
           'The bound UI actor must send the exact text to the configured room'
         )
+        const row = '[data-testid="chat-message-' + sentId + '"]'
+        const renderedBody = '[data-testid="chat-message-body-' + sentId + '"]'
         await sender.engine.fillGrants()
         const file = await sender.engine.attach(
           f.conversationId,
@@ -534,18 +536,11 @@ async function open(ctx: E2eContext): Promise<void> {
         await m.assertVisible({ id: 'chat-message-' + file.id, timeout: 20000 })
         await m.assertVisible({ text: exact(second), timeout: 20000 })
         if (web != null) {
-          const anchors = await web.page.$$eval(
-            '[data-testid^="chat-message-body-"]',
-            (rows, body) => {
-              const row = rows.find(el => el.textContent === body)
-              return row != null
-                ? [...row.querySelectorAll('a')].map(el => [
-                    el.textContent,
-                    el.href
-                  ])
-                : []
-            },
-            body
+          const anchors = await web.page.$eval(renderedBody, el =>
+            [...el.querySelectorAll('a')].map(link => [
+              link.textContent,
+              link.href
+            ])
           )
           assert.deepEqual(anchors, [
             [first, first],
@@ -580,11 +575,17 @@ async function open(ctx: E2eContext): Promise<void> {
         await m.tapOn(
           web == null
             ? { text: exact(internal), timeout: 8000 }
-            : { css: 'a[href="' + internal + '"]', timeout: 8000 }
+            : {
+                css: renderedBody + ' a[href="' + internal + '"]',
+                timeout: 8000
+              }
         )
         await m.assertVisible({ text: '^Schedule$' })
         if (web != null) {
-          assert.equal(new URL(web.page.url()).pathname, '/schedule')
+          await web.page.waitForFunction(
+            () => location.pathname === '/schedule',
+            { timeout: 10000 }
+          )
           await m.evalBrowserScript({ script: 'history.back(); return true' })
         } else {
           // The Schedule tab is at the root, so returning uses the retained
@@ -603,22 +604,8 @@ async function open(ctx: E2eContext): Promise<void> {
           // A pointer entering the row reveals the desktop ellipsis. The
           // browser callback is scoped to the message the test just sent.
           await m.evalBrowserScript({
-            script: `const row = [...document.querySelectorAll('[data-testid^="chat-message-body-"]')].find(el => el.textContent === ${JSON.stringify(body)}); if (!row) throw Error('Sent row missing'); row.closest('[data-testid^="chat-message-"]:not([data-testid^="chat-message-body-"])').dispatchEvent(new PointerEvent('pointerenter')); return true`
+            script: `const row=document.querySelector(${JSON.stringify(row)}); row.dispatchEvent(new PointerEvent('pointerenter')); return true`
           })
-          const rowId = await web.page.$$eval(
-            '[data-testid^="chat-message-body-"]',
-            (rows, body) => {
-              const row = rows.find(el => el.textContent === body)
-              return row != null
-                ? row
-                    .getAttribute('data-testid')!
-                    .slice('chat-message-body-'.length)
-                : undefined
-            },
-            body
-          )
-          assert(rowId != null && rowId !== '')
-          const row = '[data-testid="chat-message-' + rowId + '"]'
           await m.tapOn({
             css: row + ' [aria-label="More message actions"]',
             timeout: 8000
