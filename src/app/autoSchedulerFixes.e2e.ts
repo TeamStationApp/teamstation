@@ -1460,8 +1460,14 @@ async function f7(run: Run): Promise<void> {
     { timeout: 15000 }
   )
   await new Promise(resolve => setTimeout(resolve, 1000))
+  // The scene on top: the Auto-Scheduler beneath it stays mounted, with its
+  // "Open <season>" links (a86703d7e).
   const rows = await b.page.evaluate(() =>
-    [...document.querySelectorAll('[aria-label^="Open "]')]
+    [
+      ...document.querySelectorAll(
+        '[data-scene-role="top"] [aria-label^="Open "]'
+      )
+    ]
       .map(node =>
         String(node.getAttribute('aria-label')).slice('Open '.length)
       )

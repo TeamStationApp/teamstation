@@ -117,6 +117,21 @@ async function pause(ms: number): Promise<void> {
 }
 
 describe('E1: the time each scoring action was taken', function () {
+  /** The field's presentation and gestures, read off its React props. */
+  const FIELD_STATE = `(() => {
+    const host = document.querySelector('[aria-label="Baseball field"]')
+    if (host == null) return 'no field'
+    const key = Object.keys(host).find(name => name.startsWith('__reactFiber$'))
+    for (let fiber = host[key]; fiber != null; fiber = fiber.return) {
+      const props = fiber.memoizedProps
+      if (props == null || props.interaction == null) continue
+      const shown = props.presentation == null ? 'no presentation'
+        : 'presentation ' + props.presentation.id + ' ' + props.presentation.stage
+      return shown + (props.presentationPaused ? ' paused' : '') +
+        ', gestures ' + JSON.stringify(props.interaction.gestures)
+    }
+    return 'no interaction'
+  })()`
   let browser: Browser
   let token = ''
   let gameId = ''
@@ -139,7 +154,11 @@ describe('E1: the time each scoring action was taken', function () {
         `document.querySelector(${JSON.stringify(css)})?.getAttribute('aria-disabled') === 'true'`
       )
       if (!disabled) break
-      if (Date.now() > until) throw new Error(`${label} stayed disabled`)
+      if (Date.now() > until)
+        // What held it: a play still presenting, or the field's own state.
+        throw new Error(
+          `${label} stayed disabled; the field holds ${await probe<string>(FIELD_STATE)}`
+        )
       await new Promise(resolve => setTimeout(resolve, 100))
     }
     const from = Date.now()
