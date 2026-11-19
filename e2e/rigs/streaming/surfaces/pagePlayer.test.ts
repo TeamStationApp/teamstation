@@ -15,6 +15,8 @@ import type { Rect } from './regions'
 const AREA: Rect = { x: 0.4, y: 100.3, width: 389.2, height: 219.6 }
 const JUMP: Rect = { x: 300, y: 110, width: 80, height: 30 }
 const FULL: Rect = { x: 350, y: 290, width: 30, height: 24 }
+/** The angles' full-screen player's ✕, in the screen's corner, outside the picture. */
+const CLOSE: Rect = { x: 8, y: 50, width: 40, height: 40 }
 
 function pageTree(
   options: {
@@ -22,13 +24,16 @@ function pageTree(
     times?: string[]
     jump?: boolean
     fullScreen?: string | null
+    /** The angles' full-screen player's ✕ is up. */
+    close?: boolean
   } = {}
 ): HierarchyNode {
   const {
     area = '6 minutes 32 seconds',
     times = ['6:32', '1:05:00'],
     jump = true,
-    fullScreen = 'fullscreen'
+    fullScreen = 'fullscreen',
+    close = false
   } = options
   const timeNodes: HierarchyNode[] = times.map((text, index) => ({
     type: 'StaticText',
@@ -56,6 +61,7 @@ function pageTree(
         text: 'Game 0000',
         bounds: { x: 0, y: 40, width: 390, height: 30 }
       },
+      ...(close ? [{ type: 'Button', text: 'Close', bounds: CLOSE }] : []),
       // A time outside the picture is never one of its times.
       {
         type: 'StaticText',
@@ -111,6 +117,17 @@ describe('reading the game page’s player', function () {
     expect(
       readPagePlayer(pageTree({ fullScreen: 'fullscreen button' }))?.fullScreen
     ).equals(null)
+  })
+
+  it('reads the angles’ full-screen player, which names no fullscreen_exit, by its ✕', function () {
+    const angles = readPagePlayer(pageTree({ fullScreen: null, close: true }))
+    expect(angles?.close).deep.equals(CLOSE)
+    expect(angles?.isFullScreen).equals(true)
+    expect(readPagePlayer(pageTree())?.close).equals(null)
+    // Another panel's Close on the page: the page's own button decides.
+    expect(readPagePlayer(pageTree({ close: true }))?.isFullScreen).equals(
+      false
+    )
   })
 
   it('has no fraction for a zero duration, and never more than the whole line', function () {
@@ -192,6 +209,7 @@ describe('driving the game page’s player in Safari', function () {
   // The middles of the buttons.
   const JUMP_AT = '340,125'
   const FULL_AT = '365,302'
+  const CLOSE_AT = '28,70'
 
   it('scrubs on the page: reveals at the bottom-left, then taps the line at the fraction', async function () {
     const { surface: safari, calls, sleeps } = surface(pageTree())
@@ -255,6 +273,34 @@ describe('driving the game page’s player in Safari', function () {
     calls.length = 0
     await safari.scrub(0.5)
     expect(points(calls)).deep.equals([REVEAL, FULL_AT, REVEAL, '190,294'])
+  })
+
+  it('leaves the angles’ full-screen player by its ✕, back to the page for the next action', async function () {
+    // The page's full-screen button opens the angles' own player, whose way
+    // out is its ✕ (Close), not a fullscreen_exit.
+    let full = false
+    let seen = 0
+    let read: Call[] = []
+    const tree = (): HierarchyNode => {
+      for (const [name, arg] of read.slice(seen)) {
+        const point = (arg as { point?: string } | undefined)?.point
+        if (name !== 'tapOn') continue
+        if (!full && point === FULL_AT) full = true
+        else if (full && point === CLOSE_AT) full = false
+      }
+      seen = read.length
+      return full ? pageTree({ fullScreen: null, close: true }) : pageTree()
+    }
+    const { surface: safari, calls } = surface(tree)
+    read = calls
+    await safari.rapidScrub([0.5], 0)
+    await safari.scrub(1)
+    expect(full, 'in full screen for the second').equals(true)
+    calls.length = 0
+    seen = 0
+    await safari.rapidScrub([0.5], 0)
+    expect(points(calls)).deep.equals([REVEAL, CLOSE_AT, REVEAL, '190,294'])
+    expect(full, 'back on the page for the third').equals(false)
   })
 
   it('stays on the page when the player has no full-screen button', async function () {

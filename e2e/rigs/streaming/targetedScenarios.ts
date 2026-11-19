@@ -9,7 +9,8 @@ import {
   type TargetedSession,
   type TargetedSetup,
   waitFor,
-  type Watcher
+  type Watcher,
+  type WatcherRole
 } from './targeted'
 
 /**
@@ -815,13 +816,24 @@ export function streamCuts(
   options: {
     /** Whole ladders to finish however long they take, before the minutes count. */
     fullLadders?: number
+    /** The cut lengths, in seconds, taken in turn: CUT_LADDER_SEC unless a scenario repeats one. */
+    ladder?: number[]
+    /** The watchers: all five unless a scenario narrows them. */
+    watchers?: WatcherRole[]
   } = {}
 ): TargetedScenario {
-  const rounds = (options.fullLadders ?? 0) * CUT_LADDER_SEC.length
+  const ladder = options.ladder ?? CUT_LADDER_SEC
+  const rounds = (options.fullLadders ?? 0) * ladder.length
   return {
     setup: {
       synthetic: ['SynthA', 'SynthB', 'SynthC', 'SynthD'],
-      watchers: ['iphone', 'android', 'chrome', 'tv', 'safari'],
+      watchers: options.watchers ?? [
+        'iphone',
+        'android',
+        'chrome',
+        'tv',
+        'safari'
+      ],
       safariAngle: 'SynthA',
       leadMs: MIN
     },
@@ -829,7 +841,7 @@ export function streamCuts(
       const angle = 'SynthA'
       const endMs = session.now() + minutes * MIN
       for (let round = 0; round < rounds || session.now() < endMs; round++) {
-        const seconds = CUT_LADDER_SEC[round % CUT_LADDER_SEC.length]
+        const seconds = ladder[round % ladder.length]
         const before = new Map<Watcher, number | null>()
         await Promise.all(
           session.watchers.map(async watcher => {

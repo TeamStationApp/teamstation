@@ -23,6 +23,7 @@ import {
   overall,
   Recorder,
   runTargeted,
+  safariGameUrl,
   spreadMs,
   type StepRecord,
   type TargetedDeps,
@@ -69,6 +70,15 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 }
 
 describe('the targeted helpers', function () {
+  it('opens Safari’s game page under ?debug=1 only when SAFARI_DEBUG=1 says so', function () {
+    const link = 'https://e2e-01.teamstation.app/games/game_1?tab=watch'
+    expect(safariGameUrl(link, {})).equals(link)
+    expect(safariGameUrl(link, { SAFARI_DEBUG: '0' })).equals(link)
+    expect(safariGameUrl(link, { SAFARI_DEBUG: '1' })).equals(
+      'https://e2e-01.teamstation.app/games/game_1?tab=watch&debug=1'
+    )
+  })
+
   it('puts the bar at a moment of the take, within its ends', function () {
     expect(fractionFor(T0 + 30_000, T0, T0 + 120_000)).equals(0.25)
     expect(fractionFor(T0 - 1, T0, T0 + 120_000)).equals(0)

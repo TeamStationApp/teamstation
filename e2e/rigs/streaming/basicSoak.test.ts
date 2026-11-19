@@ -201,6 +201,40 @@ describe('the basic streaming soak', function () {
     expect(basicWindows(5).final).deep.equals([6 * MIN, 6 * MIN])
   })
 
+  it('cycles only the scrub kinds a scenario names, from a different one per watcher', function () {
+    const plan = planActions(0, 10 * MIN, 2, MIN, ['rapidScrub', 'scrubRight'])
+    expect(plan.slice(0, 4).map(p => [p.watcher, p.action])).deep.equals([
+      [0, 'rapidScrub'],
+      [1, 'scrubRight'],
+      [0, 'scrubRight'],
+      [1, 'rapidScrub']
+    ])
+    expect(new Set(plan.map(p => p.action))).deep.equals(
+      new Set(['rapidScrub', 'scrubRight'])
+    )
+  })
+
+  it('does only rapid scrubs and samples no memory when a scenario says so', async function () {
+    const fake = fakeSession()
+    const scenario = basicScrub({
+      minutes: 6,
+      random: () => 0.5,
+      actions: ['rapidScrub'],
+      memory: false,
+      frameLog: false
+    })
+    expect(scenario.setup.memory).equals(false)
+    expect(basicScrub({ minutes: 6, random: () => 0.5 }).setup.memory).equals(
+      true
+    )
+    await scenario.run(fake.session)
+    const recoveries = fake.steps
+      .filter(s => s.step.startsWith('recover-'))
+      .map(s => s.step)
+    expect(recoveries.length).greaterThan(0)
+    expect(new Set(recoveries)).deep.equals(new Set(['recover-rapidScrub']))
+  })
+
   it('records every look, every scrub’s recovery, every frame and memory, and writes its report', async function () {
     const fake = fakeSession()
     await basicScrub({ minutes: 6, random: () => 0.5 }).run(fake.session)

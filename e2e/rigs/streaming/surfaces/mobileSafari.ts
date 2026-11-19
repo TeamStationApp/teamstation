@@ -105,16 +105,21 @@ export class MobileSafariSurface extends TouchSurface {
   /**
    * Every other action happens in full screen: entered before it, left before
    * the next, so scrubbing and Jump to present are tried both on the page and
-   * full screen. Where it is now is read from its full-screen button each
-   * time: a relaunch opens it on the page, and Safari can leave full screen
-   * on its own.
+   * full screen. Where it is now is read each time, from its full-screen
+   * button or the full-screen player's ✕: a relaunch opens it on the page,
+   * and Safari can leave full screen on its own.
    */
   private async alternate(): Promise<void> {
     const wantFull = this.actions++ % 2 === 1
     const player = await this.pagePlayer()
-    if (player.fullScreen == null || player.isFullScreen === wantFull) return
+    if (player.isFullScreen === wantFull) return
+    // Out of the angles' full-screen player by its ✕, into it by the page's
+    // full-screen button.
+    const button =
+      !wantFull && player.close != null ? player.close : player.fullScreen
+    if (button == null) return
     await this.reveal(player.area)
-    await this.press(player.fullScreen)
+    await this.press(button)
     await this.sleep(1500)
   }
 

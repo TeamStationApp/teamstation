@@ -570,7 +570,7 @@ export async function runTargeted(
           surface: new MobileSafariSurface({
             name: role,
             device,
-            gameUrl: world.links.web,
+            gameUrl: safariGameUrl(world.links.web),
             ...(setup.safariAngle == null ? {} : { angle: setup.safariAngle }),
             saveShot: kit.saveShot
           }),
@@ -728,4 +728,18 @@ export async function runTargeted(
       .map(([surface]) => surface),
     steps: ctx.artifact('targeted.jsonl')
   }
+}
+
+/**
+ * The game page Safari opens: with `SAFARI_DEBUG=1`, under `?debug=1`, so
+ * every screenshot carries the player's readout of what its tile is doing.
+ */
+export function safariGameUrl(
+  link: string,
+  env: Record<string, string | undefined> = process.env
+): string {
+  if (env.SAFARI_DEBUG !== '1') return link
+  const url = new URL(link)
+  url.searchParams.set('debug', '1')
+  return url.toString()
 }
