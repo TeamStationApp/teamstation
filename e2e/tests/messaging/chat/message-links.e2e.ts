@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
-import { signInTestAccount } from '../../../../src/test/passwordFixtures'
 import { signInWithPassword } from '../../../core/fixtures'
 import type { MaestroDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
@@ -15,6 +14,7 @@ import {
   setServer
 } from '../../../rigs/app/setServer'
 import {
+  authenticatedActor,
   destinationPage,
   fixtureFor,
   providerFor
@@ -27,21 +27,59 @@ const exact = (s: string): string =>
 async function waitForComposer(
   m: MaestroDevice,
   observer: Awaited<ReturnType<typeof providerFor>>,
-  platform: string
+  platform: string,
+  web?: WebSession
 ): Promise<void> {
   let approved = false
+  let readySince: number | undefined
   const deadline = Date.now() + 60000
   while (Date.now() < deadline) {
     const nodes = flattenPublicHierarchy(await m.hierarchy())
-    if (nodes.some(node => node.id === composer.id)) return
     const labels = nodes.map(node => node.text ?? '')
-    if (labels.includes('Use a password instead')) {
+    if (web != null) {
+      const notices = await web.page.$$eval(
+        '[role="dialog"],[aria-modal="true"]',
+        dialogs => dialogs.map(dialog => dialog.textContent)
+      )
+      if (
+        notices.some(
+          text =>
+            text != null &&
+            text.includes('asks to read your chats') &&
+            text.includes('Later')
+        )
+      ) {
+        await m.tapOn({ text: '^Later$', timeout: 5000 })
+        readySince = undefined
+        continue
+      }
+    }
+    if (
+      labels.includes('Later') &&
+      labels.some(label => label.includes('asks to read your chats'))
+    ) {
+      await m.tapOn({ text: '^Later$', timeout: 5000 })
+    } else if (labels.includes('Use a password instead')) {
       await signInWithPassword(m, observer.person)
     } else if (labels.includes('I’m 13 or Older')) {
       await m.tapOn({ text: 'I’m 13 or Older' })
     } else if (nodes.some(node => node.id === 'notification-ask-not-now')) {
       await m.tapOn({ id: 'notification-ask-not-now' })
+    } else if (
+      nodes.some(node => node.id === composer.id) ||
+      (web != null &&
+        (await web.page.$('[data-testid="chat-composer"]')) != null)
+    ) {
+      // Give the initial app-level request and notification dialogs time to mount.
+      if (readySince != null && Date.now() - readySince > 1500) return
+      readySince ??= Date.now()
     } else if (!approved) {
+      if (web != null)
+        labels.push(
+          ...(await web.page.$$eval('[aria-label^="Six-digit code "]', nodes =>
+            nodes.map(node => node.getAttribute('aria-label')!)
+          ))
+        )
       const code = labels
         .map(label => /^(?:Six-digit code )?(\d{3})\s?(\d{3})$/.exec(label))
         .find(Boolean)
@@ -63,6 +101,7 @@ async function openExternal(
   keyboard = false,
   activeBrowser?: () => void
 ): Promise<void> {
+  const original = web?.page.url()
   const path = new URL(url)
   const marker = path.pathname + path.search + path.hash
   if (keyboard && web != null) {
@@ -71,28 +110,72 @@ async function openExternal(
     })
     await m.pressKey({ key: 'Enter' })
   } else {
-    await m.tapOn({ text: exact(url) })
+    await m.tapOn(
+      web == null
+        ? { text: exact(url), timeout: 8000 }
+        : { css: 'a[href="' + url + '"]', timeout: 8000 }
+    )
   }
   if (web != null) {
-    await web.page.browser().waitForTarget(target => target.url() === url)
+    const target = await web.page
+      .browser()
+      .waitForTarget(target => target.url() === url)
+    const page = await target.page()
+    assert(page != null)
+    await page.waitForSelector('#address', { visible: true })
+    assert.deepEqual(
+      await page.$eval('#address', el => [
+        el.textContent,
+        location.href,
+        window.opener === null
+      ]),
+      [marker, url, true]
+    )
     await m.switchTab({ url })
-  }
-  await m.assertVisible({ text: exact(marker), timeout: 20000 })
-  if (web != null) {
-    const result = await m.evalBrowserScript({
-      script: 'return JSON.stringify([location.href, window.opener === null])'
-    })
-    assert.deepEqual(JSON.parse(result.data), [url, true])
-    await m.closeTab({})
-  } else if (platform === 'ios') {
-    // Done dismisses the app's Safari sheet; switching into Safari.app would
-    // leave the conversation in a different app and fail this check.
-    await m.tapOn({ text: '^Done$' })
+    await m.closeTab()
+    await m.switchTab({ url: original })
   } else {
-    activeBrowser?.()
-    await m.pressKey({ key: 'BACK' })
+    await m.assertVisible({ text: exact(marker), timeout: 20000 })
+    if (platform === 'ios') {
+      // Done dismisses the app's Safari sheet.
+      await m.tapOn({ text: '^Done$' })
+    } else {
+      activeBrowser?.()
+      await m.pressKey({ key: 'BACK' })
+    }
   }
   await m.assertVisible({ ...composer, timeout: 10000 })
+}
+
+async function showLink(
+  m: MaestroDevice,
+  web: WebSession,
+  url: string
+): Promise<void> {
+  const selector = 'a[href="' + url + '"]'
+  await web.page.waitForFunction(
+    (selector: string) =>
+      document.querySelector(selector) != null ||
+      document.querySelector('[data-testid="chat-jump-latest"]') != null,
+    { timeout: 10000 },
+    selector
+  )
+  if ((await web.page.$(selector)) == null) {
+    await m.tapOn({ id: 'chat-jump-latest', timeout: 5000 })
+    await web.page.waitForSelector(selector, { timeout: 10000 })
+  }
+  await m.evalBrowserScript({
+    script: `
+    const link=document.querySelector('a[href="' + ${JSON.stringify(url)} + '"]')
+    if (!link) throw Error('Expected the message link in its chat row')
+    link.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'})
+    for (let n=0;n<15;n++) {
+      await new Promise(resolve=>setTimeout(resolve,80))
+      const r=link.getClientRects()[0]
+      if (r && link.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))) return true
+    }
+    throw Error('The message link is outside the readable viewport')`
+  })
 }
 
 async function linkPosition(
@@ -117,6 +200,37 @@ async function linkPosition(
   return { x: Math.round(x + width / 2), y: Math.round(y + height / 2) }
 }
 
+// The Maestro web driver models longPressOn and swipe with a mouse. Use the
+// browser's Touch objects on the same device to exercise its touch responder.
+async function touchLink(
+  m: MaestroDevice,
+  url: string,
+  move: boolean
+): Promise<void> {
+  await m.evalBrowserScript({
+    script: `
+    const link = document.querySelector('a[href="' + ${JSON.stringify(url)} + '"]')
+    const rect = link.getClientRects()[0]
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2
+    function touch(type, dx, end = false) {
+      const point = new Touch({identifier: 1, target: link, clientX: x + dx, clientY: y,
+        pageX: x + dx + scrollX, pageY: y + scrollY, screenX: x + dx, screenY: y})
+      link.dispatchEvent(new TouchEvent(type, {bubbles: true, cancelable: true,
+        touches: end ? [] : [point], targetTouches: end ? [] : [point], changedTouches: [point]}))
+    }
+    touch('touchstart', 0)
+    const dx = ${move ? -28 : 0}
+    if (dx) {
+      await new Promise(resolve => setTimeout(resolve, 120))
+      touch('touchmove', dx)
+    }
+    await new Promise(resolve => setTimeout(resolve, 700))
+    touch('touchend', dx, true)
+    link.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, clientX:x+dx, clientY:y}))
+    return true`
+  })
+}
+
 async function cancelHold(
   m: MaestroDevice,
   web: WebSession | undefined,
@@ -127,13 +241,15 @@ async function cancelHold(
   const pagesBefore = (await browser?.pages())?.length
   // Move farther than the message's hold tolerance before the half-second
   // deadline, horizontally so the row remains in the same reading position.
-  await m.swipe({
-    startX: before.x,
-    startY: before.y,
-    endX: before.x - 28,
-    endY: before.y,
-    duration: 250
-  })
+  if (web != null) await touchLink(m, url, true)
+  else
+    await m.swipe({
+      startX: before.x,
+      startY: before.y,
+      endX: before.x - 28,
+      endY: before.y,
+      duration: 250
+    })
   await m.assertNotVisible({ id: 'chat-message-spotlight', timeout: 1000 })
   await m.assertVisible(composer)
   assert.equal((await browser?.pages())?.length, pagesBefore)
@@ -147,10 +263,13 @@ async function cancelHold(
 async function copyMessage(
   m: MaestroDevice,
   web: WebSession | undefined,
-  selector: object,
+  url: string,
   body: string
 ): Promise<void> {
-  await m.longPressOn(selector)
+  if (web != null) {
+    await showLink(m, web, url)
+    await touchLink(m, url, false)
+  } else await m.longPressOn({ text: exact(url) })
   await m.assertVisible({ text: '^Copy$', timeout: 6000 })
   if (web != null) {
     const clone = await web.page.$(
@@ -183,6 +302,104 @@ async function copyMessage(
     )
     await m.eraseText({ characters: body.length })
     await m.hideKeyboard()
+  }
+}
+
+async function verifyWrappedAttention(
+  m: MaestroDevice,
+  web: WebSession,
+  sender: Awaited<ReturnType<typeof providerFor>>,
+  room: string,
+  reader: string,
+  url: string
+): Promise<void> {
+  const history = `document.querySelector('[data-testid="chat-message-history"]')`
+  const count = { id: 'chat-attention-count' }
+  const size = async (width: number): Promise<void> => {
+    await web.page.setViewport({
+      width,
+      height: 780,
+      hasTouch: true,
+      isMobile: true
+    })
+  }
+  await size(590)
+  const filler = Array.from(
+    { length: 32 },
+    (_, i) => 'Score sheet line ' + (i + 1)
+  ).join('\n')
+  const spacer = await sender.engine.sendText(room, filler)
+  assert(spacer != null)
+  await web.page.waitForSelector(
+    '[data-testid="chat-message-body-' + spacer.id + '"]'
+  )
+  await m.evalBrowserScript({
+    script: `
+    const list = ${history}
+    list.dispatchEvent(new WheelEvent('wheel', {bubbles:true,deltaY:-350}))
+    list.scrollTop = Math.max(0,list.scrollHeight-list.clientHeight-350)
+    await new Promise(resolve => setTimeout(resolve,450))
+    if (list.scrollHeight-list.clientHeight-list.scrollTop < 260) throw Error('Reader must be above the live edge')
+    return true`
+  })
+  const mention = await sender.engine.sendText(
+    room,
+    'Scoring details: ' +
+      url +
+      ' Review the next game on the updated schedule.'.repeat(7),
+    { mentions: [reader] }
+  )
+  assert(mention != null)
+  await m.assertVisible({ ...count, timeout: 15000 })
+  const tail = await sender.engine.sendText(room, 'End of this score sheet.')
+  assert(tail != null)
+  const selector = '[data-testid="chat-message-body-' + mention.id + '"]'
+  await web.page.waitForSelector(selector)
+  let initialHeight = 0
+  for (const step of ['partial', 'narrow', 'full']) {
+    if (step === 'narrow') await size(395)
+    const full = step === 'full'
+    const result = await m.evalBrowserScript({
+      script: `
+      const list=${history}
+      const body=document.querySelector(${JSON.stringify(selector)})
+      const band=document.querySelector('[data-testid="chat-composer-band"]')
+      const frameTop = document.querySelector('[data-testid="chat-conversation-identity"]').getBoundingClientRect().bottom
+      for (let i=0;i<10;i++){
+        const bottom=Math.min(list.getBoundingClientRect().bottom,band.getBoundingClientRect().top)
+        const rect=body.getBoundingClientRect(), wanted=${full ? 'rect.height + 6' : '7'}
+        const delta=rect.top-bottom+wanted
+        if (Math.abs(delta) < 2 && i>0)
+          return JSON.stringify([rect.height,rect.top,rect.bottom,bottom,frameTop])
+        list.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:delta}))
+        list.scrollTop+=delta
+        await new Promise(resolve=>setTimeout(resolve,120))
+      }
+      throw Error('Could not place the measured linked row in the reading band')`
+    })
+    const [height, top, bottom, bandBottom, bandTop] = JSON.parse(
+      result.data
+    ) as number[]
+    assert(height > 48, 'The linked message must wrap over multiple lines')
+    if (full) {
+      assert(
+        top >= bandTop && bottom <= bandBottom,
+        'The entire linked body must be readable'
+      )
+      await m.assertNotVisible({ ...count, timeout: 5000 })
+    } else {
+      assert(
+        top < bandBottom && top + 24 > bandBottom,
+        'Only part of the leading line must be readable'
+      )
+      await m.assertVisible(count)
+      if (step === 'partial') initialHeight = height
+      else
+        assert(
+          height > initialHeight,
+          'Narrowing the viewport must rewrap the same body'
+        )
+    }
   }
 }
 
@@ -221,10 +438,7 @@ async function open(ctx: E2eContext): Promise<void> {
         if (web != null) {
           await web.page.browserContext().setCookie({
             name: 'ts_session',
-            value: await signInTestAccount(
-              f.origin + '/api/v1',
-              observer.person
-            ),
+            value: (await authenticatedActor(f, f.observer, 'browser')).token,
             domain: new URL(f.origin).hostname,
             path: '/',
             httpOnly: true,
@@ -268,7 +482,7 @@ async function open(ctx: E2eContext): Promise<void> {
               link: appLink(room)
             })
           }
-          await waitForComposer(m, observer, platform)
+          await waitForComposer(m, observer, platform, web)
         }
         await enter()
         const id = randomUUID().slice(0, 8)
@@ -286,7 +500,8 @@ async function open(ctx: E2eContext): Promise<void> {
         const caption = 'Score sheet ' + id + ': ' + second
         await m.tapOn(composer)
         await m.inputText({ text: body })
-        await m.tapOn({ text: '^Send$' })
+        if (web != null) await m.pressKey({ key: 'Enter' })
+        else await m.tapOn({ text: '^Send$', timeout: 8000 })
         const deadline = Date.now() + 20000
         let sent = false
         while (!sent && Date.now() < deadline) {
@@ -362,7 +577,11 @@ async function open(ctx: E2eContext): Promise<void> {
         }
         await openExternal(m, web, platform, first, false, activeBrowser)
         await openExternal(m, web, platform, second, true, activeBrowser)
-        await m.tapOn({ text: exact(internal) })
+        await m.tapOn(
+          web == null
+            ? { text: exact(internal), timeout: 8000 }
+            : { css: 'a[href="' + internal + '"]', timeout: 8000 }
+        )
         await m.assertVisible({ text: '^Schedule$' })
         if (web != null) {
           assert.equal(new URL(web.page.url()).pathname, '/schedule')
@@ -372,8 +591,15 @@ async function open(ctx: E2eContext): Promise<void> {
           // Messages tab in the app's navigation.
           await m.tapOn({ text: '^(Messages|Chat)$' })
         }
-        await m.assertVisible({ text: exact(first), timeout: 12000 })
+        if (web == null)
+          await m.assertVisible({ text: exact(first), timeout: 12000 })
         if (web != null) {
+          await web.page.waitForFunction(
+            (path: string) => location.pathname === path,
+            { timeout: 10000 },
+            room
+          )
+          await showLink(m, web, first)
           // A pointer entering the row reveals the desktop ellipsis. The
           // browser callback is scoped to the message the test just sent.
           await m.evalBrowserScript({
@@ -393,8 +619,11 @@ async function open(ctx: E2eContext): Promise<void> {
           )
           assert(rowId != null && rowId !== '')
           const row = '[data-testid="chat-message-' + rowId + '"]'
-          await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
-          await m.tapOn({ text: '^Copy$' })
+          await m.tapOn({
+            css: row + ' [aria-label="More message actions"]',
+            timeout: 8000
+          })
+          await m.tapOn({ text: '^Copy text$', timeout: 8000 })
           assert.equal(
             await web.page.evaluate(
               async () => await navigator.clipboard.readText()
@@ -409,13 +638,20 @@ async function open(ctx: E2eContext): Promise<void> {
           })
           await enter()
         }
+        if (web != null) await showLink(m, web, first)
         await cancelHold(m, web, first)
         await m.tapOn(composer)
+        if (web != null) await showLink(m, web, second)
         const reading = await linkPosition(m, web, second)
-        await m.longPressOn({ text: exact(second) })
+        if (web != null) await touchLink(m, second, false)
+        else await m.longPressOn({ text: exact(second) })
         await m.assertVisible({ id: 'chat-message-spotlight' })
-        await m.tapOn({ text: '^Cancel$' })
-        await m.assertNotVisible({ id: 'chat-message-spotlight' })
+        if (web != null) await m.pressKey({ key: 'Escape' })
+        else await m.tapOnPoint({ point: '5%,15%' })
+        await m.assertNotVisible({
+          id: 'chat-message-spotlight',
+          timeout: 3500
+        })
         const restored = await linkPosition(m, web, second)
         assert(
           Math.abs(restored.y - reading.y) <= 3,
@@ -424,16 +660,31 @@ async function open(ctx: E2eContext): Promise<void> {
         // Type with no intervening tap, so a lost composer focus cannot pass.
         const draft = 'Draft ' + id
         await m.inputText({ text: draft })
-        assert.equal((await m.copyTextFrom(composer)).data, draft)
+        if (web == null)
+          assert.equal((await m.copyTextFrom(composer)).data, draft)
+        else
+          assert.equal(
+            await web.page.$eval(
+              '[data-testid="chat-composer"]',
+              field => (field as HTMLTextAreaElement).value
+            ),
+            draft
+          )
         await m.eraseText({ characters: draft.length })
         if (web == null) await m.hideKeyboard()
-        await copyMessage(m, web, { text: exact(first) }, body)
-        await copyMessage(m, web, { text: exact(second) }, caption)
-        await ctx.checkpoint(
-          'conversation',
-          { expect: [composer, { text: exact(second) }] },
-          m
-        )
+        await copyMessage(m, web, first, body)
+        await copyMessage(m, web, second, caption)
+        await m.assertVisible({ text: exact(second) })
+        if (web != null)
+          await verifyWrappedAttention(
+            m,
+            web,
+            sender,
+            f.conversationId,
+            observer.person.userId,
+            first
+          )
+        await ctx.checkpoint('conversation', { expect: [composer] }, m)
       } finally {
         dest.close()
         if (reversed) adb('reverse', '--remove', 'tcp:' + dest.port)

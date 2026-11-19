@@ -13,6 +13,7 @@ import {
 
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { ChatActionOverlay } from './ChatActionOverlay'
 import type { ChatBounds } from './chatInteractionModel'
 import type { MessageSource } from './chatMessageSource'
 import { ChatOverlayHost } from './ChatOverlayHost'
@@ -708,7 +709,6 @@ describe('chat message presentation', function () {
 
     it('reports an exhausted band honestly, keeps safe dismissal, and reveals controls after an ordinary keyboard change', async function () {
       const callbacks = keyboardListeners()
-      let back: (() => boolean | undefined) | undefined
       let close = 0
       Keyboard.metrics = () => ({
         screenX: 0,
@@ -716,9 +716,8 @@ describe('chat message presentation', function () {
         width: 390,
         height: 844
       })
-      BackHandler.addEventListener = (_event, accept) => {
-        back = () => accept({ type: 'hardwareBackPress', timeStamp: 1 })
-        return { remove: () => {} }
+      BackHandler.addEventListener = () => {
+        throw new Error('Web overlays must not register Android hardware Back')
       }
       const node = await render(
         <MessageActionOverlay
@@ -748,8 +747,7 @@ describe('chat message presentation', function () {
         })
       )
       await press('Cancel')
-      expect(back?.()).equals(true)
-      expect(close).equals(3)
+      expect(close).equals(2)
       await act(async () => {
         ;[...callbacks.values()][0](keyboardEvent(96))
       })
@@ -1070,7 +1068,11 @@ describe('chat message presentation', function () {
       expect(closed).equals(0)
     })
 
-    it('handles Escape, outside tap and native Back during entrance and keeps Back owned through exit', async function () {
+    it('handles Android Back during entrance and keeps it owned through exit', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: 'android'
+      })
       let close = 0
       let back: (() => boolean | undefined) | undefined
       let removed = 0
@@ -1091,25 +1093,22 @@ describe('chat message presentation', function () {
           })}
         />
       )
-      document.dispatchEvent(
-        new window.KeyboardEvent('keydown', {
-          key: 'Escape',
-          bubbles: true,
-          cancelable: true
-        })
-      )
-      await press('Cancel')
       expect(back?.()).equals(true)
-      expect(close).equals(3)
+      expect(close).equals(1)
       await render(<MessageActionOverlay {...overlay({ closing: true })} />)
       expect(removed).equals(0)
       expect(back?.()).equals(true)
-      expect(close).equals(3)
+      expect(close).equals(1)
       expect(
         host!
           .querySelector('[data-testid="chat-message-spotlight"]')!
           .getAttribute('aria-hidden')
       ).not.equals('true')
+      await act(async () => {
+        root!.unmount()
+      })
+      root = undefined
+      expect(removed).equals(1)
     })
 
     it('observes an already-open keyboard, follows keyboard geometry changes and removes ownership', async function () {
@@ -1135,6 +1134,48 @@ describe('chat message presentation', function () {
       expect(callbacks.size).equals(0)
     })
   })
+
+  for (const platform of ['web', 'android'] as const)
+    it(`closes the conversation action overlay with ${platform === 'android' ? 'hardware Back' : 'Escape'}`, async function () {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: platform
+      })
+      let close = 0
+      let removed = 0
+      let back: (() => boolean | undefined) | undefined
+      BackHandler.addEventListener = (_event, accept) => {
+        back = () => accept({ type: 'hardwareBackPress', timeStamp: 1 })
+        return {
+          remove: () => {
+            removed++
+          }
+        }
+      }
+      await render(
+        <ChatActionOverlay
+          label="Conversation"
+          onClose={() => {
+            close++
+          }}
+        >
+          {null}
+        </ChatActionOverlay>
+      )
+      if (platform === 'android') expect(back?.()).equals(true)
+      else {
+        expect(back).equals(undefined)
+        document.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        )
+      }
+      expect(close).equals(1)
+      await act(async () => {
+        root!.unmount()
+      })
+      root = undefined
+      expect(removed).equals(platform === 'android' ? 1 : 0)
+    })
 
   describe('chat message action ownership', function () {
     for (const platform of ['web', 'ios', 'android'] as const)

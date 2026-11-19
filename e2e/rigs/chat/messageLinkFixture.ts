@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { join } from 'node:path'
 
 import { ChatEngine } from '../../../src/app/chat/engine/engine'
 import {
@@ -41,6 +42,7 @@ interface Destination {
 interface ChatLinkFixture {
   origin: string
   seedFile: string
+  sessionsDir?: string
   observer: Account
   sender: Account
   conversationId: string
@@ -68,10 +70,17 @@ export function fixtureFor(ctx: E2eContext): ChatLinkFixture {
   return fixture
 }
 
-export async function providerFor(
+// Authentication sessions are each bound to one chat device. A private
+// session directory lets a repeat run reuse its own seat authorizations.
+export async function authenticatedActor(
   fixture: ChatLinkFixture,
-  account: Account
-): Promise<Provider> {
+  account: Account,
+  usage: 'provider' | 'browser'
+): Promise<{
+  person: SeedTablePerson
+  client: TeamStationClient
+  token: string
+}> {
   const person = readSeedTable(readFileSync(fixture.seedFile, 'utf8'))[
     account.actor
   ]
@@ -83,7 +92,53 @@ export async function providerFor(
     baseUrl: fixture.origin + '/api/v1',
     passwordKdf: testPasswordKdf
   })
-  await client.signInWithPassword(person.email, person.password)
+  const file =
+    fixture.sessionsDir == null
+      ? undefined
+      : join(fixture.sessionsDir, person.userId + '-' + usage + '.json')
+  if (file != null && existsSync(file)) {
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as {
+      origin: string
+      token: string
+    }
+    assert.equal(
+      saved.origin,
+      fixture.origin,
+      'Cached session belongs to another seat'
+    )
+    client.token = saved.token
+    const who = await client.whoAmI()
+    if (who != null) {
+      assert.equal(who.id, person.userId)
+      return { person, client, token: saved.token }
+    }
+    client.token = undefined
+  }
+  const { token } = await client.signInWithPassword(
+    person.email,
+    person.password
+  )
+  if (file != null) {
+    const temporary = file + '.' + randomUUID()
+    writeFileSync(
+      temporary,
+      JSON.stringify({ origin: fixture.origin, token }),
+      { mode: 0o600, flag: 'wx' }
+    )
+    renameSync(temporary, file)
+  }
+  return { person, client, token }
+}
+
+export async function providerFor(
+  fixture: ChatLinkFixture,
+  account: Account
+): Promise<Provider> {
+  const { person, client } = await authenticatedActor(
+    fixture,
+    account,
+    'provider'
+  )
   const store: ChatKeyStore = {
     exists: async () => existsSync(account.keyFile),
     load: async () =>
