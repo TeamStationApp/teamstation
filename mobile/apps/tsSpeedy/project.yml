@@ -1,0 +1,82 @@
+name: Speedy
+options:
+  bundleIdPrefix: app.teamstation
+  deploymentTarget:
+    iOS: "18.0"
+  minimumXcodeGenVersion: "2.40.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ENABLE_MODULE_VERIFIER: NO
+
+packages:
+  SpeedyCore:
+    path: Packages/SpeedyCore
+  SpeedyVoice:
+    path: ../common/SpeedyVoice
+  # The radar and its Bluetooth link, shared with TS Cameraman and the TeamStation app.
+  CameramanCapture:
+    path: ../common/CameramanCapture
+  CameramanCore:
+    path: ../common/CameramanCore
+
+targets:
+  Speedy:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    dependencies:
+      - package: SpeedyCore
+      - package: SpeedyVoice
+      - package: CameramanCapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.speedy
+        PRODUCT_NAME: TS Speedy
+        # The tests import the app as `Speedy`; the product name has a space.
+        PRODUCT_MODULE_NAME: Speedy
+        INFOPLIST_FILE: App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0"
+        SUPPORTS_MACCATALYST: NO
+        # Phones only: an iPad would have to be marked full screen to hold portrait. Set on the
+        # target, where XcodeGen's iOS preset would otherwise put iPad back.
+        TARGETED_DEVICE_FAMILY: "1"
+
+  SpeedyUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/SpeedyUnitTests
+    dependencies:
+      - target: Speedy
+      - package: SpeedyCore
+      - package: SpeedyVoice
+      - package: CameramanCapture
+      - package: CameramanCore
+    settings:
+      base:
+        # PRODUCT_NAME differs from the target name, so the host has to be spelled out.
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TS Speedy.app/TS Speedy"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.speedy.unittests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Speedy:
+    build:
+      targets:
+        Speedy: all
+        SpeedyUnitTests: [ test ]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - SpeedyUnitTests
+    archive:
+      config: Release

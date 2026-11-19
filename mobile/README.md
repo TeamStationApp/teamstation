@@ -12,6 +12,7 @@ mobile/
     tsDistributor/        TS Distributor, Mac
     tsNdiProbe/           an NDI receive probe
     tsPreview/            TS Preview
+    tsSpeedy/             TS Speedy, iPhone
   icons/                  the app icons' sources and their generator
   test/                   the maestro-d client the apps' e2e tests share
   tools/                  bench tools

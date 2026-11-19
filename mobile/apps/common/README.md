@@ -36,6 +36,8 @@ the way `DirectorCore` did.
   on `CameramanControlUI` from `CameramanUI`; its unit tests also compile
   `DirectorRTSP` to round-trip the packetizers
 - **TS Preview** — path-depends for NearStream `/live/substream2` decode
+- **TS Speedy** — path-depends from `mobile/apps/tsSpeedy` on `SpeedyVoice` for its clips and on
+  `CameramanCapture` for the TAG One radar (`RadarFleet`), which it holds to one always-on radar
 - **The TeamStation app** — `ios/TeamStation.xcodeproj` references `PhoneStream` as a local package
   and links its product
 
