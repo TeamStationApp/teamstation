@@ -1,0 +1,19 @@
+# Generated Xcode project (source of truth is project.yml)
+*.xcodeproj/
+*.xcworkspace/
+
+# Build products
+DerivedData/
+build/
+.build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store
+xcuserdata/
+*.xcuserstate
