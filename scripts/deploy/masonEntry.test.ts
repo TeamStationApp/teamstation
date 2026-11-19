@@ -51,6 +51,7 @@ import {
   signAabScript,
   signAndroid,
   signApkScript,
+  SPEEDY_APP,
   STABLE_APP,
   TV_APP
 } from '../../Masonfile'
@@ -343,6 +344,7 @@ describe('TeamStation pipeline Masonfile', () => {
             DIRECTOR_DEVELOP_APP,
             CAMERAMAN_APP,
             CAMERAMAN_DEVELOP_APP,
+            SPEEDY_APP,
             DISTRIBUTOR_APP,
             DISTRIBUTOR_DEVELOP_APP
           ].includes(key)
@@ -417,6 +419,7 @@ describe('TeamStation pipeline Masonfile', () => {
       'tvos',
       'director',
       'cameraman',
+      'speedy',
       'distributor'
     ])
     assert.deepEqual(workflows.build?.options, {
@@ -1274,6 +1277,7 @@ describe('TeamStation pipeline Masonfile', () => {
       TV_APP,
       DIRECTOR_DEVELOP_APP,
       CAMERAMAN_DEVELOP_APP,
+      SPEEDY_APP,
       DISTRIBUTOR_DEVELOP_APP
     ])
   })
@@ -1618,6 +1622,7 @@ describe('request-only Apple TV workflow', () => {
           if (
             name === 'director' ||
             name === 'cameraman' ||
+            name === 'speedy' ||
             name === 'distributor'
           ) {
             assert.deepEqual(options.triggers, [{ request: true }])
