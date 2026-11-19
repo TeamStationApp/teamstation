@@ -17,16 +17,6 @@ let root: Root | undefined
 let host: HTMLElement | undefined
 const originalImage = window.Image
 
-afterEach(async function () {
-  await act(async () => {
-    root?.unmount()
-  })
-  root = undefined
-  host?.remove()
-  host = undefined
-  window.Image = originalImage
-})
-
 async function render(element: React.ReactElement): Promise<HTMLElement> {
   if (root == null) {
     host = document.createElement('div')
@@ -48,6 +38,16 @@ function tileColours(node: HTMLElement, letters: string): string[] {
 }
 
 describe('chat identity presentation', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    host?.remove()
+    host = undefined
+    window.Image = originalImage
+  })
+
   it('draws a team, league and season chat on the tile the group has everywhere else', async function () {
     const cases = [
       {

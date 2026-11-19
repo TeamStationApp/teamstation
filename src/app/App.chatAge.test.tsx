@@ -9,6 +9,7 @@ import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { chatAgeSheet, clickPill, pressChatAge } from '../test/chatAgeTesting'
 import { App } from './App'
+import { chat, message, view } from './chat/chatViews.test.helpers'
 import type { AppleAge } from './chat/declaredAge'
 import { AppleAgeOverride } from './chat/DeclaredAgeGate'
 import { DeviceApprovals } from './chat/deviceApprovals'
@@ -95,10 +96,10 @@ describe('the app before and after the chat age sheet', function () {
   })
   after(() => {
     Object.defineProperties(proto, originals)
-    Object.defineProperties(engine, engineOriginals)
   })
   afterEach(async () => {
     await act(async () => root?.unmount())
+    Object.defineProperties(engine, engineOriginals)
     root = undefined
     window.history.replaceState(null, '', '/')
   })
@@ -436,6 +437,27 @@ describe('the app before and after the chat age sheet', function () {
     await untilPath('/')
     expect(path()).equals('/')
     navTab('Chat')
+  })
+
+  it('opens the schedule from a message link in a confirmed conversation', async () => {
+    const address = 'https://app.teamstation.app/schedule'
+    const shown = view({
+      conversation: chat({ id: 'cnv_exact', lastSeq: 1 }),
+      messages: [message({ body: `Game time: ${address}` })]
+    })
+    engine.start = async () => 'ready'
+    engine.open = async () => shown
+    engine.view = () => shown
+    await open('/chat/cnv_exact', 'confirmed')
+    const link = document.querySelector<HTMLAnchorElement>(
+      `a[href="${address}"]`
+    )
+    expect(link?.textContent).equals(address)
+    await settle(() => {
+      link!.click()
+    })
+    await untilPath('/schedule')
+    expect(path()).equals('/schedule')
   })
 
   it('opens chat directly for a confirmed account', async () => {
