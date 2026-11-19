@@ -11,6 +11,7 @@ import {
   MAX_EVENT_BYTES,
   parseBatch,
   parseEvent,
+  PROPERTY_TYPES,
   REQUEST_ROUTES,
   SERVER_EVENTS,
   userId
@@ -54,7 +55,9 @@ describe('private compact event contract', () => {
         const P =
           E.startsWith('video_') || E === 'watch_progress'
             ? { vi: 'vid_demo', ps: UUID, ms: 1 }
-            : {}
+            : E.startsWith('playback_') && E !== 'playback_fetch'
+              ? { ps: UUID }
+              : {}
         const event = parseEvent(
           { ...sample(E, P), A, V: '1.2.3+4', S: UUID },
           NOW
@@ -230,5 +233,115 @@ describe('private compact event contract', () => {
         NOW
       ).P.rp
     ).equals('/me/tess/messages')
+  })
+})
+
+describe('playback telemetry contract', () => {
+  const session = {
+    vi: 'vid_demoLive0001',
+    ps: UUID,
+    en: 'avplayer',
+    sf: 'card',
+    lv: true
+  }
+  it('accepts a whole attachment story', () => {
+    const story: Array<[EventName, Record<string, unknown>]> = [
+      ['playback_attached', { si: 'live_edge', pos: 0 }],
+      ['playback_source_set', { ms: 3 }],
+      ['playback_metadata', { ms: 900, wd: 1920, ht: 1080, n: 1 }],
+      ['playback_canplay', { ms: 1400 }],
+      [
+        'playback_first_frame',
+        { ms: 2100, pms: 28000, rl: 0, pr: false, pos: 600, be: 45, ba: 12.5 }
+      ],
+      ['playback_stall_started', { sr: 'waiting', pos: 640, be: 2, td: 6 }],
+      ['playback_stall_ended', { ms: 1000, pos: 640.2, be: 2.4 }],
+      [
+        'playback_seek',
+        { sk: 'jump_to_present', fr: 640, to: 700, bb: 50, bf: -0.5 }
+      ],
+      [
+        'playback_error',
+        { ek: 'hls_network', ed: 'frag_load_error', cd: -12660, ft: true }
+      ],
+      ['playback_recovery', { rk: 'stall_reload', n: 2 }],
+      [
+        'playback_heartbeat',
+        { rt: 1, bw: 8e6, br: 4.3e6, df: 3, tf: 9000, pl: true, wms: 30000 }
+      ],
+      ['playback_bitrate', { br: 4.3e6 }],
+      ['playback_detached', { ms: 90000, wms: 80000, sc: 3, sms: 3000, rl: 1 }]
+    ]
+    for (const [E, P] of story)
+      expect(parseEvent(sample(E, { ...session, ...P }), NOW).P).deep.equals({
+        ...session,
+        ...P
+      })
+  })
+  it('needs the attachment session on every playback event but a fetch', () => {
+    expect(() =>
+      parseEvent(sample('playback_heartbeat', { vi: session.vi }), NOW)
+    ).throws('Playback session required')
+    const fetch = {
+      fk: 'live_now',
+      sf: 'card',
+      oc: 'pending',
+      ms: 120,
+      at: 2,
+      rd: 2000,
+      n: 1
+    }
+    expect(parseEvent(sample('playback_fetch', fetch), NOW).P).deep.equals(
+      fetch
+    )
+    expect(
+      parseEvent(
+        sample('playback_fetch', { fk: 'playback', oc: 'error', status: 503 }),
+        NOW
+      ).P.status
+    ).equals(503)
+  })
+  it('refuses free text, unknown kinds and out-of-range numbers', () => {
+    for (const P of [
+      { sk: 'teleport' },
+      { en: 'vlc' },
+      { ek: 'Error: https://x' },
+      { ed: 'fragLoadError' },
+      { be: -601 },
+      { ba: 3601 },
+      { td: 61 },
+      { pos: -1 },
+      { wd: 20000 },
+      { url: 'https://develop.teamstation.app/x' },
+      { vi: 'https://develop.teamstation.app/api/v1/videos/vid_x/hls' }
+    ])
+      expect(() =>
+        parseEvent(sample('playback_seek', { ...session, ...P }), NOW)
+      ).throws()
+    expect(() =>
+      parseEvent(sample('playback_fetch', { fk: 'stills' }), NOW)
+    ).throws()
+  })
+  it('types every property any event carries, for the strict index mapping', () => {
+    for (const rules of Object.values(EVENT_RULES))
+      for (const key of Object.keys(rules))
+        expect(PROPERTY_TYPES, key).to.have.property(key)
+    for (const type of Object.values(PROPERTY_TYPES))
+      expect(['keyword', 'double', 'boolean']).includes(type)
+  })
+  it('labels the routes a live viewer polls', () => {
+    for (const route of [
+      '/videos/:videoId/playback',
+      '/videos/:videoId/hls/:file',
+      '/videos/:videoId/stills/:file',
+      '/live',
+      '/games/:gameId/live-streams/:streamId'
+    ])
+      expect(
+        parseEvent(
+          sample('request_completed', { op: 'request', rp: route }),
+          NOW
+        ).P.rp
+      ).equals(route)
   })
 })

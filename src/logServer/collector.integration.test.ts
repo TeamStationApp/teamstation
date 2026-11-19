@@ -192,6 +192,10 @@ describe('collector durable HTTP and provider boundary', function () {
       r.path.startsWith('/logs-v1-*/_mapping')
     )!.body
     expect(update.properties.P.properties.c0).deep.equals({ type: 'double' })
+    // The playback telemetry's properties are mapped from the contract.
+    expect(update.properties.P.properties.be).deep.equals({ type: 'double' })
+    expect(update.properties.P.properties.sk.type).equals('keyword')
+    expect(update.properties.P.properties.lv).deep.equals({ type: 'boolean' })
     expect(update.properties.U.type).equals('keyword')
     expect(update.properties.P.properties).deep.equals(
       template.template.mappings.properties.P.properties
