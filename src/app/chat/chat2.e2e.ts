@@ -517,7 +517,7 @@ export const SHELL_TABS = ['Home', 'Videos', 'Schedule', 'Search', 'Chat']
 
 /** E9's shared-shell return journey, also runnable in the navigation fixture. */
 export async function sharedChromeReturnsToChat(
-  ui: Pick<Chat2UI, 'nodes' | 'native' | 'tapObserved' | 'present'>
+  ui: Pick<Chat2UI, 'nodes' | 'native' | 'tapObserved' | 'present' | 'notNow'>
 ): Promise<void> {
   const tab = async (label: string): Promise<PublicNode> => {
     const nodes = await ui.nodes()
@@ -536,6 +536,7 @@ export async function sharedChromeReturnsToChat(
     await ui.tapObserved(await tab(label))
     await ui.tapObserved(await tab('Chat'))
     await ui.present('chat-message-history')
+    await ui.notNow()
   }
 }
 
@@ -2390,6 +2391,7 @@ export class Scenarios {
         .filter(n => n.text === 'Chat' && n.bounds != null)
         .sort((a, b) => (b.bounds?.y ?? 0) - (a.bounds?.y ?? 0))[0]
       if (tab != null) await ui.tapObserved(tab)
+      await ui.notNow()
     }
     if (!ui.native) {
       const readiness: Json = {
@@ -8059,6 +8061,7 @@ export class Scenarios {
           )
           await ui.open('/chat')
           await ui.id('chat-conversation-' + this.group)
+          await ui.notNow()
           const listZero = await ui.dom(
             'const n=document.querySelector(\'[data-testid="chat-message-history"]\');return {top:n?.scrollTop}'
           )
@@ -8838,6 +8841,7 @@ export class Scenarios {
           fixtureControl(this.f, 'clear-fault')
           await ui.present('chat-conversation-list')
           await ui.id('chat-conversation-' + conversation)
+          await ui.notNow()
           await this.classification()
           assert.equal(await ui.draft(), 'Keep cancelled verification draft')
           await this.anchor(fixture.readerAnchor)

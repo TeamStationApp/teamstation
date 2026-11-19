@@ -22,6 +22,7 @@
   "exclude": [
     "lib",
     "node_modules",
+    "src/test/chatWakeCases.ts",
     "src/test/fakeScoreboardSocket.ts",
     "src/test/scoringHelpers.ts",
     "src/test/scoreboardServer.e2e.ts",

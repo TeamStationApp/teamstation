@@ -84,12 +84,14 @@ import { AppSidebar } from './components/AppSidebar'
 import { PictureDirectoriesContext } from './components/CachedPicture'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
+import { ModalPresenceProvider } from './components/modalPresence'
 import { OfflineBanner } from './components/OfflineBanner'
 import { useSidebarWidth } from './components/sidebarLayout'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
 import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
+import { useForegroundEntry } from './hooks/useForegroundEntry'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
 import { lstrings, sprintf } from './locales/strings'
@@ -157,6 +159,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
+import { askWhenWanted, pushDevice } from './platform/pushDevice'
 import { useInsets } from './platform/safeArea'
 import { signInRequest } from './platform/signInRequest'
 import {
@@ -164,6 +167,11 @@ import {
   type StoredUser,
   storedUserOf
 } from './platform/storedUser'
+import {
+  NotificationAskContext,
+  useNotificationAskState
+} from './push/notificationAskContext'
+import { NotificationAskHost } from './push/NotificationAskHost'
 import { GameReplayScreen } from './replay/GameReplayScreen'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
@@ -274,9 +282,9 @@ export interface AppProps {
    *
    * The web keeps its session in an `HttpOnly` cookie that this code cannot
    * read and the browser sends by itself, which is the stronger arrangement
-   * and why both are supported. A phone has no cookie jar — `server/auth/
-   * tokens.ts` reads the `Authorization` header first and says as much — so on
-   * a phone the token is carried here.
+   * and why both are supported. A phone sends the token as an
+   * `Authorization` header, which `server/auth/tokens.ts` reads first, so
+   * on a phone the token is carried here.
    */
   initialToken?: string
   /**
@@ -296,6 +304,15 @@ export interface AppProps {
   initialUser?: StoredUser
   /** Called with who is signed in, or none, so a phone keeps it. */
   onUser?: (user: StoredUser | undefined) => void
+  /**
+   * Takes the session cookie out of the phone's own cookie jar
+   * (`sessionStore.native.ts`'s `forgetCookie`), at sign-out and an account
+   * switch, before the logout is sent: the logout's answer clears it too,
+   * but one that never lands would leave the session in the jar, and the
+   * next launch signed in on it. The web is not given one; its cookie is
+   * `HttpOnly`.
+   */
+  forgetSessionCookie?: () => Promise<void>
   /**
    * Opens a person's document cache. Given (on the phone), the client keeps
    * the documents it can show offline; the web keeps none and is not given
@@ -498,7 +515,12 @@ function Shell(props: AppProps): React.ReactElement {
     setBackOverride(() => handler)
   }, [])
 
-  const { initialToken, onToken, onUser, documentCache } = props
+  const { initialToken, onToken, onUser, documentCache, forgetSessionCookie } =
+    props
+  /** The phone's cookie jar lets go of the session, whatever else answers. */
+  const forgetCookie = async (): Promise<void> => {
+    await forgetSessionCookie?.().catch(() => undefined)
+  }
   // One client for as long as the app runs, kept across sign-out and the next
   // sign-in. On the phone it keeps documents, in a file opened only once a
   // user id is known.
@@ -536,6 +558,11 @@ function Shell(props: AppProps): React.ReactElement {
   const initialUser = useRef(props.initialUser)
   /** The phone opened on its stored user, and the server has not yet agreed. */
   const sessionUnconfirmed = useRef(false)
+  /**
+   * Counts sign-ins and sign-outs (`rememberSession`), so a sign-out's late
+   * logout can tell that somebody has signed in since, and leaves them be.
+   */
+  const sessionTurn = useRef(0)
   const userSaved = useRef(onUser)
   userSaved.current = onUser
   const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
@@ -563,6 +590,7 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const rememberSession = useCallback(
     (next: Session | undefined): void => {
+      sessionTurn.current++
       analytics?.identify(
         next?.user.id,
         next == null ? undefined : client.token
@@ -610,10 +638,35 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }, [client, notificationUser])
   useForegroundRefresh(refreshNotifications)
+  // A device already allowed to notify registers again for each session it
+  // is signed in with, at start and after a sign-in, with the switches it
+  // keeps for this person, so the server knows where to wake them.
+  useEffect(() => {
+    if (notificationUser == null) return
+    pushDevice.sync(client, notificationUser).catch(() => undefined)
+  }, [client, notificationUser])
+  // A phone not asked yet asks once either of its switches is on, at start,
+  // after a sign-in and each time it comes to the foreground; never on a
+  // timer, which would show the system's question twice a minute. A browser
+  // waits for the tap on Account's Allow notifications on this device. Either
+  // catches up at a foreground: allowed in its settings since the last look,
+  // with a register that failed, or with switches another tab changed, it
+  // registers again.
+  const askForNotifications = useCallback(async (): Promise<void> => {
+    if (notificationUser == null) return
+    await askWhenWanted(pushDevice, client, notificationUser)
+  }, [client, notificationUser])
+  useForegroundEntry(askForNotifications)
   // Until we have asked, we do not know whether anybody is signed in. Showing
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.
   const [askedAboutSession, setAskedAboutSession] = useState(false)
+  // Who is signed in, once that is known, and nobody after a sign-out or a
+  // refused session: what a phone posts on its own (a reminder, a DM it
+  // could not open in time) is shown only for them.
+  useEffect(() => {
+    if (askedAboutSession) pushDevice.signedIn(notificationUser)
+  }, [askedAboutSession, notificationUser])
   // Each list keeps its own filter. One value was how Videos, which opens on
   // Past, left Schedule on Past the next time it was opened.
   const [filters, setFilters] = useState<TabFilters>(() =>
@@ -695,12 +748,28 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /**
    * Sign Out, pressed: chat keeps this account's keys and the device stays
-   * linked. The server's session and the phone's queue file go.
+   * linked. The server's session and the phone's queue file go, and the
+   * device's push registration before the session, while it can still
+   * delete it; the device lets go of its push address whether or not the
+   * server hears, so no notification of this person's reaches it after.
+   * The delete and the letting go are given `RELEASE_TIMEOUT_MS` at most,
+   * together, so the logout is never held up for long. A logout that comes after somebody signed in
+   * again is not sent: it would end the new session, whose token or cookie
+   * the client now holds, and the old session expires on the server. The
+   * phone's cookie jar lets go of the session first of all, so a logout that
+   * never lands leaves nothing on the phone to sign in on.
    */
   const signOutNow = (): void => {
+    const forgotten = forgetCookie()
     const finish = (): void => {
-      client.signOut().catch(() => undefined)
+      const releasing = pushDevice.release(client)
       leaveSession()
+      const left = sessionTurn.current
+      Promise.allSettled([releasing, forgotten])
+        .then(async () => {
+          if (sessionTurn.current === left) await client.signOut()
+        })
+        .catch(() => undefined)
     }
     releaseChat(keyStore)
       .finally(finish)
@@ -817,6 +886,13 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const chatAge = useChatAgeState(client, signedInAs, appleAge)
   const chatOn = chatAge.access === 'allowed'
+  /**
+   * The ask about notifications, at an RSVP answer and on entering messaging
+   * from inside the app: the Chat tab, a Message button, or a conversation
+   * opened from a list. A notification's tap and a link go to the address
+   * (`goToRoute`), which never asks.
+   */
+  const notificationAsk = useNotificationAskState()
   /**
    * A chat surface for the person signed in: nothing signed out, and while
    * chat is locked a stand-in the age sheet is up over (agreeing draws the
@@ -1443,6 +1519,7 @@ function Shell(props: AppProps): React.ReactElement {
    * chat frames off this tab's stack, and the address with them.
    */
   const declineChat = (): void => {
+    notificationAsk.actions.withdraw('messaging')
     const back = tab === 'chat' ? beforeChat.current : tab
     const next = { ...stacks, chat: [] as Pushed[] }
     for (const key of ['home', 'videos', 'schedule', 'search'] as const)
@@ -1874,6 +1951,7 @@ function Shell(props: AppProps): React.ReactElement {
     }
     Keyboard.dismiss()
     captureChatLeave(() => {
+      if (next === 'chat') notificationAsk.actions.request('messaging')
       if (next === tab && stacks[tab].length > 0)
         dropRouteSuffix(
           stacks[tab],
@@ -2231,6 +2309,7 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /** A chat, from the list or from a team's, season's or league's page. */
   const openChat = (chat: { id: string; title: string }): void => {
+    notificationAsk.actions.request('messaging')
     const next: Pushed = {
       name: 'conversation',
       conversationId: chat.id,
@@ -2360,7 +2439,11 @@ function Shell(props: AppProps): React.ReactElement {
             route.name !== 'oauthApprove'
               ? undefined
               : async () => {
+                  // As at sign-out: the jar lets go before the logout.
+                  const forgotten = forgetCookie()
                   await releaseChat(keyStore).catch(() => undefined)
+                  await pushDevice.release(client)
+                  await forgotten
                   await client.signOut().catch(() => undefined)
                   client.token = undefined
                   rememberSession(undefined)
@@ -3414,6 +3497,7 @@ function Shell(props: AppProps): React.ReactElement {
               navigationRef.current.top !== top
             )
               return
+            notificationAsk.actions.request('messaging')
             const listed = chatEngine
               ?.conversations()
               .find(chat => chat.id === conversation.id)
@@ -4314,6 +4398,12 @@ function Shell(props: AppProps): React.ReactElement {
                 chatSurface={isChatSurface(tab, top?.name)}
                 onLeaveChat={declineChat}
               />
+              <NotificationAskHost
+                state={notificationAsk}
+                client={client}
+                userId={signedInAs}
+                chatShown={isChatSurface(tab, top?.name)}
+              />
               {confirmingSignOut && (
                 <ChoiceSheet
                   title="Sign Out?"
@@ -4373,16 +4463,22 @@ function Shell(props: AppProps): React.ReactElement {
     </GestureHandlerRootView>
   )
   return (
-    <ChatAgeContext.Provider value={chatAge}>
-      {caching == null ? (
-        shell
-      ) : (
-        // The phone draws each picture from its file of it, offline too.
-        <PictureDirectoriesContext.Provider value={caching.pictureFiles}>
-          {shell}
-        </PictureDirectoriesContext.Provider>
-      )}
-    </ChatAgeContext.Provider>
+    // Every modal on show, which the ask never stacks on: counted in a store
+    // of its own, so a modal coming or going never re-renders this shell.
+    <ModalPresenceProvider>
+      <ChatAgeContext.Provider value={chatAge}>
+        <NotificationAskContext.Provider value={notificationAsk.actions}>
+          {caching == null ? (
+            shell
+          ) : (
+            // The phone draws each picture from its file of it, offline too.
+            <PictureDirectoriesContext.Provider value={caching.pictureFiles}>
+              {shell}
+            </PictureDirectoriesContext.Provider>
+          )}
+        </NotificationAskContext.Provider>
+      </ChatAgeContext.Provider>
+    </ModalPresenceProvider>
   )
 }
 

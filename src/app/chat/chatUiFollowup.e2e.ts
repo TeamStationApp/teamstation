@@ -16,6 +16,7 @@ import puppeteer from 'puppeteer'
 
 import { chatRowById, chatRowSelector } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Device {
   evalBrowserScript: (options: { script: string }) => Promise<unknown>
@@ -746,6 +747,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
       script: `const row=document.querySelector('[data-testid="chat-list-pane"]').querySelector(${JSON.stringify(chatRowById(conversation))});if(!row)throw new Error('Synthetic DM row unavailable');row.click();return true`
     })
     await m.assertVisible({ text: 'Remove notes.txt' })
+    await dismissNotificationAskOn(m)
     console.log(
       await m.evalBrowserScript({
         script: `if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(draft)}||!document.querySelector('[aria-label="Cancel reply"]'))throw new Error('Back/reopen lost full draft');if(Math.abs(window.chatUiResizeScroller.scrollTop-window.chatUiResizeOffset)>2)throw new Error('Back/reopen lost reading position');return JSON.stringify({backReopenFullDraft:true})`
@@ -834,6 +836,7 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       await m.tapOn({
         css: `[data-testid="chat-conversation-${conversation}"]`
       })
+      await dismissNotificationAskOn(m)
     } else beforeReading = await sampleReading()
     beforeReading.rows = beforeReading.rows.slice(0, 2)
     assert(
@@ -898,10 +901,12 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       downloadSpeed: -1,
       uploadSpeed: -1
     })
-    if (narrow)
+    if (narrow) {
       await m.tapOn({
         css: `[data-testid="chat-conversation-${conversation}"]`
       })
+      await dismissNotificationAskOn(m)
+    }
     await m.evalBrowserScript({
       script: `const row=document.querySelector(${JSON.stringify(row)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
     })
@@ -1151,6 +1156,7 @@ async function review2Browser(daemon: Daemon): Promise<void> {
         css: `[data-testid="chat-conversation-${selected}"]`
       })
       await primary.assertVisible({ css: composer, timeout: 60000 })
+      await dismissNotificationAskOn(primary)
       const ownObserverReadyAt = Date.now()
       await observe()
       const ownId = await read<string>(
@@ -1563,6 +1569,7 @@ async function pendingSend(daemon: Daemon): Promise<void> {
       css: '[data-testid="chat-composer"]',
       timeout: 30000
     })
+    await dismissNotificationAskOn(m)
   }
   try {
     await signIn(m, narrow ? 'Hs' : 'Hc')
@@ -1734,6 +1741,7 @@ async function bands(daemon: Daemon): Promise<void> {
       await m.tapOn({ text: 'Pick Harper H', timeout: 30000 })
       await m.tapOn({ text: 'Start conversation' })
       await m.assertVisible({ text: 'Message', timeout: 60000 })
+      await dismissNotificationAskOn(m)
     }
     targets = getData(
       await m.evalBrowserScript({
@@ -1775,6 +1783,7 @@ async function bands(daemon: Daemon): Promise<void> {
         css: '[data-testid="chat-composer"]',
         timeout: 60000
       })
+      await dismissNotificationAskOn(m)
       const scrollScript = `const pane=document.querySelector('[data-testid="chat-list-pane"]');const row=pane?.querySelector('[data-testid^="chat-conversation-"]');let scroll=row?.parentElement;while(scroll&&scroll!==pane&&!(scroll.scrollHeight>scroll.clientHeight+2&&/auto|scroll/.test(getComputedStyle(scroll).overflowY)))scroll=scroll.parentElement;if(!scroll||scroll===pane)throw new Error('Actual sidebar scroll container unavailable');`
       await m.evalBrowserScript({
         script:
@@ -1934,6 +1943,7 @@ async function historyFixture(daemon: Daemon): Promise<void> {
     }
     await m.tapOn({ text: 'Start conversation' })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
+    await dismissNotificationAskOn(m)
     let conversationId = decode(
       await m.evalBrowserScript({
         script: `const r=await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'});if(!r.ok)throw new Error('Created fixture list unavailable');const wanted=${JSON.stringify(people)};const chat=(await r.json()).find(x=>x.kind==='dm'&&x.people.length===2&&wanted.every(name=>x.people.some(p=>!p.left&&p.shortName===name)));if(!chat||chat.memberCount!==3)throw new Error('Shared native fixture membership differs from three adults');return JSON.stringify(chat.id)`
@@ -2543,6 +2553,11 @@ async function disposablePrepare(daemon: Daemon): Promise<void> {
       timeout: 30000
     })
     await m.tapOn({ text: 'Start with them' })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]',
+      timeout: 60000
+    })
+    await dismissNotificationAskOn(m)
     await m.tapOn({ css: '[data-testid="chat-composer"]', timeout: 60000 })
     await m.inputText({ text: originalBody })
     await m.pressKey({ key: 'Enter' })
@@ -2791,6 +2806,7 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
       css: '[data-testid="chat-composer"]',
       timeout: 60000
     })
+    await dismissNotificationAskOn(own)
     const conversationId = await read<string>(
       own,
       'return JSON.stringify(location.pathname.split("/")[2])'
@@ -2854,6 +2870,7 @@ async function adultReplyFixture(daemon: Daemon): Promise<void> {
         css: '[data-testid="chat-composer"]',
         timeout: 60000
       })
+      await dismissNotificationAskOn(own)
       const id = await read<string>(
         own,
         'return JSON.stringify(location.pathname.split("/")[2])'

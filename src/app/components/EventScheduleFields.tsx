@@ -1,12 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  View
-} from 'react-native'
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import {
@@ -23,6 +16,7 @@ import { Button } from './Button'
 import { ButtonIcon } from './ButtonIcon'
 import { CancelAction } from './CancelAction'
 import { browserNavigator, isIosWebKit } from './iosWebKit'
+import { Modal } from './Modal'
 import { PickerDialog } from './PickerDialog'
 import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'

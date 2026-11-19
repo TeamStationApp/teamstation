@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -20,6 +19,8 @@ import {
 import { eventLocalRange } from '../../common/eventTime'
 import { Button, Card, PersonEmblem } from '../components'
 import { EventRsvpPill } from '../components/EventRsvpPill'
+import { Modal } from '../components/Modal'
+import { useNotificationAsk } from '../push/notificationAskContext'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export function eventReplyRows(infos: EventInfo[]): EventAttendee[] {
@@ -65,6 +66,8 @@ export function EventRsvpModal({
   onReplies?: (rows: EventAttendee[]) => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
+  // An answer asks about notifications, once this sheet has closed.
+  const askAboutNotifications = useNotificationAsk()
   const [infos, setInfos] = useState<EventInfo[]>([])
   const current = useRef<EventInfo[]>([])
   const alive = useRef(true)
@@ -123,6 +126,7 @@ export function EventRsvpModal({
     update(id, response)
     try {
       await client.saveRsvp(game.id, id, response)
+      askAboutNotifications('rsvp')
     } catch (error) {
       update(id, previous)
       if (alive.current)

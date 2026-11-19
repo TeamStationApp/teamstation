@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Animated, Modal, Platform, Text, View } from 'react-native'
+import { Animated, Platform, Text, View } from 'react-native'
 
 import { dictationModelOf } from '../../common/api'
 import { Checkbox } from '../components/Checkbox'
+import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { dictationOn } from './dictationPlatform'

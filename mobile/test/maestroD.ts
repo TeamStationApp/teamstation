@@ -29,6 +29,8 @@ export interface MaestroDevice {
   assertNotVisible: (value: unknown) => Promise<unknown>
   extendedWaitUntil: (value: unknown) => Promise<unknown>
   scrollUntilVisible: (value: unknown) => Promise<unknown>
+  scroll: (value?: unknown) => Promise<unknown>
+  dismissAlert: () => Promise<unknown>
   swipe: (value: unknown) => Promise<unknown>
   pressKey: (value: unknown) => Promise<unknown>
   setOrientation: (value: unknown) => Promise<unknown>

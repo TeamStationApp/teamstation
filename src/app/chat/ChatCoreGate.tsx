@@ -7,6 +7,7 @@ import type {
   CoreUnavailableReason
 } from '../../common/chatCrypto/coreCall'
 import { Screen } from '../components'
+import { useShowsModal } from '../components/modalPresence'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'
@@ -28,7 +29,8 @@ export interface ChatCoreGateProps {
  * phone, the native module. Until it is ready nothing below mounts, so
  * nothing enrols, links, resumes or opens the key store, and when it cannot
  * be had, `ChatUnavailable` says why instead. There is no other
- * implementation to fall back on.
+ * implementation to fall back on. Until then it counts as a modal on show
+ * (`modalPresence`), as `ChatGate` does.
  */
 export function ChatCoreGate(props: ChatCoreGateProps): React.ReactElement {
   const {
@@ -47,6 +49,10 @@ export function ChatCoreGate(props: ChatCoreGateProps): React.ReactElement {
       now.ready || (now.reason !== 'loading' && now.reason !== 'fetchFailed')
     return settled ? now : undefined
   })
+  // Until chat's core is ready, chat is not open: it counts as a modal, so
+  // the ask about notifications waits for it, then for `ChatGate`, which
+  // counts itself the same way from the moment it mounts.
+  useShowsModal(status?.ready !== true)
 
   useEffect(() => {
     let live = true

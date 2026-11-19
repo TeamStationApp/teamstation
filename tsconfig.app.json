@@ -23,6 +23,7 @@
     // The test helpers built on the app, and the e2e test that drives a
     // browser page with the DOM's types. The rest of src/test is the
     // server's, in tsconfig.server.test.json.
+    "src/test/chatWakeCases.ts",
     "src/test/fakeScoreboardSocket.ts",
     "src/test/PagedListStandIn.tsx",
     "src/test/responderDrag.ts",

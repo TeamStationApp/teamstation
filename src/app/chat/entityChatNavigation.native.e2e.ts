@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
+
 async function main(): Promise<void> {
   const {
     MAESTRO_D_CLIENT_ROOT,
@@ -41,6 +43,8 @@ async function main(): Promise<void> {
     await m.assertVisible({ id: 'entity-chat-list', timeout: 15000 })
     await m.tapOn({ text: TS_CHAT_GROUP_LABEL })
     await m.assertVisible({ text: '^Message$', timeout: 30000 })
+    // Opening a conversation asks about notifications once per person.
+    await dismissNotificationAskOn(m)
     writeFileSync(
       resolve(TS_CHAT_ARTIFACTS, 'narrow-after.png'),
       await m.screenshot()

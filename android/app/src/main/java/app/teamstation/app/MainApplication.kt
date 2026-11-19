@@ -10,6 +10,7 @@ import app.teamstation.app.navigation.PredictiveBackPackage
 import app.teamstation.app.network.StalledConnections
 import app.teamstation.app.orientation.OrientationPackage
 import app.teamstation.app.plan.PlanDocumentPackage
+import app.teamstation.app.push.PushPackage
 import app.teamstation.app.qrscanner.QrScannerPackage
 import app.teamstation.app.stream.PhoneStreamPackage
 import app.teamstation.app.video.LivePlaylistPatience
@@ -49,6 +50,8 @@ class MainApplication : Application(), ReactApplication {
           // Share Lineup's QR code camera.
           add(QrScannerPackage())
           add(CueSoundsPackage())
+          // Notifications: permission, FCM token, and what a chat wake shows.
+          add(PushPackage())
         },
     )
   }

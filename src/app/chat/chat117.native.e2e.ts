@@ -8,6 +8,7 @@ import {
   maestroClient,
   type MaestroDevice
 } from '../../test/chat117Maestro.e2e'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 const required = (name: string): string => {
   const value = process.env[name]
@@ -84,6 +85,8 @@ async function main(): Promise<void> {
   await tap('Chat')
   await visible('New message')
   await visible('Spring 2027 - Harbor League.*')
+  // Entering messaging asks about notifications once per person per device.
+  await dismissNotificationAskOn(d)
   await shot('list')
   await tap('New message')
   await tap('Name')
@@ -100,6 +103,7 @@ async function main(): Promise<void> {
   )
   await tap('Back')
   await tap('Lou G.*')
+  await dismissNotificationAskOn(d)
   await visible('Lou G, Direct message')
   await tap('Lou G, Direct message')
   await visible('Safety words with Lou G, Member')

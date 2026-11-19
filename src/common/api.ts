@@ -3541,6 +3541,15 @@ export interface RequestOptions {
    */
   deadline?: boolean
   /**
+   * Leaves `offline` as it was, whatever the request finds: its failure is
+   * not the phone going offline, and its answer not the phone back. For the
+   * device's own background calls (push registration), which run at moments
+   * of their own, such as an iPhone coming back from the system's
+   * notification prompt, and say nothing of the screen in front of the
+   * person. The app's own requests still say when the network is gone.
+   */
+  keepsOffline?: boolean
+  /**
    * The phone answers what it stored for the read at once, when it stored
    * anything, and asks the server behind it: for the scoring screen's own
    * reads as it opens. The web keeps nothing, and reads the server.
@@ -3744,6 +3753,20 @@ class TimedOut extends DeadlinePassed {
   ) {
     super(message)
   }
+}
+
+/** A device's own two notification switches, as its Account shows them. */
+export interface PushSwitches {
+  messages: boolean
+  rsvpEvents: boolean
+}
+
+/** `POST /me/push-registrations`: one device's push address and switches. */
+export interface PushRegistration extends PushSwitches {
+  platform: 'ios' | 'android' | 'web'
+  /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
+  address: string
+  environment: 'production' | 'development'
 }
 
 export interface ClientOptions {
@@ -4689,6 +4712,11 @@ export class TeamStationClient {
     this.onDeadlineMissed = options.onDeadlineMissed
   }
 
+  /** Sets `offline` to what a request found, unless it keeps it (`keepsOffline`). */
+  private found(options: RequestOptions, offline: boolean): void {
+    if (options.keepsOffline !== true) this.offline = offline
+  }
+
   /** Tells `onDeadlineMissed`; a listener that throws is not the request's failure. */
   protected deadlineMissed(): void {
     try {
@@ -4700,6 +4728,79 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  /**
+   * The VAPID public key a browser subscribes to push with, or null while
+   * the server sends no Web Push.
+   */
+  async webPushKey(): Promise<string | null> {
+    try {
+      return (
+        await this.request(
+          'GET',
+          '/push/web-key',
+          asObject({ publicKey: asString })
+        )
+      ).publicKey
+    } catch (error) {
+      if (error instanceof HttpError && error.code === 'notFound') return null
+      throw error
+    }
+  }
+
+  /**
+   * Where this signed-in device is woken: a phone's token or a browser's
+   * subscription (`address`, its JSON). Posting the same one again keeps one
+   * registration, moved to this session. Like the other push registration
+   * calls, it gives up as `offline` past the request deadline: the device
+   * sends them one after another, and one left hanging on a stalled link
+   * would hold up every one behind it, sign-out's among them. None of them
+   * changes the client's `offline` (`keepsOffline`): the device sends them
+   * in the background, and the phone's banner is for the app's own requests.
+   */
+  async registerPush(registration: PushRegistration): Promise<string> {
+    return (
+      await this.request(
+        'POST',
+        '/me/push-registrations',
+        asObject({ id: asString }),
+        registration,
+        { deadline: true, keepsOffline: true }
+      )
+    ).id
+  }
+
+  /**
+   * Changes this device's switches on the registration this session made
+   * (`registerPush`'s id); a switch left out keeps its value.
+   */
+  async updatePush(
+    id: string,
+    change: Partial<PushSwitches>
+  ): Promise<PushSwitches> {
+    const { messages, rsvpEvents } = await this.request(
+      'PATCH',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asObject({ messages: asBoolean, rsvpEvents: asBoolean }),
+      change,
+      { deadline: true, keepsOffline: true }
+    )
+    return { messages, rsvpEvents }
+  }
+
+  /**
+   * Deletes one of the caller's push registrations (`registerPush`'s id): at
+   * sign-out, while the session is still there to say whose it is.
+   */
+  async unregisterPush(id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asUnknownOk,
+      undefined,
+      { deadline: true, keepsOffline: true }
+    )
   }
 
   /** Whether this account has unlocked chat, and how. */
@@ -8347,13 +8448,13 @@ export class TeamStationClient {
           )
             throw this.refusal(errorFrom(caught.status, ''))
         }
-        this.offline = true
+        this.found(options, true)
         throw new HttpError(
           'offline',
           'Cannot reach TeamStation. Check your connection and try again.'
         )
       }
-      this.offline = false
+      this.found(options, false)
       if (
         answer.status === 401 &&
         !(method === 'POST' && path.startsWith('/auth/'))
@@ -8419,7 +8520,7 @@ export class TeamStationClient {
       // The caller's own cancel is its own, never no signal.
       if (cancelled || (options.signal?.aborted === true && !expired))
         throw caught
-      this.offline = true
+      this.found(options, true)
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
@@ -8428,7 +8529,7 @@ export class TeamStationClient {
       if (timer != null) clearTimeout(timer)
       options.signal?.removeEventListener('abort', callerAborted)
     }
-    this.offline = false
+    this.found(options, false)
     if (
       response.status === 401 &&
       !(method === 'POST' && path.startsWith('/auth/'))
@@ -8455,7 +8556,7 @@ export class TeamStationClient {
         throw caught
       if (caught instanceof DeadlinePassed) this.deadlineMissed()
       if (!response.ok) throw this.refusal(errorFrom(response.status, ''))
-      this.offline = true
+      this.found(options, true)
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'

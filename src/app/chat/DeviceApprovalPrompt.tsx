@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useSyncExternalStore } from 'react'
-import { Modal, ScrollView, Text, View } from 'react-native'
+import { ScrollView, Text, View } from 'react-native'
 
 import type { ChatPendingLink } from '../../common/api'
 import { Button, Card } from '../components'
+import { Modal } from '../components/Modal'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'

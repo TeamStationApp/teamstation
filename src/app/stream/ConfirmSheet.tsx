@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { Button } from '../components/Button'
 import { CancelAction } from '../components/CancelAction'
+import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'

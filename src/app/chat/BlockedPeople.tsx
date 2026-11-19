@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Modal, Text } from 'react-native'
+import { Text } from 'react-native'
 
 import type { ChatBlock, TeamStationClient } from '../../common/api'
 import type { GameSocket } from '../../common/gameSocket'
 import { Button, Screen } from '../components'
 import { ActionList, ActionRow } from '../components/ActionRow'
+import { Modal } from '../components/Modal'
 import { TextWidthButton } from '../components/TextWidthButton'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'

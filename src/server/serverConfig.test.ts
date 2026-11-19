@@ -179,10 +179,17 @@ describe('the database addresses', function () {
       worker: 10,
       primary: 3,
       statsBuilder: 3,
-      ingest: 3
+      ingest: 3,
+      pushSender: 3
     })
     expect(
       asServerConfig({ databasePoolSizes: { worker: 4 } }).databasePoolSizes
-    ).deep.equals({ worker: 4, primary: 3, statsBuilder: 3, ingest: 3 })
+    ).deep.equals({
+      worker: 4,
+      primary: 3,
+      statsBuilder: 3,
+      ingest: 3,
+      pushSender: 3
+    })
   })
 })

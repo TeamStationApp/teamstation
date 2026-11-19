@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 
 import { userIdOfGumbo } from '../../common/userId'
-import { loadToken, loadUser, saveToken, saveUser } from './sessionStore'
+import {
+  forgetSessionCookie,
+  loadToken,
+  loadUser,
+  saveToken,
+  saveUser
+} from './sessionStore'
 import { asStoredUser, sessionUserOf, storedUserOf } from './storedUser'
 
 describe('the web session store', function () {
@@ -16,6 +22,8 @@ describe('the web session store', function () {
     expect(await loadUser()).equals(undefined)
     await saveUser(undefined)
     await saveToken(undefined)
+    // The browser's cookie is the logout's to clear.
+    await forgetSessionCookie()
   })
 
   it('keeps id, display name and isAdmin of a session user, and restores them', function () {

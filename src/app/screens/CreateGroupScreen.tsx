@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type {
@@ -18,6 +18,7 @@ import { Button, Card, ListCard, Screen, TextField } from '../components'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { LocationRow } from '../components/LocationRow'
+import { Modal } from '../components/Modal'
 import { offlineCreateFailure } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { LocationScreen } from './LocationScreen'

@@ -36,6 +36,7 @@ import {
   redact,
   sourceBinding
 } from './chat2Fixture.e2e'
+import { dismissNotificationAskOn } from './notificationAsk'
 import {
   decodeRaster,
   pngFromJpeg,
@@ -4644,6 +4645,14 @@ export class Chat2UI {
       id,
       timeout: this.surface === 'ios' ? 45000 : 15000
     })
+  }
+
+  /**
+   * Entering messaging asks about notifications once per person per device:
+   * answered Not Now if it comes up, as nothing here is about it.
+   */
+  async notNow(): Promise<void> {
+    await dismissNotificationAskOn(this.device)
   }
 
   async absent(id: string): Promise<void> {

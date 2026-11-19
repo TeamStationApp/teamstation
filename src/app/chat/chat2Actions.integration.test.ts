@@ -1994,6 +1994,8 @@ describe('chat native adapter compatibility', function () {
       back: async () => {},
       open: async () => {},
       id: async () => {},
+      // The ask about notifications never comes up here.
+      notNow: async () => {},
       dom: async (script: string) => {
         if (script.includes('scrollTop=0')) zeroOffset = 0
         return { top: zeroOffset }

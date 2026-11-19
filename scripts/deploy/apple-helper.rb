@@ -133,12 +133,27 @@ when 'match', 'import'
 when 'project'
   require 'xcodeproj'
   project = Xcodeproj::Project.open(config.fetch('project'))
+  # A setting can name others, as $(NAME) or ${NAME}: each is read from the
+  # target's configuration, then from the project's of the same name.
+  expand = lambda do |value, build|
+    defaults = project.build_configurations.find { |c| c.name == build.name }
+    16.times do
+      return value unless value.match?(/\$[({]\w+[)}]/)
+      value = value.gsub(/\$[({](\w+)[)}]/) do
+        name = Regexp.last_match(1)
+        setting = build.build_settings[name] || defaults&.build_settings&.[](name)
+        raise "Unresolved build setting #{name}" unless setting.is_a?(String)
+        setting
+      end
+    end
+    raise 'Build settings name each other in a loop'
+  end
   found = []
   project.targets.each do |target|
     next unless ['com.apple.product-type.application', 'com.apple.product-type.app-extension'].include?(target.product_type)
     target.build_configurations.each do |build|
       next unless build.name == 'Release'
-      id = build.build_settings.fetch('PRODUCT_BUNDLE_IDENTIFIER')
+      id = expand.call(build.build_settings.fetch('PRODUCT_BUNDLE_IDENTIFIER'), build)
       profile = config.fetch('profiles')[id]
       # A generated project can also contain unrelated diagnostic applications.
       next if target.product_type == 'com.apple.product-type.application' && id != config.fetch('appId') && !profile

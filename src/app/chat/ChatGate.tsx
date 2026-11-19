@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Text } from 'react-native'
 
 import { Button, Screen } from '../components'
+import { useShowsModal } from '../components/modalPresence'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'
@@ -57,6 +58,9 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
   const onFailure = useRef(props.onFailure)
   onFailure.current = props.onFailure
   const mounted = useRef(true)
+  // Until this device is set up for chat (linked and approved), it counts
+  // as a modal: the ask about notifications waits.
+  useShowsModal(state !== 'ready')
   useEffect(() => {
     mounted.current = true
     return () => {

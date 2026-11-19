@@ -17,8 +17,20 @@ import {
 } from './database'
 
 describe('a pool with a role', () => {
-  const sizes = { worker: 9, primary: 8, statsBuilder: 7, ingest: 6 }
-  const roles: DatabaseRole[] = ['worker', 'primary', 'statsBuilder', 'ingest']
+  const sizes = {
+    worker: 9,
+    primary: 8,
+    statsBuilder: 7,
+    ingest: 6,
+    pushSender: 5
+  }
+  const roles: DatabaseRole[] = [
+    'worker',
+    'primary',
+    'statsBuilder',
+    'ingest',
+    'pushSender'
+  ]
 
   it('takes its size from its role', () => {
     for (const role of roles)

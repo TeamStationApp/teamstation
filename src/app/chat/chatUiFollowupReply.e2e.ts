@@ -8,6 +8,7 @@ import puppeteer from 'puppeteer'
 
 import { chatRowById } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Selector {
   text?: string
@@ -371,6 +372,8 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     css: '[data-testid="chat-composer"]',
     timeout: 20000
   })
+  // A new DM asks about notifications once per person per browser.
+  await dismissNotificationAskOn(device)
   const id = await evaluate<string>(
     device,
     `const parts=location.pathname.split('/');if(parts[1]!=='chat'||!parts[2]?.startsWith('cnv_'))throw new Error('Normal DM route missing');return JSON.stringify(parts[2]);`

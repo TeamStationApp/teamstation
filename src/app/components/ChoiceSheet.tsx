@@ -1,9 +1,10 @@
 import React from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CancelAction } from './CancelAction'
 import { RadioMark } from './RadioMark'
+import { Sheet } from './Sheet'
 
 export interface ChoiceSheetProps {
   title: string
@@ -29,88 +30,67 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   return (
-    <Modal transparent animationType="slide" visible onRequestClose={onClose}>
-      <View style={styles.scrim}>
+    <Sheet
+      onClose={onClose}
+      closeLabel="Close"
+      bottom={theme.rem(2)}
+      style={styles.sheet}
+    >
+      <Text style={styles.title}>{title}</Text>
+      {choices.map(choice => (
         <Pressable
-          accessibilityLabel="Close"
-          style={styles.behind}
-          onPress={onClose}
-        />
-        <View style={styles.sheet}>
-          <Text style={styles.title}>{title}</Text>
-          {choices.map(choice => (
-            <Pressable
-              key={choice.label}
-              accessibilityRole="button"
-              accessibilityLabel={choice.label}
-              accessibilityState={
-                choice.selected == null
-                  ? undefined
-                  : { selected: choice.selected }
-              }
-              aria-selected={choice.selected}
-              onPress={() => {
-                onClose()
-                choice.onPress()
-              }}
-              style={({ pressed }) => [
-                styles.choice,
-                choice.selected != null && styles.marked,
-                pressed && styles.pressed
+          key={choice.label}
+          accessibilityRole="button"
+          accessibilityLabel={choice.label}
+          accessibilityState={
+            choice.selected == null ? undefined : { selected: choice.selected }
+          }
+          aria-selected={choice.selected}
+          onPress={() => {
+            onClose()
+            choice.onPress()
+          }}
+          style={({ pressed }) => [
+            styles.choice,
+            choice.selected != null && styles.marked,
+            pressed && styles.pressed
+          ]}
+        >
+          <View style={styles.words}>
+            <Text
+              style={[
+                styles.label,
+                choice.link === true && styles.link,
+                choice.destructive === true && styles.destructive
               ]}
             >
-              <View style={styles.words}>
-                <Text
-                  style={[
-                    styles.label,
-                    choice.link === true && styles.link,
-                    choice.destructive === true && styles.destructive
-                  ]}
-                >
-                  {choice.label}
-                </Text>
-                {choice.detail != null && (
-                  <Text style={styles.detail}>{choice.detail}</Text>
-                )}
-              </View>
-              {choice.selected != null && <RadioMark on={choice.selected} />}
-            </Pressable>
-          ))}
-          <CancelAction
-            destructivePrimary={
-              linkCancel === true ||
-              (choices.length === 1 && choices[0].destructive === true)
-            }
-            label="Cancel"
-            onPress={onClose}
-          />
-        </View>
-      </View>
-    </Modal>
+              {choice.label}
+            </Text>
+            {choice.detail != null && (
+              <Text style={styles.detail}>{choice.detail}</Text>
+            )}
+          </View>
+          {choice.selected != null && <RadioMark on={choice.selected} />}
+        </Pressable>
+      ))}
+      <CancelAction
+        destructivePrimary={
+          linkCancel === true ||
+          (choices.length === 1 && choices[0].destructive === true)
+        }
+        label="Cancel"
+        onPress={onClose}
+      />
+    </Sheet>
   )
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  scrim: { flex: 1, justifyContent: 'flex-end' },
-  behind: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: theme.overlayBackgroundColor
-  },
   sheet: {
-    width: '100%',
-    maxWidth: theme.rem(36),
-    alignSelf: 'center',
     backgroundColor: theme.cardBackgroundColor,
-    borderTopLeftRadius: theme.rem(theme.radiusLargeRem),
-    borderTopRightRadius: theme.rem(theme.radiusLargeRem),
     borderWidth: 1,
     borderColor: theme.defaultBorderColor,
     padding: theme.rem(theme.spaceLgRem),
-    paddingBottom: theme.rem(2),
     gap: theme.rem(theme.spaceSmRem)
   },
   title: {

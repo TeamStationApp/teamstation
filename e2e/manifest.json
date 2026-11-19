@@ -361,6 +361,103 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "id": "platform/push/browser#dms-mentions-reminders",
+      "title": "A browser's notification switches are its own, a DM, a mention and an RSVPed event's reminder notify it and nothing else does, and a tap opens what it is about",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/push/**",
+        "scripts/push-coverage.mjs",
+        "scripts/serviceWorkerBuild.mjs",
+        "src/app/notifications.e2e.ts",
+        "src/app/platform/notificationSwitches*",
+        "src/app/platform/pushDevice*",
+        "src/app/platform/pushState.ts",
+        "src/app/push/**",
+        "src/app/web/sw.ts",
+        "src/server/push/**",
+        "src/server/routes/push.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/push/browser",
+      "file": "e2e/tests/platform/push/browser.e2e.ts"
+    },
+    {
+      "id": "platform/push/phone#dms-mentions-reminders",
+      "title": "A DM, a mention and an RSVPed event’s reminder notify the phone, decrypted on it, and a tap opens what each is about",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/*/java/app/teamstation/app/push/**",
+        "e2e/rigs/push/**",
+        "ios/TeamStation/Push/**",
+        "ios/TeamStationNotifications/**",
+        "mobile/test/teamStationAppNotifications.e2e.ts",
+        "scripts/push-coverage.mjs",
+        "src/app/platform/notificationSwitches*",
+        "src/app/platform/pushDevice*",
+        "src/app/platform/pushState.ts",
+        "src/app/push/**",
+        "src/server/push/**",
+        "src/server/routes/push.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 25,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/push/phone",
+      "file": "e2e/tests/platform/push/phone.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

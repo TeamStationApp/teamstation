@@ -8,6 +8,7 @@ import {
   type LongListsSeed,
   longListsSupport
 } from '../../test/longListsSeed'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 import { log, maestro } from '../../test/refinementsMaestro.e2e'
 
 /**
@@ -757,6 +758,8 @@ async function main(): Promise<void> {
         await m.tapOn({ text: 'Yes for .*', index: 0, timeout: 10000 })
         await pause(800)
         await m.tapOn({ text: 'Done', timeout: 10000 })
+        // An RSVP asks about notifications once per person per device.
+        await dismissNotificationAskOn(m)
         await pause(800)
         const rowId = control.id!
         const answer = rowsOf(await settled()).find(({ ids }) =>

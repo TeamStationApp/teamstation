@@ -560,6 +560,160 @@ describe('api client', function () {
     ])
   })
 
+  it('reads the Web Push key, none while the server sends none, registers a device with its switches, changes them and deletes it', async function () {
+    const client = (answer: ReturnType<typeof stubFetch>): TeamStationClient =>
+      new TeamStationClient({
+        baseUrl: 'http://example.com/api/v1',
+        fetch: answer.fetch
+      })
+    const key = stubFetch(200, { publicKey: 'BPublicKey' })
+    expect(await client(key).webPushKey()).equals('BPublicKey')
+    expect(key.calls.map(call => [call.method, call.url])).deep.equals([
+      ['GET', 'http://example.com/api/v1/push/web-key']
+    ])
+    expect(
+      await client(
+        stubFetch(404, { code: 'notFound', message: 'Web Push is off' })
+      ).webPushKey()
+    ).equals(null)
+    let refused: unknown
+    await client(stubFetch(500, { code: 'internal', message: 'Down' }))
+      .webPushKey()
+      .catch((error: unknown) => {
+        refused = error
+      })
+    expect(refused).instanceOf(HttpError)
+    const posted = stubFetch(200, { id: 'psh_1' })
+    const registration = {
+      platform: 'web' as const,
+      address: '{"endpoint":"https://fcm.googleapis.com/fcm/send/1"}',
+      environment: 'production' as const,
+      messages: true,
+      rsvpEvents: false
+    }
+    expect(await client(posted).registerPush(registration)).equals('psh_1')
+    expect(
+      posted.calls.map(call => [call.method, call.url, call.body])
+    ).deep.equals([
+      [
+        'POST',
+        'http://example.com/api/v1/me/push-registrations',
+        JSON.stringify(registration)
+      ]
+    ])
+    // A switch changed on the device changes the registration, by its id.
+    const patched = stubFetch(200, {
+      id: 'psh/1',
+      messages: true,
+      rsvpEvents: true
+    })
+    expect(
+      await client(patched).updatePush('psh/1', { rsvpEvents: true })
+    ).deep.equals({ messages: true, rsvpEvents: true })
+    expect(
+      patched.calls.map(call => [call.method, call.url, call.body])
+    ).deep.equals([
+      [
+        'PATCH',
+        'http://example.com/api/v1/me/push-registrations/psh%2F1',
+        JSON.stringify({ rsvpEvents: true })
+      ]
+    ])
+    // Sign-out deletes it again, by its id.
+    const deleted = stubFetch(200, {})
+    await client(deleted).unregisterPush('psh/1')
+    expect(deleted.calls.map(call => [call.method, call.url])).deep.equals([
+      ['DELETE', 'http://example.com/api/v1/me/push-registrations/psh%2F1']
+    ])
+  })
+
+  it('gives up on a push registration call that gets no answer by the deadline', async function () {
+    // A stalled link: the request leaves and nothing ever comes back.
+    const stalled = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: async () => await new Promise<Response>(() => {}),
+      requestDeadlineMs: 20
+    })
+    for (const call of [
+      async () =>
+        await stalled.registerPush({
+          platform: 'android',
+          address: 'fcm-1',
+          environment: 'production',
+          messages: true,
+          rsvpEvents: false
+        }),
+      async () => await stalled.updatePush('psh_1', { messages: false }),
+      async () => {
+        await stalled.unregisterPush('psh_1')
+      }
+    ]) {
+      let failed: unknown
+      await call().catch((error: unknown) => {
+        failed = error
+      })
+      expect(failed).instanceOf(HttpError)
+      expect((failed as HttpError).code).equals('offline')
+      // Sent in the background, it leaves the phone's banner alone.
+      expect(stalled.offline).equals(false)
+    }
+    // The app's own request on the same link still says it is offline.
+    await stalled.accountSettings().catch(() => undefined)
+    expect(stalled.offline).equals(true)
+  })
+
+  it('never changes offline by a push registration call: not when it fails, and not when it is answered', async function () {
+    let reachable = false
+    const told: boolean[] = []
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch: async () => {
+        // A request that never leaves the device, as fetch says it.
+        if (!reachable) throw new TypeError('Load failed')
+        return new Response(
+          '{"id":"psh_1","messages":true,"rsvpEvents":true}',
+          {
+            status: 200
+          }
+        )
+      }
+    })
+    client.subscribeOffline(offline => told.push(offline))
+    const registration = {
+      platform: 'ios',
+      address: 'apns-1',
+      environment: 'production',
+      messages: true,
+      rsvpEvents: true
+    } as const
+    expect(
+      await client.registerPush(registration).catch((error: unknown) => error)
+    ).property('code', 'offline')
+    expect(
+      await client
+        .updatePush('psh_1', { messages: true })
+        .catch((error: unknown) => error)
+    ).property('code', 'offline')
+    expect(
+      await client.unregisterPush('psh_1').catch((error: unknown) => error)
+    ).property('code', 'offline')
+    expect(client.offline).equals(false)
+    expect(told).deep.equals([])
+    // An ordinary request that fails is the phone offline...
+    await client.accountSettings().catch(() => undefined)
+    expect(client.offline).equals(true)
+    // ...and a push call answered while it is does not bring it back.
+    reachable = true
+    expect(await client.registerPush(registration)).equals('psh_1')
+    expect(await client.updatePush('psh_1', { rsvpEvents: true })).deep.equals({
+      messages: true,
+      rsvpEvents: true
+    })
+    await client.unregisterPush('psh_1')
+    expect(client.offline).equals(true)
+    expect(told).deep.equals([true])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({
@@ -4140,6 +4294,51 @@ describe('a timed request over XMLHttpRequest, as the phone sends one (1.harness
     ).deep.equals({ ok: true })
     expect(Date.now() - started).greaterThan(150)
     expect(client.offline).equals(false)
+  })
+
+  it('keeps a push registration call that misses its deadline, or never leaves, from changing offline, and still tells the missed deadline', async function () {
+    const registration = {
+      platform: 'ios',
+      address: 'apns-1',
+      environment: 'development',
+      messages: true,
+      rsvpEvents: false
+    } as const
+    // No answer by the deadline: the iPhone just back from its prompt.
+    const told = { missed: 0, refused: 0 }
+    const stalled = request(200, ['{"id":"psh_1"}'], 10, { never: true })
+    const client = sender(stalled.make, told)
+    expect(await failureOf(client.registerPush(registration))).property(
+      'code',
+      'offline'
+    )
+    expect(
+      await failureOf(client.updatePush('psh_1', { messages: false }))
+    ).property('code', 'offline')
+    expect(await failureOf(client.unregisterPush('psh_1'))).property(
+      'code',
+      'offline'
+    )
+    expect(client.offline).equals(false)
+    expect(told.missed).equals(3)
+    // A request that never left the device, the same.
+    const lost = sender(request(200, [], 5, { error: true }).make)
+    expect(await failureOf(lost.registerPush(registration))).property(
+      'code',
+      'offline'
+    )
+    expect(lost.offline).equals(false)
+    // The app's own read on that link is still offline.
+    expect(await failureOf(lost.send('GET', '/games'))).property(
+      'code',
+      'offline'
+    )
+    expect(lost.offline).equals(true)
+    // An answered push call leaves it so; the app's next answer clears it.
+    const answered = sender(request(200, ['{"id":"psh_2"}'], 5).make)
+    answered.offline = true
+    expect(await answered.registerPush(registration)).equals('psh_2')
+    expect(answered.offline).equals(true)
   })
 
   it('leaves a request with a body of bytes to fetch', async function () {

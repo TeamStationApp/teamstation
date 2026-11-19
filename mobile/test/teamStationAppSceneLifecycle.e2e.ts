@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 
-import { type AttachedDevice, attach } from './maestroD'
+import { type AttachedDevice, attach, flatten } from './maestroD'
 import { appLinkHost, otherServersLink } from './signInLinks'
 
 /**
@@ -74,15 +74,44 @@ async function refused(m: AttachedDevice): Promise<void> {
 }
 
 /**
+ * Waits for the keyboard the tap brought up. `tapOn` returns as the field takes focus, and a
+ * keystroke sent while the keyboard is still coming up is dropped.
+ */
+async function keyboardUp(m: AttachedDevice): Promise<void> {
+  const end = Date.now() + 10000
+  while (!flatten(await m.hierarchy()).some(node => /Keyboard$/.test(node.type ?? ''))) {
+    if (Date.now() > end) throw new Error('The keyboard did not come up')
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+}
+
+const PLACEHOLDER = 'parent@example.com'
+
+/**
  * Types `TYPED` into the e-mail field a character at a time. On a physical phone a burst of
  * automated keystrokes outruns the field and lands out of order, with or without the scene
- * lifecycle.
+ * lifecycle. A simulator can still lose a keystroke while the keyboard settles, so the field is
+ * checked, and emptied with its clear button and typed again when it does not hold `TYPED`, up
+ * to three times. Typing is not what this test is about; the field keeping it through the
+ * background is.
  */
 async function typeOnSignInScreen(m: AttachedDevice): Promise<void> {
   await signInScreen(m)
-  await m.tapOn({ text: 'parent@example.com' })
-  for (const character of TYPED) await m.inputText({ text: character })
-  await m.assertVisible({ text: TYPED })
+  await m.tapOn({ text: PLACEHOLDER })
+  await keyboardUp(m)
+  for (let attempt = 1; ; attempt++) {
+    for (const character of TYPED) await m.inputText({ text: character })
+    try {
+      await m.assertVisible({ text: TYPED, timeout: 3000 })
+      return
+    } catch (error) {
+      if (attempt === 3) throw error
+    }
+    console.log(`typing attempt ${attempt} dropped a keystroke; clearing and typing again`)
+    await m.tapOn({ id: 'Clear E-mail address' })
+    await m.tapOn({ text: PLACEHOLDER })
+    await keyboardUp(m)
+  }
 }
 
 async function phone(m: AttachedDevice): Promise<void> {

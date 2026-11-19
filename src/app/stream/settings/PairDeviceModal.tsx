@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,6 +8,7 @@ import {
   View
 } from 'react-native'
 
+import { Modal } from '../../components/Modal'
 import { lstrings, sprintf } from '../../locales/strings'
 import type { PhoneStream, RadarState } from '../phoneStreamClient'
 import { SETTINGS, SETTINGS_MONOSPACE } from './settingsTheme'

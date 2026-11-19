@@ -8,6 +8,7 @@ import { lstrings, sprintf } from '../locales/strings'
 import { seedRoute } from '../navigation/useAddressBar'
 import { deviceStorage } from '../platform/deviceStorage'
 import {
+  forgetSessionCookie,
   loadToken,
   loadUser,
   saveToken,
@@ -17,12 +18,8 @@ import type { StoredUser } from '../platform/storedUser'
 import { openDocumentCache } from '../sync/cache'
 import { getTheme } from '../theme/ThemeContext'
 import { apiBaseUrl, appOrigin, setLaunchApiBaseUrl } from './config'
-import {
-  apiBaseFor,
-  loadServerOverride,
-  saveServerOverride,
-  serverLinkOf
-} from './serverOverride'
+import { launchApi } from './launchApi'
+import { saveServerOverride, serverLinkOf } from './serverOverride'
 
 /**
  * A develop build's `teamstation-develop://server?origin=…` link keeps the
@@ -64,9 +61,10 @@ function keepServerLink(url: string | null | undefined): boolean {
  * get in — becomes a sign-in link to nowhere.
  *
  * **The session.** A browser keeps an `HttpOnly` cookie the app cannot read
- * and sends it by itself; a phone has no cookie jar, which the server already
- * knows — `server/auth/tokens.ts` reads an `Authorization` header first and
- * says so. The token from the last launch is read here and handed to the
+ * and sends it by itself; a phone sends its token as an `Authorization`
+ * header, which `server/auth/tokens.ts` reads first (`sessionStore.native.ts`
+ * says why, and what of the cookie the phone's own jar keeps). The token
+ * from the last launch is read here and handed to the
  * client before it asks anybody who it is, with who it last said that was:
  * with no signal at launch, that stored user is the session, and their
  * cached documents are what the app shows.
@@ -86,16 +84,15 @@ export function Root(): React.ReactElement {
     const settle = async (): Promise<void> => {
       // Both at once: neither waits on the other, and a slow storage read
       // should not hold up an address that is already in hand.
-      const [url, token, user, override] = await Promise.all([
+      const [url, token, user, api] = await Promise.all([
         Linking.getInitialURL().catch(() => null),
         loadToken(),
         loadUser(),
-        loadServerOverride(deviceStorage, appOrigin)
+        launchApi()
       ])
       if (!live) return
       // A server link is kept for the next launch, not opened as a route.
       seedRoute(keepServerLink(url) ? null : (url ?? null))
-      const api = apiBaseFor(override, apiBaseUrl)
       setLaunchApiBaseUrl(api)
       setOpened({ token, user, api })
     }
@@ -135,6 +132,7 @@ export function Root(): React.ReactElement {
             onUser={user => {
               saveUser(user).catch(() => undefined)
             }}
+            forgetSessionCookie={forgetSessionCookie}
             documentCache={openDocumentCache}
           />
         )}

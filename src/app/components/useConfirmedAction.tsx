@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
+import { Modal } from './Modal'
 
 export interface ConfirmedAction {
   title: string

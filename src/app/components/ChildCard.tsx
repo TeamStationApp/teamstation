@@ -1,9 +1,10 @@
 import React, { useRef, useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Card } from './Card'
 import { GroupEmblem } from './GroupEmblem'
+import { Modal } from './Modal'
 import { usePaneFrame } from './useBreakpoint'
 
 export interface ChildCardPill {

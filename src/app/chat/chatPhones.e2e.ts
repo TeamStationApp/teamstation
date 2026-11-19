@@ -46,6 +46,7 @@ import puppeteer, {
 
 import { chatRowText } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Device {
   launchApp: (options: object) => Promise<unknown>
@@ -268,7 +269,11 @@ async function p1(m: Device, run: string, shots: string): Promise<void> {
     assert(seed[who] != null, `${who} is not in the seed`)
     await signIn(m, seed[who])
     await chatTab(m, membersRow())
+    // Entering messaging asks about notifications; these steps are not
+    // about them.
+    await dismissNotificationAskOn(m)
     await m.tapOn({ text: membersRow() })
+    await dismissNotificationAskOn(m)
     // Hc's open page grants N the history; then the composer opens.
     await m.assertNotVisible({
       text: 'Waiting for history to unlock…',
@@ -432,7 +437,10 @@ async function p2(m: Device, run: string, shots: string): Promise<void> {
     await approve.click()
 
     await m.assertVisible({ text: membersRow(), timeout: 60000 })
+    // Approved, the device is through chat's gates: the ask comes up.
+    await dismissNotificationAskOn(m)
     await m.tapOn({ text: membersRow() })
+    await dismissNotificationAskOn(m)
     await m.assertVisible({ text: 'hello 🎉', timeout: 60000 })
     await m.takeScreenshot({ path: join(shots, 'p2-3-phone-history') })
     console.log(

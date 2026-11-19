@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createVerify, generateKeyPairSync } from 'node:crypto'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,14 +20,18 @@ import {
   applyDevelopIdentity,
   buildIos,
   buildTv,
+  bundleIdsOf,
   CAMERAMAN_APP,
   CAMERAMAN_DEVELOP_APP,
   compileAndroid,
+  copyGoogleServices,
   DEVELOP_APP,
   DIRECTOR_APP,
   DIRECTOR_DEVELOP_APP,
   DISTRIBUTOR_APP,
   DISTRIBUTOR_DEVELOP_APP,
+  GOOGLE_SERVICES,
+  GOOGLE_SERVICES_SECRET,
   MAPS_KEY_CHECK,
   PLAY_NOTES_LIMIT,
   PLAY_PUBLISHER_SECRET,
@@ -369,7 +374,7 @@ describe('TeamStation pipeline Masonfile', () => {
       name: string
       on: { type: string }
       tools?: { node: string; xcode: string; rust: string }
-      apple: { distribution: string; app: string }
+      apple: { distribution: string; app: string; bundleIds?: string[] }
       checkout?: boolean | { depth: number }
       when?: { branch?: string[]; params?: Record<string, string> }
     }>
@@ -390,12 +395,18 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.equal(ios[0]?.on.type, 'nomac')
     assert.equal(ios[0]?.apple.distribution, 'adHoc')
     assert.equal(ios[0]?.apple.app, 'app.teamstation.app')
+    // The archive signs the app and its notification extension.
+    assert.deepEqual(ios[0]?.apple.bundleIds, [
+      'app.teamstation.app',
+      'app.teamstation.app.notifications'
+    ])
     assert.equal(ios[0]?.tools?.node, '24')
     assert.equal(ios[0]?.tools?.xcode, '>=27.0 <27.3')
     assert.equal(ios[0]?.tools?.rust, '1.98.0')
     assert.equal(ios[1]?.name, 'release')
     assert.equal(ios[1]?.on.type, 'macos-arm64')
     assert.equal(ios[1]?.apple.distribution, 'appStore')
+    assert.deepEqual(ios[1]?.apple.bundleIds, bundleIdsOf(STABLE_APP))
     assert.deepEqual(ios[1]?.checkout, { depth: 1 })
     assert.deepEqual(ios[1]?.when, {
       branch: ['master'],
@@ -435,7 +446,10 @@ describe('TeamStation pipeline Masonfile', () => {
       'ndk;27.1.12297006',
       'cmake;3.22.1'
     ])
-    assert.deepEqual(android[0]?.secrets, ['GOOGLE_MAPS_ANDROID_API_KEY'])
+    assert.deepEqual(android[0]?.secrets, [
+      'GOOGLE_MAPS_ANDROID_API_KEY',
+      GOOGLE_SERVICES_SECRET
+    ])
     assert.deepEqual(android[1]?.secrets, [
       RELEASE_KEYSTORE_SECRET,
       RELEASE_PASSWORD_SECRET
@@ -503,6 +517,8 @@ describe('TeamStation pipeline Masonfile', () => {
         return 'store-password'
       },
       secretFile(name: string) {
+        // A stage outside Mason with no Firebase file: nothing is copied.
+        if (name === GOOGLE_SERVICES_SECRET) return ''
         assert.equal(name, RELEASE_KEYSTORE_SECRET)
         return '/private/secret-1'
       },
@@ -580,6 +596,13 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(
       log,
       /TS_APP_ENTITLEMENTS=TeamStation\/TeamStation.entitlements/
+    )
+    // The archive's tokens are production APNs's, and the extension is signed
+    // without the filtering entitlement Apple has not granted.
+    assert.match(log, /TS_APS_ENVIRONMENT=production/)
+    assert.match(
+      log,
+      /TS_NSE_ENTITLEMENTS=TeamStationNotifications\.entitlements/
     )
     assert.match(log, /cargo:.*\.mason\/tools\/rust\/1\.98\.0\/cargo/)
     assert.match(log, /publish:ios:build\/TeamStation\.ipa/)
@@ -670,7 +693,7 @@ describe('TeamStation pipeline Masonfile', () => {
       'android/app/src/main/res/values/strings.xml':
         '<string name="app_name">TeamStation</string>\n',
       'ios/TeamStation.xcodeproj/project.pbxproj':
-        'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
+        'TS_APP_BUNDLE_ID = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
       'ios/TeamStation/Info.plist':
         '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n\t\t\t<array>\n\t\t\t\t<string>teamstation</string>\n\t\t\t</array>\n',
       'android/app/src/main/AndroidManifest.xml':
@@ -723,9 +746,21 @@ describe('TeamStation pipeline Masonfile', () => {
         }
       }
     }
+    // Firebase's configuration, as Mason writes the declared secret file.
+    const secret = path.join(workspace, 'secret-1')
+    writeFileSync(secret, '{"project_info":{"project_id":"example"}}')
+    const secretFiles: string[] = []
+    const stage = {
+      ...ctx,
+      secretFile(name: string) {
+        secretFiles.push(name)
+        return secret
+      }
+    }
     try {
-      await buildIos(ctx)
-      await compileAndroid(ctx)
+      await buildIos(stage)
+      await compileAndroid(stage)
+      assert.deepEqual(secretFiles, [GOOGLE_SERVICES_SECRET])
       assert.deepEqual(apis, [
         'xcode:https://develop3.teamstation.app/api/v1',
         'stash:ios-adhoc',
@@ -738,8 +773,29 @@ describe('TeamStation pipeline Masonfile', () => {
         readFileSync(path.join(workspace, 'android/app/build.gradle'), 'utf8'),
         /applicationId "app\.teamstation\.develop"/
       )
+      assert.equal(
+        readFileSync(path.join(workspace, GOOGLE_SERVICES), 'utf8'),
+        '{"project_info":{"project_id":"example"}}'
+      )
     } finally {
       rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('builds Android without push when a stage outside Mason has no Firebase configuration', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'google-services-'))
+    try {
+      mkdirSync(path.join(root, 'android/app'), { recursive: true })
+      assert.equal(copyGoogleServices(root, undefined), false)
+      assert.equal(copyGoogleServices(root, ''), false)
+      assert.equal(existsSync(path.join(root, GOOGLE_SERVICES)), false)
+      // Named but not there is a builder set up wrong, not a build without push.
+      assert.throws(
+        () => copyGoogleServices(root, path.join(root, 'gone.json')),
+        /ENOENT/
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
@@ -995,6 +1051,9 @@ describe('TeamStation pipeline Masonfile', () => {
       getBuildNumber() {
         return '26103101'
       },
+      secretFile() {
+        return ''
+      },
       async stash(name: string) {
         commands.push(`stash:${name}`)
       }
@@ -1182,7 +1241,10 @@ describe('TeamStation pipeline Masonfile', () => {
           parallel(_group, members) {
             const ios = (
               members as {
-                ios: Array<{ apple: { app: string }; publishes?: string[] }>
+                ios: Array<{
+                  apple: { app: string; bundleIds?: string[] }
+                  publishes?: string[]
+                }>
               }
             ).ios
             const android = (
@@ -1191,6 +1253,7 @@ describe('TeamStation pipeline Masonfile', () => {
               }
             ).android
             recorded.push(ios[0]?.apple.app ?? '')
+            recorded.push((ios[0]?.apple.bundleIds ?? []).join(','))
             recorded.push((ios[0]?.publishes ?? []).join(','))
             recorded.push((android[1]?.publishes ?? []).join(','))
             recorded.push((android[0]?.secrets ?? []).join(','))
@@ -1202,9 +1265,11 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.deepEqual(recorded, [
       DEVELOP_APP,
       DEVELOP_APP,
+      // A develop archive signs the develop app's own extension.
+      'app.teamstation.develop,app.teamstation.develop.notifications',
       DEVELOP_APP,
       DEVELOP_APP,
-      'GOOGLE_MAPS_ANDROID_API_KEY',
+      `GOOGLE_MAPS_ANDROID_API_KEY,${GOOGLE_SERVICES_SECRET}`,
       STABLE_APP,
       TV_APP,
       DIRECTOR_DEVELOP_APP,
@@ -1233,7 +1298,7 @@ describe('TeamStation pipeline Masonfile', () => {
         'android/app/src/main/res/values/strings.xml':
           '<string name="app_name">TeamStation</string>\n',
         'ios/TeamStation.xcodeproj/project.pbxproj':
-          'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app.tests;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
+          'TS_APP_BUNDLE_ID = app.teamstation.app;\nTS_APP_BUNDLE_ID = app.teamstation.app;\nPRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID).tests";\nPRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID)";\nPRODUCT_NAME = TeamStation;\nPRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID).notifications";\nPRODUCT_NAME = "$(TARGET_NAME)";\nPRODUCT_NAME = TeamStation;\n',
         'ios/TeamStation/Info.plist':
           '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n\t\t\t<array>\n\t\t\t\t<string>teamstation</string>\n\t\t\t</array>\n',
         'android/app/src/main/AndroidManifest.xml':
@@ -1273,23 +1338,22 @@ describe('TeamStation pipeline Masonfile', () => {
         'utf8'
       )
       assert.match(gradle, /applicationId "app\.teamstation\.develop"/)
+      // Both configurations' one id; the app, its extension and its tests
+      // follow it, and the extension keeps its own name.
+      assert.equal(
+        project.match(/TS_APP_BUNDLE_ID = app\.teamstation\.develop;/g)?.length,
+        2
+      )
+      assert.equal(project.includes('app.teamstation.app'), false)
       assert.match(
         project,
-        /PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.app\.tests;/
-      )
-      assert.equal(
-        project.match(/PRODUCT_BUNDLE_IDENTIFIER = app\.teamstation\.develop;/g)
-          ?.length,
-        2
+        /PRODUCT_BUNDLE_IDENTIFIER = "\$\(TS_APP_BUNDLE_ID\)\.notifications";/
       )
       assert.equal(
         project.match(/PRODUCT_NAME = "TeamStation Develop";/g)?.length,
         2
       )
-      assert.equal(
-        project.includes('PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;'),
-        false
-      )
+      assert.match(project, /PRODUCT_NAME = "\$\(TARGET_NAME\)";/)
       assert.throws(() => {
         applyDevelopIdentity(path.join(root, 'missing'))
       }, /is missing/)

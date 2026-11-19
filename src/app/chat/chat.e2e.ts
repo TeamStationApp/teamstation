@@ -12,6 +12,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 import { presignGetUrl } from '../../server/media/presign'
 import type { retainedBrowserAction } from '../../test/chatBrowserLegacyActions.e2e'
 import { readSeedTable } from '../../test/chatSeedTable'
+import { dismissNotificationAsk } from '../../test/notificationAsk'
 
 /**
  * The chat's browser scenarios, against a running API and web app with
@@ -104,6 +105,8 @@ async function until<T>(
 
 /** The devices open now, by `<person>-<n>`, so a scenario reuses one. */
 const open = new Map<string, { browser: Browser; page: Page }>()
+/** Each device's seeded person, for the notification ask it answers. */
+const owners = new WeakMap<Page, string>()
 
 /**
  * One device of one person: a browser with its own lasting profile, the
@@ -122,9 +125,19 @@ async function device(person: string, n = 1): Promise<Page> {
   const page = await browser.newPage()
   await page.setViewport({ width: 1280, height: 900 })
   open.set(key, { browser, page })
+  const userId = readSeed().people[person]?.userId
+  if (userId != null) owners.set(page, userId)
   // On the app, so the page's own calls to the API carry its session.
   await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
   return page
+}
+
+/**
+ * Entering a conversation in the app asks about notifications, once per
+ * person per browser: answered Not Now, as these scenarios are not about it.
+ */
+async function notNow(page: Page): Promise<void> {
+  await dismissNotificationAsk(page, { userId: owners.get(page) })
 }
 
 /** Closes a device's browser; its profile (and keys) stay on disk. */
@@ -532,6 +545,7 @@ async function openChat(page: Page, title: string): Promise<void> {
       ? true
       : undefined
   )
+  await notNow(page)
 }
 
 /** Types a message into the composer and sends it. */
@@ -1198,6 +1212,7 @@ describe('chat scenarios in the browser', function () {
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
     )
+    await notNow(coach)
     await send(coach, 'Ec to D2: practice moved')
 
     const old = await signedIn('D2')
@@ -1263,6 +1278,7 @@ describe('chat scenarios in the browser', function () {
       await until('the DM', () =>
         /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
       )
+      await notNow(coach)
       await send(coach, 'Ec to D: carpool list')
       const parent = await signedIn('D')
       await openChat(parent, 'Eddie C')
@@ -1647,6 +1663,7 @@ describe('chat scenarios in the browser', function () {
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
     )
+    await notNow(keeper)
     const first = await dmWith(keeper, [
       seed.people.K.userId,
       seed.people.P.userId
@@ -1703,6 +1720,7 @@ describe('chat scenarios in the browser', function () {
     await until('the DM with Hc', () =>
       /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
     )
+    await notNow(keeper)
     const second = await dmWith(keeper, [
       seed.people.K.userId,
       seed.people.P.userId,
@@ -1717,6 +1735,7 @@ describe('chat scenarios in the browser', function () {
     await until('G2’s DM', () =>
       /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
     )
+    await notNow(guardian)
     const g2dm = await dmWith(guardian, [
       seed.people.G2.userId,
       seed.people.P.userId
@@ -1959,6 +1978,7 @@ describe('chat scenarios in the browser', function () {
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
     )
+    await notNow(coach)
     await send(coach, 'Thanks for cheering, Frankie')
 
     const fan = await signedIn('F')
@@ -1975,6 +1995,7 @@ describe('chat scenarios in the browser', function () {
         )) ?? undefined
     )
     await fanRow.click()
+    await notNow(fan)
     await waitForText(fan, 'Thanks for cheering, Frankie')
     await send(fan, 'Go Hawks!')
     await waitForText(coach, 'Go Hawks!')
@@ -2006,6 +2027,7 @@ describe('chat scenarios in the browser', function () {
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(player.url()) ? true : undefined
     )
+    await notNow(player)
     await dmWith(player, [seed.people.P.userId, seed.people.E.userId])
     await shot(player, 'e19-1-p-e')
 
@@ -2028,6 +2050,7 @@ describe('chat scenarios in the browser', function () {
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
     )
+    await notNow(coach)
     await dmWith(coach, [seed.people.Hc.userId, seed.people.P.userId])
     await shot(coach, 'e19-3-hc-p')
 

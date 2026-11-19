@@ -24,6 +24,7 @@ import {
   pointInMapFrame,
   waitInMapFrame
 } from '../../test/mapFrameProbe'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -598,6 +599,8 @@ async function main(): Promise<void> {
       'Independent self/child replies, continuous gradient, keyboard and Maybe persistence passed'
     )
     await m.tapOn({ text: 'Done' })
+    // An RSVP asks about notifications once per person per device.
+    await dismissNotificationAskOn(m)
     await wait(
       `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-usr_111111111111111111112k"]')?.textContent==='Maybe'`
     )
@@ -1693,6 +1696,7 @@ async function main(): Promise<void> {
       await (await f.h.request('GET', `/teams/${f.teamA}/games`)).json()
     ).find((row: { id: string }) => row.id === quickGameId).playerRsvps
     await tap({ text: 'Done' })
+    await dismissNotificationAskOn(m)
     await see({ id: `schedule-rsvps-${quickGameId}` }, 'UP')
     assert.equal(
       Number(

@@ -24,6 +24,7 @@ import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { startLongLists } from './longListsFixture.e2e'
 import { longListsSupport } from './longListsSeed'
+import { dismissNotificationAskOn } from './notificationAsk'
 import {
   absent,
   browserSession,
@@ -856,6 +857,8 @@ async function main(): Promise<void> {
       await tapCss('[data-testid="event-rsvp-modal"] [aria-label^="Yes for"]')
       await pause(400)
       await m.tapOn({ text: 'Done', timeout: 15000 })
+      // An RSVP asks about notifications once per person per device.
+      await dismissNotificationAskOn(m)
       const answer = `[data-testid="schedule-rsvps-${row.id}"]`
       await page.waitForSelector(
         `${answer} [data-testid="schedule-rsvp-avatars"]`

@@ -19,9 +19,20 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     guard let scene = scene as? UIWindowScene else { return }
     connect(
       scene,
-      url: connectionOptions.urlContexts.first?.url,
+      url: connectionOptions.urlContexts.first?.url ?? notificationURL(connectionOptions),
       userActivity: connectionOptions.userActivities.first
     )
+  }
+
+  /**
+   * The address of a notification the app was tapped open from, which is
+   * passed on as a launch link. iOS may also tell the app delegate of the
+   * tap; it knows this one has been opened.
+   */
+  private func notificationURL(_ options: UIScene.ConnectionOptions) -> URL? {
+    guard let request = options.notificationResponse?.notification.request else { return nil }
+    (UIApplication.shared.delegate as? AppDelegate)?.launchNotification = request.identifier
+    return PushCenter.url(of: request.content.userInfo as NSDictionary)
   }
 
   /**

@@ -1,5 +1,5 @@
 import { createSign } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
@@ -62,6 +62,13 @@ export const DISTRIBUTOR_APP = 'app.teamstation.distributor'
 export const DISTRIBUTOR_DEVELOP_APP = 'app.teamstation.distributor-develop'
 export const DISTRIBUTOR_NAME = 'TS Distributor'
 export const DISTRIBUTOR_DEVELOP_NAME = 'Distributor Develop'
+// The iOS app's Notification Service Extension, `<app id>.notifications`,
+// signed with the app (ios/TeamStationNotifications).
+export const NOTIFICATIONS_SUFFIX = '.notifications'
+// Which entitlements the extension is signed with. Apple's notification
+// filtering entitlement (TeamStationNotifications.filtering.entitlements)
+// replaces this once it is granted, with the server's push.iosFiltering on.
+export const NSE_ENTITLEMENTS = 'TeamStationNotifications.entitlements'
 // The team of the field apps' Mason app records. The xcconfig carries it:
 // -xcconfig overrides even Mason's own DEVELOPMENT_TEAM on the command line.
 export const FIELD_TEAM = 'V4AK4X7A2V'
@@ -115,6 +122,11 @@ function rewriteOnce(
   writeFileSync(full, text.replaceAll(from, to))
 }
 
+/** Every bundle an app's archive signs: the app and its notification extension. */
+export function bundleIdsOf(app: string): string[] {
+  return [app, `${app}${NOTIFICATIONS_SUFFIX}`]
+}
+
 /** Which app id this run publishes. Master stays stable; every other branch and every seat does not. */
 export function appIdOf(
   input: { branch?: string; seat?: string } = {}
@@ -162,10 +174,12 @@ export function applyDevelopIdentity(root: string): void {
     '<string name="app_name">TeamStation</string>',
     `<string name="app_name">${DEVELOP_DISPLAY_NAME}</string>`
   )
+  // The project's one bundle id, which the app, its extension and its tests
+  // are named from.
   rewrite(
     'ios/TeamStation.xcodeproj/project.pbxproj',
-    'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;',
-    `PRODUCT_BUNDLE_IDENTIFIER = ${DEVELOP_APP};`
+    'TS_APP_BUNDLE_ID = app.teamstation.app;',
+    `TS_APP_BUNDLE_ID = ${DEVELOP_APP};`
   )
   rewrite(
     'ios/TeamStation.xcodeproj/project.pbxproj',
@@ -387,7 +401,7 @@ function buildStages(w: WorkflowBuilder, app: string): void {
             rust: '1.98.0'
           },
           timeout: '6h',
-          apple: { distribution: 'adHoc', app },
+          apple: { distribution: 'adHoc', app, bundleIds: bundleIdsOf(app) },
           publishes: [app],
           buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
@@ -401,7 +415,11 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           // this stage re-signs the stashed IPA and does not compile.
           checkout: { depth: 1 },
           when: { branch: ['master'], params: { seat: 'production' } },
-          apple: { distribution: 'appStore', app: STABLE_APP },
+          apple: {
+            distribution: 'appStore',
+            app: STABLE_APP,
+            bundleIds: bundleIdsOf(STABLE_APP)
+          },
           run: releaseIos
         }
       ],
@@ -426,9 +444,10 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           publishes: [app],
           buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
-          // Gradle reads it from the environment into the manifest's
-          // com.google.android.geo.API_KEY for the native event map.
-          secrets: [MAPS_KEY_SECRET],
+          // Gradle reads the Maps key from the environment into the manifest's
+          // com.google.android.geo.API_KEY for the native event map, and
+          // compileAndroid copies google-services.json into the app for FCM.
+          secrets: [MAPS_KEY_SECRET, GOOGLE_SERVICES_SECRET],
           run: compileAndroid
         },
         {
@@ -621,7 +640,10 @@ export async function buildIos(ctx: Stage): Promise<void> {
     xcargs: [
       'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
       `TS_APP_LINK_HOST=${new URL(seatEnvironment(ctx).TS_APP_ORIGIN).host}`,
-      'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements'
+      'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements',
+      // An ad hoc or App Store build's tokens are production APNs's.
+      'TS_APS_ENVIRONMENT=production',
+      `TS_NSE_ENTITLEMENTS=${NSE_ENTITLEMENTS}`
     ],
     env: {
       CARGO_HOME: `${rustRoot}/cargo`,
@@ -701,6 +723,29 @@ export const MAPS_KEY_CHECK = [
   `printf '%s\\n' "$manifest" | grep -A 1 -F com.google.android.geo.API_KEY | grep -qF "\\"${MAPS_KEY}\\"" || fail 'The release APK has no Google Maps key'`,
   "echo 'The release APK carries the Google Maps key.'"
 ].join('\n')
+/** Firebase's configuration for both application ids, which no commit holds. */
+export const GOOGLE_SERVICES = 'android/app/google-services.json'
+/** The Mason project secret file that holds `google-services.json`. */
+export const GOOGLE_SERVICES_SECRET = 'google-services.json'
+
+/**
+ * Copies Firebase's configuration, which Mason holds as the project secret
+ * file `GOOGLE_SERVICES_SECRET` and writes to `secret`, into the Android app,
+ * where `android/app/build.gradle` applies the google-services plugin when it
+ * is there. The Android compile stage declares that secret, and Mason starts
+ * no stage whose declared secret the project lacks, so under Mason there is
+ * always a file. A stage run outside Mason (a local checkout's own run, or a
+ * test) may have none: then it copies nothing, and the app builds without
+ * push. True when it copied.
+ */
+export function copyGoogleServices(
+  root: string,
+  secret: string | undefined
+): boolean {
+  if (secret == null || secret === '') return false
+  copyFileSync(secret, path.join(root, GOOGLE_SERVICES))
+  return true
+}
 const AAB_GLOB = 'android/app/build/outputs/bundle/release/*.aab'
 const PLAY_ARCHITECTURES = 'arm64-v8a,armeabi-v7a'
 
@@ -792,6 +837,10 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const app = runApp(ctx)
   if (app === DEVELOP_APP) applyDevelopIdentity(developRoot(ctx))
+  copyGoogleServices(
+    ctx.workspace ?? process.cwd(),
+    ctx.secretFile(GOOGLE_SERVICES_SECRET)
+  )
   const build = ctx.getBuildNumber(app)
   const version = appVersion(ctx)
   await ctx.sh(
