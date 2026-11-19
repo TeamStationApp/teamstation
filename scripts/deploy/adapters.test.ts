@@ -363,6 +363,14 @@ describe('Native build and signing adapters', () => {
 
     context.settings.apps[app].sentry = sentry
     assert.equal(buildEnvironment(context).TS_SENTRY_DSN, sentry.dsn)
+    // Any other branch's build reports to its app's own server.
+    assert.equal(
+      new URL(
+        buildEnvironment({ ...context, branch: 'paul/feature' })
+          .TS_SENTRY_DSN ?? ''
+      ).host,
+      new URL(context.settings.apps[app].apiOrigin ?? '').host
+    )
     calls = []
     await archive(context, signing)
     assert(calls.some(c => c.args.some(a => a.startsWith('SOURCEMAP_FILE='))))

@@ -12,6 +12,7 @@ import { lstrings } from '../../locales/strings'
 import { CARD_HIDE_MS } from '../cardScrub'
 import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
+import { markSeek } from '../playbackSession'
 import type { PlayIntent } from '../playIntent'
 import {
   type GridZone,
@@ -2193,10 +2194,15 @@ export function useMultiCam(
     (wallMs: number, final = true): void => {
       if (final) {
         settledAtRef.current(wallMs)
+        for (const element of elements.current.values())
+          markSeek(element, 'scrub', false)
         scrubber.end(wallMs)
         return
       }
       // The playhead goes with the finger; the pictures follow at their pace.
+      // Each seek on the way is the viewer's scrub too.
+      for (const element of elements.current.values())
+        markSeek(element, 'scrub', false)
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
       scrubber.move(wallMs)
@@ -2631,6 +2637,8 @@ export function useMultiCam(
     const target = livePointRef.current()
     if (target == null || !Number.isFinite(target)) return
     const here = gameNowRef.current('') ?? atWallRef.current
+    for (const element of elements.current.values())
+      markSeek(element, 'jump_to_present')
     scrub(Math.max(target, here ?? target))
   }
 

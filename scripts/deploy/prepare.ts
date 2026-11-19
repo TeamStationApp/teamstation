@@ -19,7 +19,11 @@ export function buildEnvironment(context: BuildContext): NodeJS.ProcessEnv {
   const origin = settings.apps[target.app].apiOrigin
   return {
     NODE_BINARY: settings.tools.node,
-    ...sentryBuildEnvironment(settings.apps[target.app].sentry),
+    ...sentryBuildEnvironment(
+      settings.apps[target.app].sentry,
+      context.branch,
+      origin
+    ),
     TS_BUILD_INFO: JSON.stringify({
       app: target.app,
       version: context.version,

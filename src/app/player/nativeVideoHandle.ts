@@ -145,6 +145,23 @@ export class NativeVideoHandle implements VideoHandle {
 
   /** Handed to `attachHls.native.ts`, which decides what to do about it. */
   onError: ((error: OnVideoErrorData) => void) | null = null
+  /** Which phone player this is, for the playback telemetry. */
+  engine: 'avplayer' | 'exoplayer' = 'avplayer'
+  /** The player's last error, for the playback telemetry to bucket. */
+  lastError: OnVideoErrorData | null = null
+  /** Where the player's loaded footage ends, in seconds into the stream. */
+  bufferedEnd: number | null = null
+  /**
+   * ExoPlayer's estimate of the line's throughput, in bits a second, from its
+   * bandwidth meter: not the stream's bitrate.
+   */
+  bandwidthEstimate: number | null = null
+  /**
+   * The declared bitrate of the variant AVPlayer is playing, from its access
+   * log's `indicatedBitrate`, which react-native-video reports through the
+   * same bandwidth callback: the stream's bitrate, not the line's.
+   */
+  streamBitrate: number | null = null
 
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
@@ -418,6 +435,8 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleProgress = (data: OnProgressData): void => {
+    if (Number.isFinite(data.playableDuration))
+      this.bufferedEnd = data.playableDuration
     // AVPlayer reports the length of its seekable range, which for a game's
     // playlist starts at its first segment and so ends at the newest one.
     if (Number.isFinite(data.seekableDuration) && data.seekableDuration > 0) {
@@ -605,7 +624,15 @@ export class NativeVideoHandle implements VideoHandle {
     this.emit('pause')
   }
 
+  /** ExoPlayer's bandwidth report (`reportBandwidth`). */
+  handleBandwidth = (data: { bitrate: number }): void => {
+    if (!Number.isFinite(data.bitrate) || data.bitrate <= 0) return
+    if (this.engine === 'avplayer') this.streamBitrate = data.bitrate
+    else this.bandwidthEstimate = data.bitrate
+  }
+
   handleError = (error: OnVideoErrorData): void => {
+    this.lastError = error
     this.actuallyPlaying = false
     this.reportedPlaying = false
     this.emit('error')
@@ -653,6 +680,7 @@ export class NativeVideoHandle implements VideoHandle {
     }
     // A fresh attempt, paused until somebody plays it, with nothing loaded yet.
     this.failed = false
+    this.bufferedEnd = null
     this.advance('reopen')
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
@@ -678,6 +706,11 @@ export class NativeVideoHandle implements VideoHandle {
     this.playerStoppedAt = null
     this.failed = false
     this.seekableTo = null
+    // The playback telemetry's readings were the last source's.
+    this.bufferedEnd = null
+    this.bandwidthEstimate = null
+    this.streamBitrate = null
+    this.lastError = null
   }
 
   /**

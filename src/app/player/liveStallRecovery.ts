@@ -1,4 +1,5 @@
 import type { RetryClock } from './attachHls'
+import { markSeek } from './playbackSession'
 
 /** Leave normal buffering to the engine before trying a bounded seek. */
 export const LIVE_STALL_MS = 10_000
@@ -68,6 +69,7 @@ export function recoverLiveStalls(
         // a missing stretch. A seek into it must leave a second to play.
         const next = Math.max(at, start) + 0.05
         if (next - at <= MAX_GAP_SEC && end - next >= 1) {
+          markSeek(video, 'stall_recovery')
           video.currentTime = next
           nudges += 1
           lastProgress = now

@@ -169,6 +169,15 @@ export const REQUEST_ROUTES = [
   '/health',
   '/games/:gameId',
   '/videos/:videoId',
+  '/videos/:videoId/playback',
+  '/videos/:videoId/hls/:file',
+  '/videos/:videoId/stills/:file',
+  '/videos/:videoId/still',
+  '/videos/:videoId/wall-timeline',
+  '/live',
+  '/games/:gameId/live-streams',
+  '/games/:gameId/live-streams/:streamId',
+  '/games/:gameId/stream-access',
   '/director/uploads',
   '/me/tess/messages',
   'other'
@@ -204,6 +213,145 @@ const tess = {
   cr: number(10000000),
   cw: number(10000000),
   ec: error
+}
+
+/** Where a player shows: a home card, the game page, a grid, one of its tiles. */
+export const PLAYBACK_SURFACES = [
+  'card',
+  'game',
+  'grid',
+  'tile',
+  'other'
+] as const
+export type PlaybackSurface = (typeof PLAYBACK_SURFACES)[number]
+/** Who plays the stream: the browser, hls.js, AVPlayer or ExoPlayer. */
+export const PLAYBACK_ENGINES = [
+  'native',
+  'hlsjs',
+  'avplayer',
+  'exoplayer',
+  'none'
+] as const
+export type PlaybackEngine = (typeof PLAYBACK_ENGINES)[number]
+/** What moved the playhead. */
+export const SEEK_KINDS = [
+  'scrub',
+  'jump_to_present',
+  'seek_by',
+  'cushion_join',
+  'restore',
+  'stall_recovery',
+  'reload_restore',
+  'other'
+] as const
+export type SeekKind = (typeof SEEK_KINDS)[number]
+/** A player's failure, by source: the element's MediaError, hls.js, or a phone's player. */
+export const PLAYBACK_ERROR_KINDS = [
+  'media_aborted',
+  'media_network',
+  'media_decode',
+  'media_unsupported',
+  'hls_network',
+  'hls_media',
+  'hls_mux',
+  'hls_key',
+  'hls_other',
+  'avplayer',
+  'exoplayer',
+  'unknown'
+] as const
+export type PlaybackErrorKind = (typeof PLAYBACK_ERROR_KINDS)[number]
+/** hls.js error details worth telling apart, in snake case; the rest are `other`. */
+export const PLAYBACK_ERROR_DETAILS = [
+  'manifest_load_error',
+  'manifest_load_timeout',
+  'manifest_parsing_error',
+  'level_load_error',
+  'level_load_timeout',
+  'level_empty_error',
+  'frag_load_error',
+  'frag_load_timeout',
+  'frag_parsing_error',
+  'frag_gap',
+  'buffer_append_error',
+  'buffer_appending_error',
+  'buffer_stalled_error',
+  'buffer_full_error',
+  'buffer_nudge_on_stall',
+  'buffer_seek_over_hole',
+  'internal_exception',
+  'other'
+] as const
+/** What a player did to come back, or that it stopped trying. */
+export const RECOVERY_KINDS = [
+  'reload',
+  'new_address',
+  'playlist_watch_reload',
+  'rejoin',
+  'give_up',
+  'media_recover',
+  'network_retry',
+  'stall_reload',
+  'restore_abandoned'
+] as const
+export type RecoveryKind = (typeof RECOVERY_KINDS)[number]
+const behind = number(604800, -600)
+/**
+ * One player attachment's telemetry, joined by `ps`. Positions and distances
+ * are seconds; `be` is how far behind the newest seekable footage, `ba` how
+ * much is buffered ahead. No URL, token or address ever goes in.
+ */
+const playback = {
+  vi: video.vi,
+  ps: uuid,
+  en: choice(...PLAYBACK_ENGINES),
+  sf: choice(...PLAYBACK_SURFACES),
+  lv: boolean,
+  si: choice('live_edge', 'position', 'start'),
+  ms: number(86400000),
+  pms: number(86400000),
+  pos: video.pos,
+  dur: video.dur,
+  be: behind,
+  ba: number(3600, -600),
+  td: number(60),
+  sr: choice('waiting', 'stalled', 'buffer'),
+  sk: choice(...SEEK_KINDS),
+  fr: video.pos,
+  to: video.pos,
+  bb: behind,
+  bf: behind,
+  ek: choice(...PLAYBACK_ERROR_KINDS),
+  ed: choice(...PLAYBACK_ERROR_DETAILS),
+  cd: number(1e10, -1e10),
+  ft: boolean,
+  rk: choice(...RECOVERY_KINDS),
+  n: number(1e9),
+  wms: number(86400000),
+  sc: number(1e6),
+  sms: number(86400000),
+  rl: number(1e6),
+  rt: video.rt,
+  bw: number(1e11),
+  br: number(1e10),
+  df: number(1e9),
+  tf: number(1e9),
+  pl: boolean,
+  pr: boolean,
+  wd: number(16384),
+  ht: number(16384)
+}
+/** A playback or live-list request as a player screen saw it. */
+const playbackFetch = {
+  vi: video.vi,
+  sf: choice(...PLAYBACK_SURFACES),
+  fk: choice('playback', 'live_now'),
+  oc: choice('ok', 'pending', 'unavailable', 'error', 'offline'),
+  status: number(599, 100),
+  ms: number(86400000),
+  at: number(1e6),
+  rd: number(86400000),
+  n: number(1e6)
 }
 
 /** The property dictionary is positive: unknown fields never leave a client. */
@@ -275,7 +423,22 @@ export const EVENT_RULES = {
   export_completed: system,
   export_failed: system,
   tess_request: tess,
-  queue_dropped: { n: number(1e9) }
+  queue_dropped: { n: number(1e9) },
+  playback_attached: playback,
+  playback_source_set: playback,
+  playback_metadata: playback,
+  playback_canplay: playback,
+  playback_first_frame: playback,
+  playback_first_frame_missed: playback,
+  playback_stall_started: playback,
+  playback_stall_ended: playback,
+  playback_seek: playback,
+  playback_error: playback,
+  playback_recovery: playback,
+  playback_heartbeat: playback,
+  playback_bitrate: playback,
+  playback_detached: playback,
+  playback_fetch: playbackFetch
 } satisfies Record<string, Record<string, Rule>>
 export type EventName = keyof typeof EVENT_RULES
 export const ANONYMOUS_EVENTS = new Set<EventName>([
@@ -299,6 +462,83 @@ export const SERVER_EVENTS = new Set<EventName>([
   'processing_failed',
   'tess_request'
 ])
+/**
+ * How OpenSearch stores each property any event may carry. The collector's
+ * strict mapping is built from this, so a property added to a rule above and
+ * not here is refused by the index rather than silently dropped later.
+ */
+export const PROPERTY_TYPES: Readonly<
+  Record<string, 'keyword' | 'double' | 'boolean'>
+> = {
+  pg: 'keyword',
+  mt: 'keyword',
+  sp: 'keyword',
+  ec: 'keyword',
+  id: 'keyword',
+  ty: 'keyword',
+  vi: 'keyword',
+  ps: 'keyword',
+  op: 'keyword',
+  rp: 'keyword',
+  c: 'keyword',
+  f0: 'keyword',
+  f1: 'keyword',
+  f2: 'keyword',
+  en: 'keyword',
+  sf: 'keyword',
+  si: 'keyword',
+  sr: 'keyword',
+  sk: 'keyword',
+  ek: 'keyword',
+  ed: 'keyword',
+  rk: 'keyword',
+  fk: 'keyword',
+  oc: 'keyword',
+  ms: 'double',
+  pos: 'double',
+  dur: 'double',
+  rt: 'double',
+  bytes: 'double',
+  status: 'double',
+  n: 'double',
+  l0: 'double',
+  l1: 'double',
+  l2: 'double',
+  c0: 'double',
+  c1: 'double',
+  c2: 'double',
+  it: 'double',
+  ot: 'double',
+  cr: 'double',
+  cw: 'double',
+  pms: 'double',
+  be: 'double',
+  ba: 'double',
+  td: 'double',
+  fr: 'double',
+  to: 'double',
+  bb: 'double',
+  bf: 'double',
+  cd: 'double',
+  wms: 'double',
+  sc: 'double',
+  sms: 'double',
+  rl: 'double',
+  bw: 'double',
+  br: 'double',
+  df: 'double',
+  tf: 'double',
+  wd: 'double',
+  ht: 'double',
+  at: 'double',
+  rd: 'double',
+  ok: 'boolean',
+  on: 'boolean',
+  lv: 'boolean',
+  ft: 'boolean',
+  pl: 'boolean',
+  pr: 'boolean'
+}
 export const MAX_EVENT_BYTES = 4096
 export const MAX_AGE_MS = 7 * 86400000
 
@@ -380,6 +620,12 @@ export function parseEvent(value: unknown, now = Date.now()): EventRecord {
     if (properties.vi == null || properties.ps == null)
       throw new Error('Video identity required')
   }
+  if (
+    E.startsWith('playback_') &&
+    E !== 'playback_fetch' &&
+    properties.ps == null
+  )
+    throw new Error('Playback session required')
   if (E === 'watch_progress' && properties.ms == null)
     throw new Error('Watch delta required')
   if (

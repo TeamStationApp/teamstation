@@ -583,7 +583,7 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, onWallMapping }
+      { wantsToPlay, onWallMapping, surface: 'grid' }
     )
     const start = (): void => {
       onAttached(videoId, handle, toSec)

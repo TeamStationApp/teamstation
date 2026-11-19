@@ -694,7 +694,8 @@ function Tile(props: {
         onWallMapping,
         onSoundHeld,
         muted: () => mutedNow.current,
-        startSec: toSec ?? undefined
+        startSec: toSec ?? undefined,
+        surface: 'grid'
       }
     )
     const start = (): void => {

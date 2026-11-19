@@ -65,13 +65,62 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     ).deep.equals({
       api: 'https://devhost1.example-ts.test',
       socket: 'wss://devhost1.example-ts.test',
-      media: ['https://devhost1.example-ts.test', 'https://*.mzstatic.com']
+      media: ['https://devhost1.example-ts.test', 'https://*.mzstatic.com'],
+      logs: undefined
     })
     expect(originsFor('/api/v1')).deep.equals({
       api: undefined,
       socket: undefined,
-      media: []
+      media: [],
+      logs: undefined
     })
+  })
+
+  it('lets the page post its logs to the collector its DSN names, and nowhere else', function () {
+    expect(
+      originsFor(
+        '/api/v1',
+        '',
+        'https://0123abcd@develop-logs.example-ts.test/102'
+      ).logs
+    ).equals('https://develop-logs.example-ts.test')
+    for (const dsn of [
+      '',
+      'not a url',
+      'http://0123abcd@logs.example-ts.test/102',
+      'https://0123abcd:secret@logs.example-ts.test/102',
+      'https://logs.example-ts.test/102',
+      'https://0123abcd@logs.example-ts.test/ingest/102',
+      'https://0123abcd@logs.example-ts.test/102?x=1',
+      'https://0123abcd@logs.example-ts.test/102#x'
+    ])
+      expect(originsFor('/api/v1', '', dsn).logs, dsn).equals(undefined)
+    const policy = directives(
+      cspFor(
+        originsFor(
+          '/api/v1',
+          'https://media.example-ts.test',
+          'https://0123abcd@develop-logs.example-ts.test/102'
+        )
+      )
+    )
+    expect(policy['connect-src']).deep.equals([
+      "'self'",
+      'https://media.example-ts.test',
+      'https://develop-logs.example-ts.test'
+    ])
+    // The collector is only talked to: images and video never come from it.
+    expect(policy['img-src']).deep.equals([
+      "'self'",
+      'data:',
+      'blob:',
+      'https://media.example-ts.test'
+    ])
+    expect(policy['media-src']).deep.equals([
+      "'self'",
+      'blob:',
+      'https://media.example-ts.test'
+    ])
   })
 
   it('writes exactly the planned policy', function () {
@@ -150,7 +199,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
           TS_WEB_OUT_DIR: once,
           TS_API_BASE_URL: 'https://devhost1.example-ts.test/api/v1',
           TS_MEDIA_ORIGINS:
-            'https://devhost1.example-ts.test https://dev-media-bucket.sfo3.digitaloceanspaces.com https://*.mzstatic.com'
+            'https://devhost1.example-ts.test https://dev-media-bucket.sfo3.digitaloceanspaces.com https://*.mzstatic.com',
+          TS_SENTRY_DSN: 'https://0123abcd@logs.example-ts.test/102'
         },
         maxBuffer: 1 << 24
       })
@@ -170,7 +220,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         'https://devhost1.example-ts.test',
         'wss://devhost1.example-ts.test',
         'https://dev-media-bucket.sfo3.digitaloceanspaces.com',
-        'https://*.mzstatic.com'
+        'https://*.mzstatic.com',
+        'https://logs.example-ts.test'
       ])
       expect(policy['style-src']).includes('https://fonts.googleapis.com')
       expect(policy['font-src']).deep.equals([
