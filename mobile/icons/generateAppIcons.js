@@ -60,6 +60,15 @@ const APPS = [
     )
   },
   {
+    name: 'speedy',
+    svg: path.join(iconsDir, 'speedBall.svg'),
+    out: path.join(
+      repoRoot,
+      'mobile/apps/tsSpeedy/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
+    ),
+    androidRes: path.join(repoRoot, 'mobile/apps/tsSpeedyAndroid/app/src/main/res')
+  },
+  {
     name: 'preview',
     svg: path.join(iconsDir, 'monitors.svg'),
     out: path.join(
