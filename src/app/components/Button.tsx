@@ -9,7 +9,7 @@ import {
   type ViewStyle
 } from 'react-native'
 
-import { pillPadding } from '../theme/pill'
+import { pillPadding, pillShadow } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ButtonIcon } from './ButtonIcon'
 import { useFittedText } from './fittedText'
@@ -188,13 +188,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     justifyContent: 'center'
   },
   /** The lift, on everything but a text button. */
-  raised: {
-    shadowColor: theme.buttonShadowColor,
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3
-  },
+  raised: pillShadow(theme),
   /** Pressed, it settles: the shadow tightens rather than disappearing. */
   lowered: {
     shadowRadius: 4,

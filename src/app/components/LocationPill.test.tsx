@@ -75,9 +75,13 @@ describe('the location pill', function () {
     )
     const pill = byTestId('location-pill')!
     expect(pill.textContent).equals('San Diego, CA')
-    expect(pill.style.height).equals('20px')
+    expect(window.getComputedStyle(pill).height).equals('20px')
     const style = window.getComputedStyle(pill)
     expect(hex(style.backgroundColor)).equals(tsBallpark.neutralBadgeBackground)
+    // Raised as Following is, and with no border to push the circle in.
+    expect(style.boxShadow).not.equals('')
+    expect(style.borderTopWidth).oneOf(['', '0px'])
+    expect(style.borderRightWidth).oneOf(['', '0px'])
     const label =
       pill.querySelector<HTMLElement>('[dir], div[dir="auto"]') ??
       (pill.firstElementChild as HTMLElement)
@@ -115,8 +119,8 @@ describe('the location pill', function () {
     expect(px(remove.style.top) + 22).closeTo(10, 1e-9)
 
     // The label clears the circle, and starts where the kind pill's does.
-    expect(px(pill.style.paddingRight)).greaterThan(10 + 6)
-    expect(px(pill.style.paddingLeft)).equals(10)
+    expect(px(window.getComputedStyle(pill).paddingRight)).greaterThan(10 + 6)
+    expect(px(window.getComputedStyle(pill).paddingLeft)).equals(10)
 
     await act(async () => {
       pill.click()
@@ -146,12 +150,13 @@ describe('the location pill', function () {
     )
     const pill = byTestId('location-pill')!
     expect(pill.getAttribute('aria-label')).equals('Choose California')
-    expect(pill.style.height).equals('20px')
-    expect(px(pill.style.paddingLeft)).equals(10)
-    expect(px(pill.style.paddingRight)).equals(10)
+    expect(window.getComputedStyle(pill).height).equals('20px')
+    expect(px(window.getComputedStyle(pill).paddingLeft)).equals(10)
+    expect(px(window.getComputedStyle(pill).paddingRight)).equals(10)
     expect(hex(window.getComputedStyle(pill).backgroundColor)).equals(
       tsBallpark.neutralBadgeBackground
     )
+    expect(window.getComputedStyle(pill).boxShadow).not.equals('')
     expect(byTestId('location-pill-mark')).equals(null)
     await act(async () => {
       pill.click()

@@ -35,6 +35,9 @@ import {
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { dismissKeyboard, KeyboardSpacer, SearchDock } from './SearchDock'
 
+/** Room for a raised pill's shadow: its 8-point blur and a little more. */
+const SHADOW_GUTTER = 12
+
 /** The field's placeholder, which is also its accessibility label. */
 export const SEARCH_PLACEHOLDER = 'Search leagues, seasons, teams and people'
 
@@ -291,6 +294,7 @@ export function SearchScreen({
       showsHorizontalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
       testID="location-suggestions"
+      style={styles.suggestionsBleed}
       contentContainerStyle={styles.suggestions}
     >
       {suggestions.slice(0, 4).map(suggestion => (
@@ -433,11 +437,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // The row is a finger's 44 points tall, the 20-point pills centred in it:
   // a scroll view clips touches to its bounds, so their reach above and below
   // (`hitSlop`) has to fall inside it.
+  // The pills' shadows reach past their row's ends, where a scroll view
+  // clips: the row reaches into a gutter as wide as the shadow on each side,
+  // and pads it back, so the pills still line up with the field.
+  suggestionsBleed: {
+    marginHorizontal: -SHADOW_GUTTER
+  },
   suggestions: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: theme.rem(0.5),
-    minHeight: 44
+    minHeight: 44,
+    paddingHorizontal: SHADOW_GUTTER
   },
   dock: {
     position: 'absolute' as const,

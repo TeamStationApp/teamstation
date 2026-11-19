@@ -137,6 +137,15 @@ describe('a search result row', function () {
     )!
     expect(window.getComputedStyle(label).fontSize).equals('12px')
     expect(20 + 2 * FOLLOW_SLOP).greaterThanOrEqual(44)
+    // The kind pill and Follow both stand off the row on the same shadow.
+    const kind = [...document.querySelectorAll<HTMLElement>('div')].find(
+      node =>
+        node.textContent === 'Team' &&
+        window.getComputedStyle(node).height === '20px'
+    )!
+    const shadow = window.getComputedStyle(follow).boxShadow
+    expect(shadow).not.equals('')
+    expect(window.getComputedStyle(kind).boxShadow).equals(shadow)
   })
 
   it('reads Following when followed, and draws no Follow pill for none or for a person', async function () {

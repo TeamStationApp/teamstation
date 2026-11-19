@@ -417,6 +417,12 @@ describe('the Search tab', () => {
     )!.parentElement!
     expect(getComputedStyle(pillRow).minHeight).equals('44px')
     expect(getComputedStyle(pillRow).alignItems).equals('center')
+    // The pills' shadows are not cut at the row's ends: it reaches into a
+    // gutter on each side and pads it back, so they line up with the field.
+    expect(getComputedStyle(pillRow).paddingLeft).equals('12px')
+    expect(getComputedStyle(pillRow).paddingRight).equals('12px')
+    expect(getComputedStyle(suggestions).marginLeft).equals('-12px')
+    expect(getComputedStyle(suggestions).marginRight).equals('-12px')
     // In the page's flow, not floating over it.
     expect(getComputedStyle(searchField.parentElement!).position).not.equals(
       'absolute'
