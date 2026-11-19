@@ -123,20 +123,40 @@ export async function boxOfField(device: any): Promise<Box> {
  * the tab).
  */
 export async function tapTab(device: any, label: string): Promise<void> {
-  const tabs = flatten((await device.hierarchy()) as Node).filter(
-    node =>
-      (node.text ?? node.accessibilityText) === label && boxOf(node) != null
-  )
-  const tab = boxOf(
-    tabs.sort((a, b) => {
-      const [x, y] = [boxOf(a)!, boxOf(b)!]
-      return x.width * x.height - y.width * y.height
-    })[0]
-  )
-  if (tab == null) throw new Error(`no ${label} tab on screen`)
-  await device.tapOn({
-    point: `${Math.round(tab.x + tab.width / 2)},${Math.round(tab.y + tab.height / 2)}`
-  })
+  // A keyboard left up covers a phone's floating tab bar, and a tap at the
+  // tab's place would land on a key (iOS's emoji key sits under Home): put
+  // it away until the tab is clear.
+  for (let tries = 0; ; ++tries) {
+    const nodes = flatten((await device.hierarchy()) as Node)
+    const tabs = nodes.filter(
+      node =>
+        (node.text ?? node.accessibilityText) === label && boxOf(node) != null
+    )
+    const tab = boxOf(
+      tabs.sort((a, b) => {
+        const [x, y] = [boxOf(a)!, boxOf(b)!]
+        return x.width * x.height - y.width * y.height
+      })[0]
+    )
+    if (tab == null) throw new Error(`no ${label} tab on screen`)
+    const centre = { x: tab.x + tab.width / 2, y: tab.y + tab.height / 2 }
+    const keyboard = boxOf(nodes.find(node => node.type === 'Keyboard'))
+    const covered =
+      keyboard != null &&
+      centre.x >= keyboard.x &&
+      centre.x <= keyboard.x + keyboard.width &&
+      centre.y >= keyboard.y &&
+      centre.y <= keyboard.y + keyboard.height
+    if (!covered) {
+      await device.tapOn({
+        point: `${Math.round(centre.x)},${Math.round(centre.y)}`
+      })
+      return
+    }
+    if (tries === 2)
+      throw new Error(`the keyboard still covers the ${label} tab`)
+    await device.hideKeyboard()
+  }
 }
 
 /**

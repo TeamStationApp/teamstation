@@ -191,6 +191,41 @@
       "file": "e2e/tests/app-shell/search/live-jev.e2e.ts"
     },
     {
+      "id": "app-shell/search/location#backspace-removes",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
       "id": "app-shell/search/location#city-widens",
       "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
       "kind": "e2e",
@@ -198,7 +233,43 @@
         "src/app/screens/SearchScreen.tsx",
         "src/app/components/LocationPill.tsx",
         "src/server/search/**",
-        "src/server/location/places.ts"
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#near-reader",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
       ],
       "stack": "isolated",
       "fixtures": [
@@ -232,7 +303,8 @@
         "src/app/screens/SearchScreen.tsx",
         "src/app/components/LocationPill.tsx",
         "src/server/search/**",
-        "src/server/location/places.ts"
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
       ],
       "stack": "isolated",
       "fixtures": [
@@ -430,6 +502,108 @@
       "manual": false,
       "spec": "app-shell/search/open",
       "file": "e2e/tests/app-shell/search/open.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/pill-device#backspace-removes",
+      "title": "A chosen place’s pill centres its close circle at its end and goes with Backspace, on a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/LocationPill.tsx",
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/theme/pill.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/pill-device",
+      "file": "e2e/tests/app-shell/search/pill-device.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/pill-device#x-centred",
+      "title": "A chosen place’s pill centres its close circle at its end and goes with Backspace, on a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/LocationPill.tsx",
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/theme/pill.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/pill-device",
+      "file": "e2e/tests/app-shell/search/pill-device.e2e.ts"
     },
     {
       "id": "app-shell/splash/android-launch#dismiss",
