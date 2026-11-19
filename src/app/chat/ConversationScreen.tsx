@@ -118,6 +118,7 @@ export interface ConversationFiles extends ChatFileOps {
 }
 
 export interface ConversationScreenProps {
+  onOpenLink?: (address: string) => Promise<void>
   engine: ChatScreenEngine
   conversationId: string
   /** The signed-in person, who is never asked to approve their own reset. */
@@ -2819,6 +2820,11 @@ export function ConversationScreen(
     >
       {notices.get(index)?.map(renderNotice)}
       <MessageBubble
+        onOpenLink={address => {
+          props.onOpenLink?.(address).catch(() => {
+            setError(lstrings.chat_link_failed)
+          })
+        }}
         bodyRef={node => {
           if (node == null) bodyRefs.current.delete(message.id)
           else bodyRefs.current.set(message.id, node)
