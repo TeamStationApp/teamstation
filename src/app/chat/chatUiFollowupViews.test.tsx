@@ -435,6 +435,44 @@ describe('chat UI follow-up list views', function () {
 })
 
 describe('chat UI follow-up workspace', function () {
+  it('opens chat message links from a conversation and reports a failed browser', async function () {
+    const engine = new FakeEngine()
+    engine.add(item('Aurora'), {
+      messages: [message({ body: 'Visit example.org/score' })]
+    })
+    const opened: string[] = []
+    await render(
+      <ChatWorkspace
+        engine={engine}
+        userId={userIdOfGumbo(1)}
+        state={newChatWorkspaceState()}
+        conversationId="Aurora"
+        onOpen={() => {}}
+        onMembers={() => {}}
+        onNewMessage={() => {}}
+        onTitle={() => {}}
+        onOpenLink={async text => {
+          opened.push(text)
+          throw new Error('No installed browser')
+        }}
+      />
+    )
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      1200
+    )
+    const link = document.querySelector<HTMLAnchorElement>(
+      'a[href="https://example.org/score"]'
+    )
+    expect(link, 'link in loaded history').not.equals(null)
+    await act(async () => {
+      link!.click()
+      await wait()
+    })
+    expect(opened).deep.equals(['example.org/score'])
+    expect(document.body.textContent).contains('This link could not be opened.')
+  })
+
   it('restores list and message offsets and remembers later user scrolling', async function () {
     const engine = new FakeEngine()
     engine.add(item('Aurora'))
