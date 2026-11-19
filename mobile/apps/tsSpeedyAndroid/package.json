@@ -1,0 +1,14 @@
+{
+  "name": "@teamstation/speedy-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TS Speedy for Android — a TAG One radar's pitch and exit speeds, large and spoken. Node scripts only; the app itself is built with Gradle.",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "test:unit": "bash scripts/test-unit.sh",
+    "icons": "node ../../icons/generateAppIcons.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
