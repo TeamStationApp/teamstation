@@ -966,6 +966,61 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "id": "people/add-existing/add-player-device#keyboard",
+      "title": "Add Player’s field rides the keyboard on a phone while its header stays put, and Add to Roster stays above it",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/AddPlayerScene.tsx",
+        "src/app/screens/KeyboardForm.native.tsx",
+        "src/app/screens/SearchFieldDock.tsx",
+        "src/app/components/SearchField.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [
+        "addPlayerAccount"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "people/add-existing/add-player-device",
+      "file": "e2e/tests/people/add-existing/add-player-device.e2e.ts"
+    },
+    {
       "id": "people/add-existing/engine#scoring-offline",
       "title": "Add Player finds only people in the adder’s groups, and offline filters the kept players with no stale rows",
       "kind": "e2e",

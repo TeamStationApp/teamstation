@@ -7,6 +7,8 @@ import {
   byLabel,
   clearSearch,
   exactly,
+  expectFieldOnTop,
+  fieldPlacement,
   jevOf,
   named,
   openSearch,
@@ -88,6 +90,14 @@ export default searchSpec({
         readBack: async () => {
           const { rows } = await answered(web, frames, `hawk ${tag}`)
           expect(rows.length, 'at most 50 rows').within(1, 50)
+          // At the top in a browser, as Add Player's (add-existing/engine).
+          expectFieldOnTop(
+            await fieldPlacement(
+              web,
+              '[data-testid="Search field"]',
+              '[data-testid="search-result-row"]'
+            )
+          )
           const kinds = new Set(ownRows(rows, tag).map(rowKind))
           for (const row of rows.filter(row =>
             row.label.startsWith('Open LaTroy')

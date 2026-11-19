@@ -3,6 +3,8 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { expect } from 'chai'
+
 import type { FixtureAccount, FixtureManifest } from '../../core/fixtures'
 import type { JevControl, JevView } from '../../core/jevStub'
 import { BlockedError } from '../../core/result'
@@ -243,6 +245,57 @@ export async function openSearch(
 ): Promise<void> {
   await web.m.openLink({ link: `${ctx.stack.origin}/discover` })
   await web.m.assertVisible({ css: byLabel(SEARCH_FIELD), timeout: 60000 })
+}
+
+/** Where a search field and the first answer under it are drawn, in a browser. */
+export interface FieldPlacement {
+  /** Null when no field is drawn. */
+  fieldTop: number | null
+  fieldBottom: number | null
+  /** Null when no answer is drawn. */
+  firstTop: number | null
+  windowHeight: number
+}
+
+/**
+ * Reads where the search field (`fieldCss`, its whole rounded box) and the
+ * first answer (`firstCss`) are drawn, for `expectFieldOnTop`.
+ */
+export async function fieldPlacement(
+  web: WebSession,
+  fieldCss: string,
+  firstCss: string
+): Promise<FieldPlacement> {
+  return (await web.page.evaluate(`(() => {
+    const box = css => {
+      const node = document.querySelector(css)
+      return node == null ? null : node.getBoundingClientRect()
+    }
+    const field = box(${JSON.stringify(fieldCss)})
+    const first = box(${JSON.stringify(firstCss)})
+    return {
+      fieldTop: field == null ? null : field.top,
+      fieldBottom: field == null ? null : field.bottom,
+      firstTop: first == null ? null : first.top,
+      windowHeight: window.innerHeight
+    }
+  })()`)) as FieldPlacement
+}
+
+/**
+ * A browser draws a search field at the top, as Search and Add Player both
+ * do: in the top third of the window, above the first answer.
+ */
+export function expectFieldOnTop(placement: FieldPlacement): void {
+  expect(placement.fieldTop, 'a search field drawn').not.equals(null)
+  expect(placement.firstTop, 'an answer drawn').not.equals(null)
+  expect(placement.fieldTop!, 'the field in the top third').lessThan(
+    placement.windowHeight / 3
+  )
+  expect(
+    placement.fieldBottom!,
+    'the field above the first answer'
+  ).lessThanOrEqual(placement.firstTop! + 1)
 }
 
 /** Types into the Search field after what it holds. */

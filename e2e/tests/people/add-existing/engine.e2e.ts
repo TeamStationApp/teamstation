@@ -7,6 +7,8 @@ import {
   byLabel,
   byLabelStart,
   exactly,
+  expectFieldOnTop,
+  fieldPlacement,
   proveScreen,
   searchSpec,
   searchWorld,
@@ -62,7 +64,17 @@ export default searchSpec({
       // A player of the same season.
       await search('Corbin')
       await ctx.checkpoint('same-season-found', {
-        expect: [{ text: 'Choose Corbin.*' }]
+        expect: [{ text: 'Choose Corbin.*' }],
+        readBack: async () => {
+          // At the top in a browser, as Search's (search/one-field).
+          expectFieldOnTop(
+            await fieldPlacement(
+              web,
+              '[data-testid="Player search field"]',
+              byLabelStart('Choose ')
+            )
+          )
+        }
       })
       await proveScreen(ctx, web, 'add-player-after.png')
       // A player only in another league is nobody, even by the whole name.
