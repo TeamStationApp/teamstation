@@ -951,6 +951,66 @@ describe('search engine', function () {
     })
   })
 
+  describe('Add Player over a large reach', () => {
+    it('answers with thousands of players in reach within seconds', async function () {
+      this.timeout(120_000)
+      // Players on a team the reader reaches, each an account of their own.
+      // A guard on scale: the tier reads who plays where once for everyone
+      // (gather.ts); read once per person, a production-sized database
+      // planned it to run for minutes, which this small one does not.
+      const first = 20_000
+      const count = 3000
+      const ids = Array.from({ length: count }, (_, at) => first + at)
+      for (let at = 0; at < count; at += 500) {
+        const chunk = ids.slice(at, at + 500)
+        await insertFixtureUsers(
+          db,
+          chunk.map(id => ({
+            id,
+            legacyId: `usr_bulk_${id}`,
+            display_name: `Bulk Player ${id}`,
+            first_name: 'Bulk',
+            last_name: `Player ${id}`
+          }))
+        )
+        await db
+          .insertInto('memberships')
+          .values(
+            chunk.map(id => ({
+              id: makeId('membership'),
+              user_id: fixtureUserId(id),
+              team_id: 'tem_srchTigers',
+              role: 'member' as const,
+              is_player: true
+            }))
+          )
+          .execute()
+      }
+      try {
+        const started = Date.now()
+        const once = await searchOnce(
+          db,
+          reader,
+          ask('', { mode: 'people', forTeam: 'tem_srchRoyals' }),
+          deps
+        )
+        expect(Date.now() - started, 'ms').lessThan(5000)
+        expect(once.results.length).greaterThan(0)
+      } finally {
+        const bulk = ids.map(fixtureUserId)
+        await db
+          .deleteFrom('memberships')
+          .where('user_id', 'in', bulk)
+          .execute()
+        await db
+          .deleteFrom('user_emails')
+          .where('user_id', 'in', bulk)
+          .execute()
+        await db.deleteFrom('users').where('id', 'in', bulk).execute()
+      }
+    })
+  })
+
   describe('organizations', () => {
     it('keeps 20 of each kind and the first 50', async () => {
       const { results, context } = await searchOnce(

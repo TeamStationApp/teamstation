@@ -464,11 +464,6 @@ async function peopleRows(
           typed.map(word => sql`(case when ${hit(word)} then 1 else 0 end)`),
           sql` + `
         )})`
-  // A membership of the person, or of an account merged into them.
-  const heldBy = (teamsSql: RawBuilder<unknown>): RawBuilder<boolean> =>
-    sql<boolean>`exists (select 1 from memberships m
-      where m.user_id in (select r.origin from resolved r where r.id = u.id)
-        and m.team_id in (${teamsSql}))`
   const tiers =
     target == null
       ? sql``
@@ -488,17 +483,29 @@ async function peopleRows(
       union
       select scope_id from scope_roles
         where user_id = ${actor.userId} and scope_type = 'team'
+    ),
+    -- Who plays on one of the caller's teams, or the target's seasons: a
+    -- membership of the person or of an account merged into them. Read once
+    -- here, for every person, not once per person in the tier: per person
+    -- it scanned resolved for each of thousands of people, for minutes.
+    caller_held as (
+      select r.id from resolved r
+        join memberships m on m.user_id = r.origin
+        where m.team_id in (select team_id from caller_teams)
+    ),
+    season_held as (
+      select r.id from resolved r
+        join memberships m on m.user_id = r.origin
+        where m.team_id in (select team_id from team_seasons
+          where season_id in (select season_id from target_seasons))
     )`
   const tier =
     target == null
       ? sql<number | null>`null::int`
       : sql<number>`(case
           when u.id in (select unnest(${guarded}::text[]))
-            or ${heldBy(sql`select team_id from caller_teams`)} then 0
-          when ${heldBy(
-            sql`select team_id from team_seasons
-              where season_id in (select season_id from target_seasons)`
-          )} then 1
+            or u.id in (select id from caller_held) then 0
+          when u.id in (select id from season_held) then 1
           else 2
         end)`
   // Add Existing Player (a target) offers players only: whoever plays on a
