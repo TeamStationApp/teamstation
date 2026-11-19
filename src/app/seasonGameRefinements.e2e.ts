@@ -807,8 +807,6 @@ async function main(): Promise<void> {
     expect((await game(seed.managedGameId)).away_team_id).equals(
       f.standaloneTeam
     )
-    // The Eagles' own admin proposes: the season's admin, who also runs the
-    // Hawks, consents for both sides of a season game and saves at once.
     const finalId = 'baseline-hawks-eagles'
     await openSettings(admin, finalId)
     await fill(admin.m, 'Venue name (optional)', 'Demo Proposed Final Field')
@@ -829,9 +827,9 @@ async function main(): Promise<void> {
     await contains(admin.page, 'Pending approval')
     await allGames(admin)
     await absent(admin.page, '2–5')
-    await visit(admin, `/notifications/${finalProposal.id}`)
-    await tap(admin.m, 'Decline invitation')
-    await contains(admin.page, 'Declined')
+    await visit(opponent, `/notifications/${finalProposal.id}`)
+    await tap(opponent.m, 'Decline invitation')
+    await contains(opponent.page, 'Declined')
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
     await admin.m.scrollUntilVisible({
       element: { text: '2–5' },

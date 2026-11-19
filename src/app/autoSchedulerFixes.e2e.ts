@@ -835,10 +835,12 @@ async function f3(run: Run): Promise<void> {
   ]
   const setupOf = (seasonId: string): string =>
     `/groups/league/${fx.f.leagueA}/scheduler/seasons/${seasonId}`
-  // seasonA's first period, from Mar 1, ends on May 20.
+  // seasonA's first period, from Mar 1, ends on May 20. A season's periods
+  // each end on a date (a86703d7e): Mar 1 runs to the day before Jun 1, and
+  // Jun 1 to the season's last day.
   await run.visit(setupOf(fx.f.seasonA))
-  await contains(b.page, 'From Mar 1')
-  await contains(b.page, 'From Jun 1')
+  await contains(b.page, 'Mar 1 – May 31')
+  await contains(b.page, 'Jun 1 – Jul 31')
   await clickLabel(b, 'Change the end of Windows from Monday, March 1, 2027')
   await labelled(b, 'Choose 2027-05-31')
   await tapLabel(b, 'Choose 2027-05-20')
@@ -846,8 +848,8 @@ async function f3(run: Run): Promise<void> {
   await contains(b.page, 'Time windows saved.')
   await run.visit(setupOf(fx.f.seasonA))
   await contains(b.page, 'Mar 1 – May 20')
-  await contains(b.page, 'From Jun 1')
-  expect(await pageText(b)).not.includes('From Mar 1')
+  await contains(b.page, 'Jun 1 – Jul 31')
+  expect(await pageText(b)).not.includes('Mar 1 – May 31')
   // Each period now has its Starts and Ends card, so the section is taller
   // than the before shot's: the section's title goes under the header to
   // keep both periods' headings clear of the floating nav bar.
@@ -862,7 +864,7 @@ async function f3(run: Run): Promise<void> {
     const nav = document.querySelector('[role="tablist"]:not([aria-label])')
     return {
       first: box('Mar 1 – May 20').top,
-      second: box('From Jun 1').bottom,
+      second: box('Jun 1 – Jul 31').bottom,
       nav: nav === null ? innerHeight : nav.getBoundingClientRect().top
     }
   })
@@ -953,7 +955,7 @@ async function f3(run: Run): Promise<void> {
   expect(await stored()).deep.equals(copied)
   await writeFile(join(run.artifacts, 'window-gap-build.log'), lines.join('\n'))
   await run.pass(
-    `seasonA's first period ends May 20: after a reload its headings read "Mar 1 – May 20" and "From Jun 1"; the Early warnings say "${gap}"; a build with Work around places none of Option 1's ${days.length} games on May 21 – May 31 (window-gap-build.log); the playoffs copy Demo Regular's windows as one period, Mar 1 – May 20 (shifted 0 days, the June period dropped after the playoffs' end), and a second copy asks "Replace this season’s game windows?" before replacing them`
+    `seasonA's first period ends May 20: after a reload its headings read "Mar 1 – May 20" and "Jun 1 – Jul 31"; the Early warnings say "${gap}"; a build with Work around places none of Option 1's ${days.length} games on May 21 – May 31 (window-gap-build.log); the playoffs copy Demo Regular's windows as one period, Mar 1 – May 20 (shifted 0 days, the June period dropped after the playoffs' end), and a second copy asks "Replace this season’s game windows?" before replacing them`
   )
 }
 

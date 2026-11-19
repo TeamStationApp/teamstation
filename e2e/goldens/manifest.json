@@ -490,8 +490,8 @@
       "masks": []
     },
     "assistant/chat/space-hold#quick-press-activates-a-focused-tab/team-tab-selected/web-chromium@chromium-1536x900-128": {
-      "sha256": "f386efed537207c9c417ebb71ac5d00e1919abea437f2022fd852ebbd7ed1cbc",
-      "size": 72251,
+      "sha256": "774ff85c795bfb47a8690850525bc4f5cbc8a6586e303d1894fb57e429787a71",
+      "size": 87405,
       "masks": [
         {
           "enabled": true,

@@ -669,10 +669,9 @@ async function people(run: Run): Promise<void> {
     coach: 'On',
     member: 'On'
   })
+  // Taking a role away asks first, and pressRole confirms it (3cbcb71f2);
+  // the other memberships stay.
   await pressRole(admin, 'team', 'coach')
-  // Taking a role away asks first; the other memberships stay.
-  await contains(admin.page, 'Remove Coach from Grant Hartwig?')
-  await admin.m.tapOn({ text: 'Remove', timeout: 15000 })
   await until(async () => (await roleRows(people.follower)).length === 0)
 
   // Ichiro, the team's coach, opens Tim Raines: Alfonso under Parent/Guardian
