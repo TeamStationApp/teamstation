@@ -265,6 +265,17 @@ export function SearchScreen({
         placeholderTextColor={theme.placeholderTextColor}
         value={text}
         onChangeText={setText}
+        // Backspace with nothing typed takes out the place before the
+        // caret, as it would a character. The key arrives before the text
+        // changes, so a press that deletes the last letter keeps the place.
+        onKeyPress={event => {
+          if (
+            event.nativeEvent.key === 'Backspace' &&
+            text === '' &&
+            location != null
+          )
+            setLocation(null)
+        }}
         autoCorrect={false}
         autoCapitalize="none"
         returnKeyType="search"

@@ -28,6 +28,7 @@
 - added: Notifications on iPhone, Android and the browser for direct messages, mentions, and a reminder two hours before an event you said you'd attend. Each device has its own switches under Account › Notifications.
 - added: After you RSVP or open messaging, TeamStation offers once to turn on notifications for that device
 - added: A message you're reading doesn't notify you, and reading a conversation on one device clears its notifications on your others
+- added: Backspace in Search's empty field takes out the chosen place
 - changed: A stream ends after ten minutes without video once its game has ended. Its recording is kept and its expired ingest key is revoked.
 - changed: Schedules are computed on the device and stored as sent, and the server validates the submitted games
 - changed: Imported games carry TeamStation records on every play, so replay, box score, pitch counts, statistics and editing treat them like scored games. An outside scorer's unknown players are seated as guests.

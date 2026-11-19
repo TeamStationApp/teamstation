@@ -171,6 +171,16 @@ async function type(value: string): Promise<void> {
   })
   await settle(20)
 }
+
+/** A Backspace key on the field, as the browser sends it before the delete. */
+async function backspace(): Promise<void> {
+  await act(async () => {
+    field()!.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: 'Backspace', bubbles: true })
+    )
+  })
+  await settle(20)
+}
 /** The rows' labels, in order. */
 const rows = (): string[] =>
   [
@@ -387,6 +397,33 @@ describe('the Search tab', () => {
     await press('Remove San Diego, CA')
     expect(server.last).deep.include({ text: '', location: null })
     expect(dock.textContent).not.includes('San Diego, CA')
+    expect(rows()).deep.equals([])
+  })
+
+  it('takes the chosen place out with Backspace in an empty field, and keeps it while there is text to delete', async () => {
+    const server = new FakeSearchServer(frame =>
+      frame.location == null
+        ? { results: [hawks], locations: [sanDiego] }
+        : { results: [hawks] }
+    )
+    await openSearch(server)
+    // With no place chosen, Backspace in the empty field does nothing.
+    await backspace()
+    expect(server.last).equals(undefined)
+
+    await type('san die')
+    await press('Choose San Diego, CA')
+    const dock = document.querySelector('[data-testid="Search field"]')!
+    await type('x')
+    // The key comes before the text changes: this one deletes the x.
+    await backspace()
+    expect(dock.textContent).includes('San Diego, CA')
+    await type('')
+    expect(server.last).deep.include({ text: '', location: sanDiego })
+
+    await backspace()
+    expect(dock.textContent).not.includes('San Diego, CA')
+    expect(server.last).deep.include({ text: '', location: null })
     expect(rows()).deep.equals([])
   })
 
