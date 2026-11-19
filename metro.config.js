@@ -45,7 +45,8 @@ const config = {
   cacheVersion: JSON.stringify([
     process.env.TS_API_BASE_URL ?? 'production',
     appOrigin(),
-    process.env.TS_CHAT_BENCH ?? ''
+    process.env.TS_CHAT_BENCH ?? '',
+    process.env.TS_SENTRY_DSN ?? ''
   ]),
   resolver: {
     resolveRequest: (context, moduleName, platform) => {

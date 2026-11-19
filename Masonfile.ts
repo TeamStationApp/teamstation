@@ -74,6 +74,18 @@ export const NSE_ENTITLEMENTS = 'TeamStationNotifications.entitlements'
 export const FIELD_TEAM = 'V4AK4X7A2V'
 export const FIELD_VERSION = '1.0'
 const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
+/** The production server's origin, the one a master production build uses. */
+export const PRODUCTION_ORIGIN = 'https://app.teamstation.app'
+/**
+ * Where a non-production build reports its logs and crashes: the server it
+ * talks to, which takes them in for its environment, never production's
+ * collector. A routing DSN, not a secret: the key is a label and the project
+ * names the app (101, TS, by default). Every non-production DSN is made here,
+ * by Mason's phone builds and by `scripts/deploy`.
+ */
+export function serverLogDsn(apiOrigin: string, project = 101): string {
+  return `https://develop@${new URL(apiOrigin).host}/${project}`
+}
 const CAMERAMAN_APK_DIR =
   'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
@@ -488,6 +500,8 @@ function buildStages(w: WorkflowBuilder, app: string): void {
  * build explicitly names production. Any
  * other branch, left on production, points at the standing develop server.
  * A development seat keeps its API and shares the develop app-link host.
+ * Every build but master's production one reports its logs to the server it
+ * talks to (`serverLogDsn`); the production build is left as it was.
  */
 export function seatEnvironment(
   ctx: Pick<Stage, 'run'>
@@ -497,12 +511,13 @@ export function seatEnvironment(
   if (seat === 'production') {
     if (isMasterBranch(branch))
       return {
-        TS_API_BASE_URL: 'https://app.teamstation.app/api/v1',
-        TS_APP_ORIGIN: 'https://app.teamstation.app'
+        TS_API_BASE_URL: `${PRODUCTION_ORIGIN}/api/v1`,
+        TS_APP_ORIGIN: PRODUCTION_ORIGIN
       }
     return {
       TS_API_BASE_URL: `${DEVELOP_ORIGIN}/api/v1`,
-      TS_APP_ORIGIN: DEVELOP_ORIGIN
+      TS_APP_ORIGIN: DEVELOP_ORIGIN,
+      TS_SENTRY_DSN: serverLogDsn(DEVELOP_ORIGIN)
     }
   }
   if (
@@ -516,7 +531,8 @@ export function seatEnvironment(
     : `https://${seat}`
   return {
     TS_API_BASE_URL: `${origin}/api/v1`,
-    TS_APP_ORIGIN: DEVELOP_ORIGIN
+    TS_APP_ORIGIN: DEVELOP_ORIGIN,
+    TS_SENTRY_DSN: serverLogDsn(origin)
   }
 }
 

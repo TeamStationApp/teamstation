@@ -47,6 +47,7 @@ import {
   releaseToPlayTrack,
   SEAT_PARAM,
   seatEnvironment,
+  serverLogDsn,
   setup,
   signAabScript,
   signAndroid,
@@ -1141,7 +1142,7 @@ describe('TeamStation pipeline Masonfile', () => {
     )
   })
 
-  it('explicitly selects API and app-link origins and refuses unknown seats', () => {
+  it('explicitly selects API, app-link and log origins and refuses unknown seats', () => {
     const seated = (
       params?: Record<string, string | number | boolean>
     ): Record<string, string> =>
@@ -1152,13 +1153,21 @@ describe('TeamStation pipeline Masonfile', () => {
     }
     assert.deepEqual(seated({ seat: 'production' }), production)
     assert.deepEqual(seated(), production)
+    // Production reports nowhere new; every other build to its own server.
+    assert.equal(seated().TS_SENTRY_DSN, undefined)
+    assert.equal(
+      serverLogDsn('https://seat.example.test:8443'),
+      'https://develop@seat.example.test:8443/101'
+    )
     assert.deepEqual(seated({ seat: '8' }), {
       TS_API_BASE_URL: 'https://develop8.teamstation.app/api/v1',
-      TS_APP_ORIGIN: 'https://develop.teamstation.app'
+      TS_APP_ORIGIN: 'https://develop.teamstation.app',
+      TS_SENTRY_DSN: 'https://develop@develop8.teamstation.app/101'
     })
     const developServer = {
       TS_API_BASE_URL: 'https://develop.teamstation.app/api/v1',
-      TS_APP_ORIGIN: 'https://develop.teamstation.app'
+      TS_APP_ORIGIN: 'https://develop.teamstation.app',
+      TS_SENTRY_DSN: 'https://develop@develop.teamstation.app/101'
     }
     assert.deepEqual(
       seatEnvironment({
@@ -1178,7 +1187,8 @@ describe('TeamStation pipeline Masonfile', () => {
       }),
       {
         TS_API_BASE_URL: 'https://develop3.teamstation.app/api/v1',
-        TS_APP_ORIGIN: 'https://develop.teamstation.app'
+        TS_APP_ORIGIN: 'https://develop.teamstation.app',
+        TS_SENTRY_DSN: 'https://develop@develop3.teamstation.app/101'
       }
     )
     assert.deepEqual(
@@ -1190,7 +1200,8 @@ describe('TeamStation pipeline Masonfile', () => {
       }),
       {
         TS_API_BASE_URL: 'https://e2e-03.teamstation.app/api/v1',
-        TS_APP_ORIGIN: 'https://develop.teamstation.app'
+        TS_APP_ORIGIN: 'https://develop.teamstation.app',
+        TS_SENTRY_DSN: 'https://develop@e2e-03.teamstation.app/101'
       }
     )
     assert.throws(

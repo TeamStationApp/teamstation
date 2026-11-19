@@ -8,6 +8,7 @@
 - changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 - fixed: Offline documents and unsent edits stay with the server and account that created them.
 - fixed: A web build can send its logs to the log collector it was built for; the page's content policy refused them before
+- fixed: Phone builds from Mason, other than master's production build, report their logs and crashes to the server they talk to; they reported nothing before
 
 ## 1.3.0 (2026-11-18)
 
