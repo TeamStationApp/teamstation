@@ -18,6 +18,8 @@ describe('the keyboard controller owner', function () {
   const platform = { OS: 'android' }
   const enabled: boolean[] = []
   const controller = {
+    // What the provider reports, which follows `setEnabled` a render later.
+    enabled: false,
     setEnabled: (value: boolean) => enabled.push(value)
   }
   let keyboardVisible = false
@@ -76,6 +78,7 @@ describe('the keyboard controller owner', function () {
     keyboardVisible = false
     hideListeners.length = 0
     platform.OS = 'android'
+    controller.enabled = false
   })
 
   function Holder(props: { active: boolean }): null {
@@ -168,5 +171,35 @@ describe('the keyboard controller owner', function () {
     platform.OS = 'ios'
     await hold(true)
     expect(enabled).deep.equals([])
+  })
+
+  it('says it holds the controller only once the provider reports it on, on Android', async function () {
+    const seen: boolean[] = []
+    function Shows(): null {
+      seen.push(owner.useKeyboardControllerHeld())
+      return null
+    }
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    roots.push(root)
+    await act(async () => {
+      root.render(React.createElement(Shows))
+    })
+    expect(enabled, 'it asks for the controller').deep.equals([true])
+    expect(seen.at(-1), 'not yet on: no modal yet').equals(false)
+    controller.enabled = true
+    await act(async () => {
+      root.render(React.createElement(Shows))
+    })
+    expect(seen.at(-1), 'on: the modal may show').equals(true)
+
+    // iOS keeps the controller on from the root: nothing to wait for.
+    platform.OS = 'ios'
+    controller.enabled = false
+    await act(async () => {
+      root.render(React.createElement(Shows))
+    })
+    expect(seen.at(-1)).equals(true)
   })
 })

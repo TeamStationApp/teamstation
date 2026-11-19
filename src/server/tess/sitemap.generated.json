@@ -1242,6 +1242,7 @@
       "settings": [
         "Retry",
         "Showing the first %s — type more to narrow.",
+        "Search players",
         "Cancel",
         "This needs approval first. We sent the request.",
         "Add to Roster",

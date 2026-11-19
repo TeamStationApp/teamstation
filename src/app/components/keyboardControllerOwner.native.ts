@@ -41,6 +41,19 @@ export function useKeyboardControllerOwner(active: boolean): void {
   }, [active, setEnabled])
 }
 
+/**
+ * Holds the controller as `useKeyboardControllerOwner` does, and says once
+ * it is on. On Android the controller attaches to a `Modal`'s window only if
+ * it is already on when that modal shows, so a modal that moves with the
+ * keyboard (Add Player) shows only once this is true. Elsewhere it is true
+ * at once.
+ */
+export function useKeyboardControllerHeld(): boolean {
+  useKeyboardControllerOwner(true)
+  const { enabled } = useKeyboardController()
+  return Platform.OS !== 'android' || enabled
+}
+
 /** How long a release waits for a keyboard that never says it hid. */
 export const RELEASE_FALLBACK_MS = 1000
 

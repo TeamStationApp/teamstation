@@ -40,6 +40,7 @@
 - changed: Every pill on Search is the size of a result's kind pill and stands off the page on Following's shadow, in the same neutral colours; a chosen place's pill takes it out with a small gray circle and a white X, centred at its end
 - changed: In a browser, Search's field sits at the top under its title, with the suggested places right under it and the results below
 - changed: On a phone or tablet, Search's field stays at the bottom with the suggested places above it, and both rise and fall with the keyboard as it opens and closes; dragging the results puts the keyboard away
+- changed: Add Player searches with Search's own field: at the top in a browser, and on a phone or tablet at the bottom, rising and falling with the keyboard while the screen stays put; dragging the list puts the keyboard away
 - changed: The game plan's inning columns grow with the window, up to 1206 points
 - changed: Clear and Help on the coaching and scoring sheets are brighter
 - changed: Node administration sits beside the account instead of inside Account

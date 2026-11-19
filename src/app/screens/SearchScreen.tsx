@@ -1,12 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
@@ -21,10 +14,10 @@ import type {
   SearchSocketStatus
 } from '../../common/searchSocket'
 import { Screen, useScreenBottom } from '../components'
-import { ButtonIcon } from '../components/ButtonIcon'
 import { LocationPill } from '../components/LocationPill'
 import { useSceneReveals, useSceneShown } from '../components/sceneShown'
 import { useColumnSide } from '../components/Screen'
+import { SEARCH_FIELD_HEIGHT, SearchField } from '../components/SearchField'
 import { SearchResultRow } from '../components/SearchResultRow'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import {
@@ -33,7 +26,12 @@ import {
   type SearchSocketFactory
 } from '../hooks/searchSocketFactory'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { dismissKeyboard, KeyboardSpacer, SearchDock } from './SearchDock'
+import { dismissKeyboard } from './SearchDock'
+import {
+  SearchFieldClearance,
+  SearchFieldDock,
+  searchFieldOnTop
+} from './SearchFieldDock'
 
 /** Room for a raised pill's shadow: its 8-point blur and a little more. */
 const SHADOW_GUTTER = 12
@@ -46,10 +44,6 @@ export type { SearchSocketFactory }
 /** What the Search tab says once the server no longer takes the session. */
 export const SEARCH_SIGNED_OUT_MESSAGE =
   'Your session has ended. Sign in again to search.'
-
-/** The dock's height before it is measured, and the gap above it. */
-const FIELD_HEIGHT = 48
-const FIELD_GAP = 12
 
 /** A follow the reader changed here, until an answer asked later shows it. */
 interface FollowChange {
@@ -143,7 +137,7 @@ export function SearchScreen({
     new Map()
   )
   const [followError, setFollowError] = useState('')
-  const [fieldHeight, setFieldHeight] = useState(FIELD_HEIGHT)
+  const [dockHeight, setDockHeight] = useState(SEARCH_FIELD_HEIGHT)
   const latest = useRef(0)
 
   useEffect(() => {
@@ -247,57 +241,28 @@ export function SearchScreen({
   const offline = status === 'offline' || signedOut
   // A browser has no keyboard to rise over and a pointer is not a thumb: the
   // field sits at the top there, under the title, with its pills under it.
-  const top = Platform.OS === 'web'
+  const top = searchFieldOnTop()
+  // The same place between keystrokes, so typing redraws no pill.
+  const place = useMemo(
+    () =>
+      location == null
+        ? null
+        : {
+            label: location.label,
+            onRemove: () => {
+              setLocation(null)
+            }
+          },
+    [location]
+  )
   const field = (
-    <View testID="Search field" style={styles.field}>
-      <ButtonIcon name="search" size={1.25} color={theme.secondaryTextColor} />
-      {location != null && (
-        <LocationPill
-          label={location.label}
-          onRemove={() => {
-            setLocation(null)
-          }}
-        />
-      )}
-      <TextInput
-        accessibilityLabel={SEARCH_PLACEHOLDER}
-        placeholder={location == null ? SEARCH_PLACEHOLDER : undefined}
-        placeholderTextColor={theme.placeholderTextColor}
-        value={text}
-        onChangeText={setText}
-        // Backspace with nothing typed takes out the place before the
-        // caret, as it would a character. The key arrives before the text
-        // changes, so a press that deletes the last letter keeps the place.
-        onKeyPress={event => {
-          if (
-            event.nativeEvent.key === 'Backspace' &&
-            text === '' &&
-            location != null
-          )
-            setLocation(null)
-        }}
-        autoCorrect={false}
-        autoCapitalize="none"
-        returnKeyType="search"
-        style={styles.input}
-      />
-      {text !== '' && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Clear search"
-          onPress={() => {
-            setText('')
-          }}
-          style={styles.clear}
-        >
-          <ButtonIcon
-            name="close"
-            size={1.125}
-            color={theme.secondaryTextColor}
-          />
-        </Pressable>
-      )}
-    </View>
+    <SearchField
+      testID="Search field"
+      placeholder={SEARCH_PLACEHOLDER}
+      value={text}
+      onChangeText={setText}
+      place={place}
+    />
   )
   const pills = !offline && suggestions.length > 0 && (
     <ScrollView
@@ -398,34 +363,18 @@ export function SearchScreen({
               )
             })}
           {/* The last row clears the floating dock, and the keyboard. */}
-          {!top && <View style={{ height: fieldHeight + FIELD_GAP }} />}
-          {!top && <KeyboardSpacer />}
+          {!top && <SearchFieldClearance dockHeight={dockHeight} />}
         </View>
       </Screen>
       {!top && (
-        <SearchDock
+        <SearchFieldDock
           bottom={bottom}
-          gap={FIELD_GAP}
           active={shown}
-          style={styles.dock}
-          onLayout={event => {
-            setFieldHeight(event.nativeEvent.layout.height)
-          }}
-        >
-          <View
-            style={[
-              styles.dockColumn,
-              { paddingLeft: side.left, paddingRight: side.right }
-            ]}
-          >
-            {/* One tree whether pills show or not: moving the field would
-                remount its input, and drop its focus and keyboard. */}
-            <View style={pills !== false && styles.dockGround}>
-              {pills !== false && <View style={styles.dockPills}>{pills}</View>}
-              {field}
-            </View>
-          </View>
-        </SearchDock>
+          side={side}
+          field={field}
+          pills={pills}
+          onHeight={setDockHeight}
+        />
       )}
     </View>
   )
@@ -460,63 +409,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(0.5),
     minHeight: 44,
     paddingHorizontal: SHADOW_GUTTER
-  },
-  dock: {
-    position: 'absolute' as const,
-    left: 0,
-    right: 0,
-    alignItems: 'center' as const
-  },
-  dockColumn: {
-    width: '100%' as const,
-    maxWidth: theme.rem(theme.maxContentWidthRem)
-  },
-  // The pills ride directly above the field, and both sit on the page's own
-  // ground, rounded under the field as it is, so the results scrolling
-  // beneath never show between them.
-  dockGround: {
-    backgroundColor: theme.backgroundColor,
-    borderBottomLeftRadius: FIELD_HEIGHT / 2,
-    borderBottomRightRadius: FIELD_HEIGHT / 2
-  },
-  dockPills: {
-    paddingBottom: theme.rem(0.25)
-  },
-  field: {
-    minHeight: FIELD_HEIGHT,
-    paddingLeft: 14,
-    paddingRight: 4,
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 8,
-    borderRadius: FIELD_HEIGHT / 2,
-    borderWidth: 1,
-    borderColor: theme.defaultBorderColor,
-    backgroundColor: theme.cardBackgroundColor,
-    shadowColor: theme.shadowColor,
-    shadowOpacity: 0.18,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 5
-  },
-  // The input takes all the width the pill leaves, up to the clear button,
-  // and never less than 25% of the field: past that the pill's label
-  // ellipsizes instead. Longer text scrolls to the caret.
-  input: {
-    flexGrow: 1,
-    flexShrink: 0,
-    flexBasis: 0,
-    minWidth: '25%' as const,
-    paddingHorizontal: 0,
-    minHeight: 44,
-    color: theme.inputTextColor,
-    fontFamily: theme.regularTextFont,
-    fontSize: 16
-  },
-  clear: {
-    width: 44,
-    height: 44,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const
   }
 }))

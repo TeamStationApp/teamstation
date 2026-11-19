@@ -51,15 +51,22 @@ never a list expanding inside a card on the screen beneath.
 A search field sits at the bottom of its screen, not the top, so it is under
 the thumb and right above the keyboard it opens.
 
-- It floats over the content at the bottom of the screen, clear of the home
-  indicator (the safe-area inset plus 12 points), full width less the
-  screen's side margins, on the theme's raised surface with a hairline border
-  and a soft shadow. The list scrolls beneath it, with bottom padding equal to
-  the field's height so the last row can be read.
-- Tapped, it takes focus with the cursor showing and rises with the keyboard
-  to sit directly above it (`KeyboardAvoidingView`: `padding` on iOS,
-  `height` on Android, as `TessChat` does). Dismissing the keyboard returns
-  it to the bottom.
+- Use `SearchField` (`src/app/components/SearchField.tsx`), in a
+  `SearchFieldDock` (`src/app/screens/SearchFieldDock.tsx`), as Search and
+  Add Player do. It floats over the content at the bottom of the screen,
+  clear of the tab bar or the home indicator plus 12 points, full width less
+  the screen's side margins, on the theme's raised surface with a hairline
+  border and a soft shadow. The list scrolls beneath it, ending in a
+  `SearchFieldClearance` so the last row can be read.
+- Tapped, it takes focus with the cursor showing and rides the keyboard up
+  on the keyboard controller, frame by frame, to sit directly above it; the
+  screen itself does not move. Dragging the list puts the keyboard away, and
+  the field rides it back down.
+- In a scene that is a `Modal`, hold the keyboard controller with
+  `useKeyboardControllerHeld()` and render the `Modal` only once it is held.
+  On Android the controller attaches to a modal's window only if it is on as
+  the modal shows; otherwise the dock never rides the keyboard there.
+  `AddPlayerScene` is the example.
 - It has a leading `search` icon, placeholder text naming what it searches
   ("Search players"), and a clear button while it holds text.
 - The scene's title and red Cancel stay at the top.
@@ -70,9 +77,10 @@ the thumb and right above the keyboard it opens.
   browser has no keyboard to rise over and a pointer is not a thumb. The
   Search tab is the example.
 
-`ScoringPlayerSearchField` (scoring colours, in `ExistingPlayerSheet`) is the
-example. A screen with a search field at the top moves to this the next time
-it is changed.
+Search (`SearchScreen`) and Add Player (`AddPlayerScene`) are the examples.
+`ScoringPlayerSearchField` (scoring colours, in `ExistingPlayerSheet`) is an
+older one, still raised by a `KeyboardAvoidingView`, to move to these the next
+time it is changed, as is a screen with a search field at the top.
 
 ## Header menus
 

@@ -3,3 +3,8 @@
  * (`keyboardControllerOwner.native.ts` is the phone's).
  */
 export function useKeyboardControllerOwner(_active: boolean): void {}
+
+/** Nothing to hold, so nothing to wait for. */
+export function useKeyboardControllerHeld(): boolean {
+  return true
+}
