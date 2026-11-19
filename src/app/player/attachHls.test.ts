@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import Hls from 'hls.js'
-import { after, afterEach, before, describe, it } from 'mocha'
+import { after, afterEach, before, beforeEach, describe, it } from 'mocha'
 
 import {
   APPLE_VENDOR,
@@ -12,6 +12,8 @@ import {
   reportsLiveStalls,
   type RetryClock
 } from './attachHls'
+import { LIVE_DELAY_SEC } from './liveDelay'
+import { REJOIN_GIVE_UP_MS } from './liveRejoin'
 import { playbackOf } from './playbackSession'
 import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
@@ -1073,6 +1075,239 @@ describe('the browser’s own player, when it stumbles', function () {
   })
 })
 
+describe('Safari’s own live player, run out of footage during a long cut', function () {
+  const url = 'https://example.com/media/vid_example/index.m3u8'
+  const OPEN = '#EXTM3U\n#EXTINF:4.000000,\nseg1.m4s\n'
+  const CLOSED = `${OPEN}#EXT-X-ENDLIST\n`
+  const realFetch = globalThis.fetch
+  /** What the stubbed server answers for the playlist, and how often it was read. */
+  let playlist = OPEN
+  let reads = 0
+  beforeEach(function () {
+    playlist = OPEN
+    reads = 0
+    globalThis.fetch = async () => {
+      reads += 1
+      return new Response(playlist)
+    }
+  })
+  afterEach(function () {
+    globalThis.fetch = realFetch
+  })
+
+  /** Lets the stubbed fetches and the rejoin's promises settle. */
+  const settle = async (): Promise<void> => {
+    // A Response's body is read on a later turn of the event loop.
+    for (let i = 0; i < 5; i++) {
+      await new Promise(resolve => setImmediate(resolve))
+    }
+  }
+
+  /**
+   * A live SynthA at 93.5 s when its camera went away for 64 s: Safari played
+   * to the end of what it had, paused and said `ended`, and the playlist then
+   * carried on growing under it while it stood there (#327).
+   *
+   * `followsPauses` is the game page's own wish, which a pause clears and a
+   * play sets, heard before the player's; otherwise `wants` answers.
+   */
+  function ranOut(
+    options: {
+      wants?: () => boolean
+      followsPauses?: boolean
+      intent?: Partial<PlayIntent>
+    } = {}
+  ): {
+    video: FakeVideo
+    clock: ReturnType<typeof manualClock>
+    grow: (endSec: number) => void
+    detach: () => void
+    viewer: { wants: boolean }
+  } {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    const viewer = { wants: true }
+    if (options.followsPauses === true) {
+      video.addEventListener('pause', () => {
+        viewer.wants = false
+      })
+      video.addEventListener('play', () => {
+        viewer.wants = true
+      })
+    }
+    const wants =
+      options.wants ??
+      (options.followsPauses === true ? () => viewer.wants : () => true)
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      { wantsToPlay: wants, isLive: () => true, ...options.intent },
+      clock
+    )
+    video.paused = false
+    video.readyState = 4
+    video.emit('play')
+    video.currentTime = 93.5
+    video.seekable = { length: 1, start: () => 0, end: () => 81.4 }
+    video.paused = true
+    video.ended = true
+    video.emit('pause')
+    video.emit('ended')
+    return {
+      video,
+      clock,
+      viewer,
+      detach,
+      grow: endSec => {
+        video.ended = false
+        video.seekable = { length: 1, start: () => 0, end: () => endSec }
+      }
+    }
+  }
+
+  it('plays on from where it stopped once there is footage after it', function () {
+    const { video, clock, grow } = ranOut()
+    clock.advance(4000)
+    expect(video.plays, 'nothing to play yet').equals(0)
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.paused).equals(false)
+    expect(video.currentTime).equals(93.5)
+    expect(video.loads, 'no reload').equals(0)
+  })
+
+  it('rejoins the live point when the game has moved further on than that', function () {
+    const { video, clock, grow } = ranOut()
+    grow(200)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.currentTime).equals(200 - LIVE_DELAY_SEC)
+  })
+
+  it('plays again for the game page, whose wish the end’s own pause cleared', function () {
+    const { video, clock, grow, viewer } = ranOut({ followsPauses: true })
+    expect(viewer.wants, 'the page read the end as a pause').equals(false)
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.paused).equals(false)
+  })
+
+  it('stays paused when it was wanted at the end and is not by the time there is footage', function () {
+    let wanted = true
+    const { video, clock, grow } = ranOut({ wants: () => wanted })
+    wanted = false
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(0)
+    expect(video.paused).equals(true)
+  })
+
+  it('stops looking after ten minutes, on a play, and once detached', function () {
+    const late = ranOut()
+    late.clock.advance(REJOIN_GIVE_UP_MS + 2000)
+    late.grow(900)
+    late.clock.advance(2000)
+    expect(late.video.plays, 'given up').equals(0)
+
+    const played = ranOut()
+    played.video.emit('play')
+    played.grow(125.4)
+    played.clock.advance(4000)
+    expect(played.video.plays, 'a play settled it').equals(0)
+
+    const gone = ranOut()
+    gone.detach()
+    gone.grow(125.4)
+    gone.clock.advance(4000)
+    expect(gone.video.plays, 'detached').equals(0)
+  })
+
+  it('leaves an open playlist to the look: nothing reloads while the camera is away', async function () {
+    const { video, clock, grow } = ranOut()
+    for (let i = 0; i < 15; i++) {
+      clock.advance(2000)
+      await settle()
+    }
+    expect(reads, 'read every 10 s').greaterThan(1)
+    expect(video.loads).equals(0)
+    expect(video.plays).equals(0)
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.loads).equals(0)
+  })
+
+  it('hands a closed playlist to the rejoin, which loads it afresh once it is open again', async function () {
+    playlist = CLOSED
+    const { video, clock, grow } = ranOut({ followsPauses: true })
+    clock.advance(10_000)
+    await settle()
+    // The look's read, then liveRejoin's own at once: still closed.
+    expect(reads).equals(2)
+    expect(video.loads).equals(0)
+    playlist = OPEN
+    // liveRejoin looks again 5 s on, finds it open, and rejoins.
+    clock.advance(5000)
+    await settle()
+    expect(video.loads).equals(1)
+    expect(video.plays, 'played, so an iPhone loads it').equals(1)
+    // Footage after the stop no longer moves it: the look was handed over.
+    grow(300)
+    const at = video.currentTime
+    clock.advance(4000)
+    expect(video.plays).equals(1)
+    expect(video.currentTime).equals(at)
+  })
+
+  it('leaves it paused when the viewer played and paused it while the closed playlist was awaited', async function () {
+    playlist = CLOSED
+    const { video, clock } = ranOut({ followsPauses: true })
+    clock.advance(10_000)
+    await settle()
+    // Before liveRejoin's look finds it open: a play and then a pause.
+    video.paused = false
+    video.emit('play')
+    video.paused = true
+    video.emit('pause')
+    playlist = OPEN
+    clock.advance(5000)
+    await settle()
+    expect(video.loads).equals(1)
+    expect(video.plays).equals(0)
+  })
+
+  it('leaves a game that really ended alone: no footage a segment past the stop, and the closed playlist goes to the rejoin, which stops', async function () {
+    playlist = CLOSED
+    const { video, clock } = ranOut({
+      intent: { isLive: () => false }
+    })
+    // The last seekable end a hair past where it stopped, as it can be.
+    video.seekable = { length: 1, start: () => 0, end: () => 93.54 }
+    for (let i = 0; i < 30; i++) {
+      clock.advance(2000)
+      await settle()
+    }
+    expect(video.plays).equals(0)
+    expect(video.loads).equals(0)
+  })
+
+  it('leaves a grid tile, a recording and a player that has not run out alone', function () {
+    const tile = ranOut({ intent: { buffer: { aheadSec: 30 } } })
+    tile.grow(125.4)
+    tile.clock.advance(4000)
+    // Its one silent play at attach (`primeSilently`), and no other.
+    expect(tile.video.plays, 'a grid tile').equals(1)
+
+    const recording = ranOut({ intent: { isLive: undefined } })
+    recording.grow(125.4)
+    recording.clock.advance(4000)
+    expect(recording.video.plays, 'a recording').equals(0)
+  })
+})
+
 describe('a live game whose playlist was closed under the player', function () {
   const url = 'https://example.com/media/vid_example/master.m3u8'
   type Stubbed = Record<string, unknown>
@@ -1273,6 +1508,11 @@ describe('a live game whose playlist was closed under the player', function () {
     emit(hls, Hls.Events.FRAG_BUFFERED)
     expect(video.plays).equals(plays + 1)
     detach()
+    const preview = ranOut({ intent: { preview: true } })
+    preview.grow(125.4)
+    preview.clock.advance(4000)
+    expect(preview.video.plays, 'a card preview').equals(0)
+
   })
 
   it('stays paused when the viewer paused the grid while the playlist was closed', async function () {

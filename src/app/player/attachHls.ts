@@ -1,7 +1,7 @@
 import Hls from 'hls.js'
 
 import { watchLivePlaylist } from './livePlaylistWatch'
-import { liveRejoin } from './liveRejoin'
+import { liveRejoin, REJOIN_GIVE_UP_MS } from './liveRejoin'
 import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
@@ -222,6 +222,7 @@ type NativeHlsEvent =
   | 'loadedmetadata'
   | 'play'
   | 'pause'
+  | 'ended'
   | 'durationchange'
   | 'progress'
 
@@ -311,6 +312,17 @@ const MEDIA_ERR_ABORTED = 1
  */
 export const RESTORE_PROGRESS_MS = 10_000
 
+/** How often a live player that ran out looks for footage after where it stopped. */
+export const RAN_OUT_POLL_MS = 2000
+/** How often, meanwhile, it reads its playlist to see whether it was closed. */
+export const RAN_OUT_FETCH_MS = 10_000
+/**
+ * How far past where it stopped the playlist must reach before there is
+ * footage to go on with: a segment. A game that really ended can leave the
+ * seekable end a hair past the stop, and playing there only ends again.
+ */
+export const RAN_OUT_AHEAD_SEC = 4
+
 /**
  * The browser's own HLS player, with the same patience as hls.js gets.
  *
@@ -363,9 +375,116 @@ export function attachNativeHls(
     intent == null ? ownWantsToPlay : intent.wantsToPlay()
   const onPlay = (): void => {
     ownWantsToPlay = true
+    // A play, the viewer's or its own, settles any run-out (below).
+    stopRanOut()
   }
   const onPause = (): void => {
     if (!recovering) ownWantsToPlay = false
+  }
+
+  /**
+   * A live single player that ran out of footage during a long camera cut
+   * (#327). Safari plays to the end of what it has, pauses and says `ended`,
+   * and its owner — whose wish follows the element's pauses — reads that
+   * pause as the viewer's. The playlist then carries on under it and nothing
+   * plays it again, through this cut and every later one.
+   *
+   * So `ended` while live is the player running out, not the game ending.
+   * Once there is footage after where it stopped, it goes on from there, or
+   * from the live point when the game has moved further than the cushion,
+   * and plays when it is wanted — or not wanted only because of the end's
+   * own pause, unchanged since (`wantedAtEnd`, as the hls.js path keeps it).
+   * A playlist the server actually closed is handed to `liveRejoin`, which
+   * waits for it to open again and loads it afresh.
+   */
+  // The viewer's own single player only: a card preview (`preview`) is left
+  // to end, as its stalls are left unreported.
+  const runOutIsLive =
+    intent?.buffer == null && intent?.preview !== true
+      ? intent?.isLive
+      : undefined
+  const watchesRunOut = runOutIsLive != null
+  let ranOut:
+    { endedAt: number; wantedAtEnd: boolean; sinceMs: number } | undefined
+  /** An episode's `wantedAtEnd`, kept for `liveRejoin`'s rejoin. */
+  let handedWanted: boolean | undefined
+  let lookTimer: unknown
+  let lastReadMs = 0
+  const stopRanOut = (): void => {
+    ranOut = undefined
+    handedWanted = undefined
+    if (lookTimer != null) clock.clearTimeout(lookTimer)
+    lookTimer = undefined
+  }
+  const playIfWanted = (wantedAtEnd: boolean | undefined): void => {
+    if (wantsToPlay() || wantedAtEnd === false)
+      video.play().catch(() => undefined)
+  }
+  const readPlaylist = async (): Promise<string> => {
+    const response = await fetch(url, { cache: 'no-store' })
+    if (!response.ok) throw new Error(`playlist ${response.status}`)
+    return await response.text()
+  }
+  const rejoiner =
+    runOutIsLive == null
+      ? undefined
+      : liveRejoin({
+          isLive: runOutIsLive,
+          fetchPlaylist: readPlaylist,
+          clock,
+          rejoin: () => {
+            const wanted = handedWanted
+            handedWanted = undefined
+            noteResumeAt()
+            setRecovering(true)
+            reload()
+            if (!wantsToPlay() && wanted === false)
+              video.play().catch(() => undefined)
+          }
+        })
+  const lookAfterRunOut = (): void => {
+    lookTimer = undefined
+    const episode = ranOut
+    if (episode == null) return
+    const now = clock.now()
+    if (now - episode.sinceMs > REJOIN_GIVE_UP_MS) {
+      ranOut = undefined
+      return
+    }
+    const ranges = video.seekable
+    const end = ranges.length > 0 ? ranges.end(ranges.length - 1) : NaN
+    if (Number.isFinite(end) && end > episode.endedAt + RAN_OUT_AHEAD_SEC) {
+      ranOut = undefined
+      video.currentTime = Math.max(episode.endedAt, end - LIVE_DELAY_SEC)
+      playIfWanted(episode.wantedAtEnd)
+      return
+    }
+    if (now - lastReadMs >= RAN_OUT_FETCH_MS) {
+      lastReadMs = now
+      readPlaylist()
+        .then(text => {
+          if (ranOut !== episode || !text.includes('#EXT-X-ENDLIST')) return
+          ranOut = undefined
+          if (lookTimer != null) clock.clearTimeout(lookTimer)
+          lookTimer = undefined
+          handedWanted = episode.wantedAtEnd
+          rejoiner?.ended()
+        })
+        .catch(() => undefined)
+    }
+    lookTimer = clock.setTimeout(lookAfterRunOut, RAN_OUT_POLL_MS)
+  }
+  const onEnded = (): void => {
+    if (!watchesRunOut) return
+    stopRanOut()
+    const now = clock.now()
+    ranOut = {
+      endedAt: video.currentTime,
+      wantedAtEnd: wantsToPlay(),
+      sinceMs: now
+    }
+    lastReadMs = now
+    lookTimer = clock.setTimeout(lookAfterRunOut, RAN_OUT_POLL_MS)
   }
 
   /**
@@ -505,6 +624,7 @@ export function attachNativeHls(
 
   video.addEventListener('play', onPlay)
   video.addEventListener('pause', onPause)
+  video.addEventListener('ended', onEnded)
   video.addEventListener('canplay', recovered)
   video.addEventListener('error', onError)
   const onWallMapping = intent?.onWallMapping
@@ -545,9 +665,12 @@ export function attachNativeHls(
     setRecovering(false)
     video.removeEventListener('play', onPlay)
     video.removeEventListener('pause', onPause)
+    video.removeEventListener('ended', onEnded)
     video.removeEventListener('canplay', recovered)
     video.removeEventListener('error', onError)
     video.removeEventListener('loadedmetadata', seekBack)
+    stopRanOut()
+    rejoiner?.stop()
     video.removeAttribute('src')
     video.load()
   }
