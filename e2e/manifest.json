@@ -361,6 +361,67 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "id": "messaging/chat/message-links#open",
+      "title": "Chat links in text and file captions open their displayed destination",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/chatMessageLinks.ts",
+        "src/app/chat/ChatMessageText.tsx",
+        "src/app/chat/chatBrowser*",
+        "src/app/chat/NativeChatBrowser.ts",
+        "src/app/chat/MessageBubble.tsx",
+        "src/app/chat/ChatWorkspace.tsx",
+        "src/app/chat/ConversationScreen.tsx",
+        "ios/TeamStation/RCTChatBrowser.mm",
+        "android/app/src/main/java/app/teamstation/app/browser/**"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/message-links",
+      "file": "e2e/tests/messaging/chat/message-links.e2e.ts"
+    },
+    {
       "id": "platform/push/browser#dms-mentions-reminders",
       "title": "A browser's notification switches are its own, a DM, a mention and an RSVPed event's reminder notify it and nothing else does, and a tap opens what it is about",
       "kind": "e2e",
