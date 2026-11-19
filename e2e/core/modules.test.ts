@@ -55,6 +55,7 @@ describe('moduleOf', function () {
     'mobile/apps/tsCameraman/e2e/sentry.e2e.ts',
     'mobile/apps/tsDirector/e2e/programmeCut.e2e.ts',
     'mobile/apps/tsSpeedy/e2e/speedy.e2e.ts',
+    'mobile/apps/tsSpeedyAndroid/e2e/speedy.e2e.ts',
     'appletv/e2e/auth.e2e.ts',
     'src/test/longListsFixture.e2e.ts',
     'src/app/oauth/oauthWeb.e2e.ts'
