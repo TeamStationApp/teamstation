@@ -38,6 +38,8 @@ const game = asGameDetail({
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
+  // The reader keeps score for both teams.
+  assignedRoles: { away: ['scorekeeper'], home: ['scorekeeper'] },
   videos: []
 })
 interface ProbeFiber {
@@ -71,8 +73,23 @@ after(async function () {
     await coverage.record(coverageOut)
 })
 let browser: Browser
-/** Leaves every save unanswered, as a server that never replies would. */
+/**
+ * Leaves every save unanswered, as a server that never replies would. The
+ * game's saves wait in `heldSaves` until `releaseSaves` answers them.
+ */
 let holdSaves = false
+const heldSaves: Array<() => Promise<void>> = []
+/** Answers the held saves, in order, as the server would have. */
+async function releaseSaves(): Promise<void> {
+  holdSaves = false
+  for (const answer of heldSaves.splice(0)) await answer()
+}
+/** The fixture game's current count, as the server holds it. */
+interface HeldCount {
+  balls: number
+  strikes: number
+  outs: number
+}
 /** The away team's name in the mocked game, when a test needs another. */
 let awayTeamName: string | undefined
 async function open(
@@ -84,7 +101,12 @@ async function open(
   probe = false,
   logos?: 'valid' | 'broken',
   uiAnimations = false
-): Promise<{ page: Page; unexpected: string[] }> {
+): Promise<{
+  page: Page
+  unexpected: string[]
+  /** What the server holds of the game's current play: its count. */
+  serverCount: () => HeldCount | undefined
+}> {
   const createdRoster: Record<string, RosterEntry[]> = {}
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
@@ -143,6 +165,9 @@ async function open(
     console.error('Browser error:', error)
   })
   page.setDefaultTimeout(8000)
+  // A slow machine, as a loaded droplet is: the page's CPU slowed this many times.
+  const throttle = Number(process.env.TS_SCORING_CPU_THROTTLE ?? '1')
+  if (throttle > 1) await page.emulateCPUThrottling(throttle)
   await page.setViewport({ width: 1200, height: 900 })
   await page.setRequestInterception(true)
   page.on('request', request => {
@@ -191,7 +216,8 @@ async function open(
     }
     const saving =
       request.method() === 'POST' && url.pathname.endsWith('/events')
-    if (saving && holdSaves) return
+    if (saving && holdSaves && url.pathname !== '/api/v1/games/g1/events')
+      return
     const creatingPlayer =
       request.method() === 'POST' && url.pathname.endsWith('/roster-players')
     if (request.method() !== 'GET' && !saving && !creatingPlayer)
@@ -281,7 +307,8 @@ async function open(
           body: JSON.stringify(held)
         })
       }
-      answer().catch(() => undefined)
+      if (saving && holdSaves) heldSaves.push(answer)
+      else answer().catch(() => undefined)
       return
     } else if (url.pathname === '/api/v1/games/g1') {
       body =
@@ -397,6 +424,26 @@ async function open(
       ]
     } else if (url.pathname.endsWith('/live-streams'))
       body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
+    else if (/^\/api\/v1\/events\/[^/]+\/info$/.test(url.pathname))
+      // The game page's Info: the fixture game, with nobody to answer for.
+      body = {
+        id: url.pathname.split('/')[4],
+        eventKind: 'game',
+        title: null,
+        teamId: 'home',
+        teamName: 'Hawks',
+        startAt: null,
+        endAt: null,
+        timezone: 'America/Los_Angeles',
+        venue: null,
+        address: null,
+        latitude: null,
+        longitude: null,
+        status: 'scheduled',
+        canManage: false,
+        attendees: [],
+        replyUserIds: []
+      }
     else {
       unexpected.push(url.pathname)
       status = 500
@@ -411,7 +458,11 @@ async function open(
       .catch(() => undefined)
   })
   await page.goto(`${base}${path}`)
-  return { page, unexpected }
+  return {
+    page,
+    unexpected,
+    serverCount: () => (held.currentPlay as { count?: HeldCount } | null)?.count
+  }
 }
 /* eslint-disable @typescript-eslint/prefer-optional-chain -- Browser evaluation cannot reference generated Sucrase helpers. */
 async function captureScene(page: Page): Promise<void> {
@@ -1334,8 +1385,15 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('opens an unscored game full screen and protects unsaved plays from browser Back', async function () {
-    const { page, unexpected } = await open('/games/g1')
+  /**
+   * Scores a ball the server holds, leaves with browser Back, and opens
+   * scoring again: at once (`gone` false), as a scorer who comes straight
+   * back does while the screen is still sliding away, or once the screen
+   * and its field have gone. The ball is on screen both ways, and reaches
+   * the server once it answers.
+   */
+  async function backWithHeldBall(gone: boolean): Promise<void> {
+    const { page, unexpected, serverCount } = await open('/games/g1')
     try {
       await startScoring(page)
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
@@ -1344,7 +1402,7 @@ describe('scoring browser', function () {
       const saved = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
-          response.url().endsWith('/games/g1/events')
+          new URL(response.url()).pathname.endsWith('/games/g1/events')
       )
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
@@ -1353,43 +1411,106 @@ describe('scoring browser', function () {
       await page.waitForFunction(
         () => document.querySelector('[aria-label="Save status"]') == null
       )
-      // Back returns to the Score screen.
-      await page.evaluate(() => {
-        history.back()
-      })
-      await page.waitForSelector('[aria-label="Full game scoring"]')
-      expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
-      expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
+      /** Marks the field's canvas, to tell the same screen from a new one. */
+      const mark = async (): Promise<void> => {
+        await page.evaluate(() => {
+          const canvas = document.querySelector('canvas')
+          if (canvas != null) canvas.dataset.backMark = 'kept'
+        })
+      }
+      /** Back, then scoring again: at once, or once the screen has gone. */
+      const backAndReturn = async (): Promise<string> => {
+        await mark()
+        await page.evaluate(() => {
+          history.back()
+        })
+        await page.waitForSelector('[aria-label="Full game scoring"]')
+        expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
+        expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
+        if (gone) {
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[aria-label^="Baseball field"]') == null
+          )
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+        await click(page, 'Full game scoring')
+        await page.waitForFunction(
+          () => location.pathname === '/games/g1/score'
+        )
+        await page.waitForSelector('canvas')
+        const path = await page.evaluate(() =>
+          document.querySelector('canvas[data-back-mark="kept"]') == null
+            ? 'opened anew'
+            : 'shown again'
+        )
+        console.log(`Scoring ${path}`)
+        return path
+      }
+      await backAndReturn()
+      // Held back by the server: the ball has not reached it. On the web the
+      // scoring screen's own session holds it, so Back leaves without asking
+      // and the ball is there on the way back in.
       holdSaves = true
-      await click(page, 'Full game scoring')
-      await page.waitForFunction(() => location.pathname === '/games/g1/score')
-      await page.waitForSelector('canvas')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
-      await page.waitForSelector('[aria-label="Save status"]')
-      const length = await page.evaluate(() => history.length)
-      await page.evaluate(() => {
-        history.back()
-      })
-      await page.waitForFunction(() =>
-        document.body.innerText.includes(
-          '1 change has not reached the server yet and will be lost.'
-        )
+      await page.waitForSelector('[aria-label*="2 balls"]')
+      const returned = await backAndReturn()
+      const count = async (): Promise<string> =>
+        (await page.evaluate(() => {
+          // Plain: the page has no helpers for sucrase's optional chains.
+          const board = document.querySelector('[aria-label*=" balls "]')
+          return board === null ? null : board.getAttribute('aria-label')
+        })) ?? 'no count'
+      console.log('Back in with a held ball:', await count())
+      /** The scoring screen as it opened again, kept as the run's proof. */
+      const shot = async (): Promise<void> => {
+        await page.screenshot({
+          path: join(
+            process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
+            gone ? 'back-screen-gone.png' : 'back-shown-again.png'
+          )
+        })
+      }
+      await page
+        .waitForSelector('[aria-label*="2 balls"]', { timeout: 20000 })
+        .catch(async (error: unknown) => {
+          console.error('Still not 2 balls:', await count())
+          await shot()
+          throw error
+        })
+      // The screen shown again keeps its own Undo history; one opened anew
+      // offers the plays it opened with as the last play, as any game
+      // opened with plays does.
+      await page.waitForSelector(
+        returned === 'opened anew'
+          ? '[aria-label="Undo Last play"]'
+          : '[aria-label="Undo Ball"]'
       )
-      await click(page, 'Cancel')
-      await page.waitForFunction(() => location.pathname === '/games/g1/score')
-      expect(await page.evaluate(() => history.length)).equals(length)
-      await page.evaluate(() => {
-        history.back()
-      })
-      await click(page, 'Discard and Exit')
-      await page.waitForSelector('[aria-label="Full game scoring"]')
-      expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
+      await shot()
+      // The server answers: the held ball is saved, not only drawn.
+      await releaseSaves()
+      const end = Date.now() + 20000
+      while (serverCount()?.balls !== 2) {
+        if (Date.now() > end)
+          throw new Error(
+            `The server holds ${JSON.stringify(serverCount() ?? null)}, not 2 balls`
+          )
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      console.log('The server holds:', JSON.stringify(serverCount()))
       expect(unexpected).deep.equals([])
     } finally {
       holdSaves = false
+      heldSaves.length = 0
       await page.close()
     }
+  }
+  it('opens an unscored game full screen and protects unsaved plays from browser Back', async function () {
+    await backWithHeldBall(false)
+  })
+  it('keeps a held ball when the scoring screen has gone before scoring opens again', async function () {
+    await backWithHeldBall(true)
   })
   it('excludes recorded zero scores and resolves direct scoring links', async function () {
     const scored = await open('/games/g1', true)
