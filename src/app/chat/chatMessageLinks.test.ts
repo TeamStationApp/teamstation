@@ -84,6 +84,43 @@ describe('chat message links', () => {
     ])
   })
 
+  it('keeps nested destinations in web queries and fragments inside the outer address', () => {
+    for (const value of [
+      'www.example.org/share?url=https://example.net/song',
+      'example.org:8443/#https://example.net/song'
+    ]) {
+      expect(texts(value)).deep.equals([value])
+      expect(chatLinkAddress(value)?.href).equals('https://' + value)
+    }
+  })
+
+  it('isolates unsupported schemes at the candidate boundary', () => {
+    expect(texts('[map](custom:https://example.org)')).deep.equals([])
+    expect(texts('ftp://example.org/a,https://example.com')).deep.equals([
+      'https://example.com'
+    ])
+    expect(texts('custom:https://example.org;www.example.com')).deep.equals([
+      'www.example.com'
+    ])
+    expect(texts('data:text/plain,https://example.org')).deep.equals([])
+  })
+
+  it('recognizes ambiguous extensions only with an explicit web address', () => {
+    expect(texts('Main.java config.properties report.pub')).deep.equals([])
+    expect(texts('www.main.java https://report.pub')).deep.equals([
+      'www.main.java',
+      'https://report.pub'
+    ])
+  })
+
+  it('rejects C1 and bidi controls before detection and activation', () => {
+    for (const control of ['\u0080', '\u009F', '\u061C', '\u200F', '\u2067']) {
+      const value = 'https://example.org/a' + control + 'b'
+      expect(texts(value)).deep.equals([])
+      expect(chatLinkAddress(value)).equals(undefined)
+    }
+  })
+
   it('checks the URL again at activation', () => {
     for (const value of [
       '',
@@ -147,6 +184,56 @@ describe('chat message links', () => {
     ])
       expect(route(url), url).equals(undefined)
   })
+  it('recognizes complete paths after normalizing equivalent spellings', () => {
+    expect(route(active + '/node/users/?tab=users')).deep.equals({
+      name: 'userManagement',
+      tab: 'users'
+    })
+    expect(route(active + '/sche%64ule/?when=past')).deep.equals({
+      name: 'schedule',
+      when: 'past'
+    })
+    expect(route(active + '/venues/one%2ftwo')).deep.equals({
+      name: 'venue',
+      venueId: 'one/two'
+    })
+    for (const path of [
+      '/node%2Fusers',
+      '/teams/t1/unrecognized?tab=roster',
+      '/games/g1/bad?tab=score',
+      '/players/2/unknown',
+      '/signin/code/extra',
+      '/venues/%ZZ'
+    ]) {
+      expect(route(active + path), path).equals(undefined)
+    }
+    for (const [path, name] of [
+      ['/teams/t1/manage', 'groupSettings'],
+      ['/teams/t1/people/2', 'person'],
+      ['/players/2', 'player'],
+      ['/node/users/2/account', 'adminAccount'],
+      ['/signin-browser/sample', 'signInLink'],
+      ['/signin-browser', 'signIn'],
+      ['/account/tv', 'teamStationTv']
+    ])
+      expect(route(origin + path)?.name, path).equals(name)
+  })
+
+  it('drops tokens from production links when a native build has no verified origin', () => {
+    for (const prefix of ['https://app.teamstation.app', active]) {
+      expect(
+        chatLinkRoute(new URL(prefix + '/signin/sample'), active, undefined)
+      ).deep.equals({ name: 'signIn' })
+      expect(
+        chatLinkRoute(
+          new URL(prefix + '/tv-login?token=' + 'a'.repeat(43)),
+          active,
+          undefined
+        )
+      ).deep.equals({ name: 'teamStationTv' })
+    }
+  })
+
   it('honors the verified origin for sign-in and TV links', () => {
     expect(
       chatLinkRoute(

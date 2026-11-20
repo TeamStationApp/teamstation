@@ -89,13 +89,23 @@ describe('chat message links from the app', () => {
         navigate
       )
       await openChatMessageLink(
+        window.location.origin + '/schedule',
+        api,
+        navigate
+      )
+      await openChatMessageLink(
         'https://app.teamstation.app/chat',
         '/api/v1',
         navigate
       )
       await openChatMessageLink('file:///home', '/api/v1', navigate)
       expect(routes).deep.equals(['schedule', 'chat'])
-      expect(opened).has.length(1)
+      expect(opened[1]).deep.equals([
+        'https://seat.example.test/schedule',
+        '_blank',
+        'noopener,noreferrer'
+      ])
+      expect(opened).has.length(2)
     } finally {
       if (original == null) Reflect.deleteProperty(window, 'open')
       else Object.defineProperty(window, 'open', original)

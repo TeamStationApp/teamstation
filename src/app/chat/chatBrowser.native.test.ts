@@ -4,12 +4,16 @@ import Module from 'node:module'
 describe('chat message links on native', () => {
   it('uses the Safari module on iOS and the chat-specific browser intent on Android', async () => {
     const rn = require.resolve('react-native')
+    const config = require.resolve('../native/config')
     const paths = [
+      config,
       rn,
       require.resolve('./NativeChatBrowser'),
       require.resolve('./chatBrowser.native')
     ]
     const original = paths.map(path => require.cache[path])
+    const fakeConfig = new Module(config)
+    fakeConfig.exports = { appOrigin: undefined }
     const calls: string[] = []
     const platform = { OS: 'ios' }
     const modules = {
@@ -37,9 +41,17 @@ describe('chat message links on native', () => {
     try {
       for (const path of paths) Reflect.deleteProperty(require.cache, path)
       require.cache[rn] = reactNative
-      const { openChatBrowser, chatAppOrigin } =
+      require.cache[config] = fakeConfig
+      const { openChatBrowser, chatLinkOrigins } =
         await import('./chatBrowser.native')
-      assert.ok(chatAppOrigin().startsWith('https://'))
+      assert.deepEqual(chatLinkOrigins('https://seat.example.org/api/v1'), {
+        active: 'https://seat.example.org',
+        verified: undefined
+      })
+      fakeConfig.exports.appOrigin = 'https://app.example.org'
+      assert.deepEqual(chatLinkOrigins('/api/v1'), {
+        verified: 'https://app.example.org'
+      })
       const url = 'http://example.com/game?x=1#t'
       await openChatBrowser(url)
       platform.OS = 'android'

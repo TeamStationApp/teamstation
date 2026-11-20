@@ -1,11 +1,19 @@
 import { NativeModules, Platform } from 'react-native'
 
-import { PRIMARY_HOST } from '../../common/primaryUrl'
 import { appOrigin } from '../native/config'
+import { CacheUrl } from '../sync/cacheUrl'
 import ChatBrowser from './NativeChatBrowser'
 
-export const chatAppOrigin = (): string =>
-  appOrigin ?? 'https://' + PRIMARY_HOST
+export function chatLinkOrigins(apiBaseUrl: string): {
+  active?: string
+  verified?: string
+} {
+  try {
+    return { active: new CacheUrl(apiBaseUrl).origin, verified: appOrigin }
+  } catch {
+    return { verified: appOrigin }
+  }
+}
 
 export async function openChatBrowser(url: string): Promise<void> {
   if (Platform.OS === 'ios' && ChatBrowser != null) {
