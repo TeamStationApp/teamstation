@@ -415,7 +415,19 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // A phone opens again on the documents its queue swapped; the web on
       // the swapped copy of what it opened on, while the swap is out.
       const held = web ? webWrites.held(props.gameId) : undefined
-      if (web && held == null) await webWrites.settled()
+      // And, while a screen since gone still has a swap of the game out,
+      // once it is answered: a session that screen let go scores on the
+      // swapped sides, and is taken back over the server's copy of them.
+      if (web && held == null)
+        await Promise.all([
+          webWrites.settled(),
+          letGoSettled({
+            client: props.client,
+            gameId: props.gameId,
+            userId: props.userId,
+            source
+          })
+        ])
       // Every read the screen waits on as it opens is the phone's stored one
       // when it has one, read from the server behind it.
       const game =
@@ -729,6 +741,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   // replacing is the swap's, which closes it once its changes land; the
   // session opened on the swap's copy is let go as any other, its saves
   // waiting behind the swap.
+  const leftWrites = useRef(webWrites)
+  leftWrites.current = webWrites
   useEffect(
     () => () => {
       const shown = openedContext.current
@@ -742,7 +756,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         client: shown.client,
         gameId: shown.gameId,
         userId: shown.userId,
-        source: shown.source
+        source: shown.source,
+        writes: leftWrites.current
       })
     },
     []
@@ -1208,14 +1223,26 @@ function holdUnload(game: object, held: boolean): void {
 }
 
 /** What a web session let go by its screen was opened on, to be found again. */
-interface LetGoEntry {
+interface LetGoKey {
   client: TeamStationClient
   gameId: string
   userId: ScoringScreenProps['userId']
   source: ScoringSource
+}
+interface LetGoEntry extends LetGoKey {
+  /**
+   * The web writes of the screen that let it go: a swap of that screen's
+   * still out, which the session's saves wait behind.
+   */
+  writes: WebWrites
   /** Stops the wait that closes the session once it has saved. */
   stop: () => void
 }
+const sameLetGo = (entry: LetGoKey, opened: LetGoKey): boolean =>
+  entry.client === opened.client &&
+  entry.gameId === opened.gameId &&
+  entry.userId === opened.userId &&
+  entry.source === opened.source
 /**
  * The web's sessions whose screens have gone with changes still unsaved: a
  * screen that opens the same game again takes its session back, rather than
@@ -1262,13 +1289,10 @@ function closeOnceSaved(
  * None when nothing of the game is let go, or what was has saved and closed,
  * or the server refused or stopped it.
  */
-function takeBack(opened: Omit<LetGoEntry, 'stop'>): GameSession | undefined {
+function takeBack(opened: LetGoKey): GameSession | undefined {
   for (const [game, entry] of letGo) {
     if (
-      entry.client !== opened.client ||
-      entry.gameId !== opened.gameId ||
-      entry.userId !== opened.userId ||
-      entry.source !== opened.source ||
+      !sameLetGo(entry, opened) ||
       game.readOnly ||
       game.stopped ||
       game.isClosed
@@ -1280,6 +1304,20 @@ function takeBack(opened: Omit<LetGoEntry, 'stop'>): GameSession | undefined {
     return game
   }
   return undefined
+}
+/**
+ * Settles once every swap a screen since gone sent of this game is answered:
+ * the server's copy then has the sides the let-go session scores on, which
+ * a screen opening the game again reads, so the two agree.
+ */
+async function letGoSettled(opened: LetGoKey): Promise<void> {
+  await Promise.all(
+    [...letGo.values()]
+      .filter(entry => sameLetGo(entry, opened))
+      .map(async entry => {
+        await entry.writes.settled()
+      })
+  )
 }
 function statusOf(game: GameSession): SaveStatus {
   return {

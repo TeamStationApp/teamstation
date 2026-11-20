@@ -1413,6 +1413,42 @@ describe('swapping from the scoring menu', function () {
     expect(refused.defaultPrevented).equals(false)
   })
 
+  it('on the web, a screen opened while a gone screen’s swap is out waits for it, and shows the swapped sides the let-go pitch is scored on', async function () {
+    const screen = await swappable({ holdSwaps: true })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    // A pitch on the swapped copy, its save behind the swap.
+    await click('Ball')
+    await settle()
+    expect(screen.order()).deep.equals([])
+    const opens = screen.opens()
+    await unmount()
+    await screen.mountAgain()
+    // The server has not taken the swap: the screen waits for it rather
+    // than open on the sides before it.
+    expect(document.querySelector('[aria-label="Loading game"]')).not.equals(
+      null
+    )
+    expect(screen.opens()).equals(opens)
+    screen.release()
+    await settle()
+    await settle()
+    expect(screen.order()).deep.equals(['swap', 'save'])
+    expect(document.querySelector('[aria-label="Loading game"]')).equals(null)
+    // The sides shown are the swapped ones, with the pitch, and no notice
+    // of somebody else's swap.
+    expect(screen.session().state.gameData.teams.home.id).equals('away')
+    expect(
+      screen.session().state.liveData.plays.currentPlay?.count.balls
+    ).equals(1)
+    expect(document.body.textContent).not.includes('were swapped')
+    const sent = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(sent)
+    expect(sent.defaultPrevented).equals(false)
+  })
+
   it('on the web, opens on the swapped sides at once, takes a pitch, and sends it behind a swap request that is not answered', async function () {
     const screen = await swappable({ holdSwaps: true })
     await click(MENU)
