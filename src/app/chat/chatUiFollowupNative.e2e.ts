@@ -6076,7 +6076,7 @@ async function main(): Promise<void> {
       stage = 'S8-pin-result'
       if (wasPinned) {
         await messageMenu()
-        await m.tapOn({ text: 'Unpin' })
+        await tapStableControl(m, 'Unpin')
         await until('Native prior pin did not remove', async () =>
           !(await api.chatPins(fixture.conversationId)).some(
             row => row.messageId === originalId
@@ -6086,7 +6086,7 @@ async function main(): Promise<void> {
         )
       }
       await messageMenu()
-      await m.tapOn({ text: 'Pin' })
+      await tapStableControl(m, 'Pin')
       await until('Personal native message pin did not persist', async () =>
         (await api.chatPins(fixture.conversationId)).some(
           row => row.messageId === original.id
@@ -6340,7 +6340,7 @@ async function main(): Promise<void> {
       )
       if (!(fixture.initialMessagePinned ?? wasPinned)) {
         await messageMenu()
-        await m.tapOn({ text: 'Unpin' })
+        await tapStableControl(m, 'Unpin')
         await until('Personal pin cleanup did not persist', async () =>
           !(await api.chatPins(fixture.conversationId)).some(
             row => row.messageId === original.id
