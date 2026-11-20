@@ -1,5 +1,6 @@
 import type { Emulation } from '../../core/browserCdp'
 import type { FixtureManifest } from '../../core/fixtures'
+import { isHubDevice } from '../../core/maestro'
 import { iosIsSimulator } from '../../core/prepare'
 import { BlockedError } from '../../core/result'
 import {
@@ -8,7 +9,7 @@ import {
   type E2eSpec,
   type WebSession
 } from '../../core/spec'
-import { setServer } from '../app/setServer'
+import { openInApp, serverLink, setServer } from '../app/setServer'
 
 /**
  * The game plan's tests on any surface: the develop app on an iPhone or
@@ -68,6 +69,13 @@ export interface CoachApp {
   openGame: (gameId: string) => Promise<void>
   /** Coach Game for `teamId`, from its address. */
   openCoach: (gameId: string, teamId: string) => Promise<void>
+  /** The team's own page, from its address. */
+  openTeam: (teamId: string) => Promise<void>
+}
+
+/** A team page's address, as the app and the web route it. */
+export function teamPath(teamId: string): string {
+  return `/teams/${encodeURIComponent(teamId)}`
 }
 
 /**
@@ -138,7 +146,7 @@ async function pageFindAll(web: WebSession, pattern: RegExp): Promise<Found[]> {
  * The attached stack's database URL, for setup that must not go through
  * the API a fault may be breaking. A throwaway stack's database only.
  */
-async function stackDatabaseUrl(ctx: E2eContext): Promise<string> {
+export async function stackDatabaseUrl(ctx: E2eContext): Promise<string> {
   const attached = ctx.stack.attached
   if (attached == null)
     throw new BlockedError('needs an attached stack: --stack <id>')
@@ -166,6 +174,34 @@ export async function clearSignInLimits(ctx: E2eContext): Promise<void> {
   } finally {
     await client.end()
   }
+}
+
+/**
+ * Sends a hub iPhone's develop app the link that keeps `origin`, waits
+ * until the app is in front on its sign-in page (it has read the link it
+ * launched with), and launches it fresh, which then talks to `origin`.
+ * WebDriverAgent shows neither the app's "Server set" alert nor the
+ * address in its About, so the sign-in that follows, with an account only
+ * the stack holds, is what proves the server.
+ */
+export async function serverKeptOnHubPhone(
+  m: any,
+  udid: string,
+  origin: string
+): Promise<void> {
+  await openInApp({
+    platform: 'ios',
+    udid,
+    appId: DEVELOP_APP,
+    link: serverLink('ios', origin),
+    device: m,
+    hub: true
+  })
+  await m.extendedWaitUntil({
+    visible: { text: 'Sign in to TeamStation' },
+    timeout: 30_000
+  })
+  await m.launchApp({ appId: DEVELOP_APP, stopApp: true })
 }
 
 /**
@@ -217,20 +253,27 @@ export async function openCoachApp(
       },
       openCoach: async (gameId, teamId) => {
         await go(`/games/${gameId}/coach/${teamId}`)
+      },
+      openTeam: async teamId => {
+        await go(teamPath(teamId))
       }
     }
   }
   const udid = ctx.device('device')
   const m = await ctx.attach('device', { platform: 'ios', appId: DEVELOP_APP })
   await m.launchApp({ appId: DEVELOP_APP, clearState: true })
-  await setServer({
-    platform: 'ios',
-    udid,
-    appId: DEVELOP_APP,
-    origin,
-    device: m,
-    simulator: iosIsSimulator(udid)
-  })
+  if (isHubDevice(udid)) {
+    // A hub's iPhone takes the server link through its lease.
+    await serverKeptOnHubPhone(m, udid, origin)
+  } else
+    await setServer({
+      platform: 'ios',
+      udid,
+      appId: DEVELOP_APP,
+      origin,
+      device: m,
+      simulator: iosIsSimulator(udid)
+    })
   await ctx.signIn(role, m)
   const nodes = async (): Promise<Node[]> => flatten(await m.hierarchy())
   const link = async (path: string): Promise<void> => {
@@ -280,6 +323,9 @@ export async function openCoachApp(
     },
     openCoach: async (gameId, teamId) => {
       await link(`/games/${gameId}/coach/${teamId}`)
+    },
+    openTeam: async teamId => {
+      await link(teamPath(teamId))
     }
   }
 }
