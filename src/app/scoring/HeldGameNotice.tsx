@@ -8,6 +8,12 @@ import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 /** The way out of a held game's queue, confirmed before anything goes. */
 export const USE_SERVER_COPY = "Use Server's Copy"
 export const TRY_AGAIN = 'Try Again'
+/** What using the server's copy costs, said after a game's hold. */
+export const HELD_GAME_CONSEQUENCE =
+  "Using the server's copy deletes what this phone scored for this game and has not sent."
+/** The same, for a team whose new players the server refused. */
+export const HELD_TEAM_CONSEQUENCE =
+  "Using the server's copy takes the players this phone added off the team and shows its roster as the server has it."
 
 /**
  * What a game's screen says of the edits the server stopped, as a button:
@@ -24,8 +30,12 @@ export function HeldGameNotice(props: {
   onSettled: (arrived: boolean) => void
   /** The message as the screen draws it. */
   children: React.ReactNode
+  /** What using the server's copy costs; a game's by default. */
+  consequence?: string
+  /** The button's id: on iOS it stands for the message inside it. */
+  testID?: string
 }): React.ReactElement {
-  const { held, onSettled } = props
+  const { held, onSettled, consequence = HELD_GAME_CONSEQUENCE } = props
   const theme = useTheme()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -51,6 +61,7 @@ export function HeldGameNotice(props: {
   return (
     <>
       <Pressable
+        testID={props.testID}
         accessibilityRole="button"
         accessibilityLabel="Unsent changes"
         accessibilityHint={held.text}
@@ -74,8 +85,7 @@ export function HeldGameNotice(props: {
               fontFamily: theme.regularTextFont
             }}
           >
-            {held.text} Using the server's copy deletes what this phone scored
-            for this game and has not sent.
+            {held.text} {consequence}
           </Text>
           <ScoringError message={problem} />
           {held.retry != null && (
