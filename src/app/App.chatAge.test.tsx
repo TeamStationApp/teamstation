@@ -458,6 +458,13 @@ describe('the app before and after the chat age sheet', function () {
     })
     await untilPath('/schedule')
     expect(path()).equals('/schedule')
+    await settle(() => {
+      navTab('Chat').click()
+    })
+    await untilPath('/chat/cnv_exact')
+    expect(
+      document.querySelector('a[href="' + address + '"]')?.textContent
+    ).equals(address)
   })
 
   it('opens chat directly for a confirmed account', async () => {
