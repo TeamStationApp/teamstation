@@ -108,6 +108,15 @@ describe('setServer', function () {
 
   it('hands a hub iPhone the link through its leased device, and answers the system’s Open', async function () {
     const { device, calls } = phone()
+    const receipt = device.assertVisible
+    let waitingForOpen = true
+    device.assertVisible = async options => {
+      await receipt(options)
+      if (waitingForOpen) {
+        waitingForOpen = false
+        throw new Error('System is waiting for Open')
+      }
+    }
     const ran: string[][] = []
     await setServer({
       platform: 'ios',
@@ -124,6 +133,7 @@ describe('setServer', function () {
     expect(calls.map(([name]) => name)).deep.equals([
       'stopApp',
       'openLink',
+      'assertVisible',
       'tapOn',
       'assertVisible',
       'launchApp'
@@ -132,7 +142,28 @@ describe('setServer', function () {
       link: serverLink('ios', 'https://develop3.teamstation.app')
     })
     // Tapped only when the system asks; skipped when it does not.
-    expect(calls[2][1]).deep.equals({ text: 'Open', optional: true })
+    expect(calls[3][1]).deep.equals({ text: 'Open', optional: true })
+  })
+
+  it('reads a trusted hub link’s server acknowledgement immediately', async function () {
+    const { device, calls } = phone()
+    await setServer({
+      platform: 'ios',
+      udid: 'phone-1@hub',
+      appId: 'app.teamstation.develop',
+      origin: 'https://develop3.teamstation.app',
+      device
+    })
+    expect(calls.map(([name]) => name)).deep.equals([
+      'stopApp',
+      'openLink',
+      'assertVisible',
+      'launchApp'
+    ])
+    expect(calls[2][1]).deep.equals({
+      text: '.*develop3\\.teamstation\\.app.*Restart TeamStation.*',
+      timeout: 10000
+    })
   })
 
   it('opens the link on a phone, waits for the app to keep it, then launches it fresh', async function () {
