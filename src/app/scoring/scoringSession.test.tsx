@@ -802,6 +802,11 @@ describe('swapping from the scoring menu', function () {
     client: () => CachingClient
     /** Shows the scoring screen anew, on the same client and source. */
     mountAgain: () => Promise<void>
+    /**
+     * Holds every open from now until the returned function is called, as
+     * a slow read would: the open is counted, and waits.
+     */
+    holdOpens: () => () => void
   }> {
     const store = memoryStore()
     let game = gameFixture
@@ -876,12 +881,14 @@ describe('swapping from the scoring menu', function () {
     const held = new Promise<void>(resolve => {
       releaseHeld = resolve
     })
+    let opening: Promise<void> | undefined
     const source: ScoringSource = {
       persistent: options.persistent ?? true,
       // As `ServerScoringSource` opens a game the web's swap still out
       // left: on that copy, and its saves sent once the swap is.
       open: async (detail, _away, _home, heldSwap) => {
         opens++
+        await opening
         let first = true
         const read = {
           load: async (id: string) => {
@@ -1026,6 +1033,16 @@ describe('swapping from the scoring menu', function () {
       mountAgain: async () => {
         await mount(client, source)
         await settle()
+      },
+      holdOpens: () => {
+        let release: () => void = () => undefined
+        opening = new Promise<void>(resolve => {
+          release = resolve
+        })
+        return () => {
+          opening = undefined
+          release()
+        }
       }
     }
   }
@@ -1345,13 +1362,21 @@ describe('swapping from the scoring menu', function () {
   it('on the web, leaves a session a swap is replacing to the swap when the screen goes, not to the next screen', async function () {
     const screen = await swappable({ holdSaves: true })
     await click('Ball')
+    await settle()
+    // The session the swap replaces, its ball's save held.
+    const swappedOver = screen.session()
+    expect(swappedOver.pending).above(0)
+    // The swapped copy opens slowly: the screen goes before it is shown,
+    // while the swap still owns the session it replaces.
+    const openNow = screen.holdOpens()
     await click(MENU)
     await click(SWAP)
     await click('Reset and Swap')
     await settle()
-    const swappedOver = screen.session()
     const opens = screen.opens()
     await unmount()
+    openNow()
+    await settle()
     // The next screen opens from the server: the session the swap is
     // replacing is never taken back.
     await screen.mountAgain()
