@@ -25,6 +25,8 @@ import { asUserId, type UserId, userIdOfGumbo } from './userId'
 
 /** The longest body, in characters (Unicode code points). */
 export const MAX_BODY = 8000
+/** Maximum ciphertext bytes in a posted message envelope. */
+export const MAX_CIPHERTEXT = 64 * 1024
 /** The most attachments one message holds. */
 export const MAX_ATTACHMENTS = 10
 /** The largest attachment, in bytes before encryption. */
@@ -207,6 +209,26 @@ export const asChatContent: Cleaner<ChatContent> = raw => {
     default:
       throw new TypeError(`Unknown content type ${type}`)
   }
+}
+
+/** Keep the exact bytes of existing reports. Remove only the optional private field. */
+export function originalReportContent(plaintext: string): string {
+  let content: unknown
+  try {
+    content = JSON.parse(plaintext)
+  } catch {
+    return plaintext
+  }
+  if (
+    content == null ||
+    typeof content !== 'object' ||
+    Array.isArray(content) ||
+    !Object.prototype.hasOwnProperty.call(content, 'sealedPreview')
+  )
+    return plaintext
+  const original: Record<string, unknown> = { ...content }
+  delete original.sealedPreview
+  return JSON.stringify(original)
 }
 
 /** Content as the bytes `sealMessage` takes: checked, then UTF-8 JSON. */

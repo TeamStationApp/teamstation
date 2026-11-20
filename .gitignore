@@ -84,6 +84,7 @@ ios/build-sim/
 # The chat crypto core's build products (scripts/chatCryptoBuild.mjs), built
 # from crates/chat-crypto wherever the app is built.
 crates/chat-crypto/target/
+crates/chat-link-preview/target/
 src/common/chatCrypto/node/
 src/common/chatCrypto/wasm/
 android/app/google-services.json

@@ -122,6 +122,35 @@ export function sealMessage(
   return { nonce, ciphertext, signature }
 }
 
+/** Seal a preview with an epoch-derived key distinct from the reportable message key. */
+export function sealPreview(
+  fields: MessageFields,
+  epochKey: Uint8Array,
+  plaintext: Uint8Array
+): { nonce: Uint8Array; ciphertext: Uint8Array } {
+  const [nonce, ciphertext] = call('sealPreview', [
+    ...fieldArgs(fields),
+    epochKey,
+    plaintext,
+    EMPTY
+  ])
+  return { nonce, ciphertext }
+}
+
+export function openPreview(
+  fields: MessageFields,
+  epochKey: Uint8Array,
+  nonce: Uint8Array,
+  ciphertext: Uint8Array
+): Uint8Array {
+  return call('openPreview', [
+    ...fieldArgs(fields),
+    epochKey,
+    nonce,
+    ciphertext
+  ])[0]
+}
+
 /** Whether the signature is the sender identity's over this envelope. */
 export function verifyMessage(
   fields: MessageFields & SealedMessage & { senderIdentityKey: Uint8Array }

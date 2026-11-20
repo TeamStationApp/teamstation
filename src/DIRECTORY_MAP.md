@@ -10,7 +10,7 @@ Tess: `app/tess/`, `server/tess/`. Tool rounds: `server/tess/agent.ts`; budgets/
 Scoring: `app/scoring/`, `common/scoring/`, `server/scoring/`; game state/persistence: `server/games/`, `server/events/`; shared event model: `common/gumbo/`.
 Scheduling: `server/schedule/`; automatic placement: `common/autoScheduler/`, `server/autoScheduler/`; scheduling setup: `server/scheduler/`.
 Identity/access: `server/auth/`, `server/access.ts`, `server/middleware/`, `server/users/`; accounts: `server/account/`; teams/rosters: `server/teams/`; groups/leagues: `server/groups/`; guardians: `server/people/`; joining: `server/invites/`.
-Chat: `app/chat/`, `server/chat/`, `common/chatCrypto/`; offline/cache/outbox: `app/sync/`; shared Valkey connections: `server/valkey/`; sockets/change feed: `server/socket/`, `server/changeFeed/`.
+Chat: `app/chat/`, `server/chat/`, `common/chatCrypto/`, `common/chatLinkPreview.ts` (private preview payloads); offline/cache/outbox: `app/sync/`; shared Valkey connections: `server/valkey/`; sockets/change feed: `server/socket/`, `server/changeFeed/`.
 Umpires: `app/umpires/`, `server/umpires/`; scoreboards: `app/scoreboard/`, `common/scoreboard.ts`, `server/scoreboard/`.
 Statistics: `server/stats/`, `server/statsBuilder/`; read-only queries: `server/graphql/`.
 Video: `app/player/`, `app/stream/`, `server/media/`, `server/live/`, `server/ingest/`; recording orchestration: `server/director/`.

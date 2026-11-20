@@ -970,6 +970,7 @@ export interface ChatMessageEnvelope {
   senderIdentityId: string
   targetIds?: string[]
   attachmentIds?: string[]
+  previewAttachmentId?: string
   nonce: string
   ciphertext: string
   signature: string
@@ -7720,7 +7721,15 @@ export class TeamStationClient {
     return await this.request(
       'POST',
       `${chatPath(conversationId)}/messages`,
-      asChatMessage,
+      raw => {
+        try {
+          return asChatMessage(raw)
+        } catch {
+          // A successful POST can already be committed. An unreadable receipt
+          // is retried with the same signed message ID.
+          throw new HttpError('internal', 'Unreadable chat delivery receipt')
+        }
+      },
       envelope
     )
   }

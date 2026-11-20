@@ -51,7 +51,11 @@ export async function openWebSession(
         userDataDir: profile
       }
     })
-    connected = await connectToMaestroChromium(profile, blank)
+    connected = await connectToMaestroChromium(
+      profile,
+      blank,
+      emulation.observeNetwork
+    )
     const { browser, page } = connected
     await applyEmulation(page, emulation)
     return {

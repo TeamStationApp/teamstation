@@ -188,7 +188,11 @@ describe('chat attachments (U10)', function () {
   function post(
     who: string,
     kind: EnvelopeKind,
-    extra: { attachmentIds?: string[]; targetIds?: string[] } = {}
+    extra: {
+      attachmentIds?: string[]
+      previewAttachmentId?: string
+      targetIds?: string[]
+    } = {}
   ): { id: string; body: Record<string, unknown> } {
     const id = newMessageId()
     const keys = held[who].keys
@@ -688,5 +692,47 @@ describe('chat attachments (U10)', function () {
       await nowhere.destroy()
       expect(said[1]).matches(/^purging chat attachments: /)
     })
+  })
+
+  it('associates a preview with ten files and an edit, until the last reference is cleared', async function () {
+    const small = sealAttachment(utf8('fixture'))
+    const files: string[] = []
+    for (let i = 0; i < 10; i++) {
+      files.push(await upload('B', small.blob, small.digest))
+    }
+    const thumbnail = await upload('B', small.blob, small.digest)
+    const extra = { attachmentIds: files, previewAttachmentId: thumbnail }
+    const withImage = post('B', 'post', extra)
+    expect(ok(await send('B', withImage), 201).attachmentIds).to.have.members([
+      ...files,
+      thumbnail
+    ])
+    expect(ok(await send('B', withImage)).id).equals(withImage.id)
+    const edit = post('B', 'edit', { previewAttachmentId: thumbnail })
+    expect(ok(await send('B', edit), 201).attachmentIds).deep.equals([
+      thumbnail
+    ])
+    const rejected = [
+      post('B', 'reaction', { previewAttachmentId: thumbnail }),
+      post('B', 'edit', { attachmentIds: [thumbnail] }),
+      post('B', 'post', { ...extra, previewAttachmentId: files[0] }),
+      post('B', 'post', { attachmentIds: [...files, thumbnail] })
+    ]
+    for (const message of rejected) {
+      expect((await send('B', message)).status).equals(400)
+    }
+    refused(
+      await send('C', post('C', 'post', { previewAttachmentId: thumbnail })),
+      400,
+      'attachment'
+    )
+    ok(await send('B', post('B', 'delete', { targetIds: [withImage.id] })), 201)
+    expect(await inSpace(attachmentKey(members, files[0]))).equals(false)
+    expect(await inSpace(attachmentKey(members, thumbnail))).equals(true)
+    ok(
+      await send('Hc', post('Hc', 'moderatorDelete', { targetIds: [edit.id] })),
+      201
+    )
+    expect(await inSpace(attachmentKey(members, thumbnail))).equals(false)
   })
 })

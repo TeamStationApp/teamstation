@@ -2433,6 +2433,13 @@ describe('api client', function () {
     })
     expect(JSON.parse(posted.calls[0].body ?? '')).deep.equals(envelope)
 
+    for (const invalidReceipt of ['', { seq: 3 }]) {
+      const failure = await client(invalidReceipt)
+        .client.postChatMessage('cnv_1', envelope)
+        .catch((error: unknown) => error)
+      expect(failure).instanceOf(HttpError)
+      expect((failure as HttpError).code).equals('internal')
+    }
     const paged = client([message])
     expect(await paged.client.chatMessages('cnv_1')).deep.equals([message])
     await paged.client.chatMessages('cnv_1', { after: 2, limit: 50 })

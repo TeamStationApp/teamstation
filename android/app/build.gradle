@@ -131,6 +131,11 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        def previewCoverage = providers.gradleProperty("chatPreviewNativeCoverage").orNull == "true"
+        buildConfigField "boolean", "CHAT_PREVIEW_NATIVE_COVERAGE", previewCoverage.toString()
+        if (previewCoverage) {
+            externalNativeBuild.cmake.arguments "-DCHAT_PREVIEW_NATIVE_COVERAGE=ON"
+        }
         buildConfigField "String", "TS_SENTRY_DSN", groovy.json.JsonOutput.toJson(System.getenv("TS_SENTRY_DSN") ?: "")
         manifestPlaceholders += [appLinkHost: appLinkHost,
             googleMapsApiKey: System.getenv("GOOGLE_MAPS_ANDROID_API_KEY") ?: ""]

@@ -11,20 +11,34 @@ import type {
   ChatPreferences
 } from '../../../common/api'
 import type { AttachmentRef, ChatContent } from '../../../common/chatContent'
+import { originalReportContent } from '../../../common/chatContent'
 import { fromUtf8 } from '../../../common/chatCrypto/bytes'
 import { safetyWords as safetyNumber } from '../../../common/chatCrypto/safetyNumber'
 import { messageKey, openWithMessageKey } from '../../../common/chatCrypto/seal'
+import {
+  blobLength,
+  openAttachment as decryptAttachment
+} from '../../../common/chatCrypto/stream'
+import {
+  type ChatLinkPreview,
+  isPreviewThumbnail,
+  MAX_THUMBNAIL_BYTES
+} from '../../../common/chatLinkPreview'
 import type { ChatSocketEvent, GameSocket } from '../../../common/gameSocket'
 import { lstrings, sprintf } from '../../locales/strings'
 import { messagePreview } from '../chatModel'
 import { b64, type ChatKeyStore, epochKeyOf, unb64 } from '../keyRecord'
+import { readPreviewBlob } from '../previewBlob'
+import { rasterDimensions } from '../previewImage'
 import { foldMessages, type MessageView } from './apply'
 import {
   type ChatEngineClient,
   ChatEngineError,
   type EngineContext,
   isGone,
-  KeyHolder
+  KeyHolder,
+  uncertainDelivery,
+  UnconfirmedChatPost
 } from './context'
 import { fieldsOf, IdentityCache } from './decrypt'
 import { approveGrant, fillGrants } from './grants'
@@ -52,6 +66,7 @@ import {
   type FetchBytes,
   fetchBytes,
   type OutgoingFile,
+  type PostAttempt,
   postContent,
   uploadAttachment
 } from './send'
@@ -1073,22 +1088,33 @@ export class ChatEngine {
     options?: Parameters<typeof postContent>[4]
   ): Promise<MessageView | undefined> {
     const ctx = this.ctx
-    const stored = await this.serial(conversationId, async () => {
-      const message = await postContent(
-        ctx,
-        conversationId,
-        kind,
-        content,
-        options
-      )
-      await syncMessages(ctx, conversationId)
-      return message
-    })
-    this.memory.emit({ type: 'conversation', conversationId })
-    this.memory.emit({ type: 'conversations' })
-    return this.view(conversationId)?.messages.find(
-      message => message.id === stored.id
-    )
+    const attempt: PostAttempt = {}
+    const deliver = async (): Promise<MessageView | undefined> => {
+      try {
+        const stored = await this.serial(conversationId, async () => {
+          const message = await postContent(
+            ctx,
+            conversationId,
+            kind,
+            content,
+            options,
+            attempt
+          )
+          await syncMessages(ctx, conversationId)
+          return message
+        })
+        this.memory.emit({ type: 'conversation', conversationId })
+        this.memory.emit({ type: 'conversations' })
+        return this.view(conversationId)?.messages.find(
+          message => message.id === stored.id
+        )
+      } catch (error) {
+        if (attempt.candidate != null && uncertainDelivery(error))
+          throw new UnconfirmedChatPost(error, deliver)
+        throw error
+      }
+    }
+    return await deliver()
   }
 
   /** A post in the chat as last read, or `target`. */
@@ -1113,6 +1139,7 @@ export class ChatEngine {
       quoteId?: string
       mentions?: string[]
       attachments?: AttachmentRef[]
+      preview?: ChatLinkPreview
     } = {}
   ): Promise<MessageView | undefined> {
     const quoted =
@@ -1138,9 +1165,12 @@ export class ChatEngine {
             }),
         attachments
       },
-      attachments.length === 0
-        ? undefined
-        : { attachmentIds: attachments.map(attachment => attachment.id) }
+      {
+        ...(attachments.length === 0
+          ? {}
+          : { attachmentIds: attachments.map(attachment => attachment.id) }),
+        preview: options.preview
+      }
     )
   }
 
@@ -1149,7 +1179,11 @@ export class ChatEngine {
     conversationId: string,
     files: OutgoingFile[],
     body = '',
-    options: { quoteId?: string; mentions?: string[] } = {}
+    options: {
+      quoteId?: string
+      mentions?: string[]
+      preview?: ChatLinkPreview
+    } = {}
   ): Promise<MessageView | undefined> {
     const ctx = this.ctx
     const attachments: AttachmentRef[] = []
@@ -1183,7 +1217,8 @@ export class ChatEngine {
     conversationId: string,
     targetId: string,
     body: string,
-    mentions: string[] = []
+    mentions: string[] = [],
+    preview?: ChatLinkPreview
   ): Promise<void> {
     const target = this.target(conversationId, targetId)
     if (!target.mine || target.status !== 'ok') {
@@ -1192,12 +1227,17 @@ export class ChatEngine {
         'Only your own messages can be edited'
       )
     }
-    await this.post(conversationId, 'edit', {
-      type: 'edit',
-      targetId,
-      body,
-      mentions
-    })
+    await this.post(
+      conversationId,
+      'edit',
+      {
+        type: 'edit',
+        targetId,
+        body,
+        mentions
+      },
+      { preview }
+    )
   }
 
   /** Deletes one of the person's own posts for everyone, with its edits. */
@@ -1232,10 +1272,9 @@ export class ChatEngine {
   }
 
   /**
-   * Reports someone else's post to the site administrators. It discloses
-   * that one message: its content exactly as it was sealed, and its own
-   * message key, never the epoch's. Answers whether the server could prove
-   * the sender wrote it.
+   * Reports the original post and its per-message key. The preview is sealed
+   * with a separate key available only to conversation members. The server
+   * verifies the reported content against the sender's sealed post.
    */
   async report(
     conversationId: string,
@@ -1279,7 +1318,7 @@ export class ChatEngine {
     return await this.serial('blocks', async () => {
       const result = await ctx.client.reportChatMessage({
         messageId,
-        plaintext,
+        plaintext: originalReportContent(plaintext),
         messageKey: b64(key),
         blockSender
       })
@@ -1403,6 +1442,46 @@ export class ChatEngine {
         this.personalPins.set(conversationId, pins)
     })
     this.memory.emit({ type: 'conversation', conversationId })
+  }
+
+  async uploadPreviewThumbnail(
+    conversationId: string,
+    file: OutgoingFile
+  ): Promise<AttachmentRef> {
+    return await uploadAttachment(this.ctx, conversationId, file)
+  }
+
+  readonly openPreviewThumbnail = async (
+    ref: AttachmentRef,
+    signal?: AbortSignal
+  ): Promise<Uint8Array> => {
+    const revision = this.memory.blockRevision
+    if (!isPreviewThumbnail(ref))
+      throw new ChatEngineError('attachment', 'Invalid preview image')
+    const info = await this.ctx.client.chatAttachment(ref.id)
+    if (
+      !info.completed ||
+      info.url == null ||
+      info.digest !== ref.digest ||
+      info.size !== blobLength(ref.size) ||
+      info.size > blobLength(MAX_THUMBNAIL_BYTES)
+    )
+      throw new ChatEngineError('attachment', 'Invalid preview attachment')
+    const blob = await readPreviewBlob(info.url, info.size, signal)
+    if (signal?.aborted === true)
+      throw new ChatEngineError('attachment', 'Preview cancelled')
+    const bytes = decryptAttachment(unb64(ref.key), blob, unb64(ref.digest))
+    const actual = rasterDimensions(bytes)
+    if (
+      !this.live ||
+      revision !== this.memory.blockRevision ||
+      bytes.length !== ref.size ||
+      actual?.mime !== ref.contentType ||
+      actual.width !== ref.width ||
+      actual.height !== ref.height
+    )
+      throw new ChatEngineError('attachment', 'Invalid preview image')
+    return bytes
   }
 
   /** Fetches, checks and opens an attachment. */

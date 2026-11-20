@@ -34,6 +34,8 @@ export type ChatScreenEngine = Pick<
       | 'setPreferences'
       | 'pinMessage'
       | 'loadPreview'
+      | 'uploadPreviewThumbnail'
+      | 'openPreviewThumbnail'
       | 'setBlocked'
       | 'isBlocked'
     >

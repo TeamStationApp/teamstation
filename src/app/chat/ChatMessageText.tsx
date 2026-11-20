@@ -12,6 +12,51 @@ interface Props {
   onOpen?: (address: string) => void
 }
 
+/** The text link and its preview share the same tap, hold and keyboard behavior. */
+export function chatLinkInteraction(
+  address: string,
+  onOpen: (address: string) => void,
+  gesture?: MessagePressGesture
+): MessagePressGesture['pressProps'] & {
+  href?: string
+  hrefAttrs?: { rel: string; target: string }
+  accessibilityRole: 'link'
+  tabIndex: 0
+} {
+  return {
+    ...gesture?.pressProps,
+    ...(Platform.OS === 'web' && {
+      href: chatLinkAddress(address)?.href,
+      hrefAttrs: { rel: 'noopener noreferrer', target: '_blank' }
+    }),
+    accessibilityRole: 'link',
+    tabIndex: 0,
+    onPress: event => {
+      if (gesture?.canOpen(event) === false) {
+        event.preventDefault()
+        return
+      }
+      if (Platform.OS === 'web') {
+        const click = event.nativeEvent as {
+          metaKey?: boolean
+          ctrlKey?: boolean
+          shiftKey?: boolean
+          altKey?: boolean
+        }
+        if (
+          click.metaKey === true ||
+          click.ctrlKey === true ||
+          click.shiftKey === true ||
+          click.altKey === true
+        )
+          return
+      }
+      event.preventDefault()
+      onOpen(address)
+    }
+  }
+}
+
 export function ChatMessageText(props: Props): React.ReactElement {
   const { body, onOpen, gesture } = props
   const links = useMemo(() => chatLinkSpans(body), [body])
@@ -25,38 +70,7 @@ export function ChatMessageText(props: Props): React.ReactElement {
         style={{ textDecorationLine: 'underline' }}
         {...(onOpen == null
           ? {}
-          : {
-              ...gesture?.pressProps,
-              ...(Platform.OS === 'web' && {
-                href: chatLinkAddress(link.text)?.href,
-                hrefAttrs: { rel: 'noopener noreferrer', target: '_blank' }
-              }),
-              accessibilityRole: 'link' as const,
-              tabIndex: 0 as const,
-              onPress: event => {
-                if (gesture?.canOpen(event) === false) {
-                  event.preventDefault()
-                  return
-                }
-                if (Platform.OS === 'web') {
-                  const click = event.nativeEvent as {
-                    metaKey?: boolean
-                    ctrlKey?: boolean
-                    shiftKey?: boolean
-                    altKey?: boolean
-                  }
-                  if (
-                    click.metaKey === true ||
-                    click.ctrlKey === true ||
-                    click.shiftKey === true ||
-                    click.altKey === true
-                  )
-                    return
-                }
-                event.preventDefault()
-                onOpen(link.text)
-              }
-            })}
+          : chatLinkInteraction(link.text, onOpen, gesture))}
       >
         {link.text}
       </Text>
