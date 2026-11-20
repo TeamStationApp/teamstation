@@ -36,16 +36,34 @@ const links = new LinkifyIt({
 
 const filename =
   /^[^/?#:@]+\.(?:zip|mov|sh|md|pl|rs|py|ai|ps|so|ts|cc|cab|java|properties|pub|mobi)$/i
-const unsafeCharacters = /[\\\p{Cc}\p{Cs}\p{Default_Ignorable_Code_Point}]/u
+const unsafeCharacters =
+  /[\\\p{Cc}\p{Cs}\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u
+// Host normalization can discard these characters. Emoji variation selectors
+// in a path or query remain part of the visible destination.
+const unsafeAuthority = /[%@\p{Default_Ignorable_Code_Point}]/u
 // A data URL's payload can contain commas, other URLs and closing punctuation.
 // Its end without a whitespace boundary is ambiguous, so keep that tail plain.
 const schemeCandidate =
-  /(^|[^\p{L}\p{N}.+-])(data:\S*|[a-z][a-z\d+.-]*:[^\s,;)\]}>"'”’]*)/giu
+  /(^|[^\p{L}\p{N}.+-])(data:\S*|[a-z][a-z\d+.-]*:(?:\/\/\[[^\]\s]*\])?[^\s,;，；、)\]}>"'”’]*)/giu
 
-/** Do not turn part of an escaped hostname into a different, actionable host. */
-function encodedAuthority(address: string): boolean {
-  const authority = address.replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0]
-  return authority.includes('%')
+function authorityOf(address: string): string {
+  return address.replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0]
+}
+
+/** Refuse an explicit address when link recognition stopped inside its authority. */
+function completeAuthority(address: string): boolean {
+  const authority = authorityOf(address)
+  if (authority === '' || unsafeAuthority.test(authority)) return false
+  const hit = links.matchAtStart(address)
+  if (hit == null) return false
+  const recognized = authorityOf(hit.raw)
+  if (authority === recognized) return true
+  // Sentence punctuation can follow a standalone host without belonging to it.
+  return (
+    address.endsWith(authority) &&
+    authority.startsWith(recognized) &&
+    /^[.!:…]+$/u.test(authority.slice(recognized.length))
+  )
 }
 
 export interface ChatLinkSpan {
@@ -60,18 +78,15 @@ export function chatLinkAddress(text: string): URL | undefined {
     text === '' ||
     text.length > maxTokenLength ||
     unsafeCharacters.test(text) ||
-    /\s/.test(text) ||
-    encodedAuthority(text)
+    /\s/.test(text)
   )
     return
   const explicit = /^https?:\/\//i.test(text)
   if (!explicit && !/^[^.:/?#]+\.[^:/?#]+(?::\d+)?(?:[/?#]|$)/.test(text))
     return
   const address = explicit ? text : 'https://' + text
-  const authority = address
-    .slice(address.indexOf('://') + 3)
-    .split(/[/?#]/, 1)[0]
-  if (authority === '' || authority.includes('@')) return
+  const authority = authorityOf(address)
+  if (authority === '' || unsafeAuthority.test(authority)) return
   try {
     const url = new CacheUrl(address)
     if (
@@ -97,7 +112,7 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
       schemeCandidate,
       (match: string, boundary: string, candidate: string, offset: number) => {
         if (
-          (/^https?:\/\//i.test(candidate) && !encodedAuthority(candidate)) ||
+          (/^https?:\/\//i.test(candidate) && completeAuthority(candidate)) ||
           /^[^.:]+\.[^:]+:\d/.test(candidate)
         )
           return match

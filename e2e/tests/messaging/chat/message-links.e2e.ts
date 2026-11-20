@@ -302,6 +302,52 @@ async function readComposer(
   return element.value ?? ''
 }
 
+/** The fixture starts its first line with a plain filename, beside its live links. */
+async function tapPlainFilename(
+  m: MaestroDevice,
+  web: WebSession | undefined,
+  messageId: string
+): Promise<void> {
+  const id = 'chat-message-body-' + messageId
+  await m.assertVisible({ id, timeout: 15000 })
+  const tabs =
+    web == null ? undefined : (await web.page.browser().pages()).length
+  let point
+  if (web != null) {
+    point = await web.page.$eval('[data-testid="' + id + '"]', body => {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
+      const text = walker.nextNode()
+      if (text?.textContent?.startsWith('notes.pdf') !== true)
+        throw new Error('Expected a leading filename')
+      const range = document.createRange()
+      range.setStart(text, 0)
+      range.setEnd(text, 'notes.pdf'.length)
+      const rect = range.getBoundingClientRect()
+      const x = Math.round(rect.x + rect.width / 2)
+      const y = Math.round(rect.y + rect.height / 2)
+      const at = document.elementFromPoint(x, y)
+      if (at == null || !body.contains(at) || at.closest('a') != null)
+        throw new Error('Expected the plain filename at the tap position')
+      return { x, y }
+    })
+  } else {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    const body = nodes.find(
+      node => node.id === id || node.id?.endsWith(':id/' + id) === true
+    )
+    assert(body?.bounds != null, 'Expected the visible text bounds')
+    // Native text starts at the upper leading corner of this layout-only body.
+    point = {
+      x: Math.round(body.bounds.x + 15),
+      y: Math.round(body.bounds.y + 9)
+    }
+  }
+  await m.tapOnPoint({ point: point.x + ',' + point.y })
+  await m.assertVisible(composer)
+  await m.assertVisible({ id })
+  if (web != null) assert.equal((await web.page.browser().pages()).length, tabs)
+}
+
 async function copyMessage(
   m: MaestroDevice,
   web: WebSession | undefined,
@@ -327,10 +373,36 @@ async function copyMessage(
   }
   await m.tapOn({ text: '^Copy$' })
   if (web != null) {
-    assert.equal(
-      await web.page.evaluate(async () => await navigator.clipboard.readText()),
+    const copied = await web.page.evaluate(
+      async () => await navigator.clipboard.readText()
+    )
+    assert.equal(copied, body)
+    await m.assertNotVisible({ id: 'chat-message-spotlight', timeout: 3500 })
+    const selector = '[data-testid="chat-composer"]'
+    await m.tapOn({ css: selector })
+    // The web driver owns a separate clipboard. Exercise the page's paste handler,
+    // then let the driver's paste command perform the default insertion when allowed.
+    await m.setClipboard({ text: copied })
+    const paste = await m.evalBrowserScript({
+      script: `
+      const field = document.activeElement
+      if (field !== document.querySelector('[data-testid="chat-composer"]')) throw Error('Composer lost paste focus: ' + field?.tagName + ' ' + field?.getAttribute('data-testid'))
+      const clipboardData = new DataTransfer()
+      clipboardData.setData('text/plain', await navigator.clipboard.readText())
+      return field.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }))
+    `
+    })
+    if (paste.data === 'true') await m.pasteText()
+    await web.page.waitForFunction(
+      (field, expected) => {
+        const input = document.querySelector<HTMLTextAreaElement>(field)
+        return input?.value === expected
+      },
+      { timeout: 4000 },
+      selector,
       body
     )
+    await m.eraseText({ characters: body.length })
   } else {
     await waitForMenuDismissal(m)
     await m.tapOn(composer)
@@ -536,13 +608,13 @@ async function open(ctx: E2eContext): Promise<void> {
         const second = dest.origin + '/sheet/' + id + '?day=2#caption'
         const internal = f.origin + '/schedule#' + id
         const body =
-          'Fixture ' +
+          'notes.pdf and 2.50. Fixture ' +
           id +
           ': ' +
           first +
           (web == null ? '.\n' : ' and ') +
           internal +
-          '. See www.example.org, example.technology, notes.pdf and 2.50.'
+          '. See www.example.org and example.technology.'
         const caption = 'Score sheet ' + id + ': ' + second
         await m.tapOn(composer)
         await m.inputText({ text: body })
@@ -566,6 +638,7 @@ async function open(ctx: E2eContext): Promise<void> {
         )
         const row = '[data-testid="chat-message-' + sentId + '"]'
         const renderedBody = '[data-testid="chat-message-body-' + sentId + '"]'
+        await tapPlainFilename(m, web, sentId)
         await sender.engine.fillGrants()
         const file = await sender.engine.attach(
           f.conversationId,

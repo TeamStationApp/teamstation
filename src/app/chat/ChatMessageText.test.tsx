@@ -47,6 +47,16 @@ describe('chat message links in a bubble', () => {
       expect(links[3].href).equals('https://example.org:8444/')
       expect(links[0].target).equals('_blank')
       expect(links[0].rel).contains('noopener')
+      for (const modifier of ['metaKey', 'ctrlKey', 'shiftKey']) {
+        const click = new window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          [modifier]: true
+        })
+        links[1].dispatchEvent(click)
+        expect(click.defaultPrevented, modifier).equals(false)
+      }
+      expect(opened).deep.equals([])
       links[1].click()
       expect(opened).deep.equals(['http://example.org'])
       await show(true, true)

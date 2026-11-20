@@ -130,6 +130,21 @@ describe('chat message links', () => {
 
   it('keeps escaped explicit hosts and complete data payloads plain', () => {
     const encoded = 'https://exa%6Dple.org/doc'
+    for (const malformed of [
+      'https://example..org/path',
+      'https://example.org:bad/path',
+      'https://@example.org/doc'
+    ]) {
+      expect(texts(malformed + ',https://example.com')).deep.equals([
+        'https://example.com'
+      ])
+    }
+    expect(texts('See https://example.org.')).deep.equals([
+      'https://example.org'
+    ])
+    expect(texts('http://[::1]:8080/page')).deep.equals([
+      'http://[::1]:8080/page'
+    ])
     expect(chatLinkAddress(encoded)).equals(undefined)
     expect(texts(encoded + ',https://example.com')).deep.equals([
       'https://example.com'
@@ -147,6 +162,9 @@ describe('chat message links', () => {
   it('keeps complete characters in long links and leaves oversized tokens plain', () => {
     const link = 'https://example.org/' + '😀'.repeat(5050)
     expect(texts(link)).deep.equals([link])
+    expect(texts('https://example.org/⚾️')).deep.equals([
+      'https://example.org/⚾️'
+    ])
     const oversized = link + '😀'.repeat(3100)
     expect(texts(oversized)).deep.equals([])
     expect(chatLinkAddress(oversized)).equals(undefined)

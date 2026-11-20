@@ -34,8 +34,26 @@ export function ChatMessageText(props: Props): React.ReactElement {
               accessibilityRole: 'link' as const,
               tabIndex: 0 as const,
               onPress: event => {
+                if (gesture?.canOpen(event) === false) {
+                  event.preventDefault()
+                  return
+                }
+                if (Platform.OS === 'web') {
+                  const click = event.nativeEvent as {
+                    metaKey?: boolean
+                    ctrlKey?: boolean
+                    shiftKey?: boolean
+                    altKey?: boolean
+                  }
+                  if (
+                    click.metaKey === true ||
+                    click.ctrlKey === true ||
+                    click.shiftKey === true ||
+                    click.altKey === true
+                  )
+                    return
+                }
                 event.preventDefault()
-                if (gesture?.canOpen(event) === false) return
                 onOpen(link.text)
               }
             })}
