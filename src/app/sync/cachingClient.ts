@@ -1,4 +1,4 @@
-import { asArray, asString, type Cleaner } from 'cleaners'
+import { asArray, asObject, asString, type Cleaner } from 'cleaners'
 
 import {
   asGameDetail,
@@ -32,6 +32,7 @@ import {
   olderSaveFoldsAlike,
   rebuildGameEvents
 } from '../scoring/scoringSource'
+import { matchupLines, matchupTitle } from '../screens/format'
 import { deleteDocumentCaches } from './cache'
 import {
   type CacheTransaction,
@@ -51,12 +52,14 @@ import {
   foundWords,
   gameKey,
   HOME_LISTS,
+  HOME_TEAMS,
   PLACEHOLDER_TEAMS,
   PLACEHOLDERS_KEPT
 } from './documentKeys'
 import { type PictureDirectories, pictureDirectories } from './imageCache'
 import {
   confirmedPlays,
+  type DiscardOutcome,
   type GivenUp,
   Outbox,
   type OutboxListener,
@@ -139,6 +142,8 @@ export const PREFETCH_DETAIL_HOURS = 48
 const HOUR_MS = 3_600_000
 
 const asRaw: Cleaner<unknown> = raw => raw
+/** A stored team list's entry, for its name alone. */
+const asNamedTeam = asObject({ id: asString, name: asString })
 
 /** A page as the server sends one, before its items are cleaned. */
 type RawPage = Omit<Page<unknown>, 'counts'> & { counts: unknown }
@@ -640,9 +645,79 @@ export class CachingClient extends TeamStationClient {
     return await this.outbox.discard(`team:${teamId}`)
   }
 
+  /**
+   * Gives up a held game's or team's edits as `discardGame` and
+   * `discardTeam` do, answering what that came to: nothing dropped because
+   * part of it was on its way, or dropped with the server's copy back, or
+   * dropped without it.
+   */
+  async discardHeld(edit: {
+    kind: 'game' | 'team'
+    id: string
+  }): Promise<DiscardOutcome> {
+    return await this.outbox.discardOutcome(`${edit.kind}:${edit.id}`)
+  }
+
   /** Sends a team's refused players again. */
   async retryTeam(teamId: string): Promise<void> {
     await this.outbox.retry(`team:${teamId}`)
+  }
+
+  /**
+   * The names of held games and teams, by `game:<id>` and `team:<id>`, from
+   * the phone's own documents and never the network: a game by its stored
+   * matchup; a team by the person's stored team list, else as a side of a
+   * held game, else as a side of any game a stored schedule holds (an
+   * opponent whose new player was never put in a lineup). One the phone
+   * cannot name is left out.
+   */
+  async heldNames(
+    edits: ReadonlyArray<{ kind: 'game' | 'team'; id: string }>
+  ): Promise<Record<string, string>> {
+    const names: Record<string, string> = {}
+    const sides = new Map<string, string>()
+    const games = edits.filter(edit => edit.kind === 'game')
+    const teamIds = edits
+      .filter(edit => edit.kind === 'team')
+      .map(edit => edit.id)
+    const [details, teams] = await Promise.all([
+      Promise.all(
+        games.map(
+          async edit => await this.cached(gameKey(edit.id), asGameDetail)
+        )
+      ),
+      teamIds.length === 0
+        ? []
+        : this.cached(HOME_TEAMS, asArray(asNamedTeam)).then(
+            listed => listed ?? []
+          )
+    ])
+    games.forEach((edit, index) => {
+      const game = details[index]
+      if (game == null) return
+      names[`game:${edit.id}`] = matchupTitle(matchupLines(game))
+      sides.set(game.homeTeamId, game.homeTeamName)
+      sides.set(game.awayTeamId, game.awayTeamName)
+    })
+    const unnamed: string[] = []
+    for (const id of teamIds) {
+      const name = teams.find(team => team.id === id)?.name ?? sides.get(id)
+      if (name != null) names[`team:${id}`] = name
+      else unnamed.push(id)
+    }
+    if (unnamed.length > 0) {
+      const opened = this.owned
+      const scheduled =
+        opened == null
+          ? undefined
+          : await this.inStore(
+              opened.store,
+              async tx => await tx.scheduleTeamNames(unnamed)
+            )
+      for (const [id, name] of Object.entries(scheduled ?? {}))
+        names[`team:${id}`] = name
+    }
+    return names
   }
 
   /** Whether the app is in front; the queue sends nothing behind it. */

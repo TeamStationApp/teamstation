@@ -2239,6 +2239,63 @@ describe('the phone outbox', function () {
     expect(p.posts().at(-1)!.path).not.equals('/games/g1/lineups')
   })
 
+  it('says what a discard came to: nothing dropped while a send is on its way, the copy back, or the copy not back', async function () {
+    let online = false
+    let reads = true
+    let hold: Promise<never> | undefined
+    const base = server({ '/games/g1/events': eventsDoc('g1', 'D0') }, () =>
+      online
+        ? refusal(409, 'conflict', 'Somebody else changed the lineups', {
+            stale: true
+          })
+        : 'offline'
+    )
+    const p = phone(async sent =>
+      sent.method === 'GET' && !reads
+        ? 'offline'
+        : sent.method !== 'GET' && hold != null
+          ? await hold
+          : await base(sent)
+    )
+    const park = async (): Promise<void> => {
+      online = false
+      await p.client.gameEvents('g1')
+      await p.client.saveGameEvents('g1', { plays: [play(1, 42)], remove: [] })
+      await p.client.drainOutbox()
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows().map(row => row.state)).deep.equals(['parked'])
+    }
+    await park()
+    // Sent again and not answered: the chain has a row on its way.
+    hold = new Promise<never>(() => undefined)
+    p.client.retryGame('g1').catch(() => undefined)
+    for (
+      let i = 0;
+      i < 20 && !p.rows().some(row => row.state === 'inflight');
+      i++
+    )
+      await new Promise(resolve => setTimeout(resolve, 5))
+    expect(await p.client.discardHeld({ kind: 'game', id: 'g1' })).equals(
+      'inflight'
+    )
+    expect(p.rows()).has.length(1)
+    hold = undefined
+    p.sql("UPDATE outbox SET state = 'parked', lease_until = NULL")
+    reads = false
+    expect(await p.client.discardHeld({ kind: 'game', id: 'g1' })).equals(
+      'pending'
+    )
+    expect(p.rows()).deep.equals([])
+    reads = true
+    await park()
+    expect(await p.client.discardHeld({ kind: 'game', id: 'g1' })).equals(
+      'arrived'
+    )
+    expect(p.rows()).deep.equals([])
+  })
+
   it('drops what it gave up even when the server’s copy cannot be read, and says it did not arrive', async function () {
     let online = false
     let reads = true
