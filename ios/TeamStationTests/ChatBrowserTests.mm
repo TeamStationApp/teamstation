@@ -6,6 +6,8 @@
 - (void)open:(NSString *)address
      resolve:(void (^)(id))resolve
       reject:(void (^)(NSString *, NSString *, NSError *))reject;
+- (void)presentURL:(NSURL *)url from:(UIViewController *)presenter
+           resolve:(void (^)(id))resolve reject:(void (^)(NSString *, NSString *, NSError *))reject;
 @end
 
 @interface RefusingChatBrowserPresenter : UIViewController
@@ -18,6 +20,13 @@
     [super presentViewController:controller animated:animated completion:completion];
   }
 }
+@end
+
+@interface TransitioningChatPresenter : UIViewController
+@property (nonatomic) BOOL reportingTransition;
+@end
+@implementation TransitioningChatPresenter
+- (BOOL)isBeingPresented { return self.reportingTransition || [super isBeingPresented]; }
 @end
 
 @interface ChatBrowserTests : XCTestCase
@@ -87,15 +96,68 @@
   }
 }
 
+- (void)testRequiresAVisibleWindowAndSettledPresenter
+{
+  id module = [self module];
+  NSURL *url = [NSURL URLWithString:@"https://example.org/path"];
+  TransitioningChatPresenter *presenter = [TransitioningChatPresenter new];
+  __block NSUInteger refusals = 0;
+  void (^mustRefuse)(void) = ^{
+    [module presentURL:url from:presenter resolve:^(id value) {
+      XCTFail(@"An unavailable presenter opened Safari");
+    } reject:^(NSString *code, NSString *message, NSError *error) {
+      XCTAssertEqualObjects(code, @"browser_unavailable");
+      refusals++;
+    }];
+  };
+  mustRefuse();
+  XCTAssertEqual(refusals, 1u);
+
+  XCTestExpectation *done = [self expectationWithDescription:@"reopened after transition"];
+  UIViewController *root = self.activeWindow.rootViewController;
+  presenter.modalPresentationStyle = UIModalPresentationFullScreen;
+  [root presentViewController:presenter animated:NO completion:nil];
+  NSPredicate *settled = [NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings) {
+    return presenter.viewIfLoaded.window != nil && !presenter.isBeingPresented && presenter.transitionCoordinator == nil;
+  }];
+  XCTestExpectation *visible = [self expectationForPredicate:settled evaluatedWithObject:presenter handler:nil];
+  [self waitForExpectations:@[visible] timeout:5];
+  presenter.reportingTransition = YES;
+  mustRefuse();
+  XCTAssertEqual(refusals, 2u);
+  presenter.reportingTransition = NO;
+  [module presentURL:url from:presenter resolve:^(id value) {
+    [presenter dismissViewControllerAnimated:NO completion:^{ [done fulfill]; }];
+  } reject:^(NSString *code, NSString *message, NSError *error) {
+    XCTFail(@"A settled presenter refused Safari: %@", message);
+    [done fulfill];
+  }];
+  SFSafariViewController *browser = (SFSafariViewController *)presenter.presentedViewController;
+  XCTAssertTrue([browser isKindOfClass:SFSafariViewController.class]);
+  // UIKit calls the adaptive delegate after a user-initiated sheet dismissal.
+  id<UIAdaptivePresentationControllerDelegate> delegate = browser.presentationController.delegate;
+  UIPresentationController *sheet = browser.presentationController;
+  void (^close)(void) = ^{
+    [browser dismissViewControllerAnimated:NO completion:^{ [delegate presentationControllerDidDismiss:sheet]; }];
+  };
+  if (![browser.transitionCoordinator animateAlongsideTransition:nil completion:^(id context) { close(); }]) close();
+  [self waitForExpectations:@[done] timeout:10];
+}
+
 - (void)testPresentsSafariAndRefusesRepeatedTap
 {
-  XCTestExpectation *done = [self expectationWithDescription:@"Safari sheet"];
+  XCTestExpectation *done = [self expectationWithDescription:@"Safari dismissed"];
   id module = [self module];
   [module open:@"https://example.org/path?one=1#part" resolve:^(id value) {
+    [done fulfill];
+  } reject:^(NSString *code, NSString *message, NSError *error) {
+    XCTFail(@"Safari presentation failed: %@", code);
+    [done fulfill];
+  }];
+  dispatch_async(dispatch_get_main_queue(), ^{
     UIWindow *window = self.activeWindow;
-    UIViewController *presenter = window.rootViewController;
-    while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-    XCTAssertTrue([presenter isKindOfClass:SFSafariViewController.class]);
+    SFSafariViewController *browser = (SFSafariViewController *)window.rootViewController.presentedViewController;
+    XCTAssertTrue([browser isKindOfClass:SFSafariViewController.class]);
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
       UIApplication *app = UIApplication.sharedApplication;
       XCTAssertEqual([app.delegate application:app supportedInterfaceOrientationsForWindow:window],
@@ -103,15 +165,12 @@
     }
     [module open:@"http://example.org/other" resolve:^(id second) {
       XCTFail(@"A second browser opened over Safari");
-      [done fulfill];
     } reject:^(NSString *code, NSString *message, NSError *error) {
       XCTAssertEqualObjects(code, @"browser_unavailable");
-      [presenter dismissViewControllerAnimated:NO completion:^{ [done fulfill]; }];
+      void (^close)(void) = ^{ [browser.delegate safariViewControllerDidFinish:browser]; };
+      if (![browser.transitionCoordinator animateAlongsideTransition:nil completion:^(id context) { close(); }]) close();
     }];
-  } reject:^(NSString *code, NSString *message, NSError *error) {
-    XCTFail(@"Safari presentation failed: %@", code);
-    [done fulfill];
-  }];
+  });
   [self waitForExpectations:@[done] timeout:10];
 }
 @end

@@ -52,6 +52,7 @@ import {
   ChatBlockConfirmation,
   type ChatSafetyAction
 } from './ChatBlockConfirmation'
+import { chatBrowserVisible, watchChatBrowser } from './chatBrowserVisibility'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -146,7 +147,7 @@ export interface ConversationScreenProps {
  * and an app in the foreground on a phone.
  */
 function readableNow(): boolean {
-  return readDocumentActive() && inForeground()
+  return readDocumentActive() && inForeground() && !chatBrowserVisible()
 }
 
 /** How often a chat not open yet is tried again, and how many times. */
@@ -486,9 +487,11 @@ export function ConversationScreen(
     }
     const stopDocument = watchReadDocumentActive(update)
     const stopApp = watchForeground(update)
+    const stopBrowser = watchChatBrowser(update)
     return () => {
       stopDocument()
       stopApp()
+      stopBrowser()
     }
   }, [])
   // On screen in the foreground: this device shows no notification for it.
@@ -1959,6 +1962,7 @@ export function ConversationScreen(
       attentionSession.current == null ||
       props.active === false ||
       !documentActive ||
+      !readableNow() ||
       menu != null ||
       mentionChoosing != null ||
       pinsOpen ||

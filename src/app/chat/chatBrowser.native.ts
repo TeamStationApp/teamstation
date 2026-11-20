@@ -2,6 +2,7 @@ import { NativeModules, Platform } from 'react-native'
 
 import { appOrigin } from '../native/config'
 import { CacheUrl } from '../sync/cacheUrl'
+import { whileChatBrowserOpen } from './chatBrowserVisibility'
 import ChatBrowser from './NativeChatBrowser'
 
 export function chatLinkOrigins(apiBaseUrl: string): {
@@ -16,8 +17,11 @@ export function chatLinkOrigins(apiBaseUrl: string): {
 }
 
 export async function openChatBrowser(url: string): Promise<void> {
-  if (Platform.OS === 'ios' && ChatBrowser != null) {
-    await ChatBrowser.open(url)
+  const safari = ChatBrowser
+  if (Platform.OS === 'ios' && safari != null) {
+    await whileChatBrowserOpen(async () => {
+      await safari.open(url)
+    })
     return
   }
   if (

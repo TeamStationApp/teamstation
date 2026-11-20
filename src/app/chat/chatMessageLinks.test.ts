@@ -87,7 +87,8 @@ describe('chat message links', () => {
   it('keeps nested destinations in web queries and fragments inside the outer address', () => {
     for (const value of [
       'www.example.org/share?url=https://example.net/song',
-      'example.org:8443/#https://example.net/song'
+      'example.org:8443/#https://example.net/song',
+      'www.example.org/go?doc=(custom:https://example.net)'
     ]) {
       expect(texts(value)).deep.equals([value])
       expect(chatLinkAddress(value)?.href).equals('https://' + value)
@@ -95,7 +96,13 @@ describe('chat message links', () => {
   })
 
   it('isolates unsupported schemes at the candidate boundary', () => {
-    expect(texts('[map](custom:https://example.org)')).deep.equals([])
+    for (const value of [
+      '[map](custom:https://example.org)',
+      '**custom:https://example.org**',
+      '—custom:https://example.org',
+      '[map]:custom:https://example.org'
+    ])
+      expect(texts(value)).deep.equals([])
     expect(texts('ftp://example.org/a,https://example.com')).deep.equals([
       'https://example.com'
     ])

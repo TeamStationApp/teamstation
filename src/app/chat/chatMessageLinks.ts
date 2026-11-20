@@ -39,7 +39,7 @@ const unsafeCharacters =
 // Preserve offsets while hiding unsupported schemes, including their nested URLs.
 // A data URL's first comma separates its metadata and payload.
 const schemeCandidate =
-  /(^|[("'“‘[{<,;])((?:data:[^,\s)\]}>"']*,|[a-z][a-z\d+.-]*:)[^\s,;)\]}>"'”’]*)/gi
+  /(^|[^\p{L}\p{N}.+-])((?:data:[^,\s)\]}>"']*,|[a-z][a-z\d+.-]*:)[^\s,;)\]}>"'”’]*)/giu
 
 export interface ChatLinkSpan {
   start: number
@@ -77,14 +77,30 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
     const raw = token[0]
     if (!raw.includes('.') && !/https?:\/\//i.test(raw)) continue
     if (raw.length > 16000 || unsafeCharacters.test(raw)) continue
+    const original = links.match(raw) ?? []
+    let index = 0
     const searchable = raw.replace(
       schemeCandidate,
-      (match: string, boundary: string, candidate: string) =>
-        /^https?:/i.test(candidate) || /^[^.:]+\.[^:]+:\d/.test(candidate)
-          ? match
-          : boundary + ' '.repeat(candidate.length)
+      (match: string, boundary: string, candidate: string, offset: number) => {
+        if (/^https?:/i.test(candidate) || /^[^.:]+\.[^:]+:\d/.test(candidate))
+          return match
+        const start = offset + boundary.length
+        while (index < original.length && original[index].lastIndex <= start)
+          index++
+        const outer = original[index]
+        // A nested scheme can be ordinary data in a recognized web URL.
+        if (
+          outer != null &&
+          outer.index < start &&
+          (outer.schema === '' || /^https?:$/i.test(outer.schema))
+        )
+          return match
+        return boundary + ' '.repeat(candidate.length)
+      }
     )
-    for (const hit of links.match(searchable) ?? []) {
+    const candidates =
+      searchable === raw ? original : (links.match(searchable) ?? [])
+    for (const hit of candidates) {
       if (hit.schema !== '' && !/^https?:$/i.test(hit.schema)) continue
       const text = hit.raw
       if (
