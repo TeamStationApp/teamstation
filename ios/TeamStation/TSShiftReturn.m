@@ -15,17 +15,22 @@
  * sends. Return alone, and the on-screen keyboard's return key, reach the
  * text system as before, and send.
  *
- * Scope: the press handlers are replaced on React Native's multi-line field
+ * Chat also claims an unmodified hardware Up or Escape when its focused
+ * field advertises that shortcut. All other fields retain ordinary behavior.
+ * The press handlers are replaced on React Native's multi-line field
  * class (`RCTUITextView`), so every multi-line field in the app runs them,
- * but they act only for the field whose host view carries the composer's
- * `nativeID` (`FIELD_NATIVE_ID`, "tessComposerField"). Every other
+ * but they act only for the corresponding composer native IDs. Every other
  * multi-line field passes each press, Shift+Return included, straight on to
  * UITextView, as it did without this file.
  */
-@interface TSShiftReturn : NSObject
-@end
+extern BOOL TSChatSendKey(UITextView *field, NSString *key);
 
 typedef void (*TSPressesIMP)(id, SEL, NSSet<UIPress *> *, UIPressesEvent *);
+
+@interface TSShiftReturn : NSObject
++ (void)handleBegan:(NSSet<UIPress *> *)presses field:(UITextView *)field
+              event:(UIPressesEvent *)event forward:(TSPressesIMP)forward;
+@end
 
 /** UITextView's own handling of each phase of a press, before ours. */
 static TSPressesIMP TSInheritedBegan;
@@ -38,6 +43,7 @@ static NSString *const TSComposerNativeID = @"tessComposerField";
 
 /** The presses a field took, so their later phases are not passed on either. */
 static const void *TSTakenKey = &TSTakenKey;
+static const void *TSLookupAfterUpKey = &TSLookupAfterUpKey;
 
 static BOOL TSIsShiftReturn(UIPress *press)
 {
@@ -52,17 +58,17 @@ static BOOL TSIsShiftReturn(UIPress *press)
 }
 
 /**
- * Whether `field` is Tess's composer: React Native puts its `nativeID` on
- * the field's host view (`RCTTextInputComponentView`), whose subview it is.
+ * Returns the React Native host view's nativeID so key handling can identify
+ * a chat or Tess composer. The text field is a subview of that host.
  */
-static BOOL TSIsComposer(UITextView *field)
+static NSString *TSComposerID(UITextView *field)
 {
   UIView *host = field.superview;
   if (host == nil || ![host respondsToSelector:NSSelectorFromString(@"nativeId")]) {
-    return NO;
+    return nil;
   }
   id nativeId = [host valueForKey:@"nativeId"];
-  return [nativeId isKindOfClass:[NSString class]] && [nativeId isEqualToString:TSComposerNativeID];
+  return [nativeId isKindOfClass:[NSString class]] ? nativeId : nil;
 }
 
 static NSMutableSet<UIPress *> *TSTaken(UITextView *field)
@@ -95,25 +101,54 @@ static void TSInsertNewline(UITextView *field)
   }
 }
 
-static void TSPressesBegan(UITextView *self, SEL _cmd, NSSet<UIPress *> *presses, UIPressesEvent *event)
+@implementation TSShiftReturn
+
++ (void)handleBegan:(NSSet<UIPress *> *)presses field:(UITextView *)field
+              event:(UIPressesEvent *)event forward:(TSPressesIMP)forward
 {
-  if (!TSIsComposer(self)) {
-    // Any other multi-line field: every press goes on as it came.
-    TSInheritedBegan(self, _cmd, presses, event);
+  NSString *identifier = TSComposerID(field);
+  BOOL tess = [identifier isEqualToString:TSComposerNativeID];
+  BOOL up = [identifier isEqualToString:@"chatComposerEditLatest"];
+  BOOL escape = [identifier isEqualToString:@"chatComposerCancelEdit"];
+  if (!tess && !up && !escape) {
+    forward(field, @selector(pressesBegan:withEvent:), presses, event);
     return;
   }
   NSMutableSet<UIPress *> *rest = [NSMutableSet set];
   for (UIPress *press in presses) {
-    if (TSIsShiftReturn(press)) {
-      [TSTaken(self) addObject:press];
-      TSInsertNewline(self);
+    UIKey *key = press.key;
+    UIKeyModifierFlags modifiers = UIKeyModifierShift | UIKeyModifierControl |
+        UIKeyModifierAlternate | UIKeyModifierCommand;
+    if (key != nil && objc_getAssociatedObject(field, TSLookupAfterUpKey) != nil &&
+        ![TSTaken(field) containsObject:press]) {
+      objc_setAssociatedObject(field, TSLookupAfterUpKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      if (up && field.isFirstResponder && field.text.length == 0) {
+        BOOL plainEscape = key.keyCode == UIKeyboardHIDUsageKeyboardEscape && (key.modifierFlags & modifiers) == 0;
+        TSChatSendKey(field, plainEscape ? @"Escape" : @"Unidentified");
+      }
+    }
+    if (tess && TSIsShiftReturn(press)) {
+      [TSTaken(field) addObject:press];
+      TSInsertNewline(field);
+    } else if (!tess && key != nil && field.isFirstResponder && field.editable &&
+               field.markedTextRange == nil && (key.modifierFlags & modifiers) == 0 &&
+               ((up && field.text.length == 0 && key.keyCode == UIKeyboardHIDUsageKeyboardUpArrow) ||
+                (escape && key.keyCode == UIKeyboardHIDUsageKeyboardEscape)) &&
+               ([TSTaken(field) containsObject:press] || TSChatSendKey(field, up ? @"ArrowUp" : @"Escape"))) {
+      [TSTaken(field) addObject:press];
+      if (up) objc_setAssociatedObject(field, TSLookupAfterUpKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } else {
       [rest addObject:press];
     }
   }
   if (rest.count > 0) {
-    TSInheritedBegan(self, _cmd, rest, event);
+    forward(field, @selector(pressesBegan:withEvent:), rest, event);
   }
+}
+
+static void TSPressesBegan(UITextView *self, SEL _cmd, NSSet<UIPress *> *presses, UIPressesEvent *event)
+{
+  [TSShiftReturn handleBegan:presses field:self event:event forward:TSInheritedBegan];
 }
 
 /** A later phase: passed on but for the presses the field took. */
@@ -160,8 +195,6 @@ static TSPressesIMP TSReplace(Class field, SEL selector, IMP replacement)
   }
   return previous;
 }
-
-@implementation TSShiftReturn
 
 + (void)load
 {

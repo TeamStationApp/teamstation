@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { flattenPublicHierarchy } from '../chat2Maestro'
+import {
+  flattenPublicHierarchy,
+  iosPublicRead,
+  type PublicNode
+} from '../chat2Maestro'
 import type { Emulation } from '../../core/browserCdp'
 import { signInWithPassword } from '../../core/fixtures'
 import type { MaestroDevice } from '../../core/maestro'
@@ -19,6 +23,90 @@ import {
 } from './messageLinkFixture'
 
 const composer = { id: 'chat-composer' }
+
+/** Scroll until the target's center can receive a real press inside the native history. */
+export async function revealChatTarget(
+  m: MaestroDevice,
+  matches: (node: PublicNode) => boolean
+): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    const bounds = (id: string): PublicNode['bounds'] =>
+      nodes.find(node => node.id === id && node.bounds != null)?.bounds
+    const target = nodes.find(
+      node => matches(node) && node.bounds != null
+    )?.bounds
+    const header = bounds('chat-conversation-identity')
+    const composer = bounds('chat-composer-band')
+    assert(target != null && header != null && composer != null)
+    const pins = bounds('chat-pinned-band')
+    const top = Math.max(
+      header.y + header.height,
+      pins == null ? 0 : pins.y + pins.height
+    )
+    const height = composer.y - top
+    assert(height > 0, 'The message history must have visible space')
+    const center = target.y + target.height / 2
+    if (center > top + 8 && center < composer.y - 8) return
+    const x = Math.round(header.x + header.width / 2)
+    const upper = Math.round(top + height * 0.25)
+    const lower = Math.round(top + height * 0.75)
+    const above = center <= top + 8
+    await m.dragAndDrop({
+      from: { point: `${x},${above ? upper : lower}` },
+      to: { point: `${x},${above ? lower : upper}` },
+      holdDuration: 10,
+      duration: 400
+    })
+  }
+  assert.fail('The selected target must be reachable in the message history')
+}
+
+export async function readChatComposer(
+  m: MaestroDevice,
+  platform: string,
+  web?: WebSession
+): Promise<string> {
+  if (web != null) {
+    return await web.page.$eval(
+      '[data-testid="chat-composer"]',
+      node => (node as HTMLTextAreaElement).value
+    )
+  }
+  if (platform !== 'ios') return (await m.copyTextFrom(composer)).data
+  const { element } = iosPublicRead(
+    await m.hierarchyRaw(),
+    composer,
+    'TextView'
+  )
+  assert(element != null, 'The editable composer must be present')
+  return element.value ?? ''
+}
+
+/** Clear the exact draft and verify the native field even when Android clears only a word. */
+export async function clearChatComposer(
+  m: MaestroDevice,
+  platform: string,
+  expected: string,
+  web?: WebSession
+): Promise<void> {
+  if (platform === 'android') await m.tapOn(composer)
+  assert.equal(await readChatComposer(m, platform, web), expected)
+  await m.eraseText({ characters: expected.length })
+  if (platform !== 'android') return
+  // Android's accessibility Clear can leave React Native's value intact.
+  // Use actual edit keys for any text the optimized command left behind.
+  const remaining = await readChatComposer(m, platform, web)
+  if (remaining !== '' && remaining !== 'Message') {
+    assert(expected.includes(remaining))
+    let rightKeys = remaining.length
+    while (rightKeys-- > 0) await m.pressKey({ key: 'DPAD_RIGHT' })
+    let deleteKeys = remaining.length
+    while (deleteKeys-- > 0) await m.pressKey({ key: 'BACKSPACE' })
+  }
+  const cleared = await readChatComposer(m, platform, web)
+  assert(cleared === '' || cleared === 'Message')
+}
 
 async function waitForComposer(
   m: MaestroDevice,
@@ -94,7 +182,8 @@ export async function chatLinkUi(
   f: ChatLinkFixture,
   observer: Awaited<ReturnType<typeof providerFor>>,
   platform: 'ios' | 'android' | 'web',
-  emulation?: Emulation
+  emulation?: Emulation,
+  role = 'phone'
 ): Promise<{
   m: MaestroDevice & ServerDevice
   web?: WebSession
@@ -107,7 +196,7 @@ export async function chatLinkUi(
       : undefined
   const appId = 'app.teamstation.develop'
   const m: MaestroDevice & ServerDevice =
-    web?.m ?? (await ctx.attach('phone', { platform, appId }))
+    web?.m ?? (await ctx.attach(role, { platform, appId }))
   const simulator =
     platform === 'ios' && (await m.platformInfo()).isSimulator === true
   const room = '/chat/' + encodeURIComponent(f.conversationId)
@@ -130,7 +219,7 @@ export async function chatLinkUi(
     await setServer({
       platform,
       origin: f.origin,
-      udid: ctx.device('phone'),
+      udid: ctx.device(role),
       appId,
       simulator,
       device: m
@@ -148,7 +237,7 @@ export async function chatLinkUi(
       assert(platform === 'ios' || platform === 'android')
       await openInApp({
         platform,
-        udid: ctx.device('phone'),
+        udid: ctx.device(role),
         appId,
         device: m,
         simulator,

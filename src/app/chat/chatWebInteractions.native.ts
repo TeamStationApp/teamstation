@@ -32,7 +32,9 @@ export function isFinePointer(): boolean {
 }
 export function bindComposerKeys(
   _view: unknown,
-  _onSend: () => void
+  _onSend: () => void,
+  _onShortcut?: (key: string) => boolean,
+  _interrupt?: () => void
 ): () => void {
   return () => {}
 }
@@ -84,9 +86,8 @@ export function setComposerSelection(
   view: unknown,
   selection: { start: number; end: number }
 ): void {
-  ;(
-    view as {
-      setNativeProps?: (props: { selection: typeof selection }) => void
-    } | null
-  )?.setNativeProps?.({ selection })
+  const input = view as {
+    setSelection?: (start: number, end: number) => void
+  } | null
+  input?.setSelection?.(selection.start, selection.end)
 }

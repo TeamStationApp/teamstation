@@ -2,4 +2,5 @@
 <resources>
     <!-- The launch splash, as UI tests find it (resource-id app.teamstation.app:id/tsSplash). -->
     <item name="tsSplash" type="id" />
+    <item name="chat_edit_lookup_after_up" type="id" />
 </resources>

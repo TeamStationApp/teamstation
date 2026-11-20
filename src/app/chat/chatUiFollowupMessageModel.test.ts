@@ -20,6 +20,7 @@ describe('chat follow-up message permissions', function () {
   it('offers the specified readable own, received and moderator actions in order', function () {
     expect(actionsFor(message({ mine: true }), view())).deep.equals([
       'reply',
+      'edit',
       'react',
       'copy',
       'pin',

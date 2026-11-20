@@ -6,9 +6,11 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { AppState, Platform } from 'react-native'
 
+import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { lstrings } from '../locales/strings'
 import { activeConversation } from '../push/activeConversation'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { whileChatBrowserOpen } from './chatBrowserVisibility'
 import { ChatDropTarget } from './ChatDropTarget'
 import { ChatDropTarget as NativeDropTarget } from './ChatDropTarget.native'
@@ -27,6 +29,7 @@ import {
   type ConversationFiles,
   ConversationScreen
 } from './ConversationScreen'
+import { UnconfirmedChatPost } from './engine/context'
 import type { ConversationView } from './engine/engine'
 import type { ChatEngineListener } from './engine/store'
 import type { ChatScreenEngine } from './screenEngine'
@@ -1358,6 +1361,584 @@ describe('chat repeated offscreen announcements', function () {
 })
 
 describe('chat conversation shared file preparation and sending', function () {
+  it('edits an old original from the author menu and restores its separate unsent draft and file', async () => {
+    const engine = new FakeEngine()
+    const original = message({
+      mine: true,
+      body: 'Practice at four 🥎',
+      sentAt: '2019-01-01T10:00:00Z'
+    })
+    engine.update('cnv_aurora', { messages: [original] })
+    await screen(engine, {
+      draft: {
+        text: 'Bring the bats',
+        picked: [prepared('lineup.pdf')],
+        scrollOffset: 0
+      }
+    })
+    await press('More message actions')
+    await press('Edit')
+    expect(input().value).equals(original.body)
+    expect(document.activeElement).equals(input())
+    expect(input().selectionStart).equals(original.body.length)
+    expect(button('Attach').getAttribute('aria-disabled')).equals('true')
+    expect(document.body.textContent).not.contains('lineup.pdf')
+    await type('Practice at five')
+    await press('Send')
+    expect(engine.calls).deep.includes([
+      'edit',
+      'cnv_aurora',
+      original.id,
+      'Practice at five'
+    ])
+    expect(input().value).equals('Bring the bats')
+    expect(button('Remove lineup.pdf').getAttribute('aria-label')).equals(
+      'Remove lineup.pdf'
+    )
+    await press('More message actions')
+    await press('Edit')
+    await type('Discarded edit')
+    await press('Cancel edit')
+    expect(input().value).equals('Bring the bats')
+    expect(button('Remove lineup.pdf').getAttribute('aria-label')).equals(
+      'Remove lineup.pdf'
+    )
+  })
+
+  for (const picker of ['Attach', 'Emoji'] as const) {
+    it(`closes the ${picker} picker when editing and restores the draft on Escape`, async () => {
+      const engine = new FakeEngine()
+      const original = message({ mine: true, body: 'Tuesday practice' })
+      engine.update('cnv_aurora', { messages: [original] })
+      await screen(engine, {
+        files: { ...files, PICK_SOURCES: ['photos', 'files'] },
+        draft: { text: 'Bring the bats', picked: [], scrollOffset: 0 }
+      })
+      await press(picker)
+      const control =
+        picker === 'Attach'
+          ? lstrings.chat_photo_library
+          : lstrings.chat_more_emoji
+      const panelControl = (): Element | null =>
+        document.querySelector(`[aria-label="${control}"]`)
+      expect(panelControl()).not.equals(null)
+      await press('More message actions')
+      await press('Edit')
+      expect(input().value).equals(original.body)
+      expect(document.activeElement).equals(input())
+      expect(panelControl()).equals(null)
+      await act(async () => {
+        expect(key(input(), { key: 'Escape' }).defaultPrevented).equals(true)
+        await wait()
+      })
+      expect(input().value).equals('Bring the bats')
+      expect(document.body.textContent).not.contains('Editing your message')
+      expect(panelControl()).equals(null)
+    })
+  }
+
+  async function retainOlderEdit(mentions: string[] = []): Promise<{
+    engine: FakeEngine
+    room: string
+    original: ReturnType<typeof message>
+  }> {
+    const engine = new FakeEngine()
+    const room = 'cnv_aurora'
+    const original = message({
+      mine: true,
+      seq: 8,
+      body: 'Afternoon practice',
+      mentions
+    })
+    engine.update(room, { messages: [original] })
+    await screen(engine, {
+      draft: { text: 'Bring the bats', picked: [], scrollOffset: 0 }
+    })
+    await press('More message actions')
+    await press('Edit')
+    await type('Evening practice')
+    await act(async () => {
+      engine.update(room, { messages: [], hasEarlier: true, historyBefore: 12 })
+      await wait()
+    })
+    return { engine, room, original }
+  }
+
+  it('keeps editing across a partial history read and restores the parked draft when the original disappears', async () => {
+    const { engine, room } = await retainOlderEdit()
+    expect(input().value).equals('Evening practice')
+    await act(async () => {
+      engine.update(room, { messages: [], hasEarlier: true, historyBefore: 4 })
+      await wait()
+    })
+    expect(input().value).equals('Bring the bats')
+    expect(document.body.textContent).not.contains('Editing your message')
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([])
+  })
+
+  it('loads an older edit target once when Save follows a partial history refresh', async () => {
+    const { engine, room, original } = await retainOlderEdit()
+    // A stalled cursor keeps the edited text available for a retry.
+    engine.loadEarlier = async id => engine.view(id)!
+    await press('Send')
+    for (
+      let frame = 0;
+      frame < 30 &&
+      document.body.textContent?.includes(lstrings.chat_send_failed) !== true;
+      frame++
+    )
+      await act(async () => {
+        await wait(80)
+      })
+    expect(document.body.textContent).contains(lstrings.chat_send_failed)
+    expect(input().value).equals('Evening practice')
+
+    let resume!: () => void
+    const pending = new Promise<void>(resolve => {
+      resume = resolve
+    })
+    let pages = 0
+    engine.loadEarlier = async id => {
+      pages++
+      await pending
+      engine.update(id, {
+        messages: [original],
+        hasEarlier: false,
+        historyBefore: 8
+      })
+      return engine.view(id)!
+    }
+    await press('Send')
+    await press('Send')
+    expect(pages).equals(1)
+    await act(async () => {
+      resume()
+      await wait()
+    })
+    for (
+      let frame = 0;
+      frame < 30 && input().value !== 'Bring the bats';
+      frame++
+    )
+      await act(async () => {
+        await wait(80)
+      })
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([['edit', room, original.id, 'Evening practice']])
+    expect(input().value).equals('Bring the bats')
+  })
+
+  for (const [description, changed] of [
+    [
+      'retries the same signed edit after an intervening history read fails',
+      false
+    ],
+    ['signs new wording after an intervening history read fails', true]
+  ] as const) {
+    it(description, async () => {
+      const engine = new FakeEngine()
+      const room = 'cnv_aurora'
+      const original = message({ mine: true, seq: 8, body: 'Practice' })
+      engine.update(room, { messages: [original] })
+      const signed: string[] = []
+      let retried = 0
+      engine.edit = async (_room, _id, body) => {
+        signed.push(body)
+        if (signed.length > 1) return
+        throw new UnconfirmedChatPost(
+          new HttpError('offline', 'Lost acknowledgement'),
+          async () => {
+            retried++
+          }
+        )
+      }
+      await screen(engine, {
+        draft: { text: 'Parked', picked: [], scrollOffset: 0 }
+      })
+      await press('More message actions')
+      await press('Edit')
+      await type('Evening practice')
+      await press('Send')
+      expect(signed).deep.equals(['Evening practice'])
+      expect(document.body.textContent).contains(lstrings.chat_send_failed)
+
+      await act(async () => {
+        engine.update(room, {
+          messages: [],
+          hasEarlier: true,
+          historyBefore: 12
+        })
+        await wait()
+      })
+      let reads = 0
+      engine.loadEarlier = async id => {
+        if (++reads === 1) throw new Error('History unavailable')
+        engine.update(id, {
+          messages: [original],
+          hasEarlier: false,
+          historyBefore: 8
+        })
+        return engine.view(id)!
+      }
+      await press('Send')
+      expect(reads).equals(1)
+      expect(input().value).equals('Evening practice')
+      expect(retried).equals(0)
+      if (changed) await type('Late practice')
+      await press('Send')
+      for (
+        let i = 0;
+        i < 30 && button('Send').getAttribute('aria-disabled') === 'true';
+        i++
+      )
+        await act(async () => {
+          await wait(80)
+        })
+      expect(reads).equals(2)
+      expect(signed).deep.equals(
+        changed ? ['Evening practice', 'Late practice'] : ['Evening practice']
+      )
+      expect(retried).equals(changed ? 0 : 1)
+      expect(input().value).equals('Parked')
+    })
+  }
+
+  it('checks current membership after loading a missing edit target', async () => {
+    const departed = userIdOfGumbo(2)
+    const remaining = userIdOfGumbo(3)
+    const { engine, room, original } = await retainOlderEdit([
+      departed,
+      remaining
+    ])
+    const teammate = member(remaining, 'Sam')
+    const previousMembers = [member(departed, 'Lee'), teammate]
+    await act(async () => {
+      engine.update(room, { members: previousMembers })
+      await wait()
+    })
+    await type(original.body)
+    const page = pending<undefined>()
+    engine.loadEarlier = async id => {
+      await page.promise
+      engine.update(id, {
+        messages: [original],
+        members: [teammate],
+        hasEarlier: false
+      })
+      return engine.view(id)!
+    }
+    await press('Send')
+    await act(async () => {
+      page.resolve(undefined)
+      await wait()
+    })
+    for (
+      let frame = 0;
+      frame < 30 && input().value !== 'Bring the bats';
+      frame++
+    )
+      await act(async () => {
+        await wait(80)
+      })
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([['edit', room, original.id, original.body, [remaining]]])
+  })
+
+  it('ignores a late history page when Escape cancels an older edit during Save', async () => {
+    const { engine, original } = await retainOlderEdit()
+    let resume!: () => void
+    const history = new Promise<void>(resolve => {
+      resume = resolve
+    })
+    let requested = false
+    engine.loadEarlier = async id => {
+      requested = true
+      await history
+      engine.update(id, {
+        messages: [original],
+        hasEarlier: false,
+        historyBefore: 8
+      })
+      return engine.view(id)!
+    }
+    await press('Send')
+    expect(requested).equals(true)
+    await act(async () => {
+      input().focus()
+      expect(key(input(), { key: 'Escape' }).defaultPrevented).equals(true)
+      await wait()
+    })
+    expect(input().value).equals('Bring the bats')
+    expect(button('Attach').getAttribute('aria-disabled')).not.equals('true')
+    expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
+    const next = pending<undefined>()
+    engine.sendWork = next.promise
+    await press('Send')
+    expect(engine.calls).deep.includes([
+      'send',
+      'cnv_aurora',
+      'Bring the bats',
+      {}
+    ])
+    await act(async () => {
+      resume()
+      await wait()
+    })
+    // A late page from the cancelled edit cannot release the new post.
+    expect(button('Send').getAttribute('aria-disabled')).equals('true')
+    await act(async () => {
+      next.resolve(undefined)
+      await wait()
+    })
+    expect(input().value).equals('')
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([])
+    expect(document.body.textContent).not.contains(lstrings.chat_send_failed)
+  })
+
+  for (const result of ['accepted', 'failed'] as const) {
+    it(`keeps a dispatched edit open until its ${result} response arrives`, async () => {
+      const engine = new FakeEngine()
+      const original = message({ mine: true, body: 'Practice' })
+      engine.update('cnv_aurora', { messages: [original] })
+      const response = pending<undefined>()
+      const edits: string[] = []
+      let retries = 0
+      engine.edit = async (_room, _id, body) => {
+        edits.push(body)
+        await response.promise
+        if (result === 'failed')
+          throw new UnconfirmedChatPost(
+            new HttpError('offline', 'No acknowledgement'),
+            async () => {
+              retries++
+            }
+          )
+      }
+      await screen(engine, {
+        draft: { text: 'Parked', picked: [], scrollOffset: 0 }
+      })
+      await press('More message actions')
+      await press('Edit')
+      await type('Evening practice')
+      await press('Send')
+      expect(edits).deep.equals(['Evening practice'])
+      expect(button('Cancel edit').getAttribute('aria-disabled')).equals('true')
+      await press('Cancel edit')
+      await act(async () => {
+        input().focus()
+        expect(key(input(), { key: 'Escape' }).defaultPrevented).equals(false)
+        await wait()
+      })
+      expect(input().value).equals('Evening practice')
+      await act(async () => {
+        response.resolve(undefined)
+        await wait()
+      })
+      if (result === 'failed') {
+        expect(document.body.textContent).contains(lstrings.chat_send_failed)
+        expect(input().value).equals('Evening practice')
+        expect(button('Cancel edit').getAttribute('aria-disabled')).not.equals(
+          'true'
+        )
+        await press('Send')
+        expect(edits).deep.equals(['Evening practice'])
+        expect(retries).equals(1)
+      }
+      expect(input().value).equals('Parked')
+    })
+  }
+
+  it('offers Edit again when a pending attachment finishes with the author menu open', async () => {
+    const engine = new FakeEngine()
+    const original = message({ mine: true, body: 'Practice' })
+    engine.update('cnv_aurora', { messages: [original] })
+    const upload = pending<undefined>()
+    engine.sendWork = upload.promise
+    await screen(engine, {
+      draft: {
+        text: 'Lineup',
+        picked: [prepared('lineup.pdf')],
+        scrollOffset: 0
+      }
+    })
+    await press('Send')
+    await press('More message actions')
+    expect(button(lstrings.chat_copy_text)).not.equals(undefined)
+    const menuHasEdit = (): boolean =>
+      [...document.querySelectorAll('[role="button"],button')].some(
+        node =>
+          node.getAttribute('aria-label') === 'Edit' ||
+          node.textContent === 'Edit'
+      )
+    expect(menuHasEdit()).equals(false)
+    await act(async () => {
+      upload.resolve(undefined)
+      await wait()
+    })
+    await press('Edit')
+    expect(input().value).equals(original.body)
+  })
+
+  it('handles physical Up only in the empty field, reads earlier history and cancels on Escape', async () => {
+    const engine = new FakeEngine()
+    const room = 'cnv_aurora'
+    const mine = message({
+      id: 'msg_older',
+      seq: 3,
+      mine: true,
+      body: 'Practice at noon'
+    })
+    const incoming = message({ id: 'msg_newer', seq: 8, mine: false })
+    engine.update(room, {
+      messages: [incoming],
+      hasEarlier: true,
+      historyBefore: 8
+    })
+    let pages = 0
+    engine.loadEarlier = async id => {
+      pages++
+      engine.update(id, {
+        messages: [mine, incoming],
+        hasEarlier: false,
+        historyBefore: 3
+      })
+      return engine.view(id)!
+    }
+    await screen(engine)
+    await act(async () => {
+      input().focus()
+      key(input(), { key: 'ArrowUp', shiftKey: true })
+      await wait()
+    })
+    expect(input().value).equals('')
+    expect(input().id).equals('chatComposerEditLatest')
+    await act(async () => {
+      expect(key(input(), { key: 'ArrowUp' }).defaultPrevented).equals(true)
+      await wait()
+    })
+    for (let frame = 0; frame < 30 && input().value === ''; frame++) {
+      await act(async () => {
+        await wait(80)
+      })
+    }
+    expect(pages).equals(1)
+    expect(input().value, document.body.textContent ?? '').equals(mine.body)
+    expect(pages).equals(1)
+    await act(async () => {
+      key(input(), { key: 'Escape' })
+      await wait()
+    })
+    expect(input().value).equals('')
+    expect(document.body.textContent).not.contains('Editing your message')
+    await type(' ')
+    await act(async () => {
+      key(input(), { key: 'ArrowUp' })
+      await wait()
+    })
+    expect(input().value).equals(' ')
+  })
+
+  for (const platform of ['ios', 'android'] as const) {
+    for (const interrupt of ['Escape', 'Unidentified']) {
+      it(`keeps the composer empty when ${interrupt} interrupts a pending hardware Up on ${platform}`, async () => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(
+          Platform,
+          'OS'
+        )!
+        Object.defineProperty(Platform, 'OS', {
+          configurable: true,
+          value: platform
+        })
+        try {
+          const engine = new FakeEngine()
+          const room = 'cnv_aurora'
+          const recent = message({ id: 'msg_recent', seq: 8, mine: false })
+          const earlier = message({
+            id: 'msg_earlier',
+            seq: 3,
+            mine: true,
+            body: 'Early practice'
+          })
+          engine.update(room, {
+            messages: [recent],
+            hasEarlier: true,
+            historyBefore: 8
+          })
+          const page = pending<undefined>()
+          let requested = false
+          engine.loadEarlier = async id => {
+            requested = true
+            await page.promise
+            engine.update(id, {
+              messages: [earlier, recent],
+              hasEarlier: false,
+              historyBefore: 3
+            })
+            return engine.view(id)!
+          }
+          await screen(engine)
+          await act(async () => {
+            input().focus()
+            nativeFieldKey('ArrowUp')
+            await wait()
+          })
+          expect(requested).equals(true)
+          await act(async () => {
+            nativeFieldKey(interrupt)
+            page.resolve(undefined)
+            await wait()
+          })
+          expect(input().value).equals('')
+          expect(document.querySelector('[aria-label="Cancel edit"]')).equals(
+            null
+          )
+          await act(async () => {
+            nativeFieldKey('ArrowUp')
+            await wait()
+          })
+          expect(input().value).equals('Early practice')
+        } finally {
+          Object.defineProperty(Platform, 'OS', originalPlatform)
+        }
+      })
+    }
+  }
+
+  it('keeps an iOS text replacement named Escape in the edit', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
+    try {
+      const engine = new FakeEngine()
+      engine.update('cnv_aurora', {
+        messages: [message({ mine: true, body: 'Practice' })]
+      })
+      await screen(engine)
+      await press('More message actions')
+      await press('Edit')
+      await act(async () => {
+        nativeFieldKey('Escape', false)
+        await wait()
+      })
+      await type('Escape')
+      expect(document.body.textContent).contains('Editing your message')
+      expect(input().value).equals('Escape')
+      await act(async () => {
+        nativeFieldKey('Escape')
+        await wait()
+      })
+      expect(document.body.textContent).not.contains('Editing your message')
+      expect(input().value).equals('')
+    } finally {
+      Object.defineProperty(Platform, 'OS', descriptor)
+    }
+  })
+
   it('shows the received card, regenerates an edited caption’s chat link preview, and dismisses the next draft preview', async () => {
     const engine = new FakeEngine()
     const room = 'cnv_aurora'
@@ -1432,6 +2013,15 @@ describe('chat conversation shared file preparation and sending', function () {
       expect(received?.textContent).contains(metadata.title)
       expect(received?.querySelector('a')?.getAttribute('href')).equals(
         url + '#original'
+      )
+      const preview = document.querySelector<HTMLElement>(
+        '[data-testid="chat-composer-band"] [data-testid="chat-link-preview"]'
+      )
+      assert(preview != null)
+      const expectedSurface = document.createElement('div')
+      expectedSurface.style.backgroundColor = getTheme().cardBackgroundColor
+      expect(getComputedStyle(preview.parentElement!).backgroundColor).equals(
+        expectedSurface.style.backgroundColor
       )
       expect(
         document.querySelector('[data-testid="chat-dismiss-link-preview"]')
@@ -1634,12 +2224,14 @@ describe('chat conversation shared file preparation and sending', function () {
       root!.unmount()
       root = undefined
     })
+    const mine = message({ mine: true, senderName: 'Mookie Betts' })
+    engine.update('cnv_aurora', { messages: [mine] })
     await screen(engine, {
       draft: {
         text: 'Editing body',
         picked: [],
         scrollOffset: 0,
-        editing: message({ mine: true, senderName: 'Mookie Betts' })
+        editing: mine
       }
     })
     expect((await drag('drop', transfer())).defaultPrevented).equals(true)
@@ -1895,21 +2487,41 @@ describe('chat conversation shared file preparation and sending', function () {
   })
 })
 
-function renderedComposerProps(): ComposerProps {
+function renderedFieldAncestor<T>(matches: (props: Partial<T>) => boolean): T {
   interface Fiber {
     return?: Fiber
-    memoizedProps?: Partial<ComposerProps>
+    memoizedProps?: Partial<T>
   }
   const node = input() as unknown as Record<string, unknown>
   const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
   let fiber = node[key] as Fiber | undefined
   while (fiber != null) {
     const props = fiber.memoizedProps
-    if (props?.onAttach != null && props.sources != null)
-      return props as ComposerProps
+    if (props != null && matches(props)) return props as T
     fiber = fiber.return
   }
-  throw new Error('Actual mounted Composer props unavailable')
+  throw new Error('Expected a mounted chat composer field ancestor')
+}
+
+function renderedComposerProps(): ComposerProps {
+  return renderedFieldAncestor<ComposerProps>(
+    props => props.onAttach != null && props.sources != null
+  )
+}
+
+function nativeFieldKey(key: string, chatHardwareKey = true): void {
+  interface NativeField {
+    nativeID: string
+    onKeyPress: (event: {
+      nativeEvent: { key: string; chatHardwareKey?: boolean }
+    }) => void
+  }
+  const field = renderedFieldAncestor<NativeField>(
+    props =>
+      props.nativeID?.startsWith('chatComposer') === true &&
+      props.onKeyPress != null
+  )
+  field.onKeyPress({ nativeEvent: { key, chatHardwareKey } })
 }
 
 describe('review3 picker activation and busy lifetime', function () {

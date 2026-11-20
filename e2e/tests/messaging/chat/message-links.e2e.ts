@@ -3,10 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import {
-  flattenPublicHierarchy,
-  iosPublicRead
-} from '../../../rigs/chat2Maestro'
+import { flattenPublicHierarchy } from '../../../rigs/chat2Maestro'
 import type { MaestroDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
 import {
@@ -14,7 +11,12 @@ import {
   fixtureFor,
   providerFor
 } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+import {
+  chatLinkUi,
+  clearChatComposer,
+  readChatComposer,
+  revealChatTarget
+} from '../../../rigs/chat/messageLinkUi'
 
 const composer = { id: 'chat-composer' }
 const exact = (s: string): string =>
@@ -212,20 +214,6 @@ async function dismissComposerKeyboard(
   else await m.hideKeyboard()
 }
 
-async function readComposer(
-  m: MaestroDevice,
-  platform: string
-): Promise<string> {
-  if (platform !== 'ios') return (await m.copyTextFrom(composer)).data
-  const { element } = iosPublicRead(
-    await m.hierarchyRaw(),
-    composer,
-    'TextView'
-  )
-  assert(element != null, 'The editable composer must be present')
-  return element.value ?? ''
-}
-
 /** The fixture starts its first line with a plain filename, beside its live links. */
 async function tapPlainFilename(
   m: MaestroDevice,
@@ -282,7 +270,10 @@ async function copyMessage(
   if (web != null) {
     await showLink(m, web, url)
     await touchLink(m, url, false)
-  } else await m.longPressOn({ text: exact(url) })
+  } else {
+    await revealChatTarget(m, node => node.text === url)
+    await m.longPressOn({ text: exact(url) })
+  }
   await m.assertVisible({ text: '^Copy$', timeout: 6000 })
   if (web != null) {
     const clone = await web.page.$(
@@ -326,7 +317,7 @@ async function copyMessage(
       selector,
       body
     )
-    await m.eraseText({ characters: body.length })
+    await clearChatComposer(m, platform, body, web)
   } else {
     await waitForMenuDismissal(m)
     await m.tapOn(composer)
@@ -336,11 +327,11 @@ async function copyMessage(
     if (nodes.some(node => node.text === 'Allow Paste'))
       await m.tapOn({ text: '^Allow Paste$' })
     assert.equal(
-      await readComposer(m, platform),
+      await readChatComposer(m, platform),
       body,
       'Paste must put the complete message in the editable composer'
     )
-    await m.eraseText({ characters: body.length })
+    await clearChatComposer(m, platform, body, web)
     await dismissComposerKeyboard(m, platform)
   }
 }
@@ -488,7 +479,13 @@ async function open(ctx: E2eContext): Promise<void> {
           '. See www.example.org and example.technology.'
         const caption = 'Score sheet ' + id + ': ' + second
         await m.tapOn(composer)
-        await m.inputText({ text: body })
+        if (platform === 'android') {
+          // Android keyboards can capitalize both the filename and the URL
+          // following a newline. Paste the exact fixture that Copy must return.
+          await m.setClipboard({ text: body })
+          await m.pasteText()
+          assert.equal(await readChatComposer(m, platform), body)
+        } else await m.inputText({ text: body })
         if (web != null) await m.pressKey({ key: 'Enter' })
         else {
           await m.tapOn({ text: '^Send$', timeout: 8000 })
@@ -642,9 +639,11 @@ async function open(ctx: E2eContext): Promise<void> {
           await enter()
         }
         if (web != null) await showLink(m, web, first)
+        else await revealChatTarget(m, node => node.text === first)
         await cancelHold(m, web, first)
         await m.tapOn(composer)
         if (web != null) await showLink(m, web, second)
+        else await revealChatTarget(m, node => node.text === second)
         const reading = await linkPosition(m, web, second)
         if (web != null) await touchLink(m, second, false)
         else await m.longPressOn({ text: exact(second) })
@@ -669,16 +668,8 @@ async function open(ctx: E2eContext): Promise<void> {
         // Type with no intervening tap, so a lost composer focus cannot pass.
         const draft = 'Draft ' + id
         await m.inputText({ text: draft })
-        if (web == null) assert.equal(await readComposer(m, platform), draft)
-        else
-          assert.equal(
-            await web.page.$eval(
-              '[data-testid="chat-composer"]',
-              field => (field as HTMLTextAreaElement).value
-            ),
-            draft
-          )
-        await m.eraseText({ characters: draft.length })
+        assert.equal(await readChatComposer(m, platform, web), draft)
+        await clearChatComposer(m, platform, draft, web)
         if (web == null) await dismissComposerKeyboard(m, platform)
         await copyMessage(m, web, first, body, platform)
         await copyMessage(m, web, second, caption, platform)
