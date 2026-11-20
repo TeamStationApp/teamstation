@@ -149,6 +149,12 @@ export interface Theme {
   pillTextColor: string
   pillActiveBackground: string
   pillActiveTextColor: string
+  /**
+   * The gray circle, and its white X, that removes a chosen search location
+   * (`LocationPill`, which is otherwise drawn as the neutral kind pill).
+   */
+  pillCloseColor: string
+  pillCloseMarkColor: string
   /** The rail of a sliding choice, which sits straight on the page. */
   sliderTrackBackground: string
 

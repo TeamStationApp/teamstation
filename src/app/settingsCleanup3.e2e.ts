@@ -456,14 +456,9 @@ async function main(): Promise<void> {
       ]) {
         await go(path, text)
         if (name === 'discovery-team-tiles') {
-          const searched = page.waitForResponse(
-            response =>
-              new URL(response.url()).pathname.endsWith('/teams') &&
-              new URL(response.url()).searchParams.get('query') === 'Winter'
-          )
-          await fill(m, 'Search by name or city', 'Winter')
-          await searched
-          await contains(page, 'Winter Wolves')
+          // The search socket answers with the result row.
+          await fill(m, 'Search leagues, seasons, teams and people', 'Winter')
+          await page.waitForSelector('[aria-label^="Open Winter Wolves"]')
           await page.waitForFunction(
             () => !document.body.textContent!.includes('Orchard Owls')
           )
@@ -880,14 +875,9 @@ async function main(): Promise<void> {
     }
     if (only === 'evidence') {
       await go('/discover?kind=team', 'Discover')
-      const searched = page.waitForResponse(
-        response =>
-          new URL(response.url()).pathname.endsWith('/teams') &&
-          new URL(response.url()).searchParams.get('query') === 'Winter'
-      )
-      await fill(m, 'Search by name or city', 'Winter')
-      await searched
-      await contains(page, 'Winter Wolves')
+      // The search socket answers with the result row.
+      await fill(m, 'Search leagues, seasons, teams and people', 'Winter')
+      await page.waitForSelector('[aria-label^="Open Winter Wolves"]')
       await page.waitForFunction(
         () => !document.body.textContent!.includes('Orchard Owls')
       )

@@ -48,6 +48,13 @@ import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
 import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
+import {
+  answerIpLookup,
+  type IpChannel,
+  ipLookupsFrom,
+  ipPlacesConfigOf,
+  startIpPlaces
+} from './location/ipPlaces'
 import { FeedHolder, type MediaContext } from './media/mediaContext'
 import { republishOwnedImages, settlesWithin } from './media/republishImages'
 import { spaceConfigured } from './media/spacesHls'
@@ -134,6 +141,8 @@ import {
   quit,
   scoreboardPrefix
 } from './scoreboard/scoreboardStore'
+import { warmLocationsInBackground } from './search/locations'
+import { attachSearchSocket } from './search/socket'
 import {
   eventControlIssuerOf,
   primaryHost,
@@ -584,6 +593,15 @@ function runPrimary(workerCount: number): void {
   const forceExit = forceStop(builder, code => {
     process.exit(code)
   })
+  // The primary holds the IP database, one copy for the server, keeps it
+  // fresh, and answers its workers' lookups.
+  const ipPlacesConfig = ipPlacesConfigOf(serverConfig.ipPlaces)
+  const ipPlaces =
+    ipPlacesConfig == null ? undefined : startIpPlaces(ipPlacesConfig)
+  if (ipPlaces != null)
+    cluster.on('message', (worker, message) => {
+      answerIpLookup(ipPlaces, worker, message)
+    })
   console.log(`teamstation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -621,6 +639,7 @@ function runPrimary(workerCount: number): void {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    ipPlaces?.stop()
     stopRelay(relay).catch(() => undefined)
     builder.stop(signal).catch((error: unknown) => {
       console.error('stats builder: stop failed', error)
@@ -1028,6 +1047,12 @@ function runWorker(): void {
       console.log(
         `worker ${process.pid} listening on ${serverConfig.listenHost}:${serverConfig.listenPort}`
       )
+      // The place catalog and its search indexes, built once the worker
+      // listens rather than by the first search, in short stretches that
+      // leave requests answered meanwhile. A search waits for them.
+      warmLocationsInBackground(line => {
+        console.log(`worker ${process.pid}: ${line}`)
+      })
     }
   )
   // One upgrade listener. Node delivers an upgrade to every listener on the
@@ -1057,9 +1082,28 @@ function runWorker(): void {
           allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
           listenForUpgrades: false
         })
+  // Where a reader's address is: looked up here when this is the only
+  // process, else by the primary that forked this worker.
+  const ipPlacesConfig = ipPlacesConfigOf(serverConfig.ipPlaces)
+  const localIpPlaces =
+    ipPlacesConfig != null && cluster.isPrimary
+      ? startIpPlaces(ipPlacesConfig)
+      : undefined
+  const ipPlaces =
+    ipPlacesConfig == null
+      ? undefined
+      : (localIpPlaces ?? ipLookupsFrom(process as IpChannel))
+  // The search field's socket, for anybody, signed in or not.
+  const searchSocket = attachSearchSocket({
+    db,
+    deps: { space: mediaContext.space, jevBaseUrl: serverConfig.jev.baseUrl },
+    allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
+    ...(ipPlaces == null ? {} : { ipPlaces })
+  })
   const unbindUpgrades = bindUpgrades(server, [
     (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
     (req, socket, head) => dictation?.acceptUpgrade(req, socket, head) === true,
+    (req, socket, head) => searchSocket.acceptUpgrade(req, socket, head),
     (req, socket, head) => {
       scoreboard.hub.handleUpgrade(req, socket, head)
       return true
@@ -1082,6 +1126,8 @@ function runWorker(): void {
     if (closing) return
     closing = true
     dictation?.close()
+    searchSocket.close()
+    localIpPlaces?.stop()
     unbindUpgrades()
     // Before the server: an upgraded socket is not one of its connections,
     // so closing the server would leave every scoreboard socket open.

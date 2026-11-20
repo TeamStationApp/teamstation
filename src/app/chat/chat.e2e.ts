@@ -1893,7 +1893,7 @@ describe('chat scenarios in the browser', function () {
         (await page.$('[role="tab"][aria-label="Search"]')) ?? undefined
     )
     await search.click()
-    await typeInto(page, 'Search by name or city', 'Haw')
+    await typeInto(page, 'Search leagues, seasons, teams and people', 'Haw')
     await until(
       'the Hawks follow control',
       async () =>

@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import {
   type ExistingPlayerAnswer,
@@ -125,6 +126,54 @@ describe('team settings Add Player', function () {
     restoreRects?.()
     restoreRects = undefined
     document.body.innerHTML = ''
+  })
+
+  it('uses Search’s field: at the top in a browser, above the list', async () => {
+    await open()
+    const field = document.querySelector('[data-testid="Player search field"]')!
+    const list = document.querySelector('[data-testid="Candidate list"]')!
+    expect(field, 'Search’s field').not.equals(null)
+    expect(
+      field.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the field, then the list'
+    ).not.equals(0)
+    expect(document.querySelector('[data-testid="search-dock"]')).equals(null)
+    // Search's own field (`SearchField`), labelled for players.
+    expect(
+      field.querySelector('[data-testid="search-field-input"]'),
+      'Search’s input'
+    ).not.equals(null)
+    expect(node('Search players')?.tagName).equals('INPUT')
+  })
+
+  it('docks Search’s field at the bottom on a phone, with room under the last candidate for it', async () => {
+    const was = Platform.OS
+    Platform.OS = 'ios'
+    try {
+      await open()
+      const dock = document.querySelector<HTMLElement>(
+        '[data-testid="search-dock"]'
+      )!
+      expect(dock, 'the dock riding the keyboard').not.equals(null)
+      expect(
+        dock.querySelector(
+          '[data-testid="Player search field"] [data-testid="search-field-input"]'
+        ),
+        'Search’s field in it'
+      ).not.equals(null)
+      // It rests the gap above the modal's own inset (none here), and the
+      // list leaves room under its last row for it (its 48-point height
+      // before it is measured), its gap and that inset. Riding the keyboard
+      // is the phone's dock (SearchDock.native.tsx), tested with Search's.
+      expect(getComputedStyle(dock).bottom).equals('12px')
+      expect(
+        getComputedStyle(
+          document.querySelector('[data-testid="search-field-clearance"]')!
+        ).height
+      ).equals('60px')
+    } finally {
+      Platform.OS = was
+    }
   })
 
   it('lists the candidates for the team with no game, and Cancel changes nothing', async () => {

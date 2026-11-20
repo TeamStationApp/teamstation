@@ -1572,6 +1572,14 @@ const gumboCount = {
  * The stored play: a standard MLB Gumbo play, in the shape of the live feed
  * (`statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live`, `liveData.plays`).
  */
+/** What `PUT` and `DELETE /node/jev-key` answer: whether a key is set now. */
+const jevKeyStateSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['configured'],
+  properties: { configured: { type: 'boolean' } }
+}
+
 /**
  * The node settings as `GET /node/settings` answers them and `PUT` takes and
  * answers them: one copy, so the three cannot drift apart (`asNodeSettings`).
@@ -1581,6 +1589,14 @@ const nodeSettingsSchema = {
   additionalProperties: false,
   required: ['scoreboard', 'highlights'],
   properties: {
+    jev: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Whether a Jev API key is set, for search ranking. A read always has it; a save may echo it and it changes nothing. The key itself is set and cleared at `/node/jev-key` and never returned.',
+      required: ['configured'],
+      properties: { configured: { type: 'boolean' } }
+    },
     replay: {
       type: 'object',
       additionalProperties: false,
@@ -7540,6 +7556,59 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/node/jev-key': {
+        put: {
+          summary: 'A node administrator sets or replaces the Jev API key',
+          description:
+            "Search's Jev ranking calls TypeSafe's System One API with this key. It is stored on the node and never returned by any route or written to a log; `GET /node/settings` says only `jev.configured`. Node administrators only.",
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['apiKey'],
+                  properties: {
+                    apiKey: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 512,
+                      pattern: '^\\s*[\\x21-\\x7e]+\\s*$',
+                      description:
+                        'The key, printable characters with no spaces inside; surrounding spaces are trimmed'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The key is set',
+              content: { 'application/json': { schema: jevKeyStateSchema } }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        delete: {
+          summary: 'A node administrator removes the Jev API key',
+          description:
+            'Search then ranks without Jev, by its lexicographic order alone. Node administrators only.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'No key is set',
+              content: { 'application/json': { schema: jevKeyStateSchema } }
+            },
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
       '/node/logins': {
         get: {
           summary:
@@ -7740,19 +7809,23 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`affiliations` the line Add Person shows under a name. ' +
             'With `forTeam` instead, the answer is the players a roster ' +
             'manager of that team (or, with `forGame`, a scorekeeper of either ' +
-            'team in that game) may add to it: every live player, and every ' +
-            'full account (switched on, with an email) though it plays for ' +
-            'no team, nearest first by `tier` (`mine`: a team you are on or ' +
-            "hold a role on, or a person you guard; `season`: a team in the game's " +
-            "season, or any season the team is in; `league`: a team in the team's " +
-            'league; `other`: everyone else, a full account that plays for no ' +
-            'team among them, listed only once `q` holds three characters). ' +
+            'team in that game) may add to it, as the search socket finds ' +
+            'people in mode `people`, lexicographic only: everybody live in ' +
+            "the caller's reach (a membership or role on the caller's teams, " +
+            'seasons and leagues, their seasons and leagues, and this ' +
+            "team's season and league), and the caller's own wards; nobody " +
+            'outside it, however much `q` holds. With no `q`, nearest first ' +
+            'by `tier` (`mine`: on a team you are on or hold a role on, or ' +
+            "a person you guard; `season`: on a team in the game's season, " +
+            'or any season the team is in; `league`: anybody else in the ' +
+            'reach), then by name; with `q`, by how well the name you are ' +
+            'shown matches it. ' +
             'Players already on the team, and with `forGame` ' +
             'anybody already in that game, are left out. Each row adds ' +
             '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
             'in a season ending today or later), `affiliations` (the line ' +
             'under the name, as on the account search), `tier` and `cursor` ' +
-            '(always empty: the search answers once, at most 100 rows, with ' +
+            '(always empty: the search answers once, at most 20 rows, with ' +
             'no further pages, and a request with `after` answers `[]`), and ' +
             'nothing else about the person; `nameFormat` when `shortName` is ' +
             'not in the built-in format, and beside a name full only for the ' +
@@ -7839,7 +7912,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents. With view=directory: at most 120 characters, matched anywhere in the display name or any address, ignoring case; those whose name or an address starts with it come first, then by name; empty answers [].'
+                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: matched as the search socket matches people, ignoring case and accents: the more words of the name you are shown it matches, the higher; a stored surname you are not shown finds nobody unless the stored first and last names are typed whole. Text with no letters or digits finds nobody. With view=directory: at most 120 characters, matched anywhere in the display name or any address, ignoring case; those whose name or an address starts with it come first, then by name; empty answers [].'
             },
             {
               name: 'limit',
@@ -7851,14 +7924,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                 default: 100
               },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100. With view=directory: default and maximum 10.'
+                'With hasVideo: default 50, maximum 100. With forTeam: at most 100 is accepted, and the answer is at most 20; a smaller one answers fewer only beside capped=1. With view=directory: default and maximum 10.'
             },
             {
               name: 'capped',
               in: 'query',
               schema: { type: 'string', enum: ['1'] },
               description:
-                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is up to 100 whatever limit says, for installed builds that send limit=30 and page on with after.'
+                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is the whole list (at most 20) whatever limit says, for installed builds that send limit=30 and page on with after.'
             },
             {
               name: 'after',
@@ -11149,6 +11222,52 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: { 101: { description: 'The publisher socket' } }
+        }
+      },
+      '/search': {
+        get: {
+          summary: 'Search leagues, seasons, teams and people over a WebSocket',
+          description:
+            'The search field\u2019s socket. Frames are JSON text of at most ' +
+            "4096 bytes. Send `{ type: 'search', seq, text, location, " +
+            'mode, forTeam?, forGame? }` on every change to the text or the ' +
+            'location pill: `seq` a growing integer, `location` a pill ' +
+            '(`{ kind: city | region | country, id, label, city?, region?, ' +
+            'country, latitude?, longitude? }`) or null, `mode` `all` or ' +
+            '`people`, and in mode `people` the `forTeam` (and maybe ' +
+            '`forGame`) a player would be added to. Each is answered at once ' +
+            "with `{ type: 'results', seq, stage: 'lexicographic', results, " +
+            'locations }`. A second after the last frame, Jev\u2019s ranking ' +
+            "of the same rows follows as `stage: 'jev'`, for the latest " +
+            '`seq` only; a newer frame cancels it, and with no Jev key or ' +
+            'no Jev answer it never comes. No answer is sent once a newer ' +
+            'frame\u2019s has been. An empty text with no pill answers ' +
+            '`results: []`. A row is `{ kind: league | season | team, id, ' +
+            'name, imageUrl, cityLine, associations, follow }`, `follow` ' +
+            'being `follow`, `following` or null (signed out, or the ' +
+            "reader's own group), or `{ kind: 'person', userId, name, " +
+            'avatarUrl, associations, roster? }`. In mode `people` with ' +
+            '`forTeam` (Add Existing Player) every person row carries ' +
+            '`roster`: `{ gumboId, shortName, nameFormat?, compactName?, ' +
+            'compactFormat?, shortParts, bats, throws, teams, tier }`, the ' +
+            'card `GET /users?forTeam=` answers, and an empty text lists ' +
+            'the reach nearest first instead of nothing. ' +
+            'A frame the server refuses is ' +
+            "answered with `{ type: 'error', seq?, code, message }`: " +
+            '`malformed`, `tooLarge` (over 4096 bytes; past 16384 the socket ' +
+            'closes with 1009), `internal`, or, for `forTeam`, `notFound`, ' +
+            '`forbidden` or `badRequest`, as `GET /users?forTeam=` answers. ' +
+            '**Who may call:** anybody. A session token, by bearer header or ' +
+            'session cookie, searches as that person and finds people within ' +
+            'their groups; no token, or one that signs nobody in, searches ' +
+            'signed out and finds no people. A browser page whose `Origin` ' +
+            'is not the app\u2019s is refused with 403. Close codes: 4401 the ' +
+            'session was signed out, 1001 the server is restarting.',
+          security: [{}, { bearer: [] }],
+          responses: {
+            101: { description: 'The search socket' },
+            403: errorResponse
+          }
         }
       },
       '/director/events/{gameId}/claim': {

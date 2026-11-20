@@ -272,7 +272,7 @@ describe('ExistingPlayerSheet', function () {
       [...labels].sort((a, b) => String(a).localeCompare(String(b)))
     ).deep.equals(['Choose Aaron J', 'Choose Mookie B', 'Choose Shohei O'])
     expect(listProps().keyExtractor(candidate('Aaron Judge'))).equals(
-      'usr_AaronJudge'
+      candidate('Aaron Judge').userId
     )
     // Typing narrows the phone's people at once.
     await type('aar')

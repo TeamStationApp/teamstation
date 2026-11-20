@@ -225,8 +225,7 @@ async function main(): Promise<void> {
 
     await tapTab('Search')
     await settle('Discover')
-    await tap(m, 'Leagues')
-    await fill(m, 'Search by name or city', 'Demo League A')
+    await fill(m, 'Search leagues, seasons, teams and people', 'Demo League A')
     await tap(m, 'Open Demo League A')
     await settle('Demo League A')
     await tap(m, 'Open Demo Regular')

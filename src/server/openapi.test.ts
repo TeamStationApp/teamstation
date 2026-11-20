@@ -138,13 +138,15 @@ const UNDOCUMENTED = new Set([
 ])
 
 /**
- * The scoreboard's sockets. The server's upgrade handler answers them, not a
- * router, so no router lists them; the document describes them all the same.
+ * The scoreboard's and search's sockets. The server's upgrade handler
+ * answers them, not a router, so no router lists them; the document
+ * describes them all the same.
  */
 const UPGRADE_ONLY = new Set([
   'GET /scoreboard/{gameId}/socket',
   'GET /scoreboard/{gameId}/publish',
-  'GET /scoreboard/{gameId}/dashboard'
+  'GET /scoreboard/{gameId}/dashboard',
+  'GET /search'
 ])
 
 describe('the API document', function () {
@@ -316,6 +318,17 @@ describe('the API document', function () {
       invented,
       `promised but not served: ${invented.join(', ')}`
     ).deep.equals([])
+  })
+
+  it('describes the search socket, its frames and its close codes', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<
+      string,
+      { get?: { description?: string; responses?: Record<string, unknown> } }
+    >
+    const socket = paths['/search']?.get
+    expect(Object.keys(socket?.responses ?? {})).includes('101')
+    for (const phrase of ["stage: 'jev'", 'latest', '4401', 'Origin', '4096'])
+      expect(socket?.description ?? '').includes(phrase)
   })
 
   it('describes a player\u2019s settings, with the positions a coach may give', function () {
@@ -774,5 +787,37 @@ describe('the API document', function () {
     const pattern = new RegExp(leads.propertyNames.pattern)
     expect(pattern.test('home_run')).equals(true)
     expect(pattern.test('Home-Run')).equals(false)
+  })
+
+  it('says only whether a Jev key is set, and documents the key routes for node administrators', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<
+      string,
+      Record<string, any>
+    >
+    const read =
+      paths['/node/settings'].get.responses[200].content['application/json']
+        .schema
+    expect(read.properties.jev).deep.include({ required: ['configured'] })
+    expect(read.properties.jev.properties).deep.equals({
+      configured: { type: 'boolean' }
+    })
+    const key = paths['/node/jev-key']
+    expect(Object.keys(key).sort()).deep.equals(['delete', 'put'])
+    const body = key.put.requestBody.content['application/json'].schema
+    expect(body.required).deep.equals(['apiKey'])
+    expect(
+      new RegExp(body.properties.apiKey.pattern).test(' ts-key_1 ')
+    ).equals(true)
+    expect(new RegExp(body.properties.apiKey.pattern).test('two words')).equals(
+      false
+    )
+    for (const method of ['put', 'delete']) {
+      expect(key[method].responses).to.have.property('403')
+      expect(
+        key[method].responses[200].content['application/json'].schema.properties
+      ).deep.equals({ configured: { type: 'boolean' } })
+    }
+    // The key is never in an answer.
+    expect(JSON.stringify(read)).not.contains('apiKey')
   })
 })

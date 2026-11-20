@@ -1,7 +1,7 @@
 {
   // The TypeScript scripts that are not part of any build: the wall-clock
-  // stamper's command line, and the end-to-end helpers that run in Node or in
-  // a page. Here so the linter's type-aware rules see them; they reach into
+  // stamper's and the search probe's command lines, and the end-to-end
+  // helpers that run in Node or in a page. Here so the linter's type-aware rules see them; they reach into
   // `src` for what they share with the server.
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -13,6 +13,7 @@
     "scripts/stampWallClockSei.ts",
     "scripts/packedLeagueCounts.ts",
     "scripts/highsNativeSmokeModel.ts",
+    "scripts/searchProbe.ts",
     "scripts/chat-history-recovery-fixtures.ts",
     "scripts/chat-history-recovery-link.ts",
     "scripts/chat-history-recovery-native-scenes.ts",

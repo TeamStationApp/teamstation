@@ -17,7 +17,7 @@ import {
 import { asGroupDetail, type GroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
-import { candidate } from '../test/fakeCandidateClient'
+import { candidate, FakeCandidateSearch } from '../test/fakeCandidateClient'
 import { measureBoxes } from '../test/measureBoxes'
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { pageOfGames } from '../test/pageOf'
@@ -540,9 +540,15 @@ describe("team settings' Create Player", () => {
       get: () => false,
       set: () => undefined
     })
-    proto.rosterCandidates = async () => [
-      candidate('Corbin Burnes', { userId: 'usr_burnes' })
-    ]
+    // Add Player asks the search socket, which finds him.
+    const search = new FakeCandidateSearch(frame =>
+      frame.mode === 'people' && frame.forTeam === 'canonical'
+        ? [candidate('Corbin Burnes')]
+        : []
+    )
+    proto.rosterCandidates = async () => {
+      throw new Error('Add Player asks the search socket, not the route')
+    }
     proto.addExistingRosterPlayer = async (teamId, body) => {
       added.push({ teamId, userId: body.userId })
       return {
@@ -605,7 +611,7 @@ describe("team settings' Create Player", () => {
     const root = createRoot(host)
     try {
       await act(async () => {
-        root.render(<App />)
+        root.render(<App searchSocketFactory={search.factory} />)
       })
       await settle()
       expect(document.body.textContent).includes('Only a current administrator')
@@ -653,7 +659,12 @@ describe("team settings' Create Player", () => {
       const beforeAdd = reads
       await press('Add to Roster')
       expect(reads).greaterThan(beforeAdd)
-      expect(added).deep.equals([{ teamId: 'canonical', userId: 'usr_burnes' }])
+      expect(added).deep.equals([
+        { teamId: 'canonical', userId: candidate('Corbin Burnes').userId }
+      ])
+      expect(search.frames.some(frame => frame.forTeam === 'canonical')).equals(
+        true
+      )
       expect(window.location.pathname).equals('/groups/team/canonical/settings')
       expect(document.body.textContent).includes('Added Corbin B to the roster')
       // A save that stays on the form: Back finds the list read again.

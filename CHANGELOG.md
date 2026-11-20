@@ -28,12 +28,19 @@
 - added: Notifications on iPhone, Android and the browser for direct messages, mentions, and a reminder two hours before an event you said you'd attend. Each device has its own switches under Account › Notifications.
 - added: After you RSVP or open messaging, TeamStation offers once to turn on notifications for that device
 - added: A message you're reading doesn't notify you, and reading a conversation on one device clears its notifications on your others
+- added: Backspace in Search's empty field takes out the chosen place
+- added: Search suggests the places near you first among those that match as well: near your own teams and leagues, or, signed out, near the city DB-IP's free database places your connection in. The server keeps that database in its state directory (`ipPlaces` in the server config moves it, `false` turns it off), refreshes it monthly and holds one copy in memory for all its workers, and About TeamStation credits DB-IP
 - changed: A stream ends after ten minutes without video once its game has ended. Its recording is kept and its expired ingest key is revoked.
 - changed: Schedules are computed on the device and stored as sent, and the server validates the submitted games
 - changed: Imported games carry TeamStation records on every play, so replay, box score, pitch counts, statistics and editing treat them like scored games. An outside scorer's unknown players are seated as guests.
 - changed: A team's coaching plan stays with its coaches. The scoring screen downloads only the defensive column of the inning in play.
 - changed: A league's and a season's People tabs list no players
 - changed: Creating a league or season inside one you already administer from above adds no separate administrator grant, and grants an inherited one covers are removed. The last-administrator check counts administration inherited from above; a team still keeps its own administrators.
+- changed: Every pill on Search is the size of a result's kind pill, in the same neutral colours; a chosen place's pill takes it out with a small gray circle and a white X
+- changed: Every pill on Search is the size of a result's kind pill and stands off the page on Following's shadow, in the same neutral colours; a chosen place's pill takes it out with a small gray circle and a white X, centred at its end
+- changed: In a browser, Search's field sits at the top under its title, with the suggested places right under it and the results below
+- changed: On a phone or tablet, Search's field stays at the bottom with the suggested places above it, and both rise and fall with the keyboard as it opens and closes; dragging the results puts the keyboard away
+- changed: Add Player searches with Search's own field: at the top in a browser, and on a phone or tablet at the bottom, rising and falling with the keyboard while the screen stays put; dragging the list puts the keyboard away
 - changed: The game plan's inning columns grow with the window, up to 1206 points
 - changed: Clear and Help on the coaching and scoring sheets are brighter
 - changed: Node administration sits beside the account instead of inside Account

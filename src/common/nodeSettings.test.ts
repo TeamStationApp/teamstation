@@ -44,8 +44,30 @@ describe('node settings', function () {
         mergeWithinSec: 5,
         tailSec: 5
       },
-      distribution: { betaBuildsUrl: '', appStoreUrl: '' }
+      distribution: { betaBuildsUrl: '', appStoreUrl: '' },
+      jev: { configured: false }
     })
+  })
+
+  it('says whether a Jev key is set, and nothing from a server before Jev', function () {
+    const { jev: _jev, ...older } = defaultNodeSettings
+    expect(asNodeSettings(older).jev).deep.equals({ configured: false })
+    expect(
+      asNodeSettings({ ...defaultNodeSettings, jev: { configured: true } }).jev
+    ).deep.equals({ configured: true })
+    expect(
+      refused({ ...defaultNodeSettings, jev: { configured: 'yes' } })
+    ).equals('jev.configured must be true or false')
+    expect(refused({ ...defaultNodeSettings, jev: [] })).equals(
+      'jev must be an object'
+    )
+    // A save carries no Jev setting: the key has its own routes.
+    expect(
+      asNodeSettingsUpdate({
+        ...defaultNodeSettings,
+        jev: { configured: true }
+      })
+    ).not.have.property('jev')
   })
 
   it('stops a highlight 0 to 600 s past the play, 5 by default', function () {

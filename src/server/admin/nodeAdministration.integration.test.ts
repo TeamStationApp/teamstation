@@ -167,6 +167,90 @@ describe('protected node account administration', function () {
       ).status
     ).equals(404)
   })
+  it('lets only a node administrator set or clear the Jev key, and never says or logs it', async () => {
+    const key = 'ts-test-key-never-shown'
+    const written: string[] = []
+    const keep =
+      (write: (...args: any[]) => boolean) =>
+      (chunk: unknown, ...rest: any[]): boolean => {
+        written.push(String(chunk))
+        return write(chunk, ...rest)
+      }
+    const stdout = process.stdout.write.bind(process.stdout)
+    const stderr = process.stderr.write.bind(process.stderr)
+    const consoleMethods = ['log', 'info', 'warn', 'error', 'debug'] as const
+    const consoles = consoleMethods.map(name => console[name].bind(console))
+    process.stdout.write = keep(stdout) as typeof process.stdout.write
+    process.stderr.write = keep(stderr) as typeof process.stderr.write
+    for (const name of consoleMethods)
+      console[name] = (...args: unknown[]) => {
+        written.push(args.map(String).join(' '))
+      }
+    const answers: string[] = []
+    try {
+      for (const user of [101, 106, null]) {
+        for (const [method, body] of [
+          ['PUT', { apiKey: key }],
+          // A body that does not read is refused for who sent it first.
+          ['PUT', { apiKey: 42 }],
+          ['PUT', undefined],
+          ['DELETE', undefined]
+        ] as const) {
+          const response = await f.h.request(
+            method,
+            '/node/jev-key',
+            body,
+            user
+          )
+          expect(response.status, `${method} as ${user}`).equals(
+            user == null ? 401 : 403
+          )
+          answers.push(await response.text())
+        }
+      }
+      expect(
+        await f.h.db
+          .selectFrom('system_settings')
+          .select('key')
+          .where('key', '=', 'jev.apiKey')
+          .executeTakeFirst()
+      ).equals(undefined)
+
+      const set = await f.h.request(
+        'PUT',
+        '/node/jev-key',
+        { apiKey: key },
+        105
+      )
+      expect(set.status).equals(200)
+      answers.push(await set.text())
+      const read = await f.h.request('GET', '/node/settings', undefined, 105)
+      expect(read.status).equals(200)
+      const readText = await read.text()
+      answers.push(readText)
+      expect(JSON.parse(readText).jev).deep.equals({ configured: true })
+      // The settings are no node administrator's but 105's to read.
+      const refused = await f.h.request('GET', '/node/settings', undefined, 101)
+      expect(refused.status).equals(403)
+      answers.push(await refused.text())
+      const cleared = await f.h.request(
+        'DELETE',
+        '/node/jev-key',
+        undefined,
+        105
+      )
+      expect(cleared.status).equals(200)
+      answers.push(await cleared.text())
+    } finally {
+      process.stdout.write = stdout
+      process.stderr.write = stderr
+      consoleMethods.forEach((name, at) => {
+        console[name] = consoles[at]
+      })
+    }
+    for (const answer of answers) expect(answer).not.contains(key)
+    expect(written.join('\n')).not.contains(key)
+  })
   it('protects the final active node administrator against removal and suspension', async () => {
     for (const change of [{ isNodeAdmin: false }, { suspended: true }]) {
       const response = await f.h.request(

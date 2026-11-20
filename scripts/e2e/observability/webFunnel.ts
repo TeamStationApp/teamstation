@@ -71,8 +71,9 @@ export async function webFunnel(
   })
   assert(typeof actor.data === 'string' && actor.data !== '')
   await m.openLink({ link: origin + '/discover' })
-  await click(m, 'Teams')
-  await fill(m, { 'Search by name or city': fixtures.joinTeam.name })
+  await fill(m, {
+    'Search leagues, seasons, teams and people': fixtures.joinTeam.name
+  })
   await m.assertVisible({ text: fixtures.joinTeam.name, timeout: 15000 })
   const opened = await m.evalBrowserScript({
     script: `const e=[...document.querySelectorAll('a,button')].find(n=>n.textContent.includes(${JSON.stringify(fixtures.joinTeam.name)}));if(!e)return 'missing';e.click();return 'opened';`

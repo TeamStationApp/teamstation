@@ -2,13 +2,15 @@ import { timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
+import { asJevControl, JevStub } from '../core/jevStub'
 import { PLACES_ANSWERS, startPlacesStub } from '../core/placesStub'
 import { FAULTS } from './catalogue'
 import { type FaultProxy, startFaultProxy } from './proxy'
 
 /**
  * The fault server a droplet stack runs between Caddy and its API, with the
- * Places stand-in beside it:
+ * Places stand-in beside it, which also answers as the Jev stand-in
+ * (`e2e/core/jevStub.ts`):
  *
  *   node -r sucrase/register e2e/faults/server.ts --listen 127.0.0.1:9200 \
  *     --target http://127.0.0.1:9100 --places 127.0.0.1:9300 --token-file <file>
@@ -22,6 +24,9 @@ import { type FaultProxy, startFaultProxy } from './proxy'
  *   PUT  /__e2e/fault  { fault | null }   a proxy fault from the catalogue, or none
  *   GET  /__e2e/errors?since=<ms>         { errors } newer than `since`
  *   GET  /__e2e/injections?since=<ms>     { injections } newer than `since`
+ *   GET  /__e2e/jev                       the Jev stand-in's script and requests
+ *   PUT  /__e2e/jev    { passThrough?, rule?, queries? }
+ *                                         replaces the script, forgetting the requests
  */
 const CONTROL = '/__e2e/'
 
@@ -41,10 +46,31 @@ function authorized(req: IncomingMessage, token: string): boolean {
   return given.length === wanted.length && timingSafeEqual(given, wanted)
 }
 
+/** Reads a JSON body, answering 400 for one that is not JSON. */
+function withJson(
+  req: IncomingMessage,
+  res: ServerResponse,
+  then: (body: unknown) => void
+): void {
+  const chunks: Buffer[] = []
+  req.on('data', (chunk: Buffer) => chunks.push(chunk))
+  req.on('end', () => {
+    let body: unknown
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString())
+    } catch {
+      json(res, 400, { error: 'the body is not JSON' })
+      return
+    }
+    then(body)
+  })
+}
+
 /** The /__e2e/ routes, for `startFaultProxy`'s `control`. */
 export function controlRoutes(
   proxy: () => FaultProxy,
-  token: string
+  token: string,
+  jev?: JevStub
 ): (req: IncomingMessage, res: ServerResponse) => boolean {
   return (req, res) => {
     const url = new URL(req.url ?? '/', 'http://faults')
@@ -62,18 +88,8 @@ export function controlRoutes(
     if (route === 'fault' && req.method === 'GET') {
       json(res, 200, { fault: proxy().fault() })
     } else if (route === 'fault' && req.method === 'PUT') {
-      const chunks: Buffer[] = []
-      req.on('data', (chunk: Buffer) => chunks.push(chunk))
-      req.on('end', () => {
-        let fault: unknown
-        try {
-          fault = (
-            JSON.parse(Buffer.concat(chunks).toString()) as { fault?: unknown }
-          ).fault
-        } catch {
-          json(res, 400, { error: 'the body is not JSON' })
-          return
-        }
+      withJson(req, res, body => {
+        const fault = (body as { fault?: unknown } | null)?.fault
         if (
           fault !== null &&
           (typeof fault !== 'string' || !PROXY_FAULTS.includes(fault))
@@ -92,6 +108,21 @@ export function controlRoutes(
       json(res, 200, {
         injections: proxy().injections.filter(row => row.at >= since)
       })
+    } else if (route === 'jev' && jev == null) {
+      json(res, 404, { error: 'this fault server has no Jev stand-in' })
+    } else if (route === 'jev' && req.method === 'GET') {
+      json(res, 200, jev!.view())
+    } else if (route === 'jev' && req.method === 'PUT') {
+      withJson(req, res, body => {
+        let control
+        try {
+          control = asJevControl(body)
+        } catch (error) {
+          json(res, 400, { error: (error as Error).message })
+          return
+        }
+        json(res, 200, jev!.set(control))
+      })
     } else {
       json(res, 404, { error: `no route ${req.method} ${url.pathname}` })
     }
@@ -106,9 +137,13 @@ export interface FaultServerOptions {
   token: string
 }
 
-export async function startFaultServer(options: FaultServerOptions): Promise<{
+export async function startFaultServer(
+  options: FaultServerOptions,
+  jev: JevStub = new JevStub()
+): Promise<{
   proxy: FaultProxy
   placesUrl?: string
+  jev?: JevStub
   close: () => Promise<void>
 }> {
   if (options.token.length < 32) throw new Error('the stack token is too short')
@@ -122,7 +157,12 @@ export async function startFaultServer(options: FaultServerOptions): Promise<{
     target: options.target,
     host: options.listen.host,
     port: options.listen.port,
-    control: controlRoutes(current, options.token)
+    // The Jev stand-in answers on the Places listener, so only with one.
+    control: controlRoutes(
+      current,
+      options.token,
+      options.places == null ? undefined : jev
+    )
   })
   holder.proxy = proxy
   const places =
@@ -131,11 +171,12 @@ export async function startFaultServer(options: FaultServerOptions): Promise<{
       : await startPlacesStub(
           options.places.host,
           PLACES_ANSWERS,
-          options.places.port
+          options.places.port,
+          jev
         )
   return {
     proxy,
-    ...(places == null ? {} : { placesUrl: places.url }),
+    ...(places == null ? {} : { placesUrl: places.url, jev }),
     close: async () => {
       places?.server.close()
       await proxy.close()
@@ -186,7 +227,7 @@ if (require.main === module) {
   startFaultServer(parseFaultServerArgs(process.argv.slice(2))).then(
     started => {
       console.log(
-        `fault server on ${started.proxy.url}${started.placesUrl == null ? '' : `, Places on ${started.placesUrl}`}`
+        `fault server on ${started.proxy.url}${started.placesUrl == null ? '' : `, Places and Jev on ${started.placesUrl}`}`
       )
     },
     (error: unknown) => {

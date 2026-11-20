@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 
+import { JEV_PATH, type JevStub } from './jevStub'
 import { ROOT } from './manifest'
 
 /** Fixed Google answers, the same file a seat's budget proxy serves in fake mode. */
@@ -27,16 +28,29 @@ export function placesAnswer(
   return undefined
 }
 
+/**
+ * Google's Places answers from `file`, and, with `jev`, the Jev stand-in's
+ * `POST /v1/systemone` on the same listener, which the stack's
+ * `jev.baseUrl` names.
+ */
 export async function startPlacesStub(
   host: string,
   file = PLACES_ANSWERS,
-  port = 0
+  port = 0,
+  jev?: JevStub
 ): Promise<{ server: Server; url: string }> {
   const answers = JSON.parse(readFileSync(file, 'utf8')) as Record<
     string,
     unknown
   >
   const server = createServer((req, res) => {
+    if (
+      jev != null &&
+      new URL(req.url ?? '/', 'http://places').pathname === JEV_PATH
+    ) {
+      jev.handle(req, res)
+      return
+    }
     const answer = placesAnswer(answers, req.method ?? 'GET', req.url ?? '/')
     res.writeHead(answer == null ? 404 : 200, {
       'content-type': 'application/json'

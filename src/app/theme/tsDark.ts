@@ -14,6 +14,11 @@ const palette = {
   selectorGray: '#575D54',
   blue: '#90CAF9',
   white: '#FFFFFF',
+  /**
+   * A warm gray that a white mark reads on, as a close button: a step
+   * lighter than the light theme's, to stand off the dark olive pill.
+   */
+  closeGray: '#625D53',
   black: '#000000',
   transparent: '#00000000',
 
@@ -144,6 +149,8 @@ export const tsDark: Theme = {
   pillTextColor: palette.tsBeige,
   pillActiveBackground: palette.tsLightOlive,
   pillActiveTextColor: palette.tsVeryDarkGreen,
+  pillCloseColor: palette.closeGray,
+  pillCloseMarkColor: palette.white,
 
   headerBackgroundColor: palette.tsVeryDarkGreen,
   headerBorderColor: palette.tsDarkOlive,

@@ -5,7 +5,14 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { installedPackage, prepareApp } from './prepare'
+import { isHubDevice, type MaestroDaemon } from './maestro'
+import {
+  installedPackage,
+  iosIsPhysical,
+  prepareApp,
+  prepareAppOnHub,
+  preparesOnHub
+} from './prepare'
 import { BlockedError, HarnessError } from './result'
 
 function thrown(run: () => void): Error {
@@ -111,5 +118,94 @@ describe('prepare', function () {
         )
       }).message
     ).includes('Unknown app')
+  })
+
+  it('installs through a hub under a lease it ends, and notes the package under the hub id', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'prepare-'))
+    const apk = join(dir, 'android-600.apk')
+    writeFileSync(apk, 'apk')
+    const calls: unknown[][] = []
+    const hub: MaestroDaemon = {
+      attach: async options => {
+        calls.push(['attach', options])
+        return {
+          installApp: async (file: string) => calls.push(['installApp', file]),
+          screenshot: async () => new Uint8Array(),
+          hierarchy: async () => ({}),
+          state: async () => ({}),
+          detach: async () => undefined
+        }
+      },
+      shutdown: async () => calls.push(['shutdown'])
+    }
+    await prepareAppOnHub(
+      {
+        app: 'teamstation-android',
+        device: 'ANDROID-SERIAL@hub',
+        packagePath: apk
+      },
+      hub,
+      dir
+    )
+    expect(calls).deep.equals([
+      ['attach', { device: 'ANDROID-SERIAL@hub' }],
+      ['installApp', apk],
+      ['shutdown']
+    ])
+    expect(installedPackage('ANDROID-SERIAL@hub', dir)).equals(apk)
+
+    // A failed install blocks, and still ends the lease.
+    calls.length = 0
+    const failing: MaestroDaemon = {
+      ...hub,
+      attach: async () => {
+        throw new Error('DEVICE_NOT_FOUND')
+      }
+    }
+    let error: unknown
+    try {
+      await prepareAppOnHub(
+        { app: 'teamstation-ios', device: 'x@hub', packagePath: apk },
+        failing,
+        dir
+      )
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).instanceOf(BlockedError)
+    expect(calls).deep.equals([['shutdown']])
+    for (const options of [
+      { app: 'teamstation-ios', device: 'x@hub' },
+      { app: 'teamstation-web', device: 'x@hub', packagePath: apk }
+    ]) {
+      let refused: unknown
+      try {
+        await prepareAppOnHub(options, hub, dir)
+      } catch (caught) {
+        refused = caught
+      }
+      expect(refused).instanceOf(HarnessError)
+    }
+  })
+
+  it('takes a hub device for a real one without asking this machine’s simulators', function () {
+    const asked: string[] = []
+    const simulator = (device: string): boolean => {
+      asked.push(device)
+      return device === 'sim-1'
+    }
+    expect(isHubDevice('PHONE-UDID@hub')).equals(true)
+    expect(isHubDevice('PHONE-UDID')).equals(false)
+    expect(iosIsPhysical('PHONE-UDID@hub', simulator)).equals(true)
+    expect(asked, 'no simctl for a hub device').deep.equals([])
+    expect(iosIsPhysical('sim-1', simulator)).equals(false)
+    expect(iosIsPhysical('phone-1', simulator)).equals(true)
+  })
+
+  it('installs through the hub only a hub’s own device, even with a hub configured', function () {
+    const hub = { maestroHub: { address: '192.0.2.1:7433', tokenFile: '/t' } }
+    expect(preparesOnHub(hub, 'ANDROID-SERIAL@hub')).equals(true)
+    expect(preparesOnHub(hub, 'SIM-UDID')).equals(false)
+    expect(preparesOnHub({}, 'ANDROID-SERIAL@hub')).equals(false)
   })
 })

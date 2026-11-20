@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { Kysely } from 'kysely'
 
+import type { FullNameGrants } from '../access'
 import { type Actor, isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 
@@ -55,12 +56,13 @@ export function readerOf(actor: Actor | undefined): Reader | undefined {
  * when the caller has asked already: `known` is then whom of them it found the
  * reader may read in full (its own `mayViewFullName`), taken as the answer.
  * Reading in full never grants changing: that stays `mayEditNames`.
+ * `grants`, the reader's own `fullNameGrants`, is handed on to it.
  */
 export async function fullNamesFor(
   db: Kysely<Database>,
   reader: Reader | undefined,
   userIds: Iterable<string>,
-  options: { known?: Iterable<string> } = {}
+  options: { known?: Iterable<string>; grants?: FullNameGrants } = {}
 ): Promise<Set<string>> {
   const wanted = [...new Set(userIds)]
   if (reader == null || isSpoken() || wanted.length === 0) return new Set()
@@ -71,9 +73,14 @@ export async function fullNamesFor(
   // Name formats are read by migrations, which must not load the server that
   // `access.ts` brings with it: only a read for a reader loads it.
   const { mayViewFullNames } = await import('../access')
-  return await mayViewFullNames(db, reader.userId, wanted, {
-    isAdmin: reader.isAdmin
-  })
+  return await mayViewFullNames(
+    db,
+    reader.userId,
+    wanted,
+    { isAdmin: reader.isAdmin },
+    new Map(),
+    options.grants
+  )
 }
 
 /**

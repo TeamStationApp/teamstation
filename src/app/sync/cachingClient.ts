@@ -16,6 +16,7 @@ import {
   type MyRoles,
   type Page,
   type RequestOptions,
+  type RosterCandidate,
   type SeasonGame,
   type StoredChange,
   storedGameOfEvents,
@@ -43,10 +44,11 @@ import {
 import {
   CANDIDATES_KEPT,
   candidatesKey,
+  candidatesQueryOf,
   candidatesTeamOf,
-  candidatesWordsOf,
   documentKeyOf,
   fallbackKeyOf,
+  foundWords,
   gameKey,
   HOME_LISTS,
   PLACEHOLDER_TEAMS,
@@ -185,6 +187,26 @@ function isGone(error: unknown): boolean {
     error instanceof HttpError &&
     (error.code === 'notFound' || error.code === 'forbidden')
   )
+}
+
+/**
+ * An answer of `GET /users?forTeam=` to `query`, each row's `matched` (the
+ * folded words the server says found him) made the words of `query` that
+ * did, as the search socket's rows are kept; none kept when none did.
+ */
+function withFoundWords(answer: unknown, query: string): unknown {
+  if (!Array.isArray(answer)) return answer
+  return answer.map((entry: unknown) => {
+    if (entry == null || typeof entry !== 'object') return entry
+    const { matched, ...row } = entry as { matched?: unknown }
+    const words = foundWords(
+      query,
+      Array.isArray(matched)
+        ? matched.filter(word => typeof word === 'string')
+        : []
+    )
+    return words.length === 0 ? row : { ...row, matched: words }
+  })
 }
 
 /** The game a stored-first read is of, or none for a person's or a team's. */
@@ -787,6 +809,15 @@ export class CachingClient extends TeamStationClient {
     })
   }
 
+  override async keepRosterCandidates(
+    teamId: string,
+    rows: ReadonlyArray<RosterCandidate & { matched?: string[] }>
+  ): Promise<void> {
+    const opened = this.owned
+    if (opened == null) return
+    await this.keepCandidates(opened.store, teamId, rows)
+  }
+
   override async cached<T>(
     key: string,
     cleaner: Cleaner<T>
@@ -976,8 +1007,7 @@ export class CachingClient extends TeamStationClient {
         await this.keepCandidates(
           opened.store,
           team,
-          value,
-          candidatesWordsOf(path)
+          withFoundWords(value, candidatesQueryOf(path))
         )
       return value
     }
@@ -1041,8 +1071,7 @@ export class CachingClient extends TeamStationClient {
       await this.keepCandidates(
         opened.store,
         team,
-        value,
-        candidatesWordsOf(path)
+        withFoundWords(value, candidatesQueryOf(path))
       )
     if (answered?.raw === undefined) return value
     const kept = await this.storeTo(opened.store, key, {
@@ -1527,14 +1556,13 @@ export class CachingClient extends TeamStationClient {
    * lists at once, and offline. Every answer counts, a typed search's as
    * much as the list with nothing typed, up to `CANDIDATES_KEPT`. Each
    * person keeps, as `matched`, the words of every search that found him
-   * (`words`), so the phone finds him again by them offline although his
-   * short name may not show the name they matched.
+   * (a row's own `matched`), so the phone finds him again by them offline
+   * although his short name may not show the name they matched.
    */
   private async keepCandidates(
     store: Promise<DocumentStore | undefined>,
     teamId: string,
-    found: unknown,
-    words: readonly string[] = []
+    found: unknown
   ): Promise<void> {
     if (!Array.isArray(found) || found.length === 0) return
     const key = candidatesKey(teamId)
@@ -1566,7 +1594,10 @@ export class CachingClient extends TeamStationClient {
         const before = new Map(kept.map(entry => [idOf(entry), entry]))
         const answered = found.map(entry => {
           const matched = [
-            ...new Set([...matchedOf(before.get(idOf(entry))), ...words])
+            ...new Set([
+              ...matchedOf(before.get(idOf(entry))),
+              ...matchedOf(entry)
+            ])
           ]
           return matched.length === 0 ||
             entry == null ||

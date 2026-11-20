@@ -3,7 +3,7 @@ import { Text, View } from 'react-native'
 
 import { Composer } from '../app/chat/Composer'
 import { MessageActions } from '../app/chat/MessageActions'
-import { PlayerSearchField } from '../app/components/PlayerSearchField'
+import { SearchField } from '../app/components/SearchField'
 import { TextField } from '../app/components/TextField'
 import { BarButton, ExitButton } from '../app/player/multiCam/barParts'
 import { OverlayButton } from '../app/stream/overlay/OverlayButton'
@@ -226,7 +226,12 @@ export function ButtonIconScreensFixture({
         {screen === 'search' && (
           <View style={{ padding: 24, gap: 24 }}>
             <TextField label="Name" value={text} onChangeText={setText} />
-            <PlayerSearchField value={text} onChangeText={setText} />
+            <SearchField
+              testID="Player search field"
+              placeholder="Search players"
+              value={text}
+              onChangeText={setText}
+            />
           </View>
         )}
         {screen === 'walkup' && (

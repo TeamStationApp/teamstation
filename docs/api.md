@@ -38,7 +38,9 @@ card draws (a short name, a picture,
 hands and the teams they play for this season), lists strangers only once
 three letters of a name are typed, and answers once: a bare array of at most
 100 rows, with no cursor and no further pages (see **Lists with no pages**
-below).
+below). A search keeps anybody any one typed word finds, so each row found by
+typing lists, as `matched`, the folded words that found that person: what the
+phone keeps to find them again offline.
 
 - **Repeat a parameter for several values:** `?season=a&season=b`.
 - **Leaving a parameter out keeps the collection's existing answer.** Adding

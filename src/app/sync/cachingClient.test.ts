@@ -4,7 +4,12 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import { asPage, asSeasonGame, TeamStationClient } from '../../common/api'
+import {
+  asPage,
+  asSeasonGame,
+  type RosterCandidate,
+  TeamStationClient
+} from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { pageOf } from '../../test/pageOf'
@@ -22,10 +27,11 @@ import {
 import {
   CANDIDATES_KEPT,
   candidatesKey,
+  candidatesQueryOf,
   candidatesTeamOf,
-  candidatesWordsOf,
   documentKeyOf,
   fallbackKeyOf,
+  foundWords,
   fullRosterKey,
   GAMES_ALL,
   GAMES_PAST,
@@ -238,12 +244,61 @@ describe('CachingClient', function () {
     expect(candidatesTeamOf('/users?forTeam=t%201&q=x')).equals('t 1')
     expect(candidatesTeamOf('/users?guardedBy=me')).equals(undefined)
     expect(candidatesTeamOf('/teams/t1/roster')).equals(undefined)
-    expect(candidatesWordsOf('/users?forTeam=t1&q=Jor%20%20Q')).deep.equals([
-      'jor',
-      'q'
+    expect(candidatesQueryOf('/users?forTeam=t1&q=Jor%20%20Q')).equals('Jor  Q')
+    expect(candidatesQueryOf('/users?forTeam=t1')).equals('')
+    expect(candidatesQueryOf('/teams/t1/roster')).equals('')
+    expect(foundWords('Jor  Q', ['jor', 'q'])).deep.equals(['jor', 'q'])
+    expect(foundWords('John Smith', ['smith'])).deep.equals(['smith'])
+    expect(foundWords('José smith-jones', ['jose', 'smith'])).deep.equals([
+      'josé'
     ])
-    expect(candidatesWordsOf('/users?forTeam=t1')).deep.equals([])
-    expect(candidatesWordsOf('/teams/t1/roster')).deep.equals([])
+    expect(foundWords('john', [])).deep.equals([])
+  })
+
+  it('keeps what the search socket found for a team as an answer of the route is kept, with its words', async function () {
+    const row = (name: string): RosterCandidate => ({
+      userId: `usr_${name}`,
+      gumboId: null,
+      externalIds: [],
+      shortName: `${name} B`,
+      shortParts: { first: name, last: 'B' },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      affiliations: '',
+      tier: 'mine'
+    })
+    const client = clientOf(server({}).fetch)
+    // Signed out, there is no file to keep them in.
+    const found = (
+      name: string,
+      matched?: string[]
+    ): ReturnType<typeof row> & { matched?: string[] } =>
+      matched == null ? row(name) : { ...row(name), matched }
+    await client.keepRosterCandidates('tem_hawks', [found('Mookie', ['moo'])])
+    client.openFor('usr_1')
+    await client.keepRosterCandidates('tem_hawks', [found('Mookie', ['moo'])])
+    // Each row keeps the words that found it, none for one they did not.
+    await client.keepRosterCandidates('tem_hawks', [
+      found('Aaron', ['b']),
+      found('Mookie', ['b']),
+      found('Freddie')
+    ])
+    const kept = await client.cached(
+      candidatesKey('tem_hawks'),
+      raw => raw as Array<{ userId: string; matched?: string[] }>
+    )
+    expect(kept?.map(entry => [entry.userId, entry.matched])).deep.equals([
+      ['usr_Aaron', ['b']],
+      ['usr_Mookie', ['moo', 'b']],
+      ['usr_Freddie', undefined]
+    ])
+    // The web's client keeps none.
+    await new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server({}).fetch
+    }).keepRosterCandidates('tem_hawks', [found('Mookie', ['moo'])])
   })
 
   interface Kept {
@@ -268,13 +323,14 @@ describe('CachingClient', function () {
     const nearest = Array.from({ length: 30 }, (_, i) =>
       person(`Near${i}`, 'Birch')
     )
+    // Each row says which folded words found him.
     const net = server({
       '/users?forTeam=tem_falcons&forGame=gam_1&limit=30': { body: nearest },
       '/users?forTeam=tem_falcons&forGame=gam_1&q=Quill&limit=30': {
-        body: [person('Jordan', 'Quillfeather')]
+        body: [{ ...person('Jordan', 'Quillfeather'), matched: ['quill'] }]
       },
       '/users?forTeam=tem_falcons&forGame=gam_1&q=jor+q&limit=30': {
-        body: [person('Jordan', 'Quillfeather')]
+        body: [{ ...person('Jordan', 'Quillfeather'), matched: ['jor', 'q'] }]
       }
     })
     const client = clientOf(net.fetch)
@@ -312,6 +368,53 @@ describe('CachingClient', function () {
     expect(kept?.map(row => row.userId)).includes('usr_Jordan')
   })
 
+  it('keeps with each person a typed search found only the words that found him, as the route says', async function () {
+    const person = (first: string, last: string): Record<string, unknown> => ({
+      userId: `usr_${first}`,
+      gumboId: null,
+      externalIds: [],
+      shortName: `${first} ${last.slice(0, 1)}`,
+      shortParts: { first, last: last.slice(0, 1) },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      tier: 'league'
+    })
+    // The route keeps a person any one typed word found.
+    const net = server({
+      '/users?forTeam=tem_falcons&q=john+smith&limit=30': {
+        body: [
+          { ...person('John', 'Smithson'), matched: ['john', 'smith'] },
+          { ...person('Jane', 'Smith'), matched: ['smith'] },
+          // An older server says nothing: no words are kept for him.
+          person('Jake', 'Smith')
+        ]
+      }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    const answered = await client.rosterCandidates({
+      teamId: 'tem_falcons',
+      q: 'john smith',
+      limit: 30
+    })
+    expect(answered.map(row => row.matched)).deep.equals([
+      ['john', 'smith'],
+      ['smith'],
+      undefined
+    ])
+    const kept = await client.cached(
+      candidatesKey('tem_falcons'),
+      raw => raw as Kept[]
+    )
+    expect(kept?.map(row => [row.userId, row.matched])).deep.equals([
+      ['usr_John', ['john', 'smith']],
+      ['usr_Jane', ['smith']],
+      ['usr_Jake', undefined]
+    ])
+  })
+
   it('keeps no more than the cap of found people, the newest answer’s first', async function () {
     const person = (n: number): Record<string, unknown> => ({
       userId: `usr_${n}`,
@@ -330,7 +433,10 @@ describe('CachingClient', function () {
     const pages = Math.ceil(CANDIDATES_KEPT / 100) + 1
     for (let p = 0; p < pages; p++)
       routes[`/users?forTeam=tem_falcons&q=p${p}&limit=100`] = {
-        body: Array.from({ length: 100 }, (_, i) => person(p * 100 + i))
+        body: Array.from({ length: 100 }, (_, i) => ({
+          ...person(p * 100 + i),
+          matched: [`p${p}`]
+        }))
       }
     const client = clientOf(server(routes).fetch)
     client.openFor('usr_1')

@@ -91,6 +91,10 @@ import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
 import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
+import {
+  openSearchSocket,
+  SearchSocketFactoryContext
+} from './hooks/searchSocketFactory'
 import { useForegroundEntry } from './hooks/useForegroundEntry'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
@@ -185,7 +189,6 @@ import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { CreatePlayerScreen } from './screens/CreatePlayerScreen'
-import { DiscoverScreen } from './screens/DiscoverScreen'
 import { EventSettingsScreen } from './screens/EventSettingsScreen'
 import { FieldManagerScreen } from './screens/FieldManagerScreen'
 import { FieldScreen } from './screens/FieldScreen'
@@ -218,6 +221,7 @@ import { PlayingTimeRulesScreen } from './screens/PlayingTimeRulesScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SchedulePreviewScreen } from './screens/SchedulePreviewScreen'
 import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
+import { SearchScreen, type SearchSocketFactory } from './screens/SearchScreen'
 import { SeasonScreen } from './screens/SeasonScreen'
 import { SeasonTimeFrameScreen } from './screens/SeasonTimeFrameScreen'
 import { SignInLinkScreen } from './screens/SignInLinkScreen'
@@ -319,6 +323,8 @@ export interface AppProps {
    * one.
    */
   documentCache?: OpenDocumentCache
+  /** Makes the Search tab's socket; a test passes one that opens none. */
+  searchSocketFactory?: SearchSocketFactory
 }
 
 type ScoringSettingsRefresh = () => void
@@ -2811,11 +2817,13 @@ function Shell(props: AppProps): React.ReactElement {
           }
         />
       ) : tab === 'search' ? (
-        <DiscoverScreen
+        <SearchScreen
           key="search"
           client={client}
-          onOpen={openGroup}
-          follow={session != null}
+          signedIn={session != null}
+          onOpenGroup={openGroup}
+          onOpenPerson={openPlayer}
+          searchSocketFactory={props.searchSocketFactory}
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen
@@ -2837,12 +2845,17 @@ function Shell(props: AppProps): React.ReactElement {
         />
       )
     ) : top.name === 'discover' ? (
-      <DiscoverScreen
-        key={`${top.kind ?? 'team'}:${top.follow === true}`}
+      // The route's `kind` is from the screen this replaced: one field now
+      // finds every kind.
+      <SearchScreen
+        key={`discover:${top.follow === true}`}
         client={client}
-        onOpen={openGroup}
-        initialKind={top.kind}
+        signedIn={session != null}
+        onOpenGroup={openGroup}
+        onOpenPerson={openPlayer}
+        // Signed out, no row can be followed, so none is offered.
         follow={top.follow === true && session != null}
+        searchSocketFactory={props.searchSocketFactory}
       />
     ) : top.name === 'createGroup' ? (
       <CreateGroupScreen
@@ -4322,144 +4335,153 @@ function Shell(props: AppProps): React.ReactElement {
 
   const shell = withChatKeyboard(
     <GestureHandlerRootView style={styles.root}>
-      <DeviceApprovalContext.Provider value={deviceApprovals}>
-        <ChatOverlayHost>
-          <TessOverlayProvider active={tessColumn}>
-            <View style={[styles.app, tessColumn && styles.split]}>
-              <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-                <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
-                  <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
-                    <StackNavigator
-                      sidebarWidth={sidebarWidth}
-                      sidebar={
-                        sidebarWidth > 0 ? (
-                          <AppSidebar
-                            account={account}
-                            notifications={notifications}
-                            nodeAdministration={nodeAdministration}
-                            selected={tab}
-                            onSelect={selectTab}
-                            unread={chatOn && hasUnread(chatList)}
-                            apiBaseUrl={apiBaseUrl}
-                            buildsClient={session == null ? undefined : client}
-                            isAdmin={isAdmin}
-                          />
-                        ) : undefined
-                      }
-                      top={topScene}
-                      retained={retainedScene}
-                      // The field preview is one scene, with nothing beneath.
-                      renderBelow={() =>
-                        props.fieldPreview !== true && stack.length > 0
-                          ? sceneOf(stack.length - 2)
-                          : undefined
-                      }
-                      chrome={chrome}
-                      onForget={key => sceneVisits.current.delete(key)}
-                      onSwipeBack={swipeBack ? popFromDrag : undefined}
-                      intent={navigationIntent}
-                      // Not under Tess's layer: there Back closes the chat
-                      // (`useTessBack`), and must not drag away the screen it
-                      // covers.
-                      predictiveBack={
-                        predictiveBack && !tessLayer && !headerMenuOpen
-                      }
-                      predictiveBackNow={predictiveBackNow}
-                      popPending={popPending}
-                      headerHeight={headerHeight}
-                      navigationHeight={
-                        isWide || sidebarWidth > 0 ? 0 : navigationHeight
-                      }
-                      bannerHeight={bottomBanner}
-                      onHandoff={setHandoff}
-                      onHandoffHeight={setHandoffHeight}
-                      onBackOverride={setBack}
-                    />
-                  </ScreenScopeProvider>
-                  <View
-                    pointerEvents="box-none"
-                    style={[styles.paneOverlay, { left: sidebarWidth }]}
-                  >
-                    <TessOverlayHost />
-                  </View>
-                </PaneBesideTess>
-              </View>
-              {tessPanel}
-              {/* Over an immersive scene (the scorer) the chrome, and the
+      <SearchSocketFactoryContext.Provider
+        value={props.searchSocketFactory ?? openSearchSocket}
+      >
+        <DeviceApprovalContext.Provider value={deviceApprovals}>
+          <ChatOverlayHost>
+            <TessOverlayProvider active={tessColumn}>
+              <View style={[styles.app, tessColumn && styles.split]}>
+                <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
+                  <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
+                    <ScreenScopeProvider
+                      socket={gameSocket}
+                      scope={visibleScope}
+                    >
+                      <StackNavigator
+                        sidebarWidth={sidebarWidth}
+                        sidebar={
+                          sidebarWidth > 0 ? (
+                            <AppSidebar
+                              account={account}
+                              notifications={notifications}
+                              nodeAdministration={nodeAdministration}
+                              selected={tab}
+                              onSelect={selectTab}
+                              unread={chatOn && hasUnread(chatList)}
+                              apiBaseUrl={apiBaseUrl}
+                              buildsClient={
+                                session == null ? undefined : client
+                              }
+                              isAdmin={isAdmin}
+                            />
+                          ) : undefined
+                        }
+                        top={topScene}
+                        retained={retainedScene}
+                        // The field preview is one scene, with nothing beneath.
+                        renderBelow={() =>
+                          props.fieldPreview !== true && stack.length > 0
+                            ? sceneOf(stack.length - 2)
+                            : undefined
+                        }
+                        chrome={chrome}
+                        onForget={key => sceneVisits.current.delete(key)}
+                        onSwipeBack={swipeBack ? popFromDrag : undefined}
+                        intent={navigationIntent}
+                        // Not under Tess's layer: there Back closes the chat
+                        // (`useTessBack`), and must not drag away the screen it
+                        // covers.
+                        predictiveBack={
+                          predictiveBack && !tessLayer && !headerMenuOpen
+                        }
+                        predictiveBackNow={predictiveBackNow}
+                        popPending={popPending}
+                        headerHeight={headerHeight}
+                        navigationHeight={
+                          isWide || sidebarWidth > 0 ? 0 : navigationHeight
+                        }
+                        bannerHeight={bottomBanner}
+                        onHandoff={setHandoff}
+                        onHandoffHeight={setHandoffHeight}
+                        onBackOverride={setBack}
+                      />
+                    </ScreenScopeProvider>
+                    <View
+                      pointerEvents="box-none"
+                      style={[styles.paneOverlay, { left: sidebarWidth }]}
+                    >
+                      <TessOverlayHost />
+                    </View>
+                  </PaneBesideTess>
+                </View>
+                {tessPanel}
+                {/* Over an immersive scene (the scorer) the chrome, and the
                   banner in it, is not drawn: nothing to clear. */}
-              <SuccessToast
-                notice={successNotice}
-                bannerHeight={immersiveTop ? 0 : bottomBanner}
-              />
-              {chatOn && <DeviceApprovalPrompt />}
-              <ChatAgeHost
-                state={chatAge}
-                topKey={topKey}
-                chatSurface={isChatSurface(tab, top?.name)}
-                onLeaveChat={declineChat}
-              />
-              <NotificationAskHost
-                state={notificationAsk}
-                client={client}
-                userId={signedInAs}
-                chatShown={isChatSurface(tab, top?.name)}
-              />
-              {confirmingSignOut && (
-                <ChoiceSheet
-                  title="Sign Out?"
-                  choices={[
-                    {
-                      label: 'Sign Out',
-                      detail: unsentLossText(outbox?.count ?? 0),
-                      destructive: true,
-                      onPress: signOutNow
-                    }
-                  ]}
-                  onClose={() => {
-                    setConfirmingSignOut(false)
-                  }}
+                <SuccessToast
+                  notice={successNotice}
+                  bannerHeight={immersiveTop ? 0 : bottomBanner}
                 />
-              )}
-              {askingTeam != null && caching != null && (
-                <ChoiceSheet
-                  title="Player Not Saved"
-                  choices={[
-                    ...(askingTeam.state === 'dead'
-                      ? [
-                          {
-                            label: 'Try Again',
-                            onPress: () => {
-                              caching
-                                .retryTeam(askingTeam.id)
-                                .catch(() => undefined)
-                            }
-                          }
-                        ]
-                      : []),
-                    {
-                      label: "Use Server's Copy",
-                      detail:
-                        "Takes the player off this phone and shows the team's roster as the server has it.",
-                      destructive: true,
-                      onPress: () => {
-                        caching.discardTeam(askingTeam.id).catch(() => false)
+                {chatOn && <DeviceApprovalPrompt />}
+                <ChatAgeHost
+                  state={chatAge}
+                  topKey={topKey}
+                  chatSurface={isChatSurface(tab, top?.name)}
+                  onLeaveChat={declineChat}
+                />
+                <NotificationAskHost
+                  state={notificationAsk}
+                  client={client}
+                  userId={signedInAs}
+                  chatShown={isChatSurface(tab, top?.name)}
+                />
+                {confirmingSignOut && (
+                  <ChoiceSheet
+                    title="Sign Out?"
+                    choices={[
+                      {
+                        label: 'Sign Out',
+                        detail: unsentLossText(outbox?.count ?? 0),
+                        destructive: true,
+                        onPress: signOutNow
                       }
-                    }
-                  ]}
-                  onClose={() => {
-                    setAskingTeam(undefined)
-                  }}
-                />
-              )}
-              {updateRequired && (
-                <UpdateRequiredNotice
-                  onReload={Platform.OS === 'web' ? reloadPage : undefined}
-                />
-              )}
-            </View>
-          </TessOverlayProvider>
-        </ChatOverlayHost>
-      </DeviceApprovalContext.Provider>
+                    ]}
+                    onClose={() => {
+                      setConfirmingSignOut(false)
+                    }}
+                  />
+                )}
+                {askingTeam != null && caching != null && (
+                  <ChoiceSheet
+                    title="Player Not Saved"
+                    choices={[
+                      ...(askingTeam.state === 'dead'
+                        ? [
+                            {
+                              label: 'Try Again',
+                              onPress: () => {
+                                caching
+                                  .retryTeam(askingTeam.id)
+                                  .catch(() => undefined)
+                              }
+                            }
+                          ]
+                        : []),
+                      {
+                        label: "Use Server's Copy",
+                        detail:
+                          "Takes the player off this phone and shows the team's roster as the server has it.",
+                        destructive: true,
+                        onPress: () => {
+                          caching.discardTeam(askingTeam.id).catch(() => false)
+                        }
+                      }
+                    ]}
+                    onClose={() => {
+                      setAskingTeam(undefined)
+                    }}
+                  />
+                )}
+                {updateRequired && (
+                  <UpdateRequiredNotice
+                    onReload={Platform.OS === 'web' ? reloadPage : undefined}
+                  />
+                )}
+              </View>
+            </TessOverlayProvider>
+          </ChatOverlayHost>
+        </DeviceApprovalContext.Provider>
+      </SearchSocketFactoryContext.Provider>
     </GestureHandlerRootView>
   )
   return (

@@ -1,6 +1,7 @@
 import {
   asArray,
   asBoolean,
+  asEither,
   asNumber,
   asObject,
   asOptional,
@@ -40,6 +41,33 @@ export const asServerConfig = asObject({
       apiKey: asString,
       baseUrl: asOptional(asString, 'https://places.googleapis.com')
     })
+  ),
+  /**
+   * Where search's Jev ranking calls TypeSafe's System One API. The key is a
+   * node setting (`PUT /node/jev-key`), never in this file. Tests and the
+   * end-to-end stack point `baseUrl` at a stand-in.
+   */
+  jev: asOptional(
+    asObject({
+      baseUrl: asOptional(asString, 'https://api.typesafe.ai')
+    }),
+    { baseUrl: 'https://api.typesafe.ai' }
+  ),
+  /**
+   * Where the server keeps DB-IP's free IP-to-city database (CC BY 4.0,
+   * credited on About TeamStation), which ranks a reader's place pills near
+   * their address when no group of theirs has a place. Absent, it is kept
+   * in `ipPlaces` under the service's state directory (`STATE_DIRECTORY`),
+   * and off where there is none (a laptop, the test suites); `false` turns
+   * it off.
+   * `source` is the download address, `{month}` for `YYYY-MM`; tests point
+   * it at a stand-in.
+   */
+  ipPlaces: asOptional(
+    asEither(
+      asValue(false),
+      asObject({ dir: asString, source: asOptional(asString) })
+    )
   ),
   /** Where the API listens. */
   listenHost: asOptional(asString, '127.0.0.1'),

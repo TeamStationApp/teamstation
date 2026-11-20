@@ -99,8 +99,10 @@ export async function nativeFunnel(
   })
   assert(fixtures.joinTeam != null, 'Owned discovery fixture required')
   await m.openLink({ link: 'teamstation://discover' })
-  await m.tapOn({ text: '^Teams$' })
-  await paste('Search by name or city', fixtures.joinTeam.name)
+  await paste(
+    'Search leagues, seasons, teams and people',
+    fixtures.joinTeam.name
+  )
   await m.tapOn({ text: 'Open ' + fixtures.joinTeam.name, timeout: 15000 })
   await m.tapOn({ text: 'Follow ' + fixtures.joinTeam.name })
   await m.assertVisible({ text: 'Unfollow ' + fixtures.joinTeam.name })

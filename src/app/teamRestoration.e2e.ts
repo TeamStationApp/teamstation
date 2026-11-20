@@ -265,8 +265,8 @@ async function main(): Promise<void> {
     await tap(b.m, 'Open Demo Hawks')
     await shell()
     await visit('/discover')
-    await fill(b.m, 'Search by name or city', 'Demo Hawks')
-    await tap(b.m, 'Open Demo Hawks, Demo City, Demo Region, US')
+    await fill(b.m, 'Search leagues, seasons, teams and people', 'Demo Hawks')
+    await tap(b.m, 'Open Demo Hawks, Demo City, Demo Region')
     await shell()
     await pass(
       'B3 Home, season Teams/standings, league children, Search and private/group/legacy-tab addresses'

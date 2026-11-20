@@ -6,6 +6,7 @@ import { splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runSearch } from './search'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -26,7 +27,8 @@ export const WORLDS: Record<
   streaming: runStreaming,
   'coach-game': runCoachGame,
   'packed-league': runPackedLeague,
-  'packed-league-limit': runPackedLeagueLimit
+  'packed-league-limit': runPackedLeagueLimit,
+  search: runSearch
 }
 
 export function refuseWithoutTestSettings(testSettings: boolean): void {

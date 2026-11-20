@@ -19,6 +19,7 @@ import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { CHAT_USER, FakeKeys, MemoryStore } from '../../test/chatKeysFake'
+import { FakeSearchServer } from '../../test/fakeSearchSocket'
 import { windowSize } from '../../test/tessTestKit'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -27,6 +28,7 @@ import {
   NotificationDetailScreen,
   NotificationsScreen
 } from '../screens/NotificationsScreen'
+import { SEARCH_PLACEHOLDER } from '../screens/SearchScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatDevicesScreen } from './ChatDevicesScreen'
 import {
@@ -2221,6 +2223,43 @@ describe('chat devices in the app', function () {
         await settle()
       }
       const source = '/groups/league/league_demo?tab=chats'
+      const searchServer = new FakeSearchServer(() => ({
+        results: [
+          {
+            kind: 'league',
+            id: group.id,
+            name: group.name,
+            imageUrl: null,
+            cityLine: null,
+            associations: '',
+            follow: null
+          }
+        ]
+      }))
+      /** Types a league's name into the Search tab's field. */
+      const searchLeague = async (): Promise<void> => {
+        await until(
+          'search field',
+          () =>
+            document.querySelector(
+              `input[aria-label="${SEARCH_PLACEHOLDER}"]`
+            ) != null
+        )
+        await act(async () => {
+          const input = document.querySelector<HTMLInputElement>(
+            `input[aria-label="${SEARCH_PLACEHOLDER}"]`
+          )!
+          Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value'
+          )!.set!.call(
+            input,
+            input.value === 'Demo League' ? 'Demo Leagu' : 'Demo League'
+          )
+          input.dispatchEvent(new window.Event('input', { bubbles: true }))
+          await delay(20)
+        })
+      }
       try {
         showRoute(
           retained
@@ -2228,12 +2267,12 @@ describe('chat devices in the app', function () {
             : { name: 'discover', kind: 'league' },
           true
         )
-        await render(<App />)
+        await render(<App searchSocketFactory={searchServer.factory} />)
         if (retained) {
           await click('[data-testid="entity-chat-cnv_first"]')
           await click('[role="tab"][aria-label="Search"]')
         }
-        await press('Leagues')
+        await searchLeague()
         await until('league result', () => button('Open Demo League') != null)
         await press('Open Demo League')
         await click('[role="tab"][aria-label="Chats"]')
@@ -2462,7 +2501,7 @@ describe('chat devices in the app', function () {
         await press('Back')
         await until('Search root', () => currentRoute().name === 'discover')
         if (width === 390) {
-          await press('Leagues')
+          await searchLeague()
           await until(
             'league result again',
             () => button('Open Demo League') != null

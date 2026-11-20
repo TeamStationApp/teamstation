@@ -1711,7 +1711,7 @@ async function follower(run: Run): Promise<void> {
   const { f } = run
   const { people } = f
   const [game] = f.games
-  const { contains, fill, tap } = await import('../test/refinementsMaestro.e2e')
+  const { contains, fill } = await import('../test/refinementsMaestro.e2e')
   const membersOnly = 'You need to be a member of one of the teams to see this.'
   const videosMembersOnly =
     "You need to be a member of one of the teams to watch this game's videos."
@@ -2051,8 +2051,7 @@ async function follower(run: Run): Promise<void> {
   // Grant reads, bar the Follow button.
   const hank = await run.signIn('follower-search', people.oneTeam)
   await hank.m.openBrowser({ url: `${f.h.origin}/discover` })
-  await tap(hank.m, 'Teams')
-  await fill(hank.m, 'Search by name or city', 'Demo Hawks')
+  await fill(hank.m, 'Search leagues, seasons, teams and people', 'Demo Hawks')
   // Two teams are called that here; the Hawks are the one in Demo League A,
   // whose row is named with its city.
   const hawks = '[role="button"][aria-label^="Open Demo Hawks, Demo City"]'
