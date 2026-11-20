@@ -494,6 +494,30 @@ function messageViewport(
   return bottom > top ? { ...scroll, y: top, height: bottom - top } : undefined
 }
 
+/** The part of an actual message body that can receive a gesture. */
+function visibleBodyPoint(
+  body: Bounds,
+  viewport: Bounds
+): { x: number; y: number } | undefined {
+  const top = Math.max(body.y, viewport.y + 8)
+  const bottom = Math.min(
+    body.y + body.height,
+    viewport.y + viewport.height - 8
+  )
+  const left = Math.max(body.x, viewport.x)
+  const right = Math.min(body.x + body.width, viewport.x + viewport.width)
+  if (
+    right <= left ||
+    bottom <= top ||
+    bottom - top < Math.min(body.height, 44)
+  )
+    return
+  return {
+    x: Math.round((left + right) / 2),
+    y: Math.round((top + bottom) / 2)
+  }
+}
+
 async function physicalMessageHold(
   device: Device,
   rowId: string,
@@ -532,11 +556,7 @@ async function physicalMessageHold(
         viewport,
         observedAt: Date.now()
       }
-      if (
-        current == null ||
-        current.y + current.height <= viewport.y + 8 ||
-        current.y >= viewport.y + viewport.height - 8
-      ) {
+      if (current == null || visibleBodyPoint(current, viewport) == null) {
         assert(
           parent != null,
           'Exact identified row required before body preparation'
@@ -567,13 +587,13 @@ async function physicalMessageHold(
     },
     15000
   )
-  const x = Math.round(bounds.x + bounds.width / 2)
   assert(viewport != null)
-  const y = Math.round(
-    (Math.max(bounds.y, viewport.y + 8) +
-      Math.min(bounds.y + bounds.height, viewport.y + viewport.height - 8)) /
-      2
+  const point = visibleBodyPoint(bounds, viewport)
+  assert(
+    point != null,
+    'The identified message must have a visible gesture target'
   )
+  const { x, y } = point
   results.physicalHoldReceipts = [
     ...((results.physicalHoldReceipts as object[] | undefined) ?? []),
     {
@@ -5896,20 +5916,34 @@ async function main(): Promise<void> {
         !strings(flatten(await m.hierarchy())).includes('Copy'),
         'Early native release must not recognize actions'
       )
-      const movingBody = flatten(await m.hierarchy()).find(
-        node => node.text === fixture.targetText && node.bounds != null
-      )
+      const movingNodes = flatten(await m.hierarchy())
+      const movingRowId = `chat-message-${originalId}`
+      const movingRow = movingNodes.find(node => node.id === movingRowId)
       assert(
-        movingBody?.bounds != null,
-        'Actual visible message body required for scroll cancellation'
+        movingRow != null,
+        'Actual selected row required for scroll cancellation'
       )
+      const movingBody = flatten(movingRow).find(
+        node =>
+          node.text === fixture.targetText || node.label === fixture.targetText
+      )?.bounds
+      const movingViewport = messageViewport(movingNodes, movingRowId)
+      assert(
+        movingBody != null && movingViewport != null,
+        'Actual message and viewport required'
+      )
+      const start = visibleBodyPoint(movingBody, movingViewport)
+      assert(
+        start != null,
+        'The cancellation swipe must start on visible message text'
+      )
+      const endY =
+        start.y - 80 >= movingViewport.y + 8
+          ? start.y - 80
+          : Math.min(start.y + 80, movingViewport.y + movingViewport.height - 8)
       await m.dragAndDrop({
-        from: {
-          point: `${Math.round(movingBody.bounds.x + movingBody.bounds.width / 2)},${Math.round(movingBody.bounds.y + movingBody.bounds.height / 2)}`
-        },
-        to: {
-          point: `${Math.round(movingBody.bounds.x + movingBody.bounds.width / 2)},${Math.round(movingBody.bounds.y + movingBody.bounds.height / 2 - 80)}`
-        },
+        from: { point: `${start.x},${start.y}` },
+        to: { point: `${start.x},${endY}` },
         holdDuration: 10,
         duration: 550
       })

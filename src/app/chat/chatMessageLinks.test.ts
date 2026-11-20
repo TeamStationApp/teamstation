@@ -37,6 +37,18 @@ describe('chat message links', () => {
     ])
   })
 
+  it('keeps punctuation outside bare addresses with a port', () => {
+    expect(
+      texts('Read (example.org:8443), then example.com:8080.')
+    ).deep.equals(['example.org:8443', 'example.com:8080'])
+    expect(texts('“Example.org:443/a”')).deep.equals(['Example.org:443/a'])
+    expect(texts('123.example.org:8080 / café.example.org:8443.')).deep.equals([
+      '123.example.org:8080',
+      'café.example.org:8443'
+    ])
+    expect(texts('example.org:99999.')).deep.equals([])
+  })
+
   it('leaves files, decimal numbers, mail, other schemes and ambiguous text alone', () => {
     for (const body of [
       '2.50 notes.pdf video.MOV archive.zip',
