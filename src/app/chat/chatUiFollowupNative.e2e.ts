@@ -487,9 +487,11 @@ function messageViewport(
       node => node.id === 'chat-composer-band' && node.bounds != null
     ) ?? nodes.find(node => node.id === 'chat-composer')
   )?.bounds
+  const pins = nodes.find(node => node.id === 'chat-pinned-band')?.bounds
   const top = Math.max(
     scroll.y,
-    header == null ? scroll.y : header.y + header.height
+    header == null ? scroll.y : header.y + header.height,
+    pins == null ? scroll.y : pins.y + pins.height
   )
   const bottom = Math.min(scroll.y + scroll.height, composer?.y ?? Infinity)
   return bottom > top ? { ...scroll, y: top, height: bottom - top } : undefined
@@ -5836,9 +5838,8 @@ async function main(): Promise<void> {
       )
       await revealMessage(fixture.conversationId, posts[0].id)
       await physicalMessageHold(m, `chat-message-${posts[0].id}`, body, 550)
-      for (const action of ['Reply', 'Copy', 'Delete'])
+      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
         await m.assertVisible({ text: action, timeout: 10000 })
-      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
       await photo('own-message-actions-after')
       await m.tapOnPoint({ point: '5%,15%' })
       results.replySend = {
@@ -5849,7 +5850,7 @@ async function main(): Promise<void> {
         senderMatches: true,
         submittedTextAndContextCleared: true,
         ownDeleteAvailable: true,
-        editUnavailable: true,
+        ownEditAvailable: true,
         protectedPostsNotDeleted: true
       }
       pass(
@@ -6015,9 +6016,11 @@ async function main(): Promise<void> {
         'More emoji'
       ])
         await m.assertVisible({ text: label })
-      for (const label of ['Edit', 'Delete for everyone'])
-        await m.assertNotVisible({ text: label, timeout: 1000 })
+      await m.assertNotVisible({ text: 'Delete for everyone', timeout: 1000 })
       const ownMessage = original.senderUserId === fixture.actor.userId
+      const edit = { text: '^Edit$', timeout: 3000 }
+      if (ownMessage) await m.assertVisible(edit)
+      else await m.assertNotVisible(edit)
       for (const label of ['Report', 'Block', 'Report and Block']) {
         const control = { text: '^' + label + '$', timeout: 3000 }
         if (ownMessage) await m.assertNotVisible(control)
@@ -6069,7 +6072,10 @@ async function main(): Promise<void> {
         fixture.targetText,
         'Native Copy must paste only the readable body without quoted context or metadata'
       )
-      await m.eraseText({ characters: 2048 })
+      await m.eraseText({ characters: fixture.targetText.length })
+      const remaining = await composerValue(m)
+      if (remaining.length > 0) await clearNativeComposer(m, remaining)
+      if (platform === 'android') await m.hideKeyboard()
       await m.tapOn({ text: 'Back' })
       await open()
       pass('native Copy round trip equals only the selected message body')
@@ -6234,8 +6240,11 @@ async function main(): Promise<void> {
           'Reaction toggle must not change post time'
         )
       }
+      // Cancel reply restores the focused composer. Finish that keyboard
+      // transition before opening the independent reaction picker.
+      if (platform === 'android') await m.hideKeyboard()
       await messageMenu()
-      await tapStableControl(m, 'More emoji')
+      await m.tapOn({ text: '^More emoji$' })
       await m.assertVisible({ text: 'More emoji', timeout: 10000 })
       await m.tapOn({ text: 'Cancel' })
       pass('all six native quick reaction toggles and More emoji picker')
@@ -6261,7 +6270,8 @@ async function main(): Promise<void> {
         (await composerValue(m)).includes(fixture.draft),
         'Cancel reply must preserve unsent typed text'
       )
-      await m.eraseText({ characters: 2048 })
+      await m.tapOn({ id: 'chat-composer' })
+      await clearNativeComposer(m, await composerValue(m))
       assert(
         fixture.nativeReplyText != null,
         'Private synthetic outgoing reply text required'
@@ -6270,6 +6280,7 @@ async function main(): Promise<void> {
       await tapVisibleControl(m, 'Reply')
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: fixture.nativeReplyText })
+      assert.equal(await composerValue(m), fixture.nativeReplyText)
       const beforeReply = await current()
       const previous = beforeReply.lastPostId
       const previousOwnPosts = new Set(
@@ -6281,6 +6292,7 @@ async function main(): Promise<void> {
           .map(row => row.id)
       )
       await m.tapOn({ text: 'Send' })
+      if (platform === 'android') await m.hideKeyboard()
       await m.assertVisible({ text: fixture.nativeReplyText, timeout: 60000 })
       await until('Native outgoing reply not observed', async () =>
         (await current()).lastPostId !== previous ? true : undefined
@@ -6324,13 +6336,12 @@ async function main(): Promise<void> {
         fixture.nativeReplyText,
         550
       )
-      for (const action of ['Reply', 'Copy', 'Delete'])
+      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
         await m.assertVisible({ text: action, timeout: 10000 })
-      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
       results.messagePermissionMatrix = {
         receivedDeleteAvailable: target.canModerate,
         ownDeleteAvailable: true,
-        editUnavailable: true,
+        ownEditAvailable: true,
         protectedMessagesNotDeleted: true
       }
       await photo('own-message-actions-after')

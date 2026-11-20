@@ -12,7 +12,7 @@ import {
 } from '../../../rigs/chat2Maestro'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
 import {
   checkCoveredPreview,
   receiveWithDelayedImage
@@ -101,9 +101,13 @@ async function send(ctx: E2eContext): Promise<void> {
         if (mode === 'pending' && web == null)
           address.searchParams.set('probe', probe)
         const url = address.href
-        const body = mode + ' ' + probe.slice(0, 8) + ' ' + url
+        const body = 'Preview ' + mode + ' ' + probe.slice(0, 8) + ' ' + url
         await m.tapOn({ id: 'chat-composer' })
         await m.inputText({ text: body })
+        // A native hierarchy read can outlast a pending preview. Observe the
+        // request immediately. The peer verifies the exact body after Send.
+        if (mode !== 'pending' || web != null)
+          assert.equal(await readChatComposer(m, platform, web), body)
         if (mode === 'ready' || mode === 'dismissed') {
           await m.assertVisible({
             id: 'chat-dismiss-link-preview',
@@ -386,6 +390,11 @@ async function send(ctx: E2eContext): Promise<void> {
       }
       await openReport()
       await m.tapOn({ id: 'chat-safety-cancel' })
+      await m.assertNotVisible({ id: 'chat-safety-confirm' })
+      if (web == null) {
+        await m.waitForAnimationToEnd()
+        await m.assertVisible({ id: 'chat-message-' + received.id })
+      }
       await openReport()
       const reply = web?.page.waitForResponse(
         response =>

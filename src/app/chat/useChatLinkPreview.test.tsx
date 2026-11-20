@@ -6,6 +6,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { AttachmentRef } from '../../common/chatContent'
+import type { ChatLinkPreview } from '../../common/chatLinkPreview'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatLinkPreviewCard } from './ChatLinkPreviewCard'
 import type * as PreviewTransport from './previewTransport'
@@ -30,12 +31,16 @@ let root: Root | undefined
 let host: HTMLElement
 let latest: ReturnType<typeof useChatLinkPreview>
 type PreviewEngine = Pick<ChatScreenEngine, 'uploadPreviewThumbnail'>
+interface Editing {
+  id: string
+  preview?: ChatLinkPreview
+}
 
 async function show(
   engine: PreviewEngine,
   body: string,
   room = 'c1',
-  editing?: string,
+  editing?: Editing,
   active = true
 ): Promise<void> {
   if (root == null) {
@@ -65,7 +70,7 @@ function Draft({
   engine: PreviewEngine
   body: string
   room: string
-  editing?: string
+  editing?: Editing
   active: boolean
 }): React.ReactElement {
   latest = useChatLinkPreview(
@@ -127,7 +132,7 @@ describe('chat link preview drafts', function () {
     })
     expect(latest.preview).equals(undefined)
     expect(latest.submit(url)).equals(undefined)
-    await show(engine, url, 'c1', 'edit1')
+    await show(engine, url, 'c1', { id: 'edit1' })
     await settled()
     expect(latest.preview?.title).equals('Schedule')
     await show(engine, url)
@@ -202,6 +207,41 @@ describe('chat link preview drafts', function () {
       Date.now = now
     }
   })
+  it("keeps an edited message's card until the new wording settles its own", async () => {
+    const kept = {
+      url,
+      title: 'Original',
+      description: '',
+      siteName: 'example.org',
+      thumbnail: ref
+    }
+    const site: { page?: string } = {}
+    transport.readPreviewPage = async () => {
+      if (site.page == null) throw new Error('Blocked')
+      return site.page
+    }
+    const engine = {}
+    const typo = { id: 'edit2', preview: kept }
+    await show(engine, 'Fixed typo ' + url, 'c1', typo)
+    expect(latest.preview).equals(kept)
+    expect(latest.submit('Fixed typo ' + url)).equals(kept)
+    await settled()
+    expect(latest.submit('Fixed typo ' + url)).equals(kept)
+    expect(latest.submit('Elsewhere https://example.net/x')).equals(undefined)
+    await act(async () => {
+      host
+        .querySelector<HTMLElement>('[aria-label="Remove link preview"]')!
+        .click()
+    })
+    expect(latest.preview).equals(undefined)
+    expect(latest.submit('Fixed typo ' + url)).equals(undefined)
+    site.page = '<title>Regenerated</title>'
+    await show(engine, url, 'c1', { id: 'edit3', preview: kept })
+    expect(latest.preview).equals(kept)
+    await settled()
+    expect(latest.preview?.title).equals('Regenerated')
+    expect(latest.submit(url)?.title).equals('Regenerated')
+  })
   it('resumes an interrupted thumbnail without reading the page again', async () => {
     let reads = 0
     let images = 0
@@ -244,6 +284,41 @@ describe('chat link preview drafts', function () {
     await show(engine, url)
     await settled()
     expect([reads, images]).deep.equals([1, 2])
+  })
+  it('awaits an upload a pause interrupted instead of uploading again', async () => {
+    let images = 0
+    let uploads = 0
+    let finish: ((value: AttachmentRef) => void) | undefined
+    transport.readPreviewPage = async () =>
+      '<title>Fixture</title><meta property="og:image" content="thumb.jpg">'
+    transport.previewThumbnail = async () => {
+      images++
+      return {
+        fileName: ref.fileName,
+        contentType: ref.contentType,
+        bytes: Uint8Array.of(1, 2, 3)
+      }
+    }
+    const engine: PreviewEngine = {
+      uploadPreviewThumbnail: async () => {
+        uploads++
+        return await new Promise(resolve => {
+          finish = resolve
+        })
+      }
+    }
+    await show(engine, url)
+    await settled()
+    expect(uploads).equals(1)
+    await show(engine, url, 'c1', undefined, false)
+    await act(async () => {
+      finish!(ref)
+    })
+    expect(latest.preview?.thumbnail).equals(undefined)
+    await show(engine, url)
+    await settled()
+    expect(latest.preview?.thumbnail).equals(ref)
+    expect([images, uploads]).deep.equals([1, 1])
   })
   it('opens only the typed address from a received card, preserves holds and loads its encrypted thumbnail', async () => {
     host = document.createElement('div')

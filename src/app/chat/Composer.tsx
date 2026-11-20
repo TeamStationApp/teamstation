@@ -1,4 +1,10 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import { Icon } from '../components'
@@ -7,6 +13,7 @@ import { GlassView } from '../components/GlassView'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { sendAllowed } from './chatComposeModel'
+import { ChatComposerRow } from './ChatComposerRow'
 import type { PickedFile, PickSource } from './chatFileTypes'
 import {
   type ComposerChange,
@@ -28,9 +35,12 @@ export interface ComposerProps {
   /** "Replying to <name>" with its snippet, or the edit being made. */
   context:
     | { kind: 'reply'; name: string; snippet: string }
-    | { kind: 'edit' }
+    | { kind: 'edit'; hasAttachments?: boolean; saving?: boolean }
     | undefined
   onCancelContext: () => void
+  shortcutsActive?: boolean
+  onEditLatest?: () => void
+  onInterruptShortcut?: () => void
   attachments: PickedFile[]
   onRemoveAttachment: (index: number) => void
   /** Where Attach can pick from; none hides it (an edit takes no files). */
@@ -64,6 +74,13 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const styles = getStyles(theme)
   const [emoji, setEmoji] = useState(false)
   const [choosing, setChoosing] = useState(false)
+  const closePickers = useCallback(() => {
+    setChoosing(false)
+    setEmoji(false)
+  }, [])
+  useEffect(() => {
+    if (context?.kind === 'edit') closePickers()
+  }, [context?.kind, closePickers])
   useEffect(() => {
     onOverlay?.(emoji || choosing)
     return () => {
@@ -85,14 +102,41 @@ export function Composer(props: ComposerProps): React.ReactElement {
     sending,
     preparing: props.preparing === true,
     text,
-    attachments
+    attachments,
+    editingCaption: context?.kind === 'edit' && context.hasAttachments === true
   })
-  const canAttach = enabled && !sending && props.preparing !== true
+  const canAttach =
+    enabled && !sending && props.preparing !== true && context?.kind !== 'edit'
   const takes = enabled && props.asleep !== true
+  const acceptsShortcut =
+    takes &&
+    props.preparing !== true &&
+    props.shortcutsActive === true &&
+    !emoji &&
+    !choosing
+  const shortcut =
+    acceptsShortcut && context?.kind === 'edit' && context.saving !== true
+      ? 'Escape'
+      : acceptsShortcut &&
+          !sending &&
+          context == null &&
+          text === '' &&
+          attachments.length === 0 &&
+          props.onEditLatest != null
+        ? 'ArrowUp'
+        : undefined
+  const hardware = useRef<(key: string) => boolean>(() => false)
+  hardware.current = key => {
+    if (key !== shortcut) return false
+    if (key === 'Escape') props.onCancelContext()
+    else props.onEditLatest?.()
+    return true
+  }
   useEffect(
     () =>
       registerFocus?.(caret => {
         if (!latest.current.enabled || latest.current.asleep === true) return
+        closePickers()
         const field = input.current
         // Android keeps a field focused after Back hides its keyboard, and
         // focusing it again shows nothing; refocusing brings the keyboard back.
@@ -104,7 +148,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           setCaretRevision(value => value + 1)
         }
       }),
-    [registerFocus]
+    [registerFocus, closePickers]
   )
   useLayoutEffect(() => {
     const caret = pendingCaret.current
@@ -115,25 +159,38 @@ export function Composer(props: ComposerProps): React.ReactElement {
   }, [text, takes, caretRevision])
   useEffect(
     () =>
-      bindComposerKeys(input.current, () => {
-        const current = latest.current
-        if (
-          sendAllowed({
-            enabled: current.enabled,
-            sending: current.sending,
-            preparing: current.preparing === true,
-            text: current.text,
-            attachments: current.attachments
-          })
-        )
-          current.onSend()
-      }),
+      bindComposerKeys(
+        input.current,
+        () => {
+          const current = latest.current
+          if (
+            sendAllowed({
+              enabled: current.enabled,
+              sending: current.sending,
+              preparing: current.preparing === true,
+              text: current.text,
+              attachments: current.attachments,
+              editingCaption:
+                current.context?.kind === 'edit' &&
+                current.context.hasAttachments === true
+            })
+          )
+            current.onSend()
+        },
+        key => hardware.current(key),
+        () => latest.current.onInterruptShortcut?.()
+      ),
     []
   )
 
   const attach = (source: PickSource): void => {
     const current = latest.current
-    if (!current.enabled || current.sending || current.preparing === true)
+    if (
+      !current.enabled ||
+      current.sending ||
+      current.preparing === true ||
+      current.context?.kind === 'edit'
+    )
       return
     setChoosing(false)
     current.onAttach(source)
@@ -162,6 +219,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
                 ? lstrings.chat_cancel_reply
                 : lstrings.chat_cancel_edit
             }
+            disabled={context.kind === 'edit' && context.saving === true}
             onPress={props.onCancelContext}
             style={styles.chipClose}
           >
@@ -209,7 +267,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           ))}
         </View>
       )}
-      {choosing && (
+      {choosing && context?.kind !== 'edit' && (
         <View style={styles.sources}>
           {props.sources.map(source => (
             <Pressable
@@ -249,7 +307,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           </Pressable>
         </View>
       )}
-      <View style={styles.row}>
+      <ChatComposerRow style={styles.row} collapsable={false}>
         {props.sources.length > 0 && (
           <Pressable
             accessibilityRole="button"
@@ -289,6 +347,14 @@ export function Composer(props: ComposerProps): React.ReactElement {
         <TextInput
           ref={input}
           onFocus={props.onRead}
+          onBlur={props.onInterruptShortcut}
+          nativeID={
+            shortcut === 'ArrowUp'
+              ? 'chatComposerEditLatest'
+              : shortcut === 'Escape'
+                ? 'chatComposerCancelEdit'
+                : 'chatComposerField'
+          }
           testID="chat-composer"
           accessibilityLabel={lstrings.chat_composer}
           value={text}
@@ -296,7 +362,17 @@ export function Composer(props: ComposerProps): React.ReactElement {
             selection.current = event.nativeEvent.selection
           }}
           onKeyPress={event => {
-            editKey.current = event.nativeEvent.key
+            const key = event.nativeEvent.key
+            if (
+              'chatHardwareKey' in event.nativeEvent &&
+              event.nativeEvent.chatHardwareKey === true &&
+              hardware.current(key)
+            )
+              return
+            if (key !== 'ArrowUp') latest.current.onInterruptShortcut?.()
+            // A native hardware press can interrupt an older-page lookup while
+            // the text system continues to handle the actual key normally.
+            if (key !== 'Unidentified') editKey.current = key
           }}
           onChangeText={next => {
             const change = {
@@ -339,7 +415,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
             color={canSend ? theme.buttonTextColor : theme.tertiaryTextColor}
           />
         </Pressable>
-      </View>
+      </ChatComposerRow>
       {emoji && (
         <EmojiPicker
           onPick={picked => {
