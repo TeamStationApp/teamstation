@@ -48,7 +48,11 @@ const tsSuites = [
 const appSuites = [
   // The notice's words and id, and a team's control (M1).
   'src/app/scoring/HeldGameNotice.test.tsx',
-  'src/app/sync/heldControls.test.tsx'
+  'src/app/sync/heldControls.test.tsx',
+  // The banner's line and the list it opens (M2).
+  'src/app/components/OfflineBanner.test.tsx',
+  'src/app/components/HeldEditsSheet.test.tsx',
+  'src/app/App.offlineBanner.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE
