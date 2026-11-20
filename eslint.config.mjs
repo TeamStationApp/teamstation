@@ -170,6 +170,10 @@ export default [
       'tools/**',
       // Rust: the chat crypto core and its build products.
       'crates/**',
+      // The Auto-Scheduler's C++ builds: HiGHS's vendored source and CMake's
+      // trees, whose compiler_depend.ts files are timestamps, not TypeScript.
+      'native/highs/vendor/**',
+      'native/scheduler/build/**',
       // Gradle's outputs: test and coverage reports carry their own scripts.
       'android/**/build/**',
       // The mobile/ workspace is a React Native monorepo with its own
