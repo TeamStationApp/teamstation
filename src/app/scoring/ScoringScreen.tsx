@@ -1224,7 +1224,9 @@ interface LetGoEntry {
 const letGo = new Map<GameSession, LetGoEntry>()
 /**
  * Lets `game` go on sending what it has not saved after its screen has
- * gone, and closes it once that is saved, or the server refused it. Until
+ * gone, and closes it once that is saved, or the server refused it. One
+ * already closed (a swap the server refused closes the game it opened on)
+ * saves nothing more, and is not let go. Until
  * then the page warns before it unloads, and a screen opening the game it
  * was opened on (`opened`) takes it back.
  */
@@ -1233,7 +1235,11 @@ function closeOnceSaved(
   opened: Omit<LetGoEntry, 'stop'>
 ): void {
   const done = (): boolean =>
-    game.pending === 0 || game.readOnly || game.stopped || game.replaced
+    game.pending === 0 ||
+    game.readOnly ||
+    game.stopped ||
+    game.replaced ||
+    game.isClosed
   if (done()) {
     game.close()
     return
@@ -1264,7 +1270,8 @@ function takeBack(opened: Omit<LetGoEntry, 'stop'>): GameSession | undefined {
       entry.userId !== opened.userId ||
       entry.source !== opened.source ||
       game.readOnly ||
-      game.stopped
+      game.stopped ||
+      game.isClosed
     )
       continue
     letGo.delete(game)
