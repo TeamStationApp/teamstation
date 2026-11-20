@@ -15,6 +15,11 @@
 //
 // Test tooling (`scripts/**`, `src/test/**`), tests, end-to-end files and
 // type declarations are not measured.
+//
+// TS_COVERAGE_GREP runs only the cases whose titles match it, in every
+// suite, as mocha's `--grep` does, for a quick look at a few cases; a suite's
+// `skip` still leaves its cases out. Its coverage figure is of those cases
+// alone, so the gate is the run without it.
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
@@ -186,7 +191,10 @@ for (const [index, suite] of appSuites.entries()) {
       '60000',
       '--exit',
       ...(only != null
-        ? ['--grep', only]
+        ? [
+            '--grep',
+            suite.skip == null ? only : `^(?!.*(?:${suite.skip})).*(?:${only})`
+          ]
         : suite.skip == null
           ? []
           : ['--grep', suite.skip, '--invert']),
