@@ -1059,7 +1059,7 @@ describe('a conversation', function () {
     await press('Cancel')
   })
 
-  it('offers the restricted mobile message actions without edit or report', async function () {
+  it('offers Edit on the author’s message and keeps peer moderation actions separate', async function () {
     await open(
       view({
         messages: [
@@ -1073,21 +1073,15 @@ describe('a conversation', function () {
       })
     )
     await longPress('my words')
-    for (const label of ['Reply', 'Copy', 'Pin', 'Delete'])
+    for (const label of ['Reply', 'Edit', 'Copy', 'Pin', 'Delete'])
       expect(button(label), label).not.equals(undefined)
-    for (const label of [
-      'Edit',
-      'Report',
-      'Forward',
-      'Select',
-      'Speak',
-      'Info'
-    ])
+    for (const label of ['Report', 'Forward', 'Select', 'Speak', 'Info'])
       expect(button(label), label).equals(undefined)
     await press('Cancel')
     await longPress('received words')
     for (const label of ['Reply', 'Copy', 'Pin'])
       expect(button(label), label).not.equals(undefined)
+    expect(button('Edit')).equals(undefined)
     expect(button('Delete')).equals(undefined)
     await press('Cancel')
   })
@@ -1180,7 +1174,7 @@ describe('a conversation', function () {
     expect(text()).contains('Removed by a moderator')
     expect(text()).contains('Message deleted')
     await longPress('Snack schedule')
-    expect(button('Edit')).equals(undefined)
+    expect(button('Edit')).not.equals(undefined)
     await press('Delete')
     expect(text()).contains('This message will be removed for everyone.')
     expect(engine.calls.some(call => call.startsWith('delete'))).equals(false)

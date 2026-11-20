@@ -41,6 +41,8 @@ interface Destination {
 }
 
 export interface ChatLinkFixture {
+  /** An isolated, author-signed post at least a week old, with two ordinary files, used by the edit scenario. */
+  datedCaptionId?: string
   /** The runner interface a physical phone can reach for the test page. */
   destinationHost?: string
   previewPage?: {

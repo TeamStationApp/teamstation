@@ -61,6 +61,8 @@ export interface ChatSubmission {
   readonly revisions: Record<DraftField, number>
 }
 
+type SubmissionPhase = 'sending' | 'findingEdit' | 'savingEdit'
+
 /** Owns requests across keyed screen/route lifetimes, only within one session. */
 export class ChatDraftOwner {
   readonly key = nextDraftOwner++
@@ -88,9 +90,22 @@ export class ChatDraftOwner {
   }
 
   private readonly revisions = new Map<string, Record<DraftField, number>>()
-  private readonly pending = new Map<string, ChatSubmission>()
+  private readonly pending = new Map<
+    string,
+    { token: ChatSubmission; phase: SubmissionPhase }
+  >()
+
   private readonly uncertain = new Map<string, ChatSubmission>()
   private readonly failures = new Map<string, string>()
+  private readonly ordinary = new Map<
+    string,
+    {
+      draft: ChatDraft
+      retry?: ChatSubmission['retry']
+      failure?: string
+    }
+  >()
+
   private readonly readers = new Map<string, () => ChatDraft>()
   private readonly listeners = new Map<string, Set<() => void>>()
 
@@ -136,12 +151,98 @@ export class ChatDraftOwner {
     return this.pending.has(id)
   }
 
+  submissionPhase(id: string): SubmissionPhase | undefined {
+    return this.pending.get(id)?.phase
+  }
+
+  ownsSubmission(id: string, token: ChatSubmission): boolean {
+    return this.pending.get(id)?.token === token
+  }
+
+  dispatchEdit(id: string, token: ChatSubmission): boolean {
+    const pending = this.pending.get(id)
+    if (pending?.token !== token || pending.phase !== 'findingEdit')
+      return false
+    pending.phase = 'savingEdit'
+    this.changed(id)
+    return true
+  }
+
   failed(id: string): boolean {
     return this.failures.has(id)
   }
 
   failure(id: string): string | undefined {
     return this.failures.get(id)
+  }
+
+  startEdit(id: string, message: MessageView): boolean {
+    if (!this.live || this.pending.has(id)) return false
+    this.pull(id)
+    const draft = this.draft(id)
+    if (draft.editing?.id === message.id) return false
+    if (draft.editing == null) {
+      const retry = this.uncertain.get(id)
+      const revisions = this.revisions.get(id)!
+      const unchanged =
+        retry != null &&
+        (Object.keys(revisions) as DraftField[]).every(
+          field => revisions[field] === retry.revisions[field]
+        )
+      this.ordinary.set(id, {
+        draft,
+        retry: unchanged ? retry.retry : undefined,
+        failure: this.failures.get(id)
+      })
+    }
+    this.uncertain.delete(id)
+    this.failures.delete(id)
+    this.write(id, {
+      ...draft,
+      text: message.body,
+      editing: message,
+      replyTo: undefined,
+      mentionTokens: undefined,
+      picked: []
+    })
+    this.changed(id)
+    return true
+  }
+
+  cancelEdit(id: string): boolean {
+    if (!this.live || this.submissionPhase(id) === 'savingEdit') return false
+    this.pull(id)
+    const current = this.draft(id)
+    if (current.editing == null) return false
+    this.pending.delete(id)
+    this.restoreOrdinary(id, current)
+    this.changed(id)
+    return true
+  }
+
+  private restoreOrdinary(id: string, current: ChatDraft): void {
+    const parked = this.ordinary.get(id)
+    this.ordinary.delete(id)
+    const draft = parked?.draft ?? emptyChatDraft()
+    const restored: ChatDraft = {
+      ...current,
+      editing: undefined,
+      text: draft.text,
+      picked: draft.picked,
+      replyTo: draft.replyTo,
+      mentionTokens: draft.mentionTokens
+    }
+    if (draft.mentionTokens == null) delete restored.mentionTokens
+    this.write(id, restored)
+    this.uncertain.delete(id)
+    if (parked?.retry != null)
+      this.uncertain.set(id, {
+        draft: this.draft(id),
+        retry: parked.retry,
+        revisions: { ...this.revisions.get(id)! }
+      })
+    if (parked?.failure != null) this.failures.set(id, parked.failure)
+    else this.failures.delete(id)
   }
 
   begin(id: string): ChatSubmission | undefined {
@@ -178,7 +279,10 @@ export class ChatDraftOwner {
     )
       token.retry = previous.retry
     this.uncertain.delete(id)
-    this.pending.set(id, token)
+    this.pending.set(id, {
+      token,
+      phase: token.draft.editing == null ? 'sending' : 'findingEdit'
+    })
     this.failures.delete(id)
     this.changed(id)
     return token
@@ -190,7 +294,7 @@ export class ChatDraftOwner {
     success: boolean,
     error?: unknown
   ): ChatDraft | undefined {
-    if (!this.live || this.pending.get(id) !== token) return undefined
+    if (!this.live || !this.ownsSubmission(id, token)) return undefined
     this.pull(id)
     const current = this.draft(id)
     const revisions = this.revisions.get(id)!
@@ -207,7 +311,9 @@ export class ChatDraftOwner {
         current.editing?.id === token.draft.editing?.id &&
         samePickedFiles(current.picked, token.draft.picked)
       // A newer draft owns its whole context, including unchanged reply/files.
-      if (unchanged)
+      if (unchanged && token.draft.editing != null)
+        this.restoreOrdinary(id, current)
+      else if (unchanged)
         this.write(id, {
           ...current,
           text: '',
@@ -216,9 +322,15 @@ export class ChatDraftOwner {
           editing: undefined,
           picked: []
         })
-    } else {
+    } else if (token.draft.editing?.id === current.editing?.id) {
       if (error instanceof UnconfirmedChatPost) {
         token.retry = error.retry
+        this.uncertain.set(id, token)
+      } else if (
+        token.retry != null &&
+        this.submissionPhase(id) === 'findingEdit'
+      ) {
+        // Looking up the original failed before the signed retry was used.
         this.uncertain.set(id, token)
       }
       const recipientBlocked =
@@ -250,6 +362,7 @@ export class ChatDraftOwner {
   invalidate(): void {
     this.live = false
     this.attentionSessions.clear()
+    this.ordinary.clear()
     this.pending.clear()
     this.uncertain.clear()
     this.readers.clear()

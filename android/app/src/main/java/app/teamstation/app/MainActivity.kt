@@ -2,6 +2,8 @@ package app.teamstation.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
+import app.teamstation.app.chat.ChatHardwareKeys
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import app.teamstation.app.orientation.Hold
 import app.teamstation.app.splash.SplashOverlay
@@ -15,6 +17,11 @@ class MainActivity : ReactActivity() {
   /** The launch splash, on a fresh start only: never on a recreation or a new intent. */
   var splash: SplashOverlay? = null
     private set
+
+  private val chatKeys = ChatHardwareKeys()
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+    chatKeys.dispatch(currentFocus, event) || super.dispatchKeyEvent(event)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     // The system's starting window, the splash's dark ground, hands over to
