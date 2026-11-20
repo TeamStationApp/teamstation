@@ -1763,6 +1763,11 @@ export function useMultiCam(
           `ready ${element.readyState}  ` +
           `at ${element.currentTime.toFixed(1)}  ` +
           `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
+          `end ${seekableEndOf(element)?.toFixed(1) ?? '—'}  ` +
+          (element.networkState == null
+            ? ''
+            : `net ${element.networkState}  `) +
+          (element.seeking === true ? 'seeking  ' : '') +
           `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
           (tile?.parked != null ? `  parked ${tile.parked}` : '') +
           (leftOut.current.has(video.id) ? '  left out' : '') +

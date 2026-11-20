@@ -48,6 +48,9 @@ class FakeTile implements TileHandle {
   ended = false
   /** Left unset, the tile does not say how much it holds, as on a phone. */
   buffered?: TileHandle['buffered']
+  seekable?: TileHandle['seekable']
+  seeking?: boolean
+  networkState?: number
   async play(): Promise<void> {
     this.paused = false
   }
@@ -1449,7 +1452,7 @@ describe('useMultiCam buffering', function () {
     await ticks(1)
     const [a, b, clock] = mc().readout
     expect(a).match(
-      /^A {8} buf 3\.0s {2}ready 4 {2}at 120\.0 {2}to 120\.0 {2}paused {2}ok {2}short \d+(\.\d)?s/
+      /^A {8} buf 3\.0s {2}ready 4 {2}at 120\.0 {2}to 120\.0 {2}end — {2}paused {2}ok {2}short \d+(\.\d)?s/
     )
     // No tile has said where it sits on the wall yet.
     expect(a).match(/ {2}map none$/)
@@ -1462,6 +1465,25 @@ describe('useMultiCam buffering', function () {
     await ticks(2)
     expect(mc().readout[2]).match(/ {2}playing {2}ahead ≤ \d+s {2}heard A$/)
     expect(tiles.A.paused).equals(false)
+  })
+
+  it('a tile’s readout line carries its seekable end, network state and seeking', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({}, { debug: true }, tiles => {
+      fill(tiles.A, [120, 123])
+      fill(tiles.B, [60, 70])
+      tiles.A.seekable = { length: 1, end: () => 760 }
+      tiles.A.networkState = 2
+      tiles.A.seeking = true
+    })
+    await ticks(1)
+    const [a, b] = mc().readout
+    expect(a).match(
+      / {2}to 120\.0 {2}end 760\.0 {2}net 2 {2}seeking {2}paused /
+    )
+    // A phone's tile says no network state, and one not seeking says nothing of it.
+    expect(b).match(/ {2}end — {2}paused /)
+    expect(b).not.match(/net |seeking/)
   })
 
   it('keeps looking once a second while the grid re-renders faster than that, as it does after a scrub', async function () {
