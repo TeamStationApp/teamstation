@@ -11,6 +11,7 @@
 - fixed: A web build can send its logs to the log collector it was built for; the page's content policy refused them before
 - fixed: Phone builds from Mason, other than master's production build, report their logs and crashes to the server they talk to; they reported nothing before
 - fixed: Scoreboards, roster caches and live playlists recover promptly after an idle connection closes.
+- fixed: Chrome end-to-end observations no longer retain a second copy of downloaded responses, keeping long streaming memory measurements representative of playback
 
 ## 1.3.0 (2026-11-18)
 
