@@ -3,7 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
+import {
+  flattenPublicHierarchy,
+  iosPublicRead
+} from '../../../../src/test/chat2Maestro.e2e'
 import { signInWithPassword } from '../../../core/fixtures'
 import type { MaestroDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
@@ -260,11 +263,51 @@ async function cancelHold(
   )
 }
 
+async function waitForMenuDismissal(m: MaestroDevice): Promise<void> {
+  const deadline = Date.now() + 10000
+  do {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    if (
+      nodes.some(node => node.id === composer.id) &&
+      !nodes.some(node => node.id === 'chat-message-spotlight')
+    )
+      return
+    await delay(200)
+  } while (Date.now() < deadline)
+  assert.fail(
+    'The conversation must become accessible after the message menu closes'
+  )
+}
+
+async function dismissComposerKeyboard(
+  m: MaestroDevice,
+  platform: string
+): Promise<void> {
+  // The WDA hideKeyboard command presses Return, which edits a multiline draft.
+  if (platform === 'ios') await m.tapOnPoint({ point: '1%,28%' })
+  else await m.hideKeyboard()
+}
+
+async function readComposer(
+  m: MaestroDevice,
+  platform: string
+): Promise<string> {
+  if (platform !== 'ios') return (await m.copyTextFrom(composer)).data
+  const { element } = iosPublicRead(
+    await m.hierarchyRaw(),
+    composer,
+    'TextView'
+  )
+  assert(element != null, 'The editable composer must be present')
+  return element.value ?? ''
+}
+
 async function copyMessage(
   m: MaestroDevice,
   web: WebSession | undefined,
   url: string,
-  body: string
+  body: string,
+  platform: string
 ): Promise<void> {
   if (web != null) {
     await showLink(m, web, url)
@@ -289,6 +332,7 @@ async function copyMessage(
       body
     )
   } else {
+    await waitForMenuDismissal(m)
     await m.tapOn(composer)
     await m.longPressOn(composer)
     await m.tapOn({ text: '^Paste$' })
@@ -296,12 +340,12 @@ async function copyMessage(
     if (nodes.some(node => node.text === 'Allow Paste'))
       await m.tapOn({ text: '^Allow Paste$' })
     assert.equal(
-      (await m.copyTextFrom(composer)).data,
+      await readComposer(m, platform),
       body,
       'Paste must put the complete message in the editable composer'
     )
     await m.eraseText({ characters: body.length })
-    await m.hideKeyboard()
+    await dismissComposerKeyboard(m, platform)
   }
 }
 
@@ -496,14 +540,17 @@ async function open(ctx: E2eContext): Promise<void> {
           id +
           ': ' +
           first +
-          ' and ' +
+          (web == null ? '.\n' : ' and ') +
           internal +
           '. See www.example.org, example.technology, notes.pdf and 2.50.'
         const caption = 'Score sheet ' + id + ': ' + second
         await m.tapOn(composer)
         await m.inputText({ text: body })
         if (web != null) await m.pressKey({ key: 'Enter' })
-        else await m.tapOn({ text: '^Send$', timeout: 8000 })
+        else {
+          await m.tapOn({ text: '^Send$', timeout: 8000 })
+          await dismissComposerKeyboard(m, platform)
+        }
         const deadline = Date.now() + 20000
         let sentId: string | undefined
         while (sentId == null && Date.now() < deadline) {
@@ -535,6 +582,15 @@ async function open(ctx: E2eContext): Promise<void> {
           file?.id != null && file.id !== '',
           'Encrypted attachment must have been posted'
         )
+        if (web == null) {
+          // A reader above the live edge stays on the same rows when the peer sends.
+          // Use the same jump control as the reader to reveal the new attachment.
+          await m.tapOn({
+            id: 'chat-jump-latest',
+            optional: true,
+            timeout: 2500
+          })
+        }
         await m.assertVisible({ id: 'chat-message-' + file.id, timeout: 20000 })
         await m.assertVisible({ text: exact(second), timeout: 20000 })
         if (web != null) {
@@ -589,7 +645,11 @@ async function open(ctx: E2eContext): Promise<void> {
         await openExternal(m, web, platform, second, true, activeBrowser)
         await m.tapOn(
           web == null
-            ? { text: exact(internal), timeout: 8000 }
+            ? {
+                text: exact(internal),
+                childOf: { id: 'chat-message-body-' + sentId },
+                timeout: 8000
+              }
             : {
                 css: renderedBody + ' a[href="' + internal + '"]',
                 timeout: 8000
@@ -603,6 +663,7 @@ async function open(ctx: E2eContext): Promise<void> {
           )
           await m.evalBrowserScript({ script: 'history.back(); return true' })
         } else {
+          await m.assertVisible({ text: '^Upcoming$', timeout: 10000 })
           // The Schedule tab is at the root, so returning uses the retained
           // Messages tab in the app's navigation.
           await m.tapOn({ text: '^(Messages|Chat)$' })
@@ -647,13 +708,19 @@ async function open(ctx: E2eContext): Promise<void> {
         const reading = await linkPosition(m, web, second)
         if (web != null) await touchLink(m, second, false)
         else await m.longPressOn({ text: exact(second) })
-        await m.assertVisible({ id: 'chat-message-spotlight' })
-        if (web != null) await m.pressKey({ key: 'Escape' })
-        else await m.tapOnPoint({ point: '5%,15%' })
-        await m.assertNotVisible({
-          id: 'chat-message-spotlight',
-          timeout: 3500
-        })
+        await m.assertVisible({ text: '^Copy$' })
+        if (web != null) {
+          await m.pressKey({ key: 'Escape' })
+          await m.assertNotVisible({
+            id: 'chat-message-spotlight',
+            timeout: 3500
+          })
+        } else {
+          // With the keyboard up, the panel can cover the top of the screen.
+          // The outside margin is still the backdrop.
+          await m.tapOnPoint({ point: '1%,15%' })
+          await waitForMenuDismissal(m)
+        }
         const restored = await linkPosition(m, web, second)
         assert(
           Math.abs(restored.y - reading.y) <= 3,
@@ -662,8 +729,7 @@ async function open(ctx: E2eContext): Promise<void> {
         // Type with no intervening tap, so a lost composer focus cannot pass.
         const draft = 'Draft ' + id
         await m.inputText({ text: draft })
-        if (web == null)
-          assert.equal((await m.copyTextFrom(composer)).data, draft)
+        if (web == null) assert.equal(await readComposer(m, platform), draft)
         else
           assert.equal(
             await web.page.$eval(
@@ -673,10 +739,16 @@ async function open(ctx: E2eContext): Promise<void> {
             draft
           )
         await m.eraseText({ characters: draft.length })
-        if (web == null) await m.hideKeyboard()
-        await copyMessage(m, web, first, body)
-        await copyMessage(m, web, second, caption)
+        if (web == null) await dismissComposerKeyboard(m, platform)
+        await copyMessage(m, web, first, body, platform)
+        await copyMessage(m, web, second, caption, platform)
         await m.assertVisible({ text: exact(second) })
+        if (platform === 'android') {
+          await m.longPressOn({ text: exact(second) })
+          await m.assertVisible({ text: '^Copy$' })
+          await m.pressKey({ key: 'BACK' })
+          await waitForMenuDismissal(m)
+        }
         if (web != null)
           await verifyWrappedAttention(
             m,
