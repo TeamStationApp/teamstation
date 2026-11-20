@@ -1,0 +1,363 @@
+import assert from 'node:assert/strict'
+import { createHash, randomUUID } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+
+import type { MessageView } from '../../../../src/app/chat/engine/apply'
+import { dismissNotificationAskOn } from '../../../../src/test/notificationAsk'
+import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
+import { defineE2e, type E2eContext } from '../../../core/spec'
+import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
+import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+
+async function edit(ctx: E2eContext): Promise<void> {
+  const f = fixtureFor(ctx)
+  assert(f.previewPage != null)
+  const author = await providerFor(f, f.observer)
+  try {
+    const peer = await providerFor(f, f.sender)
+    try {
+      const platform =
+        ctx.surface === 'web-chromium'
+          ? 'web'
+          : ctx.surface === 'ios-app'
+            ? 'ios'
+            : 'android'
+      const { m, web, enter } = await chatLinkUi(ctx, f, author, platform, {
+        observeNetwork: true
+      })
+      const room = f.conversationId
+      const tag = randomUUID().slice(0, 8)
+      const originalCaption = 'Practice handouts ' + tag
+      const files = ['Lineup for practice', 'Bring the bats'].map(
+        (text, index) => ({
+          fileName: index === 0 ? 'practice.txt' : 'lineup.txt',
+          bytes: new TextEncoder().encode(text),
+          contentType: 'text/plain'
+        })
+      )
+      const original = await author.engine.attach(room, files, originalCaption)
+      assert(
+        original?.mine === true && original.attachments.length === files.length
+      )
+      const newest = await author.engine.sendText(
+        room,
+        'Thursday practice ' + tag
+      )
+      assert(newest?.mine === true)
+      const incoming = await peer.engine.sendText(
+        room,
+        'See you at practice ' + tag
+      )
+      assert(incoming != null)
+      await enter()
+      const row = (id: string): string => 'chat-message-' + id
+      const openMenu = async (id: string): Promise<void> => {
+        if (web != null) {
+          const selector = '[data-testid="' + row(id) + '"]'
+          const node = await web.page.waitForSelector(selector, {
+            timeout: 15000
+          })
+          assert(node != null)
+          await node.scrollIntoView()
+          await node.hover()
+          await m.tapOn({
+            css: selector + ' [aria-label="More message actions"]'
+          })
+        } else {
+          const target = { id: row(id) }
+          await m.scrollUntilVisible({
+            element: target,
+            direction: 'up',
+            timeout: 12000
+          })
+          await m.longPressOn({ id: 'chat-bubble-' + id })
+        }
+      }
+      const field = { id: 'chat-composer' }
+      const editButton = { text: '^Edit$' }
+      const draft = 'Please bring the equipment list.'
+      await m.tapOn(field)
+      await m.inputText({ text: draft })
+      if (web != null) {
+        await web.page.evaluate(() => {
+          const transfer = new DataTransfer()
+          transfer.items.add(
+            new File(['Team equipment list'], 'equipment.txt', {
+              type: 'text/plain'
+            })
+          )
+          const target = document.querySelector(
+            '[data-testid="chat-drop-target"]'
+          )
+          if (target == null) throw Error('Attachment drop target unavailable')
+          target.dispatchEvent(
+            new DragEvent('drop', {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: transfer
+            })
+          )
+        })
+        await m.assertVisible({ text: '^Remove equipment.txt$' })
+        await m.tapOn(field)
+        const update = await peer.engine.sendText(
+          room,
+          'Equipment list confirmed ' + tag
+        )
+        assert(update != null)
+        await m.assertVisible({ id: row(update.id) })
+        const history = await web.page.waitForSelector(
+          '[data-testid="chat-message-history"]'
+        )
+        assert(history != null)
+        const earlier = web.page.waitForResponse(
+          response => {
+            const url = new URL(response.url())
+            return (
+              url.pathname.endsWith('/messages') &&
+              url.searchParams.has('before') &&
+              response.ok()
+            )
+          },
+          { timeout: 20000 }
+        )
+        await history.hover()
+        await web.page.mouse.wheel({ deltaY: -100000 })
+        // Activate the public history control as assistive technology can, while the
+        // composer keeps keyboard focus. Verify the request and the restored field.
+        await history.evaluate(element => {
+          const control = Array.from(
+            element.querySelectorAll<HTMLElement>('button,[role="button"]')
+          ).find(
+            button =>
+              button.textContent != null &&
+              button.textContent.trim() === 'Load earlier messages'
+          )
+          if (control == null)
+            throw Error('The history fixture needs an earlier page')
+          control.click()
+        })
+        await earlier
+        const parked = await web.page.$eval(
+          '[data-testid="chat-composer"]',
+          node => ({
+            focused: document.activeElement === node,
+            value: (node as HTMLTextAreaElement).value
+          })
+        )
+        assert.deepEqual(parked, { focused: true, value: draft })
+        await m.assertVisible({ text: '^Remove equipment.txt$' })
+        await web.page.mouse.wheel({ deltaY: 100000 })
+      }
+      await openMenu(original.id)
+      await m.tapOn(editButton)
+      await m.assertVisible({ text: '^Editing your message$' })
+      if (web != null) {
+        const state = await web.page.evaluate(() => {
+          const input = document.querySelector<HTMLTextAreaElement>(
+            '[data-testid="chat-composer"]'
+          )
+          const attach = document.querySelector('[aria-label="Attach"]')
+          if (input == null || attach == null)
+            throw Error(
+              'Expected the focused edit field and its attachment button'
+            )
+          return {
+            value: input.value,
+            caret: input.selectionEnd,
+            focused: document.activeElement === input,
+            disabled:
+              attach.getAttribute('aria-disabled') === 'true' ||
+              attach.hasAttribute('disabled')
+          }
+        })
+        assert.deepEqual(state, {
+          value: originalCaption,
+          caret: originalCaption.length,
+          focused: true,
+          disabled: true
+        })
+      }
+      const dismissAsk = async (): Promise<void> => {
+        await dismissNotificationAskOn(
+          {
+            assertVisible: selector => m.assertVisible(selector),
+            tapOn: selector => m.tapOn(selector)
+          },
+          1500
+        )
+      }
+      await m.inputText({ text: ' updated' })
+      await dismissAsk()
+      // Use in-app Back so the two conversations retain their draft owner.
+      await m.tapOn({ text: '^Back$', timeout: 10000 })
+      const listId = 'chat-conversation-' + room
+      await m.assertVisible({ id: listId })
+      const other =
+        web == null
+          ? flattenPublicHierarchy(await m.hierarchy())
+              .map(node => node.id)
+              .find(
+                id =>
+                  id?.startsWith('chat-conversation-cnv_') === true &&
+                  id !== listId
+              )
+          : await web.page.evaluate(
+              current =>
+                Array.from(
+                  document.querySelectorAll<HTMLElement>(
+                    '[data-testid^="chat-conversation-cnv_"]'
+                  )
+                )
+                  .map(node => node.dataset.testid)
+                  .find(id => id !== current),
+              listId
+            )
+      assert(
+        other != null,
+        'The fixture needs a second conversation for switching'
+      )
+      await m.tapOn({ id: other })
+      await m.assertVisible(field)
+      await m.assertNotVisible({ text: '^Editing your message$' })
+      await dismissAsk()
+      await m.tapOn({ text: '^Back$', timeout: 10000 })
+      await m.tapOn({ id: listId })
+      await m.assertVisible({ text: '^Editing your message$' })
+      if (web != null)
+        assert.equal(
+          await web.page.$eval(
+            '[data-testid="chat-composer"]',
+            node => (node as HTMLTextAreaElement).value
+          ),
+          originalCaption + ' updated'
+        )
+
+      await dismissAsk()
+      await m.tapOn({ text: '^Cancel edit$', timeout: 10000 })
+      if (web != null) {
+        await m.assertVisible({ text: '^Remove equipment.txt$' })
+        assert.equal(
+          await web.page.$eval(
+            '[data-testid="chat-composer"]',
+            el => (el as HTMLTextAreaElement).value
+          ),
+          draft
+        )
+      }
+      await openMenu(original.id)
+      await m.tapOn(editButton)
+      await m.eraseText({ characters: originalCaption.length })
+      const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
+      await m.inputText({ text: editedCaption })
+      await m.assertVisible({ id: 'chat-dismiss-link-preview', timeout: 18000 })
+      await m.tapOn({ text: '^Send$' })
+      const readBack = async (body: string): Promise<MessageView> => {
+        const deadline = Date.now() + 30000
+        do {
+          const seen = (await peer.engine.open(room)).messages.find(
+            message => message.id === original.id
+          )
+          if (seen?.body === body && seen.edited) return seen
+          await delay(200)
+        } while (Date.now() < deadline)
+        throw Error('Peer did not receive the edit on the original')
+      }
+      const received = await readBack(editedCaption)
+      assert.equal(received.seq, original.seq)
+      assert.equal(received.senderUserId, original.senderUserId)
+      assert.equal(received.preview?.title, f.previewPage.title)
+      assert.deepEqual(received.attachments, original.attachments)
+      for (const [i, ref] of received.attachments.entries()) {
+        const bytes = await peer.engine.openAttachment(ref)
+        assert.equal(
+          createHash('sha256').update(bytes).digest('hex'),
+          createHash('sha256').update(files[i].bytes).digest('hex')
+        )
+      }
+      await m.assertVisible({
+        text: '^edited$',
+        childOf: { id: row(original.id) }
+      })
+      await openMenu(original.id)
+      await m.tapOn(editButton)
+      await m.eraseText({ characters: editedCaption.length })
+      await m.tapOn({ text: '^Send$' })
+      const cleared = await readBack('')
+      assert.deepEqual(cleared.attachments, original.attachments)
+      assert.equal(cleared.preview, undefined)
+      if (web != null) await m.tapOn({ text: '^Remove equipment.txt$' })
+      await m.tapOn(field)
+      await m.eraseText({ characters: draft.length })
+      if (platform !== 'ios') {
+        if (web != null) await web.page.keyboard.press('ArrowUp')
+        else await m.pressKey({ key: 'DPAD_UP' })
+        await m.assertVisible({ text: '^Editing your message$' })
+        if (web != null) {
+          assert.equal(
+            await web.page.$eval(
+              '[data-testid="chat-composer"]',
+              el => (el as HTMLTextAreaElement).value
+            ),
+            newest.body
+          )
+          await web.page.keyboard.press('Escape')
+        } else await m.pressKey({ key: 'ESCAPE' })
+        await m.assertNotVisible({ text: '^Editing your message$' })
+      }
+      await openMenu(incoming.id)
+      await m.assertNotVisible(editButton)
+      writeFileSync(
+        join(ctx.runDir, 'recipient.txt'),
+        [
+          '$ e2e run messaging/chat/edit-message#edit',
+          'The peer decrypted two unchanged ordinary files after the original caption was edited and cleared.',
+          'The message ID, sequence, author, file keys and digests matched. The edited caption regenerated its private preview.',
+          'The incoming message menu omitted Edit.'
+        ].join('\n') + '\n'
+      )
+    } finally {
+      peer.engine.stop()
+    }
+  } finally {
+    author.engine.stop()
+  }
+}
+
+export default defineE2e({
+  id: 'messaging/chat/edit-message',
+  title: 'Authors edit their original chat message or caption',
+  kind: 'e2e',
+  covers: [
+    'src/app/chat/Composer.tsx',
+    'src/app/chat/ConversationScreen.tsx',
+    'src/app/chat/MessageMenu.tsx',
+    'src/app/chat/chatWorkspaceModel.ts',
+    'src/app/chat/chatWebInteractions*',
+    'android/app/src/main/java/app/teamstation/app/chat/ChatHardwareKeys.kt'
+  ],
+  stack: 'seat',
+  fixtures: [],
+  exclusive: true,
+  surfaces: {
+    'web-chromium': { devices: [] },
+    'ios-app': {
+      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+    },
+    'android-app': {
+      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+    }
+  },
+  services: ['api'],
+  apps: [],
+  secrets: ['chatLinkFixture'],
+  costUsd: 0,
+  minutes: 4,
+  guards: [],
+  faults: [],
+  manual: false,
+  sendsNoMail: true,
+  scenarios: { edit }
+})

@@ -91,6 +91,15 @@ export class ChatDraftOwner {
   private readonly pending = new Map<string, ChatSubmission>()
   private readonly uncertain = new Map<string, ChatSubmission>()
   private readonly failures = new Map<string, string>()
+  private readonly ordinary = new Map<
+    string,
+    {
+      draft: ChatDraft
+      retry?: ChatSubmission['retry']
+      failure?: string
+    }
+  >()
+
   private readonly readers = new Map<string, () => ChatDraft>()
   private readonly listeners = new Map<string, Set<() => void>>()
 
@@ -142,6 +151,73 @@ export class ChatDraftOwner {
 
   failure(id: string): string | undefined {
     return this.failures.get(id)
+  }
+
+  startEdit(id: string, message: MessageView): boolean {
+    if (!this.live || this.pending.has(id)) return false
+    this.pull(id)
+    const draft = this.draft(id)
+    if (draft.editing?.id === message.id) return false
+    if (draft.editing == null) {
+      const retry = this.uncertain.get(id)
+      const revisions = this.revisions.get(id)!
+      const unchanged =
+        retry != null &&
+        (Object.keys(revisions) as DraftField[]).every(
+          field => revisions[field] === retry.revisions[field]
+        )
+      this.ordinary.set(id, {
+        draft,
+        retry: unchanged ? retry.retry : undefined,
+        failure: this.failures.get(id)
+      })
+    }
+    this.uncertain.delete(id)
+    this.failures.delete(id)
+    this.write(id, {
+      ...draft,
+      text: message.body,
+      editing: message,
+      replyTo: undefined,
+      mentionTokens: undefined,
+      picked: []
+    })
+    this.changed(id)
+    return true
+  }
+
+  cancelEdit(id: string): void {
+    if (!this.live) return
+    this.pull(id)
+    const current = this.draft(id)
+    if (current.editing == null) return
+    this.restoreOrdinary(id, current)
+    this.changed(id)
+  }
+
+  private restoreOrdinary(id: string, current: ChatDraft): void {
+    const parked = this.ordinary.get(id)
+    this.ordinary.delete(id)
+    const draft = parked?.draft ?? emptyChatDraft()
+    const restored: ChatDraft = {
+      ...current,
+      editing: undefined,
+      text: draft.text,
+      picked: draft.picked,
+      replyTo: draft.replyTo,
+      mentionTokens: draft.mentionTokens
+    }
+    if (draft.mentionTokens == null) delete restored.mentionTokens
+    this.write(id, restored)
+    this.uncertain.delete(id)
+    if (parked?.retry != null)
+      this.uncertain.set(id, {
+        draft: this.draft(id),
+        retry: parked.retry,
+        revisions: { ...this.revisions.get(id)! }
+      })
+    if (parked?.failure != null) this.failures.set(id, parked.failure)
+    else this.failures.delete(id)
   }
 
   begin(id: string): ChatSubmission | undefined {
@@ -207,7 +283,9 @@ export class ChatDraftOwner {
         current.editing?.id === token.draft.editing?.id &&
         samePickedFiles(current.picked, token.draft.picked)
       // A newer draft owns its whole context, including unchanged reply/files.
-      if (unchanged)
+      if (unchanged && token.draft.editing != null)
+        this.restoreOrdinary(id, current)
+      else if (unchanged)
         this.write(id, {
           ...current,
           text: '',
@@ -216,7 +294,7 @@ export class ChatDraftOwner {
           editing: undefined,
           picked: []
         })
-    } else {
+    } else if (token.draft.editing?.id === current.editing?.id) {
       if (error instanceof UnconfirmedChatPost) {
         token.retry = error.retry
         this.uncertain.set(id, token)
@@ -250,6 +328,7 @@ export class ChatDraftOwner {
   invalidate(): void {
     this.live = false
     this.attentionSessions.clear()
+    this.ordinary.clear()
     this.pending.clear()
     this.uncertain.clear()
     this.readers.clear()

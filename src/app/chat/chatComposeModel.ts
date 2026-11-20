@@ -25,13 +25,16 @@ export function sendAllowed(state: {
   preparing: boolean
   text: string
   attachments: PickedFile[]
+  editingCaption?: boolean
 }): boolean {
   const body = state.text.trim()
   return (
     state.enabled &&
     !state.sending &&
     !state.preparing &&
-    (body !== '' || state.attachments.length > 0) &&
+    (body !== '' ||
+      state.attachments.length > 0 ||
+      state.editingCaption === true) &&
     Array.from(body).length <= MAX_BODY &&
     attachmentProblem(
       state.attachments.map(file => ({

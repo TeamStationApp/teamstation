@@ -15,13 +15,16 @@
  * sends. Return alone, and the on-screen keyboard's return key, reach the
  * text system as before, and send.
  *
- * Scope: the press handlers are replaced on React Native's multi-line field
+ * Chat also claims an unmodified hardware Up or Escape when its focused
+ * field advertises that shortcut. All other fields retain ordinary behavior.
+ * The press handlers are replaced on React Native's multi-line field
  * class (`RCTUITextView`), so every multi-line field in the app runs them,
- * but they act only for the field whose host view carries the composer's
- * `nativeID` (`FIELD_NATIVE_ID`, "tessComposerField"). Every other
+ * but they act only for the corresponding composer native IDs. Every other
  * multi-line field passes each press, Shift+Return included, straight on to
  * UITextView, as it did without this file.
  */
+extern BOOL TSChatSendKey(UITextView *field, NSString *key);
+
 @interface TSShiftReturn : NSObject
 @end
 
@@ -55,14 +58,14 @@ static BOOL TSIsShiftReturn(UIPress *press)
  * Whether `field` is Tess's composer: React Native puts its `nativeID` on
  * the field's host view (`RCTTextInputComponentView`), whose subview it is.
  */
-static BOOL TSIsComposer(UITextView *field)
+static NSString *TSComposerID(UITextView *field)
 {
   UIView *host = field.superview;
   if (host == nil || ![host respondsToSelector:NSSelectorFromString(@"nativeId")]) {
-    return NO;
+    return nil;
   }
   id nativeId = [host valueForKey:@"nativeId"];
-  return [nativeId isKindOfClass:[NSString class]] && [nativeId isEqualToString:TSComposerNativeID];
+  return [nativeId isKindOfClass:[NSString class]] ? nativeId : nil;
 }
 
 static NSMutableSet<UIPress *> *TSTaken(UITextView *field)
@@ -97,16 +100,28 @@ static void TSInsertNewline(UITextView *field)
 
 static void TSPressesBegan(UITextView *self, SEL _cmd, NSSet<UIPress *> *presses, UIPressesEvent *event)
 {
-  if (!TSIsComposer(self)) {
-    // Any other multi-line field: every press goes on as it came.
+  NSString *identifier = TSComposerID(self);
+  BOOL tess = [identifier isEqualToString:TSComposerNativeID];
+  BOOL up = [identifier isEqualToString:@"chatComposerEditLatest"];
+  BOOL escape = [identifier isEqualToString:@"chatComposerCancelEdit"];
+  if (!tess && !up && !escape) {
     TSInheritedBegan(self, _cmd, presses, event);
     return;
   }
   NSMutableSet<UIPress *> *rest = [NSMutableSet set];
   for (UIPress *press in presses) {
-    if (TSIsShiftReturn(press)) {
+    UIKey *key = press.key;
+    UIKeyModifierFlags modifiers = UIKeyModifierShift | UIKeyModifierControl |
+        UIKeyModifierAlternate | UIKeyModifierCommand;
+    if (tess && TSIsShiftReturn(press)) {
       [TSTaken(self) addObject:press];
       TSInsertNewline(self);
+    } else if (!tess && key != nil && self.isFirstResponder && self.editable &&
+               self.markedTextRange == nil && (key.modifierFlags & modifiers) == 0 &&
+               ((up && self.text.length == 0 && key.keyCode == UIKeyboardHIDUsageKeyboardUpArrow) ||
+                (escape && key.keyCode == UIKeyboardHIDUsageKeyboardEscape)) &&
+               ([TSTaken(self) containsObject:press] || TSChatSendKey(self, up ? @"ArrowUp" : @"Escape"))) {
+      [TSTaken(self) addObject:press];
     } else {
       [rest addObject:press];
     }

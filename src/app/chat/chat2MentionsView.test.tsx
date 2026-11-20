@@ -1080,6 +1080,7 @@ describe('mention send/edit and draft compatibility', function () {
         body: '@Aaron Judge',
         mentions: [userIdOfGumbo(2)]
       })
+      state.update({ ...state.shown, messages: [original] })
       const draft = {
         ...emptyChatDraft(),
         text: '@Aaron Judge ',

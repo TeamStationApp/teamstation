@@ -5836,9 +5836,8 @@ async function main(): Promise<void> {
       )
       await revealMessage(fixture.conversationId, posts[0].id)
       await physicalMessageHold(m, `chat-message-${posts[0].id}`, body, 550)
-      for (const action of ['Reply', 'Copy', 'Delete'])
+      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
         await m.assertVisible({ text: action, timeout: 10000 })
-      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
       await photo('own-message-actions-after')
       await m.tapOnPoint({ point: '5%,15%' })
       results.replySend = {
@@ -5849,7 +5848,7 @@ async function main(): Promise<void> {
         senderMatches: true,
         submittedTextAndContextCleared: true,
         ownDeleteAvailable: true,
-        editUnavailable: true,
+        ownEditAvailable: true,
         protectedPostsNotDeleted: true
       }
       pass(
@@ -6324,13 +6323,12 @@ async function main(): Promise<void> {
         fixture.nativeReplyText,
         550
       )
-      for (const action of ['Reply', 'Copy', 'Delete'])
+      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
         await m.assertVisible({ text: action, timeout: 10000 })
-      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
       results.messagePermissionMatrix = {
         receivedDeleteAvailable: target.canModerate,
         ownDeleteAvailable: true,
-        editUnavailable: true,
+        ownEditAvailable: true,
         protectedMessagesNotDeleted: true
       }
       await photo('own-message-actions-after')

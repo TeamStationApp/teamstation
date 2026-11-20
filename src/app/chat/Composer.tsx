@@ -28,9 +28,12 @@ export interface ComposerProps {
   /** "Replying to <name>" with its snippet, or the edit being made. */
   context:
     | { kind: 'reply'; name: string; snippet: string }
-    | { kind: 'edit' }
+    | { kind: 'edit'; hasAttachments?: boolean }
     | undefined
   onCancelContext: () => void
+  shortcutsActive?: boolean
+  onEditLatest?: () => void
+  onInterruptShortcut?: () => void
   attachments: PickedFile[]
   onRemoveAttachment: (index: number) => void
   /** Where Attach can pick from; none hides it (an edit takes no files). */
@@ -85,10 +88,36 @@ export function Composer(props: ComposerProps): React.ReactElement {
     sending,
     preparing: props.preparing === true,
     text,
-    attachments
+    attachments,
+    editingCaption: context?.kind === 'edit' && context.hasAttachments === true
   })
-  const canAttach = enabled && !sending && props.preparing !== true
+  const canAttach =
+    enabled && !sending && props.preparing !== true && context?.kind !== 'edit'
   const takes = enabled && props.asleep !== true
+  const acceptsShortcut =
+    takes &&
+    !sending &&
+    props.preparing !== true &&
+    props.shortcutsActive === true &&
+    !emoji &&
+    !choosing
+  const shortcut =
+    acceptsShortcut && context?.kind === 'edit'
+      ? 'Escape'
+      : acceptsShortcut &&
+          context == null &&
+          text === '' &&
+          attachments.length === 0 &&
+          props.onEditLatest != null
+        ? 'ArrowUp'
+        : undefined
+  const hardware = useRef<(key: string) => boolean>(() => false)
+  hardware.current = key => {
+    if (key !== shortcut) return false
+    if (key === 'Escape') props.onCancelContext()
+    else props.onEditLatest?.()
+    return true
+  }
   useEffect(
     () =>
       registerFocus?.(caret => {
@@ -115,25 +144,38 @@ export function Composer(props: ComposerProps): React.ReactElement {
   }, [text, takes, caretRevision])
   useEffect(
     () =>
-      bindComposerKeys(input.current, () => {
-        const current = latest.current
-        if (
-          sendAllowed({
-            enabled: current.enabled,
-            sending: current.sending,
-            preparing: current.preparing === true,
-            text: current.text,
-            attachments: current.attachments
-          })
-        )
-          current.onSend()
-      }),
+      bindComposerKeys(
+        input.current,
+        () => {
+          const current = latest.current
+          if (
+            sendAllowed({
+              enabled: current.enabled,
+              sending: current.sending,
+              preparing: current.preparing === true,
+              text: current.text,
+              attachments: current.attachments,
+              editingCaption:
+                current.context?.kind === 'edit' &&
+                current.context.hasAttachments === true
+            })
+          )
+            current.onSend()
+        },
+        key => hardware.current(key),
+        () => latest.current.onInterruptShortcut?.()
+      ),
     []
   )
 
   const attach = (source: PickSource): void => {
     const current = latest.current
-    if (!current.enabled || current.sending || current.preparing === true)
+    if (
+      !current.enabled ||
+      current.sending ||
+      current.preparing === true ||
+      current.context?.kind === 'edit'
+    )
       return
     setChoosing(false)
     current.onAttach(source)
@@ -209,7 +251,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           ))}
         </View>
       )}
-      {choosing && (
+      {choosing && context?.kind !== 'edit' && (
         <View style={styles.sources}>
           {props.sources.map(source => (
             <Pressable
@@ -289,6 +331,14 @@ export function Composer(props: ComposerProps): React.ReactElement {
         <TextInput
           ref={input}
           onFocus={props.onRead}
+          onBlur={props.onInterruptShortcut}
+          nativeID={
+            shortcut === 'ArrowUp'
+              ? 'chatComposerEditLatest'
+              : shortcut === 'Escape'
+                ? 'chatComposerCancelEdit'
+                : 'chatComposerField'
+          }
           testID="chat-composer"
           accessibilityLabel={lstrings.chat_composer}
           value={text}
@@ -296,7 +346,11 @@ export function Composer(props: ComposerProps): React.ReactElement {
             selection.current = event.nativeEvent.selection
           }}
           onKeyPress={event => {
-            editKey.current = event.nativeEvent.key
+            const key = event.nativeEvent.key
+            if (Platform.OS !== 'web' && hardware.current(key)) return
+            if (key !== 'ArrowUp' && key !== 'Escape')
+              latest.current.onInterruptShortcut?.()
+            editKey.current = key
           }}
           onChangeText={next => {
             const change = {

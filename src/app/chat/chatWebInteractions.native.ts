@@ -32,7 +32,9 @@ export function isFinePointer(): boolean {
 }
 export function bindComposerKeys(
   _view: unknown,
-  _onSend: () => void
+  _onSend: () => void,
+  _onShortcut?: (key: string) => boolean,
+  _interrupt?: () => void
 ): () => void {
   return () => {}
 }

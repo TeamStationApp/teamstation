@@ -794,7 +794,7 @@ export function ConversationScreen(
     const current = latestView.current
     if (
       current?.composer !== 'enabled' ||
-      editing != null ||
+      editingNow.current != null ||
       sendingNow.current ||
       props.active === false
     ) {
@@ -1455,7 +1455,8 @@ export function ConversationScreen(
    */
   const loadOlder = async (
     cancelled: () => boolean = () => false,
-    page = false
+    page = false,
+    onPage?: (loaded: ConversationView) => void
   ): Promise<ConversationView> => {
     initialFollow.current = false
     const visit = readingVisit.current
@@ -1485,7 +1486,8 @@ export function ConversationScreen(
         if (stopped()) throw new AttentionCancelled()
       }
       const next = await loadOlderPage(stopped)
-      if (visit !== readingVisit.current) throw new AttentionCancelled()
+      if (stopped()) throw new AttentionCancelled()
+      onPage?.(next)
       await waitForReading()
       return next
     })
@@ -2253,6 +2255,46 @@ export function ConversationScreen(
     []
   )
 
+  const shortcutRevision = useRef(0)
+  const shortcutsActive =
+    props.active !== false &&
+    documentActive &&
+    !composerOverlay &&
+    menu == null &&
+    !pinsOpen &&
+    reacting == null &&
+    mentionChoosing == null &&
+    safetyAction == null
+  const keysAvailable = useRef(shortcutsActive)
+  keysAvailable.current = shortcutsActive
+  useEffect(() => {
+    shortcutRevision.current++
+  }, [shortcutsActive, conversationId, view?.composer])
+  const { discardEdit } = draftPreview
+  const cancelEditing = useCallback((): void => {
+    const target = editingNow.current
+    if (target == null) return
+    shortcutRevision.current++
+    discardEdit(target.id)
+    draftOwner.cancelEdit(conversationId)
+  }, [conversationId, discardEdit, draftOwner])
+  useEffect(() => {
+    if (editing == null || view == null || props.active === false) return
+    const raw = engine.view(conversationId)
+    if (raw == null) return
+    const target = raw.messages.find(message => message.id === editing.id)
+    // An older original may still be outside the loaded page on reopening.
+    if (
+      (target != null && !actionsFor(target, raw).includes('edit')) ||
+      raw.composer === 'closed' ||
+      raw.composer === 'readOnly' ||
+      (target == null &&
+        (!raw.hasEarlier ||
+          (raw.historyBefore != null && editing.seq >= raw.historyBefore)))
+    ) {
+      cancelEditing()
+    }
+  }, [view, editing, conversationId, engine, props.active, cancelEditing])
   if (view == null) initialScrollChosen.current = false
   if (failed && view == null) {
     return (
@@ -2278,10 +2320,19 @@ export function ConversationScreen(
         sending: draftOwner.isSending(conversationId),
         preparing: preparingNow.current > 0,
         text: textNow.current,
-        attachments: pickedNow.current
+        attachments: pickedNow.current,
+        editingCaption: (editingNow.current?.attachments.length ?? 0) > 0
       })
     )
       return
+    const editingTarget = editingNow.current
+    if (editingTarget != null) {
+      const latest = current.messages.find(
+        message => message.id === editingTarget.id
+      )
+      if (latest == null || !actionsFor(latest, current).includes('edit'))
+        return
+    }
     const submission = draftOwner.begin(conversationId)
     if (submission == null) return
     const submitted = submission.draft
@@ -2331,7 +2382,14 @@ export function ConversationScreen(
     }
     const finish = (success: boolean, error?: unknown): void => {
       const next = draftOwner.finish(conversationId, submission, success, error)
-      if (success && next?.text === '') draftPreview.sent()
+      if (
+        success &&
+        next != null &&
+        (submitted.editing == null
+          ? next.text === ''
+          : next.editing?.id !== submitted.editing.id)
+      )
+        draftPreview.sent()
       // Standalone consumers retain their external draft callback; workspaces
       // reconcile directly in their persistent owner, never the old screen.
       if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
@@ -2351,6 +2409,7 @@ export function ConversationScreen(
     // iOS can report the same text again once a send has cleared the draft;
     // that is no edit, and must not close a chooser the at-sign just opened.
     if (next === before) return
+    shortcutRevision.current++
     const reconciled = reconcileMentions(
       before,
       next,
@@ -2426,6 +2485,77 @@ export function ConversationScreen(
     focusComposer.current(next.selection)
   }
 
+  const edit = (id: string): void => {
+    const current = engine.view(conversationId)
+    const target = current?.messages.find(message => message.id === id)
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      target == null ||
+      current == null ||
+      !actionsFor(target, current).includes('edit') ||
+      draftOwner.isSending(conversationId)
+    )
+      return
+    const previous = editingNow.current
+    if (previous?.id !== id) {
+      if (previous != null) draftPreview.discardEdit(previous.id)
+      preparationGeneration.current++
+      preparingNow.current = 0
+      setPreparing(0)
+      preparationQueue.current = Promise.resolve()
+      draftOwner.startEdit(conversationId, target)
+    }
+    shortcutRevision.current++
+    const end = textNow.current.length
+    focusComposer.current({ start: end, end })
+  }
+
+  const editLatest = (): void => {
+    const revision = ++shortcutRevision.current
+    const visit = readingVisit.current
+    const cancelled = (): boolean =>
+      revision !== shortcutRevision.current ||
+      visit !== readingVisit.current ||
+      !mounted.current ||
+      !paneActive.current ||
+      !keysAvailable.current ||
+      textNow.current !== '' ||
+      pickedNow.current.length !== 0 ||
+      editingNow.current != null ||
+      replyNow.current != null ||
+      sendingNow.current ||
+      preparingNow.current > 0 ||
+      engine.view(conversationId)?.composer !== 'enabled'
+    const select = (page: ConversationView): boolean => {
+      if (cancelled()) return false
+      const target = page.messages.findLast(message =>
+        actionsFor(message, page).includes('edit')
+      )
+      if (target == null) return false
+      edit(target.id)
+      return true
+    }
+    run(async () => {
+      let current = engine.view(conversationId)
+      if (current == null || select(current)) return
+      while (current.hasEarlier && !cancelled()) {
+        const before = current
+        try {
+          current = await loadOlder(cancelled, true, select)
+        } catch (error) {
+          if (!cancelled()) throw error
+          return
+        }
+        if (
+          current.historyBefore === before.historyBefore &&
+          current.messages[0]?.id === before.messages[0]?.id
+        )
+          return
+      }
+    }, lstrings.chat_message_unavailable)
+  }
+
   const reply = (pressed: MessageView): void => {
     const current = engine.view(conversationId)
     const original = current?.messages.find(
@@ -2438,8 +2568,7 @@ export function ConversationScreen(
       !actionsFor(original, current).includes('reply')
     )
       return
-    editingNow.current = undefined
-    setEditing(undefined)
+    cancelEditing()
     replyNow.current = original
     setReplyTo(original)
     // Keep trusted mobile-web activation and repeated Reply actions synchronous.
@@ -3367,7 +3496,10 @@ export function ConversationScreen(
               preparing={preparing > 0}
               context={
                 editing != null
-                  ? { kind: 'edit' }
+                  ? {
+                      kind: 'edit',
+                      hasAttachments: editing.attachments.length > 0
+                    }
                   : replyTo != null
                     ? {
                         kind: 'reply',
@@ -3384,24 +3516,26 @@ export function ConversationScreen(
                       }
                     : undefined
               }
+              shortcutsActive={shortcutsActive}
+              onEditLatest={editLatest}
+              onInterruptShortcut={() => {
+                shortcutRevision.current++
+              }}
               onCancelContext={() => {
-                if (editing != null) {
-                  textNow.current = ''
-                  setText('')
-                  mentionTokensNow.current = undefined
-                  setMentionTokens(undefined)
+                if (editingNow.current != null) cancelEditing()
+                else {
+                  replyNow.current = undefined
+                  setReplyTo(undefined)
                 }
-                setEditing(undefined)
-                replyNow.current = undefined
-                setReplyTo(undefined)
               }}
               attachments={picked}
               onRemoveAttachment={index => {
+                if (editingNow.current != null) return
                 const next = pickedNow.current.filter((_, at) => at !== index)
                 pickedNow.current = next
                 setPicked(next)
               }}
-              sources={editing == null ? files.PICK_SOURCES : []}
+              sources={files.PICK_SOURCES}
               onAttach={source => {
                 prepareFiles(
                   async remaining => await files.pickFiles(source, remaining),
@@ -3467,6 +3601,10 @@ export function ConversationScreen(
             const selected = selectedFor('reply')
             if (selected == null) return
             reply(selected)
+          }}
+          onEdit={() => {
+            const selected = selectedFor('edit')
+            if (selected != null) edit(selected.id)
           }}
           onReact={emoji => {
             const selected = selectedFor('react')

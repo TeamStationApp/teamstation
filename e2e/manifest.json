@@ -966,6 +966,105 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "id": "messaging/chat/edit-message#edit",
+      "title": "Authors edit their original chat message or caption",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/Composer.tsx",
+        "src/app/chat/ConversationScreen.tsx",
+        "src/app/chat/MessageMenu.tsx",
+        "src/app/chat/chatWorkspaceModel.ts",
+        "src/app/chat/chatWebInteractions*",
+        "android/app/src/main/java/app/teamstation/app/chat/ChatHardwareKeys.kt"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/edit-message",
+      "file": "e2e/tests/messaging/chat/edit-message.e2e.ts"
+    },
+    {
+      "id": "messaging/chat/edit-message-ipad#hardware",
+      "title": "The focused iPad chat composer accepts hardware Up and Escape",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSShiftReturn.m",
+        "ios/TeamStation/ChatKeyboard/**",
+        "src/app/chat/Composer.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "tablet",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/edit-message-ipad",
+      "file": "e2e/tests/messaging/chat/edit-message-ipad.e2e.ts"
+    },
+    {
       "id": "messaging/chat/link-previews#send",
       "title": "Chat members receive the sender’s private link preview",
       "kind": "e2e",

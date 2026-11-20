@@ -94,7 +94,8 @@ export async function chatLinkUi(
   f: ChatLinkFixture,
   observer: Awaited<ReturnType<typeof providerFor>>,
   platform: 'ios' | 'android' | 'web',
-  emulation?: Emulation
+  emulation?: Emulation,
+  role = 'phone'
 ): Promise<{
   m: MaestroDevice & ServerDevice
   web?: WebSession
@@ -107,7 +108,7 @@ export async function chatLinkUi(
       : undefined
   const appId = 'app.teamstation.develop'
   const m: MaestroDevice & ServerDevice =
-    web?.m ?? (await ctx.attach('phone', { platform, appId }))
+    web?.m ?? (await ctx.attach(role, { platform, appId }))
   const simulator =
     platform === 'ios' && (await m.platformInfo()).isSimulator === true
   const room = '/chat/' + encodeURIComponent(f.conversationId)
@@ -130,7 +131,7 @@ export async function chatLinkUi(
     await setServer({
       platform,
       origin: f.origin,
-      udid: ctx.device('phone'),
+      udid: ctx.device(role),
       appId,
       simulator,
       device: m
@@ -148,7 +149,7 @@ export async function chatLinkUi(
       assert(platform === 'ios' || platform === 'android')
       await openInApp({
         platform,
-        udid: ctx.device('phone'),
+        udid: ctx.device(role),
         appId,
         device: m,
         simulator,

@@ -20,6 +20,7 @@ export interface MessageMenuProps {
   selected?: React.ReactNode
   source?: MessageSource
   onReply: () => void
+  onEdit?: () => void
   onReact: (emoji: string) => void
   onMoreEmoji: () => void
   onCopy?: () => Promise<void>
@@ -171,6 +172,15 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
               },
               true
             )
+          }}
+        />
+      )}
+      {has('edit') && props.onEdit != null && (
+        <Button
+          label={lstrings.chat_edit}
+          kind="text"
+          onPress={() => {
+            invoke('edit', () => latest.current.onEdit?.(), true)
           }}
         />
       )}

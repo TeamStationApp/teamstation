@@ -44,26 +44,39 @@ export function isFinePointer(): boolean {
 }
 export function bindComposerKeys(
   view: unknown,
-  onSend: () => void
+  onSend: () => void,
+  onShortcut?: (key: string) => boolean,
+  interrupt?: () => void
 ): () => void {
   if (!(view instanceof HTMLElement)) return () => {}
   let composing = false
   const start = (): void => {
     composing = true
+    interrupt?.()
   }
   const end = (): void => {
     composing = false
   }
   const key = (event: KeyboardEvent): void => {
-    if (
-      event.key !== 'Enter' ||
-      event.shiftKey ||
-      composing ||
-      event.isComposing ||
-      event.keyCode === 229 ||
-      !isFinePointer()
-    )
+    if (event.key !== 'ArrowUp' || !event.repeat) interrupt?.()
+    if (composing || event.isComposing || event.keyCode === 229) return
+    if (event.key === 'ArrowUp' || event.key === 'Escape') {
+      if (
+        event.target === view &&
+        view.ownerDocument.activeElement === view &&
+        !event.repeat &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        onShortcut?.(event.key) === true
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
       return
+    }
+    if (event.key !== 'Enter' || event.shiftKey || !isFinePointer()) return
     event.preventDefault()
     if (!event.repeat) onSend()
   }

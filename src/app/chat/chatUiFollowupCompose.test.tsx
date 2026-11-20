@@ -1358,6 +1358,109 @@ describe('chat repeated offscreen announcements', function () {
 })
 
 describe('chat conversation shared file preparation and sending', function () {
+  it('edits an old original from the author menu and restores its separate unsent draft and file', async () => {
+    const engine = new FakeEngine()
+    const original = message({
+      mine: true,
+      body: 'Practice at four 🥎',
+      sentAt: '2019-01-01T10:00:00Z'
+    })
+    engine.update('cnv_aurora', { messages: [original] })
+    await screen(engine, {
+      draft: {
+        text: 'Bring the bats',
+        picked: [prepared('lineup.pdf')],
+        scrollOffset: 0
+      }
+    })
+    await press('More message actions')
+    await press('Edit')
+    expect(input().value).equals(original.body)
+    expect(document.activeElement).equals(input())
+    expect(input().selectionStart).equals(original.body.length)
+    expect(button('Attach').getAttribute('aria-disabled')).equals('true')
+    expect(document.body.textContent).not.contains('lineup.pdf')
+    await type('Practice at five')
+    await press('Send')
+    expect(engine.calls).deep.includes([
+      'edit',
+      'cnv_aurora',
+      original.id,
+      'Practice at five'
+    ])
+    expect(input().value).equals('Bring the bats')
+    expect(button('Remove lineup.pdf').getAttribute('aria-label')).equals(
+      'Remove lineup.pdf'
+    )
+    await press('More message actions')
+    await press('Edit')
+    await type('Discarded edit')
+    await press('Cancel edit')
+    expect(input().value).equals('Bring the bats')
+    expect(button('Remove lineup.pdf').getAttribute('aria-label')).equals(
+      'Remove lineup.pdf'
+    )
+  })
+
+  it('handles physical Up only in the empty field, reads earlier history and cancels on Escape', async () => {
+    const engine = new FakeEngine()
+    const room = 'cnv_aurora'
+    const mine = message({
+      id: 'msg_older',
+      seq: 3,
+      mine: true,
+      body: 'Practice at noon'
+    })
+    const incoming = message({ id: 'msg_newer', seq: 8, mine: false })
+    engine.update(room, {
+      messages: [incoming],
+      hasEarlier: true,
+      historyBefore: 8
+    })
+    let pages = 0
+    engine.loadEarlier = async id => {
+      pages++
+      engine.update(id, {
+        messages: [mine, incoming],
+        hasEarlier: false,
+        historyBefore: 3
+      })
+      return engine.view(id)!
+    }
+    await screen(engine)
+    await act(async () => {
+      input().focus()
+      key(input(), { key: 'ArrowUp', shiftKey: true })
+      await wait()
+    })
+    expect(input().value).equals('')
+    expect(input().id).equals('chatComposerEditLatest')
+    await act(async () => {
+      expect(key(input(), { key: 'ArrowUp' }).defaultPrevented).equals(true)
+      await wait()
+    })
+    for (let frame = 0; frame < 30 && input().value === ''; frame++) {
+      await act(async () => {
+        await wait(80)
+      })
+    }
+    expect(pages).equals(1)
+    expect(input().value, document.body.textContent ?? '').equals(mine.body)
+    expect(pages).equals(1)
+    await act(async () => {
+      key(input(), { key: 'Escape' })
+      await wait()
+    })
+    expect(input().value).equals('')
+    expect(document.body.textContent).not.contains('Editing your message')
+    await type(' ')
+    await act(async () => {
+      key(input(), { key: 'ArrowUp' })
+      await wait()
+    })
+    expect(input().value).equals(' ')
+  })
+
   it('shows the received card, regenerates an edited caption’s chat link preview, and dismisses the next draft preview', async () => {
     const engine = new FakeEngine()
     const room = 'cnv_aurora'
@@ -1634,12 +1737,14 @@ describe('chat conversation shared file preparation and sending', function () {
       root!.unmount()
       root = undefined
     })
+    const mine = message({ mine: true, senderName: 'Mookie Betts' })
+    engine.update('cnv_aurora', { messages: [mine] })
     await screen(engine, {
       draft: {
         text: 'Editing body',
         picked: [],
         scrollOffset: 0,
-        editing: message({ mine: true, senderName: 'Mookie Betts' })
+        editing: mine
       }
     })
     expect((await drag('drop', transfer())).defaultPrevented).equals(true)
