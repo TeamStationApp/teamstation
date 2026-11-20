@@ -9,7 +9,7 @@ import { join, resolve } from 'node:path'
    turns ?. and ?? into helpers the page does not have. */
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import type { Page } from 'puppeteer'
+import type { HTTPRequest, Page } from 'puppeteer'
 
 import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import {
@@ -91,6 +91,7 @@ describe('the roster screen for a scorekeeper', function () {
   let daemon: Awaited<ReturnType<typeof maestro>>
   let session: BrowserSession
   let page: Page
+  const openRequests = new Map<HTTPRequest, number>()
   let token: string
 
   before(async function () {
@@ -116,6 +117,14 @@ describe('the roster screen for a scorekeeper', function () {
     )
     page = session.page
     page.setDefaultTimeout(30000)
+    // The page's requests still open, for a wait on an idle network to name.
+    page.on('request', request => {
+      openRequests.set(request, Date.now())
+    })
+    for (const done of ['requestfinished', 'requestfailed'] as const)
+      page.on(done, request => {
+        openRequests.delete(request)
+      })
     // A silent microphone the R scenarios play their clips into, and every
     // dictation frame both ways, for what the API was asked and answered.
     await page.evaluateOnNewDocument(fakeMicrophone, '')
@@ -1096,7 +1105,18 @@ describe('the roster screen for a scorekeeper', function () {
   }
   /** Every save has gone out and come back. */
   const waitSaved = async (): Promise<void> => {
-    await page.waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
+    await page
+      .waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
+      .catch((error: unknown) => {
+        const now = Date.now()
+        const open = [...openRequests].map(
+          ([request, at]) =>
+            `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
+        )
+        throw new Error(
+          `The network never went idle; still open: ${open.join(', ')} (${String(error)})`
+        )
+      })
     await page.waitForFunction(
       () => document.querySelector('[aria-label="Save status"]') == null,
       { timeout: 30000 }
