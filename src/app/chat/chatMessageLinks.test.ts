@@ -113,11 +113,43 @@ describe('chat message links', () => {
   })
 
   it('recognizes ambiguous extensions only with an explicit web address', () => {
-    expect(texts('Main.java config.properties report.pub')).deep.equals([])
+    expect(
+      texts('Main.java config.properties report.pub handbook.mobi')
+    ).deep.equals([])
+    expect(
+      texts('example.org/clips/final.mov example.org/download?file=archive.zip')
+    ).deep.equals([
+      'example.org/clips/final.mov',
+      'example.org/download?file=archive.zip'
+    ])
     expect(texts('www.main.java https://report.pub')).deep.equals([
       'www.main.java',
       'https://report.pub'
     ])
+  })
+
+  it('keeps escaped explicit hosts and complete data payloads plain', () => {
+    const encoded = 'https://exa%6Dple.org/doc'
+    expect(chatLinkAddress(encoded)).equals(undefined)
+    expect(texts(encoded + ',https://example.com')).deep.equals([
+      'https://example.com'
+    ])
+    expect(
+      texts('data:text/plain,top,https://example.org https://example.net')
+    ).deep.equals(['https://example.net'])
+    for (const character of ['\u00AD', '\u034F', '\uFE0F', '\uFEFF']) {
+      const value = 'https://exa' + character + 'mple.org/'
+      expect(texts(value)).deep.equals([])
+      expect(chatLinkAddress(value)).equals(undefined)
+    }
+  })
+
+  it('keeps complete characters in long links and leaves oversized tokens plain', () => {
+    const link = 'https://example.org/' + '😀'.repeat(5050)
+    expect(texts(link)).deep.equals([link])
+    const oversized = link + '😀'.repeat(3100)
+    expect(texts(oversized)).deep.equals([])
+    expect(chatLinkAddress(oversized)).equals(undefined)
   })
 
   it('rejects C1 and bidi controls before detection and activation', () => {

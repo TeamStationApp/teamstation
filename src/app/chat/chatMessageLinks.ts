@@ -1,6 +1,7 @@
 import { LinkifyIt, REBuilder } from 'linkify-it'
 import tlds from 'tlds'
 
+import { MAX_BODY } from '../../common/chatContent'
 import { PRIMARY_HOST, WEB_HOST } from '../../common/primaryUrl'
 import { routeOfUrl } from '../navigation/deepLink'
 import { type Route, routePath } from '../navigation/routes'
@@ -21,7 +22,10 @@ class ChatLinkGrammar extends REBuilder {
   }
 }
 
+// Chat accepts 8,000 code points. One astral character occupies two UTF-16 units.
+const maxTokenLength = MAX_BODY * 2
 const links = new LinkifyIt({
+  maxLength: maxTokenLength,
   rebuilder: new ChatLinkGrammar(),
   fuzzyLink: true,
   fuzzyEmail: false,
@@ -31,15 +35,18 @@ const links = new LinkifyIt({
 }).tlds(tlds)
 
 const filename =
-  /\.(?:zip|mov|sh|md|pl|rs|py|ai|ps|so|ts|cc|cab|java|properties|pub)$/i
-// Reject invisible formatting and control characters before a browser normalizes them.
-const unsafeCharacters =
-  // eslint-disable-next-line no-control-regex
-  /[\\\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u
-// Preserve offsets while hiding unsupported schemes, including their nested URLs.
-// A data URL's first comma separates its metadata and payload.
+  /^[^/?#:@]+\.(?:zip|mov|sh|md|pl|rs|py|ai|ps|so|ts|cc|cab|java|properties|pub|mobi)$/i
+const unsafeCharacters = /[\\\p{Cc}\p{Cs}\p{Default_Ignorable_Code_Point}]/u
+// A data URL's payload can contain commas, other URLs and closing punctuation.
+// Its end without a whitespace boundary is ambiguous, so keep that tail plain.
 const schemeCandidate =
-  /(^|[^\p{L}\p{N}.+-])((?:data:[^,\s)\]}>"']*,|[a-z][a-z\d+.-]*:)[^\s,;)\]}>"'”’]*)/giu
+  /(^|[^\p{L}\p{N}.+-])(data:\S*|[a-z][a-z\d+.-]*:[^\s,;)\]}>"'”’]*)/giu
+
+/** Do not turn part of an escaped hostname into a different, actionable host. */
+function encodedAuthority(address: string): boolean {
+  const authority = address.replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0]
+  return authority.includes('%')
+}
 
 export interface ChatLinkSpan {
   start: number
@@ -49,7 +56,14 @@ export interface ChatLinkSpan {
 
 /** Parse the visible address again at the point where it leaves the chat. */
 export function chatLinkAddress(text: string): URL | undefined {
-  if (text === '' || unsafeCharacters.test(text) || /\s/.test(text)) return
+  if (
+    text === '' ||
+    text.length > maxTokenLength ||
+    unsafeCharacters.test(text) ||
+    /\s/.test(text) ||
+    encodedAuthority(text)
+  )
+    return
   const explicit = /^https?:\/\//i.test(text)
   if (!explicit && !/^[^.:/?#]+\.[^:/?#]+(?::\d+)?(?:[/?#]|$)/.test(text))
     return
@@ -73,16 +87,19 @@ export function chatLinkAddress(text: string): URL | undefined {
 /** UTF-16 offsets into the unmodified body, suitable for both text and captions. */
 export function chatLinkSpans(body: string): ChatLinkSpan[] {
   const spans: ChatLinkSpan[] = []
-  for (const token of body.matchAll(/\S+/gu)) {
+  for (const token of body.matchAll(/(?:\S|\uFEFF)+/gu)) {
     const raw = token[0]
     if (!raw.includes('.') && !/https?:\/\//i.test(raw)) continue
-    if (raw.length > 16000 || unsafeCharacters.test(raw)) continue
+    if (raw.length > maxTokenLength || unsafeCharacters.test(raw)) continue
     const original = links.match(raw) ?? []
     let index = 0
     const searchable = raw.replace(
       schemeCandidate,
       (match: string, boundary: string, candidate: string, offset: number) => {
-        if (/^https?:/i.test(candidate) || /^[^.:]+\.[^:]+:\d/.test(candidate))
+        if (
+          (/^https?:\/\//i.test(candidate) && !encodedAuthority(candidate)) ||
+          /^[^.:]+\.[^:]+:\d/.test(candidate)
+        )
           return match
         const start = offset + boundary.length
         while (index < original.length && original[index].lastIndex <= start)
