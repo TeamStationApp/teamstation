@@ -1,4 +1,4 @@
-import { asArray, asString, type Cleaner } from 'cleaners'
+import { asArray, asObject, asString, type Cleaner } from 'cleaners'
 
 import {
   asGameDetail,
@@ -32,6 +32,7 @@ import {
   olderSaveFoldsAlike,
   rebuildGameEvents
 } from '../scoring/scoringSource'
+import { matchupLines, matchupTitle } from '../screens/format'
 import { deleteDocumentCaches } from './cache'
 import {
   type CacheTransaction,
@@ -51,6 +52,7 @@ import {
   foundWords,
   gameKey,
   HOME_LISTS,
+  HOME_TEAMS,
   PLACEHOLDER_TEAMS,
   PLACEHOLDERS_KEPT
 } from './documentKeys'
@@ -139,6 +141,8 @@ export const PREFETCH_DETAIL_HOURS = 48
 const HOUR_MS = 3_600_000
 
 const asRaw: Cleaner<unknown> = raw => raw
+/** A stored team list's entry, for its name alone. */
+const asNamedTeam = asObject({ id: asString, name: asString })
 
 /** A page as the server sends one, before its items are cleaned. */
 type RawPage = Omit<Page<unknown>, 'counts'> & { counts: unknown }
@@ -643,6 +647,37 @@ export class CachingClient extends TeamStationClient {
   /** Sends a team's refused players again. */
   async retryTeam(teamId: string): Promise<void> {
     await this.outbox.retry(`team:${teamId}`)
+  }
+
+  /**
+   * The names of held games and teams, by `game:<id>` and `team:<id>`, from
+   * the phone's own documents and never the network: a game by its stored
+   * matchup, a team by the person's stored team list, or else by a held
+   * game it plays in. One the phone cannot name is left out.
+   */
+  async heldNames(
+    edits: ReadonlyArray<{ kind: 'game' | 'team'; id: string }>
+  ): Promise<Record<string, string>> {
+    const names: Record<string, string> = {}
+    const sides = new Map<string, string>()
+    for (const edit of edits) {
+      if (edit.kind !== 'game') continue
+      const game = await this.cached(gameKey(edit.id), asGameDetail)
+      if (game == null) continue
+      names[`game:${edit.id}`] = matchupTitle(matchupLines(game))
+      sides.set(game.homeTeamId, game.homeTeamName)
+      sides.set(game.awayTeamId, game.awayTeamName)
+    }
+    const teams = edits.some(edit => edit.kind === 'team')
+      ? ((await this.cached(HOME_TEAMS, asArray(asNamedTeam))) ?? [])
+      : []
+    for (const edit of edits) {
+      if (edit.kind !== 'team') continue
+      const name =
+        teams.find(team => team.id === edit.id)?.name ?? sides.get(edit.id)
+      if (name != null) names[`team:${edit.id}`] = name
+    }
+    return names
   }
 
   /** Whether the app is in front; the queue sends nothing behind it. */
