@@ -791,6 +791,27 @@ describe('scoring shell and exit', function () {
     expect(session.pending).equals(0)
   })
 
+  it('does not let go a session closed under the screen, and opens from the server again', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    expect(session.pending).greaterThan(0)
+    await act(async () => {
+      await game.leave()
+    })
+    // As a swap the server refused closes the game it opened on, before
+    // the game read again is shown.
+    session.close()
+    await game.gone()
+    expect(unloadWarned()).equals(false)
+    await game.again()
+    expect(game.opens()).equals(2)
+    expect(game.session()).not.equals(session)
+    game.release()
+    await wait()
+  })
+
   it('opens from the server when the let-go session saves while the screen is reading', async function () {
     const game = await heldWebGame()
     await click('Ball')
