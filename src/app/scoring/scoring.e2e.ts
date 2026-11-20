@@ -1455,7 +1455,7 @@ describe('scoring browser', function () {
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
       await page.waitForSelector('[aria-label*="2 balls"]')
-      await backAndReturn()
+      const returned = await backAndReturn()
       const count = async (): Promise<string> =>
         (await page.evaluate(() => {
           // Plain: the page has no helpers for sucrase's optional chains.
@@ -1483,7 +1483,9 @@ describe('scoring browser', function () {
       // offers the plays it opened with as the last play, as any game
       // opened with plays does.
       await page.waitForSelector(
-        gone ? '[aria-label="Undo Last play"]' : '[aria-label="Undo Ball"]'
+        returned === 'opened anew'
+          ? '[aria-label="Undo Last play"]'
+          : '[aria-label="Undo Ball"]'
       )
       await shot()
       // The server answers: the held ball is saved, not only drawn.
