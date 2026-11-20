@@ -1,9 +1,10 @@
-import type { ChatMessage } from '../../../common/api'
+import type { ChatMessage, ChatMessageEnvelope } from '../../../common/api'
 import {
   type AttachmentRef,
   type ChatContent,
   encodeContent,
-  MAX_ATTACHMENT_SIZE
+  MAX_ATTACHMENT_SIZE,
+  MAX_CIPHERTEXT
 } from '../../../common/chatContent'
 import { newMessageId } from '../../../common/chatCrypto/messageIds'
 import { type EnvelopeKind, sealMessage } from '../../../common/chatCrypto/seal'
@@ -11,8 +12,16 @@ import {
   openAttachment,
   sealAttachment
 } from '../../../common/chatCrypto/stream'
+import {
+  type ChatLinkPreview,
+  contentWithPreview
+} from '../../../common/chatLinkPreview'
 import { b64, epochKeyOf, unb64 } from '../keyRecord'
-import { ChatEngineError, type EngineContext } from './context'
+import {
+  ChatEngineError,
+  type EngineContext,
+  uncertainDelivery
+} from './context'
 import { reasonOf } from './links'
 import { epochForSend } from './rotate'
 import { stateOf } from './sync'
@@ -26,6 +35,72 @@ import { stateOf } from './sync'
 /** Refusals that mean "read the chat's keys again, then try once more". */
 const RETRY = new Set(['staleEpoch', 'locked', 'staleIdentity'])
 
+export interface PostAttempt {
+  candidate?: { envelope: ChatMessageEnvelope; preview?: ChatLinkPreview }
+}
+
+interface PostOptions {
+  targetIds?: string[]
+  attachmentIds?: string[]
+  preview?: ChatLinkPreview
+}
+
+async function preparePost(
+  ctx: EngineContext,
+  conversationId: string,
+  kind: EnvelopeKind,
+  content: ChatContent,
+  options: PostOptions,
+  id: string,
+  preview?: ChatLinkPreview
+): Promise<NonNullable<PostAttempt['candidate']>> {
+  const plaintext = encodeContent(content)
+  const epoch = await epochForSend(ctx, conversationId)
+  const record = ctx.keys.record
+  const identity = record.identity
+  const epochKey = epochKeyOf(record, conversationId, epoch)
+  if (identity == null || epochKey == null) {
+    throw new ChatEngineError('notReady', 'This device is not linked')
+  }
+  const fields = {
+    conversationId,
+    epoch,
+    messageId: id,
+    senderUserId: ctx.userId,
+    kind,
+    epochKey,
+    identitySecretKey: identity.keys.secretKey
+  }
+  let sealed = sealMessage({
+    ...fields,
+    plaintext:
+      preview == null
+        ? plaintext
+        : contentWithPreview(content, preview, fields, epochKey)
+  })
+  if (preview != null && sealed.ciphertext.length > MAX_CIPHERTEXT) {
+    preview = undefined
+    sealed = sealMessage({ ...fields, plaintext })
+  }
+  const envelope: ChatMessageEnvelope = {
+    id,
+    epoch,
+    kind,
+    senderIdentityId: identity.id,
+    ...(options.targetIds == null ? {} : { targetIds: options.targetIds }),
+    ...(options.attachmentIds == null
+      ? {}
+      : { attachmentIds: options.attachmentIds }),
+    ...(preview?.thumbnail == null
+      ? {}
+      : { previewAttachmentId: preview.thumbnail.id }),
+    nonce: b64(sealed.nonce),
+    ciphertext: b64(sealed.ciphertext),
+    signature: b64(sealed.signature)
+  }
+  return { envelope, preview }
+}
+
 /**
  * Seals `content` as one message of envelope `kind` and posts it. A post
  * refused because the epoch moved on, or the keys changed, is tried once
@@ -36,53 +111,59 @@ export async function postContent(
   conversationId: string,
   kind: EnvelopeKind,
   content: ChatContent,
-  options: { targetIds?: string[]; attachmentIds?: string[] } = {}
+  options: PostOptions = {},
+  attempt: PostAttempt = {}
 ): Promise<ChatMessage> {
-  const id = newMessageId()
-  const plaintext = encodeContent(content)
-  for (let attempt = 0; ; attempt++) {
-    const epoch = await epochForSend(ctx, conversationId)
-    const record = ctx.keys.record
-    const identity = record.identity
-    const epochKey = epochKeyOf(record, conversationId, epoch)
-    if (identity == null || epochKey == null) {
-      throw new ChatEngineError('notReady', 'This device is not linked')
-    }
-    const sealed = sealMessage({
-      conversationId,
-      epoch,
-      messageId: id,
-      senderUserId: ctx.userId,
-      kind,
-      epochKey,
-      plaintext,
-      identitySecretKey: identity.keys.secretKey
-    })
-    try {
-      const stored = await ctx.client.postChatMessage(conversationId, {
-        id,
-        epoch,
+  const id = attempt.candidate?.envelope.id ?? newMessageId()
+  let preview = options.preview
+  let retryEpoch = true
+  for (;;) {
+    const candidate =
+      attempt.candidate ??
+      (await preparePost(
+        ctx,
+        conversationId,
         kind,
-        senderIdentityId: identity.id,
-        ...(options.targetIds == null ? {} : { targetIds: options.targetIds }),
-        ...(options.attachmentIds == null
-          ? {}
-          : { attachmentIds: options.attachmentIds }),
-        nonce: b64(sealed.nonce),
-        ciphertext: b64(sealed.ciphertext),
-        signature: b64(sealed.signature)
+        content,
+        options,
+        id,
+        preview
+      ))
+    const { envelope } = candidate
+    preview = candidate.preview
+    attempt.candidate = candidate
+    try {
+      const post = async (): Promise<ChatMessage> =>
+        await ctx.client.postChatMessage(conversationId, envelope)
+      const stored = await post().catch(async (error: unknown) => {
+        // The server may already have stored this ID. Replay the same signed
+        // bytes once to retrieve it before attempting any other recovery.
+        if (options.preview == null || !uncertainDelivery(error)) throw error
+        return await post()
       })
       const state = await stateOf(ctx, conversationId)
       state.envelopes.set(stored.seq, stored)
       state.opened.set(stored.id, {
         status: 'ok',
         content,
+        ...(preview == null ? {} : { preview }),
         replacedIdentity: false
       })
       return stored
     } catch (error) {
+      if (uncertainDelivery(error)) throw error
+      delete attempt.candidate
       const reason = reasonOf(error)
-      if (attempt > 0 || reason == null || !RETRY.has(reason)) throw error
+      if (reason === 'attachment' && preview?.thumbnail != null) {
+        const { url, title, siteName, description } = preview
+        preview =
+          title.trim() !== '' || description.trim() !== ''
+            ? { url, title, siteName, description }
+            : undefined
+        continue
+      }
+      if (!retryEpoch || reason == null || !RETRY.has(reason)) throw error
+      retryEpoch = false
       if (reason === 'staleIdentity') await ctx.refreshKeys()
     }
   }

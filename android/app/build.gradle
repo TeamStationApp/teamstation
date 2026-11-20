@@ -131,6 +131,11 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        def previewCoverage = providers.gradleProperty("chatPreviewNativeCoverage").orNull == "true"
+        buildConfigField "boolean", "CHAT_PREVIEW_NATIVE_COVERAGE", previewCoverage.toString()
+        if (previewCoverage) {
+            externalNativeBuild.cmake.arguments "-DCHAT_PREVIEW_NATIVE_COVERAGE=ON"
+        }
         buildConfigField "String", "TS_SENTRY_DSN", groovy.json.JsonOutput.toJson(System.getenv("TS_SENTRY_DSN") ?: "")
         manifestPlaceholders += [appLinkHost: appLinkHost,
             googleMapsApiKey: System.getenv("GOOGLE_MAPS_ANDROID_API_KEY") ?: ""]
@@ -165,6 +170,31 @@ android {
         }
     }
     testCoverage { jacocoVersion = '0.8.13' }
+}
+
+// Robolectric loads the application classes through an in-memory class loader.
+tasks.withType(Test).configureEach {
+    if (name == 'testDebugUnitTest' && pushCoverage) {
+        jacoco.includeNoLocationClasses = true
+        jacoco.excludes += ['jdk.internal.*']
+    }
+}
+
+// The browser bridge's JUnit coverage, plus optional execution data from the selected device.
+tasks.register('chatBrowserCoverage', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    executionData.from(layout.buildDirectory.file('outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec'))
+    executionData.from(layout.buildDirectory.file('jacoco/testDebugUnitTest.exec'))
+    def deviceFile = providers.environmentVariable('TS_CHAT_BROWSER_EXEC').getOrNull()
+    if (deviceFile) executionData.from(file(deviceFile))
+    sourceDirectories.from(file('src/main/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/browser/ExternalBrowserModule*'
+    })
+    reports {
+        xml.required = true
+        xml.outputLocation = layout.buildDirectory.file('reports/chatBrowser/report.xml')
+    }
 }
 
 // Run instrumentation on the explicitly selected device, then supply its measured execution file.
@@ -265,6 +295,7 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")
     // LocalFileIdTest reads the fixtures it shares with localFileId.test.ts.
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("org.json:json:20240303")
     // StalledConnectionsTest, at the OkHttp the app resolves (4.12.0, which
     // streamcore asks for over React Native's 4.9.2).

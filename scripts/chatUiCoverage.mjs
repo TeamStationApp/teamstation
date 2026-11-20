@@ -153,6 +153,7 @@ const specs = [
   'src/server/tess/sitemap.integration.test.ts',
   'src/buildCsp.integration.test.ts',
   'src/common/chatContent.test.ts',
+  'src/common/chatLinkPreview.test.ts',
   'src/app/components/teamTile.test.ts',
   'src/app/navigation/routes.test.ts',
   'src/common/gameSocket.test.ts',

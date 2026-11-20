@@ -1,6 +1,6 @@
 #!/bin/bash
-# Builds the chat crypto core (crates/chat-crypto) as a static library for a
-# phone build, with the toolchain its rust-toolchain.toml pins.
+# Builds the preview and crypto cores together in the phone’s static library
+# with the toolchain pinned by the mobile crate.
 #
 #   scripts/chatCryptoNative.sh ios             # from Xcode's "Build chat crypto" phase
 #   scripts/chatCryptoNative.sh android <abi>[,<abi>…]   # from Gradle's buildChatCryptoRust
@@ -15,7 +15,7 @@ set -euo pipefail
 # Xcode's run-script phases do not inherit the shell's PATH.
 export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-crate="$root/crates/chat-crypto"
+crate="$root/crates/chat-link-preview"
 
 die() {
   echo "error: $*" >&2
@@ -31,7 +31,7 @@ command -v cargo >/dev/null ||
 # builds for has NEON, and without it ChaCha20 is the portable code.
 # rustc takes the last prefix that matches, so the home directory comes
 # first and the crate and cargo's home, usually under it, after.
-export RUSTFLAGS="--cfg chacha20_force_neon --remap-path-prefix=$HOME=home --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo --remap-path-prefix=$crate=chat-crypto"
+export RUSTFLAGS="--cfg chacha20_force_neon --remap-path-prefix=$HOME=home --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=cargo --remap-path-prefix=$root/crates=crates"
 # Where cargo writes, CARGO_TARGET_DIR (from the crate) when set.
 target_dir="$crate/target"
 if [ -n "${CARGO_TARGET_DIR:-}" ]; then
@@ -57,8 +57,8 @@ case "${1:-}" in
       esac
       # Xcode's SDK settings are for clang, not for cargo's host build scripts.
       (cd "$crate" && env -u SDKROOT -u LIBRARY_PATH \
-        cargo build --locked --release --lib --target "$target")
-      libs+=("$target_dir/$target/release/libchat_crypto.a")
+        cargo build --locked --release --lib --features mobile-crypto --target "$target")
+      libs+=("$target_dir/$target/release/libchat_link_preview.a")
     done
     lipo -create "${libs[@]}" -output "$out/libchat_crypto.a"
     echo "chat crypto: $out/libchat_crypto.a ($archs)"
@@ -76,7 +76,7 @@ case "${1:-}" in
     targets=()
     for abi in ${abis//,/ }; do targets+=(--target "$abi"); done
     (cd "$crate" && cargo ndk "${targets[@]}" --platform 28 \
-      build --locked --release --lib)
+      build --locked --release --lib --features mobile-crypto)
     echo "chat crypto: $abis"
     ;;
   *)

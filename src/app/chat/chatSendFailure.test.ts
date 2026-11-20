@@ -4,8 +4,29 @@ import { describe, it } from 'mocha'
 import { HttpError } from '../../common/errors'
 import { lstrings } from '../locales/strings'
 import { ChatDraftOwner, newChatWorkspaceState } from './chatWorkspaceModel'
+import { UnconfirmedChatPost } from './engine/context'
 
 describe('chat send failure messages', () => {
+  it('replays an unchanged draft and distinguishes edits and dismissed cards', async () => {
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    owner.write('chat', { text: 'An event', picked: [], scrollOffset: 0 })
+    let count = 0
+    const error = new UnconfirmedChatPost(
+      new HttpError('offline', 'Lost reply'),
+      async () => ++count
+    )
+    const first = owner.begin('chat')!
+    owner.finish('chat', first, false, error)
+    const retry = owner.begin('chat')!
+    expect(await retry.retry!()).equals(1)
+    owner.write('chat', { ...owner.draft('chat'), text: 'A new event' })
+    owner.finish('chat', retry, false, error)
+    const other = owner.begin('chat')!
+    expect(other.retry).equals(undefined)
+    owner.discardRetry('chat')
+    owner.finish('chat', other, false, error)
+    expect(owner.begin('chat')!.retry).equals(undefined)
+  })
   for (const [label, error, blocked] of [
     [
       'recipient block',

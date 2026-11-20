@@ -25,23 +25,35 @@ else()
 endif()
 
 # Where cargo wrote it: CARGO_TARGET_DIR (from the crate) when set.
-set(TS_RUST_TARGET_DIR ${TS_ROOT}/crates/chat-crypto/target)
+set(TS_RUST_TARGET_DIR ${TS_ROOT}/crates/chat-link-preview/target)
 if(DEFINED ENV{CARGO_TARGET_DIR} AND NOT "$ENV{CARGO_TARGET_DIR}" STREQUAL "")
   get_filename_component(TS_RUST_TARGET_DIR "$ENV{CARGO_TARGET_DIR}" ABSOLUTE
-    BASE_DIR ${TS_ROOT}/crates/chat-crypto)
+    BASE_DIR ${TS_ROOT}/crates/chat-link-preview)
 endif()
 
 add_library(chat_crypto STATIC IMPORTED)
 set_target_properties(chat_crypto PROPERTIES IMPORTED_LOCATION
-  ${TS_RUST_TARGET_DIR}/${TS_RUST_TARGET}/release/libchat_crypto.a)
+  ${TS_RUST_TARGET_DIR}/${TS_RUST_TARGET}/release/libchat_link_preview.a)
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-  ${TS_ROOT}/native/chatCrypto/NativeChatCrypto.cpp)
+  ${TS_ROOT}/native/chatCrypto/NativeChatCrypto.cpp
+  ${TS_ROOT}/native/linkPreview/NativeChatPreview.cpp)
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${TS_ROOT}/native/chatCrypto
+  ${TS_ROOT}/native/linkPreview
   ${TS_ROOT}/crates/chat-crypto/include)
 target_link_libraries(${CMAKE_PROJECT_NAME} chat_crypto log)
+
+if(CHAT_PREVIEW_NATIVE_COVERAGE)
+  find_package(hermes-engine REQUIRED CONFIG)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../androidTest/jni/ChatPreviewCoverage.cpp)
+  set_source_files_properties(OnLoad.cpp PROPERTIES
+    COMPILE_OPTIONS "-fprofile-instr-generate;-fcoverage-mapping")
+  target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -fprofile-instr-generate)
+  target_link_libraries(${CMAKE_PROJECT_NAME} hermes-engine::hermesvm)
+endif()
 
 # HiGHS as static libraries, with the same options as iOS's
 # scripts/highsNative.sh.

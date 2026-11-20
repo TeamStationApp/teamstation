@@ -52,6 +52,8 @@ import {
   ChatBlockConfirmation,
   type ChatSafetyAction
 } from './ChatBlockConfirmation'
+import { chatLinkOrigins } from './chatBrowser'
+import { chatBrowserVisible, watchChatBrowser } from './chatBrowserVisibility'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -64,6 +66,7 @@ import {
   useChatHistoryKeyboard
 } from './ChatHistoryList'
 import { anchorAfterChromeChange } from './chatLayoutModel'
+import { ChatLinkPreviewCard } from './ChatLinkPreviewCard'
 import {
   type ComposerChange,
   type ComposerSelection,
@@ -110,6 +113,7 @@ import { MessageMenu } from './MessageMenu'
 import { PinnedMessages } from './PinnedMessages'
 import { PinnedMessageSummary } from './PinnedMessageSummary'
 import type { ChatScreenEngine } from './screenEngine'
+import { useChatLinkPreview } from './useChatLinkPreview'
 
 /** What the screen needs of the platform's file twin. */
 export interface ConversationFiles extends ChatFileOps {
@@ -118,6 +122,8 @@ export interface ConversationFiles extends ChatFileOps {
 }
 
 export interface ConversationScreenProps {
+  apiBaseUrl?: string
+  onOpenLink?: (address: string) => Promise<void>
   engine: ChatScreenEngine
   conversationId: string
   /** The signed-in person, who is never asked to approve their own reset. */
@@ -145,7 +151,7 @@ export interface ConversationScreenProps {
  * and an app in the foreground on a phone.
  */
 function readableNow(): boolean {
-  return readDocumentActive() && inForeground()
+  return readDocumentActive() && inForeground() && !chatBrowserVisible()
 }
 
 /** How often a chat not open yet is tried again, and how many times. */
@@ -368,6 +374,22 @@ export function ConversationScreen(
   const [sending, setSending] = useState(() =>
     draftOwner.isSending(conversationId)
   )
+  const linkOrigin = useMemo(
+    () =>
+      props.apiBaseUrl == null ||
+      (Platform.OS === 'web' && typeof window === 'undefined')
+        ? undefined
+        : chatLinkOrigins(props.apiBaseUrl),
+    [props.apiBaseUrl]
+  )
+  const draftPreview = useChatLinkPreview(
+    engine,
+    conversationId,
+    editing?.id,
+    text,
+    props.active !== false && !sending && view?.composer === 'enabled',
+    linkOrigin
+  )
   const sendingNow = useRef(sending)
   const preparingNow = useRef(0)
   const [preparing, setPreparing] = useState(0)
@@ -485,9 +507,11 @@ export function ConversationScreen(
     }
     const stopDocument = watchReadDocumentActive(update)
     const stopApp = watchForeground(update)
+    const stopBrowser = watchChatBrowser(update)
     return () => {
       stopDocument()
       stopApp()
+      stopBrowser()
     }
   }, [])
   // On screen in the foreground: this device shows no notification for it.
@@ -1958,6 +1982,7 @@ export function ConversationScreen(
       attentionSession.current == null ||
       props.active === false ||
       !documentActive ||
+      !readableNow() ||
       menu != null ||
       mentionChoosing != null ||
       pinsOpen ||
@@ -2261,6 +2286,7 @@ export function ConversationScreen(
     if (submission == null) return
     const submitted = submission.draft
     const body = submitted.text.trim()
+    const preview = draftPreview.submit(body)
     const mentions = mentionIds(
       submitted.text,
       submitted.mentionTokens,
@@ -2268,8 +2294,17 @@ export function ConversationScreen(
       submitted.editing
     )
     const work = async (): Promise<unknown> => {
+      if (submission.retry != null) return await submission.retry()
       if (submitted.editing != null) {
-        if (mentions.length > 0)
+        if (preview != null)
+          await engine.edit(
+            conversationId,
+            submitted.editing.id,
+            body,
+            mentions,
+            preview
+          )
+        else if (mentions.length > 0)
           await engine.edit(
             conversationId,
             submitted.editing.id,
@@ -2280,6 +2315,7 @@ export function ConversationScreen(
         return
       }
       const quote = {
+        ...(preview == null ? {} : { preview }),
         ...(submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }),
         ...(mentions.length === 0 ? {} : { mentions })
       }
@@ -2295,6 +2331,7 @@ export function ConversationScreen(
     }
     const finish = (success: boolean, error?: unknown): void => {
       const next = draftOwner.finish(conversationId, submission, success, error)
+      if (success && next?.text === '') draftPreview.sent()
       // Standalone consumers retain their external draft callback; workspaces
       // reconcile directly in their persistent owner, never the old screen.
       if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
@@ -2819,6 +2856,11 @@ export function ConversationScreen(
     >
       {notices.get(index)?.map(renderNotice)}
       <MessageBubble
+        onOpenLink={address => {
+          props.onOpenLink?.(address).catch(() => {
+            setError(lstrings.chat_link_failed)
+          })
+        }}
         bodyRef={node => {
           if (node == null) bodyRefs.current.delete(message.id)
           else bodyRefs.current.set(message.id, node)
@@ -3266,6 +3308,16 @@ export function ConversationScreen(
             zIndex: 4
           }}
         >
+          {draftPreview.preview != null && (
+            <ChatLinkPreviewCard
+              preview={draftPreview.preview}
+              onDismiss={() => {
+                draftOwner.discardRetry(conversationId)
+                draftPreview.handleDismiss()
+              }}
+              loadThumbnail={engine.openPreviewThumbnail}
+            />
+          )}
           {typing.length > 0 && (
             <Text style={shared.small} accessibilityLiveRegion="polite">
               {typing.length === 1

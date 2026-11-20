@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatRead } from '../../../common/api'
 import type { AttachmentRef } from '../../../common/chatContent'
+import type { ChatLinkPreview } from '../../../common/chatLinkPreview'
 import type { Opened } from './decrypt'
 import { resolveQuote } from './reply'
 
@@ -63,6 +64,7 @@ export interface MessageView {
   mentions: string[]
   quote: QuoteView | undefined
   attachments: AttachmentRef[]
+  preview?: ChatLinkPreview
   edited: boolean
   /** The ids of this post's opened edits; deleting the post clears them too. */
   editIds: string[]
@@ -105,6 +107,7 @@ function remove(post: MessageView, by: 'author' | 'moderator'): void {
   post.mentions = []
   post.quote = undefined
   post.attachments = []
+  delete post.preview
 }
 
 /**
@@ -158,6 +161,9 @@ export function foldMessages(input: FoldInput): MessageView[] {
               authorName: input.names.get(content.quote.authorId)
             },
       attachments: content?.attachments ?? [],
+      ...(opened?.status === 'ok' && content != null && opened.preview != null
+        ? { preview: opened.preview }
+        : {}),
       edited: false,
       editIds: [],
       reactions: [],
@@ -191,6 +197,8 @@ export function foldMessages(input: FoldInput): MessageView[] {
       ) {
         continue
       }
+      if (opened.preview == null) delete post.preview
+      else post.preview = opened.preview
       post.body = content.body
       post.mentions = content.mentions
       post.edited = true

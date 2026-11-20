@@ -48,6 +48,7 @@ import { ChatGate } from './chat/ChatGate'
 import { withChatKeyboard } from './chat/ChatHistoryList'
 import { ChatInfoScreen } from './chat/ChatInfoScreen'
 import type { ChatLink } from './chat/ChatLinks'
+import { openChatMessageLink } from './chat/chatMessageLinks'
 import { hasUnread } from './chat/chatModel'
 import { ChatOverlayHost } from './chat/ChatOverlayHost'
 import { ChatWorkspace } from './chat/ChatWorkspace'
@@ -2763,6 +2764,14 @@ function Shell(props: AppProps): React.ReactElement {
     return top?.name === 'conversation' || (top == null && tab === 'chat') ? (
       gated(
         <ChatWorkspace
+          apiBaseUrl={apiBaseUrl}
+          onOpenLink={async address => {
+            await openChatMessageLink(address, apiBaseUrl, route => {
+              captureChatLeave(() => {
+                goToRoute(route)
+              })
+            })
+          }}
           engine={chatEngine!}
           userId={signedInAs!}
           state={chatWorkspaceState}

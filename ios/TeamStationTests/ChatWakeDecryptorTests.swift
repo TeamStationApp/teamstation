@@ -74,7 +74,9 @@ final class ChatWakeDecryptorTests: XCTestCase {
   }
 
   private func json(_ path: String) throws -> [String: Any] {
-    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    // On a phone the fixtures live in the host app’s data container.
+    let file = (path as NSString).expandingTildeInPath
+    let data = try Data(contentsOf: URL(fileURLWithPath: file))
     return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
   }
 
@@ -151,7 +153,7 @@ final class ChatWakeDecryptorTests: XCTestCase {
 
   func testEveryCaseShowsWhatTheBrowserAndAndroidShow() throws {
     let all = try cases()
-    XCTAssertEqual(all.count, 14)
+    XCTAssertEqual(all.count, 16)
     for item in all {
       let name = item["name"] as! String
       let (shown, calls) = open(item)

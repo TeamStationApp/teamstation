@@ -831,6 +831,7 @@ export const enUs = {
   chat_remove_attachment: 'Remove %s',
   chat_replying_to: 'Replying to %s',
   chat_editing: 'Editing your message',
+  chat_remove_link_preview: 'Remove link preview',
   chat_cancel_reply: 'Cancel reply',
   chat_cancel_edit: 'Cancel edit',
   chat_former_member: 'Former member',
@@ -944,6 +945,7 @@ export const enUs = {
   chat_reaction_label: '%s, %s',
   chat_open_attachment: 'Open %s',
   chat_save_file: 'Save %s',
+  chat_link_failed: 'This link could not be opened.',
   chat_attachment_failed: 'That attachment could not be opened.',
   chat_send_failed: 'That did not send. Try again.',
   chat_send_blocked:

@@ -39,6 +39,7 @@
 #include <autolinking.h>
 #include <fbjni/fbjni.h>
 #include "NativeChatCrypto.h"
+#include "NativeChatPreview.h"
 #include "NativeScheduler.h"
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 
@@ -80,6 +81,9 @@ std::shared_ptr<TurboModule> cxxModuleProvider(
   // }
 
   // The chat crypto core (native/chatCrypto, src/app/chat/NativeChatCrypto.ts).
+  if (name == NativeChatPreview::kModuleName) {
+    return std::make_shared<NativeChatPreview>(jsInvoker);
+  }
   if (name == NativeChatCrypto::kModuleName) {
     return std::make_shared<NativeChatCrypto>(jsInvoker);
   }

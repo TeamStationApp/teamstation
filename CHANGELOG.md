@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- added: Chat senders can include a removable link preview. Recipients see its encrypted copy, and reporting the message shares the original content while keeping the preview private.
+
+- added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
 - added: Develop, branch and seat builds of the web and phone apps report how each video plays: how long it takes to start, every stall and seek with how far behind live it was, errors and the recoveries that followed, bitrate and dropped frames, so a slow start or a stall can be measured
 - added: `?debug=1` on the game page shows what its video player is doing: its state, the page's own reading and its last events

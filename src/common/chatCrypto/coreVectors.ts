@@ -3,6 +3,7 @@ import { call } from './core'
 import { type CoreCall, flag, num, readFlag, readNumber } from './coreCall'
 import vectorFile from './frozenVectors.json'
 import { runIdentityVectors } from './identityVectors'
+import { runPreviewVectors } from './previewVectors'
 import { openAttachmentWith, sealAttachmentWith } from './stream'
 import { fromHex, toHex } from './vectors'
 
@@ -326,7 +327,7 @@ export function runCoreVectors(core: CoreCall = call): CoreVectorResult[] {
     () => toHex(one('chunkNonce', [prefix, num(3), flag(true)]).subarray(16)),
     '00000000000003' + '01'
   )
-  return [...results, ...runIdentityVectors(core)]
+  return [...results, ...runIdentityVectors(core), ...runPreviewVectors(core)]
 }
 
 /** `vectors ok`, or the first that did not match. */

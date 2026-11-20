@@ -4,7 +4,8 @@ import { after, before, beforeEach, describe, it } from 'mocha'
 import { Client } from 'pg'
 
 import type { ChatReport } from '../../common/api'
-import { utf8 } from '../../common/chatCrypto/bytes'
+import { asChatContent, originalReportContent } from '../../common/chatContent'
+import { fromUtf8, utf8 } from '../../common/chatCrypto/bytes'
 import { newEpochKey, sign } from '../../common/chatCrypto/keys'
 import { newIdentityId, newMessageId } from '../../common/chatCrypto/messageIds'
 import { randomBytes } from '../../common/chatCrypto/random'
@@ -15,6 +16,11 @@ import {
   sealMessage,
   signedDigest
 } from '../../common/chatCrypto/seal'
+import {
+  type ChatLinkPreview,
+  contentWithPreview,
+  previewFromContent
+} from '../../common/chatLinkPreview'
 import {
   b64,
   ChatDevices,
@@ -145,6 +151,7 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
       id?: string
       targetIds?: string[]
       attachmentIds?: string[]
+      rawPlaintext?: Uint8Array
       signer?: TestKeys
       identityId?: string
     } = {}
@@ -159,7 +166,7 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
       senderUserId: keys.userId,
       kind,
       epochKey,
-      plaintext: utf8(plaintext),
+      plaintext: extra.rawPlaintext ?? utf8(plaintext),
       identitySecretKey: (extra.signer ?? keys).identity.secretKey
     })
     const body: Record<string, unknown> = {
@@ -997,6 +1004,104 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
       expect(open).to.have.length(4)
       expect(open.map(report => report.id)).not.to.include(fromC.id)
       expect(await auditRows('/api/v1/admin/chat/reports/%')).equals(2)
+    })
+
+    it('verifies the reported text while only conversation members can open the link preview', async function () {
+      const id = newMessageId()
+      const url = 'https://example.com/schedule'
+      const fields = {
+        conversationId: members,
+        epoch: 2,
+        messageId: id,
+        senderUserId: held.C.keys.userId,
+        kind: 'post' as const
+      }
+      const content = asChatContent(text('Schedule ' + url))
+      const thumbnailKey = b64(newEpochKey())
+      const preview: ChatLinkPreview = {
+        url,
+        title: 'Private page title',
+        description: 'Private site summary',
+        siteName: 'Team calendar',
+        thumbnail: {
+          id: 'thumbnail',
+          size: 32,
+          width: 2,
+          height: 2,
+          key: thumbnailKey,
+          digest: b64(newEpochKey()),
+          contentType: 'image/png',
+          fileName: 'preview.png'
+        }
+      }
+      const bytes = contentWithPreview(content, preview, fields, memberKeys[2])
+      const outer = fromUtf8(bytes)
+      const key = messageKey(memberKeys[2], members, id)
+      expect(previewFromContent(bytes, fields, memberKeys[2])).deep.equals(
+        preview
+      )
+      expect(previewFromContent(bytes, fields, key)).equals(undefined)
+      const sent = seal(
+        'C',
+        members,
+        2,
+        memberKeys[2],
+        'post',
+        JSON.parse(outer),
+        { id }
+      )
+      ok(await post('C', members, sent.body), 201)
+      const original = originalReportContent(outer)
+      for (const [submission, verified] of [
+        [original, true],
+        [outer, true],
+        [outer.replace('Schedule ', 'Other '), false]
+      ] as const) {
+        const result = ok(
+          await call('B', 'POST', '/chat/reports', {
+            messageId: id,
+            plaintext: submission,
+            messageKey: b64(key)
+          }),
+          201
+        )
+        expect(result.verified).equals(verified)
+        const view = (
+          ok(await call('Z', 'GET', '/admin/chat/reports')) as ChatReport[]
+        ).find(report => report.id === result.id)
+        expect(view?.plaintext).equals(originalReportContent(submission))
+        expect(view?.plaintext).contains(url)
+        for (const secret of [
+          thumbnailKey,
+          preview.title,
+          preview.description,
+          'sealedPreview'
+        ])
+          expect(view?.plaintext).not.contains(secret)
+      }
+    })
+    it('retains an unverified report and the requested block for unreadable signed content', async function () {
+      const binary = seal(
+        'C',
+        members,
+        2,
+        memberKeys[2],
+        'post',
+        text('unreadable'),
+        { rawPlaintext: Uint8Array.of(255) }
+      )
+      ok(await post('C', members, binary.body), 201)
+      const result = ok(
+        await call('B', 'POST', '/chat/reports', {
+          messageId: binary.id,
+          plaintext: binary.plaintext,
+          messageKey: b64(messageKey(memberKeys[2], members, binary.id)),
+          blockSender: true
+        }),
+        201
+      )
+      expect(result.verified).equals(false)
+      expect(result.blockedUserIds).includes(held.C.keys.userId)
     })
   })
 })

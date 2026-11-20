@@ -28,6 +28,10 @@ import {
 } from '../common/chatCrypto/keys'
 import { newIdentityId, newMessageId } from '../common/chatCrypto/messageIds'
 import { type EnvelopeKind, sealMessage } from '../common/chatCrypto/seal'
+import {
+  type ChatLinkPreview,
+  contentWithPreview
+} from '../common/chatLinkPreview'
 import { notFound } from '../common/errors'
 import type { ChatWake } from '../common/push'
 import { userIdOfGumbo } from '../common/userId'
@@ -121,20 +125,32 @@ function envelopeOf(
   chat: Chat,
   sender: Person,
   content: ChatContent,
-  options: { epoch?: number; seq?: number; kind?: EnvelopeKind } = {}
+  options: {
+    epoch?: number
+    seq?: number
+    kind?: EnvelopeKind
+    preview?: ChatLinkPreview
+  } = {}
 ): ChatMessage {
   const epoch = options.epoch ?? chat.keys.length
   const kind = options.kind ?? 'post'
   const id = newMessageId()
-  const sealed = sealMessage({
+  const fields = {
     conversationId: chat.id,
     epoch,
     messageId: id,
     senderUserId: sender.userId,
-    kind,
-    epochKey: chat.keys[epoch - 1],
+    kind
+  }
+  const epochKey = chat.keys[epoch - 1]
+  const sealed = sealMessage({
+    ...fields,
+    epochKey,
     identitySecretKey: sender.identity.secretKey,
-    plaintext: encodeContent(content)
+    plaintext:
+      options.preview == null
+        ? encodeContent(content)
+        : contentWithPreview(content, options.preview, fields, epochKey)
   })
   return {
     id,
@@ -258,6 +274,18 @@ export function wakeCases(): WakeCase[] {
   })
 
   const dmPost = envelopeOf(dm, sender, text('Bring water and a glove.'))
+  const url = 'https://example.org/game'
+  const original = 'Game details ' + url
+  const preview = {
+    url,
+    title: 'Preview title',
+    siteName: 'Fixture',
+    description: ''
+  }
+  const smallPreview = envelopeOf(dm, sender, text(original), { preview })
+  const largePreview = envelopeOf(dm, sender, text(original), {
+    preview: { ...preview, description: '⚾'.repeat(512) }
+  })
   const mention = envelopeOf(
     group,
     sender,
@@ -289,6 +317,11 @@ export function wakeCases(): WakeCase[] {
   const fallback = shown(dm, FROM, `New message from ${FROM}`)
 
   return [
+    inline('inlinePreview', dm, smallPreview, shown(dm, FROM, original)),
+    inline('fetchedPreview', dm, largePreview, shown(dm, FROM, original), {
+      wake: wakeOf(dm, undefined),
+      message: largePreview
+    }),
     inline('dm', dm, dmPost, shown(dm, FROM, 'Bring water and a glove.')),
     inline(
       'mention',
