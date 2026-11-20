@@ -82,6 +82,7 @@ import type { PlayerFrom } from '../navigation/gameAngles'
 import { useInsets } from '../platform/safeArea'
 import { landingSec, sameMoment, switchTarget } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
+import { playerDebug } from '../player/debugFlag'
 import { playerEngine } from '../player/engine'
 import { seekTo } from '../player/explicitSeek'
 import { heldSource } from '../player/heldSource'
@@ -94,6 +95,7 @@ import { playbackOutcome, startFetchLog } from '../player/playbackFetchLog'
 import { markSeek, playbackOf } from '../player/playbackSession'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
+import { SinglePlayerReadout } from '../player/SinglePlayerReadout'
 import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
 import {
@@ -1338,6 +1340,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * not the viewer's, and must not stop what recovers it from playing again.
    */
   const recovering = useRef(false)
+  /** `?debug=1`: what the player is doing, drawn over it. */
+  const debug = useMemo(() => playerDebug(), [])
+  const debugState = useCallback(
+    (): string =>
+      `recovering ${String(recovering.current)} wants ${String(viewerWants.current)} suspended ${String(suspended.current)}`,
+    []
+  )
   /**
    * Where the single player had got to, sampled as it plays.
    *
@@ -2406,6 +2415,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 muted={!cardSound}
                 live={freshStatus === 'live'}
               />
+              {debug ? (
+                <SinglePlayerReadout element={playerNode} state={debugState} />
+              ) : null}
               {/* Black while the full-screen player is up, its source
                   detached, and on its way back to where that player left it:
                   the frame it had before, or the recording's first, is not

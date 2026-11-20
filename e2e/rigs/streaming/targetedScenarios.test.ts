@@ -898,6 +898,29 @@ describe('the stream-cuts scenario', function () {
     )
   })
 
+  it('cuts only the lengths and watches only the watchers a scenario names', async function () {
+    const world = makeWorld(FOUR)
+    const fake = session(world, [watcher(world, 'chrome')])
+    const scenario = streamCuts(4, {
+      ladder: [64],
+      watchers: ['chrome', 'safari']
+    })
+    expect(scenario.setup.watchers).deep.equals(['chrome', 'safari'])
+    expect(streamCuts(1).setup.watchers).deep.equals([
+      'iphone',
+      'android',
+      'chrome',
+      'tv',
+      'safari'
+    ])
+    await scenario.run(fake.session)
+    expect(world.publisherCalls.length).greaterThan(1)
+    expect(new Set(world.publisherCalls)).deep.equals(
+      new Set(['cut SynthA 64'])
+    )
+    expect(fake.steps[0].step).equals('cut-64s-1')
+  })
+
   it('fails a watcher that never shows the camera again, and names what it showed', async function () {
     const world = makeWorld(FOUR)
     const fake = session(world, [

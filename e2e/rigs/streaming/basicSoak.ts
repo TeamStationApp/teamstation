@@ -67,6 +67,10 @@ export interface BasicOptions {
   watchers?: WatcherRole[]
   /** This machine's load and cores, for the report: whether the bench machine kept up. */
   machine?: Machine
+  /** The kinds of scrub, cycled in this order; all of BASIC_ACTIONS unless a scenario narrows it. */
+  actions?: readonly BasicAction[]
+  /** Whether memory is sampled and judged (true unless told otherwise). */
+  memory?: boolean
   /**
    * Whether Chrome logs every presented frame (true unless told otherwise).
    * Off, a run shows Chrome's own memory without the logger's reads.
@@ -124,13 +128,14 @@ export interface PlannedAction {
 
 /**
  * The scrubs: each watcher every `everyMs`, staggered so no two act at once,
- * cycling through the four kinds from a different one each.
+ * cycling through `kinds` (the four of BASIC_ACTIONS) from a different one each.
  */
 export function planActions(
   startMs: number,
   endMs: number,
   watchers: number,
-  everyMs: number
+  everyMs: number,
+  kinds: readonly BasicAction[] = BASIC_ACTIONS
 ): PlannedAction[] {
   const out: PlannedAction[] = []
   const stagger = everyMs / Math.max(1, watchers)
@@ -141,7 +146,7 @@ export function planActions(
       out.push({
         atMs,
         watcher,
-        action: BASIC_ACTIONS[(watcher + k) % BASIC_ACTIONS.length]
+        action: kinds[(watcher + k) % kinds.length]
       })
     }
   }
@@ -227,7 +232,7 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
       watchers: options.watchers ?? BASIC_WATCHERS,
       safariAngle: BASIC_ANGLES[0],
       leadMs: MIN,
-      memory: true
+      memory: options.memory !== false
     },
     run: async session => {
       const startMs = session.now()
@@ -238,7 +243,8 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
         startMs,
         endMs,
         scrubbed.length,
-        options.actionEveryMs ?? 2 * MIN
+        options.actionEveryMs ?? 2 * MIN,
+        options.actions
       )
       const samples: MemorySample[] = []
       const samplers = session.memory ?? []

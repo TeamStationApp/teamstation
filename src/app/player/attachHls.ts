@@ -1,7 +1,8 @@
 import Hls from 'hls.js'
 
+import type { SeekKind } from '../../common/observability/contract'
 import { watchLivePlaylist } from './livePlaylistWatch'
-import { liveRejoin } from './liveRejoin'
+import { liveRejoin, REJOIN_GIVE_UP_MS } from './liveRejoin'
 import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
@@ -199,6 +200,13 @@ export interface NativeHlsVideo {
     start: (index: number) => number
     end: (index: number) => number
   }
+  /** Still moving to where it was last sent (`seekStuck`). */
+  readonly seeking?: boolean
+  readonly buffered?: {
+    readonly length: number
+    start: (index: number) => number
+    end: (index: number) => number
+  }
   load: () => void
   play: () => Promise<void>
   pause: () => void
@@ -222,6 +230,10 @@ type NativeHlsEvent =
   | 'loadedmetadata'
   | 'play'
   | 'pause'
+  | 'ended'
+  | 'seeking'
+  | 'seeked'
+  | 'emptied'
   | 'durationchange'
   | 'progress'
 
@@ -311,6 +323,23 @@ const MEDIA_ERR_ABORTED = 1
  */
 export const RESTORE_PROGRESS_MS = 10_000
 
+/** How often a live player that ran out looks for footage after where it stopped. */
+export const RAN_OUT_POLL_MS = 2000
+/** How often, meanwhile, it reads its playlist to see whether it was closed. */
+export const RAN_OUT_FETCH_MS = 10_000
+/**
+ * How far past where it stopped the playlist must reach before there is
+ * footage to go on with: a segment. A game that really ended can leave the
+ * seekable end a hair past the stop, and playing there only ends again.
+ */
+export const RAN_OUT_AHEAD_SEC = 4
+/** How long a seek may stand unfinished before it is taken for one that never will. */
+export const SEEK_STUCK_MS = 3000
+/** The furthest a stuck seek's retry goes back: a segment. */
+export const RETRY_BACK_SEC = 4
+/** How near a `seeking` must land to this file's own last seek to be taken for it. */
+const OWN_SEEK_SLACK_SEC = 0.5
+
 /**
  * The browser's own HLS player, with the same patience as hls.js gets.
  *
@@ -361,11 +390,147 @@ export function attachNativeHls(
   }
   const wantsToPlay = (): boolean =>
     intent == null ? ownWantsToPlay : intent.wantsToPlay()
+  /**
+   * Where this file's own last seek went — a retry, the way back after a
+   * reload, a jump to the live point, a rejoin — until its `seeking`, which
+   * Safari fires later, as a task, is heard. A `seeking` is taken for this
+   * file's own by where it went, not by count: two seeks in one moment are
+   * heard as one `seeking`, at the later one's place. Only a seek the viewer
+   * or the grid makes starts the seek watch's count afresh (`onSeeking`).
+   */
+  let ownSeekTarget: number | null = null
+  const seekTo = (sec: number, kind: SeekKind): void => {
+    markSeek(video, kind)
+    ownSeekTarget = sec
+    video.currentTime = sec
+  }
+  /** To the live point, `LIVE_DELAY_SEC` behind the newest footage; false when there is no live range to go to. */
+  /** The live point, `LIVE_DELAY_SEC` behind the newest footage; null without a live range to go to. */
+  const livePoint = (): number | null => {
+    const ranges = video.seekable
+    if (ranges.length === 0) return null
+    const index = ranges.length - 1
+    const start = ranges.start(index)
+    const end = ranges.end(index)
+    if (!Number.isFinite(end) || end <= start) return null
+    return Math.max(start, end - LIVE_DELAY_SEC)
+  }
+
+  /** The reload under way is the seek watch's: it goes back to the seek's target and stays there. */
+  let seekWatchReload = false
   const onPlay = (): void => {
     ownWantsToPlay = true
+    // A play, the viewer's or its own, settles any run-out (below).
+    stopRanOut()
   }
   const onPause = (): void => {
     if (!recovering) ownWantsToPlay = false
+  }
+
+  /**
+   * A live single player that ran out of footage during a long camera cut
+   * (#327). Safari plays to the end of what it has, pauses and says `ended`,
+   * and its owner — whose wish follows the element's pauses — reads that
+   * pause as the viewer's. The playlist then carries on under it and nothing
+   * plays it again, through this cut and every later one.
+   *
+   * So `ended` while live is the player running out, not the game ending.
+   * Once there is footage after where it stopped, it goes on from there, or
+   * from the live point when the game has moved further than the cushion,
+   * and plays when it is wanted — or not wanted only because of the end's
+   * own pause, unchanged since (`wantedAtEnd`, as the hls.js path keeps it).
+   * A playlist the server actually closed is handed to `liveRejoin`, which
+   * waits for it to open again and loads it afresh.
+   */
+  // The viewer's own single player only: a card preview (`preview`) is left
+  // to end, as its stalls are left unreported.
+  const runOutIsLive =
+    intent?.buffer == null && intent?.preview !== true
+      ? intent?.isLive
+      : undefined
+  const watchesRunOut = runOutIsLive != null
+  let ranOut:
+    { endedAt: number; wantedAtEnd: boolean; sinceMs: number } | undefined
+  /** An episode's `wantedAtEnd`, kept for `liveRejoin`'s rejoin. */
+  let handedWanted: boolean | undefined
+  let lookTimer: unknown
+  let lastReadMs = 0
+  const stopRanOut = (): void => {
+    ranOut = undefined
+    handedWanted = undefined
+    if (lookTimer != null) clock.clearTimeout(lookTimer)
+    lookTimer = undefined
+  }
+  const playIfWanted = (wantedAtEnd: boolean | undefined): void => {
+    if (wantsToPlay() || wantedAtEnd === false)
+      video.play().catch(() => undefined)
+  }
+  const readPlaylist = async (): Promise<string> => {
+    const response = await fetch(url, { cache: 'no-store' })
+    if (!response.ok) throw new Error(`playlist ${response.status}`)
+    return await response.text()
+  }
+  const rejoiner =
+    runOutIsLive == null
+      ? undefined
+      : liveRejoin({
+          isLive: runOutIsLive,
+          fetchPlaylist: readPlaylist,
+          clock,
+          rejoin: () => {
+            playbackOf(video)?.recovery('rejoin')
+            const wanted = handedWanted
+            handedWanted = undefined
+            noteResumeAt()
+            setRecovering(true)
+            reload()
+            if (!wantsToPlay() && wanted === false)
+              video.play().catch(() => undefined)
+          }
+        })
+  const lookAfterRunOut = (): void => {
+    lookTimer = undefined
+    const episode = ranOut
+    if (episode == null) return
+    const now = clock.now()
+    if (now - episode.sinceMs > REJOIN_GIVE_UP_MS) {
+      ranOut = undefined
+      return
+    }
+    const end = seekableEndOf(video) ?? NaN
+    if (Number.isFinite(end) && end > episode.endedAt + RAN_OUT_AHEAD_SEC) {
+      ranOut = undefined
+      playbackOf(video)?.recovery('rejoin')
+      seekTo(Math.max(episode.endedAt, end - LIVE_DELAY_SEC), 'cushion_join')
+      playIfWanted(episode.wantedAtEnd)
+      return
+    }
+    if (now - lastReadMs >= RAN_OUT_FETCH_MS) {
+      lastReadMs = now
+      readPlaylist()
+        .then(text => {
+          if (ranOut !== episode || !text.includes('#EXT-X-ENDLIST')) return
+          ranOut = undefined
+          if (lookTimer != null) clock.clearTimeout(lookTimer)
+          lookTimer = undefined
+          handedWanted = episode.wantedAtEnd
+          rejoiner?.ended()
+        })
+        .catch(() => undefined)
+    }
+    lookTimer = clock.setTimeout(lookAfterRunOut, RAN_OUT_POLL_MS)
+  }
+  const onEnded = (): void => {
+    if (!watchesRunOut) return
+    stopRanOut()
+    const now = clock.now()
+    ranOut = {
+      endedAt: video.currentTime,
+      wantedAtEnd: wantsToPlay(),
+      sinceMs: now
+    }
+    lastReadMs = now
+    lookTimer = clock.setTimeout(lookAfterRunOut, RAN_OUT_POLL_MS)
   }
 
   /**
@@ -411,15 +576,11 @@ export function attachNativeHls(
     restoredAt = null
     if (at == null) return
     const wanted = wantsToPlay()
-    const ranges = video.seekable
-    if (wanted && Math.abs(video.currentTime - at) < 1 && ranges.length > 0) {
-      const index = ranges.length - 1
-      const start = ranges.start(index)
-      const end = ranges.end(index)
-      if (Number.isFinite(end) && end > start) {
+    if (wanted && Math.abs(video.currentTime - at) < 1) {
+      const point = livePoint()
+      if (point != null) {
         playbackOf(video)?.recovery('restore_abandoned')
-        markSeek(video, 'cushion_join')
-        video.currentTime = Math.max(start, end - LIVE_DELAY_SEC)
+        seekTo(point, 'cushion_join')
       }
     }
     const resume = shouldResumeAfterRecovery({
@@ -433,10 +594,15 @@ export function attachNativeHls(
   }
 
   const seekBack = (): void => {
+    // A seek the watch reloaded for was the viewer's or the grid's own
+    // choice, not a camera's hole: it is gone back to and left there, never
+    // moved to the live point. Read, and cleared, whatever happens next, so
+    // no later reload takes it for the watch's.
+    const forSeek = seekWatchReload
+    seekWatchReload = false
     if (resumeAtSec <= 0) return
-    markSeek(video, 'reload_restore')
-    video.currentTime = resumeAtSec
-    if (!live) return
+    seekTo(resumeAtSec, 'reload_restore')
+    if (!live || forSeek) return
     cancelRestoreCheck()
     restoredAt = resumeAtSec
     restoreTimer = clock.setTimeout(checkRestored, RESTORE_PROGRESS_MS)
@@ -475,6 +641,141 @@ export function attachNativeHls(
     if (wanted) video.play().catch(() => undefined)
   }
 
+  /**
+   * A seek Safari starts and never finishes (#326). Sent 0.2 s before the end
+   * of the one segment it held, Safari's player began the seek and stood
+   * there for good: `seeking`, nothing drawn, nothing more loaded, while the
+   * playlist grew under it — and no other recovery here looks at a seek.
+   *
+   * So a seek that has stood `SEEK_STUCK_MS` with nothing arriving — each
+   * `progress` starts the count again, so a seek a slow network is still
+   * loading is left to finish — is retried once from up to a segment
+   * (`RETRY_BACK_SEC`) before it, within the buffered range that holds it:
+   * footage Safari already has, which it can draw without fetching anything;
+   * one that still stands,
+   * or that no buffered range holds, reloads the player, which goes back to
+   * where it was. At most once a seek: the reload's own seek back can be
+   * retried but never reloads again. If that one wedges as well, the watch
+   * stops there: it ends the recovery, so the viewer's own pause and play
+   * count again, and moves a live player to the live point, where its
+   * footage is still arriving. A reload already scheduled for an error, or a
+   * player that gave up, is left to that path. Every Safari player: the
+   * single one, a grid tile, a recording.
+   */
+  let seekTimer: unknown
+  /** Whether this seek is already a retry. */
+  let seekRetried = false
+  /** Whether the next `seeking` is the retry's own. */
+  let retrySeek = false
+  /** Whether this seek has already reloaded the player. */
+  let seekReloaded = false
+  /**
+   * The watch took its last step for this seek: its own seeks are no longer
+   * watched until a seek of the viewer's or the grid's, or one finishes.
+   */
+  let seekGaveUp = false
+  /** Whether the seek being watched is this file's own. */
+  let watchedOwn = false
+  const stopSeekWatch = (): void => {
+    if (seekTimer != null) clock.clearTimeout(seekTimer)
+    seekTimer = undefined
+  }
+  const seekStuck = (): void => {
+    seekTimer = undefined
+    if (video.seeking !== true) return
+    const target = video.currentTime
+    const ranges = video.buffered
+    let from: number | null = null
+    if (ranges != null) {
+      for (let index = 0; index < ranges.length; index++) {
+        if (ranges.start(index) <= target && target <= ranges.end(index))
+          from = ranges.start(index)
+      }
+    }
+    if (!seekRetried && from != null && from < target) {
+      seekRetried = true
+      retrySeek = true
+      // Back to the segment it is in, never further: a buffered range runs
+      // across every segment Safari holds in a row, and its start can be
+      // minutes behind.
+      seekTo(Math.max(from, target - RETRY_BACK_SEC), 'stall_recovery')
+      return
+    }
+    seekRetried = false
+    // An error's reload is on its way, or the player gave up: theirs.
+    if (timer != null || gaveUp) return
+    if (seekReloaded) {
+      // The way back after this seek's reload wedged too: the last step.
+      lastResort()
+      return
+    }
+    seekReloaded = true
+    // Only the viewer's or the grid's seek is left where it went: a
+    // recovery's own way back keeps the restore check it would have had.
+    seekWatchReload = !watchedOwn
+    // Back to the stuck seek's own target, which is the viewer's or the
+    // grid's choice — not to where a recovery under way last put it.
+    if (target > 0) resumeAtSec = target
+    setRecovering(true)
+    playbackOf(video)?.recovery('stall_reload')
+    reload()
+  }
+  /**
+   * The watch's last step for one seek: the recovery ends, so a pause or a
+   * play is the viewer's again, and a live player goes to the live point,
+   * where footage is still arriving rather than where it would not come.
+   */
+  const lastResort = (): void => {
+    seekGaveUp = true
+    setRecovering(false)
+    resumeAtSec = 0
+    const point = live ? livePoint() : null
+    if (point != null) seekTo(point, 'cushion_join')
+  }
+  const watchSeek = (): void => {
+    stopSeekWatch()
+    seekTimer = clock.setTimeout(seekStuck, SEEK_STUCK_MS)
+  }
+  /** Something arrived: a seek still under way is loading, not stuck. */
+  const onProgress = (): void => {
+    if (seekTimer != null) watchSeek()
+  }
+  /** Loaded afresh: a seek still pending is gone, and so is its `seeking`. */
+  const onEmptied = (): void => {
+    stopSeekWatch()
+    ownSeekTarget = null
+    retrySeek = false
+  }
+  /** A seek finished: whatever it took, the next one starts afresh. */
+  const onSeeked = (): void => {
+    stopSeekWatch()
+    seekReloaded = false
+    seekRetried = false
+    seekGaveUp = false
+  }
+  const onSeeking = (): void => {
+    // A seek of the viewer's or the grid's counts afresh; the retry's own
+    // is the one retry.
+    if (retrySeek) retrySeek = false
+    else seekRetried = false
+    // Only the viewer's or the grid's seek starts afresh: one of this
+    // file's own — the way back after the watch's reload, a jump to live —
+    // is the same seek, and may not reload again.
+    const own =
+      ownSeekTarget != null &&
+      Math.abs(video.currentTime - ownSeekTarget) < OWN_SEEK_SLACK_SEC
+    ownSeekTarget = null
+    watchedOwn = own
+    if (!own) {
+      seekReloaded = false
+      seekGaveUp = false
+      // The viewer moved it: a run-out's rejoin would undo where they went.
+      stopRanOut()
+    }
+    if (seekGaveUp) return
+    watchSeek()
+  }
+
   const onError = (): void => {
     // A load this file or the caller stopped on purpose is not trouble.
     if (video.error == null || video.error.code === MEDIA_ERR_ABORTED) return
@@ -505,6 +806,11 @@ export function attachNativeHls(
 
   video.addEventListener('play', onPlay)
   video.addEventListener('pause', onPause)
+  video.addEventListener('ended', onEnded)
+  video.addEventListener('seeking', onSeeking)
+  video.addEventListener('seeked', onSeeked)
+  video.addEventListener('emptied', onEmptied)
+  video.addEventListener('progress', onProgress)
   video.addEventListener('canplay', recovered)
   video.addEventListener('error', onError)
   const onWallMapping = intent?.onWallMapping
@@ -545,9 +851,17 @@ export function attachNativeHls(
     setRecovering(false)
     video.removeEventListener('play', onPlay)
     video.removeEventListener('pause', onPause)
+    video.removeEventListener('ended', onEnded)
+    video.removeEventListener('seeking', onSeeking)
+    video.removeEventListener('seeked', onSeeked)
+    video.removeEventListener('emptied', onEmptied)
+    video.removeEventListener('progress', onProgress)
     video.removeEventListener('canplay', recovered)
     video.removeEventListener('error', onError)
     video.removeEventListener('loadedmetadata', seekBack)
+    stopRanOut()
+    stopSeekWatch()
+    rejoiner?.stop()
     video.removeAttribute('src')
     video.load()
   }

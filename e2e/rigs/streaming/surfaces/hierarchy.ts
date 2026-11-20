@@ -178,11 +178,23 @@ export interface PagePlayer {
   fraction: number | null
   jump: Rect | null
   fullScreen: Rect | null
-  /** Whether it is full screen, as its full-screen button says (`fullscreen_exit`); null without one. */
+  /**
+   * The way out of full screen: the full-screen player's ✕ ("Close"), the
+   * page's full-screen button opening the angles' own player, which names no
+   * `fullscreen_exit`.
+   */
+  close: Rect | null
+  /**
+   * Whether it is full screen: its full-screen button says so
+   * (`fullscreen_exit` or `fullscreen`), or, with neither, the angles'
+   * player's ✕ is up; null with none of them.
+   */
   isFullScreen: boolean | null
 }
 
 const AREA = /\bminutes?\b|\bseconds?\b|indefinite time/
+/** The full-screen player's ✕ (`angles_close`). */
+const CLOSE_LABEL = 'Close'
 const TIME = /^\d+(?::\d\d){1,2}$/
 
 /** Seconds in a player's `m:ss` or `h:mm:ss`. */
@@ -214,6 +226,9 @@ export function readPagePlayer(
   const duration = clockSeconds(labelOf(end))
   const button = (label: RegExp): Rect | null =>
     within.find(node => label.test(labelOf(node)))?.bounds ?? null
+  // Anywhere on the screen: the ✕ sits in the corner, outside the picture.
+  const close =
+    nodes.find(node => labelOf(node) === CLOSE_LABEL)?.bounds ?? null
   return {
     area,
     line: {
@@ -227,11 +242,17 @@ export function readPagePlayer(
         : null,
     jump: button(/^Jump to present$/),
     fullScreen: button(/^fullscreen(_exit)?$/),
+    close,
+    // The player's own full-screen button decides when it is there; a ✕
+    // ("Close") reads as the angles' player only without one, since other
+    // panels close with the same word.
     isFullScreen:
       button(/^fullscreen_exit$/) != null
         ? true
         : button(/^fullscreen$/) != null
           ? false
-          : null
+          : close != null
+            ? true
+            : null
   }
 }

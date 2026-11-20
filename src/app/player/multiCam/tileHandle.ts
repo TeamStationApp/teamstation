@@ -13,6 +13,8 @@ export interface TileHandle extends VideoHandle {
   readonly ended?: boolean
   /** Still moving to where it was last sent; a browser says, a phone does not. */
   readonly seeking?: boolean
+  /** The browser element's network state (`?debug=1`); a phone's player has none. */
+  readonly networkState?: number
   readonly seekable?: { length: number; end: (index: number) => number }
   /**
    * A phone's player that has gone quiet: the seekable end it last reported

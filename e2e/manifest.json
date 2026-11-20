@@ -2414,6 +2414,51 @@
       "file": "e2e/tests/streaming/targeted/gap-seek.e2e.ts"
     },
     {
+      "id": "streaming/targeted/long-cuts#repeat-64s",
+      "title": "A camera cut for 64 s again and again plays again on iPhone Safari and Chrome after every cut",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/screens/GameScreen.tsx",
+        "src/server/live/**",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 35,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/long-cuts",
+      "file": "e2e/tests/streaming/targeted/long-cuts.e2e.ts"
+    },
+    {
       "id": "streaming/targeted/owner-panel#unanswered-read",
       "title": "The owner's camera panel shows a camera ended after one of its reads went unanswered for 90 s, without a reload",
       "kind": "e2e",
@@ -2504,6 +2549,50 @@
       "manual": false,
       "spec": "streaming/targeted/publisher-outage",
       "file": "e2e/tests/streaming/targeted/publisher-outage.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/rapid-scrub#safari-20",
+      "title": "Twenty rapid scrubs on iPhone Safari, each after a scrub to the live edge, the picture moving again within 10 s of each",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/screens/GameScreen.tsx",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 32,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/rapid-scrub",
+      "file": "e2e/tests/streaming/targeted/rapid-scrub.e2e.ts"
     },
     {
       "id": "streaming/targeted/receiver-outage#180s",

@@ -247,6 +247,34 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     platformWas = null
   })
 
+  it('draws the picture’s readout under ?debug=1, and nothing without it', async function () {
+    const readout = (): Element | null =>
+      document.querySelector('[data-testid="singlePlayerReadout"]')
+    await page([videoOf('v1', START)])
+    expect(readout()).equals(null)
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    document.body.replaceChildren()
+    // The test page has a window but no global `location`; the flag reads it.
+    window.history.replaceState(null, '', '/?debug=1')
+    Object.assign(globalThis, { location: window.location })
+    try {
+      await page([videoOf('v1', START)])
+      expect(readout()?.textContent).match(/(paused|playing) ready \d/)
+      expect(readout()?.textContent).includes('recovering false')
+    } finally {
+      Reflect.deleteProperty(globalThis, 'location')
+      window.history.replaceState(null, '', '/')
+      try {
+        sessionStorage.removeItem('teamstation.playerDebug')
+      } catch {
+        // No storage in this page: nothing was remembered.
+      }
+    }
+  })
+
   it('has no browser controls, and revealing then opening keeps its moment', async function () {
     const view = await page([videoOf('v1', START, 2), videoOf('v2', START)])
     const video = inline()
