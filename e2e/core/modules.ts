@@ -28,6 +28,8 @@ const PARKED_PREFIXES = [
   'mobile/apps/tsCameraman/',
   'mobile/apps/tsCameramanAndroid/',
   'mobile/apps/tsDirector/',
+  'mobile/apps/tsSpeedy/',
+  'mobile/apps/tsSpeedyAndroid/',
   'appletv/'
 ]
 

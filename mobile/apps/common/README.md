@@ -19,6 +19,7 @@ without reaching into another app's `Packages`.
 | `CameramanControlUI` | Cameraman's operating screen, Settings sheet, zoom rail, thermal and battery pills, generic over `CameraControlling` |
 | `LoopbackHTTP` | A small HTTP/1.1 server bound to loopback (`LinkServer`), its request parser and responses, and `JSONEventHub` for newline-delimited event streams. TS Director's link to TS Distributor (`DirectorLink`) is built on it |
 | `CameramanRemote` | `RemoteCameraControl`: `CameraControlling` over RTSP `GET_PARAMETER` / `SET_PARAMETER`, polling at 1 Hz with coalesced writes |
+| `SpeedyVoice` | TS Speedy's spoken numbers: 242 WAV clips made with xAI text to speech, the scripts that made and check them, and `SpeedyVoice.clipURL`. TS Speedy for Android plays the same files as assets |
 | `EventControl` | Device event control: the app-neutral protocol a Director uses to set the publishing event of nearby devices signed in to the same account — wire contract, receiver and Director state machines, keychain key store, and the TCP listener and connection adapters. Specified in its README; its fixtures are the contract every implementation runs |
 
 Swift module names stay as listed; `CameramanCore` kept its name on the move
@@ -35,6 +36,8 @@ the way `DirectorCore` did.
   on `CameramanControlUI` from `CameramanUI`; its unit tests also compile
   `DirectorRTSP` to round-trip the packetizers
 - **TS Preview** — path-depends for NearStream `/live/substream2` decode
+- **TS Speedy** — path-depends from `mobile/apps/tsSpeedy` on `SpeedyVoice` for its clips and on
+  `CameramanCapture` for the TAG One radar (`RadarFleet`), which it holds to one always-on radar
 - **The TeamStation app** — `ios/TeamStation.xcodeproj` references `PhoneStream` as a local package
   and links its product
 

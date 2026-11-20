@@ -318,6 +318,7 @@ describe('Native build and signing adapters', () => {
     for (const id of [
       'app.teamstation.director',
       'app.teamstation.cameraman',
+      'app.teamstation.speedy',
       'app.teamstation.preview'
     ]) {
       context.target = target(id, 'ios')
@@ -328,6 +329,19 @@ describe('Native build and signing adapters', () => {
       await prepare(context)
     }
     assert(calls.some(c => c.args.includes('scripts/bootstrapNdi.sh')))
+    assert.deepEqual(target('app.teamstation.speedy', 'ios'), {
+      app: 'app.teamstation.speedy',
+      platform: 'ios',
+      path: 'mobile/apps/tsSpeedy',
+      kind: 'swift',
+      scheme: 'Speedy'
+    })
+    assert.deepEqual(target('app.teamstation.speedy', 'android'), {
+      app: 'app.teamstation.speedy',
+      platform: 'android',
+      path: 'mobile/apps/tsSpeedyAndroid',
+      kind: 'kotlin'
+    })
     context.target = target(app, 'ios')
     rmSync(path.join(context.source, 'package-lock.json'))
     await assert.rejects(prepare(context), /locked/)
