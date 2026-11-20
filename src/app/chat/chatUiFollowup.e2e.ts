@@ -415,6 +415,23 @@ async function s4(daemon: Daemon): Promise<void> {
   }
 }
 
+async function assertFixtureBody(
+  device: Device,
+  id: string,
+  text: string
+): Promise<void> {
+  const selector = `[data-testid="chat-message-body-${id}"]`
+  await device.assertVisible({ css: selector, timeout: 60000 })
+  // Text selectors interpret fixture punctuation as a regular expression.
+  const result = (await device.evalBrowserScript({
+    script: `return document.querySelector(${JSON.stringify(selector)})?.textContent === ${JSON.stringify(text)}`
+  })) as { data?: unknown }
+  assert(
+    result.data === true || result.data === 'true',
+    'The displayed message must exactly match the fixture body'
+  )
+}
+
 async function s5(daemon: Daemon): Promise<void> {
   const id = required('CHAT_UI_MESSAGE')
   const target = required('CHAT_UI_TARGET_TEXT')
@@ -451,7 +468,7 @@ async function s5(daemon: Daemon): Promise<void> {
     await m.openLink({
       link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
     })
-    await m.assertVisible({ text: target, timeout: 60000 })
+    await assertFixtureBody(m, id, target)
     console.log(
       '$ S5 hover actual original message, inspect named controls, anchored menu and clipboard body'
     )
@@ -514,7 +531,7 @@ async function s5(daemon: Daemon): Promise<void> {
       await m.screenshot()
     )
     await m.tapOn({ css: `[data-testid="chat-pin-${id}"]` })
-    await m.assertVisible({ text: target })
+    await assertFixtureBody(m, id, target)
     console.log(
       await m.evalBrowserScript({
         script: `const row=document.querySelector(${JSON.stringify(row)});if(!row)throw new Error('Pin jump original missing');return JSON.stringify({pinBadgeHeaderList:true,originalJump:true});`
@@ -654,7 +671,7 @@ async function s6(daemon: Daemon): Promise<void> {
     })
     await m.tapOn({ css: MEMBERS_ROW, timeout: 60000 })
     await m.assertVisible({ css: bubble, timeout: 60000 })
-    await m.assertVisible({ text: target })
+    await assertFixtureBody(m, id, target)
     await dismissNotificationAskOn(m)
     console.log(
       '$ S6 390px real browser with coarse-pointer media emulation; actual hold, blur, exact actions'
@@ -3382,10 +3399,11 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Mark unread' })
     await m.pressKey({ key: 'Escape' })
     await m.tapOn({ css: MEMBERS_ROW })
-    await m.assertVisible({
-      text: required('CHAT_UI_TARGET_TEXT'),
-      timeout: 60000
-    })
+    await assertFixtureBody(
+      m,
+      required('CHAT_UI_MESSAGE'),
+      required('CHAT_UI_TARGET_TEXT')
+    )
     await dismissNotificationAskOn(m)
     console.log(
       '$ Actual Chrome coarse media + rawTouchEvent bubble500ms recognizes exactly one menu'

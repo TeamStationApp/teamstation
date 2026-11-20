@@ -6158,13 +6158,39 @@ async function main(): Promise<void> {
       if (process.env.CHAT_UI_NATIVE_RECORD_STOP != null)
         writeFileSync(process.env.CHAT_UI_NATIVE_RECORD_STOP, 'stop')
       stage = 'S6-reaction-toggles'
+      const rowId = `chat-message-${originalId}`
+      async function waitForReaction(
+        emoji: string,
+        present: boolean
+      ): Promise<void> {
+        const label = `${emoji}, 1`
+        await until(
+          `Expected ${label} to be ${present ? 'visible on' : 'removed from'} the original message`,
+          async () => {
+            const nodes = flatten(await m.hierarchy())
+            const row = nodes.find(node => node.id === rowId)
+            const viewport = messageViewport(nodes, rowId)
+            if (row?.bounds == null || viewport == null) return
+            if (visibleBodyPoint(row.bounds, viewport) == null) return
+            const chip = flatten(row).find(node =>
+              strings([node]).includes(label)
+            )
+            if (!present) return chip == null ? true : undefined
+            return chip?.bounds != null &&
+              visibleBodyPoint(chip.bounds, viewport) != null
+              ? true
+              : undefined
+          },
+          platform === 'ios' ? 60000 : 30000
+        )
+      }
       for (const emoji of ['❤️', '👍', '👎', '😂', '😮', '😢']) {
         const before = (await api.chatConversations()).find(
           row => row.id === fixture.conversationId
         )!
         await messageMenu()
         await tapStableControl(m, `React with ${emoji}`)
-        await m.assertVisible({ text: `${emoji}, 1`, timeout: 10000 })
+        await waitForReaction(emoji, true)
         if (emoji === '❤️') {
           await physicalMessageHold(
             m,
@@ -6184,10 +6210,7 @@ async function main(): Promise<void> {
           )
           await photo('reaction-chip-hold-actions')
           await dismissMessageSpotlight(m)
-          assert(
-            strings(flatten(await m.hierarchy())).includes(`${emoji}, 1`),
-            'Holding the reaction chip must not perform its short toggle'
-          )
+          await waitForReaction(emoji, true)
           pass(
             'physical nested reaction hold selects the message without toggling its reaction'
           )
@@ -6196,13 +6219,7 @@ async function main(): Promise<void> {
           text: `^${emoji}, 1$`,
           childOf: { id: `chat-message-${originalId}` }
         })
-        await until(
-          'Native reaction toggle did not restore the visible state',
-          async () =>
-            !strings(flatten(await m.hierarchy())).includes(`${emoji}, 1`)
-              ? true
-              : undefined
-        )
+        await waitForReaction(emoji, false)
         const after = (await api.chatConversations()).find(
           row => row.id === fixture.conversationId
         )!
