@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { isIPv4 } from 'node:net'
 import { join } from 'node:path'
 
 import { ChatEngine } from '../../../src/app/chat/engine/engine'
@@ -40,6 +41,10 @@ interface Destination {
 }
 
 interface ChatLinkFixture {
+  /** The runner interface a physical phone can reach for the test page. */
+  destinationHost?: string
+  /** The browser selected in the remote Android phone’s Default apps settings. */
+  defaultBrowserPackage?: string
   origin: string
   seedFile: string
   sessionsDir?: string
@@ -198,7 +203,13 @@ export async function providerFor(
 }
 
 /** The browser itself renders its full path, including its client-only fragment. */
-export async function destinationPage(): Promise<Destination> {
+export async function destinationPage(
+  host = '127.0.0.1'
+): Promise<Destination> {
+  assert(
+    isIPv4(host) && host !== '0.0.0.0',
+    'Bind the fixture to one local IPv4 address'
+  )
   const server = createServer((_request, response) => {
     response.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
@@ -210,12 +221,12 @@ export async function destinationPage(): Promise<Destination> {
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
+    server.listen(0, host, resolve)
   })
   const address = server.address()
   assert(address != null && typeof address !== 'string')
   return {
-    origin: 'http://127.0.0.1:' + address.port,
+    origin: 'http://' + host + ':' + address.port,
     port: address.port,
     close: () => {
       server.closeAllConnections()
