@@ -358,7 +358,10 @@ describe('scoring shell and exit', function () {
   })
   /**
    * A game kept on the server, whose saves wait for `release`, or are
-   * refused once `refuse` is set; and the screen's leave check.
+   * refused once `refuse` is set; and the screen's leave check. `again`
+   * shows the scoring screen anew, once the last one has gone, on the same
+   * client, or on another game, user or source; `gameRead` holds or fails
+   * the screen's read of the game as it opens.
    */
   async function heldWebGame(): Promise<{
     leave: () => Promise<boolean>
@@ -367,18 +370,31 @@ describe('scoring shell and exit', function () {
     saved: () => number
     session: () => ScoringSession
     exits: () => number
+    /** How many times the source opened the game from the server. */
+    opens: () => number
+    gameRead: { fail?: boolean; held?: Promise<void> }
+    again: (other?: {
+      gameId?: string
+      userId?: number
+      source?: ScoringSource
+    }) => Promise<void>
+    gone: () => Promise<void>
+    source: ScoringSource
   }> {
     const store = memoryStore()
     let saved = 0
+    let opens = 0
     let release: () => void = () => undefined
     const held = new Promise<void>(resolve => {
       release = resolve
     })
     const refuse: { error?: Error } = {}
+    const gameRead: { fail?: boolean; held?: Promise<void> } = {}
     let opened: ScoringSession | undefined
     const source: ScoringSource = {
       persistent: true,
       open: async (game, away, home) => {
+        opens++
         opened = await ScoringSession.open(
           {
             load: store.load.bind(store),
@@ -400,38 +416,76 @@ describe('scoring shell and exit', function () {
       }
     }
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
-    client.game = async () => gameFixture
+    client.game = async () => {
+      await gameRead.held
+      if (gameRead.fail === true) throw new Error('The game did not load')
+      return gameFixture
+    }
     client.roster = async teamId =>
       scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
     let leave: (() => Promise<boolean>) | undefined
     let exits = 0
-    await render(
-      <ScoringScreen
-        client={client}
-        gameId="g1"
-        source={source}
-        onExit={() => {
-          exits++
-        }}
-        onBeforeLeave={check => {
-          leave = check
-          return () => undefined
-        }}
-      />
-    )
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 20))
-    })
-    if (document.querySelector('[aria-label="OK"]') != null) await click('OK')
+    const show = async (other?: {
+      gameId?: string
+      userId?: number
+      source?: ScoringSource
+    }): Promise<void> => {
+      await render(
+        <ScoringScreen
+          client={client}
+          gameId={other?.gameId ?? 'g1'}
+          userId={other?.userId}
+          source={other?.source ?? source}
+          onExit={() => {
+            exits++
+          }}
+          onBeforeLeave={check => {
+            leave = check
+            return () => undefined
+          }}
+        />
+      )
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+      if (document.querySelector('[aria-label="OK"]') != null) await click('OK')
+    }
+    const gone = async (): Promise<void> => {
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+    }
+    await show()
     return {
       leave: async () => await leave!(),
       release,
       refuse,
       saved: () => saved,
       session: () => opened!,
-      exits: () => exits
+      exits: () => exits,
+      opens: () => opens,
+      gameRead,
+      again: show,
+      gone,
+      source
     }
   }
+  const wait = async (ms = 20): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms))
+    })
+  }
+  const unloadWarned = (): boolean => {
+    const unload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    return unload.defaultPrevented
+  }
+  const balls = (): string =>
+    document
+      .querySelector('[aria-label*=" balls "]')
+      ?.getAttribute('aria-label')
+      ?.match(/\d+ balls/)?.[0] ?? 'no count'
 
   it('leaves at once with a save held on the web, and the save still lands', async function () {
     const game = await heldWebGame()
@@ -545,7 +599,222 @@ describe('scoring shell and exit', function () {
     })
     await click('Discard and Exit')
     expect(await left).equals(true)
+    // Let go once the screen has gone: refused, it closes at once.
+    expect(closes).equals(0)
+    await game.gone()
     expect(closes).equals(1)
+  })
+
+  it('goes on saving on a screen shown again after leaving with a save out', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    let left: boolean | undefined
+    await act(async () => {
+      left = await game.leave()
+    })
+    expect(left).equals(true)
+    // Still on screen, as a screen sliding away is when the scorer comes
+    // straight back: the next ball is scored and saved too.
+    await click('Ball')
+    await wait()
+    expect(balls()).equals('2 balls')
+    game.release()
+    await wait()
+    expect(game.session().pending).equals(0)
+    expect(game.saved()).greaterThan(0)
+    expect(unloadWarned()).equals(false)
+  })
+
+  it('saves a ball scored on a screen shown again after leaving with nothing to save', async function () {
+    const game = await heldWebGame()
+    game.release()
+    await click('Ball')
+    await wait()
+    expect(game.session().pending).equals(0)
+    const before = game.saved()
+    await act(async () => {
+      await game.leave()
+    })
+    await click('Ball')
+    await wait()
+    expect(game.saved()).greaterThan(before)
+    expect(game.session().pending).equals(0)
+  })
+
+  it('takes back a session still saving after its screen has gone, without reading the server', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    await act(async () => {
+      await game.leave()
+    })
+    await game.gone()
+    expect(unloadWarned()).equals(true)
+    await game.again()
+    // The held ball is shown, from the session, not the server's copy.
+    expect(game.opens()).equals(1)
+    expect(balls()).equals('1 balls')
+    expect(game.session()).equals(session)
+    game.release()
+    await wait()
+    expect(game.saved()).greaterThan(0)
+    expect(session.pending).equals(0)
+    // Nothing is left holding the page: the screen shows the saved session.
+    expect(unloadWarned()).equals(false)
+  })
+
+  for (const other of [
+    { gameId: 'g2' },
+    { userId: 7 },
+    { source: 'another' as const }
+  ])
+    it(`opens from the server, and leaves a let-go session saving, for another ${Object.keys(other)[0]}`, async function () {
+      const game = await heldWebGame()
+      await click('Ball')
+      await wait()
+      const session = game.session()
+      await act(async () => {
+        await game.leave()
+      })
+      await game.gone()
+      await game.again(
+        other.source == null
+          ? other
+          : { source: { ...game.source, open: game.source.open } }
+      )
+      expect(game.opens()).equals(2)
+      expect(unloadWarned()).equals(true)
+      game.release()
+      await wait()
+      expect(session.pending).equals(0)
+      expect(unloadWarned()).equals(false)
+    })
+
+  it('closes a session left with nothing to save once its screen has gone, and opens from the server again', async function () {
+    const game = await heldWebGame()
+    game.release()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    const close = session.close.bind(session)
+    let closes = 0
+    session.close = () => {
+      closes++
+      close()
+    }
+    await act(async () => {
+      await game.leave()
+    })
+    expect(closes).equals(0)
+    await game.gone()
+    expect(closes).equals(1)
+    await game.again()
+    expect(game.opens()).equals(2)
+    expect(balls()).equals('1 balls')
+  })
+
+  it('does not take back a session the server refused', async function () {
+    const game = await heldWebGame()
+    game.refuse.error = new HttpError('forbidden', 'Not yours to score')
+    game.release()
+    await click('Ball')
+    await act(async () => {
+      await game.session().flush()
+    })
+    let left: Promise<boolean> | undefined
+    await act(async () => {
+      left = game.leave()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await click('Discard and Exit')
+    expect(await left).equals(true)
+    await game.gone()
+    game.refuse.error = undefined
+    await game.again()
+    expect(game.opens()).equals(2)
+  })
+
+  it('keeps a let-go session when the read that would take it back fails, and takes it back on Retry', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    await act(async () => {
+      await game.leave()
+    })
+    await game.gone()
+    game.gameRead.fail = true
+    await game.again()
+    expect(
+      document.querySelector('[aria-label="Retry loading scoring"]')
+    ).not.equals(null)
+    expect(unloadWarned()).equals(true)
+    game.gameRead.fail = false
+    await click('Retry loading scoring')
+    await wait()
+    expect(game.opens()).equals(1)
+    expect(game.session()).equals(session)
+    expect(balls()).equals('1 balls')
+    game.release()
+    await wait()
+    expect(session.pending).equals(0)
+    expect(game.saved()).greaterThan(0)
+  })
+
+  it('leaves a let-go session to the next screen when the one taking it back goes first', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    await act(async () => {
+      await game.leave()
+    })
+    await game.gone()
+    let readNow: () => void = () => undefined
+    game.gameRead.held = new Promise<void>(resolve => {
+      readNow = resolve
+    })
+    await game.again()
+    await game.gone()
+    readNow()
+    await wait()
+    game.gameRead.held = undefined
+    await game.again()
+    expect(game.opens()).equals(1)
+    expect(game.session()).equals(session)
+    expect(balls()).equals('1 balls')
+  })
+
+  it('opens from the server when the let-go session saves while the screen is reading', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    await act(async () => {
+      await game.leave()
+    })
+    await game.gone()
+    let readNow: () => void = () => undefined
+    game.gameRead.held = new Promise<void>(resolve => {
+      readNow = resolve
+    })
+    const shown = game.again()
+    game.release()
+    await wait()
+    // Saved, and closed: the server has the ball now.
+    expect(session.pending).equals(0)
+    readNow()
+    await shown
+    await wait()
+    expect(game.opens()).equals(2)
+    expect(game.session()).not.equals(session)
+    expect(balls()).equals('1 balls')
+    await click('Ball')
+    await wait()
+    expect(game.session().pending).equals(0)
+    expect(balls()).equals('2 balls')
   })
 
   it('retains the standalone field controls and repeated undo', async function () {

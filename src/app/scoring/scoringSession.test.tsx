@@ -800,6 +800,8 @@ describe('swapping from the scoring menu', function () {
     read: () => unknown
     /** The client the screen was given, for a test to answer its own way. */
     client: () => CachingClient
+    /** Shows the scoring screen anew, on the same client and source. */
+    mountAgain: () => Promise<void>
   }> {
     const store = memoryStore()
     let game = gameFixture
@@ -1020,7 +1022,11 @@ describe('swapping from the scoring menu', function () {
       },
       session: () => opened!,
       read: () => asked,
-      client: () => client as CachingClient
+      client: () => client as CachingClient,
+      mountAgain: async () => {
+        await mount(client, source)
+        await settle()
+      }
     }
   }
   /** The menu row's text, its subtext included. */
@@ -1336,6 +1342,33 @@ describe('swapping from the scoring menu', function () {
     expect(sent.defaultPrevented).equals(false)
   })
 
+  it('on the web, leaves a session a swap is replacing to the swap when the screen goes, not to the next screen', async function () {
+    const screen = await swappable({ holdSaves: true })
+    await click('Ball')
+    await click(MENU)
+    await click(SWAP)
+    await click('Reset and Swap')
+    await settle()
+    const swappedOver = screen.session()
+    const opens = screen.opens()
+    await unmount()
+    // The next screen opens from the server: the session the swap is
+    // replacing is never taken back.
+    await screen.mountAgain()
+    expect(screen.opens()).equals(opens + 1)
+    expect(screen.session()).not.equals(swappedOver)
+    await unmount()
+    const reload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(reload)
+    expect(reload.defaultPrevented).equals(true)
+    screen.release()
+    await settle()
+    expect(screen.order()).deep.equals(['save', 'swap'])
+    const sent = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(sent)
+    expect(sent.defaultPrevented).equals(false)
+  })
+
   it('on the web, warns before the page unloads until a swap the server refuses is answered', async function () {
     const screen = await swappable({
       holdSwaps: true,
@@ -1391,6 +1424,27 @@ describe('swapping from the scoring menu', function () {
     expect(
       screen.session().state.liveData.plays.currentPlay?.count.balls
     ).equals(1)
+  })
+
+  it('on the web, sends a pitch taken behind a swap still out once the screen has gone', async function () {
+    const screen = await swappable({ holdSwaps: true })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    await click('Ball')
+    await settle()
+    expect(screen.order()).deep.equals([])
+    await unmount()
+    const reload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(reload)
+    expect(reload.defaultPrevented).equals(true)
+    screen.release()
+    await settle()
+    expect(screen.order()).deep.equals(['swap', 'save'])
+    const sent = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(sent)
+    expect(sent.defaultPrevented).equals(false)
   })
 
   it('on the web, reads the server’s copy again over the swapped one when the swap held is refused', async function () {

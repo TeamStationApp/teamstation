@@ -465,9 +465,27 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
               loadRoster(game.homeTeamId),
               defaultsOf(props.client, game, true)
             ])
-      const value = await source.open(game, away, home, held, {
-        storedFirst: true
-      })
+      if (!live) return
+      // On the web, a session a screen since gone let go for this game,
+      // with changes the server has not answered yet, is shown again rather
+      // than the server's copy, which lacks them; taken back only now, as it
+      // is shown, so a read that failed or an open given up leaves it to the
+      // next open. One that has since saved and closed is not: the server
+      // has its changes.
+      const kept =
+        web && held == null
+          ? takeBack({
+              client: props.client,
+              gameId: props.gameId,
+              userId: props.userId,
+              source
+            })
+          : undefined
+      const value =
+        kept ??
+        (await source.open(game, away, home, held, {
+          storedFirst: true
+        }))
       if (!live) return
       showOpened(
         {
@@ -701,6 +719,34 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const reopened = opened != null && openedAttempt === retry
   /** The session a swap replaced, kept on screen until the new one opens. */
   const [closedSession, setClosedSession] = useState<GameSession>()
+  const swappedOver = useRef(closedSession)
+  swappedOver.current = closedSession
+  // The web's session is let go when the screen goes, not when leaving is
+  // decided: a screen still sliding away when the scorer comes straight
+  // back is shown again, and goes on scoring on a session that saves. Let
+  // go, it saves what it has not, and a screen that opens the game again
+  // takes it back (`takeBack`). A session a swap of this screen's own is
+  // replacing is the swap's, which closes it once its changes land; the
+  // session opened on the swap's copy is let go as any other, its saves
+  // waiting behind the swap.
+  useEffect(
+    () => () => {
+      const shown = openedContext.current
+      if (
+        shown?.source.persistent !== true ||
+        shown.client instanceof CachingClient ||
+        shown.session === swappedOver.current
+      )
+        return
+      closeOnceSaved(shown.session, {
+        client: shown.client,
+        gameId: shown.gameId,
+        userId: shown.userId,
+        source: shown.source
+      })
+    },
+    []
+  )
   /**
    * The game whose panel a swap of this screen's own replaces. Its sheet is
    * drawn empty first, alone, without drawing the panel again: a sheet that
@@ -1161,12 +1207,31 @@ function holdUnload(game: object, held: boolean): void {
     window.removeEventListener('beforeunload', warnUnsaved)
 }
 
+/** What a web session let go by its screen was opened on, to be found again. */
+interface LetGoEntry {
+  client: TeamStationClient
+  gameId: string
+  userId: ScoringScreenProps['userId']
+  source: ScoringSource
+  /** Stops the wait that closes the session once it has saved. */
+  stop: () => void
+}
+/**
+ * The web's sessions whose screens have gone with changes still unsaved: a
+ * screen that opens the same game again takes its session back, rather than
+ * read the server, which does not have those changes yet.
+ */
+const letGo = new Map<GameSession, LetGoEntry>()
 /**
  * Lets `game` go on sending what it has not saved after its screen has
- * closed, and closes it once that is saved, or the server refused it. Until
- * then the page warns before it unloads.
+ * gone, and closes it once that is saved, or the server refused it. Until
+ * then the page warns before it unloads, and a screen opening the game it
+ * was opened on (`opened`) takes it back.
  */
-function closeOnceSaved(game: GameSession): void {
+function closeOnceSaved(
+  game: GameSession,
+  opened: Omit<LetGoEntry, 'stop'>
+): void {
   const done = (): boolean =>
     game.pending === 0 || game.readOnly || game.stopped || game.replaced
   if (done()) {
@@ -1177,10 +1242,37 @@ function closeOnceSaved(game: GameSession): void {
   const stop = game.subscribe(() => {
     if (!done()) return
     stop()
+    letGo.delete(game)
     holdUnload(game, false)
     game.close()
   })
+  letGo.set(game, { ...opened, stop })
   game.flush().catch(() => undefined)
+}
+/**
+ * The session a screen since gone let go for this game, still saving, taken
+ * back by the screen opening it: no longer closed once it has saved, and no
+ * longer holding the page's unload warning, since a screen shows it again.
+ * None when nothing of the game is let go, or what was has saved and closed,
+ * or the server refused or stopped it.
+ */
+function takeBack(opened: Omit<LetGoEntry, 'stop'>): GameSession | undefined {
+  for (const [game, entry] of letGo) {
+    if (
+      entry.client !== opened.client ||
+      entry.gameId !== opened.gameId ||
+      entry.userId !== opened.userId ||
+      entry.source !== opened.source ||
+      game.readOnly ||
+      game.stopped
+    )
+      continue
+    letGo.delete(game)
+    entry.stop()
+    holdUnload(game, false)
+    return game
+  }
+  return undefined
 }
 function statusOf(game: GameSession): SaveStatus {
   return {
@@ -2478,9 +2570,10 @@ function ScoringPanel(props: {
   const stopWalkUp = useRef<() => void>(() => undefined)
   // Leaving never waits on the server. On a phone the game's last change
   // goes on its queue, a write to the phone's file. On the web the session
-  // goes on sending what it has not saved once the screen has closed, and
-  // closes itself once it has. Only changes the server refused for good, or
-  // a game that keeps nothing (the field preview), ask first.
+  // is let go once the screen has gone (`ScoringScreen`): it goes on
+  // sending what it has not saved, and closes itself once it has. Only
+  // changes the server refused for good, or a game that keeps nothing (the
+  // field preview), ask first.
   const leaving = useRef<Promise<boolean> | null>(null)
   const leave = useCallback(async (): Promise<boolean> => {
     if (leaving.current != null) return await leaving.current
@@ -2491,11 +2584,9 @@ function ScoringPanel(props: {
         const queued = props.client instanceof CachingClient
         if (queued) await game.handedOff().catch(() => undefined)
         // Changes the server will never take are the only ones to ask about.
-        // The web's session is let go only once leaving is settled: a Cancel
-        // stays on a session that still reads and saves.
+        // A Cancel stays on a session that still reads and saves.
         if ((game.readOnly || game.stopped) && !(await requestConfirmation()))
           return false
-        if (!queued) closeOnceSaved(game)
         return true
       } else if (scoredHere.current === 0) return true
       return await requestConfirmation()
