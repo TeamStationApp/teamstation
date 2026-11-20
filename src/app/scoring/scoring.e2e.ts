@@ -1479,7 +1479,12 @@ describe('scoring browser', function () {
           await shot()
           throw error
         })
-      await page.waitForSelector('[aria-label="Undo Ball"]')
+      // The screen shown again keeps its own Undo history; one opened anew
+      // offers the plays it opened with as the last play, as any game
+      // opened with plays does.
+      await page.waitForSelector(
+        gone ? '[aria-label="Undo Last play"]' : '[aria-label="Undo Ball"]'
+      )
       await shot()
       // The server answers: the held ball is saved, not only drawn.
       await releaseSaves()
