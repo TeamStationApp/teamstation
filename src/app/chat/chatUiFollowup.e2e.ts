@@ -642,6 +642,8 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
 }
 
 async function s6(daemon: Daemon): Promise<void> {
+  const conversation = required('CHAT_UI_CONVERSATION')
+  const row = chatRowById(conversation)
   const id = required('CHAT_UI_MESSAGE')
   const target = required('CHAT_UI_TARGET_TEXT')
   const bubble = `[data-testid="chat-bubble-${id}"]`
@@ -669,7 +671,7 @@ async function s6(daemon: Daemon): Promise<void> {
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=query=>query.includes('pointer')&&query.includes('fine')?new Proxy(original(query),{get(target,key){if(key==='matches')return false;const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value}}):original(query);return true`
     })
-    await m.tapOn({ css: MEMBERS_ROW, timeout: 60000 })
+    await m.tapOn({ css: row, timeout: 60000 })
     await m.assertVisible({ css: bubble, timeout: 60000 })
     await assertFixtureBody(m, id, target)
     await dismissNotificationAskOn(m)
@@ -708,14 +710,13 @@ async function s6(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
     await hold()
     await m.tapOn({ text: '^Unpin$' })
-    const pins =
-      API + '/chat/conversations/' + required('CHAT_UI_CONVERSATION') + '/pins'
+    const pins = API + '/chat/conversations/' + conversation + '/pins'
     await m.evalBrowserScript({
       script: `for(let attempt=0;attempt<50;attempt++){const r=await fetch(${JSON.stringify(pins)},{credentials:'include'});if(!r.ok)throw Error('Personal pin list unavailable');if(!(await r.json()).some(pin=>pin.messageId===${JSON.stringify(id)}))return true;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('The fixture original remained pinned')`
     })
     await m.openLink({ link: WEB + '/chat' })
-    await m.assertVisible({ css: MEMBERS_ROW, timeout: 30000 })
-    await m.longPressOn({ css: MEMBERS_ROW })
+    await m.assertVisible({ css: row, timeout: 30000 })
+    await m.longPressOn({ css: row })
     await m.assertVisible({ text: 'Mark unread' })
     writeFileSync(
       join(required('CHAT_UI_ARTIFACTS'), 'narrow-conversation-menu-after.png'),

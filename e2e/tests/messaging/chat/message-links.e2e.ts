@@ -317,7 +317,7 @@ async function tapPlainFilename(
     point = await web.page.$eval('[data-testid="' + id + '"]', body => {
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT)
       const text = walker.nextNode()
-      if (text?.textContent?.startsWith('notes.pdf') !== true)
+      if (!(text instanceof Text) || !text.data.startsWith('notes.pdf'))
         throw new Error('Expected a leading filename')
       const range = document.createRange()
       range.setStart(text, 0)
@@ -395,8 +395,8 @@ async function copyMessage(
     if (paste.data === 'true') await m.pasteText()
     await web.page.waitForFunction(
       (field, expected) => {
-        const input = document.querySelector<HTMLTextAreaElement>(field)
-        return input?.value === expected
+        const input = document.querySelector(field)
+        return input instanceof HTMLTextAreaElement && input.value === expected
       },
       { timeout: 4000 },
       selector,

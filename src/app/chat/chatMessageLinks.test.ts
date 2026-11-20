@@ -37,6 +37,25 @@ describe('chat message links', () => {
     ])
   })
 
+  it('keeps sentence punctuation and paired emphasis outside explicit addresses', () => {
+    const host = 'https://example.org'
+    for (const body of [
+      '試合は ' + host + '。',
+      '「' + host + '！」',
+      'Visit ' + host + '— then choose a team.',
+      '**' + host + '**',
+      '__' + host + '__!',
+      '⚾ ***' + host + '/score***。'
+    ]) {
+      expect(texts(body), body).deep.equals([
+        body.includes('/score') ? host + '/score' : host
+      ])
+    }
+    expect(texts(host + '/a*b*c')).deep.equals([host + '/a*b*c'])
+    expect(texts('**https://example.org:bad/path**')).deep.equals([])
+    expect(texts('https://example.org。other.example/path')).deep.equals([])
+  })
+
   it('keeps punctuation outside bare addresses with a port', () => {
     expect(
       texts('Read (example.org:8443), then example.com:8080.')

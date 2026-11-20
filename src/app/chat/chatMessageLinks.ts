@@ -46,6 +46,11 @@ const unsafeAuthority = /[%@\p{Default_Ignorable_Code_Point}]/u
 const schemeCandidate =
   /(^|[^\p{L}\p{N}.+-])(data:\S*|[a-z][a-z\d+.-]*:(?:\/\/\[[^\]\s]*\])?[^\s,;，；、)\]}>"'”’]*)/giu
 
+// Keep matching emphasis outside a URL, including when its path could legally
+// contain asterisks. Asterisks inside an unwrapped URL remain part of its path.
+const emphasis =
+  /^(\*{1,3}|_{1,3})(.+?)\1[\p{Terminal_Punctuation}\p{Pe}\p{Pf}…–—]*$/u
+
 function authorityOf(address: string): string {
   return address.replace(/^https?:\/\//i, '').split(/[/?#]/, 1)[0]
 }
@@ -62,7 +67,9 @@ function completeAuthority(address: string): boolean {
   return (
     address.endsWith(authority) &&
     authority.startsWith(recognized) &&
-    /^[.!:…]+$/u.test(authority.slice(recognized.length))
+    /^[\p{Terminal_Punctuation}\p{Pe}\p{Pf}…–—]+$/u.test(
+      authority.slice(recognized.length)
+    )
   )
 }
 
@@ -106,9 +113,12 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
     const raw = token[0]
     if (!raw.includes('.') && !/https?:\/\//i.test(raw)) continue
     if (raw.length > maxTokenLength || unsafeCharacters.test(raw)) continue
-    const original = links.match(raw) ?? []
+    const wrapped = emphasis.exec(raw)
+    const content = wrapped?.[2] ?? raw
+    const tokenOffset = token.index + (wrapped?.[1].length ?? 0)
+    const original = links.match(content) ?? []
     let index = 0
-    const searchable = raw.replace(
+    const searchable = content.replace(
       schemeCandidate,
       (match: string, boundary: string, candidate: string, offset: number) => {
         if (
@@ -131,7 +141,7 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
       }
     )
     const candidates =
-      searchable === raw ? original : (links.match(searchable) ?? [])
+      searchable === content ? original : (links.match(searchable) ?? [])
     for (const hit of candidates) {
       if (hit.schema !== '' && !/^https?:$/i.test(hit.schema)) continue
       const text = hit.raw
@@ -143,8 +153,8 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
         continue
       if (chatLinkAddress(text) == null) continue
       spans.push({
-        start: token.index + hit.index,
-        end: token.index + hit.lastIndex,
+        start: tokenOffset + hit.index,
+        end: tokenOffset + hit.lastIndex,
         text
       })
     }
