@@ -83,7 +83,7 @@ export async function openInApp(options: {
     // A simulator's system hands its own app the link: devicectl sees only
     // phones.
     await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
-  } else if (platform === 'ios') {
+  } else if (platform === 'ios' && !udid.includes('@')) {
     await (options.run ?? realRun)('xcrun', [
       'devicectl',
       'device',

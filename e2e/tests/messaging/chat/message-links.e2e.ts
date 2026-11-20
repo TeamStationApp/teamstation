@@ -99,7 +99,7 @@ async function openExternal(
   platform: string,
   url: string,
   keyboard = false,
-  activeBrowser?: () => void
+  activeBrowser?: () => Promise<void>
 ): Promise<void> {
   const original = web?.page.url()
   const path = new URL(url)
@@ -138,9 +138,9 @@ async function openExternal(
     await m.assertVisible({ text: exact(marker), timeout: 20000 })
     if (platform === 'ios') {
       // Done dismisses the app's Safari sheet.
-      await m.tapOn({ text: '^Done$' })
+      await m.tapOn({ text: '^(Done|Close|Close Browser)$' })
     } else {
-      activeBrowser?.()
+      await activeBrowser?.()
       await m.pressKey({ key: 'BACK' })
     }
   }
@@ -409,7 +409,7 @@ async function open(ctx: E2eContext): Promise<void> {
   try {
     const sender = await providerFor(f, f.sender)
     try {
-      const dest = await destinationPage()
+      const dest = await destinationPage(f.destinationHost)
       const platform =
         ctx.surface === 'ios-app'
           ? 'ios'
@@ -423,7 +423,7 @@ async function open(ctx: E2eContext): Promise<void> {
         })
       let reversed = false
       try {
-        if (platform === 'android') {
+        if (platform === 'android' && f.destinationHost == null) {
           adb('reverse', '--no-rebind', 'tcp:' + dest.port, 'tcp:' + dest.port)
           reversed = true
         }
@@ -434,6 +434,8 @@ async function open(ctx: E2eContext): Promise<void> {
         const appId = 'app.teamstation.develop'
         const m: MaestroDevice & ServerDevice =
           web?.m ?? (await ctx.attach('phone', { platform, appId }))
+        const simulator =
+          platform === 'ios' && (await m.platformInfo()).isSimulator === true
         const room = '/chat/' + encodeURIComponent(f.conversationId)
         if (web != null) {
           await web.page.browserContext().setCookie({
@@ -456,7 +458,7 @@ async function open(ctx: E2eContext): Promise<void> {
             origin: f.origin,
             udid: ctx.device('phone'),
             appId,
-            simulator: platform === 'ios',
+            simulator,
             device: m
           })
           const labels = flattenPublicHierarchy(await m.hierarchy()).map(
@@ -478,7 +480,7 @@ async function open(ctx: E2eContext): Promise<void> {
               udid: ctx.device('phone'),
               appId,
               device: m,
-              simulator: platform === 'ios',
+              simulator,
               link: appLink(room)
             })
           }
@@ -549,7 +551,20 @@ async function open(ctx: E2eContext): Promise<void> {
             ['example.technology', 'https://example.technology/']
           ])
         }
-        const activeBrowser = (): void => {
+        const activeBrowser = async (): Promise<void> => {
+          if (ctx.device('phone').includes('@')) {
+            assert(
+              f.defaultBrowserPackage != null && f.defaultBrowserPackage !== '',
+              'Set the leased phone’s default browser package in its fixture'
+            )
+            const prefix = f.defaultBrowserPackage + ':id/'
+            const tree = flattenPublicHierarchy(await m.hierarchy())
+            assert(
+              tree.some(node => node.id?.startsWith(prefix) === true),
+              'The selected browser must own the visible controls'
+            )
+            return
+          }
           const userBrowser = adb(
             'shell',
             'cmd',

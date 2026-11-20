@@ -27,6 +27,24 @@ function phone(): { device: ServerDevice; calls: Array<[string, unknown]> } {
 }
 
 describe('setServer', function () {
+  it('opens links on a hub iPhone through its leased driver', async function () {
+    const { device, calls } = phone()
+    await openInApp({
+      platform: 'ios',
+      udid: 'phone-1@hub',
+      appId: 'app.teamstation.develop',
+      link: appLink('chat'),
+      device,
+      run: async () => {
+        throw new Error('The phone belongs to the hub')
+      }
+    })
+    expect(calls).deep.equals([
+      ['stopApp', { appId: 'app.teamstation.develop' }],
+      ['openLink', { link: 'teamstation-develop://chat' }]
+    ])
+  })
+
   it('opens a page of the app from a stopped app, by its develop link', async function () {
     expect(appLink('/groups/league/l1/scheduler')).equals(
       'teamstation-develop://groups/league/l1/scheduler'
