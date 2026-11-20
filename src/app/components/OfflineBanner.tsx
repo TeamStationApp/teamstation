@@ -14,8 +14,11 @@ export interface OfflineBannerProps {
   text?: string
   /** Why the action just pressed did nothing, while it cannot be done. */
   refusal?: string
-  /** Queues the server stopped that no screen of their own shows: a team's. */
-  held?: Array<{ key: string; text: string; onPress: () => void }>
+  /**
+   * Opens the list of what the server stopped: with it, the line is a
+   * button. Only while something is held.
+   */
+  onOpenHeld?: () => void
   onLayout?: (height: number) => void
   /** Where the shell puts it: the bottom of the window, on the safe area. */
   style?: StyleProp<ViewStyle>
@@ -23,21 +26,31 @@ export interface OfflineBannerProps {
 
 /** The strip's fill, the same in every theme: a dark yellow under white. */
 export const OFFLINE_BANNER_BACKGROUND = '#6B3E00'
-/** Every line on it, a refusal and a held team's included. */
+/** Every line on it, a refusal included. */
 export const OFFLINE_BANNER_TEXT = '#ffffff'
 
 /**
  * The strip at the bottom of the phone, under the tab bar and above the
  * home indicator, that says the server cannot be reached and how many edits
- * wait on the phone, and why a create pressed offline did not open. Nothing
- * at all when there is nothing to say.
+ * wait on the phone, and why a create pressed offline did not open. While
+ * the server holds edits, its line opens the list of them. Nothing at all
+ * when there is nothing to say.
  */
 export function OfflineBanner(
   props: OfflineBannerProps
 ): React.ReactElement | null {
   const styles = getStyles(useTheme())
-  const { text, refusal, held = [], onLayout, style } = props
-  if (text == null && refusal == null && held.length === 0) return null
+  const { text, refusal, onOpenHeld, onLayout, style } = props
+  if (text == null && refusal == null) return null
+  const line = text != null && (
+    <Text
+      testID="offlineBannerText"
+      accessibilityRole="text"
+      style={[styles.text, onOpenHeld != null && styles.held]}
+    >
+      {text}
+    </Text>
+  )
   return (
     <View
       testID="offlineBanner"
@@ -47,29 +60,23 @@ export function OfflineBanner(
         onLayout?.(event.nativeEvent.layout.height)
       }}
     >
-      {text != null && (
-        <Text
-          testID="offlineBannerText"
-          accessibilityRole="text"
-          style={styles.text}
-        >
-          {text}
-        </Text>
-      )}
-      {held.map(line => (
+      {line !== false && onOpenHeld != null ? (
+        // On iOS the button stands for the line inside it: find it by its
+        // own id and label, not the line's.
         <Pressable
-          key={line.key}
-          testID="heldTeamMessage"
+          testID="offlineBannerButton"
           accessibilityRole="button"
-          accessibilityLabel="Player not saved"
-          accessibilityHint={line.text}
+          accessibilityLabel="Edits not sent"
+          accessibilityHint={text}
           onPress={() => {
-            line.onPress()
+            onOpenHeld()
           }}
         >
-          <Text style={[styles.text, styles.held]}>{line.text}</Text>
+          {line}
         </Pressable>
-      ))}
+      ) : (
+        line
+      )}
       {refusal != null && (
         <Text
           testID="offlineCreateMessage"
@@ -100,7 +107,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   refusal: {
     fontFamily: theme.boldTextFont
   },
-  // A line that opens what can be done about it.
+  // The line that opens what can be done about what is held.
   held: {
     textDecorationLine: 'underline' as const
   }
