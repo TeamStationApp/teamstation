@@ -52,6 +52,9 @@ const config = {
     resolveRequest: (context, moduleName, platform) => {
       if (/^expo-(asset|file-system)(\/legacy)?$/.test(moduleName))
         return { type: 'sourceFile', filePath: expoStandIn }
+      // parse5 ships a CommonJS entry compatible with the native Babel preset.
+      if (moduleName === 'parse5')
+        return { type: 'sourceFile', filePath: require.resolve('parse5') }
       if (moduleName === 'three')
         return context.resolveRequest(
           { ...context, unstable_conditionNames: ['import'] },

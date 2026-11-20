@@ -2787,6 +2787,7 @@ function Shell(props: AppProps): React.ReactElement {
     return top?.name === 'conversation' || (top == null && tab === 'chat') ? (
       gated(
         <ChatWorkspace
+          apiBaseUrl={apiBaseUrl}
           onOpenLink={async address => {
             await openChatMessageLink(address, apiBaseUrl, route => {
               captureChatLeave(() => {

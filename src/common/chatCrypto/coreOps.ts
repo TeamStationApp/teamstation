@@ -36,7 +36,9 @@ export const OP = {
   newIdentityId: 31,
   sha256Update: 32,
   sha256Finish: 33,
-  safetyBytes: 34
+  safetyBytes: 34,
+  sealPreview: 35,
+  openPreview: 36
 } as const
 
 export type OpName = keyof typeof OP

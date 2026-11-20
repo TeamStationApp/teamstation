@@ -72,7 +72,7 @@ describe('the game plan rig', function () {
     expect(steps).deep.equals([
       'stop',
       'link teamstation-develop://server?origin=https%3A%2F%2Fe2e-02.teamstation.app',
-      'tap Open',
+      'tap ^Open$',
       'wait Sign in to TeamStation',
       'launch stop=true'
     ])

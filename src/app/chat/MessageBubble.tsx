@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type GestureResponderEvent,
   Image,
@@ -23,6 +23,8 @@ import {
   pressPoint,
   pressStamp
 } from './chatInteractionModel'
+import { ChatLinkPreviewCard } from './ChatLinkPreviewCard'
+import { chatLinkSpans } from './chatMessageLinks'
 import { captureMessageBounds, type MessageSource } from './chatMessageSource'
 import { ChatMessageText } from './ChatMessageText'
 import {
@@ -38,6 +40,7 @@ import {
 } from './chatWebInteractions'
 import type { MessageView } from './engine/apply'
 import type { ConversationListItem, MemberView } from './engine/engine'
+import { firstPreviewUrl } from './linkPreview'
 import { MessageActions } from './MessageActions'
 import { ReplyQuote } from './ReplyQuote'
 import type { ChatScreenEngine } from './screenEngine'
@@ -47,7 +50,7 @@ export interface MessageBubbleProps {
   message: MessageView
   conversation: ConversationListItem
   members: MemberView[]
-  engine: Pick<ChatScreenEngine, 'openAttachment'>
+  engine: Pick<ChatScreenEngine, 'openAttachment' | 'openPreviewThumbnail'>
   files: ChatFileOps
   maxWidth: number
   swipe: boolean
@@ -308,6 +311,16 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
     ? lstrings.chat_you
     : (message.senderName ?? lstrings.chat_former_member)
   const said = statusText(message)
+  const previewUrl = message.preview?.url
+  const previewAddress = useMemo(
+    () =>
+      previewUrl != null &&
+      said == null &&
+      firstPreviewUrl(message.body) === previewUrl
+        ? chatLinkSpans(message.body)[0]?.text
+        : undefined,
+    [message.body, previewUrl, said]
+  )
   const read = message.mine
     ? readLine(message, conversation, members, lstrings.chat_former_member)
     : undefined
@@ -415,6 +428,17 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                   : `chat-message-body-${message.id}`
               }
             >
+              {message.preview != null && previewAddress != null && (
+                <ChatLinkPreviewCard
+                  preview={message.preview}
+                  loadThumbnail={props.engine.openPreviewThumbnail}
+                  address={previewAddress}
+                  gesture={messageGesture}
+                  onOpen={
+                    props.selected === true ? undefined : props.onOpenLink
+                  }
+                />
+              )}
               {said != null ? (
                 <Text style={styles.status}>{said}</Text>
               ) : (

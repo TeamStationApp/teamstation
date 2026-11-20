@@ -1,6 +1,7 @@
 import { type Kysely, type Selectable, sql } from 'kysely'
 
-import { equalBytes, utf8 } from '../../common/chatCrypto/bytes'
+import { originalReportContent } from '../../common/chatContent'
+import { equalBytes, fromUtf8, utf8 } from '../../common/chatCrypto/bytes'
 import {
   type EnvelopeKind,
   openWithMessageKey,
@@ -71,7 +72,7 @@ import { b64 } from './wire'
  */
 
 /** The largest ciphertext a message may carry. */
-export const MAX_CIPHERTEXT = 64 * 1024
+export { MAX_CIPHERTEXT } from '../../common/chatContent'
 
 /** The most targets one delete may name: a post and its edits. */
 export const MAX_TARGETS = 500
@@ -716,8 +717,22 @@ export async function reportMessage(
     } catch {
       opened = undefined
     }
-    const verified =
-      signed && opened != null && equalBytes(opened, utf8(body.plaintext))
+    const claimed = utf8(body.plaintext)
+    const plaintext = originalReportContent(body.plaintext)
+    let verified = false
+    if (signed && opened != null) {
+      // Old clients can submit the complete authenticated outer message.
+      verified = equalBytes(opened, claimed)
+      if (!verified) {
+        try {
+          const outer = fromUtf8(opened)
+          const original = originalReportContent(outer)
+          verified = original !== outer && equalBytes(utf8(original), claimed)
+        } catch {
+          // The authenticated bytes have no UTF-8 message to verify.
+        }
+      }
+    }
     const envelope: ReportEnvelope = {
       id: row.id,
       conversationId: row.conversation_id,
@@ -747,7 +762,7 @@ export async function reportMessage(
         reporter_user_id: reporterUserId,
         envelope: JSON.stringify(envelope),
         message_key: body.messageKey,
-        plaintext: body.plaintext,
+        plaintext,
         verified,
         created_at: now
       })

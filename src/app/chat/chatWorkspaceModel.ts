@@ -7,6 +7,7 @@ import {
 import type { PickedFile } from './chatFileTypes'
 import { type MentionToken, sameMentionTokens } from './chatMentionsModel'
 import type { MessageView } from './engine/apply'
+import { UnconfirmedChatPost } from './engine/context'
 import type { ConversationView } from './engine/engine'
 
 export const CHAT_WIDE_WIDTH = 960
@@ -55,6 +56,7 @@ const samePickedFiles = (
   before.every((file, index) => file === after[index])
 let nextDraftOwner = 0
 export interface ChatSubmission {
+  retry?: () => Promise<unknown>
   readonly draft: ChatDraft
   readonly revisions: Record<DraftField, number>
 }
@@ -87,6 +89,7 @@ export class ChatDraftOwner {
 
   private readonly revisions = new Map<string, Record<DraftField, number>>()
   private readonly pending = new Map<string, ChatSubmission>()
+  private readonly uncertain = new Map<string, ChatSubmission>()
   private readonly failures = new Map<string, string>()
   private readonly readers = new Map<string, () => ChatDraft>()
   private readonly listeners = new Map<string, Set<() => void>>()
@@ -166,6 +169,15 @@ export class ChatDraftOwner {
         })
       }
     }
+    const previous = this.uncertain.get(id)
+    if (
+      previous != null &&
+      (Object.keys(token.revisions) as DraftField[]).every(
+        field => previous.revisions[field] === token.revisions[field]
+      )
+    )
+      token.retry = previous.retry
+    this.uncertain.delete(id)
     this.pending.set(id, token)
     this.failures.delete(id)
     this.changed(id)
@@ -205,6 +217,10 @@ export class ChatDraftOwner {
           picked: []
         })
     } else {
+      if (error instanceof UnconfirmedChatPost) {
+        token.retry = error.retry
+        this.uncertain.set(id, token)
+      }
       const recipientBlocked =
         error instanceof HttpError &&
         error.code === 'forbidden' &&
@@ -224,10 +240,18 @@ export class ChatDraftOwner {
     return this.draft(id)
   }
 
+  discardRetry(id: string): void {
+    // Dismissing a card while a post is pending also changes that draft.
+    const revisions = this.revisions.get(id)
+    if (revisions != null) revisions.text++
+    this.uncertain.delete(id)
+  }
+
   invalidate(): void {
     this.live = false
     this.attentionSessions.clear()
     this.pending.clear()
+    this.uncertain.clear()
     this.readers.clear()
     this.listeners.clear()
   }

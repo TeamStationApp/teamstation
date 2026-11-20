@@ -44,7 +44,7 @@ describe('setServer', function () {
     expect(calls).deep.equals([
       ['stopApp', { appId: 'app.teamstation.develop' }],
       ['openLink', { link: 'teamstation-develop://chat' }],
-      ['tapOn', { text: 'Open', optional: true }]
+      ['tapOn', { text: '^Open$', optional: true, timeout: 2500 }]
     ])
   })
 

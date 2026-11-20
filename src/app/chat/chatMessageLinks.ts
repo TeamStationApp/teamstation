@@ -13,7 +13,7 @@ class ChatLinkGrammar extends REBuilder {
     // linkify appends its usual path alternatives after this fragment. Treat
     // a typographic apostrophe as part of a word, leaving closing quotes out.
     const letter = this.get_pseudo_letter().source
-    return new RegExp(letter + '’(?=' + letter + ')|')
+    return new RegExp(letter + '’(?=' + letter + ')|[0-9]–(?=[0-9])|')
   }
 
   // Bare addresses use the same port and boundary rules as explicit URLs.
@@ -39,6 +39,9 @@ const links = new LinkifyIt({
   // Recognize the entire authority so credentials can be refused as a unit.
   urlAuth: true
 }).tlds(tlds)
+
+// Bind the text parser once. Its input is ordinary text.
+const scanLinks = links.match.bind(links)
 
 const filename =
   /^[^/?#:@]+\.(?:zip|mov|sh|md|pl|rs|py|ai|ps|so|ts|cc|cab|java|properties|pub|mobi)$/i
@@ -115,19 +118,74 @@ export function chatLinkAddress(text: string): URL | undefined {
   }
 }
 
+/** Mask quoted email local parts without changing message offsets. */
+export function outsideQuotedMailboxes(body: string): string {
+  if (!body.includes('"') || !body.includes('@')) return body
+  return body.replace(/"(?:\\[^\r\n]|[^"\\\r\n]){0,64}"(?=@)/gu, match =>
+    ' '.repeat(match.length)
+  )
+}
+
+/** A link emoji can introduce an address or occur literally in an enclosing URL. */
+function maskLinkEmoji(content: string): string {
+  if (!content.includes('🔗')) return content
+  const hits = scanLinks(content) ?? []
+  let index = 0
+  return content.replace(
+    /(^|[([{“‘«])🔗(?=(?:https?:\/\/|www\.))/giu,
+    (match: string, punctuation: string, offset: number) => {
+      while (index < hits.length && hits[index].lastIndex <= offset) index++
+      const enclosing = hits[index]
+      if (
+        enclosing != null &&
+        enclosing.index < offset &&
+        enclosing.lastIndex > offset + match.length
+      )
+        return match
+      return punctuation + '  '
+    }
+  )
+}
+
 /** UTF-16 offsets into the unmodified body, suitable for both text and captions. */
 export function chatLinkSpans(body: string): ChatLinkSpan[] {
   const spans: ChatLinkSpan[] = []
-  for (const token of body.matchAll(/(?:\S|\uFEFF)+/gu)) {
+  for (const token of outsideQuotedMailboxes(body).matchAll(
+    /(?:\S|\uFEFF)+/gu
+  )) {
     const raw = token[0]
     if (!raw.includes('.') && !/https?:\/\//i.test(raw)) continue
     if (raw.length > maxTokenLength || unsafeCharacters.test(raw)) continue
     const wrapped = emphasis.exec(raw)
-    const content = wrapped?.[2] ?? raw
+    const content = maskLinkEmoji(wrapped?.[2] ?? raw)
     const tokenOffset = token.index + (wrapped?.[1].length ?? 0)
-    const original = links.match(content) ?? []
+    const original = scanLinks(content) ?? []
     let index = 0
-    const searchable = content.replace(
+    // Mask malformed bare authorities, keeping percent escapes inside the
+    // path or query of a complete enclosing URL visible and clickable.
+    let outerIndex = 0
+    const bareChecked = content.replace(
+      /(^|[^\p{L}\p{N}.@])((?:www\.)[^\s/?#,:;]+%[^\s/?#,:;]*)/giu,
+      (match: string, boundary: string, authority: string, offset: number) => {
+        const start = offset + boundary.length
+        while (
+          outerIndex < original.length &&
+          original[outerIndex].lastIndex <= start
+        )
+          outerIndex++
+        const enclosing = original[outerIndex]
+        if (
+          enclosing != null &&
+          enclosing.index < start &&
+          /[/?#]/.test(
+            content.slice(enclosing.index, start).replace(/^https?:\/\//i, '')
+          )
+        )
+          return match
+        return boundary + ' '.repeat(authority.length)
+      }
+    )
+    const searchable = bareChecked.replace(
       schemeCandidate,
       (match: string, boundary: string, candidate: string, offset: number) => {
         if (
@@ -150,7 +208,7 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
       }
     )
     const candidates =
-      searchable === content ? original : (links.match(searchable) ?? [])
+      searchable === content ? original : (scanLinks(searchable) ?? [])
     for (const hit of candidates) {
       if (hit.schema !== '' && !/^https?:$/i.test(hit.schema)) continue
       const text = hit.raw
@@ -168,16 +226,7 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
       })
     }
   }
-  if (!body.includes('"') || !body.includes('@')) return spans
-  // A quoted local part can contain spaces or even a complete URL. Match it
-  // across word boundaries and exclude only links that start inside it.
-  const mailboxes = body.matchAll(/"(?:\\[^\r\n]|[^"\\\r\n]){0,64}"(?=@)/gu)
-  let mailbox = mailboxes.next().value
-  return spans.filter(span => {
-    while (mailbox != null && mailbox.index + mailbox[0].length <= span.start)
-      mailbox = mailboxes.next().value
-    return mailbox == null || span.start < mailbox.index
-  })
+  return spans
 }
 
 /** Normalize only equivalent paths. Escaped separators stay inside their segment. */

@@ -52,6 +52,7 @@ import {
   ChatBlockConfirmation,
   type ChatSafetyAction
 } from './ChatBlockConfirmation'
+import { chatLinkOrigins } from './chatBrowser'
 import { chatBrowserVisible, watchChatBrowser } from './chatBrowserVisibility'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
@@ -65,6 +66,7 @@ import {
   useChatHistoryKeyboard
 } from './ChatHistoryList'
 import { anchorAfterChromeChange } from './chatLayoutModel'
+import { ChatLinkPreviewCard } from './ChatLinkPreviewCard'
 import {
   type ComposerChange,
   type ComposerSelection,
@@ -111,6 +113,7 @@ import { MessageMenu } from './MessageMenu'
 import { PinnedMessages } from './PinnedMessages'
 import { PinnedMessageSummary } from './PinnedMessageSummary'
 import type { ChatScreenEngine } from './screenEngine'
+import { useChatLinkPreview } from './useChatLinkPreview'
 
 /** What the screen needs of the platform's file twin. */
 export interface ConversationFiles extends ChatFileOps {
@@ -119,6 +122,7 @@ export interface ConversationFiles extends ChatFileOps {
 }
 
 export interface ConversationScreenProps {
+  apiBaseUrl?: string
   onOpenLink?: (address: string) => Promise<void>
   engine: ChatScreenEngine
   conversationId: string
@@ -372,6 +376,22 @@ export function ConversationScreen(
   const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
   const [sending, setSending] = useState(() =>
     draftOwner.isSending(conversationId)
+  )
+  const linkOrigin = useMemo(
+    () =>
+      props.apiBaseUrl == null ||
+      (Platform.OS === 'web' && typeof window === 'undefined')
+        ? undefined
+        : chatLinkOrigins(props.apiBaseUrl),
+    [props.apiBaseUrl]
+  )
+  const draftPreview = useChatLinkPreview(
+    engine,
+    conversationId,
+    editing?.id,
+    text,
+    props.active !== false && !sending && view?.composer === 'enabled',
+    linkOrigin
   )
   const sendingNow = useRef(sending)
   const preparingNow = useRef(0)
@@ -2274,6 +2294,7 @@ export function ConversationScreen(
     if (submission == null) return
     const submitted = submission.draft
     const body = submitted.text.trim()
+    const preview = draftPreview.submit(body)
     const mentions = mentionIds(
       submitted.text,
       submitted.mentionTokens,
@@ -2281,8 +2302,17 @@ export function ConversationScreen(
       submitted.editing
     )
     const work = async (): Promise<unknown> => {
+      if (submission.retry != null) return await submission.retry()
       if (submitted.editing != null) {
-        if (mentions.length > 0)
+        if (preview != null)
+          await engine.edit(
+            conversationId,
+            submitted.editing.id,
+            body,
+            mentions,
+            preview
+          )
+        else if (mentions.length > 0)
           await engine.edit(
             conversationId,
             submitted.editing.id,
@@ -2293,6 +2323,7 @@ export function ConversationScreen(
         return
       }
       const quote = {
+        ...(preview == null ? {} : { preview }),
         ...(submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }),
         ...(mentions.length === 0 ? {} : { mentions })
       }
@@ -2308,6 +2339,7 @@ export function ConversationScreen(
     }
     const finish = (success: boolean, error?: unknown): void => {
       const next = draftOwner.finish(conversationId, submission, success, error)
+      if (success && next?.text === '') draftPreview.sent()
       // Standalone consumers retain their external draft callback; workspaces
       // reconcile directly in their persistent owner, never the old screen.
       if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
@@ -3284,6 +3316,16 @@ export function ConversationScreen(
             zIndex: 4
           }}
         >
+          {draftPreview.preview != null && (
+            <ChatLinkPreviewCard
+              preview={draftPreview.preview}
+              onDismiss={() => {
+                draftOwner.discardRetry(conversationId)
+                draftPreview.handleDismiss()
+              }}
+              loadThumbnail={engine.openPreviewThumbnail}
+            />
+          )}
           {typing.length > 0 && (
             <Text style={shared.small} accessibilityLiveRegion="polite">
               {typing.length === 1

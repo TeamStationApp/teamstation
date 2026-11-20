@@ -116,7 +116,11 @@ async function deliverAppLink(options: OpenInAppOptions): Promise<boolean> {
  */
 export async function openInApp(options: OpenInAppOptions): Promise<void> {
   if (await deliverAppLink(options))
-    await options.device.tapOn({ text: 'Open', optional: true })
+    await options.device.tapOn({
+      text: '^Open$',
+      optional: true,
+      timeout: 2500
+    })
 }
 
 export async function setServer(options: {

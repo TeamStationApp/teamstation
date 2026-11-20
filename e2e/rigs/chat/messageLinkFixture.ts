@@ -40,9 +40,16 @@ interface Destination {
   close: () => void
 }
 
-interface ChatLinkFixture {
+export interface ChatLinkFixture {
   /** The runner interface a physical phone can reach for the test page. */
   destinationHost?: string
+  previewPage?: {
+    url: string
+    title: string
+    corsDeniedUrl?: string
+    /** A public GET held by the fixture. HEAD returns 204 while that probe is waiting. */
+    pendingUrl?: string
+  }
   /** The browser selected in the remote Android phone’s Default apps settings. */
   defaultBrowserPackage?: string
   origin: string
