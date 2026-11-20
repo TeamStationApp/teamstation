@@ -5966,8 +5966,14 @@ async function main(): Promise<void> {
       )
       stage = 'S6-copy'
       await messageMenu()
-      await m.tapOn({ text: 'Copy' })
-      await m.assertNotVisible({ text: 'Copy', timeout: 3000 })
+      await tapStableControl(m, 'Copy')
+      await until('Copy must close the selected message menu', async () =>
+        flatten(await m.hierarchy()).some(
+          node => node.id === 'chat-message-spotlight'
+        )
+          ? undefined
+          : true
+      )
       await m.tapOn({ id: 'chat-composer' })
       await m.longPressOn({ id: 'chat-composer', duration: 650 })
       const paste = await until(
@@ -6151,7 +6157,7 @@ async function main(): Promise<void> {
         )
       }
       await messageMenu()
-      await m.tapOn({ text: 'More emoji' })
+      await tapStableControl(m, 'More emoji')
       await m.assertVisible({ text: 'More emoji', timeout: 10000 })
       await m.tapOn({ text: 'Cancel' })
       pass('all six native quick reaction toggles and More emoji picker')
