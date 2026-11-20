@@ -1413,7 +1413,7 @@ describe('swapping from the scoring menu', function () {
     expect(refused.defaultPrevented).equals(false)
   })
 
-  it('on the web, a screen opened while a gone screen’s swap is out waits for it, and shows the swapped sides the let-go pitch is scored on', async function () {
+  it('on the web, a screen opened while a gone screen’s swap is out takes back the swapped copy’s session at once, on the swapped sides, and sends its pitch behind the swap', async function () {
     const screen = await swappable({ holdSwaps: true })
     await click(MENU)
     await click(SWAP)
@@ -1422,28 +1422,34 @@ describe('swapping from the scoring menu', function () {
     // A pitch on the swapped copy, its save behind the swap.
     await click('Ball')
     await settle()
+    const copy = screen.session()
     expect(screen.order()).deep.equals([])
     const opens = screen.opens()
+    const reads = screen.reads()
     await unmount()
+    // The swap is not answered (as when the scorer is offline): the screen
+    // opens at once, reading nothing, on the copy's own sides.
     await screen.mountAgain()
-    // The server has not taken the swap: the screen waits for it rather
-    // than open on the sides before it.
-    expect(document.querySelector('[aria-label="Loading game"]')).not.equals(
-      null
-    )
+    expect(document.querySelector('[aria-label="Loading game"]')).equals(null)
     expect(screen.opens()).equals(opens)
+    expect(screen.reads()).equals(reads)
+    expect(screen.session()).equals(copy)
+    expect(copy.state.gameData.teams.home.id).equals('away')
+    expect(copy.state.liveData.plays.currentPlay?.count.balls).equals(1)
+    // The scorer goes on scoring on it.
+    await click('Ball')
+    await settle()
+    expect(copy.state.liveData.plays.currentPlay?.count.balls).equals(2)
+    // Answered: the swap, then the pitches; no notice of somebody else's
+    // swap, since the screen is already on the sides the server now has.
     screen.release()
     await settle()
     await settle()
-    expect(screen.order()).deep.equals(['swap', 'save'])
-    expect(document.querySelector('[aria-label="Loading game"]')).equals(null)
-    // The sides shown are the swapped ones, with the pitch, and no notice
-    // of somebody else's swap.
-    expect(screen.session().state.gameData.teams.home.id).equals('away')
-    expect(
-      screen.session().state.liveData.plays.currentPlay?.count.balls
-    ).equals(1)
+    expect(screen.order()[0]).equals('swap')
+    expect(screen.order()).includes('save')
+    expect(copy.pending).equals(0)
     expect(document.body.textContent).not.includes('were swapped')
+    await unmount()
     const sent = new window.Event('beforeunload', { cancelable: true })
     window.dispatchEvent(sent)
     expect(sent.defaultPrevented).equals(false)
