@@ -372,7 +372,12 @@ describe('scoring shell and exit', function () {
     exits: () => number
     /** How many times the source opened the game from the server. */
     opens: () => number
-    gameRead: { fail?: boolean; held?: Promise<void> }
+    gameRead: {
+      fail?: boolean
+      held?: Promise<void>
+      swapped?: boolean
+      generation?: number
+    }
     again: (other?: {
       gameId?: string
       userId?: number
@@ -389,7 +394,12 @@ describe('scoring shell and exit', function () {
       release = resolve
     })
     const refuse: { error?: Error } = {}
-    const gameRead: { fail?: boolean; held?: Promise<void> } = {}
+    const gameRead: {
+      fail?: boolean
+      held?: Promise<void>
+      swapped?: boolean
+      generation?: number
+    } = {}
     let opened: ScoringSession | undefined
     const source: ScoringSource = {
       persistent: true,
@@ -397,7 +407,11 @@ describe('scoring shell and exit', function () {
         opens++
         opened = await ScoringSession.open(
           {
-            load: store.load.bind(store),
+            // The plays as the server keeps them, in its play generation.
+            load: async id => ({
+              ...(await store.load(id)),
+              generation: gameRead.generation ?? 1
+            }),
             save: async (id, change) => {
               if (refuse.error != null) throw refuse.error
               await held
@@ -419,7 +433,17 @@ describe('scoring shell and exit', function () {
     client.game = async () => {
       await gameRead.held
       if (gameRead.fail === true) throw new Error('The game did not load')
-      return gameFixture
+      const read = { ...gameFixture, generation: gameRead.generation ?? 1 }
+      // Another device swapped home and away.
+      return gameRead.swapped === true
+        ? {
+            ...read,
+            homeTeamId: gameFixture.awayTeamId,
+            awayTeamId: gameFixture.homeTeamId,
+            homeTeamName: gameFixture.awayTeamName,
+            awayTeamName: gameFixture.homeTeamName
+          }
+        : read
     }
     client.roster = async teamId =>
       scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
@@ -736,7 +760,7 @@ describe('scoring shell and exit', function () {
     expect(game.opens()).equals(2)
   })
 
-  it('keeps a let-go session when the read that would take it back fails, and takes it back on Retry', async function () {
+  it('offline, takes back a let-go session on the reads it was shown with, and goes on scoring on it', async function () {
     const game = await heldWebGame()
     await click('Ball')
     await wait()
@@ -745,18 +769,21 @@ describe('scoring shell and exit', function () {
       await game.leave()
     })
     await game.gone()
+    // Offline: nothing can be read from the server.
     game.gameRead.fail = true
     await game.again()
     expect(
       document.querySelector('[aria-label="Retry loading scoring"]')
-    ).not.equals(null)
-    expect(unloadWarned()).equals(true)
-    game.gameRead.fail = false
-    await click('Retry loading scoring')
-    await wait()
+    ).equals(null)
     expect(game.opens()).equals(1)
     expect(game.session()).equals(session)
     expect(balls()).equals('1 balls')
+    // The scorer goes on scoring, still offline.
+    await click('Ball')
+    await wait()
+    expect(balls()).equals('2 balls')
+    // Back online, every pitch reaches the server.
+    game.gameRead.fail = false
     game.release()
     await wait()
     expect(session.pending).equals(0)
@@ -789,6 +816,44 @@ describe('scoring shell and exit', function () {
     game.release()
     await wait()
     expect(session.pending).equals(0)
+  })
+
+  it('opens from the server, not on a let-go session, once another device has swapped home and away', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    await act(async () => {
+      await game.leave()
+    })
+    await game.gone()
+    game.gameRead.swapped = true
+    await game.again()
+    expect(game.opens()).equals(2)
+    expect(game.session()).not.equals(session)
+    expect(game.session().state.gameData.teams.home.id).equals(
+      gameFixture.awayTeamId
+    )
+    game.release()
+    await wait()
+    expect(session.pending).equals(0)
+  })
+
+  it('opens from the server, not on a let-go session, once another device has reset the game', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await wait()
+    const session = game.session()
+    await act(async () => {
+      await game.leave()
+    })
+    await game.gone()
+    game.gameRead.generation = 2
+    await game.again()
+    expect(game.opens()).equals(2)
+    expect(game.session()).not.equals(session)
+    game.release()
+    await wait()
   })
 
   it('does not let go a session closed under the screen, and opens from the server again', async function () {

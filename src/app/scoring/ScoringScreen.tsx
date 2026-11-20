@@ -20,6 +20,7 @@ import {
 
 import {
   type DictationModel,
+  type GameDetail,
   REQUEST_DEADLINE_MS,
   type RosterEntry,
   type SwapSidesAnswer,
@@ -334,6 +335,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   useEffect(() => source.keepTime?.(), [source])
   /** What the open game was opened on: what a swap of its own opens over. */
   const shownReads = useRef<OpenedReads | undefined>(undefined)
+  /**
+   * The web writes of the screen since gone whose session this one took
+   * back: a swap of that screen's still out is this screen's own.
+   */
+  const takenWrites = useRef<WebWrites | undefined>(undefined)
   /** The open a swap of this screen's own made already, read from nothing. */
   const adopted = useRef<number | undefined>(undefined)
   const retryRef = useRef(retry)
@@ -415,101 +421,121 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // A phone opens again on the documents its queue swapped; the web on
       // the swapped copy of what it opened on, while the swap is out.
       const held = web ? webWrites.held(props.gameId) : undefined
-      // And, while a screen since gone still has a swap of the game out,
-      // once it is answered: a session that screen let go scores on the
-      // swapped sides, and is taken back over the server's copy of them.
-      if (web && held == null)
-        await Promise.all([
-          webWrites.settled(),
-          letGoSettled({
-            client: props.client,
-            gameId: props.gameId,
-            userId: props.userId,
-            source
-          })
-        ])
-      // Every read the screen waits on as it opens is the phone's stored one
-      // when it has one, read from the server behind it.
-      const game =
-        held?.game ??
-        (await props.client.game(props.gameId, { storedFirst: true }))
-      const roles =
-        held != null
-          ? held.roles
-          : await props.client
-              .myRoles({ storedFirst: true })
-              .catch(() => undefined)
-      const rights = held?.rights ?? {
-        [game.awayTeamId]: managesRoster(roles, game.awayTeamId),
-        [game.homeTeamId]: managesRoster(roles, game.homeTeamId)
-      }
-      const loadRoster = async (teamId: string): Promise<RosterEntry[]> => {
-        try {
-          return await props.client.roster(teamId, {
-            includeFullNames: rights[teamId],
-            storedFirst: true
-          })
-        } catch (caught: unknown) {
-          if (
-            rights[teamId] &&
-            caught instanceof HttpError &&
-            ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
-          ) {
-            rights[teamId] = false
-            return withoutPrivateNames(
-              await props.client.roster(teamId, { storedFirst: true })
-            )
+      if (web && held == null) await webWrites.settled()
+      /** Everything the screen opens on, read as any open reads it. */
+      const readAll = async (): Promise<OpenedReads> => {
+        // Every read the screen waits on as it opens is the phone's stored one
+        // when it has one, read from the server behind it.
+        const game =
+          held?.game ??
+          (await props.client.game(props.gameId, { storedFirst: true }))
+        const roles =
+          held != null
+            ? held.roles
+            : await props.client
+                .myRoles({ storedFirst: true })
+                .catch(() => undefined)
+        const rights = held?.rights ?? {
+          [game.awayTeamId]: managesRoster(roles, game.awayTeamId),
+          [game.homeTeamId]: managesRoster(roles, game.homeTeamId)
+        }
+        const loadRoster = async (teamId: string): Promise<RosterEntry[]> => {
+          try {
+            return await props.client.roster(teamId, {
+              includeFullNames: rights[teamId],
+              storedFirst: true
+            })
+          } catch (caught: unknown) {
+            if (
+              rights[teamId] &&
+              caught instanceof HttpError &&
+              ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
+            ) {
+              rights[teamId] = false
+              return withoutPrivateNames(
+                await props.client.roster(teamId, { storedFirst: true })
+              )
+            }
+            // An unavailable roster is not an empty team: reconciliation would
+            // otherwise remove the saved lineup and defense. Offer load retry.
+            throw caught
           }
-          // An unavailable roster is not an empty team: reconciliation would
-          // otherwise remove the saved lineup and defense. Offer load retry.
-          throw caught
+        }
+        const [away, home, defaults] =
+          held != null
+            ? [
+                held.rosters[game.awayTeamId],
+                held.rosters[game.homeTeamId],
+                held.defaults
+              ]
+            : await Promise.all([
+                loadRoster(game.awayTeamId),
+                loadRoster(game.homeTeamId),
+                defaultsOf(props.client, game, true)
+              ])
+        return {
+          game,
+          roles,
+          rights,
+          rosters: { [game.awayTeamId]: away, [game.homeTeamId]: home },
+          defaults
         }
       }
-      const [away, home, defaults] =
-        held != null
-          ? [
-              held.rosters[game.awayTeamId],
-              held.rosters[game.homeTeamId],
-              held.defaults
-            ]
-          : await Promise.all([
-              loadRoster(game.awayTeamId),
-              loadRoster(game.homeTeamId),
-              defaultsOf(props.client, game, true)
-            ])
-      if (!live) return
       // On the web, a session a screen since gone let go for this game,
       // with changes the server has not answered yet, is shown again rather
-      // than the server's copy, which lacks them; taken back only now, as it
-      // is shown, so a read that failed or an open given up leaves it to the
-      // next open. One that has since saved and closed is not: the server
-      // has its changes.
-      const kept =
+      // than the server's copy, which lacks them. It opens on the reads it
+      // was last shown with when a fresh read cannot stand for it: while the
+      // swap of the screen that let it go is out (the server has not taken
+      // its sides), or when the read fails (offline: the scorer goes on
+      // scoring on it, as on the screen that let it go). Read afresh, it is
+      // taken back only on the sides it scores on; on others (another
+      // device swapped or reset the game) the server's copy opens. Nothing
+      // here waits on the server.
+      const letGone =
         web && held == null
-          ? takeBack({
+          ? letGoFor({
               client: props.client,
               gameId: props.gameId,
               userId: props.userId,
               source
             })
           : undefined
+      let reads: OpenedReads
+      let ownReads = false
+      if (letGone?.entry.writes.held(props.gameId) != null) {
+        reads = letGone.entry.reads
+        ownReads = true
+      } else
+        try {
+          reads = await readAll()
+        } catch (caught: unknown) {
+          if (letGone == null) throw caught
+          reads = letGone.entry.reads
+          ownReads = true
+        }
+      if (!live) return
+      // Taken back only now, as it is shown, so a read given up leaves it
+      // to the next open; one that has since saved and closed, or been
+      // refused, is not taken back.
+      const kept =
+        letGone != null &&
+        (ownReads || sameSides(letGone.session, reads.game)) &&
+        takeBack(letGone)
+          ? letGone.session
+          : undefined
+      takenWrites.current = kept == null ? undefined : letGone?.entry.writes
+      const { game } = reads
       const value =
         kept ??
-        (await source.open(game, away, home, held, {
-          storedFirst: true
-        }))
-      if (!live) return
-      showOpened(
-        {
+        (await source.open(
           game,
-          roles,
-          rights,
-          rosters: { [game.awayTeamId]: away, [game.homeTeamId]: home },
-          defaults
-        },
-        value,
-        attempt
-      )
+          reads.rosters[game.awayTeamId],
+          reads.rosters[game.homeTeamId],
+          held,
+          { storedFirst: true }
+        ))
+      if (!live) return
+      showOpened(reads, value, attempt)
     }
     load().catch(() => {
       if (!live) return
@@ -746,10 +772,12 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   useEffect(
     () => () => {
       const shown = openedContext.current
+      const reads = shownReads.current
       if (
         shown?.source.persistent !== true ||
         shown.client instanceof CachingClient ||
-        shown.session === swappedOver.current
+        shown.session === swappedOver.current ||
+        reads == null
       )
         return
       closeOnceSaved(shown.session, {
@@ -757,7 +785,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         gameId: shown.gameId,
         userId: shown.userId,
         source: shown.source,
-        writes: leftWrites.current
+        writes: leftWrites.current,
+        reads
       })
     },
     []
@@ -946,10 +975,13 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     if (away == null || home == null) return undefined
     return { ...opening, away, home }
   }
-  // While the web's own swap is out, the game is the copy it swapped.
+  // While the web's own swap is out, the game is the copy it swapped: this
+  // screen's swap, or that of the screen since gone whose session it took
+  // back.
   const readSides = useCallback(
     async (): Promise<OpenedGame> =>
       webWrites.held(props.gameId)?.game ??
+      takenWrites.current?.held(props.gameId)?.game ??
       (await props.client.game(props.gameId)),
     [props.client, props.gameId, webWrites]
   )
@@ -1231,10 +1263,13 @@ interface LetGoKey {
 }
 interface LetGoEntry extends LetGoKey {
   /**
-   * The web writes of the screen that let it go: a swap of that screen's
-   * still out, which the session's saves wait behind.
+   * The web writes of the screen that let it go: while a swap of that
+   * screen's is out, the server has not taken the sides the session scores
+   * on, and a screen opening the game opens on `reads`.
    */
   writes: WebWrites
+  /** What the screen that let it go showed it with: its sides and rosters. */
+  reads: OpenedReads
   /** Stops the wait that closes the session once it has saved. */
   stop: () => void
 }
@@ -1283,41 +1318,47 @@ function closeOnceSaved(
   game.flush().catch(() => undefined)
 }
 /**
- * The session a screen since gone let go for this game, still saving, taken
- * back by the screen opening it: no longer closed once it has saved, and no
- * longer holding the page's unload warning, since a screen shows it again.
- * None when nothing of the game is let go, or what was has saved and closed,
- * or the server refused or stopped it.
+ * The session a screen since gone let go for this game and that is still
+ * saving, with its entry: none when nothing of the game is let go, or what
+ * was has saved and closed, or the server refused or stopped it.
  */
-function takeBack(opened: LetGoKey): GameSession | undefined {
-  for (const [game, entry] of letGo) {
-    if (
-      !sameLetGo(entry, opened) ||
-      game.readOnly ||
-      game.stopped ||
-      game.isClosed
-    )
-      continue
-    letGo.delete(game)
-    entry.stop()
-    holdUnload(game, false)
-    return game
-  }
+function letGoFor(
+  opened: LetGoKey
+): { session: GameSession; entry: LetGoEntry } | undefined {
+  for (const [session, entry] of letGo)
+    if (sameLetGo(entry, opened) && takeable(session)) return { session, entry }
   return undefined
 }
+const takeable = (session: GameSession): boolean =>
+  !session.readOnly && !session.stopped && !session.isClosed
 /**
- * Settles once every swap a screen since gone sent of this game is answered:
- * the server's copy then has the sides the let-go session scores on, which
- * a screen opening the game again reads, so the two agree.
+ * Whether `session` scores on the sides of `read`, the game a screen has
+ * just read: the same home and away, and the same play generation (no
+ * swap or reset by another device since).
  */
-async function letGoSettled(opened: LetGoKey): Promise<void> {
-  await Promise.all(
-    [...letGo.values()]
-      .filter(entry => sameLetGo(entry, opened))
-      .map(async entry => {
-        await entry.writes.settled()
-      })
+function sameSides(session: GameSession, read: GameDetail): boolean {
+  const { home, away } = session.state.gameData.teams
+  return (
+    home.id === read.homeTeamId &&
+    away.id === read.awayTeamId &&
+    (session.generation == null ||
+      read.generation == null ||
+      session.generation === read.generation)
   )
+}
+/**
+ * Takes back the let-go session `found` names, for the screen opening it:
+ * no longer closed once it has saved, and no longer holding the page's
+ * unload warning, since a screen shows it again. False when it has since
+ * saved and closed, or been refused or stopped.
+ */
+function takeBack(found: { session: GameSession; entry: LetGoEntry }): boolean {
+  const { session, entry } = found
+  if (letGo.get(session) !== entry || !takeable(session)) return false
+  letGo.delete(session)
+  entry.stop()
+  holdUnload(session, false)
+  return true
 }
 function statusOf(game: GameSession): SaveStatus {
   return {
