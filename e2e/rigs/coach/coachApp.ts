@@ -68,6 +68,13 @@ export interface CoachApp {
   openGame: (gameId: string) => Promise<void>
   /** Coach Game for `teamId`, from its address. */
   openCoach: (gameId: string, teamId: string) => Promise<void>
+  /** The team's own page, from its address. */
+  openTeam: (teamId: string) => Promise<void>
+}
+
+/** A team page's address, as the app and the web route it. */
+export function teamPath(teamId: string): string {
+  return `/teams/${encodeURIComponent(teamId)}`
 }
 
 /**
@@ -138,7 +145,7 @@ async function pageFindAll(web: WebSession, pattern: RegExp): Promise<Found[]> {
  * The attached stack's database URL, for setup that must not go through
  * the API a fault may be breaking. A throwaway stack's database only.
  */
-async function stackDatabaseUrl(ctx: E2eContext): Promise<string> {
+export async function stackDatabaseUrl(ctx: E2eContext): Promise<string> {
   const attached = ctx.stack.attached
   if (attached == null)
     throw new BlockedError('needs an attached stack: --stack <id>')
@@ -217,6 +224,9 @@ export async function openCoachApp(
       },
       openCoach: async (gameId, teamId) => {
         await go(`/games/${gameId}/coach/${teamId}`)
+      },
+      openTeam: async teamId => {
+        await go(teamPath(teamId))
       }
     }
   }
@@ -280,6 +290,9 @@ export async function openCoachApp(
     },
     openCoach: async (gameId, teamId) => {
       await link(`/games/${gameId}/coach/${teamId}`)
+    },
+    openTeam: async teamId => {
+      await link(teamPath(teamId))
     }
   }
 }

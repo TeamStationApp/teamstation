@@ -1192,6 +1192,198 @@
       "file": "e2e/tests/platform/node-admin/jev-key.e2e.ts"
     },
     {
+      "id": "platform/offline/held-edits#clear-from-banner",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#clear-from-game",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#clear-from-team",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#refused-state",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
       "id": "platform/push/browser#dms-mentions-reminders",
       "title": "A browser's notification switches are its own, a DM, a mention and an RSVPed event's reminder notify it and nothing else does, and a tap opens what it is about",
       "kind": "e2e",

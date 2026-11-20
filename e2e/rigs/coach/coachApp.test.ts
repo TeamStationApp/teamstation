@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { type CoachApp, type Found, literal, scrollTo } from './coachApp'
+import {
+  type CoachApp,
+  type Found,
+  literal,
+  scrollTo,
+  teamPath
+} from './coachApp'
 
 /** An app whose sheet moves up `step` points for each swipe it is given. */
 function sheetApp(options: { web?: boolean; shareAt: number; step: number }): {
@@ -43,12 +49,18 @@ function sheetApp(options: { web?: boolean; shareAt: number; step: number }): {
       heroActions: async () => [],
       window: async () => ({ x: 0, y: 0, width: 402, height: 874 }),
       openGame: async () => {},
-      openCoach: async () => {}
+      openCoach: async () => {},
+      openTeam: async () => {}
     }
   }
 }
 
 describe('the game plan rig', function () {
+  it("opens a team at its own page's address", function () {
+    expect(teamPath('tem_home')).equals('/teams/tem_home')
+    expect(teamPath('a b')).equals('/teams/a%20b')
+  })
+
   it('matches a line literally, whatever it holds', function () {
     expect(literal('Inning 1 is missing: 3B, LF (and RF).')).equals(
       'Inning 1 is missing: 3B, LF \\(and RF\\)\\.'
