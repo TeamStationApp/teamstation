@@ -534,7 +534,7 @@ async function open(ctx: E2eContext): Promise<void> {
         const id = randomUUID().slice(0, 8)
         const first = dest.origin + '/score/' + id + '?side=away#first'
         const second = dest.origin + '/sheet/' + id + '?day=2#caption'
-        const internal = f.origin + '/schedule'
+        const internal = f.origin + '/schedule#' + id
         const body =
           'Fixture ' +
           id +
@@ -645,11 +645,7 @@ async function open(ctx: E2eContext): Promise<void> {
         await openExternal(m, web, platform, second, true, activeBrowser)
         await m.tapOn(
           web == null
-            ? {
-                text: exact(internal),
-                childOf: { id: 'chat-message-body-' + sentId },
-                timeout: 8000
-              }
+            ? { text: exact(internal), timeout: 8000 }
             : {
                 css: renderedBody + ' a[href="' + internal + '"]',
                 timeout: 8000

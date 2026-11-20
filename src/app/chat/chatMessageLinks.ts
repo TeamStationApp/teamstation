@@ -1,4 +1,4 @@
-import { LinkifyIt } from 'linkify-it'
+import { LinkifyIt, REBuilder } from 'linkify-it'
 import tlds from 'tlds'
 
 import { PRIMARY_HOST, WEB_HOST } from '../../common/primaryUrl'
@@ -7,7 +7,22 @@ import { type Route, routePath } from '../navigation/routes'
 import { CacheUrl } from '../sync/cacheUrl'
 import { chatAppOrigin, openChatBrowser } from './chatBrowser'
 
+// Linkify excludes ports from its bare-domain grammar. Reuse the same port
+// and boundary rules as explicit URLs, including for each link in a list.
+class ChatLinkGrammar extends REBuilder {
+  override get_fuzzy_url_host_port(): RegExp {
+    const label = this.get_domain().source
+    const tld = this.get_tld().source
+    return new RegExp(
+      `(?:(?:${label})\\.){1,10}(?:${tld})` +
+        this.get_port().source +
+        this.get_host_terminator().source
+    )
+  }
+}
+
 const links = new LinkifyIt({
+  rebuilder: new ChatLinkGrammar(),
   fuzzyLink: true,
   fuzzyEmail: false,
   fuzzyIP: false,
@@ -60,25 +75,16 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
     if (!raw.includes('.') && !/https?:\/\//i.test(raw)) continue
     if (raw.length > 16000 || unsafeCharacters.test(raw)) continue
     const word = raw.replace(openingPunctuation, '')
-    const wordStart = token.index + raw.length - word.length
-    // Give linkify's explicit URL grammar a bare authority with a port.
-    // It validates the port and leaves trailing punctuation outside the link.
-    const colon = word.indexOf(':')
-    const host = word.slice(0, colon)
-    const portPrefix =
-      colon > 0 &&
-      /\d/.test(word.charAt(colon + 1)) &&
-      links.match(host)?.[0]?.raw === host
-        ? 'https://'
-        : ''
     const protocol = scheme.exec(word)?.[1]
-    if (protocol != null && !/^https?$/i.test(protocol) && portPrefix === '')
+    if (
+      protocol != null &&
+      !/^https?$/i.test(protocol) &&
+      !(protocol.includes('.') && /\d/.test(word.charAt(protocol.length + 1)))
+    )
       continue
-    for (const hit of links.match(portPrefix + word) ?? []) {
+    for (const hit of links.match(raw) ?? []) {
       if (hit.schema !== '' && !/^https?:$/i.test(hit.schema)) continue
-      const start = Math.max(0, hit.index - portPrefix.length)
-      const end = hit.lastIndex - portPrefix.length
-      const text = word.slice(start, end)
+      const text = hit.raw
       if (
         hit.schema === '' &&
         !/^www\./i.test(hit.raw) &&
@@ -87,8 +93,8 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
         continue
       if (chatLinkAddress(text) == null) continue
       spans.push({
-        start: wordStart + start,
-        end: wordStart + end,
+        start: token.index + hit.index,
+        end: token.index + hit.lastIndex,
         text
       })
     }

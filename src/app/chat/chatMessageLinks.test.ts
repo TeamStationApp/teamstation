@@ -46,6 +46,16 @@ describe('chat message links', () => {
       '123.example.org:8080',
       'café.example.org:8443'
     ])
+    expect(
+      texts('⚾ (example.org:8443),(example.net:8444),[example.com:80/a(b)].')
+    ).deep.equals([
+      'example.org:8443',
+      'example.net:8444',
+      'example.com:80/a(b)'
+    ])
+    expect(texts('example.org:65535,example.net:65536')).deep.equals([
+      'example.org:65535'
+    ])
     expect(texts('example.org:99999.')).deep.equals([])
   })
 

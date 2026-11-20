@@ -518,6 +518,38 @@ function visibleBodyPoint(
   }
 }
 
+async function dismissMessageSpotlight(device: Device): Promise<void> {
+  const nodes = flatten(await device.hierarchy())
+  const frame = nodes.find(node => node.id === 'chat-message-spotlight')?.bounds
+  const controls = nodes.find(
+    node => node.id === 'chat-message-spotlight-controls'
+  )?.bounds
+  assert(frame != null && controls != null, 'Measured spotlight required')
+  // The panel keeps a horizontal gutter even when the keyboard is open.
+  // Pick the wider side and stay level with the visible controls.
+  const right = controls.x + controls.width
+  const leftGap = controls.x - frame.x
+  const rightGap = frame.x + frame.width - right
+  assert(
+    Math.max(leftGap, rightGap) >= 2,
+    'Spotlight backdrop must be reachable'
+  )
+  const x = leftGap >= rightGap ? frame.x + leftGap / 2 : right + rightGap / 2
+  const top = Math.max(frame.y, controls.y)
+  const bottom = Math.min(frame.y + frame.height, controls.y + controls.height)
+  assert(bottom > top, 'Spotlight controls must be visible')
+  await device.tapOnPoint({
+    point: `${Math.round(x)},${Math.round((top + bottom) / 2)}`
+  })
+  await until('The spotlight must dismiss after a backdrop tap', async () =>
+    flatten(await device.hierarchy()).some(
+      node => node.id === 'chat-message-spotlight'
+    )
+      ? undefined
+      : true
+  )
+}
+
 async function physicalMessageHold(
   device: Device,
   rowId: string,
@@ -2113,17 +2145,7 @@ async function main(): Promise<void> {
         )
         await photo(`hold-probe-${trial + 1}-menu`)
         results.stationaryHoldTrials = trial + 1
-        await m.tapOnPoint({ point: '5%,15%' })
-        await until(
-          'The exact message action menu must dismiss',
-          async () =>
-            flatten(await m.hierarchy()).some(
-              node => node.text === 'Reply' || node.label === 'Reply'
-            )
-              ? undefined
-              : true,
-          3000
-        )
+        await dismissMessageSpotlight(m)
       }
       pass(
         'bounded stationary 550 ms holds open message actions on the exact readable body'
@@ -5993,7 +6015,7 @@ async function main(): Promise<void> {
         await m.assertNotVisible({ text: 'Delete', timeout: 1000 })
       else await m.assertVisible({ text: 'Delete', timeout: 10000 })
       await photo('message-actions-after')
-      await m.tapOnPoint({ point: '5%,15%' })
+      await dismissMessageSpotlight(m)
       await m.assertNotVisible({ text: 'Copy', timeout: 1000 })
       pass(
         'recognized native message menu, exact reactions and permission-filtered actions over blur'
@@ -6129,7 +6151,7 @@ async function main(): Promise<void> {
           row => row.id === fixture.conversationId
         )!
         await messageMenu()
-        await m.tapOn({ text: `React with ${emoji}` })
+        await tapStableControl(m, `React with ${emoji}`)
         await m.assertVisible({ text: `${emoji}, 1`, timeout: 10000 })
         if (emoji === '❤️') {
           await physicalMessageHold(
@@ -6149,14 +6171,7 @@ async function main(): Promise<void> {
             10000
           )
           await photo('reaction-chip-hold-actions')
-          await m.tapOnPoint({ point: '1%,15%' })
-          await until('The nested reaction menu must dismiss', async () =>
-            flatten(await m.hierarchy()).some(
-              node => node.id === 'chat-message-spotlight'
-            )
-              ? undefined
-              : true
-          )
+          await dismissMessageSpotlight(m)
           assert(
             strings(flatten(await m.hierarchy())).includes(`${emoji}, 1`),
             'Holding the reaction chip must not perform its short toggle'
@@ -6290,7 +6305,7 @@ async function main(): Promise<void> {
         protectedMessagesNotDeleted: true
       }
       await photo('own-message-actions-after')
-      await m.tapOnPoint({ point: '5%,15%' })
+      await dismissMessageSpotlight(m)
       pass(
         'native reply Cancel keeps draft; successful encrypted reply send clears context exactly once'
       )
