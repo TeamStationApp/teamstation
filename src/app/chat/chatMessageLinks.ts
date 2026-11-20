@@ -20,7 +20,8 @@ const filename = /\.(?:zip|mov|sh|md|pl|rs|py|ai|ps|so|ts|cc|cab)$/i
 const unsafeCharacters =
   // eslint-disable-next-line no-control-regex
   /[\\\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u206f]/u
-const scheme = /^[\s("'[{<]*([a-z][a-z\d+.-]*):/i
+const scheme = /^([a-z][a-z\d+.-]*):/i
+const openingPunctuation = /^[("'“‘[{<]+/u
 
 export interface ChatLinkSpan {
   start: number
@@ -55,20 +56,22 @@ export function chatLinkAddress(text: string): URL | undefined {
 export function chatLinkSpans(body: string): ChatLinkSpan[] {
   const spans: ChatLinkSpan[] = []
   for (const token of body.matchAll(/\S+/gu)) {
-    const word = token[0]
-    if (!word.includes('.') && !/https?:\/\//i.test(word)) continue
-    if (word.length > 16000 || unsafeCharacters.test(word)) continue
-    const protocol = scheme.exec(word)?.[1]
-    // A bare host followed by a port also has the shape of a URI scheme.
-    // Validate the host independently before asking the explicit URL grammar
-    // to match its port and path.
+    const raw = token[0]
+    if (!raw.includes('.') && !/https?:\/\//i.test(raw)) continue
+    if (raw.length > 16000 || unsafeCharacters.test(raw)) continue
+    const word = raw.replace(openingPunctuation, '')
+    const wordStart = token.index + raw.length - word.length
+    // Give linkify's explicit URL grammar a bare authority with a port.
+    // It validates the port and leaves trailing punctuation outside the link.
+    const colon = word.indexOf(':')
+    const host = word.slice(0, colon)
     const portPrefix =
-      protocol != null &&
-      word.startsWith(protocol + ':') &&
-      /^:\d+(?:[/?#]|$)/.test(word.slice(protocol.length)) &&
-      links.match(protocol)?.[0]?.raw === protocol
+      colon > 0 &&
+      /\d/.test(word.charAt(colon + 1)) &&
+      links.match(host)?.[0]?.raw === host
         ? 'https://'
         : ''
+    const protocol = scheme.exec(word)?.[1]
     if (protocol != null && !/^https?$/i.test(protocol) && portPrefix === '')
       continue
     for (const hit of links.match(portPrefix + word) ?? []) {
@@ -84,8 +87,8 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
         continue
       if (chatLinkAddress(text) == null) continue
       spans.push({
-        start: token.index + start,
-        end: token.index + end,
+        start: wordStart + start,
+        end: wordStart + end,
         text
       })
     }

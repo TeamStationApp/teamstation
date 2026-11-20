@@ -7,7 +7,7 @@ import { ChatMessageText } from './ChatMessageText'
 
 describe('chat message links in a bubble', () => {
   const body =
-    'Score sheet: example.com/game and http://example.org. File: scores.pdf.'
+    'Score sheet: example.com/game and http://example.org. Alternate: (example.net:8443). File: scores.pdf.'
   it('keeps the full caption selectable and activates just the chosen address', async () => {
     const host = document.createElement('div')
     document.body.append(host)
@@ -38,9 +38,11 @@ describe('chat message links in a bubble', () => {
       const links = host.querySelectorAll('a')
       expect([...links].map(link => link.textContent)).deep.equals([
         'example.com/game',
-        'http://example.org'
+        'http://example.org',
+        'example.net:8443'
       ])
       expect(links[0].href).equals('https://example.com/game')
+      expect(links[2].href).equals('https://example.net:8443/')
       expect(links[0].target).equals('_blank')
       expect(links[0].rel).contains('noopener')
       links[1].click()
