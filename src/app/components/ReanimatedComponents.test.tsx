@@ -3,12 +3,19 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { AccessibilityInfo } from 'react-native'
+import { AccessibilityInfo, Platform } from 'react-native'
 
 import { RosterSelector } from '../scoring/RosterSelector'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { AnimatedLivePill, LivePill } from './LivePill'
+import { GameHeroCard } from './GameHeroCard'
+import {
+  AnimatedLivePill,
+  LivePill,
+  LivePillHeld,
+  livePillPulses
+} from './LivePill'
+import { SceneShownProvider } from './sceneShown'
 
 const query = AccessibilityInfo.isReduceMotionEnabled
 const subscribe = AccessibilityInfo.addEventListener
@@ -97,6 +104,84 @@ describe('Reanimated UI components', () => {
     expect(live.style.opacity).equals('')
     expect(['', 'none']).includes(getComputedStyle(live).animationName)
     expect(listeners.size, 'no motion preference to follow').equals(0)
+  })
+  it('pulses a pill only where it can be seen (issue 317)', async function () {
+    const opacityOf = (): string =>
+      host.querySelector<HTMLElement>('[aria-label="Live now"]')!.style.opacity
+    const moves = async (): Promise<boolean> => {
+      const seen = new Set<string>()
+      for (let i = 0; i < 6; i++) {
+        await act(async () => {
+          await delay(60)
+        })
+        seen.add(opacityOf())
+      }
+      return [...seen].some(value => value !== '' && value !== '1')
+    }
+    const draw = async (shown: boolean, held: boolean): Promise<void> => {
+      await render(
+        <SceneShownProvider value={shown}>
+          <LivePillHeld value={held}>
+            <AnimatedLivePill />
+          </LivePillHeld>
+        </SceneShownProvider>
+      )
+    }
+
+    await draw(true, false)
+    expect(await moves(), 'shown and not held').equals(true)
+
+    await draw(true, true)
+    expect(await moves(), 'held under the angles').equals(false)
+    expect(opacityOf()).equals('1')
+
+    await draw(false, false)
+    expect(await moves(), 'covered by another screen').equals(false)
+    expect(opacityOf()).equals('1')
+
+    await draw(true, false)
+    expect(await moves(), 'shown again').equals(true)
+  })
+
+  it('holds the hero card’s live pill under a page that holds its pills (issue 317)', async function () {
+    // The app's pill: a browser draws the still one whatever holds it.
+    const platformWas = Platform.OS
+    Platform.OS = 'ios'
+    try {
+      await render(
+        <LivePillHeld value>
+          <GameHeroCard
+            awayTeamId="t1"
+            homeTeamId="t2"
+            awayName="Away"
+            homeName="Home"
+            awayScore={1}
+            homeScore={2}
+            status="TOP 3RD"
+            // The pill sits in the card's meta row, which a venue brings.
+            venue="Field 1"
+            live
+          />
+        </LivePillHeld>
+      )
+      await act(async () => {
+        await delay(300)
+      })
+      const live = host.querySelector<HTMLElement>('[aria-label="Live now"]')!
+      expect(live.style.opacity).equals('1')
+    } finally {
+      Platform.OS = platformWas
+    }
+  })
+
+  it('decides the pulse from motion, a hold and the screen on show (issue 317)', function () {
+    for (const reduceMotion of [false, true])
+      for (const held of [false, true])
+        for (const shown of [false, true])
+          expect(
+            livePillPulses({ reduceMotion, held, shown }),
+            JSON.stringify({ reduceMotion, held, shown })
+          ).equals(!reduceMotion && !held && shown)
   })
   it('settles roster thumbs after programmatic selection and width changes with reduced motion', async () => {
     const draw = async (value: number): Promise<void> => {

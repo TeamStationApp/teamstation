@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { AccessibilityInfo, Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -725,6 +725,126 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
     await waitToLand()
     expect(video.currentTime).closeTo(40, 0.001)
+  })
+
+  it('in the app, lands a picture that comes back from nothing at the grid’s moment, playing (issue 317)', async function () {
+    // The app hands its own player no source while the angles are up, so it
+    // returns as a fresh player: at its start, until its metadata says so.
+    asApp()
+    const from = { videoId: 'v1', sec: 40 }
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from
+    })
+    const video = inline()
+    // No address for the page's own player while the angles are up.
+    expect(video.getAttribute('data-has-source')).equals('false')
+    const { played } = drive(video, 40)
+    const tile = [...document.querySelectorAll('video')].at(-1)!
+    drive(tile, 40)
+    Object.defineProperty(tile, 'paused', { configurable: true, value: false })
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    video.currentTime = 0
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+    // The address back once they close, for a fresh player to load.
+    expect(video.getAttribute('data-has-source')).equals('true')
+    const landing = (): Element | null =>
+      document.querySelector('[data-testid="gameVideoLanding"]')
+    expect(landing()).not.equals(null)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    await waitToLand()
+    expect(video.currentTime).closeTo(40, 0.001)
+    expect(played()).greaterThan(0)
+  })
+
+  it('in the app, holds the page’s live pill still under the angles, and pulses it once they close (issue 317)', async function () {
+    asApp()
+    // Motion allowed, so the pill on show pulses; this suite's browser would
+    // otherwise answer that the viewer asked for less.
+    // Kept to put back as they were, not called here.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const query = AccessibilityInfo.isReduceMotionEnabled
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const subscribe = AccessibilityInfo.addEventListener
+    AccessibilityInfo.isReduceMotionEnabled = async () => false
+    AccessibilityInfo.addEventListener = () => ({
+      remove: () => undefined
+    })
+    try {
+      const view = await page(
+        [{ ...videoOf('v1', START), status: 'live', receiving: true }],
+        {
+          angles: ['v1'],
+          audioId: 'v1',
+          from: { videoId: 'v1', sec: 40 }
+        }
+      )
+      const pills = (): HTMLElement[] => [
+        ...document.querySelectorAll<HTMLElement>('[aria-label="Live now"]')
+      ]
+      const opacities = async (): Promise<Set<string>> => {
+        const seen = new Set<string>()
+        for (let i = 0; i < 6; i++) {
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 60))
+          })
+          for (const pill of pills()) seen.add(pill.style.opacity)
+        }
+        return seen
+      }
+      expect(pills().length).greaterThan(0)
+      // Under the angles: every pill on the page holds at full.
+      expect([...(await opacities())]).deep.equals(['1'])
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(
+            `[aria-label="${lstrings.angles_close}"]`
+          )!
+          .click()
+      })
+      await view.rerender({
+        angles: undefined,
+        audioId: undefined,
+        from: undefined
+      })
+      // Shown again: the pulse runs.
+      expect([...(await opacities())].some(value => value !== '1')).equals(true)
+    } finally {
+      AccessibilityInfo.isReduceMotionEnabled = query
+      AccessibilityInfo.addEventListener = subscribe
+    }
+  })
+
+  it('in a browser, keeps the page player’s address while the angles are up (issue 317)', async function () {
+    // A browser's detach already lets hls.js and its buffers go.
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from: { videoId: 'v1', sec: 40 }
+    })
+    expect(inline().getAttribute('data-has-source')).equals('true')
+    // Closed, as a viewer leaves them, before the page goes.
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
   })
 
   it('puts the picture back at the player’s moment, playing as the player was, when Back takes the player away', async function () {

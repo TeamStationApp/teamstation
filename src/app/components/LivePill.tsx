@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { createContext, useContext, useEffect } from 'react'
 import { Platform, Text, View } from 'react-native'
 import Animated, {
   cancelAnimation,
@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useSceneShown } from './sceneShown'
 import { useMotionPreference } from './useMotionPreference'
 
 export interface LivePillProps {
@@ -65,16 +66,39 @@ export function StillLivePill(props: LivePillProps): React.ReactElement {
   )
 }
 
+/**
+ * Holds every live pill below it still: for a page something else covers,
+ * such as a game under its angles, which is still the screen on show.
+ */
+export const LivePillHeld = createContext(false)
+
+/**
+ * Whether a pill pulses: only where it can be seen, and for those who have
+ * not asked for less movement. On Android every frame of the pulse is a
+ * commit of the whole tree, so one nobody can see costs as much as one
+ * somebody can.
+ */
+export function livePillPulses(options: {
+  reduceMotion: boolean
+  held: boolean
+  shown: boolean
+}): boolean {
+  return !options.reduceMotion && !options.held && options.shown
+}
+
 /** The pill as the apps draw it, pulsing on Reanimated's UI thread. */
 export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
   const { inline = false } = props
   const styles = getStyles(useTheme())
   const reduceMotion = useMotionPreference()
+  const shown = useSceneShown()
+  const held = useContext(LivePillHeld)
+  const pulse = livePillPulses({ reduceMotion, held, shown })
   const opacity = useSharedValue(1)
   const animated = useAnimatedStyle(() => ({ opacity: opacity.value }))
   useEffect(() => {
     opacity.value = 1
-    if (!reduceMotion)
+    if (pulse)
       opacity.value = withRepeat(
         withTiming(0.72, {
           duration: 800,
@@ -89,7 +113,7 @@ export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
     return () => {
       cancelAnimation(opacity)
     }
-  }, [opacity, reduceMotion])
+  }, [opacity, pulse])
 
   return (
     <Animated.View
