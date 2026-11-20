@@ -1,4 +1,5 @@
 import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
+import { onceAMinute, runValkey } from '../valkey/client'
 import type { VideoPath } from './videoPrefix'
 
 /**
@@ -84,6 +85,8 @@ export function parseLivePlaylistNotice(
 export class ValkeyPlaylistSink {
   private readonly lists = new Map<string, { length: number; gen: number }>()
   private down = false
+  /** Failures after the first of an outage, at most once a minute. */
+  private readonly sayAgain: (message: string) => boolean
   /** A call that outlasted its timeout and has not settled yet. */
   private stalled: Promise<void> | undefined
 
@@ -92,7 +95,9 @@ export class ValkeyPlaylistSink {
     private readonly prefix: string,
     private readonly log: (message: string) => void = () => {},
     private readonly timeoutMs = SINK_TIMEOUT_MS
-  ) {}
+  ) {
+    this.sayAgain = onceAMinute(log)
+  }
 
   async append(videoId: string, text: string, body: string): Promise<void> {
     const held = this.lists.get(videoId)
@@ -101,7 +106,11 @@ export class ValkeyPlaylistSink {
       return
     }
     const key = livePlaylistKey(this.prefix, videoId)
-    await this.attempt(videoId, async () => {
+    await this.attempt(videoId, async retry => {
+      if (retry) {
+        await this.write(videoId, body)
+        return
+      }
       const [length] = (await this.client
         .multi()
         .rPush(key, text)
@@ -160,36 +169,39 @@ export class ValkeyPlaylistSink {
 
   private async attempt(
     videoId: string,
-    run: () => Promise<void>
+    run: (retry: boolean) => Promise<void>
   ): Promise<void> {
     if (this.stalled != null) {
       this.lists.delete(videoId)
       return
     }
-    const running = run()
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let running: Promise<void> | undefined
+    let settled = true
+    let attempts = 0
     try {
-      const answered = await Promise.race([
-        running.then(() => true),
-        new Promise<boolean>(resolve => {
-          timer = setTimeout(() => {
-            resolve(false)
-          }, this.timeoutMs)
-        })
-      ])
-      if (!answered) {
-        this.leaveBehind(running)
-        return
-      }
+      await runValkey(
+        this.client,
+        async () => {
+          settled = false
+          running = run(attempts++ > 0).finally(() => {
+            settled = true
+          })
+          await running
+        },
+        this.timeoutMs,
+        // A retry rewrites the whole body rather than appending again.
+        true
+      )
       if (this.down) this.log('live playlists: Valkey answers again')
       this.down = false
     } catch (error) {
-      // The next body replaces the whole list.
+      // The bounded helper can finish before the actual command does.
+      if (running != null && !settled) {
+        this.leaveBehind(running)
+        return
+      }
       this.lists.delete(videoId)
-      if (!this.down) this.log(`live playlists: ${String(error)}`)
-      this.down = true
-    } finally {
-      clearTimeout(timer)
+      this.sayDown(`live playlists: ${String(error)}`)
     }
   }
 
@@ -198,13 +210,18 @@ export class ValkeyPlaylistSink {
    * list when it settles is forgotten with the rest, so every next body
    * replaces its list.
    */
+  /** The first failure of an outage is always said; repeats are limited. */
+  private sayDown(message: string): void {
+    // The first also starts the limit's minute, so its repeats wait for it.
+    if (!this.sayAgain(message) && !this.down) this.log(message)
+    this.down = true
+  }
+
   private leaveBehind(running: Promise<void>): void {
     this.lists.clear()
-    if (!this.down)
-      this.log(
-        `live playlists: Valkey did not answer in ${this.timeoutMs} ms; sending nothing until it does`
-      )
-    this.down = true
+    this.sayDown(
+      `live playlists: Valkey did not answer in ${this.timeoutMs} ms; sending nothing until it does`
+    )
     this.stalled = running
       .catch(() => {})
       .finally(() => {

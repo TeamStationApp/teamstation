@@ -140,7 +140,8 @@ export async function writeGameScoreboard(
   return await outsideSpoken(async () => await writeBoard())
   async function writeBoard(): Promise<WriteResult | undefined> {
     try {
-      if (!store.isReady()) throw new ScoreboardUnavailable()
+      // Spare Postgres the reads when the write could not reach Valkey.
+      if (!store.reachable()) throw new ScoreboardUnavailable()
       const source = await scoreboardFromGame(db, gameId, log)
       if (source == null) {
         // A game reset to nothing loses the board its plays left.

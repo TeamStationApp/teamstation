@@ -1,12 +1,16 @@
-import { createClient } from 'redis'
+import { createClient, DisconnectsClientError } from 'redis'
 
+import { scoreboardPrefix } from '../scoreboard/scoreboardStore'
 import {
-  redisSocketOptions,
-  scoreboardPrefix
-} from '../scoreboard/scoreboardStore'
-
-/** How often a cache that keeps failing says so, at most. */
-const LOG_EVERY_MS = 60_000
+  closeValkey,
+  onceAMinute,
+  reconnectWhenSilent,
+  runValkey,
+  type ValkeyClientOptions,
+  valkeyClientOptions,
+  valkeyConnection,
+  ValkeyTimeout
+} from '../valkey/client'
 
 /**
  * How long a command may wait for its answer. A partition that drops packets
@@ -21,8 +25,9 @@ const CONNECT_TIMEOUT_MS = 1000
 
 /**
  * A cache in Valkey that is never needed: `get` answers null and `set` does
- * nothing while the client is not ready, offline, failing or slower than
- * `COMMAND_TIMEOUT_MS`, so whatever reads through it reads Postgres instead,
+ * nothing while the client is offline, failing, or not answering or connected
+ * within `COMMAND_TIMEOUT_MS` (a connection being made is waited on for that
+ * long), so whatever reads through it reads Postgres instead,
  * and the server starts and serves without Valkey, as it always has. Every key
  * starts with the deployment's prefix.
  */
@@ -54,20 +59,27 @@ export function makeValkeyCache(options: {
   databaseUrl: string
   log: (message: string) => void
   now?: () => number
+  clientOptions?: ValkeyClientOptions
 }): ValkeyCache {
   const { log } = options
   const prefix = scoreboardPrefix(options.redis.prefix, options.databaseUrl)
-  const socket = redisSocketOptions(options.redis.caFile ?? '')
+  const common = valkeyClientOptions(
+    options.redis.url,
+    'cache',
+    options.redis.caFile,
+    options.clientOptions
+  )
   const client = createClient({
-    url: options.redis.url,
-    socket: { connectTimeout: CONNECT_TIMEOUT_MS, ...socket },
-    disableOfflineQueue: true
+    ...common,
+    socket: { connectTimeout: CONNECT_TIMEOUT_MS, ...common.socket }
   })
+  valkeyConnection(client)
+  reconnectWhenSilent(client, options.clientOptions?.silenceGraceMs)
   let lastAnswered = false
   const limited = onceAMinute(log, options.now)
   const say = (error: unknown): void => {
     limited(
-      `redis cache: ${error instanceof Error ? error.message : String(error)}`
+      `redis cache: ${error instanceof ValkeyTimeout && error.what === 'answer' ? `no answer in ${COMMAND_TIMEOUT_MS} ms` : error instanceof Error ? error.message : String(error)}`
     )
   }
   const failed = (error: unknown): void => {
@@ -75,14 +87,22 @@ export function makeValkeyCache(options: {
     say(error)
   }
   // An unheard `error` would end the worker.
-  client.on('error', failed)
+  client.on('error', error => {
+    // Our own destroy() rejecting a keepalive in flight is no failure.
+    if (!(error instanceof DisconnectsClientError)) failed(error)
+  })
   client.connect().catch(failed)
 
+  // A GET or a SET of the same value can be sent again after a lost connection.
   return {
     get: async key => {
-      if (!client.isReady) return null
       try {
-        const held = await answered(client.get(`${prefix}:${key}`))
+        const held = await runValkey(
+          client,
+          async () => await client.get(`${prefix}:${key}`),
+          COMMAND_TIMEOUT_MS,
+          true
+        )
         lastAnswered = true
         return held
       } catch (error) {
@@ -91,9 +111,14 @@ export function makeValkeyCache(options: {
       }
     },
     set: async (key, value, ttlMs) => {
-      if (!client.isReady) return
       try {
-        await answered(client.set(`${prefix}:${key}`, value, { PX: ttlMs }))
+        await runValkey(
+          client,
+          async () =>
+            await client.set(`${prefix}:${key}`, value, { PX: ttlMs }),
+          COMMAND_TIMEOUT_MS,
+          true
+        )
         lastAnswered = true
       } catch (error) {
         failed(error)
@@ -102,51 +127,9 @@ export function makeValkeyCache(options: {
     // At once when Valkey is away or silent: a graceful close would wait for
     // it, so one that is not done in a command's time is cut short.
     close: async () => {
-      if (client.isReady)
-        await answered(client.close()).catch(() => {
-          if (client.isOpen) client.destroy()
-        })
-      else if (client.isOpen) client.destroy()
+      await closeValkey(client, COMMAND_TIMEOUT_MS)
     },
     report: say,
     answering: () => client.isReady && lastAnswered
-  }
-}
-
-/**
- * `log`, saying a message only when it has said none in the last
- * `LOG_EVERY_MS`; each call makes a limit of its own.
- */
-export function onceAMinute(
-  log: (message: string) => void,
-  now: () => number = Date.now
-): (message: string) => void {
-  let loggedAt: number | undefined
-  return message => {
-    const at = now()
-    if (loggedAt != null && at - loggedAt < LOG_EVERY_MS) return
-    loggedAt = at
-    log(message)
-  }
-}
-
-/**
- * A command's answer, or a failure once it has waited `COMMAND_TIMEOUT_MS`.
- * The command itself is left to finish or fail unheard.
- */
-async function answered<T>(command: Promise<T>): Promise<T> {
-  command.catch(() => undefined)
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      command,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(new Error(`no answer in ${COMMAND_TIMEOUT_MS} ms`))
-        }, COMMAND_TIMEOUT_MS)
-      })
-    ])
-  } finally {
-    clearTimeout(timer)
   }
 }

@@ -98,7 +98,7 @@ export async function runIngest(
     message => {
       log(`live playlists: ${message}`)
     },
-    'live playlists',
+    'ingest',
     config.redis.caFile
   )
   valkey.connect().catch((error: unknown) => {

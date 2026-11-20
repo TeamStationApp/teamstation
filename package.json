@@ -113,6 +113,7 @@
     "typecheck.android": "tsc -p tsconfig.android.json",
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts",
     "coverage.dbLoad": "c8 --all --reporter=text --check-coverage --lines 90 --include 'tools/dbLoad/**/*.ts' --exclude '**/*.test.ts' mocha -r sucrase/register --extension ts --exit --timeout 60000 --spec 'tools/dbLoad/**/*.test.ts' --spec src/server/scopeAgreement.integration.test.ts",
+    "coverage.valkey": "node scripts/valkey-coverage.mjs",
     "coverage.account": "node scripts/account-coverage.mjs",
     "coverage.userManagement": "node scripts/user-management-coverage.mjs",
     "coverage.password": "node scripts/password-coverage.mjs",

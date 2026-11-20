@@ -2,6 +2,8 @@
  * Every write to a game's scoreboard, in one atomic step.
  *
  *   KEYS[1]  the game's hash, `<prefix>:scoreboard:<gameId>`
+ *   KEYS[2]  the unique command's result, kept 10 seconds for its retries;
+ *            hash-tagged by KEYS[1], so both share a cluster slot
  *   ARGV[1]  the field: `game`, `watcher` or `overrides`
  *   ARGV[2]  its JSON: a state, or the whole overrides object
  *   ARGV[3]  the mode: `replace`, `merge`, `mergeUncontested`, `reset`, or
@@ -34,6 +36,13 @@
  */
 export const WRITE_SCOREBOARD = `
 local key = KEYS[1]
+local resultKey = KEYS[2]
+local replay = redis.call('GET', resultKey)
+if replay then return replay end
+local function result(value)
+  redis.call('SET', resultKey, value, 'PX', 10000)
+  return value
+end
 local field = ARGV[1]
 local json = ARGV[2]
 local mode = ARGV[3]
@@ -46,7 +55,7 @@ local gameId = ARGV[8]
 local HOUR = 3600000
 local exists = redis.call('EXISTS', key) == 1
 if now >= startAt + 72 * HOUR or ((not exists) and now >= startAt + 2 * HOUR) then
-  return 'closed'
+  return result('closed')
 end
 
 local stored = redis.call('HGET', key, field)
@@ -54,12 +63,12 @@ local previous = nil
 if stored then previous = cjson.decode(stored) end
 
 if mode == 'clearGame' and previous == nil then
-  return 'closed'
+  return result('closed')
 end
 
 if field == 'game' and previous ~= nil and previous.sourceVersion ~= nil
   and sourceVersion ~= '' and tonumber(previous.sourceVersion) > tonumber(sourceVersion) then
-  return 'stale'
+  return result('stale')
 end
 
 local value = json
@@ -116,5 +125,5 @@ local message = '{"gameId":' .. cjson.encode(gameId) ..
   ',"watcher":' .. raw('watcher') ..
   ',"overrides":' .. raw('overrides') .. '}'
 redis.call('PUBLISH', channel, message)
-return message
+return result(message)
 `

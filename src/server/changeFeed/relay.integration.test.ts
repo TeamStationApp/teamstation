@@ -8,7 +8,7 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
-import { createClient } from 'redis'
+import { createClient, SocketClosedUnexpectedlyError } from 'redis'
 
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import {
@@ -242,6 +242,164 @@ describe('the feed relay', function () {
     await poker.query(`select pg_notify('game_changes', '')`)
     await until(() => games.payloads.length === 201, 'every payload')
     expect(games.payloads).deep.equals([...sent, ''])
+    await stopAll()
+  })
+
+  it('pipelines a healthy burst without abandoning leadership while replies are delayed', async function () {
+    const prefix = testPrefix()
+    const feed = feedOf(prefix)
+    const games = hearer()
+    await feed.subscribe('game_changes', games).listening
+    const logs: string[] = []
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const publish = client.publish.bind(client)
+      Object.assign(client, {
+        publish: async (...args: Parameters<typeof publish>) => {
+          const answer = await publish(...args)
+          await wait(20)
+          return answer
+        }
+      })
+      return client
+    }
+    relayOf(prefix, 'burst', {
+      makeClient,
+      leaderTtlMs: 5000,
+      log: line => logs.push(line)
+    })
+    await until(() => games.listenings.length === 2, 'the resync')
+    const notices = Array.from({ length: 40 }, (_, i) => `notice-${i}`)
+    for (const notice of notices)
+      await poker.query("select pg_notify('game_changes', $1)", [notice])
+    await until(
+      () => games.payloads.length === notices.length,
+      'the complete burst'
+    )
+    await wait(550)
+    expect(games.payloads).deep.equals(notices)
+    expect(games.listenings).length(2)
+    expect(await leader(prefix)).equals('burst')
+    expect(logs.some(line => line.includes('stops leading'))).equals(false)
+    await stopAll()
+  })
+
+  it('recovers an isolated uncertain publication without losing leadership', async function () {
+    const prefix = testPrefix()
+    const feed = feedOf(prefix)
+    const games = hearer()
+    await feed.subscribe('game_changes', games).listening
+    let attempts = 0
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const publish = client.publish.bind(client)
+      Object.assign(client, {
+        publish: async (...args: Parameters<typeof publish>) => {
+          if (args[1] === 'isolated' && ++attempts === 1)
+            throw new SocketClosedUnexpectedlyError()
+          return await publish(...args)
+        }
+      })
+      return client
+    }
+    relayOf(prefix, 'isolated', { makeClient, leaderTtlMs: 5000, beatMs: 1000 })
+    await until(() => games.listenings.length === 2, 'the resync')
+    await poker.query("select pg_notify('game_changes', 'isolated')")
+    await until(() => games.payloads.length === 1, 'the retried notice')
+    expect(games.payloads).deep.equals(['isolated'])
+    expect(attempts).equals(2)
+    expect(games.listenings).length(2)
+    await stopAll()
+  })
+
+  it('resyncs instead of replaying an uncertain older notice after a newer notice', async function () {
+    const prefix = testPrefix()
+    const feed = feedOf(prefix)
+    const games = hearer()
+    await feed.subscribe('game_changes', games).listening
+    let interrupted = false
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const publish = client.publish.bind(client)
+      Object.assign(client, {
+        publish: async (...args: Parameters<typeof publish>) => {
+          if (args[1] === 'first' && !interrupted) {
+            interrupted = true
+            await wait(30)
+            throw new SocketClosedUnexpectedlyError()
+          }
+          return await publish(...args)
+        }
+      })
+      return client
+    }
+    relayOf(prefix, 'recovering', { makeClient, leaderTtlMs: 5000 })
+    await until(() => games.listenings.length === 2, 'the resync')
+    await poker.query(
+      "select pg_notify('game_changes', 'first'), pg_notify('game_changes', 'second')"
+    )
+    await until(() => games.listenings.length === 3, 'the replacement resync')
+    expect(games.payloads).deep.equals(['second'])
+    expect(interrupted).equals(true)
+    await stopAll()
+  })
+
+  it('does not retry a publish after its leadership turn ended', async function () {
+    const prefix = testPrefix()
+    const feed = feedOf(prefix)
+    const games = hearer()
+    await feed.subscribe('game_changes', games).listening
+    let reached = false
+    let resume: () => void = () => undefined
+    const paused = new Promise<void>(resolve => {
+      resume = resolve
+    })
+    let attempts = 0
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const publish = client.publish.bind(client)
+      Object.assign(client, {
+        publish: async (...args: Parameters<typeof publish>) => {
+          if (args[1] === 'old turn') {
+            attempts++
+            reached = true
+            await paused
+            throw new SocketClosedUnexpectedlyError()
+          }
+          return await publish(...args)
+        }
+      })
+      return client
+    }
+    const relay = relayOf(prefix, 'ending', { makeClient, leaderTtlMs: 5000 })
+    await until(() => games.listenings.length === 2, 'the resync')
+    await poker.query("select pg_notify('game_changes', 'old turn')")
+    await until(() => reached, 'the held publish')
+    await relay.stop()
+    resume()
+    await wait(40)
+    expect(attempts).equals(1)
+    expect(games.payloads).deep.equals([])
     await stopAll()
   })
 
@@ -555,6 +713,69 @@ describe('the feed relay', function () {
       'the loss'
     )
     await until(async () => (await leader(prefix)) === 'usurped', 'the return')
+    // Leading again is said every time, however soon after the last.
+    await until(
+      () =>
+        lines.filter(line => line.includes('relay leads here')).length === 2,
+      'the second lead said'
+    )
+    await stopAll()
+  })
+
+  it('leads through a claim whose commands are slower than one command budget', async function () {
+    const prefix = testPrefix()
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const set = client.set.bind(client)
+      Object.assign(client, {
+        set: async (...args: Parameters<typeof set>) => {
+          await wait(700)
+          return await set(...args)
+        }
+      })
+      return client
+    }
+    relayOf(prefix, 'loaded', { makeClient, leaderTtlMs: 1500 })
+    await until(async () => (await leader(prefix)) === 'loaded', 'the lead')
+    await stopAll()
+  })
+
+  it('keeps leading through a renewal slower than one command but within the key', async function () {
+    const prefix = testPrefix()
+    let slow = false
+    const lines: string[] = []
+    const makeClient: FeedRelayOptions['makeClient'] = (
+      url,
+      log,
+      name,
+      caFile
+    ) => {
+      const client = makeScoreboardClient(url, log, name, caFile)
+      const evaluate = client.eval.bind(client)
+      Object.assign(client, {
+        eval: async (...args: Parameters<typeof evaluate>) => {
+          if (slow && args[0].includes('pexpire')) await wait(700)
+          return await evaluate(...args)
+        }
+      })
+      return client
+    }
+    relayOf(prefix, 'patient', {
+      makeClient,
+      leaderTtlMs: 1500,
+      log: line => lines.push(line)
+    })
+    await until(async () => (await leader(prefix)) === 'patient', 'the lead')
+    slow = true
+    await wait(2000)
+    slow = false
+    expect(lines.filter(line => line.includes('stops leading'))).deep.equals([])
+    expect(await leader(prefix)).equals('patient')
     await stopAll()
   })
 
