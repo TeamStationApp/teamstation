@@ -56,6 +56,30 @@ describe('chat message links', () => {
     expect(texts('https://example.org。other.example/path')).deep.equals([])
   })
 
+  it('recognizes links separated by dashes in running text', () => {
+    const first = 'https://example.org'
+    const second = 'https://example.net/team'
+    expect(texts('See ' + first + '—registration opens today')).deep.equals([
+      first
+    ])
+    expect(texts(first + '—' + second)).deep.equals([first, second])
+    expect(texts(first + ':bad/path—' + second)).deep.equals([second])
+    expect(texts('data:text/plain,team—' + second)).deep.equals([])
+  })
+
+  it('preserves word-internal apostrophes in paths and queries', () => {
+    for (const url of [
+      'https://example.org/King’s-Cup/schedule',
+      'https://example.org/schedule?team=O’Neill',
+      'https://example.org/Équipe?name=D’André',
+      'https://example.org/O’N’É'
+    ]) {
+      expect(texts('See ‘' + url + '’ today.')).deep.equals([url])
+      expect(chatLinkAddress(url)?.href).equals(new URL(url).href)
+    }
+    expect(texts('custom:O’Neill/https://example.org')).deep.equals([])
+  })
+
   it('keeps punctuation outside bare addresses with a port', () => {
     expect(
       texts('Read (example.org:8443), then example.com:8080.')

@@ -8,9 +8,15 @@ import { type Route, routePath } from '../navigation/routes'
 import { CacheUrl } from '../sync/cacheUrl'
 import { chatLinkOrigins, openChatBrowser } from './chatBrowser'
 
-// Linkify excludes ports from its bare-domain grammar. Reuse the same port
-// and boundary rules as explicit URLs, including for each link in a list.
 class ChatLinkGrammar extends REBuilder {
+  override get_path_extra(): RegExp {
+    // linkify appends its usual path alternatives after this fragment. Treat
+    // a typographic apostrophe as part of a word, leaving closing quotes out.
+    const letter = this.get_pseudo_letter().source
+    return new RegExp(letter + '’(?=' + letter + ')|')
+  }
+
+  // Bare addresses use the same port and boundary rules as explicit URLs.
   override get_fuzzy_url_host_port(): RegExp {
     const label = this.get_domain().source
     const tld = this.get_tld().source
@@ -44,7 +50,7 @@ const unsafeAuthority = /[%@\p{Default_Ignorable_Code_Point}]/u
 // A data URL's payload can contain commas, other URLs and closing punctuation.
 // Its end without a whitespace boundary is ambiguous, so keep that tail plain.
 const schemeCandidate =
-  /(^|[^\p{L}\p{N}.+-])(data:\S*|[a-z][a-z\d+.-]*:(?:\/\/\[[^\]\s]*\])?[^\s,;，；、)\]}>"'”’]*)/giu
+  /(^|[^\p{L}\p{N}.+-])(data:\S*|[a-z][a-z\d+.-]*:(?:\/\/\[[^\]\s]*\])?(?:\p{L}['’](?=\p{L})|[^\s,;，；、–—)\]}>"'”’])*)/giu
 
 // Keep matching emphasis outside a URL, including when its path could legally
 // contain asterisks. Asterisks inside an unwrapped URL remain part of its path.
