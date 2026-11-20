@@ -84,6 +84,7 @@ import { AppSidebar } from './components/AppSidebar'
 import { PictureDirectoriesContext } from './components/CachedPicture'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
+import { HeldEditsSheet } from './components/HeldEditsSheet'
 import { ModalPresenceProvider } from './components/modalPresence'
 import { OfflineBanner } from './components/OfflineBanner'
 import { useSidebarWidth } from './components/sidebarLayout'
@@ -240,14 +241,14 @@ import {
   OFFLINE_CREATE_MESSAGE,
   type OpenDocumentCache
 } from './sync/cachingClient'
-import type { HeldChain } from './sync/outbox'
 import { watchReachability } from './sync/reachability'
 import { leaveStalledConnections } from './sync/stalledConnections'
 import { timedRequest } from './sync/timedRequests'
 import {
-  heldTeamText,
+  heldEdits,
   offlineBannerText,
   unsentLossText,
+  useHeldNames,
   useOutboxSummary,
   usePhoneOffline
 } from './sync/useOffline'
@@ -956,18 +957,20 @@ function Shell(props: AppProps): React.ReactElement {
   const bannerText =
     signedInAs == null ? undefined : offlineBannerText(phoneOffline, outbox)
   const [createRefused, setCreateRefused] = useState(false)
-  // A team whose new players the server refused: no screen of its own says
-  // so, and the banner offers what can be done.
-  const [askingTeam, setAskingTeam] = useState<
-    { id: string; state: HeldChain['state'] } | undefined
-  >()
-  const heldTeams = Object.entries(outbox?.teams ?? {}).map(([id, held]) => ({
-    key: id,
-    text: heldTeamText(held),
-    onPress: () => {
-      setAskingTeam({ id, state: held.state })
-    }
-  }))
+  // What the server stopped, games and teams: the banner opens the list,
+  // and online only, as offline nothing has been refused yet.
+  const held = useMemo(() => heldEdits(outbox), [outbox])
+  const heldNames = useHeldNames(client, held)
+  const [heldOpen, setHeldOpen] = useState(false)
+  const closeHeld = useCallback(() => {
+    setHeldOpen(false)
+  }, [])
+  const openHeld =
+    held.length > 0 && !phoneOffline
+      ? () => {
+          setHeldOpen(true)
+        }
+      : undefined
   const [bannerHeight, setBannerHeight] = useState(0)
   useEffect(() => {
     if (!phoneOffline) setCreateRefused(false)
@@ -4249,8 +4252,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     </TessFrame>
   )
-  const bannerShown =
-    bannerText != null || createRefused || heldTeams.length > 0
+  const bannerShown = bannerText != null || createRefused
   const bottomBanner = bannerShown ? bannerHeight : 0
   // The offline banner is the last chrome: the bottom strip, on the safe-area
   // inset, under the floating capsule, which sits on top of it. A wide window
@@ -4281,7 +4283,7 @@ function Shell(props: AppProps): React.ReactElement {
         ]}
         text={bannerText}
         refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-        held={heldTeams}
+        onOpenHeld={openHeld}
         onLayout={setBannerHeight}
       />
     </>
@@ -4441,35 +4443,22 @@ function Shell(props: AppProps): React.ReactElement {
                     }}
                   />
                 )}
-                {askingTeam != null && caching != null && (
-                  <ChoiceSheet
-                    title="Player Not Saved"
-                    choices={[
-                      ...(askingTeam.state === 'dead'
-                        ? [
-                            {
-                              label: 'Try Again',
-                              onPress: () => {
-                                caching
-                                  .retryTeam(askingTeam.id)
-                                  .catch(() => undefined)
-                              }
-                            }
-                          ]
-                        : []),
-                      {
-                        label: "Use Server's Copy",
-                        detail:
-                          "Takes the player off this phone and shows the team's roster as the server has it.",
-                        destructive: true,
-                        onPress: () => {
-                          caching.discardTeam(askingTeam.id).catch(() => false)
-                        }
-                      }
-                    ]}
-                    onClose={() => {
-                      setAskingTeam(undefined)
+                {heldOpen && caching != null && (
+                  <HeldEditsSheet
+                    edits={held}
+                    names={heldNames}
+                    actions={{
+                      retry: async edit => {
+                        if (edit.kind === 'game')
+                          await caching.retryGame(edit.id)
+                        else await caching.retryTeam(edit.id)
+                      },
+                      discard: async edit =>
+                        edit.kind === 'game'
+                          ? await caching.discardGame(edit.id)
+                          : await caching.discardTeam(edit.id)
                     }}
+                    onClose={closeHeld}
                   />
                 )}
                 {updateRequired && (

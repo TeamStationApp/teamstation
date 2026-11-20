@@ -43,6 +43,14 @@ function rgb(hex: string): string {
   return `rgb(${r}, ${g}, ${b})`
 }
 
+/** Whether a line is drawn underlined, however the web writes it. */
+const underlined = (node: HTMLElement): boolean => {
+  const style = getComputedStyle(node)
+  return `${style.textDecorationLine} ${style.textDecoration}`.includes(
+    'underline'
+  )
+}
+
 const byTestId = (host: HTMLElement, id: string): HTMLElement | null =>
   host.querySelector(`[data-testid="${id}"]`)
 
@@ -56,20 +64,17 @@ describe('the offline banner', () => {
     ['ballpark', tsBallpark],
     ['dark', tsDark]
   ] as const) {
-    it(`is white on #6B3E00 in the ${name} theme, a refusal and a held team included`, async () => {
+    it(`is white on #6B3E00 in the ${name} theme, a refusal and a line that opens the held list included`, async () => {
       const host = await draw(theme, {
-        text: 'Offline · 1 edit waiting',
+        text: '1 edit not sent',
         refusal: 'Creating needs a connection',
-        held: [
-          { key: 'tem_a', text: 'A player was not saved', onPress: () => {} }
-        ]
+        onOpenHeld: () => {}
       })
       const banner = byTestId(host, 'offlineBanner')!
       expect(getComputedStyle(banner).backgroundColor).equals(rgb('#6B3E00'))
       const lines = [
         byTestId(host, 'offlineBannerText')!,
-        byTestId(host, 'offlineCreateMessage')!,
-        byTestId(host, 'heldTeamMessage')!.firstElementChild as HTMLElement
+        byTestId(host, 'offlineCreateMessage')!
       ]
       for (const line of lines)
         expect(getComputedStyle(line).color, line.textContent!).equals(
@@ -103,14 +108,28 @@ describe('the offline banner', () => {
     expect(heights).deep.equals([40])
   })
 
-  it('opens a held team from its line', async () => {
+  it('opens the held list from its line, a button labelled for it', async () => {
     let opened = 0
     const host = await draw(tsBallpark, {
-      held: [{ key: 'tem_a', text: 'Not saved', onPress: () => opened++ }]
+      text: '2 edits not sent',
+      onOpenHeld: () => opened++
     })
+    const button = byTestId(host, 'offlineBannerButton')!
+    expect(button.getAttribute('role')).equals('button')
+    expect(button.getAttribute('aria-label')).equals('Edits not sent')
+    expect(underlined(byTestId(host, 'offlineBannerText')!)).equals(true)
     await act(async () => {
-      byTestId(host, 'heldTeamMessage')!.click()
+      button.click()
     })
     expect(opened).equals(1)
+  })
+
+  it('keeps the line plain text with nothing held', async () => {
+    const host = await draw(tsBallpark, { text: 'Sending 1 edit…' })
+    expect(byTestId(host, 'offlineBannerButton')).equals(null)
+    expect(byTestId(host, 'offlineBannerText')!.textContent).equals(
+      'Sending 1 edit…'
+    )
+    expect(underlined(byTestId(host, 'offlineBannerText')!)).equals(false)
   })
 })
