@@ -1,5 +1,12 @@
 import { asArray } from 'cleaners'
-import React, { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   type LayoutChangeEvent,
   Text,
@@ -74,8 +81,13 @@ import { ActiveView, TabPages } from '../components/TabPages'
 import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { lstrings, sprintf, videoCountLabel } from '../locales/strings'
+import {
+  HELD_TEAM_CONSEQUENCE,
+  HeldGameNotice
+} from '../scoring/HeldGameNotice'
 import { rosterKey } from '../sync/documentKeys'
 import { storedSchedule, teamScope } from '../sync/scheduleReads'
+import { useHeldTeamControl } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -329,6 +341,18 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   const reload = useCallback(() => {
     setReloads(count => count + 1)
   }, [])
+  /**
+   * New players the server refused for this team, and the way out. Once
+   * the hold is gone, from here or from the banner's list, the page reads
+   * the server's roster.
+   */
+  const heldTeam = useHeldTeamControl(client, team.id)
+  const isHeld = heldTeam != null
+  const wasHeld = useRef(isHeld)
+  useEffect(() => {
+    if (wasHeld.current && !isHeld) reload()
+    wasHeld.current = isHeld
+  }, [isHeld, reload])
 
   // Browser/native Back can change the address while this team stays mounted.
   useEffect(() => {
@@ -591,6 +615,22 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         />
       </PillBand>
 
+      {heldTeam != null && (
+        <HeldGameNotice
+          held={heldTeam}
+          testID="heldTeamNotice"
+          consequence={HELD_TEAM_CONSEQUENCE}
+          onSettled={reload}
+        >
+          <Text
+            accessibilityRole="alert"
+            testID="heldTeamMessage"
+            style={styles.held}
+          >
+            {heldTeam.text}
+          </Text>
+        </HeldGameNotice>
+      )}
       {error != null && <Text style={styles.error}>{error}</Text>}
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
@@ -1331,6 +1371,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
     color: theme.dangerColor
+  },
+  // A held team's notice, as a held game's says it.
+  held: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.dangerColor,
+    textAlign: 'center' as const
   }
 }))
 

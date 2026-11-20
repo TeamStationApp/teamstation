@@ -52,7 +52,12 @@ const appSuites = [
   // The banner's line and the list it opens (M2).
   'src/app/components/OfflineBanner.test.tsx',
   'src/app/components/HeldEditsSheet.test.tsx',
-  'src/app/App.offlineBanner.test.tsx'
+  'src/app/App.offlineBanner.test.tsx',
+  // The Game screen's and the Team page's notices (M3).
+  'src/app/screens/GameScreen.held.test.tsx',
+  'src/app/screens/TeamScreen.held.test.tsx',
+  'src/app/screens/GameScreen.eventInfo.test.tsx',
+  'src/app/screens/CoachGameScreen.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE
