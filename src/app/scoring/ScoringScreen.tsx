@@ -329,6 +329,22 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const [swapNotice, setSwapNotice] = useState<string>()
   /** The phone gave up its edits, and the server's copy has not come. */
   const [copyPending, setCopyPending] = useState(false)
+  // Held edits given up while a page is over the scorer (a player's page
+  // shows the banner, whose list can give them up): open the game again,
+  // as the scorer's own notice does, once per clear and per game.
+  const heldHere = useHeldGameControl(props.client, props.gameId) != null
+  const heldBefore = useRef({ gameId: props.gameId, held: heldHere })
+  useEffect(() => {
+    const before = heldBefore.current
+    if (
+      before.gameId === props.gameId &&
+      before.held &&
+      !heldHere &&
+      props.active === false
+    )
+      setRetry(value => value + 1)
+    heldBefore.current = { gameId: props.gameId, held: heldHere }
+  }, [props.gameId, heldHere, props.active])
   const surface = useFieldSurface()
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
   const source: ScoringSource = props.source ?? fallback

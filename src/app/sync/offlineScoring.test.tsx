@@ -469,6 +469,66 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     expect(document.body.textContent).includes('1 balls')
   })
 
+  it("opens the game again when its held edits are given up from the banner's list while a page is over the scorer", async function () {
+    const { client, net, rows } = await preparedPhone()
+    net.offline = true
+    const source = new ServerScoringSource(
+      client,
+      new ServerClock(async () => await client.serverTime(), memoryStorage())
+    )
+    let cover: (covered: boolean) => void = () => undefined
+    const Host = (): React.ReactElement => {
+      const [covered, setCovered] = React.useState(false)
+      cover = setCovered
+      return (
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            userId="usr_scorer"
+            source={source}
+            active={!covered}
+            onExit={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(<Host />)
+    })
+    await settle(50)
+    await click('Ball')
+    await settle(50)
+    expect(document.body.textContent).includes('2 balls')
+    net.offline = false
+    net.stale = true
+    client.wakeOutbox(true)
+    await act(async () => {
+      await client.drainOutbox()
+    })
+    await settle(50)
+    expect(rows().map(row => row.state)).deep.equals(['parked'])
+    // A player's page opened from the scorer covers it, and the banner's
+    // list gives the game's edits up there, not the scorer's own notice.
+    await act(async () => {
+      cover(true)
+    })
+    await act(async () => {
+      expect(await client.discardGame('g1')).equals(true)
+    })
+    await settle(100)
+    await act(async () => {
+      cover(false)
+    })
+    await settle(100)
+    expect(rows()).deep.equals([])
+    // Back on the scorer: the server's copy, the one ball it had.
+    expect(document.body.textContent).includes('1 balls')
+  })
+
   it("says the server's copy has not arrived when it gave the phone's innings up with no signal", async function () {
     const { client, net } = await preparedPhone()
     net.offline = true
