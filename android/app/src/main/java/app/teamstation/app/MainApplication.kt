@@ -3,6 +3,7 @@ package app.teamstation.app
 import android.app.Application
 import app.teamstation.observability.NativeSentryPrivacy
 import app.teamstation.app.browser.ExternalBrowserPackage
+import app.teamstation.app.chat.ChatComposerKeysPackage
 import app.teamstation.app.cues.CueSoundsPackage
 import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
@@ -19,6 +20,7 @@ import app.teamstation.app.walkup.WalkUpMusicPackage
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
+import com.facebook.react.ReactPackage
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.common.assets.ReactFontManager
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
@@ -28,33 +30,36 @@ class MainApplication : Application(), ReactApplication {
   override val reactHost: ReactHost by lazy {
     getDefaultReactHost(
       context = applicationContext,
-      packageList =
-        PackageList(this).packages.apply {
-          // Expo's modules are linked by `expo-autolinking`, not by React
-          // Native's autolinking, so they are added by hand.
-          add(ExpoModulesPackage())
-          // The app's own TurboModules, which autolinking does not see.
-          add(WalkUpMusicPackage())
-          add(DictationMicrophonePackage())
-          // The backdrop blur under the scoring menu button.
-          add(GlassPackage())
-          // Lets the multi-camera view turn sideways in an upright app.
-          add(OrientationPackage())
-          // Android's back gesture, as the stack navigator's drag back.
-          add(PredictiveBackPackage())
-          add(ExternalBrowserPackage())
-          add(HapticsPackage())
-          add(PlanDocumentPackage())
-          // The phone's own streaming and recording, and its camera preview.
-          add(PhoneStreamPackage())
-          // Share Lineup's QR code camera.
-          add(QrScannerPackage())
-          add(CueSoundsPackage())
-          // Notifications: permission, FCM token, and what a chat wake shows.
-          add(PushPackage())
-        },
+      packageList = reactPackages(),
     )
   }
+
+  internal fun reactPackages(): List<ReactPackage> =
+    PackageList(this).packages.apply {
+      // Expo's modules are linked by `expo-autolinking`, not by React
+      // Native's autolinking, so they are added by hand.
+      add(ExpoModulesPackage())
+      add(ChatComposerKeysPackage())
+      // The app's own TurboModules, which autolinking does not see.
+      add(WalkUpMusicPackage())
+      add(DictationMicrophonePackage())
+      // The backdrop blur under the scoring menu button.
+      add(GlassPackage())
+      // Lets the multi-camera view turn sideways in an upright app.
+      add(OrientationPackage())
+      // Android's back gesture, as the stack navigator's drag back.
+      add(PredictiveBackPackage())
+      add(ExternalBrowserPackage())
+      add(HapticsPackage())
+      add(PlanDocumentPackage())
+      // The phone's own streaming and recording, and its camera preview.
+      add(PhoneStreamPackage())
+      // Share Lineup's QR code camera.
+      add(QrScannerPackage())
+      add(CueSoundsPackage())
+      // Notifications: permission, FCM token, and what a chat wake shows.
+      add(PushPackage())
+    }
 
   override fun onCreate() {
     super.onCreate()

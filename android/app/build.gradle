@@ -180,6 +180,26 @@ tasks.withType(Test).configureEach {
     }
 }
 
+tasks.register('chatKeysCoverage', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    executionData.from(layout.buildDirectory.file('outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec'))
+    executionData.from(layout.buildDirectory.file('jacoco/testDebugUnitTest.exec'))
+    def deviceFile = providers.environmentVariable('TS_CHAT_KEYS_EXEC').getOrNull()
+    if (deviceFile) executionData.from(file(deviceFile))
+    sourceDirectories.from(file('src/main/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/MainActivity.class'
+        include 'app/teamstation/app/chat/ChatHardwareKeys*'
+        include 'app/teamstation/app/chat/ChatKeyPress*'
+        include 'app/teamstation/app/chat/ChatComposerKeys*'
+        include 'app/teamstation/app/MainApplication*'
+    })
+    reports {
+        xml.required = true
+        xml.outputLocation = layout.buildDirectory.file('reports/jacoco/chatKeysCoverage/keys.xml')
+    }
+}
+
 // The browser bridge's JUnit coverage, plus optional execution data from the selected device.
 tasks.register('chatBrowserCoverage', JacocoReport) {
     dependsOn 'testDebugUnitTest'

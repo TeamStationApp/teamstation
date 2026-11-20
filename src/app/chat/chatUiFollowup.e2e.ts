@@ -565,7 +565,10 @@ async function s5(daemon: Daemon): Promise<void> {
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     console.log('$ S8 personal message pin badge/header/list and verified jump')
     await setPin(id, 'Pin')
-    await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-pinned-summary"][aria-label="Pinned messages: 1"]',
+      timeout: 30000
+    })
     writeFileSync(
       join(artifacts, 'desktop-message-pins-after.png'),
       await m.screenshot()
@@ -581,7 +584,9 @@ async function s5(daemon: Daemon): Promise<void> {
       'Expected a separate fixture reply'
     )
     await setPin(replyId, 'Pin')
-    await m.assertVisible({ text: 'Pinned messages: 2' })
+    await m.assertVisible({
+      css: '[data-testid="chat-pinned-summary"][aria-label="Pinned messages: 2"]'
+    })
     await m.tapOn({ css: '[data-testid="chat-pinned-summary"]' })
     await m.assertVisible({ css: `[data-testid="chat-pin-${replyId}"]` })
     writeFileSync(
@@ -1762,7 +1767,7 @@ async function pendingSend(daemon: Daemon): Promise<void> {
           narrow ? 'Hs' : 'Hc',
           outcome,
           gateId,
-          '15000'
+          '60000'
         ],
         { stdio: 'pipe' }
       )
@@ -1792,6 +1797,12 @@ async function pendingSend(daemon: Daemon): Promise<void> {
       })
       await input(next)
       const returnedAt = Date.now()
+      // Release only after the ordinary composer has returned and recorded the new draft.
+      execFileSync(
+        process.execPath,
+        [required('CHAT_UI_PENDING_CONTROL'), 'clear'],
+        { stdio: 'pipe' }
+      )
       await m.evalBrowserScript({
         script: `for(let n=0;n<1000;n++){const send=document.querySelector('[aria-label="Send"]');if(send?.getAttribute('aria-disabled')!=='true'){if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(next)})throw new Error('Old completion overwrote a newer draft');return true}await new Promise(resolve=>setTimeout(resolve,25))}throw new Error('Pending request did not complete')`
       })
@@ -2202,23 +2213,33 @@ async function composeFull(daemon: Daemon): Promise<void> {
     required('CHAT_UI_PROFILE_DIR'),
     false
   )
-  const peer = await attach(
-    'chat-ui-compose-peer',
-    required('CHAT_UI_PEER_PROFILE_DIR'),
-    true
-  )
   const marker = 'Attachment delivery probe ' + Date.now().toString(36)
-  const posts = `const raw=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();const count=raw.filter(x=>x.kind==='post').length;`
+  const messagesUrl = JSON.stringify(
+    API + '/chat/conversations/' + conversation + '/messages'
+  )
+  // A full conversation returns a bounded newest page. Count from the last original
+  // sequence observed before this test so adding a post cannot evict one from the count.
+  const posts = `const raw=await(await fetch(${messagesUrl}+'?after='+window.chatUiComposeAfter,{credentials:'include'})).json();const count=raw.filter(x=>x.kind==='post').length;`
+  const committed = (expected: number): string => `
+    const expected = window.chatUiComposePosts + ${expected};
+    let raw, count;
+    for (let tries = 0; tries < 100; tries++) {
+      const response = await fetch(${messagesUrl} + '?after=' + window.chatUiComposeAfter, { credentials:'include' });
+      if (!response.ok) throw Error('Message read failed: ' + response.status);
+      raw = await response.json();
+      count = raw.filter(row => row.kind === 'post').length;
+      if (count >= expected) break;
+      await new Promise(done => setTimeout(done, 100));
+    }
+    if (count !== expected) throw Error('Expected '+expected+' new posts, received '+count);
+  `
   const drop = `const target=document.querySelector('[data-testid="chat-drop-target"]');function drop(files){const data=new DataTransfer();for(const file of files)data.items.add(file);const event=new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data});target.dispatchEvent(event);if(!event.defaultPrevented)throw new Error('File navigation not prevented');}`
   try {
     await signIn(m, 'Hc')
-    await signIn(peer, 'Hs')
     await m.openLink({ link: WEB + '/chat/' + conversation })
-    await peer.openLink({ link: WEB + '/chat/' + conversation })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
-    await peer.assertVisible({ text: 'Message', timeout: 60000 })
     await m.evalBrowserScript({
-      script: `${posts}window.chatUiComposePosts=count;window.chatUiByteReads=[];const original=File.prototype.arrayBuffer;window.chatUiOriginalRead=original;File.prototype.arrayBuffer=function(){window.chatUiByteReads.push(this.name);if(this.name==='slow.txt')return new Promise(resolve=>{window.chatUiReleaseRead=async()=>resolve(await original.call(this))});if(this.name==='bad.txt')return Promise.reject(new Error('Synthetic file read failure'));return original.call(this)};return true`
+      script: `const conversations=await(await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'})).json();window.chatUiComposeAfter=conversations.find(row=>row.id===${JSON.stringify(conversation)}).lastSeq;${posts}window.chatUiComposePosts=count;window.chatUiByteReads=[];const original=File.prototype.arrayBuffer;window.chatUiOriginalRead=original;File.prototype.arrayBuffer=function(){window.chatUiByteReads.push(this.name);if(this.name==='slow.txt')return new Promise(resolve=>{window.chatUiReleaseRead=async()=>resolve(await original.call(this))});if(this.name==='bad.txt')return Promise.reject(new Error('Synthetic file read failure'));return original.call(this)};return true`
     })
     console.log(
       '$ S9 actual File metadata limits before byte reads; delayed preparation blocks both send paths'
@@ -2258,24 +2279,14 @@ async function composeFull(daemon: Daemon): Promise<void> {
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.inputText({ text: marker })
     await m.tapOn({ text: 'Send' })
-    await peer.assertVisible({ text: marker, timeout: 60000 })
-    await peer.evalBrowserScript({
-      script: `window.chatUiOriginalObjectURL=URL.createObjectURL;URL.createObjectURL=function(blob){window.chatUiDecodedBlob=blob;return window.chatUiOriginalObjectURL.call(URL,blob)};return true`
+    await m.assertVisible({ text: marker, timeout: 60000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]:placeholder-shown',
+      timeout: 10000
     })
-    for (const [file, bytes] of [
-      ['notes.txt', 'Practice notes'],
-      ['lineup.txt', 'Bring a glove']
-    ]) {
-      await peer.tapOn({ text: 'Save ' + file })
-      console.log(
-        await peer.evalBrowserScript({
-          script: `for(let n=0;n<100;n++){if(window.chatUiDecodedBlob){const text=await window.chatUiDecodedBlob.text();if(text!==${JSON.stringify(bytes)})throw new Error('Peer decrypted file bytes differ');window.chatUiDecodedBlob=undefined;return JSON.stringify({file:${JSON.stringify(file)},peerDecryptedExactBytes:true})}await new Promise(r=>setTimeout(r,50))}throw new Error('Peer file was not decrypted')`
-        })
-      )
-    }
     console.log(
       await m.evalBrowserScript({
-        script: `${posts}if(count!==window.chatUiComposePosts+1)throw new Error('Multiple files/caption did not send exactly one post');if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Submitted caption not cleared');const wire=JSON.stringify(raw);if(wire.includes(${JSON.stringify(marker)})||wire.includes('notes.txt')||wire.includes('Bring a glove'))throw new Error('Plaintext canary entered message API wire');return JSON.stringify({captionAndTwoFiles:true,postCountDelta:1,ciphertextWireCanaryAbsent:true})`
+        script: `${committed(1)}if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Submitted caption not cleared');const wire=JSON.stringify(raw);if(wire.includes(${JSON.stringify(marker)})||wire.includes('notes.txt')||wire.includes('Bring a glove'))throw new Error('Plaintext canary entered message API wire');return JSON.stringify({captionAndTwoFiles:true,postCountDelta:1,ciphertextWireCanaryAbsent:true})`
       })
     )
     console.log(
@@ -2289,18 +2300,55 @@ async function composeFull(daemon: Daemon): Promise<void> {
     await m.evalBrowserScript({
       script: `const input=document.querySelector('[data-testid="chat-composer"]');document.querySelector('[aria-label="Send"]').click();input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));return true`
     })
+    console.log(
+      await m.evalBrowserScript({
+        script: `${committed(2)}File.prototype.arrayBuffer=window.chatUiOriginalRead;return JSON.stringify({compositionQuiet:true,rapidButtonKeyExactlyOne:true})`
+      })
+    )
+  } finally {
+    await m.detach()
+  }
+  // The recipient opens its saved profile after the author has finished.
+  const peer = await attach(
+    'chat-ui-compose-peer',
+    required('CHAT_UI_PEER_PROFILE_DIR'),
+    true
+  )
+  try {
+    await signIn(peer, 'Hs')
+    await peer.openLink({ link: WEB + '/chat/' + conversation })
+    await peer.assertVisible({ text: 'Message', timeout: 60000 })
+    await peer.assertVisible({ text: marker, timeout: 60000 })
+    await peer.evalBrowserScript({
+      script: `window.chatUiOriginalObjectURL=URL.createObjectURL;URL.createObjectURL=function(blob){window.chatUiDecodedBlob=blob;return window.chatUiOriginalObjectURL.call(URL,blob)};return true`
+    })
+    const { data: rowId } = (await peer.evalBrowserScript({
+      script: `const rows=Array.from(document.querySelectorAll('[data-testid^="chat-message-msg_"]'));const row=rows.find(el=>el.textContent.includes(${JSON.stringify(marker)}));return row?.getAttribute('data-testid')`
+    })) as { data?: unknown }
+    assert(
+      typeof rowId === 'string' &&
+        /^chat-message-msg_[A-Za-z0-9_-]+$/.test(rowId)
+    )
+    for (const [file, bytes] of [
+      ['notes.txt', 'Practice notes'],
+      ['lineup.txt', 'Bring a glove']
+    ]) {
+      await peer.tapOn({
+        css: '[data-testid="' + rowId + '"] [aria-label="Save ' + file + '"]',
+        timeout: 15000
+      })
+      console.log(
+        await peer.evalBrowserScript({
+          script: `for(let n=0;n<100;n++){if(window.chatUiDecodedBlob){const text=await window.chatUiDecodedBlob.text();if(text!==${JSON.stringify(bytes)})throw new Error('Peer decrypted file bytes differ');window.chatUiDecodedBlob=undefined;return JSON.stringify({file:${JSON.stringify(file)},peerDecryptedExactBytes:true})}await new Promise(r=>setTimeout(r,50))}throw new Error('Peer file was not decrypted')`
+        })
+      )
+    }
     await peer.assertVisible({
       text: 'Composition probe ' + marker,
       timeout: 60000
     })
-    console.log(
-      await m.evalBrowserScript({
-        script: `await new Promise(r=>setTimeout(r,250));${posts}if(count!==window.chatUiComposePosts+2)throw new Error('Rapid button/key made duplicate posts');File.prototype.arrayBuffer=window.chatUiOriginalRead;return JSON.stringify({compositionQuiet:true,rapidButtonKeyExactlyOne:true,peerDelivered:true})`
-      })
-    )
     console.log('S9/S10 full encrypted browser peer delivery PASS')
   } finally {
-    await m.detach()
     await peer.detach()
   }
 }

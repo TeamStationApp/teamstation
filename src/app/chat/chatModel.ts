@@ -184,6 +184,7 @@ export const QUICK_REACTIONS = ['❤️', '👍', '👎', '😂', '😮', '😢'
 
 export type MessageAction =
   | 'reply'
+  | 'edit'
   | 'react'
   | 'copy'
   | 'pin'
@@ -222,7 +223,10 @@ export function actionsFor(
   const actions: MessageAction[] = []
   const closed = view.composer === 'closed'
   const posting = view.composer === 'enabled'
-  if (posting) actions.push('reply')
+  if (posting) {
+    actions.push('reply')
+    if (message.mine) actions.push('edit')
+  }
   // Readers of Announcements react too; a locked device cannot send at all.
   if (!closed && view.composer !== 'locked') actions.push('react')
   if (message.body !== '') actions.push('copy')

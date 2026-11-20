@@ -4,6 +4,7 @@
 
 - added: Chat senders can include a removable link preview. Recipients see its encrypted copy, and reporting the message shares the original content while keeping the preview private.
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
+- added: Chat senders can edit their own messages and attachment captions from the message menu.
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV

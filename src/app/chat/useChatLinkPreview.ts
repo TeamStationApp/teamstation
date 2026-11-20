@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer } from 'react'
+import { useCallback, useEffect, useMemo, useReducer } from 'react'
 
 import type { ChatLinkPreview } from '../../common/chatLinkPreview'
 import {
@@ -33,6 +33,7 @@ export function useChatLinkPreview(
   handleDismiss: () => void
   submit: (submitted: string) => ChatLinkPreview | undefined
   sent: () => void
+  discardEdit: (id: string) => void
 } {
   const cache = useMemo(() => {
     let entries = drafts.get(engine)
@@ -106,6 +107,14 @@ export function useChatLinkPreview(
       controller.abort()
     }
   }, [active, cache, conversationId, engine, origin, slot, source, url])
+  const discardEdit = useCallback(
+    (id: string) => {
+      const key = JSON.stringify([conversationId, id])
+      cache.get(key)?.controller?.abort()
+      cache.delete(key)
+    },
+    [cache, conversationId]
+  )
   return {
     preview:
       current?.url === url && current?.dismissed !== true
@@ -119,6 +128,7 @@ export function useChatLinkPreview(
         refresh()
       }
     },
+    discardEdit,
     sent: () => {
       if (current === cache.get(slot)) cache.delete(slot)
     },
