@@ -127,6 +127,26 @@ describe('chat message links', () => {
     ])
   })
 
+  it('leaves the entire email address plain alongside an independent web link', () => {
+    const link = 'https://example.org/team'
+    for (const email of [
+      'first.name@example.com',
+      'first.name+team@example.com',
+      'first.name@localhost',
+      '"first.name"@example.org',
+      '"foo.org / sports.news"@example.com',
+      '"https://example.org"@example.com',
+      'www.example.org@example.com'
+    ]) {
+      expect(texts(email + ',' + link), email).deep.equals([link])
+    }
+    for (const url of [
+      'www.example.org/send?to=first.name@example.net',
+      'https://example.org/people/first.name@example.net'
+    ])
+      expect(texts(url)).deep.equals([url])
+  })
+
   it('keeps nested destinations in web queries and fragments inside the outer address', () => {
     for (const value of [
       'www.example.org/share?url=https://example.net/song',

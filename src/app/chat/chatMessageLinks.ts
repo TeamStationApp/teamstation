@@ -42,6 +42,9 @@ const links = new LinkifyIt({
 
 const filename =
   /^[^/?#:@]+\.(?:zip|mov|sh|md|pl|rs|py|ai|ps|so|ts|cc|cab|java|properties|pub|mobi)$/i
+// A bare match can stop within the local part of a mailbox, e.g. first.name.
+// Its remaining dot-atom characters (or closing quote) lead straight to @.
+const emailTail = /^[\p{L}\p{N}\p{M}.!#$%&'*+\-/=?^_`{|}~]{0,64}"?@/u
 const unsafeCharacters =
   /[\\\p{Cc}\p{Cs}\u00ad\u061c\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u
 // Host normalization can discard these characters. Emoji variation selectors
@@ -153,8 +156,8 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
       const text = hit.raw
       if (
         hit.schema === '' &&
-        !/^www\./i.test(hit.raw) &&
-        filename.test(hit.raw)
+        (emailTail.test(content.slice(hit.lastIndex, hit.lastIndex + 66)) ||
+          (!/^www\./i.test(hit.raw) && filename.test(hit.raw)))
       )
         continue
       if (chatLinkAddress(text) == null) continue
@@ -165,7 +168,16 @@ export function chatLinkSpans(body: string): ChatLinkSpan[] {
       })
     }
   }
-  return spans
+  if (!body.includes('"') || !body.includes('@')) return spans
+  // A quoted local part can contain spaces or even a complete URL. Match it
+  // across word boundaries and exclude only links that start inside it.
+  const mailboxes = body.matchAll(/"(?:\\[^\r\n]|[^"\\\r\n]){0,64}"(?=@)/gu)
+  let mailbox = mailboxes.next().value
+  return spans.filter(span => {
+    while (mailbox != null && mailbox.index + mailbox[0].length <= span.start)
+      mailbox = mailboxes.next().value
+    return mailbox == null || span.start < mailbox.index
+  })
 }
 
 /** Normalize only equivalent paths. Escaped separators stay inside their segment. */
