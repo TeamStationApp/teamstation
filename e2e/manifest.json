@@ -3837,6 +3837,69 @@
       "file": "e2e/tests/assistant/chat/weekly-usage.e2e.ts"
     },
     {
+      "id": "messaging/chat/link-previews#send",
+      "title": "Chat members receive the sender’s private link preview",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/*Preview*",
+        "src/app/chat/preview*",
+        "src/app/chat/linkPreview*",
+        "src/common/chatLinkPreview.ts",
+        "src/app/chat/engine/send.ts",
+        "src/app/chat/engine/decrypt.ts",
+        "src/app/chat/engine/apply.ts",
+        "crates/chat-link-preview/**",
+        "crates/chat-crypto/src/preview.rs",
+        "native/linkPreview/**",
+        "ios/TeamStation/ChatPreview/**"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/link-previews",
+      "file": "e2e/tests/messaging/chat/link-previews.e2e.ts"
+    },
+    {
       "id": "messaging/chat/message-links#open",
       "title": "Chat links in text and file captions open their displayed destination",
       "kind": "e2e",

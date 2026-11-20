@@ -480,7 +480,9 @@ async function assertFixtureBody(
   await device.assertVisible({ css: selector, timeout: 60000 })
   // Text selectors interpret fixture punctuation as a regular expression.
   const result = (await device.evalBrowserScript({
-    script: `return document.querySelector(${JSON.stringify(selector)})?.textContent === ${JSON.stringify(text)}`
+    script: `const body = document.querySelector(${JSON.stringify(selector)})?.cloneNode(true);
+      body?.querySelector('[data-testid="chat-link-preview"]')?.remove();
+      return body?.textContent === ${JSON.stringify(text)}`
   })) as { data?: unknown }
   assert(
     result.data === true || result.data === 'true',

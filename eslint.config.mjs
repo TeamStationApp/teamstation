@@ -176,6 +176,13 @@ export default [
       'native/scheduler/build/**',
       // Gradle's outputs: test and coverage reports carry their own scripts.
       'android/**/build/**',
+      // Native compilation and coverage generate scripts and dependency files.
+      'android/app/.cxx/**',
+      'ios/build*/**',
+      'ios/Pods/**',
+      'native/highs/vendor/**',
+      'native/scheduler/build*/**',
+      'coverage/**',
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that
       // diverge from the Node server's standard-kit config. It has its

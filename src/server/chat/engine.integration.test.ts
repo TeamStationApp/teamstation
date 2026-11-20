@@ -8,7 +8,10 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import { ChatEngineError } from '../../app/chat/engine/context'
+import {
+  ChatEngineError,
+  UnconfirmedChatPost
+} from '../../app/chat/engine/context'
 import { ChatEngine, type ConversationView } from '../../app/chat/engine/engine'
 import {
   approveLink,
@@ -55,6 +58,7 @@ import type {
 } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
+import { encodePng } from '../../test/rasterImage'
 import { closeInto } from '../admin/people'
 import { listen } from '../dev/fakeSpace'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -328,6 +332,15 @@ describe('the chat engine (U12)', function () {
     view.messages.map(message => message.body)
   const statuses = (view: ConversationView): string[] =>
     view.messages.map(message => message.status)
+
+  async function reasonOfRefusal(work: Promise<unknown>): Promise<unknown> {
+    try {
+      await work
+    } catch (error) {
+      return ((error as HttpError).details as { reason?: string }).reason
+    }
+    throw new Error('expected a refusal')
+  }
 
   async function engineRefusal(work: Promise<unknown>): Promise<string> {
     try {
@@ -2195,6 +2208,172 @@ describe('the chat engine (U12)', function () {
     }
   })
 
+  it('opens a private link preview for members and reports only the typed message', async function () {
+    const author = await device('A')
+    const reader = await device('B')
+    const room = await dm('A', ['B'])
+    const bytes = new Uint8Array(
+      encodePng(2, 1, Uint8Array.of(255, 0, 0, 255, 0, 0, 255, 255))
+    )
+    const thumbnail = await author.engine.uploadPreviewThumbnail(room, {
+      bytes,
+      width: 2,
+      height: 1,
+      fileName: 'preview.png',
+      contentType: 'image/png'
+    })
+    const url = 'https://example.org/fixture'
+    const body = 'Look at ' + url
+    const preview = {
+      url,
+      title: 'Private page title',
+      description: 'Private description',
+      siteName: 'Fixture',
+      thumbnail
+    }
+    const sent = (await author.engine.sendText(room, body, { preview }))!
+    const received = (await reader.engine.open(room)).messages.find(
+      item => item.id === sent.id
+    )!
+    expect(received.body).equals(body)
+    expect(received.attachments).deep.equals([])
+    expect(received.preview).deep.equals(preview)
+    expect(
+      await reader.engine.openPreviewThumbnail(received.preview!.thumbnail!)
+    ).deep.equals(bytes)
+    for (const modified of [
+      { ...thumbnail, size: 96 * 1024 + 1 },
+      { ...thumbnail, size: thumbnail.size + 1 },
+      { ...thumbnail, width: 3 },
+      { ...thumbnail, digest: b64(new Uint8Array(32)) },
+      { ...thumbnail, contentType: 'image/webp' },
+      { ...thumbnail, contentType: 'image/svg+xml' }
+    ]) {
+      expect(
+        await engineRefusal(reader.engine.openPreviewThumbnail(modified))
+      ).equals('attachment')
+    }
+    const report = await reader.engine.report(room, sent.id)
+    expect(report.verified).equals(true)
+    const row = await f()
+      .db.selectFrom('chat_reports')
+      .select('plaintext')
+      .where('id', '=', report.id)
+      .executeTakeFirstOrThrow()
+    expect(JSON.parse(row.plaintext)).deep.equals({
+      type: 'text',
+      body,
+      mentions: [],
+      attachments: []
+    })
+    await author.engine.edit(room, sent.id, 'Updated ' + url, [], {
+      ...preview,
+      title: 'Updated title',
+      thumbnail: undefined
+    })
+    expect(
+      (await reader.engine.open(room)).messages.find(m => m.id === sent.id)
+        ?.preview?.title
+    ).equals('Updated title')
+    await author.engine.edit(room, sent.id, 'New wording')
+    expect(
+      (await reader.engine.open(room)).messages.find(m => m.id === sent.id)
+        ?.preview
+    ).equals(undefined)
+  })
+
+  it('preserves the same signed preview across a lost reply and removes only a refused thumbnail', async function () {
+    const author = await device('A')
+    const room = await dm('A', ['B'])
+    const url = 'https://example.org/event'
+    const preview = {
+      url,
+      title: 'Event preview',
+      description: '',
+      siteName: 'Fixture'
+    }
+    const post = author.client.postChatMessage.bind(author.client)
+    const requests: ChatMessageEnvelope[] = []
+    author.client.postChatMessage = async (id, envelope) => {
+      requests.push(envelope)
+      const reply = await post(id, envelope)
+      if (requests.length === 1) throw new HttpError('offline', 'Reply lost')
+      return reply
+    }
+    try {
+      const sent = await author.engine.sendText(room, url, { preview })
+      expect(sent?.preview).deep.equals(preview)
+      expect(requests).length(2)
+      expect(requests[1]).deep.equals(requests[0])
+      requests.length = 0
+      author.client.postChatMessage = async (id, envelope) => {
+        requests.push(envelope)
+        const reply = await post(id, envelope)
+        if (requests.length <= 2) {
+          // The server committed the envelope. Only its success response is damaged.
+          const receipt = new TeamStationClient({
+            baseUrl: 'http://fixture.invalid',
+            fetch: async () =>
+              new Response(requests.length === 1 ? '' : '{"seq":1}')
+          })
+          return await receipt.postChatMessage(id, envelope)
+        }
+        return reply
+      }
+      const unconfirmed = await author.engine
+        .sendText(room, 'Read again ' + url, { preview })
+        .catch((error: unknown) => error)
+      expect(unconfirmed).instanceOf(UnconfirmedChatPost)
+      if (!(unconfirmed instanceof UnconfirmedChatPost))
+        throw Error('Expected a replayable post')
+      await unconfirmed.retry()
+      expect(requests).length(3)
+      expect(requests[2]).deep.equals(requests[0])
+      expect(
+        (await author.engine.open(room)).messages.filter(
+          message => message.body === 'Read again ' + url
+        )
+      ).length(1)
+      requests.length = 0
+      author.client.postChatMessage = async (id, envelope) => {
+        requests.push(envelope)
+        return await post(id, envelope)
+      }
+      const thumbnail = {
+        id: 'cat_nothere',
+        fileName: 'preview.jpg',
+        contentType: 'image/jpeg',
+        width: 1,
+        height: 1,
+        key: b64(new Uint8Array(32)),
+        digest: b64(new Uint8Array(32)),
+        size: 10
+      }
+      const retried = await author.engine.sendText(room, url, {
+        preview: { ...preview, thumbnail }
+      })
+      expect(retried?.preview).deep.equals(preview)
+      expect(requests).length(2)
+      expect(requests[1].id).equals(requests[0].id)
+      expect(requests[1].nonce).not.equals(requests[0].nonce)
+      expect(requests[0].previewAttachmentId).equals(thumbnail.id)
+      expect(requests[1].previewAttachmentId).equals(undefined)
+      expect(
+        await reasonOfRefusal(
+          author.engine.sendText(room, url, {
+            attachments: [thumbnail],
+            preview: {
+              ...preview,
+              thumbnail: { ...thumbnail, id: 'cat_alsoabsent' }
+            }
+          })
+        )
+      ).equals('attachment')
+    } finally {
+      author.client.postChatMessage = post
+    }
+  })
+
   it('hears typing, device changes and resyncs from the socket', async function () {
     const a = await device('A')
     const b = await device('B')
@@ -2556,14 +2735,6 @@ describe('the chat engine (U12)', function () {
       refusal('postChatMessage', 'conflict', 'staleEpoch'),
       refusal('postChatMessage', 'conflict', 'staleEpoch')
     )
-    async function reasonOfRefusal(work: Promise<unknown>): Promise<unknown> {
-      try {
-        await work
-      } catch (error) {
-        return ((error as HttpError).details as { reason?: string }).reason
-      }
-      throw new Error('expected a refusal')
-    }
     expect(await reasonOfRefusal(again.engine.sendText(chatOf, 'no'))).equals(
       'staleEpoch'
     )

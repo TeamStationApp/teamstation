@@ -41,6 +41,23 @@ export type ChatEngineClient = ChatKeysClient &
     | 'pinChatMessage'
   >
 
+/** A committed post may have lost its response. Retry exactly its signed bytes. */
+export class UnconfirmedChatPost extends HttpError {
+  constructor(
+    error: HttpError,
+    readonly retry: () => Promise<unknown>
+  ) {
+    super(error.code, error.message, error.details)
+  }
+}
+
+export function uncertainDelivery(error: unknown): error is HttpError {
+  return (
+    error instanceof HttpError &&
+    (error.code === 'offline' || error.code === 'internal')
+  )
+}
+
 export type ChatEngineErrorCode =
   /** The device holds no key for the chat's latest epoch. */
   | 'locked'

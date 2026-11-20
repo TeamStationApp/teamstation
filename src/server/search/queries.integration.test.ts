@@ -10,6 +10,7 @@ import type { Database } from '../db/database'
 import { makeNonce } from '../dev/fixtures/accounts'
 import { runSearch } from '../dev/fixtures/search'
 import { type SearchDeps, searchJev, searchOnce } from './engine'
+import { warmLocations } from './locations'
 import { READER_CACHE_MS, type ReaderCache, readerCache } from './readerCache'
 
 /**
@@ -100,6 +101,9 @@ describe('search engine queries', function () {
   let nonce: string
 
   before(async function () {
+    // The server warms its place catalog at startup. Measure database waits
+    // with that index ready and each test's per-reader cache still cold.
+    await warmLocations()
     f = await groupFixture()
     jev = await fakeJev()
     deps = {

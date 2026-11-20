@@ -16,6 +16,7 @@
     "exported": "4bbd6243b8bb54cec311fac9df81841b6fd61f56538a775e7c80a9f40160606e"
   },
   "frozen": {
+    "previewCiphertextSha256": "d9d40b5116fbf3641ffac1f7980ee57d81e750534e961afdba30f2141b0225b7",
     "recipientPublicKey": "c085cb25d725d21ebe6829a45f7411d34589d3cb98021645d1dad603b09db550",
     "identityPublicKey": "14724019b41f21093706e67cd4e4949ba35a4a7e8212324553a44bf9a61161d1",
     "boxes": {

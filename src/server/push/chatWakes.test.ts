@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { ChatWake } from '../../common/push'
+import { wakeCases } from '../../test/chatWakeCases'
 import type { ApnsMessage } from './apns'
 import { readMessage } from './chatReads'
 import {
@@ -9,6 +10,7 @@ import {
   expiresAfter,
   IOS_ALERT_WAKE_SECONDS,
   IOS_BACKGROUND_WAKE_SECONDS,
+  MAX_INLINE_WAKE,
   STALE_WAKE_MS,
   wakeMessage,
   WEB_WAKE_TTL_SECONDS
@@ -35,6 +37,20 @@ const wake = (dm: boolean): ChatWake => ({
 })
 
 describe('wakeMessage on Android', function () {
+  it('fits the small private preview inline and fetches the larger preview envelope', () => {
+    const cases = wakeCases()
+    const inline = cases.find(item => item.name === 'inlinePreview')!
+    const fetched = cases.find(item => item.name === 'fetchedPreview')!
+    expect(Buffer.byteLength(JSON.stringify(inline.wake))).at.most(
+      MAX_INLINE_WAKE
+    )
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({ ...fetched.wake, env: fetched.message })
+      )
+    ).greaterThan(MAX_INLINE_WAKE)
+  })
+
   it('keeps a wake 8 hours, past a night of Doze and well short of four weeks', function () {
     expect(ANDROID_WAKE_TTL_SECONDS).equals(28_800)
     expect(ANDROID_WAKE_TTL_SECONDS).lessThanOrEqual(24 * 60 * 60)

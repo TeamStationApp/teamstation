@@ -17,6 +17,10 @@ import {
   openWithMessageKey,
   verifyMessage
 } from '../../../common/chatCrypto/seal'
+import {
+  type ChatLinkPreview,
+  previewFromContent
+} from '../../../common/chatLinkPreview'
 import { HttpError } from '../../../common/errors'
 import {
   type ChatKeyRecord,
@@ -44,7 +48,12 @@ import type { ConversationState } from './store'
 
 /** What one envelope opened to. */
 export type Opened =
-  | { status: 'ok'; content: ChatContent; replacedIdentity: boolean }
+  | {
+      status: 'ok'
+      content: ChatContent
+      preview?: ChatLinkPreview
+      replacedIdentity: boolean
+    }
   /** No key for its epoch yet; a grant may still bring one. */
   | { status: 'locked' }
   /** Before a chain break this device holds no key across: never readable. */
@@ -345,14 +354,16 @@ export async function openEnvelope(
     return { status: 'invalid', reason: 'signature' }
   }
   let content: ChatContent
+  let preview: ChatLinkPreview | undefined
   try {
-    content = decodeContent(
-      openWithMessageKey({
-        ...fields,
-        ...sealed,
-        messageKey: messageKey(epochKey, fields.conversationId, envelope.id)
-      })
-    )
+    const bytes = openWithMessageKey({
+      ...fields,
+      ...sealed,
+      messageKey: messageKey(epochKey, fields.conversationId, envelope.id)
+    })
+    content = decodeContent(bytes)
+    if (content.type === 'text' || content.type === 'edit')
+      preview = previewFromContent(bytes, fields, epochKey)
   } catch (error) {
     if (error instanceof ChatCryptoUnavailable) throw error
     return { status: 'invalid', reason: 'content' }
@@ -370,6 +381,7 @@ export async function openEnvelope(
   return {
     status: 'ok',
     content,
+    ...(preview == null ? {} : { preview }),
     replacedIdentity: identity.replacedAt != null
   }
 }

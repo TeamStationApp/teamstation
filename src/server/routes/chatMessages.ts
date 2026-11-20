@@ -78,6 +78,7 @@ const asEnvelope = asObject({
   senderIdentityId: asIdentityId,
   targetIds: asOptional(asArray(asMessageId)),
   attachmentIds: asOptional(asArray(asAttachmentId)),
+  previewAttachmentId: asOptional(asAttachmentId),
   nonce: asBase64urlBytes(24),
   ciphertext: asBase64urlBytes(1, MAX_CIPHERTEXT),
   signature: asBase64urlBytes(64)
@@ -117,6 +118,18 @@ const asMessageBody: Cleaner<MessageBody> = raw => {
     throw new TypeError(
       `Expected at most ${MAX_ATTACHMENTS} different attachmentIds`
     )
+  }
+  if (body.previewAttachmentId != null) {
+    if (
+      (body.kind !== 'post' && body.kind !== 'edit') ||
+      attachmentIds.includes(body.previewAttachmentId)
+    )
+      throw new TypeError('Invalid preview attachment')
+    return {
+      ...body,
+      targetIds,
+      attachmentIds: [...attachmentIds, body.previewAttachmentId]
+    }
   }
   return { ...body, targetIds, attachmentIds }
 }

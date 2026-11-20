@@ -546,7 +546,10 @@ class FakeEngine implements ChatScreenEngine {
   }
 
   async react(): Promise<void> {}
-  async edit(): Promise<void> {}
+  async edit(...args: Parameters<ChatScreenEngine['edit']>): Promise<void> {
+    this.calls.push(['edit', ...args])
+  }
+
   async deleteMessage(): Promise<void> {}
   async moderatorDelete(): Promise<void> {}
   async report(): Promise<{ id: string; verified: boolean }> {
@@ -1355,6 +1358,114 @@ describe('chat repeated offscreen announcements', function () {
 })
 
 describe('chat conversation shared file preparation and sending', function () {
+  it('shows the received card, regenerates an edited caption’s chat link preview, and dismisses the next draft preview', async () => {
+    const engine = new FakeEngine()
+    const room = 'cnv_aurora'
+    const url = 'https://example.org/game'
+    const metadata = {
+      url,
+      siteName: 'example.org',
+      title: 'Team schedule',
+      description: ''
+    }
+    const original = message({
+      mine: true,
+      body: url + '#original',
+      preview: metadata
+    })
+    engine.update(room, { messages: [original] })
+    const pageLocation = Object.getOwnPropertyDescriptor(globalThis, 'location')
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: window.location
+    })
+    const prototype = Object.getPrototypeOf(
+      document.createElement('iframe')
+    ) as HTMLIFrameElement
+    const sandbox = Object.getOwnPropertyDescriptor(prototype, 'sandbox')
+    Object.defineProperty(prototype, 'sandbox', {
+      configurable: true,
+      get: () => new Set()
+    })
+    const observer = new MutationObserver(records => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (
+            !(node instanceof window.HTMLIFrameElement) ||
+            node.contentWindow == null
+          )
+            continue
+          node.contentWindow.postMessage = (
+            request: { id: string },
+            origin?: string | WindowPostMessageOptions,
+            ports?: Transferable[]
+          ) => {
+            assert.equal(origin, '*')
+            const port = ports?.[0] as MessagePort | undefined
+            assert(port != null)
+            port.postMessage({
+              id: request.id,
+              mime: 'text/html',
+              bytes: new TextEncoder().encode('<title>Team schedule</title>')
+                .buffer
+            })
+          }
+          node.dispatchEvent(new window.Event('load'))
+        }
+      }
+    })
+    observer.observe(document.body, { childList: true })
+    try {
+      const body = 'Updated caption ' + url
+      await screen(engine, {
+        onOpenLink: async () => {},
+        draft: { text: body, picked: [], scrollOffset: 0, editing: original }
+      })
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 650))
+      })
+      const received = document.querySelector(
+        '[data-testid="chat-message-' +
+          original.id +
+          '"] [data-testid="chat-link-preview"]'
+      )
+      expect(received?.textContent).contains(metadata.title)
+      expect(received?.querySelector('a')?.getAttribute('href')).equals(
+        url + '#original'
+      )
+      expect(
+        document.querySelector('[data-testid="chat-dismiss-link-preview"]')
+      ).not.equals(null)
+      await press('Send')
+      expect(engine.calls).to.deep.include([
+        'edit',
+        room,
+        original.id,
+        body,
+        [],
+        metadata
+      ])
+      const next = 'Next game https://example.org/next'
+      await type(next)
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 650))
+      })
+      await press('Remove link preview')
+      expect(
+        document.querySelector('[data-testid="chat-dismiss-link-preview"]')
+      ).equals(null)
+      expect(received?.textContent).contains(metadata.title)
+      await press('Send')
+      expect(engine.calls).to.deep.include(['send', room, next, {}])
+    } finally {
+      observer.disconnect()
+      if (sandbox == null) Reflect.deleteProperty(prototype, 'sandbox')
+      else Object.defineProperty(prototype, 'sandbox', sandbox)
+      if (pageLocation == null) Reflect.deleteProperty(globalThis, 'location')
+      else Object.defineProperty(globalThis, 'location', pageLocation)
+    }
+  })
+
   it('only prepares a drop, blocks both send entries until preparation finishes, and retains original file order', async function () {
     const engine = new FakeEngine()
     const read = pending<ArrayBuffer>()

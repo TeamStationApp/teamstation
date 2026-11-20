@@ -329,6 +329,15 @@ const withFonts = page =>
 /** Keep the web AudioWorklet at the bundle origin. */
 await copyFile('src/app/scoring/pcm16kWorklet.js', `${out}/pcm16kWorklet.js`)
 
+// The preview frame exchanges bytes with the composer through a private port.
+const previewScript = await readFile('src/app/chat/linkPreviewFrame.js', 'utf8')
+const previewHash = createHash('sha256').update(previewScript).digest('base64')
+const previewPolicy = `default-src 'none'; script-src 'sha256-${previewHash}'; connect-src https: http:; base-uri 'none'; form-action 'none'`
+await writeFile(
+  `${out}/chat-link-preview.html`,
+  `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${previewPolicy}"><meta name="referrer" content="no-referrer"><script>${previewScript}</script>`
+)
+
 // Earlier deploys' modules, then this one's, so exactly one is left.
 for (const name of await readdirSafe(out)) {
   if (/^chat-crypto-[0-9a-f]+\.wasm$/.test(name) && name !== wasmFile) {

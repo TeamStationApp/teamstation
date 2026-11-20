@@ -257,6 +257,47 @@ describe('measured LLVM changed-line counters', function () {
     expect(() => verifySnapshot(current, f.root)).throws('source changed')
   })
 
+  it('requires counters for Rust code and accepts a declaration-only crate root', function () {
+    const f = fixture()
+    const root = join(f.root, 'src/lib.rs')
+    writeFileSync(
+      root,
+      '//! Crate modules.\n#[cfg(feature = "mobile-preview")]\nextern crate mobile_preview;\npub mod a;\n'
+    )
+    f.git(['add', 'src'])
+    const counts = join(f.root, 'counts.json')
+    const bind = (): void => {
+      const manifest = snapshot(f.root, ['src'])
+      writeFileSync(f.lcov, f.record())
+      utimesSync(f.lcov, new Date(), new Date(manifest.capturedAt + 10))
+      writeFileSync(counts, JSON.stringify(convert(manifest, f.lcov)))
+    }
+    bind()
+    const runGate = (): number =>
+      gate.main(
+        [
+          '--base',
+          'HEAD',
+          '--counts',
+          counts,
+          '--min',
+          '50',
+          '--ext',
+          '.rs',
+          'src'
+        ],
+        {
+          cwd: f.root,
+          run: (_file: string, args: string[]) => f.git(args),
+          log: () => {}
+        }
+      )
+    expect(runGate()).equals(0)
+    writeFileSync(root, 'pub mod a;\npub fn initialization() {}\n')
+    bind()
+    expect(runGate()).equals(1)
+  })
+
   it('rejects unknown source paths, foreign roots, escaping symlinks and invalid manifests', function () {
     const f = fixture()
     const other = fixture()
