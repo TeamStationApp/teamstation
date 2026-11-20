@@ -1002,6 +1002,7 @@ async function main(): Promise<void> {
     ) {
       // The Chat tab can resume a conversation on a retained phone. These
       // two scenarios start at the list before selecting their fixture row.
+      await m.assertVisible({ text: '^Chat$', timeout: 60000 })
       await m.openLink({ link: `${fixture.scheme}://chat` })
     } else {
       await m.assertVisible({ text: 'Chat', timeout: 60000 })
