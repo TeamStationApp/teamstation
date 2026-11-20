@@ -785,6 +785,10 @@ describe('scoring shell and exit', function () {
     expect(game.opens()).equals(1)
     expect(game.session()).equals(session)
     expect(balls()).equals('1 balls')
+    // Answered, so nothing it holds outlives the test.
+    game.release()
+    await wait()
+    expect(session.pending).equals(0)
   })
 
   it('opens from the server when the let-go session saves while the screen is reading', async function () {
