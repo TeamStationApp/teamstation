@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path'
 
 import puppeteer from 'puppeteer'
 
+import { revealCoveredTaps } from '../../../e2e/rigs/refinementsMaestro'
 import { chatRowById, chatRowSelector } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
@@ -3478,6 +3479,16 @@ async function main(): Promise<void> {
     name: required('MAESTRO_D'),
     bin: required('MAESTRO_D_BIN')
   })
+  // Each browser's tap brings a target the tab bar covers to the middle.
+  const attach = daemon.attach.bind(daemon)
+  daemon.attach = async options => {
+    const device = await attach(options)
+    revealCoveredTaps(
+      device,
+      async script => await device.evalBrowserScript({ script })
+    )
+    return device
+  }
   try {
     if (scenario === 'S1') await s1(daemon)
     else if (scenario === 'S2') await s2(daemon)
