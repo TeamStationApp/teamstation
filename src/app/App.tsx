@@ -19,13 +19,13 @@ import {
 } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import {
-  type InviteInfo,
-  type MyRoles,
-  type SeasonSummary,
-  type Session,
+import type {
+  InviteInfo,
+  MyRoles,
+  SeasonSummary,
+  Session,
   TeamStationClient,
-  type TeamSummary
+  TeamSummary
 } from '../common/api'
 import { asTeamSummary } from '../common/api'
 import { GameSocket, type ScreenScope } from '../common/gameSocket'
@@ -236,6 +236,7 @@ import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
+import { openDocumentCache } from './sync/cache'
 import {
   CachingClient,
   OFFLINE_CREATE_MESSAGE,
@@ -250,7 +251,8 @@ import {
   unsentLossText,
   useHeldNames,
   useOutboxSummary,
-  usePhoneOffline
+  usePhoneOffline,
+  useUnsentEditsWarning
 } from './sync/useOffline'
 import { TessDivider } from './tess/TessDivider'
 import { usePaneAtLeast, useTessWide, useTessWidth } from './tess/tessLayout'
@@ -319,9 +321,10 @@ export interface AppProps {
    */
   forgetSessionCookie?: () => Promise<void>
   /**
-   * Opens a person's document cache. Given (on the phone), the client keeps
-   * the documents it can show offline; the web keeps none and is not given
-   * one.
+   * Opens a person's document cache, where the client keeps the documents
+   * it can show offline and the outbox of edits still to send. By default
+   * `./sync/cache`'s: the phone's SQLite file (`cache.native.ts`), or on
+   * the web an in-memory database of the tab's own (`cache.ts`).
    */
   documentCache?: OpenDocumentCache
   /** Makes the Search tab's socket; a test passes one that opens none. */
@@ -522,33 +525,31 @@ function Shell(props: AppProps): React.ReactElement {
     setBackOverride(() => handler)
   }, [])
 
-  const { initialToken, onToken, onUser, documentCache, forgetSessionCookie } =
-    props
+  const {
+    initialToken,
+    onToken,
+    onUser,
+    documentCache = openDocumentCache,
+    forgetSessionCookie
+  } = props
   /** The phone's cookie jar lets go of the session, whatever else answers. */
   const forgetCookie = async (): Promise<void> => {
     await forgetSessionCookie?.().catch(() => undefined)
   }
   // One client for as long as the app runs, kept across sign-out and the next
-  // sign-in. On the phone it keeps documents, in a file opened only once a
-  // user id is known.
+  // sign-in. It keeps documents and queues edits, in a cache opened only
+  // once a user id is known: a file on the phone, memory on the web.
   const client = useMemo(
     () =>
-      documentCache == null
-        ? new TeamStationClient({
-            baseUrl: apiBaseUrl,
-            token: initialToken,
-            passwordKdf,
-            deviceModel: signInDeviceModel()
-          })
-        : new CachingClient({
-            baseUrl: apiBaseUrl,
-            token: initialToken,
-            passwordKdf,
-            deviceModel: signInDeviceModel(),
-            openCache: documentCache,
-            onDeadlineMissed: leaveStalledConnections,
-            ...(timedRequest == null ? {} : { timedRequest })
-          }),
+      new CachingClient({
+        baseUrl: apiBaseUrl,
+        token: initialToken,
+        passwordKdf,
+        deviceModel: signInDeviceModel(),
+        openCache: documentCache,
+        onDeadlineMissed: leaveStalledConnections,
+        ...(timedRequest == null ? {} : { timedRequest })
+      }),
     [apiBaseUrl, initialToken, documentCache]
   )
   const caching = client instanceof CachingClient ? client : undefined
@@ -950,10 +951,12 @@ function Shell(props: AppProps): React.ReactElement {
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
   useResumePendingUploads(client, signedInAs)
-  // The phone's banner: the last request could not leave the device, and
-  // what its queue holds. The web's client is never offline here.
+  // The offline banner: the last request could not leave the device, and
+  // what its queue holds, on the phone and the web alike. The page warns
+  // before it unloads while the queue holds an edit.
   const phoneOffline = usePhoneOffline(client)
   const outbox = useOutboxSummary(client, signedInAs)
+  useUnsentEditsWarning(outbox)
   const bannerText =
     signedInAs == null ? undefined : offlineBannerText(phoneOffline, outbox)
   const [createRefused, setCreateRefused] = useState(false)

@@ -415,13 +415,6 @@ describe('the phone shell offline', () => {
     }
   })
 
-  it('shows no banner on the web, which keeps no queue', async () => {
-    net.offline = true
-    showRoute({ name: 'home' }, true)
-    await mount(<App initialToken="token-one" />)
-    await settle(100)
-    expect(banner()).equals(null)
-  })
   it('keeps what was queued through a launch the server refuses, and sends it once the same person signs in', async () => {
     await earlierLaunch()
     // The session ran out while the phone was away.

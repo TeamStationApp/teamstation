@@ -6,8 +6,8 @@ import { CachingClient, OFFLINE_CREATE_MESSAGE } from './cachingClient'
 import type { HeldChain, OutboxNotice, OutboxSummary } from './outbox'
 
 /**
- * What the shell and the screens say while the phone is offline. The web
- * keeps no documents and queues nothing, so it says none of it.
+ * What the shell and the screens say while the device is offline, on the
+ * phone and the web alike: both keep documents and queue edits.
  */
 export const OFFLINE_BANNER =
   "Offline. Edits will send when you're back online."
@@ -113,9 +113,8 @@ export function heldGameText(held: HeldChain | undefined): string | undefined {
 }
 
 /**
- * Whether the phone's last request failed to leave it, kept up to date. The
- * web's client is never offline here: its screens behave as they always
- * have.
+ * Whether the device's last request failed to leave it, kept up to date.
+ * A plain client, which queues nothing, is never offline here.
  */
 export function usePhoneOffline(client: TeamStationClient): boolean {
   const phone = client instanceof CachingClient
@@ -132,8 +131,8 @@ export function usePhoneOffline(client: TeamStationClient): boolean {
 }
 
 /**
- * The phone's queue as it stands, kept up to date; nothing on the web.
- * `owner` is whose file is open: a new one reads the queue again.
+ * The queue as it stands, kept up to date; nothing for a plain client.
+ * `owner` is whose cache is open: a new one reads the queue again.
  */
 export function useOutboxSummary(
   client: TeamStationClient,
@@ -159,6 +158,30 @@ export function useOutboxSummary(
     }
   }, [client, owner])
   return summary
+}
+
+/**
+ * Asks the browser to warn before the page unloads while `summary` holds an
+ * edit: the web's queue is in memory, and leaving loses it. Nothing on the
+ * phone, which has no page to unload and keeps its queue in a file.
+ */
+export function useUnsentEditsWarning(
+  summary: OutboxSummary | undefined
+): void {
+  const waiting = (summary?.count ?? 0) > 0
+  useEffect(() => {
+    // React Native's `window` has no events.
+    if (!waiting || typeof window?.addEventListener !== 'function') return
+    const unload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault()
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', unload)
+    return () => {
+      window.removeEventListener('beforeunload', unload)
+    }
+  }, [waiting])
 }
 
 /**
