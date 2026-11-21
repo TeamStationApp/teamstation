@@ -552,6 +552,26 @@ export type ChatPerson = Omit<
 }
 export const asChatPerson: Cleaner<ChatPerson> = cleanChatPerson
 
+/**
+ * How a reader can message somebody: a DM with them (`direct`), or, for a
+ * player who cannot sign in, through their guardians or coaches (`proxies`).
+ */
+export type MessageReach = 'direct' | 'proxies'
+
+/** Whom to message for a player who cannot sign in (`GET /chat/dm-proxies`). */
+export const asDmProxies = asObject({
+  player: asObject({ userId: asUserId, shortName: asString }),
+  kind: asLiteral('guardians', 'coaches'),
+  /** No account to sign in with, or one, under 13; an older server says neither. */
+  why: asOptional(asLiteral('noAccount', 'tooYoung'), 'noAccount'),
+  people: asArray(asChatPerson)
+})
+export type DmProxies = ReturnType<typeof asDmProxies>
+
+const asDmReach = asObject({
+  reach: asEither(asLiteral(null), asLiteral('direct', 'proxies'))
+})
+
 export const asChatBlock = asObject({
   userId: asUserId,
   shortName: asString,
@@ -1110,12 +1130,14 @@ export const asGameDetail = withEventMetadata(
                 asObject({
                   userId: asString,
                   name: asString,
-                  avatarUrl: asOptional(asNullable(asString))
+                  avatarUrl: asOptional(asNullable(asString)),
+                  openable: asOptional(asBoolean)
                 }),
                 asLiteral(null)
               )
             })
-          )
+          ),
+          leagueId: asOptional(asString)
         }),
         asLiteral(null)
       ),
@@ -7436,6 +7458,29 @@ export class TeamStationClient {
       'GET',
       `/chat/dm-candidates?q=${encodeURIComponent(query)}${userId == null ? '' : `&userId=${encodeURIComponent(userId)}`}`,
       asArray(asChatPerson)
+    )
+  }
+
+  /**
+   * How the signed-in person can message `userId`: `direct`, `proxies` (a
+   * player who cannot sign in, through their guardians or coaches), or null.
+   */
+  async dmReach(userId: string): Promise<MessageReach | null> {
+    return (
+      await this.request(
+        'GET',
+        `/chat/dm-reach?userId=${encodeURIComponent(userId)}`,
+        asDmReach
+      )
+    ).reach
+  }
+
+  /** Whom the signed-in person may message for a player who cannot sign in. */
+  async dmProxies(userId: string): Promise<DmProxies> {
+    return await this.request(
+      'GET',
+      `/chat/dm-proxies?userId=${encodeURIComponent(userId)}`,
+      asDmProxies
     )
   }
 

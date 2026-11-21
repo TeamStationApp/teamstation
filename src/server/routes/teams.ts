@@ -716,7 +716,14 @@ export function teamRoutes(
       })
       const answer = {
         id: game.id,
-        umpires: await gameUmpires(db, game.id, media, readerOf(actor)),
+        umpires: await gameUmpires(
+          db,
+          game.id,
+          media,
+          readerOf(actor),
+          // Acceptance into the league decides, not membership of a team.
+          actor ?? undefined
+        ),
         guests: availability.guests,
         unrostered: availability.unrostered,
         guestPlayers:
