@@ -1692,7 +1692,7 @@ async function e10(run: Run): Promise<void> {
   // or one apart team by team ("Demo Rockets gets 33 of 40…; the others get
   // 34 of 40"), as the fixture's ids and the hour of the run fall.
   expect(unmet.message).matches(
-    /^(every team gets \d+ of the 40 requested regular-season games|.+ gets \d+ of 40 regular-season games(; .+ gets? \d+ of 40)+)$/
+    /^(every team gets \d+ of the 40 requested regular-season games|[^;]+ gets \d+ of 40 regular-season games(?:; [^;]+ gets? \d+ of 40)+)$/
   )
   expect(unmet.cause).equals(
     'not enough 50/70 field time to give every team 40 games'

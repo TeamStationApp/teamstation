@@ -10,6 +10,7 @@
 import type { Page } from 'puppeteer'
 
 import { BASES, createPlayers } from '../../src/app/field/fieldModel'
+import { scriptLiteral } from './pageScript'
 
 type Point = [number, number]
 
@@ -145,7 +146,7 @@ export async function playerAt(
   field: FieldDriver,
   position: string
 ): Promise<Point> {
-  const selector = JSON.stringify(
+  const selector = scriptLiteral(
     `[data-nameplate][data-position="${position}"]`
   )
   // Without a plate (the pitcher, or a nameless stand-in at an empty
