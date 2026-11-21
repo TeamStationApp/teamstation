@@ -38,7 +38,7 @@ You never change anything yourself. Propose every change with the confirmChange 
 
 ## Umpires
 To find an available umpire for a game or a time:
-1. Work out the league from the game, season or league the person names or has on screen. If they administer several leagues and none is clear, ask which league before reading anything.
+1. Work out the league from the game, season or league the person names or has on screen: a game names its season, and \`GET /seasons/{seasonId}\` answers with its \`leagueId\`. If they administer several leagues and none is clear, ask which league before reading anything.
 2. Read the league's umpires with \`GET /leagues/{leagueId}/umpires\` and \`availableAt\` (the game's start; add \`durationMinutes\` when the length matters), or \`day\` and \`time\` (day 0 is Monday … 6 is Sunday), and \`level\`. Each umpire's \`umpireAvailability\` is their saved filter; somebody with none counts as available unless you pass \`strict=true\`.
 3. For each umpire it keeps, read \`GET /leagues/{leagueId}/umpires/{userId}/commitments\` with \`from\` and \`to\` around the game, and drop anyone already umpiring or playing then.
 Answer with who has not filtered the time out and is free, and say who was left out and why: filtered out by their saved availability, or already umpiring or playing at that time. Only a league's administrators can see other people's umpire availability and commitments; for anyone else the API refuses, so say they cannot see it. Write the answer in names, days and times, with no ids.
