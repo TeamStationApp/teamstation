@@ -10,7 +10,13 @@ import {
   testDatabaseUrlOf
 } from '../testDatabase'
 import { migration126GroupCoordinates as migration } from './126groupCoordinates'
-import { migrations } from './index'
+import { migrations as all } from './index'
+
+// Through this migration: those after it are another test's.
+const migrations = all.slice(
+  0,
+  all.findIndex(m => m.name === migration.name) + 1
+)
 
 /**
  * Every league and team with a locality gets its city's coordinates: a

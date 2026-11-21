@@ -140,6 +140,7 @@ import { migration123CoveredAdmins } from './123coveredAdmins'
 import { migration124PushNotifications } from './124pushNotifications'
 import { migration125SolverLimit } from './125solverLimit'
 import { migration126GroupCoordinates } from './126groupCoordinates'
+import { migration127AgeBands } from './127ageBands'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -283,5 +284,6 @@ export const migrations: Migration[] = [
   migration123CoveredAdmins,
   migration124PushNotifications,
   migration125SolverLimit,
-  migration126GroupCoordinates
+  migration126GroupCoordinates,
+  migration127AgeBands
 ]

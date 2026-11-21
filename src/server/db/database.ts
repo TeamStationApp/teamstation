@@ -60,6 +60,15 @@ export interface UsersTable {
   birth_year: number | null
   birth_month: number | null
   /**
+   * 18 or older without a birth month (127ageBands); a birth month always
+   * wins over it. `ageBandOf` in `common/age.ts` reads the band from these.
+   */
+  is_adult: Generated<boolean>
+  /** Who set the age most recently. */
+  age_source: 'self' | 'apple' | 'guardian' | 'admin' | null
+  /** When the person first gave their age themselves; kept after later changes. */
+  age_set_at: Timestamp | null
+  /**
    * When and how chat was unlocked for this account, both or neither
    * (105chatAgeConfirmations): `apple` from a shared Declared Age Range of 13
    * or more, `self` from the app's age sheet.
