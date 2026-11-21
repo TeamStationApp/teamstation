@@ -44,6 +44,7 @@ import {
 } from '../auth/passwords'
 import { checkLimits, type LimitRule, recordAttempts } from '../auth/rateLimit'
 import { isMachine } from '../auth/sessions'
+import { recheckDmsOf } from '../chat/dms'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
@@ -482,6 +483,10 @@ export function accountRoutes(
           })
           .where('id', '=', userId)
           .execute()
+        // In the same transaction, so the age and its effect land together:
+        // a DM this age breaks closes, and what was said in it before is
+        // hidden from the minor, before any session can read with the age.
+        await recheckDmsOf(tx, userId, now)
       })
       const age = await readAge(db, userId, now)
       setAudit(res.locals, {

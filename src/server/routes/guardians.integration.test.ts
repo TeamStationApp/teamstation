@@ -316,6 +316,64 @@ describe('guardians, ages and the SafeSport setting (U2)', function () {
       expect(await relatives('R')).deep.equals([])
     })
 
+    it('refuses a guardian known to be under 18, but not one with no age yet, and keeps family of any age', async function () {
+      const setB = async (fields: {
+        birth_year: number | null
+        birth_month: number | null
+        is_adult: boolean
+      }): Promise<void> => {
+        await database()
+          .updateTable('users')
+          .set(fields)
+          .where('id', '=', id('B'))
+          .execute()
+      }
+      await setB({
+        birth_year: new Date().getUTCFullYear() - 16,
+        birth_month: 1,
+        is_adult: false
+      })
+      try {
+        const refused = await call('Ha', 'POST', guardiansPath('R'), {
+          userId: String(id('B'))
+        })
+        expect(refused.status).equals(400)
+        expect(refused.body.details.reason).equals('guardianNotAdult')
+        // Invitations and the seed link through the same function.
+        let thrown: unknown
+        try {
+          await linkGuardian(
+            database(),
+            id('R'),
+            id('B'),
+            seed.teams.hawks,
+            null,
+            'guardian'
+          )
+        } catch (error) {
+          thrown = error
+        }
+        expect(JSON.stringify(thrown)).includes('guardianNotAdult')
+        const family = await call('Ha', 'POST', guardiansPath('R'), {
+          userId: String(id('B')),
+          kind: 'family'
+        })
+        expect(family.status).equals(201)
+        await call('Hc', 'DELETE', `${guardiansPath('R')}/${id('B')}`)
+
+        // Somebody who has not given an age yet may be linked.
+        await setB({ birth_year: null, birth_month: null, is_adult: false })
+        const fresh = await call('Ha', 'POST', guardiansPath('R'), {
+          userId: String(id('B'))
+        })
+        expect(fresh.status).equals(201)
+        await call('Hc', 'DELETE', `${guardiansPath('R')}/${id('B')}`)
+      } finally {
+        await setB({ birth_year: null, birth_month: null, is_adult: true })
+      }
+      expect(await relatives('R')).deep.equals([])
+    })
+
     it('links an existing account by address at once, with a membership granted by the link', async function () {
       const answer = await call('Hc', 'POST', guardiansPath('T'), {
         email: ' D@Chat.Example.com '
@@ -738,6 +796,15 @@ describe('guardians, ages and the SafeSport setting (U2)', function () {
         birthMonth: text(older),
         isAdult: false
       })
+      const setAt = async (): Promise<unknown> =>
+        (
+          await database()
+            .selectFrom('users')
+            .select(['age_source', 'age_set_at'])
+            .where('id', '=', id('P'))
+            .executeTakeFirstOrThrow()
+        ).age_set_at
+      const firstAnswer = await setAt()
       const site = await call('Z', 'PUT', path('P'), teen)
       expect(site.status).equals(200)
       const row = await database()
@@ -745,7 +812,8 @@ describe('guardians, ages and the SafeSport setting (U2)', function () {
         .select(['age_source', 'age_set_at'])
         .where('id', '=', id('P'))
         .executeTakeFirstOrThrow()
-      expect(row).deep.equals({ age_source: 'admin', age_set_at: null })
+      // A change by somebody else leaves when the person first answered.
+      expect(row).deep.equals({ age_source: 'admin', age_set_at: firstAnswer })
 
       // Coaches no longer keep a player's age.
       for (const key of ['Hc', 'Ha', 'P', 'A', 'F', 'Hk', 'Ec']) {

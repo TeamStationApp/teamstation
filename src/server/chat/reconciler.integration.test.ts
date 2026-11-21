@@ -464,7 +464,7 @@ describe('the chat reconciler (U5)', function () {
     )
   })
 
-  it('removes a DM member who turns under 13 or loses their account, at once', async function () {
+  it('removes a DM member who turns under 13 or loses their account, at once, and closes the DM it leaves with one', async function () {
     const p = fixture.id('P')
     const e = fixture.id('E')
     const made = await createDm(db, e, [p], fixture.now)
@@ -482,18 +482,17 @@ describe('the chat reconciler (U5)', function () {
     )
     await fixture.drain()
     const rows = await log(made.conversationId)
-    expect(rows.at(-1)).deep.equals({
-      event: 'leave',
-      who: 'E',
-      reason: 'notEligible'
-    })
+    expect(rows.slice(-2)).deep.equals([
+      { event: 'leave', who: 'E', reason: 'notEligible' },
+      { event: 'closed', who: 'E', reason: 'notEligible' }
+    ])
     const dm = await db
       .selectFrom('chat_conversations')
       .select(['needs_rotation', 'closed_at'])
       .where('id', '=', made.conversationId)
       .executeTakeFirstOrThrow()
     expect(dm.needs_rotation).equals(true)
-    expect(dm.closed_at).equals(null)
+    expect(dm.closed_at).not.equals(null)
     await db
       .updateTable('users')
       .set({ birth_year: 2011, birth_month: 2 })
@@ -502,32 +501,32 @@ describe('the chat reconciler (U5)', function () {
     await fixture.drain()
 
     // Losing every way to sign in.
-    const k = fixture.id('K')
-    const second = await createDm(db, k, [p], fixture.now)
-    await db.deleteFrom('user_emails').where('user_id', '=', k).execute()
+    const ha = fixture.id('Ha')
+    const second = await createDm(db, ha, [p], fixture.now)
+    await db.deleteFrom('user_emails').where('user_id', '=', ha).execute()
     await db
       .updateTable('users')
       .set({ password_hash: null })
-      .where('id', '=', k)
+      .where('id', '=', ha)
       .execute()
-    expect(await memberNow(db, second.conversationId, k, fixture.now)).equals(
+    expect(await memberNow(db, second.conversationId, ha, fixture.now)).equals(
       false
     )
     await fixture.drain()
-    expect((await log(second.conversationId)).at(-1)).deep.equals({
-      event: 'leave',
-      who: 'K',
-      reason: 'notEligible'
-    })
+    expect((await log(second.conversationId)).slice(-2)).deep.equals([
+      { event: 'leave', who: 'Ha', reason: 'notEligible' },
+      { event: 'closed', who: 'Ha', reason: 'notEligible' }
+    ])
     expect(await chainsVerify(db)).equals(true)
   })
 
   it('closes a DM on the next run when a coach role or the season goes', async function () {
     const p = fixture.id('P')
     const hc = fixture.id('Hc')
-    const s = fixture.id('S')
+    // E, 16, plays for Eagles in P's season: a peer while they share it.
+    const e = fixture.id('E')
     const coachDm = await createDm(db, hc, [p], fixture.now)
-    const seasonDm = await createDm(db, s, [p], fixture.now)
+    const seasonDm = await createDm(db, e, [p], fixture.now)
     await db
       .deleteFrom('scope_roles')
       .where('user_id', '=', hc)
@@ -865,11 +864,10 @@ describe('the chat reconciler (U5)', function () {
         who: fixture.keyOf(going),
         reason: 'audience'
       })
-      expect((await log(dm.conversationId)).at(-1)).deep.equals({
-        event: 'leave',
-        who: fixture.keyOf(under13),
-        reason: 'notEligible'
-      })
+      expect((await log(dm.conversationId)).slice(-2)).deep.equals([
+        { event: 'leave', who: fixture.keyOf(under13), reason: 'notEligible' },
+        { event: 'closed', who: fixture.keyOf(under13), reason: 'notEligible' }
+      ])
       await conversation('leagueOrg', fixture.seed.leagueId)
       expect(await members(broken)).includes(fixture.keyOf(staying))
       const said = lines.join('\n')

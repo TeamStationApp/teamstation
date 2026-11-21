@@ -769,19 +769,384 @@ describe('chat messages, deletes, read cursors and reports (U8)', function () {
       expect(await auditRows('%/read')).equals(0)
     })
 
+    it('closes the DM and hides its history as the first answer is given, before the reconciler runs', async function () {
+      // The age route stamps the answer by the real clock; the DM's joins go
+      // just before it.
+      const fixtureNow = fixture.now
+      fixture.now = new Date(Date.now() - 60_000)
+      try {
+        const u = await fixture.person('Answering', { noAge: true })
+        await db
+          .insertInto('memberships')
+          .values({
+            id: `mem_${u}`,
+            user_id: u,
+            team_id: fixture.seed.teams.hawks,
+            role: 'member'
+          })
+          .execute()
+        await fixture.drain()
+        held.A ??= await devices.enrol('A')
+        const made = ok(
+          await call('A', 'POST', '/chat/dms', { userIds: [u] }),
+          201
+        )
+        const key = await makeEpoch('A', made.id, 1, null)
+        ok(
+          await post(
+            'A',
+            made.id,
+            seal('A', made.id, 1, key, 'post', text('earlier')).body
+          ),
+          201
+        )
+        const now = new Date()
+        ok(
+          await call('Answering', 'PUT', '/me/account/age', {
+            year: now.getUTCFullYear() - 15,
+            month: 1
+          })
+        )
+        // No drain: the age route itself has closed the DM and hidden it.
+        const dm = await db
+          .selectFrom('chat_conversations')
+          .select('closed_at')
+          .where('id', '=', made.id)
+          .executeTakeFirstOrThrow()
+        expect(dm.closed_at).not.equals(null)
+        expect(
+          ok(
+            await call(
+              'Answering',
+              'GET',
+              `/chat/conversations/${made.id}/messages`
+            )
+          )
+        ).deep.equals([])
+        expect(
+          ok(await call('A', 'GET', `/chat/conversations/${made.id}/messages`))
+        ).to.have.length(1)
+      } finally {
+        fixture.now = fixtureNow
+      }
+    })
+
+    /**
+     * On the real clock (the age routes stamp answers by it): a Hawks member
+     * with no age, in a DM with A that holds one post from A.
+     */
+    const ageless = async (
+      key: string,
+      by = 'A',
+      player = false
+    ): Promise<{ userId: string; dm: string; restore: () => void }> => {
+      const fixtureNow = fixture.now
+      fixture.now = new Date(Date.now() - 60_000)
+      const restore = (): void => {
+        fixture.now = fixtureNow
+      }
+      try {
+        const userId = await fixture.person(key, { noAge: true })
+        await db
+          .insertInto('memberships')
+          .values({
+            id: `mem_${userId}`,
+            user_id: userId,
+            team_id: fixture.seed.teams.hawks,
+            role: 'member',
+            is_player: player
+          })
+          .execute()
+        await fixture.drain()
+        held[by] ??= await devices.enrol(by)
+        const made = ok(
+          await call(by, 'POST', '/chat/dms', { userIds: [userId] }),
+          201
+        )
+        const key1 = await makeEpoch(by, made.id, 1, null)
+        ok(
+          await post(
+            by,
+            made.id,
+            seal(by, made.id, 1, key1, 'post', text('earlier')).body
+          ),
+          201
+        )
+        return { userId, dm: made.id, restore }
+      } catch (error) {
+        restore()
+        throw error
+      }
+    }
+    const fifteen = (): { year: number; month: number } => ({
+      year: new Date().getUTCFullYear() - 15,
+      month: 1
+    })
+    const messagesFor = async (who: string, dm: string): Promise<unknown[]> =>
+      ok(
+        await call(who, 'GET', `/chat/conversations/${dm}/messages`)
+      ) as unknown[]
+    const closedAt = async (dm: string): Promise<Date | null> =>
+      (
+        await db
+          .selectFrom('chat_conversations')
+          .select('closed_at')
+          .where('id', '=', dm)
+          .executeTakeFirstOrThrow()
+      ).closed_at
+
+    it('closes and hides on a first age a site administrator gives', async function () {
+      const { userId, dm, restore } = await ageless('AdminAged')
+      try {
+        ok(await call('Z', 'PUT', `/people/${userId}/age`, fifteen()))
+        expect(await closedAt(dm)).not.equals(null)
+        expect(await messagesFor('AdminAged', dm)).deep.equals([])
+      } finally {
+        restore()
+      }
+    })
+
+    it('hides a DM the adult in it has left from a member who answers 13 to 17', async function () {
+      const { dm, restore } = await ageless('LeftBehind')
+      try {
+        ok(await call('A', 'DELETE', `/chat/dms/${dm}/members/me`))
+        ok(await call('LeftBehind', 'PUT', '/me/account/age', fifteen()))
+        expect(await messagesFor('LeftBehind', dm)).deep.equals([])
+      } finally {
+        restore()
+      }
+    })
+
+    it('leaves a DM under way open while the minor’s guardian has no age, and lists no hidden messages', async function () {
+      const { userId, dm, restore } = await ageless('NoAgeYet')
+      try {
+        // Answering 15 closes the DM with A and hides its post from them…
+        ok(await call('NoAgeYet', 'PUT', '/me/account/age', fifteen()))
+        const listed = (
+          ok(await call('NoAgeYet', 'GET', '/chat/conversations')) as Array<{
+            id: string
+            unread: number
+            lastPostId: string | null
+            lastMessageAt: string | null
+          }>
+        ).find(row => row.id === dm)
+        // …and the list shows nothing of what it hides.
+        expect(listed).to.include({
+          unread: 0,
+          lastPostId: null,
+          lastMessageAt: null
+        })
+        // A DM between that minor and a guardian with no age (as every
+        // parent is at deploy) stays open: the guardian reads nothing until
+        // they answer, and their answer re-checks it.
+        const parent = await fixture.person('NoAgeParent')
+        await db
+          .insertInto('user_links')
+          .values({
+            id: `ul_${parent}`,
+            user_id: parent,
+            related_user_id: userId,
+            kind: 'guardian',
+            can_manage: true
+          })
+          .execute()
+        await fixture.drain()
+        const family = ok(
+          await call('NoAgeParent', 'POST', '/chat/dms', { userIds: [userId] }),
+          201
+        )
+        await db
+          .updateTable('users')
+          .set({ is_adult: false, age_source: null, age_set_at: null })
+          .where('id', '=', parent)
+          .execute()
+        await fixture.drain()
+        expect(await closedAt(family.id)).equals(null)
+        // A new DM still needs the guardian to be an adult.
+        await db
+          .updateTable('chat_conversations')
+          .set({ closed_at: new Date() })
+          .where('id', '=', family.id)
+          .execute()
+        expect(
+          (
+            await call('NoAgeParent', 'POST', '/chat/dms', {
+              userIds: [userId]
+            })
+          ).status
+        ).equals(403)
+      } finally {
+        restore()
+      }
+    })
+
+    it('hides from an adult whose first answer breaks a minor’s DM what the minor wrote before', async function () {
+      const fixtureNow = fixture.now
+      fixture.now = new Date(Date.now() - 60_000)
+      try {
+        // X plays for Eagles in P's season, born 44 months before P: a peer,
+        // and an adult.
+        const p = await db
+          .selectFrom('users')
+          .select(['birth_year', 'birth_month'])
+          .where('id', '=', fixture.id('P'))
+          .executeTakeFirstOrThrow()
+        const months = p.birth_year! * 12 + (p.birth_month! - 1) - 44
+        const x = await fixture.person('Xavier', {
+          birth: { year: Math.floor(months / 12), month: (months % 12) + 1 }
+        })
+        await db
+          .insertInto('memberships')
+          .values({
+            id: `mem_${x}`,
+            user_id: x,
+            team_id: fixture.seed.teams.eagles,
+            role: 'member',
+            is_player: true
+          })
+          .execute()
+        await fixture.drain()
+        held.P ??= await devices.enrol('P')
+        const made = ok(
+          await call('P', 'POST', '/chat/dms', { userIds: [x] }),
+          201
+        )
+        // An administrator clears X's age: X reads nothing, and breaks no
+        // rule in the DM under way.
+        ok(
+          await call('Z', 'PUT', `/people/${x}/age`, {
+            year: null,
+            month: null
+          })
+        )
+        await fixture.drain()
+        expect(await closedAt(made.id)).equals(null)
+        const key = await makeEpoch('P', made.id, 1, null)
+        ok(
+          await post(
+            'P',
+            made.id,
+            seal('P', made.id, 1, key, 'post', text('from P')).body
+          ),
+          201
+        )
+        // X answers 18 or older, which makes them no peer of P's.
+        ok(await call('Xavier', 'PUT', '/me/account/age', { adult: true }))
+        expect(await closedAt(made.id)).not.equals(null)
+        expect(await messagesFor('Xavier', made.id)).deep.equals([])
+        expect(await messagesFor('P', made.id)).to.have.length(1)
+      } finally {
+        fixture.now = fixtureNow
+      }
+    })
+
+    it('leaves the history a minor has read when a later break closes the DM', async function () {
+      const { userId, dm, restore } = await ageless('Coached', 'Hc', true)
+      const role = await db
+        .selectFrom('scope_roles')
+        .selectAll()
+        .where('user_id', '=', fixture.id('Hc'))
+        .where('scope_id', '=', fixture.seed.teams.hawks)
+        .execute()
+      try {
+        // Answering 15 keeps the DM with their coach open, history and all.
+        ok(await call('Coached', 'PUT', '/me/account/age', fifteen()))
+        expect(await closedAt(dm)).equals(null)
+        expect(await messagesFor('Coached', dm)).to.have.length(1)
+        // Hc stops coaching Hawks: the next pass closes the DM for the pair
+        // rule, and hides nothing Coached has read.
+        await db
+          .deleteFrom('scope_roles')
+          .where('user_id', '=', fixture.id('Hc'))
+          .where('scope_id', '=', fixture.seed.teams.hawks)
+          .execute()
+        await fixture.drain()
+        expect(await closedAt(dm)).not.equals(null)
+        expect(await messagesFor('Coached', dm)).to.have.length(1)
+        expect(
+          (
+            await db
+              .selectFrom('chat_members')
+              .select('hidden_before')
+              .where('conversation_id', '=', dm)
+              .where('user_id', '=', userId)
+              .executeTakeFirstOrThrow()
+          ).hidden_before
+        ).equals(null)
+      } finally {
+        if (role.length > 0)
+          await db.insertInto('scope_roles').values(role).execute()
+        await fixture.drain()
+        restore()
+      }
+    })
+
+    it('adds an adult guardian beside a guardian with no age to a DM under way', async function () {
+      const { userId, dm, restore } = await ageless('Guarded', 'Hc', true)
+      try {
+        ok(await call('Guarded', 'PUT', '/me/account/age', fifteen()))
+        const link = async (adult: string, id: string): Promise<void> => {
+          await db
+            .insertInto('user_links')
+            .values({
+              id,
+              user_id: adult,
+              related_user_id: userId,
+              kind: 'guardian',
+              can_manage: true
+            })
+            .execute()
+        }
+        const quiet = await fixture.person('QuietParent', { noAge: true })
+        const adult = await fixture.person('AdultParent')
+        await link(quiet, `ul_${quiet}`)
+        await link(adult, `ul_${adult}`)
+        await fixture.drain()
+        // The parent with no age is already in the DM (from before deploy).
+        await db
+          .insertInto('chat_members')
+          .values({
+            conversation_id: dm,
+            user_id: quiet,
+            joined_at: new Date(Date.now() - 30_000)
+          })
+          .execute()
+        expect(
+          ok(
+            await call('Hc', 'POST', `/chat/dms/${dm}/members`, {
+              userIds: [adult]
+            })
+          ).added
+        ).deep.equals([adult])
+        // Somebody with no age is still not added.
+        const other = await fixture.person('Stranger', { noAge: true })
+        expect(
+          (
+            await call('Hc', 'POST', `/chat/dms/${dm}/members`, {
+              userIds: [other]
+            })
+          ).status
+        ).equals(403)
+      } finally {
+        restore()
+      }
+    })
+
     it('refuses posts in a closed DM', async function () {
-      held.K = await devices.enrol('K')
-      held.P = await devices.enrol('P')
+      held.Ha ??= await devices.enrol('Ha')
+      held.P ??= await devices.enrol('P')
       const made = ok(
-        await call('K', 'POST', '/chat/dms', { userIds: [held.P.keys.userId] }),
+        await call('Ha', 'POST', '/chat/dms', {
+          userIds: [held.P.keys.userId]
+        }),
         201
       )
-      const key = await makeEpoch('K', made.id, 1, null)
+      const key = await makeEpoch('Ha', made.id, 1, null)
       ok(
         await post(
-          'K',
+          'Ha',
           made.id,
-          seal('K', made.id, 1, key, 'post', text('hi')).body
+          seal('Ha', made.id, 1, key, 'post', text('hi')).body
         ),
         201
       )

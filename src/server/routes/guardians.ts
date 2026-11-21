@@ -21,6 +21,7 @@ import {
   visibleScopes
 } from '../access'
 import { findUserByEmail } from '../auth/emails'
+import { recheckDmsOf } from '../chat/dms'
 import type { Database } from '../db/database'
 import { createInvite } from '../invites/invites'
 import { cleanBody } from '../jsonBody'
@@ -325,20 +326,28 @@ export function guardianRoutes(
         })
       }
 
-      await db
-        .updateTable('users')
-        .set({
-          birth_year: after.birthYear,
-          birth_month: after.birthMonth,
-          is_adult: after.isAdult,
-          // A cleared age is no answer at all: the person gives it again.
-          ...(body == null
-            ? { age_source: null, age_set_at: null }
-            : { age_source: actor.isAdmin ? 'admin' : 'guardian' }),
-          updated_at: now
-        })
-        .where('id', '=', userId)
-        .execute()
+      // A first age (only an administrator gives one for somebody else) is
+      // stamped as the person's own answer is, and closes and hides what it
+      // breaks before anybody reads with it.
+      const first = body != null && current === 'unknown'
+      await db.transaction().execute(async tx => {
+        await tx
+          .updateTable('users')
+          .set({
+            birth_year: after.birthYear,
+            birth_month: after.birthMonth,
+            is_adult: after.isAdult,
+            // A cleared age is no answer at all: the person gives it again.
+            ...(body == null
+              ? { age_source: null, age_set_at: null }
+              : { age_source: actor.isAdmin ? 'admin' : 'guardian' }),
+            ...(first ? { age_set_at: now } : {}),
+            updated_at: now
+          })
+          .where('id', '=', userId)
+          .execute()
+        if (first) await recheckDmsOf(tx, userId, now)
+      })
 
       const birthMonth =
         after.birthYear == null || after.birthMonth == null
