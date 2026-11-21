@@ -7,6 +7,7 @@ import express from 'express'
 import type { Kysely } from 'kysely'
 import { Pool } from 'pg'
 
+import { CHAT_KINDS_HEADER, NEWER_CHAT_KINDS } from '../../common/chatKinds'
 import { makeId } from '../../common/ids'
 import { asUserId } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
@@ -225,7 +226,10 @@ export async function openChatFixture(
         return sessionId
       },
       call: async (who, method, path, body) => {
-        const headers: Record<string, string> = {}
+        // As the app sends it: the newer chat kinds it reads.
+        const headers: Record<string, string> = {
+          [CHAT_KINDS_HEADER]: NEWER_CHAT_KINDS.join(',')
+        }
         const token = tokens.get(who)
         if (token != null) headers.authorization = `Bearer ${token}`
         if (body !== undefined) headers['content-type'] = 'application/json'

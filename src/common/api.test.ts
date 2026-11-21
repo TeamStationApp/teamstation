@@ -8,6 +8,7 @@ import { asAccountSettings } from './accountSettings'
 import {
   asAccountAffiliations,
   asChatBlock,
+  asChatKind,
   asGameDetail,
   asHighlight,
   asLiveNow,
@@ -1894,6 +1895,32 @@ describe('api client', function () {
       }
     ])
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
+    // It names the newer chat kinds it reads, and a kind it does not know,
+    // from a newer server still, is left out rather than failing the list.
+    expect(list.calls[0].headers['x-teamstation-chat-kinds']).equals(
+      'leagueUmpires'
+    )
+    const newer = client([
+      { ...chat, id: 'cnv_new', kind: 'leagueReferees' },
+      { ...chat, id: 'cnv_umpires', kind: 'leagueUmpires' },
+      chat
+    ])
+    expect(
+      (await newer.client.chatConversations()).map(item => item.id)
+    ).deep.equals(['cnv_umpires', 'cnv_1'])
+    // A malformed row of a known kind still fails.
+    expect(
+      await client([{ ...chat, unread: 'one' }])
+        .client.chatConversations()
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+    // And so does a missing or malformed kind: a broken answer, not a newer one.
+    for (const kind of [null, undefined, 7])
+      expect(
+        await client([{ ...chat, kind }])
+          .client.chatConversations()
+          .catch((error: unknown) => error)
+      ).instanceOf(Error)
 
     // A coach reads Hank Conger in full; the public label rides beside it.
     const member = {
@@ -1975,6 +2002,54 @@ describe('api client', function () {
     expect(candidates.calls[1].url).equals(
       `http://x/api/v1/chat/dm-candidates?q=&userId=${encodeURIComponent(person.userId)}`
     )
+
+    const reachOf = client({ reach: 'proxies' })
+    expect(await reachOf.client.dmReach(person.userId)).equals('proxies')
+    expect(reachOf.calls[0].url).equals(
+      `http://x/api/v1/chat/dm-reach?userId=${encodeURIComponent(person.userId)}`
+    )
+    expect(await client({ reach: null }).client.dmReach(person.userId)).equals(
+      null
+    )
+    expect(
+      await client({ reach: 'maybe' })
+        .client.dmReach('x')
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+    const proxies = client({
+      player: { userId: person.userId, shortName: 'Riley Rookie' },
+      kind: 'guardians',
+      people: [person]
+    })
+    // An older server says nothing of why: no account, as it always meant.
+    expect(await proxies.client.dmProxies(person.userId)).deep.equals({
+      player: { userId: person.userId, shortName: 'Riley Rookie' },
+      kind: 'guardians',
+      why: 'noAccount',
+      people: [{ ...person, affiliations: '' }]
+    })
+    expect(
+      (
+        await client({
+          player: { userId: person.userId, shortName: 'Riley Rookie' },
+          kind: 'guardians',
+          why: 'tooYoung',
+          people: []
+        }).client.dmProxies(person.userId)
+      ).why
+    ).equals('tooYoung')
+    expect(proxies.calls[0].url).equals(
+      `http://x/api/v1/chat/dm-proxies?userId=${encodeURIComponent(person.userId)}`
+    )
+    expect(
+      await client({
+        player: { userId: person.userId, shortName: 'R' },
+        kind: 'parents',
+        people: []
+      })
+        .client.dmProxies('x')
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
 
     const adult = {
       userId: userIdOfGumbo(7),
@@ -2500,6 +2575,17 @@ describe('api client', function () {
     }
     const listed = client([report])
     expect(await listed.client.chatReports()).deep.equals([report])
+    // A report from a chat of a kind this build does not know is left out.
+    expect(
+      await client([
+        {
+          ...report,
+          id: 'crp_new',
+          conversation: { ...report.conversation, kind: 'leagueReferees' }
+        },
+        report
+      ]).client.chatReports()
+    ).deep.equals([report])
     await listed.client.chatReports(true)
     expect(listed.calls.map(call => call.url)).deep.equals([
       'http://x/api/v1/admin/chat/reports',
@@ -5079,6 +5165,32 @@ describe('a person’s tile, coloured by their id alone', function () {
     expect(person).deep.include({ userId: ripken, name: 'Cal Ripken' })
   })
 
+  it('keeps the umpire block’s league when it is sent, and cleans a stored game without it', function () {
+    const block = {
+      positions: [
+        {
+          slot: 'type:1',
+          typeId: 'type',
+          typeName: 'Plate',
+          ordinal: 1,
+          required: true,
+          person: null
+        }
+      ]
+    }
+    expect(
+      asGameDetail({
+        ...minimalGameDetail,
+        umpires: { ...block, leagueId: 'lea_1' }
+      }).umpires?.leagueId
+    ).equals('lea_1')
+    const stored = asGameDetail({ ...minimalGameDetail, umpires: block })
+    expect(stored.umpires?.leagueId).equals(undefined)
+    expect(() =>
+      asGameDetail({ ...minimalGameDetail, umpires: { ...block, leagueId: 7 } })
+    ).throws()
+  })
+
   it('gives public staff their id, which picks their colour, and none from an older server', function () {
     const detail = (staff: unknown[]): ReturnType<typeof asGroupDetail> =>
       asGroupDetail({ ...minimalGroupDetail, staff })
@@ -5406,5 +5518,11 @@ describe('the request deadline', function () {
       await sender.send('POST', '/leagues/l1/schedule-previews', { weeks: 1 })
     ).deep.equals({ ok: true })
     expect(sender.offline).equals(false)
+  })
+
+  it('reads a league umpire chat’s kind, and refuses a kind it does not know', function () {
+    expect(asChatKind('leagueUmpires')).equals('leagueUmpires')
+    expect(asChatKind('leagueOrg')).equals('leagueOrg')
+    expect(() => asChatKind('leagueReferees')).throws()
   })
 })

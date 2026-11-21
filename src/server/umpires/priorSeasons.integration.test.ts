@@ -4,6 +4,11 @@ import { after, before, describe, it } from 'mocha'
 import { asUmpireSchedule } from '../../common/umpireCleaners'
 import { userIdOfGumbo } from '../../common/userId'
 import type { GroupFixture } from '../../test/groupFixtures'
+import {
+  addAcceptanceSeasons,
+  freshUmpire,
+  grantScopeRole
+} from '../../test/umpireAcceptance'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { parseUmpireFilters } from './schedule'
 
@@ -126,5 +131,56 @@ describe('umpire prior seasons filter', function () {
         })
         .execute()
     }
+  })
+})
+
+describe('prior seasons follow acceptance', function () {
+  this.timeout(60000)
+  let f: GroupFixture
+  let previous: string | undefined
+  before(async () => {
+    previous = process.env.TS_UMPIRE_NOW
+    process.env.TS_UMPIRE_NOW = UMPIRE_TEST_NOW
+    f = await umpireFixture()
+    await addAcceptanceSeasons(f)
+  })
+  after(async () => {
+    await f?.h.close()
+    if (previous == null) delete process.env.TS_UMPIRE_NOW
+    else process.env.TS_UMPIRE_NOW = previous
+  })
+  const read = async (query: string, user: number): Promise<Response> =>
+    await f.h.request(
+      'GET',
+      `/leagues/${f.leagueA}/umpire-schedule?${query}`,
+      undefined,
+      user
+    )
+  it("clears the admin's own reason on a past game outside the family's seasons", async () => {
+    const body = await (
+      await read('view=schedule&priorSeasons=true', 101)
+    ).json()
+    const past = body.games.find((g: any) => g.id === 'gam_umpire_past')
+    const own = past.choices['uty_plate:1'].find(
+      (c: any) => c.userId === userIdOfGumbo(101)
+    )
+    expect(own.reason).equals(null)
+  })
+  it("lists the later season's game, not the ended season's, to a team coach", async () => {
+    const coach = await freshUmpire(f, 320)
+    await grantScopeRole(f, coach, 'team', f.teamA)
+    const body = await (await read('view=schedule', 320)).json()
+    const ids = body.games.map((g: any) => g.id)
+    expect(ids).includes('gam_umpire_other')
+    expect(ids).not.includes('gam_umpire_past')
+    const other = body.games.find((g: any) => g.id === 'gam_umpire_other')
+    expect(
+      other.choices['uty_plate:1'].find((c: any) => c.userId === coach).reason
+    ).equals(null)
+    const refused = await read('view=schedule&priorSeasons=true', 320)
+    expect(refused.status).equals(403)
+    expect((await refused.json()).message).equals(
+      'Only league administrators can include prior seasons'
+    )
   })
 })

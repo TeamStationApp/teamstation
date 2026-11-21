@@ -662,12 +662,15 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
             )}
           </View>
           {props.onOpenChat != null && player != null && (
-            <PersonMessageButton
-              key={player.userId}
-              client={client}
-              userId={player.userId}
-              onOpenChat={props.onOpenChat}
-            />
+            <View style={styles.identityAction}>
+              <PersonMessageButton
+                key={player.userId}
+                client={client}
+                userId={player.userId}
+                name={shortShown}
+                onOpenChat={props.onOpenChat}
+              />
+            </View>
           )}
         </Card>
       </CardBand>
@@ -1163,6 +1166,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   identityText: {
     flex: 1,
     gap: theme.rem(0.125)
+  },
+  // The Message pill, on a line of its own at the card's bottom right, under
+  // the gear.
+  identityAction: {
+    alignSelf: 'flex-end',
+    marginTop: theme.rem(theme.spaceSmRem)
   },
   playerName: {
     fontFamily: theme.boldTextFont,

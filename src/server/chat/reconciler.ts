@@ -37,8 +37,9 @@ import {
  * `delete … returning` and expands them into conversations:
  *
  * - a team: its three chats, and the three of every season it plays in;
- * - a season: its three;
- * - a league: its Org chat, and the three of each of its seasons;
+ * - a season: its three, and its league's Umpires chat;
+ * - a league: its Org and Umpires chats, and the three of each of its
+ *   seasons;
  * - every team, season or league mark also re-checks every DM holding a
  *   player of a team in that scope;
  * - a user: every scope chat they are in, those the audiences might now put
@@ -243,6 +244,14 @@ export async function targetsOf(
       .where('user_id', 'in', rows)
       .execute()
     for (const row of leagueMembers) userLeagues.add(row.league_id)
+    // An umpire's league reaches its umpire chat alone: nothing else of the
+    // league reads the umpire role.
+    const umpiring = await db
+      .selectFrom('league_umpires')
+      .select(['league_id'])
+      .where('user_id', 'in', rows)
+      .execute()
+    for (const row of umpiring) addScope('leagueUmpires', row.league_id)
     const chats = await db
       .selectFrom('chat_members')
       .innerJoin(
@@ -278,6 +287,12 @@ export async function targetsOf(
   for (const league of leagues) {
     for (const kind of LEAGUE_KINDS) addScope(kind, league)
   }
+  // Acceptance into a league, which its umpire chat reads, also comes
+  // through its seasons' members and teams, whose changes mark the season
+  // alone. A season's `season_teams.active` turning, which marks nothing,
+  // and a guardian's child changing teams wait for the sweep.
+  for (const league of await leaguesOfSeasons(db, marked('season')))
+    addScope('leagueUmpires', league)
 
   // DMs holding a player of a team in a marked scope (not a user's scopes:
   // a user's own DMs are re-checked above).
@@ -310,6 +325,20 @@ async function seasonsOfLeagues(
     .where('league_id', 'in', leagueIds)
     .execute()
   return rows.map(row => row.id)
+}
+
+async function leaguesOfSeasons(
+  db: Kysely<Database>,
+  seasonIds: string[]
+): Promise<string[]> {
+  if (seasonIds.length === 0) return []
+  const rows = await db
+    .selectFrom('seasons')
+    .select(['league_id'])
+    .where('id', 'in', seasonIds)
+    .where('league_id', 'is not', null)
+    .execute()
+  return [...new Set(rows.flatMap(row => row.league_id ?? []))]
 }
 
 async function seasonsOfTeams(
@@ -592,6 +621,10 @@ async function marksFor(
       }
     } else {
       keys.push({ scope_type: 'league', scope_id: scopeId })
+      // The umpire chat also reads its seasons' members and teams.
+      if (conversation.kind === 'leagueUmpires')
+        for (const season of await seasonsOfLeagues(db, [scopeId]))
+          keys.push({ scope_type: 'season', scope_id: season })
     }
   }
   const held = await db

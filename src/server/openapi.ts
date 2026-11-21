@@ -460,7 +460,7 @@ const pushPaths = {
       security: [{ bearer: [] }],
       summary: "Register this device's push address (signed-in sessions only)",
       description:
-        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address and switches, and is sent to again if a push service had refused it for good. The two switches are this device's own, as its Account shows them: chat wakes go only to registrations with `messages` on, and RSVP reminders only to those with `rsvpEvents` on. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted.",
+        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address and switches, and is sent to again if a push service had refused it for good. The two switches are this device's own, as its Account shows them: chat wakes go only to registrations with `messages` on, and RSVP reminders only to those with `rsvpEvents` on. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted. The newer chat kinds the request names in `x-teamstation-chat-kinds` (`leagueUmpires`) are kept with the registration: a chat of such a kind wakes only registrations that named it, as only their app lists it.",
       requestBody: {
         required: true,
         content: {
@@ -5439,7 +5439,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`replayable` is whether anything TeamStation scored is stored ' +
             'for the game — a play carrying its `teamStation` record, or a ' +
             'recorded at-bat in progress — so it can be replayed. ' +
-            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone). Names are abbreviated.',
+            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone), and `leagueId`, the game\u2019s league, only for a caller accepted into it (who may open its umpires\u2019 league cards), with `openable: true` on each person who still holds the league\u2019s umpire role (whose card that caller can open). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -8329,7 +8329,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'The chats the caller is in',
           description:
             'Scope chats (Staff, Members and Fans of a team; Staff, All Staff ' +
-            'and Announcements of a season; a league’s Org) and DMs, each ' +
+            'and Announcements of a season; a league’s Org and, while it ' +
+            'manages umpires, its Umpires, `leagueUmpires`) and DMs, each ' +
             '`{id, kind, title, scope, scopeName, lastSeq, lastMessageAt, ' +
             'unread, canPost, canModerate, locked, noHolder, closed, ' +
             'memberCount, people}`. `title` and `scopeName` are null for a ' +
@@ -8337,7 +8338,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'with the caller as `{userId, shortName, left, avatarUrl}` (current ' +
             'members, and those who left after the caller joined), and is ' +
             'empty for a scope chat. `lastMessageAt` is null before the ' +
-            'first message. Somebody who is not an account, or is under ' +
+            'first message. A chat of a kind added since the first eight ' +
+            '(`leagueUmpires`) is listed only when the request names it in ' +
+            '`x-teamstation-chat-kinds` (comma-separated), so a client built ' +
+            'before it never meets a kind it cannot read. Somebody who is not an account, or is under ' +
             '13 by birth month, is in none. Additive `preferences` describes ' +
             'only the caller: `{pinned, muted, manualUnread, manualUnreadRevision}`. ' +
             '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
@@ -8534,6 +8538,61 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: 'The candidates' },
             401: errorResponse
+          }
+        }
+      },
+      '/chat/dm-reach': {
+        get: {
+          summary: 'How the caller can message a person',
+          description:
+            '`{reach}`: `direct` when the DM rules let the caller start a DM ' +
+            'with `userId`; `proxies` when `userId` is a player who cannot ' +
+            'sign in (no eligible account), whom the caller may name as a ' +
+            'player, and who has somebody the caller can message instead ' +
+            '(`GET /chat/dm-proxies`); null otherwise. Merged identities ' +
+            'resolve to the surviving user.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The reach' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/dm-proxies': {
+        get: {
+          summary: 'Whom to message for a player who cannot be messaged',
+          description:
+            '`{player: {userId, shortName}, kind, why, people}`: the guardians ' +
+            'and adult family members of player `userId` the caller can ' +
+            'message (`kind: guardians`), or, with none, the player’s ' +
+            'current coaches the caller can message (`kind: coaches`), never ' +
+            'the caller, each `{userId, shortName, compactName?, avatarUrl, ' +
+            'affiliations}` and ordered by name. `why` is `noAccount` when ' +
+            'the player has no account they can sign in with, and ' +
+            '`tooYoung` when they have one but are under 13. 404 when `GET ' +
+            '/chat/dm-reach` would not answer `proxies` for the player.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The people' },
+            401: errorResponse,
+            404: errorResponse
           }
         }
       },
@@ -9480,7 +9539,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'unresolved with `open=true`. Each is `{id, conversation: {id, ' +
             'kind, title}, messageId, reporter: {userId, shortName}, sender: ' +
             '{userId, shortName}, kind, sentAt, plaintext, verified, ' +
-            'createdAt, resolvedAt}`.',
+            'createdAt, resolvedAt}`. A report from a chat of a newer kind ' +
+            '(`leagueUmpires`) is listed only when the request names that kind ' +
+            'in `x-teamstation-chat-kinds`.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -10503,7 +10564,17 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'For the level\u2019s administrators, coaches and assistants, ' +
                 'and the person themselves; anybody else gets 404, as does ' +
-                'somebody not on the level\u2019s people list.',
+                'somebody not on the level\u2019s people list.' +
+                (collection === 'leagues'
+                  ? ' A league\u2019s umpires are readable whether or not ' +
+                    'its list holds them: in full, read only, by its ' +
+                    'administrators; and, while the league manages ' +
+                    'umpires, as their card alone (`guardianOf` and ' +
+                    '`sections` empty, `viewer.manages` false), to message ' +
+                    'them from a game, by anybody else accepted into the ' +
+                    'league, its coaches and assistants included. A token ' +
+                    'or Tess opens no card.'
+                  : ''),
               security: [{ bearer: [] }],
               parameters: [idParam, userIdParam],
               responses: {

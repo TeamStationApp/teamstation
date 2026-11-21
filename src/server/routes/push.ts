@@ -11,6 +11,7 @@ import { type Request, Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
+import { CHAT_KINDS_HEADER, readChatKinds } from '../../common/chatKinds'
 import { forbidden, notFound, unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { isMachine } from '../auth/sessions'
@@ -181,6 +182,8 @@ export function pushRoutes(
         body.address
       )
       const now = new Date()
+      // The newer chat kinds this app reads, whose wakes it can open.
+      const chatKinds = readChatKinds(req.get(CHAT_KINDS_HEADER))
       const row = await db.transaction().execute(async trx => {
         const posted = await trx
           .insertInto('push_registrations')
@@ -194,6 +197,7 @@ export function pushRoutes(
             environment: body.environment,
             messages: body.messages,
             rsvp_events: body.rsvpEvents,
+            chat_kinds: chatKinds,
             created_at: now,
             seen_at: now,
             rejected_at: null
@@ -206,6 +210,7 @@ export function pushRoutes(
               environment: body.environment,
               messages: body.messages,
               rsvp_events: body.rsvpEvents,
+              chat_kinds: chatKinds,
               seen_at: now,
               rejected_at: null
             })

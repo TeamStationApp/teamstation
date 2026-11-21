@@ -65,7 +65,11 @@ import {
 import { DeviceApprovals } from './chat/deviceApprovals'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { releaseChat } from './chat/engine/links'
-import { entityChats, entityPreviewLoader } from './chat/entityChats'
+import {
+  entityChats,
+  entityPreviewLoader,
+  umpireChatOf
+} from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
@@ -1263,6 +1267,9 @@ function Shell(props: AppProps): React.ReactElement {
       unsubscribe()
     }
   }, [chatEngine])
+  /** The umpire schedule's league: the route's, or the reader's first. */
+  const umpireLeagueOf = (id: string): string =>
+    id === '' ? (umpireLeagues[0]?.id ?? '') : id
   const chatsOf = (kind: GroupRef['kind'], id: string): ChatLink[] =>
     entityChats(chatList, { kind, id })
   const loadChatPreviews = useMemo(() => {
@@ -3132,10 +3139,7 @@ function Shell(props: AppProps): React.ReactElement {
         key={top.id}
         client={client}
         onBeforeLeave={registerUmpireLeave}
-        route={{
-          ...top,
-          id: top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
-        }}
+        route={{ ...top, id: umpireLeagueOf(top.id) }}
         leagues={umpireLeagues}
         onOpenTeam={teamId => {
           push({
@@ -3152,10 +3156,21 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'info' })
         }}
         onOpenPerson={(userId, name) => {
-          const leagueId = top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
+          const leagueId = umpireLeagueOf(top.id)
           if (leagueId !== '')
             openPerson({ kind: 'league', id: leagueId }, userId, name)
         }}
+        umpireChat={umpireChatOf(chatList, umpireLeagueOf(top.id))}
+        onOpenChat={chatEngine == null ? undefined : openChat}
+        onRefreshChats={
+          chatEngine == null
+            ? undefined
+            : () => {
+                // The engine's conversations event updates the list, as the
+                // engine it came from stays the one signed in.
+                chatEngine.refresh().catch(() => undefined)
+              }
+        }
         onRoute={route => {
           writeTop(current => ({
             ...current,
@@ -3909,6 +3924,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
@@ -4001,6 +4017,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}

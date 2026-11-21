@@ -119,8 +119,11 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the league umpire chat, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '127leagueUmpireChat'
+    ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '126groupCoordinates'
     ])
@@ -677,7 +680,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '123coveredAdmins',
           '124pushNotifications',
           '125solverLimit',
-          '126groupCoordinates'
+          '126groupCoordinates',
+          '127leagueUmpireChat'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

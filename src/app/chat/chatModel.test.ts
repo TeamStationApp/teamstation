@@ -10,6 +10,8 @@ import {
   approvalsIn,
   canStartDm,
   contentPreview,
+  conversationPill,
+  conversationTitle,
   groupChats,
   hasUnread,
   messagePreview,
@@ -455,5 +457,17 @@ describe('approvals', function () {
     expect(
       approvalsIn(all, 'cnv_a', userIdOfGumbo(3)).map(one => one.requestId)
     ).deep.equals([2])
+  })
+
+  it('lists a league’s umpire chat under the league’s name, with the pill League Umpires, and starts no DM from it', () => {
+    const umpires = chat({
+      kind: 'leagueUmpires',
+      title: 'QPLL Umpires',
+      scope: { type: 'league', id: 'lea_qpll' },
+      scopeName: 'QPLL'
+    })
+    expect(conversationTitle(umpires)).equals('QPLL')
+    expect(conversationPill(umpires)).equals('League Umpires')
+    expect(canStartDm([umpires])).equals(false)
   })
 })

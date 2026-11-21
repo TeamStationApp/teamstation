@@ -171,7 +171,7 @@ async function main(): Promise<void> {
     }
     await page.setViewport({ width: 1440, height: 900 })
     await open(base + '/umpires', 'Manage Umpires')
-    await tap(m, 'Uma L, majors, 1st')
+    await tap(m, 'Uma Lee, majors, 1st')
     const saving = page.waitForResponse(
       r => r.request().method() === 'PUT' && r.url().endsWith('/umpires')
     )
@@ -232,6 +232,82 @@ async function main(): Promise<void> {
         p => p.userId === userIdOfGumbo(103)
       )?.count
     ).equals(1)
+    // A coach of the playoffs season only — no membership, role or roster
+    // in the regular season — signs up for a regular-season game (#345).
+    const coach = userIdOfGumbo(106)
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'rol_umpire_browser_coach',
+        user_id: coach,
+        scope_type: 'season',
+        scope_id: f.playoffs,
+        role: 'coach',
+        granted_by: userIdOfGumbo(101),
+        granted_at: new Date()
+      })
+      .execute()
+    await f.h.db
+      .insertInto('league_umpires')
+      .values({
+        league_id: f.leagueA,
+        user_id: coach,
+        granted_by: userIdOfGumbo(101)
+      })
+      .execute()
+    await f.h.db
+      .insertInto('umpire_certifications')
+      .values({
+        user_id: coach,
+        level_id: 'ulv_browser_majors',
+        type_id: 'uty_plate',
+        enabled: true
+      })
+      .execute()
+    await login(106)
+    await open('/umpires/' + f.leagueA, 'Sign Up')
+    await m.tapOn({ css: '[aria-label^="Sign Up, Plate,"]' })
+    await contains(page, 'Confirm')
+    await tap(m, 'Confirm')
+    // 106 is Bobby Lee in this fixture, and reads their own name in full.
+    await page.waitForSelector('[aria-label="Bobby Lee, uty_plate:1"]')
+    await capture(m, artifacts, 'coach-signup-after.png')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('umpire_assignments')
+          .select('user_id')
+          .where('game_id', '=', 'gam_umpire_g1')
+          .where('slot', '=', 'uty_plate:1')
+          .executeTakeFirst()
+      )?.user_id
+    ).equals(coach)
+    // From the game's Info tab, the umpire's league card opens for 106, who
+    // is accepted into League A (the playoffs coach above) and neither
+    // manages its people nor is Uma (#347).
+    await open('/games/gam_umpire_g1', 'UMPIRES')
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-testid="game-umpires"]')!
+        .scrollIntoView({ block: 'center' })
+    })
+    await capture(m, artifacts, 'game-umpires-after.png')
+    await m.tapOn({
+      css: `[data-testid="umpire-person-${userIdOfGumbo(103)}"] [role="button"]`
+    })
+    await page.waitForFunction(
+      (league, uma) => location.pathname === `/leagues/${league}/people/${uma}`,
+      { polling: 100 },
+      f.leagueA,
+      userIdOfGumbo(103)
+    )
+    await contains(page, 'Uma Lee')
+    expect(
+      await page.evaluate(() =>
+        String(document.body.textContent).includes('ROLES')
+      )
+    ).equals(false)
+    await capture(m, artifacts, 'game-umpire-profile-after.png')
     await recordBrowserCoverage(
       [page],
       f.h.origin,
@@ -239,7 +315,7 @@ async function main(): Promise<void> {
       web
     )
     console.log(
-      'B1–B4 configurable types, counts, certification, signup, game detail and spreadsheet notes passed'
+      'B1–B4 configurable types, counts, certification, signup, game detail and spreadsheet notes, and a season coach umpiring another season, passed'
     )
   } finally {
     if (b != null) {

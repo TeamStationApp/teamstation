@@ -12,6 +12,7 @@ import { createSession } from '../auth/sessions'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { TESS_HEADER } from '../middleware/withAuth'
+import { openableBy } from '../push/chatWakes'
 import { pushSettings, webPushKey } from '../push/config'
 import {
   liveRegistrations,
@@ -187,6 +188,45 @@ describe('push registrations', function () {
     })
     const row = (await rows()).find(item => item.id === android)
     expect(row?.environment).equals('production')
+  })
+
+  it('keeps the newer chat kinds the registering app reads, and wakes a chat of one only where it is read', async function () {
+    const post = async (address: string, kinds?: string): Promise<string> => {
+      const response = await fetch(`${h.origin}/api/v1${ROUTE}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${h.tokens.get(101)!}`,
+          'content-type': 'application/json',
+          ...(kinds == null ? {} : { 'x-teamstation-chat-kinds': kinds })
+        },
+        body: JSON.stringify({ platform: 'android', address })
+      })
+      expect(response.status, await response.clone().text()).equals(200)
+      return ((await response.json()) as { id: string }).id
+    }
+    const kindsOf = async (id: string): Promise<string[]> =>
+      (
+        await db
+          .selectFrom('push_registrations')
+          .select('chat_kinds')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).chat_kinds
+    const older = await post('fcm-token:older')
+    const newer = await post('fcm-token:newer', 'leagueUmpires,somethingElse')
+    expect(await kindsOf(older)).deep.equals([])
+    expect(await kindsOf(newer)).deep.equals(['leagueUmpires'])
+    // An app updated and registered again reads it from then on.
+    expect(await post('fcm-token:older', 'leagueUmpires')).equals(older)
+    expect(await kindsOf(older)).deep.equals(['leagueUmpires'])
+    const stale = await post('fcm-token:stale')
+    const devices = [{ id: older }, { id: newer }, { id: stale }]
+    expect(
+      (await openableBy(db, devices, 'leagueUmpires')).map(to => to.id)
+    ).deep.equals([older, newer])
+    // Every app opens the kinds every build reads.
+    expect(await openableBy(db, devices, 'teamMembers')).deep.equals(devices)
+    expect(await openableBy(db, [], 'leagueUmpires')).deep.equals([])
   })
 
   it('moves a token posted again to the posting session and person', async function () {

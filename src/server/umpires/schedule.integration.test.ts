@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { after, before, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
 import { initialUmpireGame } from '../../common/nextGame'
@@ -22,6 +22,11 @@ import {
 } from '../../common/umpireTime'
 import { userIdOfGumbo } from '../../common/userId'
 import { actor, type GroupFixture } from '../../test/groupFixtures'
+import {
+  addAcceptanceSeasons,
+  freshUmpire,
+  grantScopeRole
+} from '../../test/umpireAcceptance'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { seedUmpireCounts } from '../../test/umpireTypes'
 import { now } from '../clock'
@@ -892,5 +897,340 @@ describe('umpire schedule pages (U9)', function () {
       { cursor: page.nextCursor ?? '' }
     )
     expect(on.prevCursor).not.equals(null)
+  })
+})
+
+describe('umpire schedule acceptance', function () {
+  this.timeout(60000)
+  let f: GroupFixture
+  let old: string | undefined
+  let next = 300
+  const games = async (user: number): Promise<string[]> => {
+    const response = await f.h.request(
+      'GET',
+      `/leagues/${f.leagueA}/umpire-schedule?view=umpire`,
+      undefined,
+      user
+    )
+    expect(response.status).equals(200)
+    return (await response.json()).games.map((g: any) => g.id)
+  }
+  const signUp = async (
+    user: number,
+    userId: string,
+    game = 'gam_umpire_other'
+  ): Promise<Response> =>
+    await f.h.request(
+      'POST',
+      `/games/${game}/umpire-slots`,
+      { slot: 'uty_plate:1', userId },
+      user
+    )
+  const fresh = async (role = true): Promise<[number, string]> => {
+    const id = next++
+    return [id, await freshUmpire(f, id, role)]
+  }
+  before(async () => {
+    old = process.env.TS_UMPIRE_NOW
+    process.env.TS_UMPIRE_NOW = UMPIRE_TEST_NOW
+    f = await umpireFixture()
+    await addAcceptanceSeasons(f)
+  })
+  afterEach(async () => {
+    await f.h.db
+      .deleteFrom('umpire_assignments')
+      .where('game_id', 'in', ['gam_umpire', 'gam_umpire_other'])
+      .execute()
+  })
+  after(async () => {
+    await f?.h.close()
+    if (old == null) delete process.env.TS_UMPIRE_NOW
+    else process.env.TS_UMPIRE_NOW = old
+  })
+  const all = ['gam_umpire', 'gam_umpire_other', 'gam_umpire_past']
+
+  it('lists every league game for a league member, who signs up in a season no family plays in', async () => {
+    const [id, userId] = await fresh()
+    await f.h.db
+      .insertInto('league_members')
+      .values({
+        id: `lmb_acceptance_${id}`,
+        league_id: f.leagueA,
+        user_id: userId,
+        role: 'member'
+      })
+      .execute()
+    expect(await games(id)).members(all)
+    expect((await signUp(id, userId)).status).equals(200)
+  })
+  for (const [label, scope, role] of [
+    ['a league administrator role', 'league', 'admin'],
+    ['a direct league role', 'league', 'coach'],
+    ['a direct role on one season', 'season', 'coach'],
+    ['a coach role on a team active in one season', 'team', 'coach']
+  ] as const)
+    it(`lists every league game for ${label}`, async () => {
+      const [id, userId] = await fresh()
+      await grantScopeRole(
+        f,
+        userId,
+        scope,
+        scope === 'league'
+          ? f.leagueA
+          : scope === 'season'
+            ? f.seasonA
+            : f.teamA,
+        role
+      )
+      expect(await games(id)).members(all)
+      expect((await signUp(id, userId)).status).equals(200)
+    })
+  it('lists every league game for a season member of one season', async () => {
+    const [id, userId] = await fresh()
+    await f.h.db
+      .insertInto('season_members')
+      .values({
+        id: `smb_acceptance_${id}`,
+        season_id: f.seasonA,
+        user_id: userId,
+        role: 'member'
+      })
+      .execute()
+    expect(await games(id)).members(all)
+    expect((await signUp(id, userId)).status).equals(200)
+  })
+  for (const role of ['member', 'owner', 'manager'] as const)
+    it(`lists every league game for a non-player ${role} of a team, who is never playing`, async () => {
+      const [id, userId] = await fresh()
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: `mem_acceptance_${id}`,
+          team_id: f.teamA,
+          user_id: userId,
+          is_player: false,
+          role
+        })
+        .execute()
+      expect(await games(id)).members(all)
+      const body = await (
+        await f.h.request(
+          'GET',
+          `/leagues/${f.leagueA}/umpire-schedule?view=umpire`,
+          undefined,
+          id
+        )
+      ).json()
+      const own = body.games.find((g: any) => g.id === 'gam_umpire')
+      expect(
+        own.conflicts.filter(
+          (c: any) => c.userId === userId && c.activity === 'playing'
+        )
+      ).length(0)
+      expect(
+        own.choices['uty_plate:1'].find((c: any) => c.userId === userId).reason
+      ).equals(null)
+      expect((await signUp(id, userId, 'gam_umpire')).status).equals(200)
+    })
+  it('keeps a team coach off "already playing" on their own team\'s game', async () => {
+    const [id, userId] = await fresh()
+    await grantScopeRole(f, userId, 'team', f.teamA)
+    const body = await (
+      await f.h.request(
+        'GET',
+        `/leagues/${f.leagueA}/umpire-schedule?view=umpire`,
+        undefined,
+        id
+      )
+    ).json()
+    const own = body.games.find((g: any) => g.id === 'gam_umpire')
+    expect(own.conflicts.some((c: any) => c.userId === userId)).equals(false)
+    expect(
+      own.choices['uty_plate:1'].find((c: any) => c.userId === userId).reason
+    ).equals(null)
+  })
+  it('lists every league game for the guardian of a player on a league team', async () => {
+    const [id, userId] = await fresh()
+    const [, child] = await fresh(false)
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: `lnk_acceptance_${id}`,
+        user_id: userId,
+        related_user_id: child,
+        kind: 'guardian'
+      })
+      .execute()
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: `mem_acceptance_child_${id}`,
+        team_id: f.teamA,
+        user_id: child,
+        is_player: true,
+        role: 'member'
+      })
+      .execute()
+    expect(await games(id)).members(all)
+  })
+  it('lists nothing for the guardian of a disabled player only', async () => {
+    const [id, userId] = await fresh()
+    const [, child] = await fresh(false)
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: `lnk_acceptance_${id}`,
+        user_id: userId,
+        related_user_id: child,
+        kind: 'guardian'
+      })
+      .execute()
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: `mem_acceptance_child_${id}`,
+        team_id: f.teamA,
+        user_id: child,
+        is_player: true,
+        role: 'member'
+      })
+      .execute()
+    await f.h.db
+      .updateTable('users')
+      .set({ disabled_at: new Date() })
+      .where('id', '=', child)
+      .execute()
+    expect(await games(id)).length(0)
+  })
+  it('lists nothing for the coach of a team inactive in its only league season', async () => {
+    const [id, userId] = await fresh()
+    const team = 'tem_acceptance_inactive'
+    await f.h.db
+      .insertInto('teams')
+      .values({ id: team, name: 'Demo Withdrawn' })
+      .execute()
+    await f.h.db
+      .insertInto('season_teams')
+      .values({ season_id: f.seasonA, team_id: team, active: false })
+      .execute()
+    await grantScopeRole(f, userId, 'team', team)
+    expect(await games(id)).length(0)
+  })
+  it('lists nothing for a follower, who cannot sign up', async () => {
+    const [id, userId] = await fresh()
+    await f.h.db
+      .insertInto('team_follows')
+      .values({ user_id: userId, team_id: f.teamA })
+      .execute()
+    expect(await games(id)).length(0)
+    const refused = await signUp(id, userId, 'gam_umpire')
+    expect(refused.status).equals(403)
+    expect((await refused.json()).message).equals(
+      'This game is outside your umpire schedule'
+    )
+  })
+  it('lists nothing for someone accepted only in another league', async () => {
+    const [id, userId] = await fresh()
+    await f.h.db
+      .insertInto('league_members')
+      .values({
+        id: `lmb_acceptance_${id}`,
+        league_id: f.leagueB,
+        user_id: userId,
+        role: 'member'
+      })
+      .execute()
+    expect(await games(id)).length(0)
+  })
+  it('refuses the umpire view to someone accepted without the umpire role', async () => {
+    const [id, userId] = await fresh(false)
+    await f.h.db
+      .insertInto('league_members')
+      .values({
+        id: `lmb_acceptance_${id}`,
+        league_id: f.leagueA,
+        user_id: userId,
+        role: 'member'
+      })
+      .execute()
+    const response = await f.h.request(
+      'GET',
+      `/leagues/${f.leagueA}/umpire-schedule?view=umpire`,
+      undefined,
+      id
+    )
+    expect(response.status).equals(403)
+    expect((await response.json()).message).equals(
+      'Not an umpire for this league'
+    )
+  })
+  it('lists a past game of another season for the accepted only', async () => {
+    const [accepted, acceptedId] = await fresh()
+    await f.h.db
+      .insertInto('season_members')
+      .values({
+        id: `smb_acceptance_${accepted}`,
+        season_id: f.seasonA,
+        user_id: acceptedId,
+        role: 'member'
+      })
+      .execute()
+    const [outsider] = await fresh()
+    expect(await games(accepted)).includes('gam_umpire_past')
+    expect(await games(outsider)).not.includes('gam_umpire_past')
+  })
+  it('takes the games away once someone leaves the league', async () => {
+    for (const add of [
+      async (userId: string, id: number) => {
+        await f.h.db
+          .insertInto('league_members')
+          .values({
+            id: `lmb_acceptance_${id}`,
+            league_id: f.leagueA,
+            user_id: userId,
+            role: 'member'
+          })
+          .execute()
+        return async () => {
+          await f.h.db
+            .deleteFrom('league_members')
+            .where('id', '=', `lmb_acceptance_${id}`)
+            .execute()
+        }
+      },
+      async (userId: string) => {
+        const role = await grantScopeRole(f, userId, 'season', f.seasonA)
+        return async () => {
+          await f.h.db
+            .deleteFrom('scope_roles')
+            .where('id', '=', role)
+            .execute()
+        }
+      },
+      async (userId: string, id: number) => {
+        await f.h.db
+          .insertInto('memberships')
+          .values({
+            id: `mem_acceptance_${id}`,
+            team_id: f.teamA,
+            user_id: userId,
+            is_player: false,
+            role: 'member'
+          })
+          .execute()
+        return async () => {
+          await f.h.db
+            .deleteFrom('memberships')
+            .where('id', '=', `mem_acceptance_${id}`)
+            .execute()
+        }
+      }
+    ]) {
+      const [id, userId] = await fresh()
+      const remove = await add(userId, id)
+      expect(await games(id)).members(all)
+      await remove()
+      expect(await games(id)).length(0)
+    }
   })
 })

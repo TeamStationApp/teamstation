@@ -48,7 +48,8 @@ const chatNames = new Set([
   '087loginOffOnly',
   '088chatDirtyQueue',
   '099ChatLinkDecisions',
-  '113chatHistoryRecovery'
+  '113chatHistoryRecovery',
+  '127leagueUmpireChat'
 ])
 
 async function scratch(

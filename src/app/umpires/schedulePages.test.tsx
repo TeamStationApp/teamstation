@@ -692,4 +692,103 @@ describe('umpire schedule pages', () => {
     })
     expect(rowIds()).length(50)
   })
+
+  describe('the umpire chat pill', () => {
+    const chatPill = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="umpire-chat"]')
+    const tab = (name: string): HTMLElement =>
+      [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+        n => n.textContent === name
+      )!
+
+    it('sits right after Leaderboard, the same pill as the tabs, and opens the chat', async () => {
+      const f = world()
+      const opened: Array<{ id: string; title: string }> = []
+      await mount(
+        <UmpireScheduleScreen
+          client={f.client}
+          route={ROUTE}
+          leagues={[]}
+          onRoute={() => undefined}
+          umpireChat={{ id: 'cnv_umpires', title: 'QPLL Umpires' }}
+          onOpenChat={chat => {
+            opened.push(chat)
+          }}
+        />
+      )
+      const pill = chatPill()!
+      expect(pill.getAttribute('aria-label')).equals('Open the umpire chat')
+      expect(pill.textContent).equals('Umpire chat')
+      // In the tabs' row, after their strip, which keeps to its pills' width.
+      const strip = tab('Leaderboard').closest('[role="tablist"]')!
+      // The pill, in a margin of its own, is the row's next item.
+      expect(strip.nextElementSibling).equals(pill.parentElement)
+      expect(getComputedStyle(pill.parentElement!).marginLeft).equals('4px')
+      expect(getComputedStyle(strip.parentElement!).flexWrap).equals('wrap')
+      expect(getComputedStyle(strip).flexGrow).equals('0')
+      // The same pill as the tabs: the same shell inside.
+      const shell = (n: HTMLElement): string =>
+        n.querySelector<HTMLElement>('[data-testid="settings-pill-tab"]')!
+          .className
+      expect(shell(pill)).equals(shell(tab('Leaderboard')))
+      await act(async () => {
+        pill.click()
+      })
+      expect(opened).deep.equals([{ id: 'cnv_umpires', title: 'QPLL Umpires' }])
+    })
+
+    it('is not there for somebody outside the chat, and the tabs still switch', async () => {
+      const f = world()
+      const routes: UmpireScheduleRoute[] = []
+      await mount(
+        <UmpireScheduleScreen
+          client={f.client}
+          route={ROUTE}
+          leagues={[]}
+          onRoute={route => {
+            routes.push(route)
+          }}
+          onOpenChat={() => undefined}
+        />
+      )
+      expect(chatPill()).equals(null)
+      const strip = tab('Leaderboard').closest('[role="tablist"]')!
+      expect(getComputedStyle(strip).flexGrow).not.equals('0')
+      await act(async () => {
+        tab('Leaderboard').click()
+      })
+      expect(routes.at(-1)?.pill).equals('leaderboard')
+    })
+
+    it('reads the reader’s chats again when it opens and when the league changes, once a league is named', async () => {
+      const f = world()
+      let asked = 0
+      const screen = (id: string): React.ReactElement => (
+        <UmpireScheduleScreen
+          client={f.client}
+          route={{ ...ROUTE, id }}
+          leagues={[]}
+          onRoute={() => undefined}
+          onRefreshChats={() => {
+            asked++
+          }}
+        />
+      )
+      // Before the leagues arrive the id is empty: nothing to read for yet.
+      await mount(screen(''))
+      expect(asked).equals(0)
+      await act(async () => {
+        root!.render(<ThemeProvider>{screen('demo')}</ThemeProvider>)
+      })
+      expect(asked).equals(1)
+      await act(async () => {
+        root!.render(<ThemeProvider>{screen('demo')}</ThemeProvider>)
+      })
+      expect(asked).equals(1)
+      await act(async () => {
+        root!.render(<ThemeProvider>{screen('other')}</ThemeProvider>)
+      })
+      expect(asked).equals(2)
+    })
+  })
 })
