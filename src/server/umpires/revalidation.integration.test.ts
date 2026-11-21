@@ -7,6 +7,7 @@ import {
   announcedDuring,
   listenScreenScopes
 } from '../../test/screenScopeNotices'
+import { freshUmpire, grantScopeRole } from '../../test/umpireAcceptance'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { closeInto } from '../admin/people'
 import { atomic } from '../db/atomic'
@@ -97,6 +98,27 @@ describe('umpire assignment revalidation through game editors', function () {
     } finally {
       await notices.close()
     }
+  })
+  it("keeps a non-player coach's assignment when their team's game is extended into it", async () => {
+    const coach = await freshUmpire(f, 310)
+    await grantScopeRole(f, coach, 'team', f.teamA)
+    const saved = await f.h.request(
+      'POST',
+      '/games/gam_umpire/umpire-slots',
+      { slot: 'uty_field:1', userId: coach },
+      310
+    )
+    expect(saved.status, await saved.clone().text()).equals(200)
+    await updateEventInfo(f.h.db, actor(101), 'gam_playing', {
+      endAt: '2027-04-03T01:00:00Z'
+    })
+    const held = await f.h.db
+      .selectFrom('umpire_assignments')
+      .select(['slot', 'user_id'])
+      .where('game_id', '=', 'gam_umpire')
+      .execute()
+    // The player (104) is playing in the extended game; the coach is not.
+    expect(held).deep.equals([{ slot: 'uty_field:1', user_id: coach }])
   })
   it('rechecks an accepted game-time proposal from the editor API', async () => {
     const snapshot = await (
