@@ -105,7 +105,9 @@ export function hubDaemon(
       const renewal = setInterval(() => {
         device.renew?.({ ttlSec: HUB_LEASE_SEC })?.catch?.(() => undefined)
       }, renewEveryMs)
-      renewal.unref?.()
+      // A Node timer; the DOM's types, under which e2e/ is also checked,
+      // make it a number.
+      ;(renewal as unknown as { unref?: () => void }).unref?.()
       renewals.push(renewal)
       return device
     },

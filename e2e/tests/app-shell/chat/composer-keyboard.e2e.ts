@@ -11,6 +11,7 @@ import {
   platformOf,
   typeKeys
 } from '../../../rigs/app/keyboardDock'
+import { tapIfShown } from '../../../rigs/streaming/surfaces/surface'
 
 /**
  * A conversation's composer still rides the keyboard on a phone now that
@@ -64,7 +65,8 @@ export default defineE2e({
       })
       await device.launchApp({ appId: APP, stopApp: true, clearState: true })
       try {
-        await device.tapOn({ text: 'Use a password instead', optional: true })
+        // The sign-in screen offers a code first on some builds.
+        await tapIfShown(device, { text: 'Use a password instead' }, 5000)
         await device.tapOn({ text: 'E-mail address' })
         await typeKeys(device, ios, account.email)
         await device.tapOn({ text: 'Password' })
