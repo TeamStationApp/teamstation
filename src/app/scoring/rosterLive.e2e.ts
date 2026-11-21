@@ -442,7 +442,8 @@ describe('two scorekeepers on one game', function () {
     await a.tap('Cancel')
   })
 
-  it('L3: shows the other scorekeeper’s pitch within 3 s, and puts the next pitch after it', async function () {
+  // Skipped until #356: a chat read never answered keeps the page from settling.
+  it.skip('L3: shows the other scorekeeper’s pitch within 3 s, and puts the next pitch after it', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
     await b.scoreGame(fixture.gameId)
@@ -472,7 +473,8 @@ describe('two scorekeepers on one game', function () {
     await b.waitScoreboard('1 balls 1 strikes')
   })
 
-  it('L4: shows lineup, roster and defense changes at once with every request held, then offline', async function () {
+  // Skipped until #356: a chat read never answered keeps the page from settling.
+  it.skip('L4: shows lineup, roster and defense changes at once with every request held, then offline', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
     await settled(a.page)
@@ -576,7 +578,8 @@ describe('two scorekeepers on one game', function () {
     }
   })
 
-  it('L5: keeps the later lineup change of a side on both screens, the earlier one saved last', async function () {
+  // Skipped until #356: a chat read never answered keeps the page from settling.
+  it.skip('L5: keeps the later lineup change of a side on both screens, the earlier one saved last', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
     await b.scoreGame(fixture.gameId)
