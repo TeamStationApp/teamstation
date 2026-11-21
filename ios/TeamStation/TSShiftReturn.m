@@ -41,6 +41,7 @@ static NSString *const TSComposerNativeID = @"tessComposerField";
 
 /** The presses a field took, so their later phases are not passed on either. */
 static const void *TSTakenKey = &TSTakenKey;
+static const void *TSLookupAfterUpKey = &TSLookupAfterUpKey;
 
 static BOOL TSIsShiftReturn(UIPress *press)
 {
@@ -113,6 +114,14 @@ static void TSPressesBegan(UITextView *self, SEL _cmd, NSSet<UIPress *> *presses
     UIKey *key = press.key;
     UIKeyModifierFlags modifiers = UIKeyModifierShift | UIKeyModifierControl |
         UIKeyModifierAlternate | UIKeyModifierCommand;
+    if (key != nil && objc_getAssociatedObject(self, TSLookupAfterUpKey) != nil &&
+        ![TSTaken(self) containsObject:press]) {
+      objc_setAssociatedObject(self, TSLookupAfterUpKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+      if (up && self.isFirstResponder && self.text.length == 0) {
+        BOOL plainEscape = key.keyCode == UIKeyboardHIDUsageKeyboardEscape && (key.modifierFlags & modifiers) == 0;
+        TSChatSendKey(self, plainEscape ? @"Escape" : @"Unidentified");
+      }
+    }
     if (tess && TSIsShiftReturn(press)) {
       [TSTaken(self) addObject:press];
       TSInsertNewline(self);
@@ -122,6 +131,7 @@ static void TSPressesBegan(UITextView *self, SEL _cmd, NSSet<UIPress *> *presses
                 (escape && key.keyCode == UIKeyboardHIDUsageKeyboardEscape)) &&
                ([TSTaken(self) containsObject:press] || TSChatSendKey(self, up ? @"ArrowUp" : @"Escape"))) {
       [TSTaken(self) addObject:press];
+      if (up) objc_setAssociatedObject(self, TSLookupAfterUpKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } else {
       [rest addObject:press];
     }

@@ -167,6 +167,18 @@ class ChatHardwareKeysTest {
     assertEquals(listOf("ArrowUp", "Escape"), sent)
   }
 
+  @Test fun nextHardwarePressInterruptsTheEarlierLookupAndKeepsItsDefaultHandling() {
+    val activityKeys = ChatHardwareKeys { _, key -> sent.add(key); true }
+    for (key in listOf(esc, KeyEvent.KEYCODE_DPAD_LEFT)) {
+      assertTrue(handler.dispatch(field, event(up)))
+      assertTrue(handler.dispatch(field, event(up, KeyEvent.ACTION_UP)))
+      assertFalse(activityKeys.dispatch(field, event(key)))
+      assertFalse(handler.dispatch(field, event(key)))
+      assertFalse(activityKeys.dispatch(field, event(key, KeyEvent.ACTION_UP)))
+    }
+    assertEquals(listOf("ArrowUp", "Escape", "ArrowUp", "Unidentified"), sent)
+  }
+
   @Test fun otherFieldsTextCompositionsAndModifiedInputKeepTheirKeys() {
     assertFalse(handler.dispatch(null, event()))
     assertFalse(handler.dispatch(other, event()))

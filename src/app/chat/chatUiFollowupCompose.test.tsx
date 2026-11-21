@@ -1614,6 +1614,72 @@ describe('chat conversation shared file preparation and sending', function () {
     expect(input().value).equals(' ')
   })
 
+  for (const platform of ['ios', 'android'] as const) {
+    for (const interrupt of ['Escape', 'Unidentified']) {
+      it(`keeps the composer empty when ${interrupt} interrupts a pending hardware Up on ${platform}`, async () => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(
+          Platform,
+          'OS'
+        )!
+        Object.defineProperty(Platform, 'OS', {
+          configurable: true,
+          value: platform
+        })
+        try {
+          const engine = new FakeEngine()
+          const room = 'cnv_aurora'
+          const recent = message({ id: 'msg_recent', seq: 8, mine: false })
+          const earlier = message({
+            id: 'msg_earlier',
+            seq: 3,
+            mine: true,
+            body: 'Early practice'
+          })
+          engine.update(room, {
+            messages: [recent],
+            hasEarlier: true,
+            historyBefore: 8
+          })
+          const page = pending<undefined>()
+          let requested = false
+          engine.loadEarlier = async id => {
+            requested = true
+            await page.promise
+            engine.update(id, {
+              messages: [earlier, recent],
+              hasEarlier: false,
+              historyBefore: 3
+            })
+            return engine.view(id)!
+          }
+          await screen(engine)
+          await act(async () => {
+            input().focus()
+            nativeFieldKey('ArrowUp')
+            await wait()
+          })
+          expect(requested).equals(true)
+          await act(async () => {
+            nativeFieldKey(interrupt)
+            page.resolve(undefined)
+            await wait()
+          })
+          expect(input().value).equals('')
+          expect(document.querySelector('[aria-label="Cancel edit"]')).equals(
+            null
+          )
+          await act(async () => {
+            nativeFieldKey('ArrowUp')
+            await wait()
+          })
+          expect(input().value).equals('Early practice')
+        } finally {
+          Object.defineProperty(Platform, 'OS', originalPlatform)
+        }
+      })
+    }
+  }
+
   it('shows the received card, regenerates an edited caption’s chat link preview, and dismisses the next draft preview', async () => {
     const engine = new FakeEngine()
     const room = 'cnv_aurora'
@@ -2133,21 +2199,39 @@ describe('chat conversation shared file preparation and sending', function () {
   })
 })
 
-function renderedComposerProps(): ComposerProps {
+function renderedFieldAncestor<T>(matches: (props: Partial<T>) => boolean): T {
   interface Fiber {
     return?: Fiber
-    memoizedProps?: Partial<ComposerProps>
+    memoizedProps?: Partial<T>
   }
   const node = input() as unknown as Record<string, unknown>
   const key = Object.keys(node).find(name => name.startsWith('__reactFiber$'))!
   let fiber = node[key] as Fiber | undefined
   while (fiber != null) {
     const props = fiber.memoizedProps
-    if (props?.onAttach != null && props.sources != null)
-      return props as ComposerProps
+    if (props != null && matches(props)) return props as T
     fiber = fiber.return
   }
-  throw new Error('Actual mounted Composer props unavailable')
+  throw new Error('Expected a mounted chat composer field ancestor')
+}
+
+function renderedComposerProps(): ComposerProps {
+  return renderedFieldAncestor<ComposerProps>(
+    props => props.onAttach != null && props.sources != null
+  )
+}
+
+function nativeFieldKey(key: string): void {
+  interface NativeField {
+    nativeID: string
+    onKeyPress: (event: { nativeEvent: { key: string } }) => void
+  }
+  const field = renderedFieldAncestor<NativeField>(
+    props =>
+      props.nativeID?.startsWith('chatComposer') === true &&
+      props.onKeyPress != null
+  )
+  field.onKeyPress({ nativeEvent: { key } })
 }
 
 describe('review3 picker activation and busy lifetime', function () {

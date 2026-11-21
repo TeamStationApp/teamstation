@@ -101,6 +101,24 @@ using namespace facebook::react;
   XCTAssertEqual(host.emissions, 3u);
 }
 
+- (void)testNextUnclaimedKeyNotifiesThePendingLookupOnlyOnce {
+  ChatTestHost *host = [ChatTestHost new];
+  ChatTestField *field = [[ChatTestField alloc] initWithFrame:CGRectZero];
+  [host addSubview:field];
+  field.focusedForTest = YES;
+  host.emitterReady = YES;
+  host.identifierForTest = @"chatComposerEditLatest";
+  NSSet *up = [NSSet setWithObject:[self key:UIKeyboardHIDUsageKeyboardUpArrow flags:0]];
+  NSSet *escape = [NSSet setWithObject:[self key:UIKeyboardHIDUsageKeyboardEscape flags:0]];
+  [field pressesBegan:up withEvent:nil];
+  [field pressesEnded:up withEvent:nil];
+  [field pressesBegan:escape withEvent:nil];
+  [field pressesEnded:escape withEvent:nil];
+  [field pressesBegan:escape withEvent:nil];
+  [field pressesEnded:escape withEvent:nil];
+  XCTAssertEqual(host.emissions, 2u);
+}
+
 - (void)testDetachedFieldKeepsItsTextWhenTheHostHasGoneAway {
   ChatTestField *field = [[ChatTestField alloc] initWithFrame:CGRectZero];
   field.focusedForTest = YES;

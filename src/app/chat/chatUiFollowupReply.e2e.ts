@@ -329,7 +329,7 @@ async function send(device: Device, id: string, body: string): Promise<string> {
   const before = await envelopes(device, id)
   await device.tapOn({ css: '[data-testid="chat-composer"]' })
   await device.inputText({ text: body })
-  await device.tapOn({ text: 'Send' })
+  await device.tapOn({ css: '[aria-label="Send"]', timeout: 10000 })
   return await sent(device, id, before)
 }
 async function reply(device: Device, id: string): Promise<void> {
@@ -430,7 +430,7 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     patterns: [`*api/v1/chat/conversations/${id}/messages*`]
   })
   try {
-    await device.tapOn({ text: 'Send' })
+    await device.tapOn({ css: '[aria-label="Send"]', timeout: 10000 })
     await device.assertVisible({
       text: 'That did not send. Try again.',
       timeout: 20000
@@ -454,7 +454,7 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     before.length,
     'Blocked normal request must not reach the server'
   )
-  await device.tapOn({ text: 'Send' })
+  await device.tapOn({ css: '[aria-label="Send"]', timeout: 10000 })
   const replyId = await sent(device, id, before)
   const clean = await evaluate<{ text: string; file: boolean; reply: boolean }>(
     device,

@@ -4,6 +4,7 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
+import app.teamstation.app.R as AppR
 import com.facebook.react.R
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.WritableMap
@@ -32,6 +33,17 @@ internal class ChatHardwareKeys(
   private val pressed = mutableSetOf<Pair<Int, Int>>()
 
   fun dispatch(focused: View?, event: KeyEvent): Boolean {
+    // Pre-IME and activity dispatch can see different parts of one key sequence.
+    // Keep the pending Up on the field so its next press can interrupt a history read.
+    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+      focused is ReactEditText && focused.getTag(AppR.id.chat_edit_lookup_after_up) == true &&
+      event.isFromSource(InputDevice.SOURCE_KEYBOARD) && event.flags and KeyEvent.FLAG_SOFT_KEYBOARD == 0) {
+      focused.setTag(AppR.id.chat_edit_lookup_after_up, null)
+      if (focused.hasFocus() && focused.text.isNullOrEmpty() && focused.getTag(R.id.view_tag_native_id) == "chatComposerEditLatest") {
+        val key = if (event.keyCode == KeyEvent.KEYCODE_ESCAPE && event.hasNoModifiers()) "Escape" else "Unidentified"
+        send(focused, key)
+      }
+    }
     if (event.keyCode != KeyEvent.KEYCODE_DPAD_UP && event.keyCode != KeyEvent.KEYCODE_ESCAPE) return false
     val press = event.deviceId to event.keyCode
     if (event.action == KeyEvent.ACTION_UP) return pressed.remove(press)
@@ -49,6 +61,7 @@ internal class ChatHardwareKeys(
       else -> null
     } ?: return false
     if (!send(field, key)) return false
+    if (key == "ArrowUp") field.setTag(AppR.id.chat_edit_lookup_after_up, true)
     pressed.add(press)
     return true
   }

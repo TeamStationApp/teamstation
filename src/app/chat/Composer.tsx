@@ -352,9 +352,10 @@ export function Composer(props: ComposerProps): React.ReactElement {
           onKeyPress={event => {
             const key = event.nativeEvent.key
             if (Platform.OS !== 'web' && hardware.current(key)) return
-            if (key !== 'ArrowUp' && key !== 'Escape')
-              latest.current.onInterruptShortcut?.()
-            editKey.current = key
+            if (key !== 'ArrowUp') latest.current.onInterruptShortcut?.()
+            // A native hardware press can interrupt an older-page lookup while
+            // the text system continues to handle the actual key normally.
+            if (key !== 'Unidentified') editKey.current = key
           }}
           onChangeText={next => {
             const change = {
