@@ -68,6 +68,7 @@ export function groupChats(chats: ConversationListItem[]): ChatGroup[] {
 
 const SUBGROUP: Record<ConversationListItem['kind'], string> = {
   leagueOrg: 'Org',
+  leagueUmpires: 'Umpires',
   seasonStaff: 'Staff',
   seasonAllStaff: 'All Staff',
   seasonAnnouncements: 'Announcements',

@@ -10,7 +10,7 @@ import {
   testDatabaseUrlOf
 } from '../testDatabase'
 import { migration126GroupCoordinates as migration } from './126groupCoordinates'
-import { migrations } from './index'
+import { migrations as every } from './index'
 
 /**
  * Every league and team with a locality gets its city's coordinates: a
@@ -18,6 +18,9 @@ import { migrations } from './index'
  * the most populous catalog city of the same name, region and country, and a
  * city the catalog does not hold stays null.
  */
+
+// Through this migration: later ones have their own tests.
+const migrations = every.filter(m => m.name <= migration.name)
 
 const sanDiego = { latitude: 32.71571, longitude: -117.16472 }
 const nowhere = { latitude: null, longitude: null }

@@ -431,7 +431,7 @@ describe('the chat reconciler (U5)', function () {
     expect(await chainsVerify(db)).equals(true)
   })
 
-  it('expands marks: a team reaches its seasons, a league its seasons, a user their chats', async function () {
+  it('expands marks: a team reaches its seasons, a league its seasons, a season its league’s umpire chat, a user their chats', async function () {
     const { teams, seasonId, leagueId } = fixture.seed
     const byTeam = await targetsOf(db, [
       { scope_type: 'team', scope_id: teams.owls }
@@ -451,9 +451,21 @@ describe('the chat reconciler (U5)', function () {
     ])
     expect(byLeague.scopes.map(s => s.kind).sort()).deep.equals([
       'leagueOrg',
+      'leagueUmpires',
       'seasonAllStaff',
       'seasonAnnouncements',
       'seasonStaff'
+    ])
+    const bySeason = await targetsOf(db, [
+      { scope_type: 'season', scope_id: seasonId }
+    ])
+    expect(
+      bySeason.scopes.map(s => `${s.kind} ${s.scopeId}`).sort()
+    ).deep.equals([
+      `leagueUmpires ${leagueId}`,
+      `seasonAllStaff ${seasonId}`,
+      `seasonAnnouncements ${seasonId}`,
+      `seasonStaff ${seasonId}`
     ])
     const byUser = await targetsOf(db, [
       { scope_type: 'user', scope_id: String(fixture.id('G1')) },
@@ -603,6 +615,39 @@ describe('the chat reconciler (U5)', function () {
     await sweep(db, fixture.now)
     const org = await conversation('leagueOrg', fixture.seed.leagueId)
     expect(await members(org.id)).deep.equals(['L'])
+  })
+
+  it('creates a league’s missing umpire chat at the sweep, once it manages umpires and has one', async function () {
+    const league = fixture.seed.leagueId
+    await db
+      .updateTable('leagues')
+      .set({ umpire_management: true })
+      .where('id', '=', league)
+      .execute()
+    await db
+      .insertInto('league_umpires')
+      .values({
+        league_id: league,
+        user_id: fixture.id('B'),
+        granted_by: fixture.id('L')
+      })
+      .execute()
+    // The marks those wrote are lost: only the sweep can find the chat.
+    await db.deleteFrom('chat_dirty').execute()
+    await sweep(db, fixture.now)
+    const umpires = await conversation('leagueUmpires', league)
+    expect(await members(umpires.id)).deep.equals(['B'])
+    await db
+      .deleteFrom('league_umpires')
+      .where('league_id', '=', league)
+      .execute()
+    await db
+      .updateTable('leagues')
+      .set({ umpire_management: false })
+      .where('id', '=', league)
+      .execute()
+    await fixture.drain()
+    expect(await members(umpires.id)).deep.equals([])
   })
 
   it('reads a scope marked many times while it was behind once, and leaves nothing queued', async function () {

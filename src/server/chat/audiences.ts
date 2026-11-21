@@ -6,7 +6,7 @@ import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
 
 /**
- * Who is in each scope chat: the seven audiences.
+ * Who is in each scope chat: the eight audiences.
  *
  * Every audience is worked out from the roster tables as they stand, never
  * stored: the reconciler diffs it with `chat_members`. Each user id read from
@@ -27,6 +27,7 @@ import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
  * | `seasonAllStaff` | season staff, and team staff of every full team in it |
  * | `seasonAnnouncements` | All Staff, every full team's Members, `season_members`, and the league's `league_members` |
  * | `leagueOrg` | any direct role on the league |
+ * | `leagueUmpires` | the league's umpires (`league_umpires`) accepted into it, as their umpire schedule decides (`umpireAcceptance`), while it manages umpires |
  *
  * A team chat exists only for a full, unmerged team; any other team's
  * audience is empty, so a merged team's chats empty out.
@@ -45,7 +46,7 @@ export const SEASON_KINDS: readonly ScopeKind[] = [
   'seasonAllStaff',
   'seasonAnnouncements'
 ]
-export const LEAGUE_KINDS: readonly ScopeKind[] = ['leagueOrg']
+export const LEAGUE_KINDS: readonly ScopeKind[] = ['leagueOrg', 'leagueUmpires']
 
 /** The chats whose shared membership lets one person name another in a DM. */
 export const NAMING_KINDS: readonly ChatKind[] = [
@@ -415,5 +416,65 @@ export async function audienceOf(
         await leagueRoleIds(db, [scopeId]),
         now
       )
+    case 'leagueUmpires':
+      return await leagueUmpireIds(db, scopeId, now)
   }
+}
+
+/**
+ * The league's umpires who belong in its umpire chat: nobody while it does
+ * not manage umpires; otherwise each holder of its umpire role, resolved to
+ * an eligible survivor, who is accepted into the league as their umpire
+ * schedule decides it. Being one of its administrators gives nothing without
+ * the role.
+ *
+ * Eligibility comes first, so that the acceptance below, which asks who
+ * administers the league, only ever sees accounts that can sign in.
+ */
+async function leagueUmpireIds(
+  db: Kysely<Database>,
+  leagueId: string,
+  now: Date
+): Promise<Set<string>> {
+  const league = await db
+    .selectFrom('leagues')
+    .select('umpire_management')
+    .where('id', '=', leagueId)
+    .executeTakeFirst()
+  if (league?.umpire_management !== true) return new Set()
+  const holders = await db
+    .selectFrom('league_umpires')
+    .select('user_id')
+    .where('league_id', '=', leagueId)
+    .execute()
+  const eligible = await eligibleSurvivors(
+    db,
+    holders.map(row => row.user_id),
+    now
+  )
+  if (eligible.size === 0) return eligible
+  // Loaded here, not imported: the umpire modules reach the DM rules, which
+  // read this module.
+  const { umpireAcceptance } = await import('../umpires/schedule')
+  const { umpireFamily } = await import('../umpires/context')
+  const { canAdminister } = await import('../groups/rights')
+  const accepted = new Set<string>()
+  for (const userId of eligible) {
+    // Membership usually accepts; administration is asked only after.
+    if (
+      (await umpireAcceptance(
+        db,
+        leagueId,
+        await umpireFamily(db, userId),
+        false
+      )) ||
+      (await canAdminister(
+        db,
+        { userId, isAdmin: false, scopes: [] },
+        { kind: 'league', id: leagueId }
+      ))
+    )
+      accepted.add(userId)
+  }
+  return accepted
 }

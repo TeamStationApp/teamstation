@@ -14,6 +14,7 @@ import { asLiteral } from '../../common/asLiteral'
 import { MAX_ATTACHMENTS } from '../../common/chatContent'
 import { isIdentityId, isMessageId } from '../../common/chatCrypto/messageIds'
 import { ENVELOPE_KINDS } from '../../common/chatCrypto/seal'
+import { CHAT_KINDS_HEADER, unreadChatKinds } from '../../common/chatKinds'
 import { notFound } from '../../common/errors'
 import { chatCaller } from '../chat/keys'
 import {
@@ -310,11 +311,15 @@ export function chatMessageRoutes(
     '/admin/chat/reports',
     requireAdmin,
     withAsync(async (req, res) => {
+      // A build from before a kind would fail its whole list on it.
+      const unread = unreadChatKinds(req.get(CHAT_KINDS_HEADER))
       res.json(
-        await reportsFor(db, media.space, {
-          open: req.query.open === 'true' || req.query.open === '1',
-          reader: readerOf(req.actor)
-        })
+        (
+          await reportsFor(db, media.space, {
+            open: req.query.open === 'true' || req.query.open === '1',
+            reader: readerOf(req.actor)
+          })
+        ).filter(report => !unread.has(report.conversation.kind))
       )
     })
   )

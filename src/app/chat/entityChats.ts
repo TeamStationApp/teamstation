@@ -6,6 +6,7 @@ import type { ChatKeyStore } from './keyRecord'
 
 const GROUP_LABELS: Record<ConversationListItem['kind'], string> = {
   leagueOrg: 'Org',
+  leagueUmpires: 'Umpires',
   seasonStaff: 'Staff',
   seasonAllStaff: 'All Staff',
   seasonAnnouncements: 'Announcements',
