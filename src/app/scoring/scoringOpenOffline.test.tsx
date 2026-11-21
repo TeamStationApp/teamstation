@@ -3,15 +3,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import { afterEach, beforeEach, describe, it } from 'mocha'
+import { afterEach, before, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { ScoringSession } from '../../common/scoring/session'
-import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { fieldServer, memoryStorage } from '../../test/offlineFieldServer'
 import { scoringSession } from '../../test/scoringSession'
-import { cacheFileName, openCacheStore } from '../sync/cacheStore'
+import {
+  sql,
+  testSqliteExecutor,
+  testSqliteReady
+} from '../../test/testSqliteExecutor'
+import {
+  cacheFileName,
+  openCacheStore,
+  type SqlExecutor
+} from '../sync/cacheStore'
 import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
@@ -34,8 +42,10 @@ async function settle(ms = 50): Promise<void> {
  */
 describe('scoring opened again with no signal', function () {
   let dir: string
-  let executors: Array<ReturnType<typeof nodeSqliteExecutor>>
+  let executors: SqlExecutor[]
   let root: Root | undefined
+
+  before(testSqliteReady)
 
   beforeEach(function () {
     dir = mkdtempSync(join(tmpdir(), 'teamstation-open-'))
@@ -96,7 +106,7 @@ describe('scoring opened again with no signal', function () {
       token: 'token-1',
       fetch: net.fetch,
       openCache: async (userId, apiBaseUrl) => {
-        const executor = nodeSqliteExecutor(
+        const executor = testSqliteExecutor(
           join(
             dir,
             cacheFileName(
@@ -115,10 +125,10 @@ describe('scoring opened again with no signal', function () {
     await open(client)
     expect(document.body.textContent).includes('1 balls')
     const keys = (
-      executors
-        .at(-1)!
-        .db.prepare('SELECT key FROM documents ORDER BY key')
-        .all() as Array<{ key: string }>
+      (await sql(
+        executors.at(-1)!,
+        'SELECT key FROM documents ORDER BY key'
+      )) as Array<{ key: string }>
     ).map(row => row.key)
     // The plays carry the lineups; the sides' default lineups open them.
     for (const key of [

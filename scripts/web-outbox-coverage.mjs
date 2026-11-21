@@ -33,21 +33,24 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { build } from 'esbuild'
 import ts from 'typescript'
 
-import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
-import { webSettings } from './web-build-settings.mjs'
+import { bundleAppSuite } from './appSuiteBundle.mjs'
 
 const minimum = 90
 
 /** The `.test.ts` suites, run together under mocha. */
-const tsSuites = []
+const tsSuites = [
+  // The cache's SQL and outbox, on node:sqlite (M2).
+  'src/app/sync/cacheStore.test.ts'
+]
 
 /**
  * The `.test.tsx` suites, each bundled alone. `skip` names the cases left
  * out because, bundled alone, they fail on the branch's base as well: they
  * lean on their bundle neighbours under `npm test`, which still runs them.
+ * `env` is set for that suite's own mocha process (`TS_TEST_SQLITE: 'wasm'`
+ * runs it on the web's SQLite WASM).
  */
 const appSuites = [
   // Leaving and coming back to scoring.
@@ -62,7 +65,13 @@ const appSuites = [
   },
   { path: 'src/app/scoring/eventTags.test.tsx' },
   // Scoring with no signal, on the queue the web now shares.
-  { path: 'src/app/sync/offlineScoring.test.tsx' }
+  { path: 'src/app/sync/offlineScoring.test.tsx' },
+  // The web's executor and cache, on SQLite WASM (M2).
+  {
+    path: 'src/app/sync/wasmSqliteExecutor.test.ts',
+    env: { TS_TEST_SQLITE: 'wasm' }
+  },
+  { path: 'src/app/sync/cache.test.ts', env: { TS_TEST_SQLITE: 'wasm' } }
 ]
 const only = process.env.TS_COVERAGE_GREP
 
@@ -125,47 +134,12 @@ const changed = lines(git(['diff', '--name-only', '--diff-filter=d', base]))
 const untracked = lines(git(['ls-files', '--others', '--exclude-standard']))
 const paths = [...new Set([...changed, ...untracked])].filter(eligible).sort()
 
-for (const [index, suite] of appSuites.entries()) {
-  await build({
-    ...webSettings,
-    alias: {
-      ...webSettings.alias,
-      'react-native-webview': './src/test/eventWebViewStub.tsx',
-      'react-native-maps': './src/test/eventNativeMapStub.tsx',
-      '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',
-      '@react-native/assets-registry/registry':
-        'react-native-web/dist/modules/AssetRegistry'
-    },
-    stdin: {
-      contents: `import './${suite.path}'`,
-      resolveDir: process.cwd(),
-      sourcefile: `web-outbox-test-${index}.ts`
-    },
+for (const [index, suite] of appSuites.entries())
+  await bundleAppSuite({
+    path: suite.path,
     outfile: resolve(bundles, `${index}.cjs`),
-    bundle: true,
-    platform: 'node',
-    format: 'cjs',
-    sourcemap: true,
-    jsx: 'automatic',
-    external: [
-      'react',
-      'react-dom',
-      'three',
-      '@react-three/fiber',
-      '@react-three/test-renderer',
-      'jsdom',
-      'mocha',
-      'chai'
-    ],
-    define: {
-      __DEV__: 'true',
-      TS_API_BASE_URL: JSON.stringify('/api/v1'),
-      'process.env.TS_SENTRY_DSN': JSON.stringify(''),
-      'process.env.NODE_ENV': JSON.stringify('test')
-    },
-    loader: ASSET_LOADER
+    sourcefile: `web-outbox-test-${index}.ts`
   })
-}
 
 const mocha = 'node_modules/.bin/mocha'
 const setup = ['-r', 'sucrase/register', '-r', './src/test/scoringDomSetup.cjs']
@@ -203,7 +177,8 @@ for (const [index, suite] of appSuites.entries()) {
       resolve(bundles, `${index}.cjs`)
     ],
     {
-      NODE_V8_COVERAGE: temp
+      NODE_V8_COVERAGE: temp,
+      ...suite.env
     }
   )
 }

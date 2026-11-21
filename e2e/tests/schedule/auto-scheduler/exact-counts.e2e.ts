@@ -291,7 +291,10 @@ export default defineE2e({
         ],
         readBack: async () => {
           expect(await requested(web, MODULE)).deep.equals([])
-          expect(await warnings(web)).deep.equals([
+          // The tab's document cache is SQLite on WebAssembly too: without
+          // it the session runs uncached and says so (#358).
+          expect(await warnings(web)).to.have.members([
+            'Offline document cache unavailable: Error: This browser has no WebAssembly',
             'scheduler unavailable: noWebAssembly'
           ])
           // Nothing was built, so no result was sent.
