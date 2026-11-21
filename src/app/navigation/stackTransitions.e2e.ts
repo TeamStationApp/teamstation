@@ -659,8 +659,22 @@ async function main(): Promise<void> {
         )
         if (scroller === undefined) return -1
         scroller.dataset.w8 = ''
-        scroller.scrollTop = 120
-        return scroller.scrollTop
+        // As far down as 120 points while the team's row stays in the clear:
+        // the header covers it once Home is scrolled too far.
+        const row = top.querySelector(
+          '[role="button"][aria-label^="Demo Hawks"]'
+        )
+        if (row === null) return -1
+        for (let by = 120; by > 0; by -= 10) {
+          scroller.scrollTop = by
+          const box = row.getBoundingClientRect()
+          const hit = document.elementFromPoint(
+            box.left + box.width / 2,
+            box.top + box.height / 2
+          )
+          if (hit !== null && row.contains(hit)) return scroller.scrollTop
+        }
+        return 0
       })
       assert.ok(scrolled > 0, `W8: Home scrolls (${scrolled})`)
       await tapCss(
