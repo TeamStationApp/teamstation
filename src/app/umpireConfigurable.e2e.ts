@@ -282,6 +282,32 @@ async function main(): Promise<void> {
           .executeTakeFirst()
       )?.user_id
     ).equals(coach)
+    // From the game's Info tab, the umpire's league card opens for 106, who
+    // is accepted into League A (the playoffs coach above) and neither
+    // manages its people nor is Uma (#347).
+    await open('/games/gam_umpire_g1', 'UMPIRES')
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-testid="game-umpires"]')!
+        .scrollIntoView({ block: 'center' })
+    })
+    await capture(m, artifacts, 'game-umpires-after.png')
+    await m.tapOn({
+      css: `[data-testid="umpire-person-${userIdOfGumbo(103)}"] [role="button"]`
+    })
+    await page.waitForFunction(
+      (league, uma) => location.pathname === `/leagues/${league}/people/${uma}`,
+      { polling: 100 },
+      f.leagueA,
+      userIdOfGumbo(103)
+    )
+    await contains(page, 'Uma Lee')
+    expect(
+      await page.evaluate(() =>
+        String(document.body.textContent).includes('ROLES')
+      )
+    ).equals(false)
+    await capture(m, artifacts, 'game-umpire-profile-after.png')
     await recordBrowserCoverage(
       [page],
       f.h.origin,

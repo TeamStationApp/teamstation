@@ -977,6 +977,13 @@ export const enUs = {
   chat_new_not_allowed: 'You cannot start a conversation with %s.',
   chat_new_failed: 'The conversation could not be started.',
   chat_new_too_many: 'A conversation holds at most 20 people.',
+  chat_message: 'Message',
+  chat_message_named: 'Message %s',
+  chat_proxy_no_account: "%s doesn't have an account",
+  chat_proxy_too_young: "%s can't use chat yet",
+  chat_proxy_choose_guardian: 'Choose a guardian to message',
+  chat_proxy_choose_coach: 'Choose a coach to message',
+  chat_proxy_choose_person: 'Message %s',
   chat_include_title: 'Include another adult',
   chat_include_detail:
     'This league is a SafeSport Local Affiliated Organization. Messages between an adult and a player under 18 must also include the player’s parent or guardian, an adult family member, or another adult of the team, season or league. Pick at least one.',

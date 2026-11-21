@@ -3909,6 +3909,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
@@ -4001,6 +4002,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}

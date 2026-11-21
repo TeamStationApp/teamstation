@@ -95,6 +95,8 @@ async function render(
     kind?: 'team' | 'season' | 'league'
     failChange?: boolean
     staleManager?: boolean
+    /** Gives the screen a DM opener, the person being one the reader can message. */
+    messages?: boolean
   } = {}
 ): Promise<Calls> {
   const calls: Calls = {
@@ -106,6 +108,7 @@ async function render(
   }
   const kind = options.kind ?? 'team'
   const client = {
+    dmReach: async () => 'direct' as const,
     personProfile: async (asked: string, id: string, userId: string) => {
       expect([asked, id, userId]).deep.equals([
         kind,
@@ -155,6 +158,7 @@ async function render(
             onOpenPlayer={(userId, name, from) => {
               calls.players.push([userId, name, from])
             }}
+            onOpenChat={options.messages === true ? () => {} : undefined}
           />
         </CoverableScene>
       </ThemeProvider>
@@ -197,6 +201,32 @@ describe('the person profile', function () {
     await coverAndReveal()
     expect(calls.loads).equals(2)
     expect(document.body.textContent).equals(before)
+  })
+
+  it('puts the Message pill at the hero card’s bottom right, under the name’s row', async function () {
+    await render([profile()], { messages: true })
+    const pill = document.querySelector<HTMLElement>(
+      '[data-testid="person-message"]'
+    )
+    expect(pill?.getAttribute('aria-label')).equals('Message Pat Neshek')
+    const heading = [
+      ...document.querySelectorAll<HTMLElement>('[role="heading"]')
+    ].find(node => node.textContent === 'Pat Neshek')!
+    // Not in the row with the photo and name, but in the same card, after it.
+    const row = heading.parentElement!.parentElement!
+    expect(row.contains(pill)).equals(false)
+    const line = pill!.parentElement!.parentElement!
+    expect(line.parentElement).equals(row.parentElement)
+    expect(line.previousElementSibling).equals(row)
+    expect(getComputedStyle(line).alignSelf).equals('flex-end')
+    expect(text().indexOf('Message')).lessThan(text().indexOf('TEAM ROLES'))
+  })
+
+  it('draws no Message pill without a DM opener', async function () {
+    await render([profile()])
+    expect(document.querySelector('[data-testid="person-message"]')).equals(
+      null
+    )
   })
 
   it('puts the photo, the whole name and the level it is for in the hero, then the players they guard', async function () {

@@ -35,7 +35,10 @@ describe('game detail umpire contract', () => {
     ]
   }
   it('preserves typed optional positions supplied by the game endpoint', () => {
-    expect(asGameDetail({ ...game, umpires }).umpires).deep.equals(umpires)
+    expect(asGameDetail({ ...game, umpires }).umpires).deep.equals({
+      ...umpires,
+      leagueId: undefined
+    })
   })
   it('allows an absent game umpire block', () => {
     expect(asGameDetail(game).umpires).equals(null)
