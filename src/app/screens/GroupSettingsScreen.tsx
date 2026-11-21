@@ -31,6 +31,7 @@ import { ManagementCard, type ManagementCardProps } from './ManagementCard'
 import { ParentOrganizations } from './ParentOrganizations'
 import { ParticipationList } from './ParticipationList'
 import { PlayerNamePrivacyRow } from './PlayerNamePrivacyRow'
+import { SafesportRow } from './SafesportRow'
 import { SeasonParticipations } from './SeasonParticipations'
 
 export function GroupSettingsScreen({
@@ -328,6 +329,9 @@ export function GroupSettingsScreen({
                 scopeId={detail.group.id}
                 onChanged={onChanged}
               />
+            )}
+            {kind === 'league' && (
+              <SafesportRow client={client} leagueId={id} />
             )}
             {kind === 'league' && onUmpires != null && (
               <UmpireSettingsCard
