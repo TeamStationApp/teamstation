@@ -552,6 +552,24 @@ export type ChatPerson = Omit<
 }
 export const asChatPerson: Cleaner<ChatPerson> = cleanChatPerson
 
+/**
+ * How a reader can message somebody: a DM with them (`direct`), or, for a
+ * player who cannot sign in, through their guardians or coaches (`proxies`).
+ */
+export type MessageReach = 'direct' | 'proxies'
+
+/** Whom to message for a player who cannot sign in (`GET /chat/dm-proxies`). */
+export const asDmProxies = asObject({
+  player: asObject({ userId: asUserId, shortName: asString }),
+  kind: asLiteral('guardians', 'coaches'),
+  people: asArray(asChatPerson)
+})
+export type DmProxies = ReturnType<typeof asDmProxies>
+
+const asDmReach = asObject({
+  reach: asEither(asLiteral(null), asLiteral('direct', 'proxies'))
+})
+
 export const asChatBlock = asObject({
   userId: asUserId,
   shortName: asString,
@@ -1110,12 +1128,14 @@ export const asGameDetail = withEventMetadata(
                 asObject({
                   userId: asString,
                   name: asString,
-                  avatarUrl: asOptional(asNullable(asString))
+                  avatarUrl: asOptional(asNullable(asString)),
+                  openable: asOptional(asBoolean)
                 }),
                 asLiteral(null)
               )
             })
-          )
+          ),
+          leagueId: asOptional(asString)
         }),
         asLiteral(null)
       ),
@@ -1581,7 +1601,13 @@ const cleanRosterEntry = asObject({
    * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
    * visible.
    */
-  affiliations: asOptional(asString, '')
+  affiliations: asOptional(asString, ''),
+  /**
+   * How the signed-in reader can message this person: `direct`, or `proxies`
+   * for a player who cannot sign in, through their guardians or coaches
+   * (`dmProxies`). Absent when the reader cannot message them at all.
+   */
+  message: asOptional(asLiteral('direct', 'proxies'))
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
@@ -1593,8 +1619,10 @@ export type RosterEntry = Omit<
   | 'pool'
   | 'ownIdentity'
   | 'isHeadCoach'
+  | 'message'
 > & {
   isHeadCoach?: boolean
+  message?: MessageReach
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
@@ -7436,6 +7464,29 @@ export class TeamStationClient {
       'GET',
       `/chat/dm-candidates?q=${encodeURIComponent(query)}${userId == null ? '' : `&userId=${encodeURIComponent(userId)}`}`,
       asArray(asChatPerson)
+    )
+  }
+
+  /**
+   * How the signed-in person can message `userId`: `direct`, `proxies` (a
+   * player who cannot sign in, through their guardians or coaches), or null.
+   */
+  async dmReach(userId: string): Promise<MessageReach | null> {
+    return (
+      await this.request(
+        'GET',
+        `/chat/dm-reach?userId=${encodeURIComponent(userId)}`,
+        asDmReach
+      )
+    ).reach
+  }
+
+  /** Whom the signed-in person may message for a player who cannot sign in. */
+  async dmProxies(userId: string): Promise<DmProxies> {
+    return await this.request(
+      'GET',
+      `/chat/dm-proxies?userId=${encodeURIComponent(userId)}`,
+      asDmProxies
     )
   }
 

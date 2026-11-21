@@ -14,6 +14,7 @@ import { asUserId } from '../../common/userId'
 import { seesPeopleOf, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { withDmReach } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -101,7 +102,7 @@ export function peopleRoutes(
         if (people == null) throw notFound()
         const manages = await canManagePeople(db, actor, ref)
         res.json({
-          people,
+          people: await withDmReach(db, actor.userId, people),
           manages,
           admin: manages && (await canAdminister(db, actor, ref))
         })

@@ -13,7 +13,7 @@ import {
 } from '../../common/umpireSchedule'
 import { hardUmpireConflict, umpireEnd } from '../../common/umpireTime'
 import { onePerson } from '../admin/people'
-import type { Actor } from '../auth/sessions'
+import { type Actor, isMachine } from '../auth/sessions'
 import { now } from '../clock'
 import type {
   Database,
@@ -28,12 +28,13 @@ import { type Reader, readerOf } from '../users/readerNames'
 import { people } from './admin'
 import {
   readerUmpireNames,
+  umpireFamily,
   type UmpireIdentity,
   umpireIdentity,
   umpireInterval,
   umpireIsPlaying
 } from './context'
-import { schedule, umpireAccess } from './schedule'
+import { schedule, umpireAcceptance, umpireAccess } from './schedule'
 import { types } from './types'
 
 export async function gameLeague(
@@ -288,13 +289,16 @@ async function recheckAgainst(
 }
 /**
  * A game's umpire positions and who holds each, named in full to a `reader`
- * who may read them in full and short otherwise.
+ * who may read them in full and short otherwise. The league's id comes with
+ * it only for a `viewer` accepted into the league, who may open its umpires'
+ * league cards.
  */
 export async function gameUmpires(
   db: Kysely<Database>,
   gameId: string,
   media?: MediaContext,
-  reader?: Reader
+  reader?: Reader,
+  viewer?: Actor
 ): Promise<UmpireGameBlock | null> {
   const row = await db
     .selectFrom('games')
@@ -330,7 +334,12 @@ export async function gameUmpires(
     .execute()
   const slots = new Map<
     string,
-    { userId: string; name: string; avatarUrl: string | null }
+    {
+      userId: string
+      name: string
+      avatarUrl: string | null
+      openable?: true
+    }
   >()
   // Each holder's account, avatar included, read together.
   const holders = await Promise.all(
@@ -341,16 +350,53 @@ export async function gameUmpires(
     reader,
     holders.map(p => p.named)
   )
+  // A machine reader opens no cards, and may not ask who administers what;
+  // with nobody in a slot there is no card to open.
+  const opens =
+    held.length > 0 &&
+    viewer != null &&
+    !isMachine(viewer) &&
+    (await umpireAcceptance(
+      db,
+      row.league_id,
+      await umpireFamily(db, viewer.userId),
+      await canAdminister(db, viewer, { kind: 'league', id: row.league_id })
+    ))
+  // Only somebody who still umpires for the league has a card to open: a
+  // revoked umpire keeps their slots on finished games.
+  const umpiring = new Set(
+    opens
+      ? (
+          await db
+            .selectFrom('league_umpires')
+            .select('user_id')
+            .where('league_id', '=', row.league_id)
+            .where(
+              'user_id',
+              'in',
+              holders.flatMap(p => p.userIds)
+            )
+            .execute()
+        ).map(r => r.user_id)
+      : []
+  )
   for (const [i, assignment] of held.entries()) {
     const p = holders[i]
     slots.set(assignment.slot, {
       userId: p.userId,
       name: names.get(p.userId) ?? p.name,
-      avatarUrl: media == null ? null : imageUrl(media.space, p.avatarPath)
+      avatarUrl: media == null ? null : imageUrl(media.space, p.avatarPath),
+      ...(p.userIds.some(id => umpiring.has(id))
+        ? { openable: true as const }
+        : {})
     })
   }
   return {
-    positions: positions.map(p => ({ ...p, person: slots.get(p.slot) ?? null }))
+    positions: positions.map(p => ({
+      ...p,
+      person: slots.get(p.slot) ?? null
+    })),
+    ...(opens ? { leagueId: row.league_id } : {})
   }
 }
 interface LeaderboardCounts {

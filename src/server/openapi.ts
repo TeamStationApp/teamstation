@@ -3295,6 +3295,16 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'On a team\u2019s roster it names no team, and only guardians ' +
                 'of, or guarded players on, that team. Empty when nothing is ' +
                 'visible.'
+            },
+            message: {
+              type: 'string',
+              enum: ['direct', 'proxies'],
+              description:
+                'How the caller can message this person: `direct` (a DM with ' +
+                'them, as the DM rules allow), or `proxies` for a player who ' +
+                'cannot sign in, through their guardians or, with none, their ' +
+                'current coaches (`GET /chat/dm-proxies`). Absent when the ' +
+                'caller cannot message them at all.'
             }
           }
         },
@@ -5439,7 +5449,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`replayable` is whether anything TeamStation scored is stored ' +
             'for the game — a play carrying its `teamStation` record, or a ' +
             'recorded at-bat in progress — so it can be replayed. ' +
-            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone). Names are abbreviated.',
+            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone), and `leagueId`, the game\u2019s league, only for a caller accepted into it (who may open its umpires\u2019 league cards), with `openable: true` on each person who still holds the league\u2019s umpire role (whose card that caller can open). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -8534,6 +8544,59 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: 'The candidates' },
             401: errorResponse
+          }
+        }
+      },
+      '/chat/dm-reach': {
+        get: {
+          summary: 'How the caller can message a person',
+          description:
+            '`{reach}`: `direct` when the DM rules let the caller start a DM ' +
+            'with `userId`; `proxies` when `userId` is a player who cannot ' +
+            'sign in (no eligible account), whom the caller may name as a ' +
+            'player, and who has somebody the caller can message instead ' +
+            '(`GET /chat/dm-proxies`); null otherwise. Merged identities ' +
+            'resolve to the surviving user.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The reach' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/chat/dm-proxies': {
+        get: {
+          summary: 'Whom to message for a player who cannot sign in',
+          description:
+            '`{player: {userId, shortName}, kind, people}`: the guardians ' +
+            'and adult family members of player `userId` the caller can ' +
+            'message (`kind: guardians`), or, with none, the player’s ' +
+            'current coaches the caller can message (`kind: coaches`), never ' +
+            'the caller, each `{userId, shortName, compactName?, avatarUrl, ' +
+            'affiliations}` and ordered by name. 404 when `GET ' +
+            '/chat/dm-reach` would not answer `proxies` for the player.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'query',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'The people' },
+            401: errorResponse,
+            404: errorResponse
           }
         }
       },

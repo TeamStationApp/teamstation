@@ -38,6 +38,7 @@ import {
 import { onePerson } from '../admin/people'
 import { isMachine } from '../auth/sessions'
 import type { ValkeyCache } from '../cache/valkeyCache'
+import { withDmReach } from '../chat/dms'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
@@ -716,7 +717,14 @@ export function teamRoutes(
       })
       const answer = {
         id: game.id,
-        umpires: await gameUmpires(db, game.id, media, readerOf(actor)),
+        umpires: await gameUmpires(
+          db,
+          game.id,
+          media,
+          readerOf(actor),
+          // Acceptance into the league decides, not membership of a team.
+          actor ?? undefined
+        ),
         guests: availability.guests,
         unrostered: availability.unrostered,
         guestPlayers:
@@ -1020,15 +1028,19 @@ export function teamRoutes(
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (canSeeTeam(scopes, teamId)) {
         res.json(
-          await teamRoster(
+          await withDmReach(
             db,
-            media.space,
-            teamId,
-            fullNames === 'true',
-            actor,
-            rosterCache,
-            readerOf(actor),
-            scopes
+            actor.userId,
+            await teamRoster(
+              db,
+              media.space,
+              teamId,
+              fullNames === 'true',
+              actor,
+              rosterCache,
+              readerOf(actor),
+              scopes
+            )
           )
         )
         return
@@ -1048,7 +1060,7 @@ export function teamRoutes(
         undefined
       )
       res.json(
-        roster.map(entry => ({
+        (await withDmReach(db, actor.userId, roster)).map(entry => ({
           ...entry,
           avatarUrl:
             entry.section === 'admin' || entry.section === 'staff'

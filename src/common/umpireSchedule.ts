@@ -116,9 +116,21 @@ export interface UmpireLeague {
 export interface UmpireGameBlock {
   positions: Array<
     UmpirePosition & {
-      person: { userId: string; name: string; avatarUrl?: string | null } | null
+      person: {
+        userId: string
+        name: string
+        avatarUrl?: string | null
+        /** Their league card opens for this reader (they still umpire there). */
+        openable?: boolean
+      } | null
     }
   >
+  /**
+   * The game's league, sent only to a reader accepted into it, who may open
+   * its umpires' league cards; absent for anybody else, and from a game the
+   * phone stored before it was sent.
+   */
+  leagueId?: string
 }
 export interface UmpireRank {
   userId: string

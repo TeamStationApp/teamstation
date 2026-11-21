@@ -7,6 +7,7 @@ import {
   type GuardianFixture,
   guardianFixture
 } from '../../test/guardianFixture'
+import { dmReach } from '../chat/dms'
 
 /**
  * The non-member view: anybody signed in who holds no private access to a
@@ -325,6 +326,36 @@ describe('the non-member view', function () {
         expect(body.nonMemberView).equals(false)
       })
     })
+
+  describe('how each reader can message the people on the roster', function () {
+    it('marks the member’s and the non-member’s roster as dmReach answers, from one cached core', async function () {
+      for (const viewer of [member, follower, stranger]) {
+        const { status, body } = await call(`/teams/${f.teamA}/roster`, viewer)
+        expect(status).equals(200)
+        const rows = body as Array<{ userId: string; message?: string }>
+        const reach = await dmReach(
+          f.h.db,
+          userIdOfGumbo(viewer),
+          rows.map(row => row.userId)
+        )
+        for (const row of rows)
+          expect(row.message, row.userId).equals(
+            reach.get(row.userId) ?? undefined
+          )
+      }
+      // The coach may message the team's players; a follower nobody.
+      const coach = (await call(`/teams/${f.teamA}/roster`, member))
+        .body as Array<{
+        message?: string
+      }>
+      expect(coach.some(row => row.message === 'direct')).equals(true)
+      const fan = (await call(`/teams/${f.teamA}/roster`, follower))
+        .body as Array<{
+        message?: string
+      }>
+      expect(fan.every(row => row.message == null)).equals(true)
+    })
+  })
 
   describe('for nobody signed in', function () {
     it('allows public highlight thumbnails without allowing playback', async function () {

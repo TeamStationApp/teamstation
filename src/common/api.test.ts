@@ -1976,6 +1976,42 @@ describe('api client', function () {
       `http://x/api/v1/chat/dm-candidates?q=&userId=${encodeURIComponent(person.userId)}`
     )
 
+    const reachOf = client({ reach: 'proxies' })
+    expect(await reachOf.client.dmReach(person.userId)).equals('proxies')
+    expect(reachOf.calls[0].url).equals(
+      `http://x/api/v1/chat/dm-reach?userId=${encodeURIComponent(person.userId)}`
+    )
+    expect(await client({ reach: null }).client.dmReach(person.userId)).equals(
+      null
+    )
+    expect(
+      await client({ reach: 'maybe' })
+        .client.dmReach('x')
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+    const proxies = client({
+      player: { userId: person.userId, shortName: 'Riley Rookie' },
+      kind: 'guardians',
+      people: [person]
+    })
+    expect(await proxies.client.dmProxies(person.userId)).deep.equals({
+      player: { userId: person.userId, shortName: 'Riley Rookie' },
+      kind: 'guardians',
+      people: [{ ...person, affiliations: '' }]
+    })
+    expect(proxies.calls[0].url).equals(
+      `http://x/api/v1/chat/dm-proxies?userId=${encodeURIComponent(person.userId)}`
+    )
+    expect(
+      await client({
+        player: { userId: person.userId, shortName: 'R' },
+        kind: 'parents',
+        people: []
+      })
+        .client.dmProxies('x')
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+
     const adult = {
       userId: userIdOfGumbo(7),
       shortName: 'Gale G',
@@ -5077,6 +5113,51 @@ describe('a person’s tile, coloured by their id alone', function () {
     }).umpires?.positions[0].person
     expect(person).not.have.property('publicName')
     expect(person).deep.include({ userId: ripken, name: 'Cal Ripken' })
+  })
+
+  it('keeps the umpire block’s league when it is sent, and cleans a stored game without it', function () {
+    const block = {
+      positions: [
+        {
+          slot: 'type:1',
+          typeId: 'type',
+          typeName: 'Plate',
+          ordinal: 1,
+          required: true,
+          person: null
+        }
+      ]
+    }
+    expect(
+      asGameDetail({
+        ...minimalGameDetail,
+        umpires: { ...block, leagueId: 'lea_1' }
+      }).umpires?.leagueId
+    ).equals('lea_1')
+    const stored = asGameDetail({ ...minimalGameDetail, umpires: block })
+    expect(stored.umpires?.leagueId).equals(undefined)
+    expect(() =>
+      asGameDetail({ ...minimalGameDetail, umpires: { ...block, leagueId: 7 } })
+    ).throws()
+  })
+
+  it('reads how the reader can message a roster entry, and nothing else', function () {
+    const entry = mintedRosterEntry({
+      firstName: 'Cal',
+      lastName: 'Ripken',
+      jersey: null,
+      positions: [],
+      bats: null,
+      throws: null
+    })
+    expect(asRosterEntry({ ...entry, message: 'direct' }).message).equals(
+      'direct'
+    )
+    expect(asRosterEntry({ ...entry, message: 'proxies' }).message).equals(
+      'proxies'
+    )
+    expect(asRosterEntry(entry).message).equals(undefined)
+    expect(() => asRosterEntry({ ...entry, message: 'chat' })).throws()
   })
 
   it('gives public staff their id, which picks their colour, and none from an older server', function () {

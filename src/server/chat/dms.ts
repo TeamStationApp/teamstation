@@ -1,6 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import { ageOn } from '../../common/age'
+import type { MessageReach } from '../../common/api'
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
@@ -106,10 +107,37 @@ export class DmFacts {
     readonly now: Date
   ) {}
 
-  /** Reads these users' rows at once, for the checks that follow. */
+  /**
+   * Reads these users' rows at once, for the checks that follow. A user's
+   * row and player teams are kept together, once both are read; a read
+   * already under way for a user is waited for, so checks running side by
+   * side never see a row without its teams.
+   */
   async load(userIds: string[]): Promise<void> {
-    const missing = [...new Set(userIds)].filter(id => !this.rows.has(id))
-    if (missing.length === 0) return
+    const wanted = [...new Set(userIds)]
+    const missing = wanted.filter(
+      id => !this.rows.has(id) && !this.loading.has(id)
+    )
+    if (missing.length > 0) {
+      const read = this.read(missing)
+      for (const id of missing) this.loading.set(id, read)
+      try {
+        await read
+      } finally {
+        for (const id of missing) this.loading.delete(id)
+      }
+    }
+    await Promise.all(
+      wanted.flatMap(id => {
+        const pending = this.loading.get(id)
+        return pending == null ? [] : [pending]
+      })
+    )
+  }
+
+  private readonly loading = new Map<string, Promise<void>>()
+
+  private async read(missing: string[]): Promise<void> {
     const rows = await this.db
       .selectFrom('users')
       .select([
@@ -122,7 +150,16 @@ export class DmFacts {
       ])
       .where('id', 'in', missing)
       .execute()
-    for (const id of missing) this.rows.set(id, null)
+    const players = await this.db
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id'])
+      .where('user_id', 'in', missing)
+      .where('is_player', '=', true)
+      .execute()
+    for (const id of missing) {
+      this.rows.set(id, null)
+      this.teams.set(id, [])
+    }
     for (const row of rows) {
       this.rows.set(row.id, {
         id: row.id,
@@ -134,13 +171,6 @@ export class DmFacts {
         birthMonth: row.birth_month
       })
     }
-    const players = await this.db
-      .selectFrom('memberships')
-      .select(['user_id', 'team_id'])
-      .where('user_id', 'in', missing)
-      .where('is_player', '=', true)
-      .execute()
-    for (const id of missing) this.teams.set(id, [])
     for (const row of players) this.teams.get(row.user_id)?.push(row.team_id)
   }
 
@@ -946,6 +976,150 @@ export async function dmCandidateIds(
     named.push(id)
   }
   return named
+}
+
+/** How a viewer can message somebody, or null when they cannot. */
+export type DmReach = MessageReach | null
+
+/** Whom to message instead of a player who cannot sign in. */
+export interface DmProxyIds {
+  kind: 'guardians' | 'coaches'
+  ids: string[]
+}
+
+/**
+ * Whether `viewerId` may start a DM with `targetId` alone: the naming rule
+ * and the pair rule, as `dmCandidateIds` applies them. Neither reads the block
+ * policy, which `createDm` applies when the DM is made.
+ */
+async function reachable(
+  facts: DmFacts,
+  viewerId: string,
+  targetId: string
+): Promise<boolean> {
+  return (
+    (await facts.mayName(viewerId, targetId)) &&
+    (await facts.pairRuleBreaks([viewerId, targetId])).length === 0
+  )
+}
+
+/**
+ * The people `viewerId` may message for player `playerId`, who cannot sign
+ * in: their guardians and adult family members, or, with none of those the
+ * viewer can reach, their current coaches. Never the viewer.
+ */
+async function proxiesFor(
+  facts: DmFacts,
+  viewerId: string,
+  playerId: string
+): Promise<DmProxyIds> {
+  const keep = async (ids: Iterable<string>): Promise<string[]> => {
+    const kept: string[] = []
+    for (const id of ids)
+      if (id !== viewerId && (await reachable(facts, viewerId, id)))
+        kept.push(id)
+    return kept
+  }
+  const { guardians, family } = await facts.relativesOf(playerId)
+  const adults: string[] = [...guardians]
+  for (const id of family)
+    if (await facts.isAdultFor(id, playerId)) adults.push(id)
+  const kin = await keep(adults)
+  if (kin.length > 0) return { kind: 'guardians', ids: kin }
+  return { kind: 'coaches', ids: await keep(await facts.coachesOf(playerId)) }
+}
+
+/**
+ * How `viewerId` can message each of `targetIds`: `direct` when they may
+ * start a DM with that person, `proxies` when that person is a player who
+ * cannot sign in, whom the viewer may name as a player, and who has somebody
+ * the viewer can message instead (`dmProxies`), and null otherwise. One set
+ * of facts serves the whole list.
+ */
+export async function dmReach(
+  db: Kysely<Database>,
+  viewerId: string,
+  targetIds: string[],
+  now: Date = new Date()
+): Promise<Map<string, DmReach>> {
+  const facts = new DmFacts(db, now)
+  const answers = new Map<string, DmReach>()
+  const viewing = await facts.eligible(viewerId)
+  await facts.load([viewerId, ...targetIds])
+  const targets = [...new Set(targetIds)]
+  // A few at a time: each person's naming checks are their own round trips,
+  // and one list's facts are shared through `facts`' caches.
+  for (let start = 0; start < targets.length; start += REACH_BATCH) {
+    const batch = targets.slice(start, start + REACH_BATCH)
+    const reached = await Promise.all(
+      batch.map(async id =>
+        viewing ? (await reachOf(facts, viewerId, id)).reach : null
+      )
+    )
+    batch.forEach((id, i) => answers.set(id, reached[i]))
+  }
+  return answers
+}
+
+/**
+ * How many people of a list `dmReach` checks at once: each check holds one
+ * pool connection at a time, so a list never holds more than a few of them.
+ */
+const REACH_BATCH = 3
+
+async function reachOf(
+  facts: DmFacts,
+  viewerId: string,
+  targetId: string
+): Promise<{ reach: DmReach; proxies?: DmProxyIds }> {
+  if (targetId === viewerId) return { reach: null }
+  if (await facts.eligible(targetId))
+    return {
+      reach: (await reachable(facts, viewerId, targetId)) ? 'direct' : null
+    }
+  if (!(await facts.isPlayer(targetId))) return { reach: null }
+  if (!(await facts.mayNamePlayer(viewerId, targetId))) return { reach: null }
+  const proxies = await proxiesFor(facts, viewerId, targetId)
+  return proxies.ids.length > 0
+    ? { reach: 'proxies', proxies }
+    : { reach: null }
+}
+
+/**
+ * `entries` with how `viewerId` can message each (`message`), left off for
+ * people they cannot message at all: the people lists' per-row action.
+ */
+export async function withDmReach<T extends { userId: string }>(
+  db: Kysely<Database>,
+  viewerId: string,
+  entries: T[],
+  now: Date = new Date()
+): Promise<Array<T & { message?: MessageReach }>> {
+  const reach = await dmReach(
+    db,
+    viewerId,
+    entries.map(entry => entry.userId),
+    now
+  )
+  return entries.map(entry => {
+    const message = reach.get(entry.userId)
+    return message == null ? entry : { ...entry, message }
+  })
+}
+
+/**
+ * Whom `viewerId` may message for `playerId`, a player who cannot sign in,
+ * or null when `dmReach` would not answer `proxies` for them.
+ */
+export async function dmProxies(
+  db: Kysely<Database>,
+  viewerId: string,
+  playerId: string,
+  now: Date = new Date()
+): Promise<DmProxyIds | null> {
+  const facts = new DmFacts(db, now)
+  if (!(await facts.eligible(viewerId))) return null
+  return (await reachOf(facts, viewerId, playerId)).proxies ?? null
 }
 
 /**

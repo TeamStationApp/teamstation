@@ -10,6 +10,7 @@ import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { canKeepSongs, roleScopes } from '../access'
 import { createSession } from '../auth/sessions'
+import { dmReach } from '../chat/dms'
 import { lockKeys } from '../db/advisoryLocks'
 import { rolesAt } from '../invites/people'
 import { notificationDetail } from '../notifications/inbox'
@@ -872,6 +873,41 @@ describe('people at a team, a season and a league', function () {
     })
   })
 
+  describe('how the reader can message each listed person', function () {
+    const matches = async (
+      path: string,
+      viewer: number,
+      pick: (body: any) => RosterEntry[]
+    ): Promise<RosterEntry[]> => {
+      const answer = await call('GET', path, viewer)
+      expect(answer.status).equals(200)
+      const people = pick(answer.body)
+      const reach = await dmReach(
+        f.h.db,
+        userIdOfGumbo(viewer),
+        people.map(person => person.userId)
+      )
+      for (const person of people)
+        expect(person.message, person.shortName).equals(
+          reach.get(person.userId) ?? undefined
+        )
+      return people
+    }
+
+    it('marks the season’s and the league’s people as dmReach answers', async () => {
+      await matches(`/seasons/${f.seasonA}/people`, 101, body => body.people)
+      // Nobody messages themselves.
+      const league = await matches(
+        `/leagues/${f.leagueA}/people`,
+        101,
+        body => body.people
+      )
+      expect(
+        league.find(person => person.userId === userIdOfGumbo(101))
+      ).not.to.have.property('message')
+    })
+  })
+
   describe('a season’s and a league’s people', function () {
     const sectionOf = (
       people: RosterEntry[],
@@ -1032,6 +1068,102 @@ describe('people at a team, a season and a league', function () {
         canManagePeople: true,
         canSeePeople: true
       })
+    })
+  })
+
+  describe('an umpire’s league card', function () {
+    const card = async (
+      userId: number,
+      viewer: number
+    ): Promise<{ status: number; body: PersonProfile }> =>
+      await call(
+        'GET',
+        `/leagues/${f.leagueA}/people/${userIdOfGumbo(userId)}`,
+        viewer
+      )
+    before(async () => {
+      // Demo Hawks plays in Demo Regular, which makes its members accepted.
+      await f.h.db
+        .insertInto('season_teams')
+        .values({ season_id: f.seasonA, team_id: f.teamA, active: true })
+        .onConflict(oc => oc.doNothing())
+        .execute()
+      await f.h.db
+        .updateTable('leagues')
+        .set({ umpire_management: true })
+        .where('id', '=', f.leagueA)
+        .execute()
+      await f.h.db
+        .insertInto('league_umpires')
+        .values({
+          league_id: f.leagueA,
+          user_id: userIdOfGumbo(SEASON_MEMBER),
+          granted_by: userIdOfGumbo(101)
+        })
+        .execute()
+    })
+    after(async () => {
+      await f.h.db
+        .deleteFrom('league_umpires')
+        .where('league_id', '=', f.leagueA)
+        .where('user_id', '=', userIdOfGumbo(SEASON_MEMBER))
+        .execute()
+      await f.h.db
+        .updateTable('leagues')
+        .set({ umpire_management: false })
+        .where('id', '=', f.leagueA)
+        .execute()
+    })
+
+    it('shows a member of the league the umpire alone: no sections, no family', async () => {
+      const { status, body } = await card(SEASON_MEMBER, MEMBER)
+      expect(status).equals(200)
+      expect(body.person.userId).equals(userIdOfGumbo(SEASON_MEMBER))
+      expect(body.context).includes({ kind: 'league', id: f.leagueA })
+      expect(body.sections).deep.equals([])
+      expect(body.guardianOf).deep.equals([])
+      expect(body.viewer).deep.equals({
+        manages: false,
+        admin: false,
+        self: false
+      })
+    })
+
+    it('answers 404 for somebody who is not an umpire, and to a reader outside the league', async () => {
+      expect((await card(LEAGUE_MEMBER, MEMBER)).status).equals(404)
+      // A follower of a team in the league is not accepted into it.
+      expect((await card(SEASON_MEMBER, FOLLOWER)).status).equals(404)
+    })
+
+    it('lets a league coach, who manages its people, read an umpire off its list', async () => {
+      const role = makeId('scopeRole')
+      await f.h.db
+        .insertInto('scope_roles')
+        .values({
+          id: role,
+          user_id: userIdOfGumbo(ASSISTANT),
+          scope_type: 'league',
+          scope_id: f.leagueA,
+          role: 'coach',
+          granted_by: userIdOfGumbo(101),
+          granted_at: new Date()
+        })
+        .execute()
+      try {
+        const { status, body } = await card(SEASON_MEMBER, ASSISTANT)
+        expect(status).equals(200)
+        expect(body.viewer.manages).equals(false)
+        expect(body.person.userId).equals(userIdOfGumbo(SEASON_MEMBER))
+      } finally {
+        await f.h.db.deleteFrom('scope_roles').where('id', '=', role).execute()
+      }
+    })
+
+    it('keeps the administrator’s read as it was: the role sections, read only', async () => {
+      const { status, body } = await card(SEASON_MEMBER, 101)
+      expect(status).equals(200)
+      expect(body.sections.length).greaterThan(0)
+      expect(body.viewer.manages).equals(false)
     })
   })
 
