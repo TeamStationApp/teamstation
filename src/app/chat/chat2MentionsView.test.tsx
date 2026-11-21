@@ -1204,13 +1204,15 @@ describe('mention send/edit and draft compatibility', function () {
     expect(() => {
       setComposerSelection(undefined, { start: 0, end: 0 })
     }).not.throws()
-    const values: unknown[] = []
+    const ranges: number[][] = []
     setNativeComposerSelection(
-      { setNativeProps: (props: unknown) => values.push(props) },
-      { start: 3, end: 3 }
+      {
+        setSelection: (start: number, end: number) => ranges.push([start, end])
+      },
+      { start: 3, end: 7 }
     )
     setNativeComposerSelection(undefined, { start: 0, end: 0 })
-    expect(values).deep.equals([{ selection: { start: 3, end: 3 } }])
+    expect(ranges).deep.equals([[3, 7]])
   })
 })
 

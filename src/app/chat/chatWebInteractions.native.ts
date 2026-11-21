@@ -86,9 +86,8 @@ export function setComposerSelection(
   view: unknown,
   selection: { start: number; end: number }
 ): void {
-  ;(
-    view as {
-      setNativeProps?: (props: { selection: typeof selection }) => void
-    } | null
-  )?.setNativeProps?.({ selection })
+  const input = view as {
+    setSelection?: (start: number, end: number) => void
+  } | null
+  input?.setSelection?.(selection.start, selection.end)
 }
