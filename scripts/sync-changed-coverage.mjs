@@ -89,6 +89,7 @@ const SPECS = [
   'src/server/routes/venues.integration.test.ts',
   'src/server/account/deleteAccount.integration.test.ts',
   'src/server/routes/account.integration.test.ts',
+  'src/server/routes/account.age.integration.test.ts',
   'src/server/routes/account.chatAge.integration.test.ts',
   'src/server/dev/fakeSpace.test.ts',
   'src/server/routes/pictures.integration.test.ts',

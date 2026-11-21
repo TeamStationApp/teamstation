@@ -407,6 +407,11 @@ export const enUs = {
   player_birth_year_earlier: 'One year earlier',
   player_birth_year_later: 'One year later',
   player_birth_none: 'Not set',
+  player_birth_adult: '18 or older',
+  player_birth_unknown:
+    'They give their age themselves the first time they open chat. You can change it after that.',
+  player_birth_adult_fixed:
+    'Only a site administrator can change the age of somebody 18 or older.',
   player_birth_shown: 'Born %s %s \u00b7 %s today',
   player_birth_save: 'Save birth month',
   player_birth_clear: 'Clear birth month',

@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { ageOn, type BirthMonth, parseBirthMonth } from '../../common/age'
+import {
+  type AgeBand,
+  ageOn,
+  type BirthMonth,
+  parseBirthMonth
+} from '../../common/age'
 import type { Guardian, RosterEntry, TeamStationClient } from '../../common/api'
 import { rosterFullName } from '../../common/names'
 import { playerFormError, type PlayerFormValue } from '../../common/playerForm'
@@ -269,6 +274,8 @@ function BirthMonthSection(props: {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [mayClear, setMayClear] = useState(false)
+  const [band, setBand] = useState<AgeBand>('unknown')
 
   const show = (birth: BirthMonth | null): void => {
     setSaved(birth)
@@ -282,6 +289,8 @@ function BirthMonthSection(props: {
       .player(userId)
       .then(player => {
         if (!live || player.birthMonth === undefined) return
+        setMayClear(player.mayClearAge)
+        setBand(player.ageBand ?? 'unknown')
         show(parseBirthMonth(player.birthMonth) ?? null)
       })
       .catch(() => undefined)
@@ -300,9 +309,10 @@ function BirthMonthSection(props: {
     setError(undefined)
     setNote(undefined)
     client
-      .setBirthMonth(userId, birth)
-      .then(text => {
-        show(parseBirthMonth(text) ?? null)
+      .setAge(userId, birth)
+      .then(answer => {
+        setBand(answer.band)
+        show(parseBirthMonth(answer.birthMonth) ?? null)
         setNote(
           birth == null
             ? lstrings.player_birth_cleared
@@ -327,7 +337,9 @@ function BirthMonthSection(props: {
       <Card style={styles.form}>
         <Text style={styles.muted}>
           {saved == null
-            ? lstrings.player_birth_none
+            ? band === 'adult'
+              ? lstrings.player_birth_adult
+              : lstrings.player_birth_none
             : sprintf(
                 lstrings.player_birth_shown,
                 monthName(saved.month),
@@ -336,85 +348,101 @@ function BirthMonthSection(props: {
               )}
         </Text>
         <Text style={styles.muted}>{lstrings.player_birth_detail}</Text>
+        {/*
+         * A guardian changes an age the person gave, among the bands a
+         * guardian may move it to (13 to 17 and under 13); a site
+         * administrator changes any.
+         */}
+        {mayClear || band === 'minor' || band === 'under13' ? (
+          <>
+            <Text style={styles.label}>
+              {lstrings.player_birth_month.toUpperCase()}
+            </Text>
+            <View
+              style={styles.chips}
+              accessibilityRole="radiogroup"
+              accessibilityLabel={lstrings.player_birth_month}
+            >
+              {MONTHS.map(number => (
+                <Chip
+                  key={number}
+                  label={monthName(number).slice(0, 3)}
+                  accessibilityLabel={`${lstrings.player_birth_month} ${monthName(number)}`}
+                  role="radio"
+                  on={month === number}
+                  disabled={busy}
+                  onPress={() => {
+                    setMonth(number)
+                    setNote(undefined)
+                  }}
+                />
+              ))}
+            </View>
 
-        <Text style={styles.label}>
-          {lstrings.player_birth_month.toUpperCase()}
-        </Text>
-        <View
-          style={styles.chips}
-          accessibilityRole="radiogroup"
-          accessibilityLabel={lstrings.player_birth_month}
-        >
-          {MONTHS.map(number => (
-            <Chip
-              key={number}
-              label={monthName(number).slice(0, 3)}
-              accessibilityLabel={`${lstrings.player_birth_month} ${monthName(number)}`}
-              role="radio"
-              on={month === number}
-              disabled={busy}
+            <Text style={styles.label}>
+              {lstrings.player_birth_year.toUpperCase()}
+            </Text>
+            <View style={styles.stepper}>
+              <Chip
+                label="−"
+                accessibilityLabel={lstrings.player_birth_year_earlier}
+                role="button"
+                on={false}
+                disabled={busy || year <= EARLIEST_YEAR}
+                onPress={() => {
+                  setYear(year - 1)
+                  setNote(undefined)
+                }}
+              />
+              <Text
+                style={styles.year}
+                accessibilityLabel={`${lstrings.player_birth_year} ${year}`}
+              >
+                {year}
+              </Text>
+              <Chip
+                label="+"
+                accessibilityLabel={lstrings.player_birth_year_later}
+                role="button"
+                on={false}
+                disabled={busy || year >= thisYear}
+                onPress={() => {
+                  setYear(year + 1)
+                  setNote(undefined)
+                }}
+              />
+            </View>
+
+            {error != null && <Text style={styles.error}>{error}</Text>}
+            {note != null && <Text style={styles.muted}>{note}</Text>}
+            <Button
+              label={lstrings.player_birth_save}
+              accessibilityLabel={lstrings.player_birth_save}
+              busy={busy}
+              disabled={!changed}
               onPress={() => {
-                setMonth(number)
-                setNote(undefined)
+                if (month != null) send({ year, month })
               }}
             />
-          ))}
-        </View>
-
-        <Text style={styles.label}>
-          {lstrings.player_birth_year.toUpperCase()}
-        </Text>
-        <View style={styles.stepper}>
-          <Chip
-            label="−"
-            accessibilityLabel={lstrings.player_birth_year_earlier}
-            role="button"
-            on={false}
-            disabled={busy || year <= EARLIEST_YEAR}
-            onPress={() => {
-              setYear(year - 1)
-              setNote(undefined)
-            }}
-          />
-          <Text
-            style={styles.year}
-            accessibilityLabel={`${lstrings.player_birth_year} ${year}`}
-          >
-            {year}
+            {mayClear && (
+              <Button
+                label={lstrings.player_birth_clear}
+                accessibilityLabel={lstrings.player_birth_clear}
+                kind="text"
+                disabled={busy || band === 'unknown'}
+                onPress={() => {
+                  send(null)
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <Text style={styles.muted}>
+            {band === 'unknown'
+              ? lstrings.player_birth_unknown
+              : lstrings.player_birth_adult_fixed}
           </Text>
-          <Chip
-            label="+"
-            accessibilityLabel={lstrings.player_birth_year_later}
-            role="button"
-            on={false}
-            disabled={busy || year >= thisYear}
-            onPress={() => {
-              setYear(year + 1)
-              setNote(undefined)
-            }}
-          />
-        </View>
-
-        {error != null && <Text style={styles.error}>{error}</Text>}
-        {note != null && <Text style={styles.muted}>{note}</Text>}
-        <Button
-          label={lstrings.player_birth_save}
-          accessibilityLabel={lstrings.player_birth_save}
-          busy={busy}
-          disabled={!changed}
-          onPress={() => {
-            if (month != null) send({ year, month })
-          }}
-        />
-        <Button
-          label={lstrings.player_birth_clear}
-          accessibilityLabel={lstrings.player_birth_clear}
-          kind="text"
-          disabled={busy || saved == null}
-          onPress={() => {
-            send(null)
-          }}
-        />
+        )}
       </Card>
     </View>
   )
