@@ -768,6 +768,29 @@ async function main(): Promise<void> {
           expect(narrowDays.right).at.most(narrowDays.clipRight)
           expect(narrowDays.width).at.least(40)
           await page.setViewport({ width: 390, height: 844 })
+          // The day row lays itself out again at the new width: every pill
+          // has its 32-point circle back before it is measured.
+          await page.waitForFunction(
+            () =>
+              [
+                'Monday',
+                'Tuesday',
+                'Wednesday',
+                'Thursday',
+                'Friday',
+                'Saturday',
+                'Sunday'
+              ].every(name => {
+                const pill = document.querySelector(`[aria-label="${name}"]`)
+                const circle = pill === null ? null : pill.firstElementChild
+                return (
+                  circle !== null &&
+                  circle.getBoundingClientRect().width === 32 &&
+                  pill!.getBoundingClientRect().width >= 40
+                )
+              }),
+            { timeout: 15000 }
+          )
           const filterGeometry = await page.evaluate(() => {
             const names = [
               'Monday',

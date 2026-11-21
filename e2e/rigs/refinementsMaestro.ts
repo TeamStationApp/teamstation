@@ -52,6 +52,61 @@ export interface BrowserSession {
   device: string
 }
 const browserPages = new WeakMap<MaestroHandle, Page>()
+/**
+ * Since maestro-d 3.2.0 a web tap on an element something covers (the
+ * floating tab bar, a sticky header) fails as "blocked by overlay", where it
+ * used to click the element anyway. As a person would, the target is
+ * scrolled to the middle of its scroller and tapped once more; any other
+ * failure, or a target the page cannot find, fails as it did.
+ */
+function revealCoveredTaps(m: MaestroHandle, page: Page): void {
+  const tapOn = m.tapOn.bind(m)
+  m.tapOn = async args => {
+    try {
+      return await tapOn(args)
+    } catch (error) {
+      if (!String(error).includes('blocked by overlay')) throw error
+      const target = {
+        css: typeof args.css === 'string' ? args.css : null,
+        text: typeof args.text === 'string' ? args.text : null,
+        id: typeof args.id === 'string' ? args.id : null
+      }
+      // Plain JavaScript: the page has no helpers for sucrase's ?. and ??.
+      const moved = await page.evaluate(target => {
+        let nodes: Element[] = []
+        if (target.css !== null) {
+          nodes = [...document.querySelectorAll(target.css)]
+        } else {
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- serialized into the page, which has no ?? helper
+          const pattern = target.text !== null ? target.text : target.id
+          if (pattern === null) return false
+          const whole = new RegExp('^(?:' + pattern + ')$')
+          nodes = [...document.querySelectorAll('*')].filter(node => {
+            const label = node.getAttribute('aria-label')
+            const testId = node.getAttribute('data-testid')
+            // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- serialized into the page, which has no ?? helper
+            const own = node.textContent === null ? '' : node.textContent
+            return (
+              (label !== null && whole.test(label)) ||
+              (testId !== null && whole.test(testId)) ||
+              (node.childElementCount === 0 && whole.test(own.trim()))
+            )
+          })
+        }
+        for (const node of nodes) {
+          const box = node.getBoundingClientRect()
+          if (box.width === 0 || box.height === 0) continue
+          node.scrollIntoView({ block: 'center', inline: 'center' })
+          return true
+        }
+        return false
+      }, target)
+      if (!moved) throw error
+      return await tapOn(args)
+    }
+  }
+}
+
 export async function browserSession(
   daemon: MaestroDaemon,
   device: string,
@@ -107,6 +162,7 @@ export async function browserSession(
     await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   ).deep.equals({ width, height })
   browserPages.set(m, page)
+  revealCoveredTaps(m, page)
   await page.coverage.startJSCoverage({
     resetOnNavigation: false,
     includeRawScriptCoverage: true
