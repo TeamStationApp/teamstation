@@ -98,6 +98,57 @@ function conversationActions(conversationId: string): string {
   return `:has(> ${chatRowById(conversationId)}) > [aria-label^="Conversation actions: "]`
 }
 
+/** A script answering whether something covers the element `css` names. */
+function coveredScript(css: string): string {
+  return `const node=document.querySelector(${JSON.stringify(css)});if(!node)return 'false';const box=node.getBoundingClientRect();const hit=document.elementFromPoint(box.left+box.width/2,box.top+box.height/2);return String(!(hit&&node.contains(hit)))`
+}
+
+/**
+ * Opens a conversation's row menu, sees it offer Mark unread, and closes it.
+ * At a narrow width an open conversation is pushed over the list (develop
+ * f6d21316d), which then takes no taps, and maestro-d 3.2.0 refuses a tap on
+ * a covered row. As a person does, it taps Back to the list for the menu,
+ * and the row again to reopen the conversation unless `stayOnList`. Both
+ * stay in the app, so what the page was set up with is kept.
+ */
+async function rowMenu(
+  m: Device,
+  conversationId: string,
+  stayOnList = false
+): Promise<void> {
+  const css = conversationActions(conversationId)
+  const covered = async (): Promise<boolean> =>
+    String(
+      (
+        (await m.evalBrowserScript({ script: coveredScript(css) })) as {
+          data: unknown
+        }
+      ).data
+    ) === 'true'
+  const until = async (want: boolean, what: string): Promise<void> => {
+    for (let tries = 0; tries < 60; tries++) {
+      if ((await covered()) === want) return
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    throw new Error(`The conversation list never ${what}`)
+  }
+  const pushed = await covered()
+  if (pushed) {
+    await m.tapOn({ text: 'Back' })
+    await until(false, 'came back on top')
+  }
+  await m.tapOn({ css })
+  await m.assertVisible({ text: 'Mark unread' })
+  await m.pressKey({ key: 'Escape' })
+  await m.evalBrowserScript({
+    script: `for(let attempt=0;attempt<40;attempt++){if(!document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))return true;await new Promise(resolve=>setTimeout(resolve,50))}throw new Error('Conversation actions did not dismiss')`
+  })
+  if (pushed && !stayOnList) {
+    await m.tapOn({ css: chatRowById(conversationId) })
+    await until(true, 'went back under the conversation')
+  }
+}
+
 async function signIn(device: Device, key: string): Promise<void> {
   const credentials = readSeedTable(
     readFileSync(required('CHAT_UI_SEED_FILE'), 'utf8')
@@ -624,14 +675,7 @@ async function s6(daemon: Daemon): Promise<void> {
     })
     // The conversation's own menu is its row's (develop 2bc27808d removed
     // the header's), by the conversation's id.
-    await m.tapOn({
-      css: conversationActions(required('CHAT_UI_CONVERSATION'))
-    })
-    await m.assertVisible({ text: 'Mark unread' })
-    await m.pressKey({ key: 'Escape' })
-    await m.evalBrowserScript({
-      script: `for(let attempt=0;attempt<40;attempt++){if(!document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))return true;await new Promise(resolve=>setTimeout(resolve,50))}throw new Error('Conversation actions did not dismiss')`
-    })
+    await rowMenu(m, required('CHAT_UI_CONVERSATION'))
     await hold()
     await m.assertVisible({ text: 'Copy' })
     await m.assertVisible({ text: 'Reply' })
@@ -890,14 +934,17 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
     console.log({ listBeforeMembers: offset, narrow, beforeReading })
     // The conversation's title opens its members (develop 2bc27808d).
     await m.tapOn({ css: '[data-testid="chat-conversation-identity"]' })
-    assert(
-      await read<boolean>(
+    // The title opens the conversation's information page (develop
+    // 3757c207d), a moment after the press: a real click navigates on the
+    // app's own time, as maestro-d 3.2.0's does.
+    let atInfo = false
+    for (let tries = 0; tries < 40 && !atInfo; tries++) {
+      atInfo = await read<boolean>(
         'return JSON.stringify(location.pathname.endsWith("/info"))'
-      ),
-      // The title opens the conversation's information page (develop
-      // 3757c207d).
-      'Info must navigate outside the workspace'
-    )
+      )
+      if (!atInfo) await new Promise(resolve => setTimeout(resolve, 250))
+    }
+    assert(atInfo, 'Info must navigate outside the workspace')
     await m.setNetworkConditions({
       latency: 1200,
       downloadSpeed: -1,
@@ -2273,12 +2320,8 @@ async function reader(daemon: Daemon): Promise<void> {
       script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
     })
     // The conversation's own menu is its row's (develop 2bc27808d removed
-    // the header's), by the conversation's id.
-    await m.tapOn({
-      css: conversationActions(required('CHAT_UI_CONVERSATION'))
-    })
-    await m.assertVisible({ text: 'Mark unread' })
-    await m.pressKey({ key: 'Escape' })
+    // the header's): the reader's channel, which is the one open.
+    await rowMenu(m, id)
     await m.evalBrowserScript({
       script: `const row=[...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].find(x=>x.getAttribute('data-testid')!=='chat-message-pane'&&x.innerText.includes('Practice notes'));if(!row)throw new Error('Reader post missing');row.setAttribute('data-reader-target','true');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,350));return true`
     })
@@ -3403,11 +3446,7 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     // the header's), opened while the list is the top screen: once the
     // conversation is pushed over it at this width, the covered list stays
     // mounted but takes no taps (develop f6d21316d).
-    await m.tapOn({
-      css: conversationActions(required('CHAT_UI_CONVERSATION'))
-    })
-    await m.assertVisible({ text: 'Mark unread' })
-    await m.pressKey({ key: 'Escape' })
+    await rowMenu(m, required('CHAT_UI_CONVERSATION'), true)
     await m.tapOn({ css: MEMBERS_ROW })
     await m.assertVisible({
       text: required('CHAT_UI_TARGET_TEXT'),
