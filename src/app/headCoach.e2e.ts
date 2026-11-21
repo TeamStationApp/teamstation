@@ -5,6 +5,15 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  browserSession,
+  capture,
+  contains,
+  fill,
+  maestro,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import { userIdOfGumbo } from '../common/userId'
 import { googlePlaces } from '../server/location/googlePlaces'
@@ -16,15 +25,6 @@ import {
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
-import {
-  browserSession,
-  capture,
-  contains,
-  fill,
-  maestro,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
   const dir = process.env.TS_MANAGER_ARTIFACTS

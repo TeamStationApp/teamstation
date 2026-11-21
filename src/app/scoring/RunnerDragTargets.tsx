@@ -1,44 +1,20 @@
-import React, { useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import React from 'react'
+import { Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import type { RunnerDragView } from './runnerDrag'
-import { useMenuEscape } from './useMenuEscape'
+/** Where a dragged runner is dropped to call him Safe or Out. */
 export function RunnerDragTargets({
-  view,
-  onChoose,
-  onCancel
+  view
 }: {
   view: RunnerDragView | null
-  onChoose?: (decision: 'safe' | 'out') => void
-  onCancel?: () => void
 }): React.ReactElement | null {
   const theme = useTheme()
-  const [focused, setFocused] = useState<string>()
-  useMenuEscape(
-    view?.keyboard === true,
-    () => {
-      onCancel?.()
-    },
-    ''
-  )
   if (view == null) return null
   return (
     <View pointerEvents="none" style={{ position: 'absolute', inset: 0 }}>
       {(['safe', 'out'] as const).map(key => (
-        <Pressable
-          accessibilityRole="button"
-          focusable={view.keyboard === true}
-          disabled={key === 'safe' && view.safeDisabled != null}
-          onPress={() => {
-            if (view.keyboard === true) onChoose?.(key)
-          }}
-          onFocus={() => {
-            setFocused(key)
-          }}
-          onBlur={() => {
-            setFocused(undefined)
-          }}
+        <View
           key={key}
           accessibilityState={{
             disabled: key === 'safe' && view.safeDisabled != null
@@ -56,10 +32,10 @@ export function RunnerDragTargets({
             justifyContent: 'center',
             backgroundColor:
               key === 'safe'
-                ? view.hovered === key || focused === key
+                ? view.hovered === key
                   ? theme.scoringSafeColor
                   : theme.scoringSafeIdleColor
-                : view.hovered === key || focused === key
+                : view.hovered === key
                   ? theme.scoringOutColor
                   : theme.scoringOutIdleColor
           }}
@@ -75,7 +51,7 @@ export function RunnerDragTargets({
           >
             {key === 'safe' ? 'Safe' : 'Out'}
           </Text>
-        </Pressable>
+        </View>
       ))}
     </View>
   )

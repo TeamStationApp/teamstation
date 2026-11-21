@@ -46,6 +46,7 @@ import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import pg from 'pg'
+import { Agent, setGlobalDispatcher } from 'undici'
 import WebSocket from 'ws'
 
 import {
@@ -53,6 +54,7 @@ import {
   teamsOf
 } from '../../../src/app/scoring/developmentSession'
 import { TeamStationClient } from '../../../src/common/api'
+import { HttpError } from '../../../src/common/errors'
 import { NO_OVERRIDES } from '../../../src/common/scoreboard'
 import type { ScoringAction } from '../../../src/common/scoring/actions'
 import { ScoringSession } from '../../../src/common/scoring/session'
@@ -79,6 +81,9 @@ const { values } = parseArgs({
   }
 })
 const API = values.api
+// A fresh connection for every request: a pooled one the API closed for
+// idling, while sample-video encoded, was taken up again just as it closed.
+setGlobalDispatcher(new Agent({ pipelining: 0 }))
 const OUT = values.out
 for (const url of [API, serverConfig.databaseUrl])
   if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname))
@@ -352,15 +357,43 @@ async function record(
  * are encoded. Every angle encodes at once, so the lead grows with them: four
  * twenty-minute encodes ran past the broadcaster's own lead and it gave up.
  */
+export function liveLead(seconds: number, angles: number): number {
+  // Measured: four encodes at once take more than twice as long as two.
+  return Math.ceil(10 + (seconds / 4) * Math.max(1, angles / 2) ** 2)
+}
+
 function publishLive(url: string, angles = 2): number {
   const seconds = Number(values['live-seconds'])
-  // Measured: four encodes at once take more than twice as long as two.
-  const lead = Math.ceil(10 + (seconds / 4) * Math.max(1, angles / 2) ** 2)
+  const lead = liveLead(seconds, angles)
   return broadcast(
     url,
     ['--stamped', '--duration', String(seconds), '--lead', String(lead)],
     true
   ).pid
+}
+
+/**
+ * Waits for V's angles to be publishing. Until its publisher connects, a live
+ * camera's video is a hidden placeholder, which playback answers as not
+ * found, and each publisher first encodes for its lead; until its first
+ * segment is written, playback answers with no address.
+ */
+async function connected(videoIds: string[]): Promise<void> {
+  const lead = liveLead(Number(values['live-seconds']), videoIds.length)
+  const end = Date.now() + (lead + 300) * 1000
+  for (const videoId of videoIds) {
+    for (;;) {
+      try {
+        if ((await client.playback(videoId)).url != null) break
+      } catch (error: unknown) {
+        if (!(error instanceof HttpError) || error.code !== 'notFound')
+          throw error
+      }
+      if (Date.now() > end) throw new Error(`${videoId} never began publishing`)
+      await pause(2000)
+    }
+  }
+  say('the live angles are publishing', videoIds)
 }
 
 async function startLive(): Promise<void> {
@@ -370,6 +403,9 @@ async function startLive(): Promise<void> {
     fixture.live.length > 0
       ? fixture.live.map(one => ({ ...one, pid: publishLive(one.url) }))
       : await freshLive(fixture)
+  if (token === '') token = await signInTestAccount(API, fixture.admin)
+  client = new TeamStationClient({ baseUrl: API, token })
+  await connected(live.map(one => one.videoId))
   const games = {
     ...fixture.games,
     V: { ...fixture.games.V, videos: live.map(one => one.videoId) }
@@ -537,6 +573,8 @@ async function main(): Promise<void> {
         url: one.url
       })
     }
+
+    await connected(live.map(one => one.videoId))
 
     const fixture: Fixture = {
       api: API,

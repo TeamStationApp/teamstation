@@ -136,7 +136,11 @@ import {
 import { usePriorRunnerCorrection } from './priorRunnerCorrection'
 import { useDictationHandover } from './rosterDictation'
 import { sameValue } from './rosterDirty'
-import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
+import {
+  RosterEditor,
+  type RosterEditorDraft,
+  type RosterMode
+} from './RosterEditor'
 import { type GameChanges, listen, useRosterLive } from './rosterLive'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -1751,13 +1755,6 @@ function ScoringPanel(props: {
   useEffect(() => {
     scoringAudio.prepare()
   }, [])
-  const keyboard = useRef<((key: string) => boolean) | null>(null)
-  const registerKeyboard = useCallback(
-    (handler: ((key: string) => boolean) | null) => {
-      keyboard.current = handler
-    },
-    []
-  )
   const [gestureActive, setGestureActive] = useState(false)
   // A touch drag. Scoring-screen state stays put until the finger is up,
   // because a redraw from pointer-down drops the rest of that touch. Handlers
@@ -1843,8 +1840,7 @@ function ScoringPanel(props: {
     'Open scoring menu'
   )
   const [hint, setHint] = useState(false)
-  // Read-only takes no input at all, from the pointer, the keyboard or a
-  // screen reader.
+  // Read-only takes no input at all, from the pointer or a screen reader.
   const session = state.session
   const currentSetup = useRef(session)
   currentSetup.current = session
@@ -2119,6 +2115,12 @@ function ScoringPanel(props: {
     !outcomeMenu &&
     !moreOpen &&
     !tiebreaker.active
+  // A game that can no longer change its defense here, as when another
+  // device ends it, closes the defensive roster this screen has open.
+  const defenseEditable = setupEditable(state)
+  useEffect(() => {
+    if (!defenseEditable && defensiveSlot != null) setDefensiveSlot(undefined)
+  }, [defenseEditable, defensiveSlot])
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
   const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
@@ -2600,23 +2602,8 @@ function ScoringPanel(props: {
     }
     // A roster-triggered read may defer behind a save or another read. The
     // eventual automatic follow must refresh the open clean editor too.
-    if (
-      changed &&
-      canAdopt() &&
-      currentSheet.current === 'rosters' &&
-      !rosterDirty.current
-    ) {
-      setRosterInitial(held => ({
-        draft: refreshed.session,
-        side: held?.side ?? battingSide(refreshed.session),
-        mode: held?.mode ?? 'lineup',
-        ...(held?.scrollOffsets == null
-          ? {}
-          : { scrollOffsets: held.scrollOffsets }),
-        base: refreshed.session
-      }))
-      setRosterRead(value => value + 1)
-    }
+    if (changed && canAdopt() && currentSheet.current === 'rosters')
+      redrawRoster(refreshed.session, 'lineup')
     return { session: refreshed.session, oldUnresolved }
   }
   /**
@@ -2884,11 +2871,54 @@ function ScoringPanel(props: {
   })
   const rosterDirty = useRef(rosterChanged)
   rosterDirty.current = rosterChanged
+  // Whether the open editor holds a staged change or a sheet of its own, as
+  // it says in the commit that changes it: a game read meanwhile redraws it
+  // only while it holds nothing.
+  const rosterHeld = useRef(false)
+  // A redraw put off while the editor held something, made once it holds
+  // nothing again.
+  const heldRedraw = useRef<(() => void) | undefined>(undefined)
+  /**
+   * Draws the open editor again over `fresh`, keeping its tab, mode and
+   * scroll: at once when it holds nothing, once it holds nothing when it
+   * holds a sheet, and never over a staged change, which saves on top.
+   */
+  const redrawRoster = (fresh: GameState, mode: RosterMode): void => {
+    heldRedraw.current = undefined
+    if (rosterDirty.current) return
+    const redraw = (): void => {
+      setRosterInitial(held => ({
+        draft: fresh,
+        side: held?.side ?? battingSide(fresh),
+        mode: held?.mode ?? mode,
+        ...(held?.scrollOffsets == null
+          ? {}
+          : { scrollOffsets: held.scrollOffsets }),
+        base: fresh
+      }))
+      setRosterRead(value => value + 1)
+    }
+    if (rosterHeld.current) heldRedraw.current = redraw
+    else redraw()
+  }
+  const onRosterHeld = useCallback((held: boolean) => {
+    rosterHeld.current = held
+    if (held) return
+    const redraw = heldRedraw.current
+    heldRedraw.current = undefined
+    if (redraw != null && !rosterDirty.current) redraw()
+  }, [])
+  const onRosterDirty = useCallback((dirty: boolean) => {
+    rosterDirty.current = dirty
+    setRosterChanged(dirty)
+  }, [])
   const { stop: stopRosterLive } = rosterLive
   useEffect(() => {
     if (sheet === 'rosters') return
     stopRosterLive()
     setRosterChanged(false)
+    rosterHeld.current = false
+    heldRedraw.current = undefined
   }, [sheet, stopRosterLive])
   const openRosters = (
     lineup: boolean | { dictated: DictatedRoster } = false
@@ -2953,20 +2983,10 @@ function ScoringPanel(props: {
         if (
           fresh == null ||
           currentSheet.current !== 'rosters' ||
-          rosterDirty.current ||
           JSON.stringify(setupOf(fresh)) === JSON.stringify(setupOf(local))
         )
           return
-        setRosterInitial(held => ({
-          draft: fresh,
-          side: held?.side ?? battingSide(fresh),
-          mode: held?.mode ?? (lineup ? 'lineup' : 'editRoster'),
-          ...(held?.scrollOffsets == null
-            ? {}
-            : { scrollOffsets: held.scrollOffsets }),
-          base: fresh
-        }))
-        setRosterRead(value => value + 1)
+        redrawRoster(fresh, lineup ? 'lineup' : 'editRoster')
       })
       .catch(() => undefined)
   }
@@ -3566,12 +3586,10 @@ function ScoringPanel(props: {
             angle: value,
             generation,
             // The scorer's own angle: one a drag turned, or one accepted off
-            // where the control started, as a tap after the keyboard's
-            // arrows or their Enter leaves it.
+            // where the control started.
             dragged: dragged === true || value !== startingAngle(state)
           })
         },
-        registerKeyboard,
         onFieldPlacement: event => {
           if (tiebreaker.active) return
           // A player, or the stand-in at an empty position's plate.
@@ -3953,13 +3971,6 @@ function ScoringPanel(props: {
             retreatIds.includes(view.id) &&
             advanceIds?.includes(view.id) !== true)
         }
-        onChoose={decision => {
-          keyboard.current?.(decision === 'safe' ? 's' : 'o')
-          keyboard.current?.('Enter')
-        }}
-        onCancel={() => {
-          keyboard.current?.('Escape')
-        }}
       />
       {state.moreDraft != null && state.runnerDraft == null && (
         <View
@@ -4176,7 +4187,8 @@ function ScoringPanel(props: {
                 unaccepted={lineupsUnaccepted(state, props.visibleDefaults)}
                 onDraftChange={setRosterInitial}
                 conflict={rosterLive.conflict}
-                onDirtyChange={setRosterChanged}
+                onDirtyChange={onRosterDirty}
+                onHeldChange={onRosterHeld}
                 onEditPlayer={props.onEditPlayer}
                 onCreateGuest={async (side, player) => {
                   const entry = await props.client.createGuestPlayer(
@@ -4555,21 +4567,11 @@ function PanelSheet({
 /** The drop targets, redrawn from the drag's relay on their own. */
 function RelayedRunnerDragTargets({
   relay,
-  hides,
-  onChoose,
-  onCancel
+  hides
 }: {
   relay: Relay<RunnerDragView | null>
   hides: (view: RunnerDragView) => boolean
-  onChoose: (decision: 'safe' | 'out') => void
-  onCancel: () => void
 }): React.ReactElement {
   const view = useRelay(relay)
-  return (
-    <RunnerDragTargets
-      view={view == null || hides(view) ? null : view}
-      onChoose={onChoose}
-      onCancel={onCancel}
-    />
-  )
+  return <RunnerDragTargets view={view == null || hides(view) ? null : view} />
 }

@@ -172,6 +172,18 @@ describe('spreadsheet umpire notes', () => {
       nextNoteCell({ game: 'a', type: 'color' }, ['a'], ['color'], 'previous')
     ).equals(undefined)
   })
+  it('selects the whole note as the cell takes focus, before any timer runs', async () => {
+    await mount()
+    // No timers run between the click and the read: a key typed at once
+    // replaces the note, as on a busy page.
+    await click('b', 'color')
+    focused('b', 'color')
+    expect([
+      input().value,
+      input().selectionStart,
+      input().selectionEnd
+    ]).deep.equals(['Gold', 0, 4])
+  })
   it('saves with Enter, selects existing text, tabs right and wraps, reverses, cancels and clears', async () => {
     await mount()
     expect(input()).equals(null)

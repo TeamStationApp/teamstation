@@ -1,6 +1,12 @@
 import { type Camera, Vector3 } from 'three'
 
 import type { GroundPoint } from './fieldModel'
+import {
+  NAMEPLATE_FONT,
+  NAMEPLATE_LINE_GAP,
+  NAMEPLATE_NUMBER_FONT,
+  NAMEPLATE_PAD
+} from './playerPresentation'
 
 /** A crouched catcher's height and width, in field units, as drawn. */
 const CATCHER_HEIGHT = 5
@@ -53,5 +59,38 @@ export function movedRect(a: ScreenRect | null, b: ScreenRect): boolean {
     Math.abs(a.y - b.y) > 1 ||
     Math.abs(a.width - b.width) > 1 ||
     Math.abs(a.height - b.height) > 1
+  )
+}
+
+/**
+ * The catcher wears his nameplate under his feet: a name and a number, and a
+ * few points of room above it.
+ */
+const PLATE_BELOW =
+  NAMEPLATE_PAD * 2 +
+  NAMEPLATE_FONT +
+  NAMEPLATE_LINE_GAP +
+  NAMEPLATE_NUMBER_FONT +
+  8
+
+/**
+ * Whether a control at `control` would cover the catcher or the nameplate
+ * under his feet, with `margin` points to spare all round: a scorer must be
+ * able to throw to him.
+ */
+export function coversCatcher(
+  control: ScreenRect,
+  catcher: ScreenRect,
+  margin = 8
+): boolean {
+  const left = catcher.x - margin
+  const right = catcher.x + catcher.width + margin
+  const top = catcher.y - margin
+  const bottom = catcher.y + catcher.height + PLATE_BELOW + margin
+  return (
+    control.x < right &&
+    control.x + control.width > left &&
+    control.y < bottom &&
+    control.y + control.height > top
   )
 }

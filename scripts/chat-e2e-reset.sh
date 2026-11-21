@@ -26,21 +26,24 @@ artifacts=$1
 cd "$(dirname "$0")/.."
 
 url=$(node -e "console.log(require('./serverConfig.json').databaseUrl)")
-case "$url" in
-  postgres://localhost:* | postgres://127.0.0.1:* | postgresql://localhost:* | postgresql://127.0.0.1:*) ;;
-  *)
-    echo "serverConfig.json's databaseUrl is not on this Mac: $url" >&2
-    exit 1
-    ;;
-esac
+# This machine's database only, with or without a user name.
+if ! printf '%s' "$url" | grep -Eq '^postgres(ql)?://([A-Za-z0-9_]+@)?(localhost|127\.0\.0\.1):[0-9]+/'; then
+  echo "serverConfig.json's databaseUrl is not on this machine: $url" >&2
+  exit 1
+fi
 rest=${url#*://*:}
 port=${rest%%/*}
 name=${rest#*/}
 name=${name%%\?*}
 
 echo "Recreating $name on port $port"
-dropdb -h localhost -p "$port" --if-exists --force "$name"
-createdb -h localhost -p "$port" "$name"
+# The URL's user, when it names one; otherwise this account's own role.
+user=()
+case "$url" in
+  *://*@*) login=${url#*://}; user=(-U "${login%%@*}") ;;
+esac
+dropdb -h localhost -p "$port" ${user[@]+"${user[@]}"} --if-exists --force "$name"
+createdb -h localhost -p "$port" ${user[@]+"${user[@]}"} "$name"
 npm run --silent migrate -- up
 mkdir -p "$artifacts"
 npm run --silent chat-seed | tee "$artifacts/seed.txt"

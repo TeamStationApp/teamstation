@@ -99,6 +99,24 @@ describe('a droplet stack', function () {
     expect(bare.jev).equals(undefined)
   })
 
+  it('calls any route of the fault server, with the token', async function () {
+    const { fetchFn, calls } = faultServer()
+    const control = faultControl(HANDLE.faults, fetchFn)
+    expect(
+      await control.call('PUT', 'speech', { heard: 'Ball one.' })
+    ).deep.equals({
+      fault: null
+    })
+    expect(calls).deep.equals([
+      {
+        url: 'https://e2e-04.example.test/__e2e/speech',
+        method: 'PUT',
+        auth: 'Bearer tok',
+        body: '{"heard":"Ball one."}'
+      }
+    ])
+  })
+
   it('calls a refusal from the fault server a harness error', async function () {
     const control = faultControl(HANDLE.faults, faultServer(401).fetchFn)
     let failure: unknown

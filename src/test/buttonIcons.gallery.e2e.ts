@@ -2,8 +2,12 @@ import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import {
+  capture,
+  maestro,
+  type MaestroHandle
+} from '../../e2e/rigs/refinementsMaestro'
 import { assertButtonIconCenters } from './buttonIconPixels'
-import { capture, maestro, type MaestroHandle } from './refinementsMaestro.e2e'
 
 function disabledButtons(value: unknown): string[] {
   if (value == null || typeof value !== 'object') return []

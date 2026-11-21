@@ -38,6 +38,7 @@ import {
 } from './search'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
+import { RATE_LIMIT_SCALE, runTess } from './tess'
 
 const MAILBOX = 'testmailbox@example.test'
 const adminUrl = testDatabaseUrl
@@ -655,6 +656,59 @@ describe('fixture worlds', function () {
         expect((error as Error).message).equals('rolled back')
       })
     expect(await hasGroupCoordinates(the())).equals(true)
+  })
+
+  it('tess gives the admin Demo Hawks in the umpired league, eight games, a player the admin cannot see and room for its sign-in codes, twice over', async function () {
+    const worlds = [
+      await runTess({ db: the(), mailbox: MAILBOX, nonce: makeNonce() }),
+      await runTess({ db: the(), mailbox: MAILBOX, nonce: makeNonce() })
+    ]
+    const [world, again] = worlds
+    expect(again.ids.teamA).not.equals(world.ids.teamA)
+    const hawks = await the()
+      .selectFrom('teams')
+      .select('name')
+      .where('id', '=', world.ids.teamA)
+      .executeTakeFirstOrThrow()
+    expect(hawks.name).equals('Demo Hawks')
+    const games = await the()
+      .selectFrom('games')
+      .select(['id', 'status'])
+      .where(eb =>
+        eb.or([
+          eb('home_team_id', '=', world.ids.teamA),
+          eb('away_team_id', '=', world.ids.teamA)
+        ])
+      )
+      .execute()
+    expect(games).length(8)
+    expect(games.filter(game => game.status === 'final')).length(7)
+    const umpire = await the()
+      .selectFrom('league_umpires')
+      .select('user_id')
+      .where('league_id', '=', world.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(umpire.user_id).equals(world.accounts.admin.userId)
+    const hidden = await the()
+      .selectFrom('memberships')
+      .select(['team_id', 'jersey'])
+      .where('user_id', '=', world.ids.hiddenPlayer as never)
+      .executeTakeFirstOrThrow()
+    expect(hidden.team_id).equals(world.ids.standaloneTeam)
+    const adminTeams = await the()
+      .selectFrom('memberships')
+      .select('team_id')
+      .where('user_id', '=', world.accounts.admin.userId as never)
+      .execute()
+    expect(adminTeams.map(row => row.team_id)).not.includes(
+      world.ids.standaloneTeam
+    )
+    const scale = await the()
+      .selectFrom('system_settings')
+      .select('value')
+      .where('key', '=', 'test.rateLimitScale')
+      .executeTakeFirstOrThrow()
+    expect(scale.value).equals(RATE_LIMIT_SCALE)
   })
 
   it('creates accounts with no role by default and distinct passwords', async function () {

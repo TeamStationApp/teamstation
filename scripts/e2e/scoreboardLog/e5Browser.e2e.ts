@@ -41,10 +41,11 @@ const resultsPath = process.env.E5_RESULTS
 const token = process.env.TS_TOKEN
 /**
  * Chrome, or another Chromium-family browser's binary where Chrome is not
- * installed. Not the Chromium maestro-d downloads: it plays no H.264 and no
- * HEVC, so it never shows a picture of a recording.
+ * installed, such as the sweep's Chrome for Testing (`TS_CHROME_PATH`). Not
+ * the Chromium maestro-d downloads: it plays no H.264 and no HEVC, so it
+ * never shows a picture of a recording.
  */
-const browser = process.env.E5_BROWSER ?? 'chrome'
+const browser = process.env.E5_BROWSER ?? process.env.TS_CHROME_PATH ?? 'chrome'
 const requireClient =
   process.env.MAESTRO_D_CLIENT_ROOT == null
     ? createRequire(__filename)

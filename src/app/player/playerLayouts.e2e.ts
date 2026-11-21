@@ -1,12 +1,6 @@
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
 
-import { type LineScoreStep, TeamStationClient } from '../../common/api'
-import type { BoardLine } from '../../common/scoring/boardLineTypes'
-import { mediaAt, wallAt } from '../../common/wallTimeline'
-import { lstrings } from '../locales/strings'
-import type { Rect } from './multiCam/layout'
-import { GAP, playerLayout } from './multiCam/playerLayout'
 import {
   API,
   finish,
@@ -16,11 +10,18 @@ import {
   gridState,
   open,
   pause,
+  print,
   shot,
   signedIn,
   type WebSession,
   webSession
-} from './playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
+import { type LineScoreStep, TeamStationClient } from '../../common/api'
+import type { BoardLine } from '../../common/scoring/boardLineTypes'
+import { mediaAt, wallAt } from '../../common/wallTimeline'
+import { lstrings } from '../locales/strings'
+import type { Rect } from './multiCam/layout'
+import { GAP, playerLayout } from './multiCam/playerLayout'
 import { currentInning } from './scoreboardOverlay/lineScoreLayout'
 
 const PORTRAIT: [number, number] = [402, 874]
@@ -113,10 +114,23 @@ describe('player layouts in a browser', function () {
     const S = fixture().games.S
     const session: WebSession = await webSession('smoke', 402, 874)
     await open(session, `/games/${S.id}?tab=watch`)
-    await session.page.waitForFunction(
-      `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 2 })()`,
-      { timeout: 60_000 }
-    )
+    await session.page
+      .waitForFunction(
+        `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 2 })()`,
+        { timeout: 60_000 }
+      )
+      .catch(async (error: unknown) => {
+        // Why nothing played: each video's state, and what the page reported.
+        const videos = await session.page.evaluate(
+          `JSON.stringify(Array.from(document.querySelectorAll('video')).map(v => ({ root: v.closest('#root') != null, ready: v.readyState, network: v.networkState, error: v.error && v.error.message })))`
+        )
+        const shown = await session.page.evaluate(
+          `location.href + ' :: ' + document.body.innerText.slice(0, 400)`
+        )
+        throw new Error(
+          `${String(error)}; videos ${String(videos)}; page ${String(shown)}; ${session.problems.join(' | ')}`
+        )
+      })
     expect(await session.page.$$eval('video', all => all.length)).at.least(1)
   })
 
@@ -393,19 +407,36 @@ describe('player layouts in a browser', function () {
         `(() => ${GRID_VIDEOS}.map(v => ({ t: v.currentTime, paused: v.paused, ready: v.readyState >= 2 })))()`
       )) as Array<{ t: number; paused: boolean; ready: boolean }>
     const inlineReady = async (): Promise<void> => {
-      await page.waitForFunction(
-        `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 1 && ${GRID_VIDEOS}.length === 0 })()`,
-        { timeout: 60_000 }
-      )
+      try {
+        await page.waitForFunction(
+          `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 1 && ${GRID_VIDEOS}.length === 0 })()`,
+          { timeout: 60_000 }
+        )
+      } catch (error) {
+        print(
+          'the inline video never became ready',
+          await page.evaluate(
+            `(() => ({ url: location.href, inline: [...document.querySelectorAll('#root video')].map(v => ({ src: v.currentSrc, readyState: v.readyState, error: v.error && v.error.code })), tiles: ${GRID_VIDEOS}.length }))()`
+          )
+        )
+        throw error
+      }
     }
     /** Taps the picture, and answers the one tile's first reading. */
     const openPlayer = async (): Promise<{ t: number }> => {
-      const hidden = await page.$eval(
-        '[data-testid="gameVideoOpen"]',
-        node => node.getAttribute('tabindex') === '-1'
-      )
-      if (hidden) await page.click('[data-testid="gameVideoOpen"]')
+      // A first tap only reveals hidden controls (develop 44b04fbc7); the
+      // open square stays focusable, so whether they showed is read from
+      // whether the player opened, and a second tap inside the reveal opens it.
       await page.click('[data-testid="gameVideoOpen"]')
+      const opened = await page
+        .waitForFunction(`(() => ${GRID_VIDEOS}.length > 0)()`, {
+          timeout: 1000
+        })
+        .then(
+          () => true,
+          () => false
+        )
+      if (!opened) await page.click('[data-testid="gameVideoOpen"]')
       await page.waitForFunction(
         `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 })()`,
         { timeout: 60_000 }

@@ -6,23 +6,23 @@ import { join, resolve } from 'node:path'
 
 import express from 'express'
 
-import { asGameDetail, TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
+import { freezeBrowserClock } from '../../e2e/rigs/creationBrowserActions'
 import {
   browserSession,
   contains,
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { asGameDetail, TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
 import { teamScheduleAnswer } from '../test/teamScheduleFixture'
 import { teamTint } from './components/teamTile'
-import { freezeBrowserClock } from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_CREATION_ARTIFACTS')
@@ -92,7 +92,11 @@ async function main(): Promise<void> {
   const go = async (path: string, text: string): Promise<void> => {
     await m.openLink({ link: f.h.origin + path })
     await contains(page, text)
-    await page.waitForNetworkIdle({ idleTime: 150, timeout: 10000 })
+    // Quiet is a courtesy for what follows: a page that keeps a live game
+    // or a feed polling may never be quiet, and its text is already there.
+    await page
+      .waitForNetworkIdle({ idleTime: 150, timeout: 10000 })
+      .catch(() => undefined)
   }
   const shot = async (name: string): Promise<void> => {
     // Live indicators animate continuously; each route's loaded state is
@@ -439,10 +443,14 @@ async function main(): Promise<void> {
           '/games/gam_settings3_final?tab=info',
           'Demo Field'
         ],
-        ['player-gear', `/players/104?onTeam=${f.teamA}`, 'Ichiro'],
+        [
+          'player-gear',
+          `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}`,
+          'Ichiro'
+        ],
         [
           'player-team-tiles',
-          `/players/104?onTeam=${f.teamA}&tab=teams`,
+          `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}&tab=teams`,
           'Winter Wolves'
         ],
         ['home-team-tiles', '/', 'Winter Wolves'],
@@ -883,7 +891,7 @@ async function main(): Promise<void> {
       )
       await shot('discovery-team-tiles')
       await go(settings + '/people', 'Add People')
-      await show('Send invite')
+      await show('Add people')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await note(
@@ -898,26 +906,21 @@ async function main(): Promise<void> {
       await shot('cancel-invite-link')
     }
     if (only == null || only === 'schedule') {
-      await go(`/groups/team/${f.teamA}?tab=schedule`, 'Add Event')
-      await show('Add Event')
-      await shot('add-event')
+      // The team schedule's add action is the score-blue Add Game button.
+      await go(`/groups/team/${f.teamA}?tab=schedule`, 'Add Game')
+      await show('Add Game')
+      await shot('add-game')
       if (!before) {
-        const style = await page.$eval(
-          '[data-testid="add-event-card"]',
-          node => ({
-            background: getComputedStyle(node).backgroundColor,
-            border: getComputedStyle(node).borderTopWidth,
-            shadow: getComputedStyle(node).boxShadow,
-            centered: getComputedStyle(node).alignItems
-          })
+        const background = await page.$eval(
+          '[data-testid="add-game-button"]',
+          node => getComputedStyle(node).backgroundColor
         )
-        assert.equal(style.background, 'rgb(21, 101, 192)')
-        assert.equal(style.border, '0px')
-        assert.notEqual(style.shadow, 'none')
-        assert.equal(style.centered, 'center')
-        await tap(m, 'Add Event')
+        assert.equal(background, 'rgb(29, 78, 216)')
+        await tap(m, 'Add Game')
         await contains(page, 'Choose Away Team')
-        await note('E5 PASS: blue borderless shadow card opens event creation')
+        await note(
+          'E5 PASS: the score-blue Add Game button opens game creation'
+        )
       }
     }
     if (only == null || only === 'forms') {
@@ -967,7 +970,7 @@ async function main(): Promise<void> {
       await shot('cancel-manage-player')
       await tap(m, 'Cancel')
       await go(
-        `/players/104?onTeam=${f.teamA}&tab=settings`,
+        `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}&tab=settings`,
         'Remove from Winter Wolves'
       )
       await show('Remove from Winter Wolves')
@@ -993,7 +996,7 @@ async function main(): Promise<void> {
       await shot('cancel-photo')
       await tap(m, 'Cancel')
       await go(settings + '/people', 'Add People')
-      await show('Send invite')
+      await show('Add people')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await go(settings + '/invites', 'Create invite link')

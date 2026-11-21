@@ -4,18 +4,18 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { userIdOfGumbo } from '../common/userId'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { type GroupFixture, groupFixture } from '../test/groupFixtures'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   fill,
   frameText,
   freezeBrowserClock,
   press,
   text
-} from './creationBrowserActions.e2e'
+} from '../../e2e/rigs/creationBrowserActions'
+import { userIdOfGumbo } from '../common/userId'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)
@@ -407,9 +407,21 @@ async function main(): Promise<void> {
     await text(teamAdmin, 'Leave Demo Regular?')
     await frameText(teamAdmin, 'Leave Demo Regular?')
     await shot(teamAdmin, 'parent-unlink-preview.png')
-    await press(teamAdmin, 'Leave Demo Regular')
+    // The sheet's Leave reads its whole name; the row's own reads only Leave.
+    await teamAdmin.evaluate(() => {
+      const confirm = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.innerText.trim() === 'Leave Demo Regular')
+      if (confirm === undefined)
+        throw new Error('No Leave Demo Regular in the sheet')
+      confirm.click()
+    })
+    // Gone from the settings on top; a covered screen may still hold its own.
     await teamAdmin.waitForFunction(
-      () => document.querySelector('[aria-label="Leave Demo Regular"]') === null
+      () =>
+        document.querySelector(
+          '[data-scene-role="top"] [aria-label="Leave Demo Regular"]'
+        ) === null
     )
     expect(
       await f.h.db

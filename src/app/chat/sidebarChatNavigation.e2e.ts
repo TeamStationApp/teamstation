@@ -4,13 +4,13 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import { publicWebNodes } from '../../test/chat2Maestro.e2e'
-import { dismissNotificationAskOn } from '../../test/notificationAsk'
+import { publicWebNodes } from '../../../e2e/rigs/chat2Maestro'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 import { tessFixture } from '../../test/tessFixture'
 import { sharedChromeReturnsToChat } from './chat2.e2e'
 import { openRecoveryChat } from './chatHistoryRecoveryReplyFixture.e2e'
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
           ...process.env,
           MAESTRO_D_CLIENT_ROOT: clientRoot,
           MAESTRO_D: name,
-          MAESTRO_DEVICE: device,
+          MAESTRO_DEVICE: session.device,
           TS_CHAT_WEB: origin,
           TS_CHAT_ORIGIN: source,
           TS_CHAT_ARTIFACTS: out

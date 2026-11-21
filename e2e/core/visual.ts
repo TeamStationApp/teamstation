@@ -57,6 +57,32 @@ export interface CompareInputs {
   golden: GoldenOptions
   manifest: GoldenManifest
   store: string | undefined
+  /** On the web, the indices of the drawn elements a CSS selector matches. */
+  drawn?: (css: string) => Promise<number[]>
+}
+
+/**
+ * The masks as maestro-d takes them. maestro-d masks the one element a
+ * selector finds; a CSS mask marked `every` stands for each drawn element
+ * it matches, one entry each by its index among the matches, and for none
+ * when nothing it matches is drawn. Every other mask goes as it is, and
+ * still fails a checkpoint when it matches nothing.
+ */
+export async function expandMasks(
+  mask: ReadonlyArray<Record<string, unknown>>,
+  drawn?: (css: string) => Promise<number[]>
+): Promise<Array<Record<string, unknown>>> {
+  const out: Array<Record<string, unknown>> = []
+  for (const entry of mask) {
+    const { every, ...rest } = entry
+    if (every !== true || typeof rest.css !== 'string' || drawn == null) {
+      out.push(rest)
+      continue
+    }
+    for (const index of await drawn(rest.css))
+      out.push({ ...rest, index: String(index) })
+  }
+  return out
 }
 
 /**
@@ -72,7 +98,7 @@ export async function compareGolden(
   mkdirSync(expectedDir, { recursive: true })
   const expected = join(expectedDir, `${checkpoint}.png`)
   const capture = join(runDir, 'captures', `${checkpoint}.png`)
-  const mask = golden.mask ?? []
+  const mask = await expandMasks(golden.mask ?? [], inputs.drawn)
   const entry = manifest.goldens[key]
   const bytes =
     entry == null

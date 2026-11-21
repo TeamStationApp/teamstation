@@ -209,6 +209,8 @@ export const STREAM_DELAY_MS = 60
 export async function fakeAnthropic(
   options: {
     host?: string
+    /** The port to listen on; any free one by default. */
+    port?: number
     script?: ScriptEntry[]
     /** The wait before each streamed piece of thinking or text. */
     streamDelayMs?: number
@@ -303,7 +305,7 @@ export async function fakeAnthropic(
       })
   })
   const host = options.host ?? '127.0.0.1'
-  server.listen(0, host)
+  server.listen(options.port ?? 0, host)
   await new Promise<void>(resolve => server.once('listening', resolve))
   const { port } = server.address() as AddressInfo
   return {

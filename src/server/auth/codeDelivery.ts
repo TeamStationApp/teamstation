@@ -1,6 +1,20 @@
 import { mailConfigured, sendSignInCode } from '../email/sendMail'
 import type { SmtpSettings } from '../serverConfig'
 
+/**
+ * The account route's sender: it refuses when mail is not configured, because a person
+ * is waiting on this code, and otherwise delivers and logs like every other code.
+ */
+export function accountCodeSender(
+  smtp: SmtpSettings,
+  options: Parameters<typeof deliverSignInCode>[4] = {}
+): (email: string, code: string) => Promise<void> {
+  return async (email, code) => {
+    if (!mailConfigured(smtp)) throw new Error('Email is not configured')
+    await deliverSignInCode(smtp, email, code, undefined, options)
+  }
+}
+
 /** The production adapter preserves delivery failures for the auth endpoint. */
 export async function deliverSignInCode(
   smtp: SmtpSettings,

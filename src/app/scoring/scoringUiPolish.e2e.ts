@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import { modalFixture } from '../../../e2e/fixtures/scoringModalsFixture'
 import {
   recordOf,
   replayPlays,
@@ -10,7 +11,6 @@ import {
 } from '../../common/scoring/gumbo'
 import { baseIds } from '../../common/scoring/rules'
 import type { GameSetup, GameState } from '../../common/scoring/state'
-import { modalFixture } from './scoringModals.e2e.fixture'
 
 const required = (name: string): string => {
   const value = process.env[name]

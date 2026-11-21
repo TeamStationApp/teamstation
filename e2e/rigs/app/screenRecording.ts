@@ -136,7 +136,7 @@ export async function startRecorder(
     startedAtMs,
     stop: async localPath => {
       child.kill('SIGINT')
-      let timer: NodeJS.Timeout | undefined
+      let timer: ReturnType<typeof setTimeout> | undefined
       const code = await Promise.race([
         exited,
         new Promise<'timeout'>(resolve => {

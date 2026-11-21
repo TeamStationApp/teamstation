@@ -176,9 +176,11 @@ export function SeasonTimeFrameScreen({
           {custom && (
             <DateRangePicker
               // It reads `initial` when it mounts: a season or a year chosen
-              // while it is open shows there too.
+              // while it is open shows there too. With no range yet, it opens
+              // on the same clock as the year.
               key={draft == null ? 'none' : `${draft.startsOn}:${draft.endsOn}`}
               initial={draft ?? undefined}
+              now={now()}
               onChoose={range => {
                 touched.current = true
                 setDraft(range)

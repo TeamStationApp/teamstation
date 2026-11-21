@@ -9,7 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 
-import { API, fixture } from '../../../src/app/player/playerLayoutsRig.e2e'
+import { API, fixture } from '../../../e2e/rigs/playerLayoutsRig'
 
 async function main(): Promise<void> {
   const [log, next] = process.argv.slice(2)

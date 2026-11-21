@@ -450,8 +450,14 @@ function fakeRecogniser(
   }
 }
 
-/** Two angles' HLS, from one generated clip, in a disposable media root. */
-async function makeMedia(mediaRoot: string, ids: string[]): Promise<void> {
+/**
+ * Each video's HLS, from one generated H.264 clip any browser plays, in a
+ * media root: where a fixture's `local` video rows find their files.
+ */
+export async function makeMedia(
+  mediaRoot: string,
+  ids: string[]
+): Promise<void> {
   const first = join(mediaRoot, 'work/videos', ids[0])
   await mkdir(first, { recursive: true })
   execFileSync(process.env.TS_FFMPEG ?? 'ffmpeg', [

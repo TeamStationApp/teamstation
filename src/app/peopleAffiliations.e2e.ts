@@ -16,12 +16,6 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import { makeId } from '../common/ids'
-import { userIdOfGumbo } from '../common/userId'
-import { createSession } from '../server/auth/sessions'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { groupFixture } from '../test/groupFixtures'
-import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import {
   absent,
   browserSession,
@@ -29,7 +23,13 @@ import {
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { makeId } from '../common/ids'
+import { userIdOfGumbo } from '../common/userId'
+import { createSession } from '../server/auth/sessions'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { groupFixture } from '../test/groupFixtures'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 
 const PLAYER = 400
 const GUARDIAN = 401

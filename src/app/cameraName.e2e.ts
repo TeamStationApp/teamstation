@@ -7,12 +7,12 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import { TeamStationClient } from '../common/api'
 import { findUserByEmail } from '../server/auth/emails'
 import { createSession } from '../server/auth/sessions'
 import { makeDatabase } from '../server/db/database'
 import { serverConfig } from '../server/serverConfig'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 import { waitForCameraLimit } from './stream/webCameraLimit.e2e'
 
 /**
@@ -157,15 +157,43 @@ describe('web camera management on Videos', function () {
     }
   })
   it('shows a member Request access and records the request', async function () {
-    const page = await open(browser, viewer, games[0])
-    pages.push(page)
-    await page.waitForSelector(id('request-access'))
-    await shot(page, 'member-after')
-    await click(page, 'request-access')
-    await page.waitForFunction(() =>
-      document.body.innerText.includes('Request sent')
-    )
-    expect((await viewer.streamAccess(games[0])).requested).equals(true)
+    // A request to film is a relationship, which a node takes only once its
+    // administrator has finished organization setup. A shared test database
+    // holds other fixtures' unowned groups, so this run marks setup finished
+    // as a deployed node has it, and puts the setting back after.
+    const db = makeDatabase(serverConfig.databaseUrl)
+    const key = 'creation.hierarchyReady'
+    const before = await db
+      .selectFrom('system_settings')
+      .select('value')
+      .where('key', '=', key)
+      .executeTakeFirst()
+    await db
+      .insertInto('system_settings')
+      .values({ key, value: true })
+      .onConflict(oc => oc.column('key').doUpdateSet({ value: true }))
+      .execute()
+    try {
+      const page = await open(browser, viewer, games[0])
+      pages.push(page)
+      await page.waitForSelector(id('request-access'))
+      await shot(page, 'member-after')
+      await click(page, 'request-access')
+      await page.waitForFunction(() =>
+        document.body.innerText.includes('Request sent')
+      )
+      expect((await viewer.streamAccess(games[0])).requested).equals(true)
+    } finally {
+      if (before == null)
+        await db.deleteFrom('system_settings').where('key', '=', key).execute()
+      else
+        await db
+          .updateTable('system_settings')
+          .set({ value: before.value })
+          .where('key', '=', key)
+          .execute()
+      await db.destroy()
+    }
   })
   it('sets up, publishes, ends and deletes an external camera', async function () {
     const game = games[0]

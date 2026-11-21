@@ -119,7 +119,12 @@ async function device(person: string, n = 1): Promise<Page> {
   const browser = await puppeteer.launch({
     headless: true,
     userDataDir: join(ARTIFACTS, 'profiles', key),
-    executablePath: process.env.TS_CHROME_PATH
+    executablePath: process.env.TS_CHROME_PATH,
+    // A desktop with a mouse, as the scenarios mean, on a machine with no
+    // pointing device too (a server): the hover actions show only for one.
+    args: [
+      '--blink-settings=primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2'
+    ]
   })
   browsers.push(browser)
   const page = await browser.newPage()
@@ -128,7 +133,7 @@ async function device(person: string, n = 1): Promise<Page> {
   const userId = readSeed().people[person]?.userId
   if (userId != null) owners.set(page, userId)
   // On the app, so the page's own calls to the API carry its session.
-  await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
+  await goto(page, `${WEB}/`, { waitUntil: 'networkidle2' })
   return page
 }
 
@@ -147,8 +152,18 @@ async function closeDevice(person: string, n = 1): Promise<void> {
   open.delete(key)
 }
 
+/**
+ * The page's words, without the navigation sidebar's: its account row names
+ * the signed-in person (develop a0db231a9), whom a list must not offer.
+ */
 async function bodyText(page: Page): Promise<string> {
-  return await page.evaluate(() => document.body.innerText)
+  return await page.evaluate(() => {
+    const text = document.body.innerText
+    const sidebar = document.querySelector<HTMLElement>(
+      '[data-testid="navigation-sidebar"]'
+    )
+    return sidebar == null ? text : text.replace(sidebar.innerText, '')
+  })
 }
 
 async function waitForText(page: Page, words: string): Promise<void> {
@@ -174,7 +189,7 @@ async function finishNewAccount(page: Page): Promise<void> {
   }
   // Onboarding remounts the invitation screen after the one-use invitation
   // has been consumed. The durable outcome is membership on the home screen.
-  await page.goto(WEB, { waitUntil: 'networkidle2' })
+  await goto(page, WEB, { waitUntil: 'networkidle2' })
 }
 
 async function press(page: Page, label: string): Promise<void> {
@@ -231,11 +246,28 @@ async function typeInto(
   throw new Error(`The ${label} field would not take "${text}"`)
 }
 
+/**
+ * Opens `url` on `page`, once more if the app replaced its frame while it
+ * loaded: it reloads itself when a device's chat keys change under it.
+ */
+async function goto(
+  page: Page,
+  url: string,
+  options?: Parameters<Page['goto']>[1]
+): Promise<void> {
+  try {
+    await page.goto(url, options)
+  } catch (error) {
+    if (!String(error).includes('detached')) throw error
+    await page.goto(url, options)
+  }
+}
+
 /** Signs a device in with its person's password, if it is not already. */
 async function signIn(page: Page, seed: Seed, person: string): Promise<void> {
   const who = seed.people[person]
   if (who == null) throw new Error(`No ${person} in the seed`)
-  await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
+  await goto(page, `${WEB}/`, { waitUntil: 'networkidle2' })
   if ((await page.$('input[aria-label="E-mail address"]')) == null) return
   await typeInto(page, 'E-mail address', who.email)
   await pressText(page, 'Use a password instead')
@@ -293,7 +325,9 @@ function database(): CheckDatabase {
     databaseUrl: string
   }
   if (
-    !/^postgres(ql)?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(config.databaseUrl)
+    !/^postgres(ql)?:\/\/([^@/]+@)?(localhost|127\.0\.0\.1)[:/]/.test(
+      config.databaseUrl
+    )
   ) {
     throw new Error('serverConfig.json does not name a local database')
   }
@@ -453,8 +487,15 @@ async function confirmChatAge(page: Page): Promise<void> {
 
 /** The id of the chat called `title` in the page's person's list. */
 async function chatIdOf(page: Page, title: string): Promise<string> {
-  return await until(`the chat ${title}`, async () => {
-    const list = (await apiGet(page, '/chat/conversations')).body as Array<{
+  let lastAnswer: unknown
+  const found = until(`the chat ${title}`, async () => {
+    const answer = await apiGet(page, '/chat/conversations')
+    // Anything but the list (the API restarting, a refusal) is tried again.
+    if (!Array.isArray(answer.body)) {
+      lastAnswer = answer
+      return undefined
+    }
+    const list = answer.body as Array<{
       id: string
       title: string | null
       members?: unknown
@@ -477,6 +518,11 @@ async function chatIdOf(page: Page, title: string): Promise<string> {
           .slice('chat-conversation-'.length)
       },
       title
+    )
+  })
+  return await found.catch((error: unknown) => {
+    throw new Error(
+      `${String(error)}; the chat list answered ${JSON.stringify(lastAnswer)}`
     )
   })
 }
@@ -519,7 +565,7 @@ async function waitForChatList(page: Page): Promise<void> {
 
 /** Opens the Chat tab, which sets the device up for chat, and waits. */
 async function openChatTab(page: Page): Promise<void> {
-  await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+  await goto(page, `${WEB}/chat`, { waitUntil: 'networkidle2' })
   await waitForChatList(page)
 }
 
@@ -636,6 +682,9 @@ async function legacyAction(
     define: { __DEV__: 'false', 'process.env.TS_BUILD_INFO': 'undefined' }
   }).then(result => result.outputFiles[0].text)
   await page.evaluate(await legacyActionBundle)
+  // The module the page will fetch, so its integrity is that of the build served.
+  const wasmUrl = `${WEB}/chat-crypto.wasm`
+  const wasm = Buffer.from(await (await fetch(wasmUrl)).arrayBuffer())
   const input: Parameters<typeof retainedBrowserAction>[0] = {
     apiUrl: API,
     userId,
@@ -643,12 +692,9 @@ async function legacyAction(
     messageId: messageId!,
     action,
     ...(body == null ? {} : { body }),
-    wasmUrl: `${WEB}/chat-crypto.wasm`,
+    wasmUrl,
     wasmIntegrity:
-      'sha256-' +
-      createHash('sha256')
-        .update(readFileSync('dist/chat-crypto.wasm'))
-        .digest('base64')
+      'sha256-' + createHash('sha256').update(wasm).digest('base64')
   }
   await page.evaluate(async input => {
     await (
@@ -769,7 +815,7 @@ describe('chat scenarios in the browser', function () {
       const hawks = seed.ids.Hawks
       const coach = await device('Hc')
       await signIn(coach, seed, 'Hc')
-      await coach.goto(`${WEB}/players/${pat.userId}?onTeam=${hawks}`, {
+      await goto(coach, `${WEB}/players/${pat.userId}?onTeam=${hawks}`, {
         waitUntil: 'networkidle2'
       })
       await press(coach, 'Player settings')
@@ -796,7 +842,7 @@ describe('chat scenarios in the browser', function () {
       expect(auntCode).not.equals('')
 
       const aunt = await device('Aunt')
-      await aunt.goto(`${WEB}/i/${auntCode}`, { waitUntil: 'networkidle2' })
+      await goto(aunt, `${WEB}/i/${auntCode}`, { waitUntil: 'networkidle2' })
       await waitForText(aunt, 'You are invited to watch Hawks')
       await typeInto(aunt, 'Your name', 'Ava Aunt')
       await typeInto(aunt, 'E-mail address', auntAddress)
@@ -820,7 +866,7 @@ describe('chat scenarios in the browser', function () {
       const uncleCode = /\/i\/([^/\s]+)$/.exec(uncleLink)?.[1] ?? ''
       const parentD = await device('D')
       await signIn(parentD, seed, 'D')
-      await parentD.goto(`${WEB}/i/${uncleCode}`, {
+      await goto(parentD, `${WEB}/i/${uncleCode}`, {
         waitUntil: 'networkidle2'
       })
       await pressText(parentD, 'Accept the invitation')
@@ -833,8 +879,8 @@ describe('chat scenarios in the browser', function () {
       // Parent B, picked from the team, as an adult family member.
       await press(coach, 'Adult family member')
       await typeInto(coach, 'E-mail address or name', 'Bla')
-      await press(coach, 'Add Blair B')
-      await waitForText(coach, 'Blair B is linked.')
+      await press(coach, 'Add Blair Brooks')
+      await waitForText(coach, 'Blair Brooks is linked.')
       await waitForText(coach, 'Family · b@chat.example.com')
       await shot(coach, 'e2-5-b-family')
 
@@ -914,7 +960,7 @@ describe('chat scenarios in the browser', function () {
   it('E5: a second device is linked by matching six digits', async function () {
     const first = await device('B', 1)
     await signIn(first, seed, 'B')
-    await first.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
+    await goto(first, `${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
     await waitForText(first, 'YOUR DEVICES')
     await waitForText(first, '(this device)')
     const enrolled = await apiGet(first, '/chat/me/keys')
@@ -924,7 +970,7 @@ describe('chat scenarios in the browser', function () {
 
     const second = await device('B', 2)
     await signIn(second, seed, 'B')
-    await second.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
+    await goto(second, `${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
     await waitForText(second, 'Link this device')
     const shown = await codeOn(second, 'Six-digit code ')
     await shot(second, 'e5-2-b2-code')
@@ -989,7 +1035,7 @@ describe('chat scenarios in the browser', function () {
 
     const admin = await signedIn('Ha')
     await signIn(admin, seed, 'Ha')
-    await admin.goto(`${WEB}/teams/${seed.ids.Hawks}/manage`, {
+    await goto(admin, `${WEB}/teams/${seed.ids.Hawks}/manage`, {
       waitUntil: 'networkidle2'
     })
     const codes = async (): Promise<string[]> =>
@@ -1023,7 +1069,7 @@ describe('chat scenarios in the browser', function () {
       }
     })
     const address = 'j@chat.example.com'
-    await newcomer.goto(`${WEB}/i/${code}`, { waitUntil: 'networkidle2' })
+    await goto(newcomer, `${WEB}/i/${code}`, { waitUntil: 'networkidle2' })
     await waitForText(newcomer, 'You are invited to watch Hawks')
     await typeInto(newcomer, 'Your name', 'Jules Jay')
     await typeInto(newcomer, 'E-mail address', address)
@@ -1058,7 +1104,7 @@ describe('chat scenarios in the browser', function () {
     // Straight to the chat, as a link to it opens: J's device enrols on the
     // way in, and Hc's open page grants it the history.
     const members = await chatIdOf(coach, 'Hawks Members')
-    await newcomer.goto(`${WEB}/chat/${members}`, { waitUntil: 'load' })
+    await goto(newcomer, `${WEB}/chat/${members}`, { waitUntil: 'load' })
     await waitForText(newcomer, 'Welcome to Hawks Members')
     const seen = await newcomer.evaluate(
       () => (window as unknown as { seen: Record<string, number> }).seen
@@ -1207,7 +1253,7 @@ describe('chat scenarios in the browser', function () {
     await openChatTab(coach)
     await pressText(coach, 'New message')
     await typeInto(coach, 'Name', 'Drew')
-    await press(coach, 'Pick Drew D')
+    await press(coach, 'Pick Drew Dalton')
     await pressText(coach, 'Start conversation')
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
@@ -1230,12 +1276,12 @@ describe('chat scenarios in the browser', function () {
 
     const fresh = await device('D2', 2)
     await signIn(fresh, seed, 'D2')
-    await fresh.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+    await goto(fresh, `${WEB}/chat`, { waitUntil: 'networkidle2' })
     await waitForText(fresh, 'Link this device')
     await pressText(fresh, 'I can’t reach my other devices')
     await pressText(fresh, 'Reset chat on this device')
     await waitForChatList(fresh)
-    await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
+    await goto(fresh, `${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
     await waitForText(fresh, 'Locked message')
     await send(fresh, 'D2: new device can send before history recovery')
     await waitForText(fresh, 'Locked message')
@@ -1244,7 +1290,7 @@ describe('chat scenarios in the browser', function () {
     await shot(fresh, 'e8-2-d2-locked')
 
     const back = await signedIn('Ec')
-    await openChat(back, 'Drew D')
+    await openChat(back, 'Drew Dalton')
     await waitForText(back, 'D2: new device can send before history recovery')
     await waitForText(back, 'safety words changed')
     await waitForText(back, 'reset their chat keys')
@@ -1253,7 +1299,7 @@ describe('chat scenarios in the browser', function () {
     await waitForText(back, 'OLD SAFETY WORDS')
     await waitForText(back, 'NEW SAFETY WORDS')
     await shot(back, 'e8-4-ec-approval')
-    await press(back, 'Approve Drew D')
+    await press(back, 'Approve Drew Dalton')
     await until('the approval to go', async () =>
       (await bodyText(back)).includes('OLD SAFETY WORDS') ? undefined : true
     )
@@ -1273,7 +1319,7 @@ describe('chat scenarios in the browser', function () {
       await openChatTab(coach)
       await pressText(coach, 'New message')
       await typeInto(coach, 'Name', 'Dana')
-      await press(coach, 'Pick Dana D')
+      await press(coach, 'Pick Dana Dunn')
       await pressText(coach, 'Start conversation')
       await until('the DM', () =>
         /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
@@ -1289,7 +1335,7 @@ describe('chat scenarios in the browser', function () {
       ])
       await shot(parent, 'e9-1-d-history')
 
-      await coach.goto(`${WEB}/chat/${dm}/members`, {
+      await goto(coach, `${WEB}/chat/${dm}/members`, {
         waitUntil: 'networkidle2'
       })
       await pressText(coach, 'Leave this conversation')
@@ -1302,12 +1348,12 @@ describe('chat scenarios in the browser', function () {
 
       const fresh = await device('D', 2)
       await signIn(fresh, seed, 'D')
-      await fresh.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+      await goto(fresh, `${WEB}/chat`, { waitUntil: 'networkidle2' })
       await waitForText(fresh, 'Link this device')
       await pressText(fresh, 'I can’t reach my other devices')
       await pressText(fresh, 'Reset chat on this device')
       await waitForChatList(fresh)
-      await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
+      await goto(fresh, `${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
       await send(fresh, 'still here')
       await waitForText(fresh, 'still here')
       await waitForText(fresh, 'Locked message')
@@ -1693,100 +1739,106 @@ describe('chat scenarios in the browser', function () {
       )
     }
     await toggle(true)
-    await shot(league, 'e14-2-l-switch-on')
-    await until('K’s first DM to close', async () => {
-      const list = (await apiGet(keeper, '/chat/conversations')).body as Array<{
-        id: string
-        closed: boolean
-      }>
-      return list.find(chat => chat.id === first)?.closed === true
-        ? true
-        : undefined
-    })
-
-    await newDm(keeper, 'Pat', 'Pat Player')
-    await waitForText(keeper, 'Include another adult')
-    for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
-      await waitForText(keeper, name)
-    }
-    expect(await bodyText(keeper)).not.contains('Kim K')
-    await shot(keeper, 'e14-3-k-suggestions')
-    await typeInto(keeper, 'Search for an adult', 'Eddie')
-    await waitForText(keeper, 'Nobody matches that name.')
-    await shot(keeper, 'e14-4-k-no-ec')
-    await typeInto(keeper, 'Search for an adult', 'Hank')
-    await press(keeper, 'Include Hank C')
-    await pressText(keeper, 'Start with them')
-    await until('the DM with Hc', () =>
-      /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
-    )
-    await notNow(keeper)
-    const second = await dmWith(keeper, [
-      seed.people.K.userId,
-      seed.people.P.userId,
-      seed.people.Hc.userId
-    ])
-    await shot(keeper, 'e14-5-k-p-hc')
-
-    const guardian = await signedIn('G2')
-    await signIn(guardian, seed, 'G2')
-    // Pat's guardian reads Pat in full.
-    await newDm(guardian, 'Pat', 'Pat Player')
-    await until('G2’s DM', () =>
-      /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
-    )
-    await notNow(guardian)
-    const g2dm = await dmWith(guardian, [
-      seed.people.G2.userId,
-      seed.people.P.userId
-    ])
-    await shot(guardian, 'e14-6-g2-p')
-
-    const coach = await signedIn('Hc')
-    await coach.goto(
-      `${WEB}/players/${seed.people.P.userId}?onTeam=${seed.ids.Hawks}&tab=settings`,
-      { waitUntil: 'networkidle2' }
-    )
-    await press(coach, 'Player settings')
-    await press(coach, 'Change guardians and family')
-    for (const name of ['Glen Guardian', 'Ava Aunt']) {
-      await press(coach, `Remove ${name}`)
-      await until(`${name} unlinked`, async () => {
-        const text = await bodyText(coach)
-        return text.includes(name) ? undefined : true
+    // Off again however the scenario ends: E19 needs QPLL an ordinary league.
+    try {
+      await shot(league, 'e14-2-l-switch-on')
+      await until('K’s first DM to close', async () => {
+        const list = (await apiGet(keeper, '/chat/conversations'))
+          .body as Array<{
+          id: string
+          closed: boolean
+        }>
+        return list.find(chat => chat.id === first)?.closed === true
+          ? true
+          : undefined
       })
+
+      await newDm(keeper, 'Pat', 'Pat Player')
+      await waitForText(keeper, 'Include another adult')
+      for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
+        await waitForText(keeper, name)
+      }
+      expect(await bodyText(keeper)).not.contains('Kim K')
+      await shot(keeper, 'e14-3-k-suggestions')
+      await typeInto(keeper, 'Search for an adult', 'Eddie')
+      await waitForText(keeper, 'Nobody matches that name.')
+      await shot(keeper, 'e14-4-k-no-ec')
+      await typeInto(keeper, 'Search for an adult', 'Hank')
+      await press(keeper, 'Include Hank C')
+      await pressText(keeper, 'Start with them')
+      await until('the DM with Hc', () =>
+        /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
+      )
+      await notNow(keeper)
+      const second = await dmWith(keeper, [
+        seed.people.K.userId,
+        seed.people.P.userId,
+        seed.people.Hc.userId
+      ])
+      await shot(keeper, 'e14-5-k-p-hc')
+
+      const guardian = await signedIn('G2')
+      await signIn(guardian, seed, 'G2')
+      // Pat's guardian reads Pat in full.
+      await newDm(guardian, 'Pat', 'Pat Player')
+      await until('G2’s DM', () =>
+        /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
+      )
+      await notNow(guardian)
+      const g2dm = await dmWith(guardian, [
+        seed.people.G2.userId,
+        seed.people.P.userId
+      ])
+      await shot(guardian, 'e14-6-g2-p')
+
+      const coach = await signedIn('Hc')
+      await goto(
+        coach,
+        `${WEB}/players/${seed.people.P.userId}?onTeam=${seed.ids.Hawks}&tab=settings`,
+        { waitUntil: 'networkidle2' }
+      )
+      await press(coach, 'Player settings')
+      await press(coach, 'Change guardians and family')
+      for (const name of ['Glen Guardian', 'Ava Aunt']) {
+        await press(coach, `Remove ${name}`)
+        await until(`${name} unlinked`, async () => {
+          const text = await bodyText(coach)
+          return text.includes(name) ? undefined : true
+        })
+      }
+      await pressText(coach, 'Done')
+      await shot(coach, 'e14-7-hc-unlinked')
+      await until('G2’s DM to close', async () => {
+        const list = (await apiGet(guardian, '/chat/conversations'))
+          .body as Array<{
+          id: string
+          closed: boolean
+        }>
+        return list.find(chat => chat.id === g2dm)?.closed === true
+          ? true
+          : undefined
+      })
+
+      await goto(coach, `${WEB}/chat/${second}/members`, {
+        waitUntil: 'networkidle2'
+      })
+      await pressText(coach, 'Leave this conversation')
+      await until('K’s DM to close', async () => {
+        const list = (await apiGet(keeper, '/chat/conversations'))
+          .body as Array<{
+          id: string
+          closed: boolean
+        }>
+        return list.find(chat => chat.id === second)?.closed === true
+          ? true
+          : undefined
+      })
+      await goto(keeper, `${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
+      await waitForText(keeper, 'This chat is closed')
+      await shot(keeper, 'e14-8-k-closed')
+    } finally {
+      await toggle(false)
     }
-    await pressText(coach, 'Done')
-    await shot(coach, 'e14-7-hc-unlinked')
-    await until('G2’s DM to close', async () => {
-      const list = (await apiGet(guardian, '/chat/conversations'))
-        .body as Array<{
-        id: string
-        closed: boolean
-      }>
-      return list.find(chat => chat.id === g2dm)?.closed === true
-        ? true
-        : undefined
-    })
-
-    await coach.goto(`${WEB}/chat/${second}/members`, {
-      waitUntil: 'networkidle2'
-    })
-    await pressText(coach, 'Leave this conversation')
-    await until('K’s DM to close', async () => {
-      const list = (await apiGet(keeper, '/chat/conversations')).body as Array<{
-        id: string
-        closed: boolean
-      }>
-      return list.find(chat => chat.id === second)?.closed === true
-        ? true
-        : undefined
-    })
-    await keeper.goto(`${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
-    await waitForText(keeper, 'This chat is closed')
-    await shot(keeper, 'e14-8-k-closed')
-
-    await toggle(false)
     await shot(league, 'e14-9-l-switch-off')
   })
   /**
@@ -1842,7 +1894,7 @@ describe('chat scenarios in the browser', function () {
       await db.end()
     }
 
-    await parentB.goto(`${WEB}/admin/chat/reports`, {
+    await goto(parentB, `${WEB}/admin/chat/reports`, {
       waitUntil: 'networkidle2'
     })
     await waitForText(parentB, 'There is nothing here.')
@@ -1850,7 +1902,7 @@ describe('chat scenarios in the browser', function () {
     await shot(parentB, 'e15-3-b-not-found')
 
     const admin = await signedIn('Z')
-    await admin.goto(`${WEB}/admin/chat/reports`, {
+    await goto(admin, `${WEB}/admin/chat/reports`, {
       waitUntil: 'networkidle2'
     })
     await waitForText(admin, 'second from C')
@@ -1972,7 +2024,7 @@ describe('chat scenarios in the browser', function () {
     await openChatTab(coach)
     await pressText(coach, 'New message')
     await typeInto(coach, 'Name', 'Frank')
-    await press(coach, 'Pick Frankie F')
+    await press(coach, 'Pick Frankie Fan')
     await shot(coach, 'e18-1-hc-picks-f')
     await pressText(coach, 'Start conversation')
     await until('the DM', () =>

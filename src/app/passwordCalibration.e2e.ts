@@ -34,7 +34,14 @@ async function main(): Promise<void> {
       device: 'web',
       platform: 'web',
       url: h.origin + '/fixture',
-      extra: { windowSize: '1100,1000' },
+      // Chrome by path where the run names one: Maestro D's own Chromium is
+      // an older build.
+      extra: {
+        windowSize: '1100,1000',
+        ...(process.env.TS_CHROME_PATH == null
+          ? {}
+          : { browser: process.env.TS_CHROME_PATH })
+      },
       artifacts: 'none'
     })
     await m.openLink({ link: h.origin + '/fixture' })
@@ -99,6 +106,11 @@ async function main(): Promise<void> {
     await m.tapOn({ text: 'Save password' })
     await m.assertVisible({ text: 'Password saved', timeout: 60000 })
     await record()
+    // After the save, the sticky Account header covers the button where it
+    // stands, and maestro-d fails a covered tap: it is brought to the middle.
+    await m.evalBrowserScript({
+      script: `for (const node of document.querySelectorAll('[role="button"]')) if (node.textContent.trim() === 'Change password') { node.scrollIntoView({ block: 'center' }); break }`
+    })
     await m.tapOn({ text: 'Change password' })
     await m.tapOn({ text: 'Reset with an email code' })
     await m.assertVisible({ css: 'input[aria-label="Password reset code"]' })
@@ -116,7 +128,7 @@ async function main(): Promise<void> {
     })
     assert.equal(
       (await login.signInWithPassword('alex@example.com', 'Another9')).user.id,
-      101
+      userIdOfGumbo(101)
     )
     await writeFile(
       path.join(artifacts, 'browser-calibration.log'),

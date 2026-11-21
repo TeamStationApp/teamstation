@@ -47,6 +47,7 @@ import {
   type WatchedDevice,
   type WebSession
 } from './spec'
+import { startStack } from './stack'
 import { openWebSession } from './web'
 
 export interface RunOptions {
@@ -246,6 +247,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
   }
   // The proxy fault set on the stack, cleared when the run ends.
   let faultSet: StackHandle | undefined
+  // A stack this run started for itself, stopped when it ends.
+  let stopLocal: (() => Promise<void>) | undefined
   try {
     const { entry, spec } = findScenario(options.id, root)
     const surface = options.surface as Surface
@@ -309,10 +312,27 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           throw new BlockedError(`${service} needs a seat: use --seat <name>`)
         }
       }
-      // Every stack is a droplet of its own, brought up beforehand.
-      throw new BlockedError(
-        'needs a stack: npm run -s e2e -- stack up --ref <ref>, then --stack <id>'
-      )
+      // Every stack is a droplet of its own, brought up beforehand, except on
+      // a machine that is one: the droplet sweep, which serves its own stack
+      // and says so with E2E_LOCAL_STACK=1, starts one for a browser run.
+      if (process.env.E2E_LOCAL_STACK !== '1') {
+        throw new BlockedError(
+          'needs a stack: npm run -s e2e -- stack up --ref <ref>, then --stack <id>'
+        )
+      }
+      if (surface !== 'web-chromium') {
+        throw new BlockedError(
+          `${surface} needs a stack its device can reach: --stack <id>`
+        )
+      }
+      const local = await startStack({
+        services: spec.services,
+        root,
+        fault: options.fault,
+        mailbox: options.settings.mailbox
+      })
+      stopLocal = local.stop
+      handle = local
     }
 
     if (options.fault != null && FAULTS[options.fault]?.how === 'proxy') {
@@ -567,5 +587,6 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     await faultSet?.setFault?.(null).catch((error: unknown) => {
       console.error(`could not clear the stack's fault: ${String(error)}`)
     })
+    await stopLocal?.().catch(() => undefined)
   }
 }

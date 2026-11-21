@@ -5,13 +5,13 @@ import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import express from 'express'
 
-import { groupFixture } from './groupFixtures'
 import {
   browserSession,
   contains,
   maestro,
   type MaestroHandle
-} from './refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { groupFixture } from './groupFixtures'
 
 /** Each dark fixture state, and the row names it must show readably. */
 const DARK_STATES: Array<[string, string[]]> = [

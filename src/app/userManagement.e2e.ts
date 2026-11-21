@@ -14,6 +14,13 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  fill,
+  freezeBrowserClock,
+  press,
+  text
+} from '../../e2e/rigs/creationBrowserActions'
 import type { ActivityPage } from '../common/api'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
@@ -21,13 +28,6 @@ import { createSession } from '../server/auth/sessions'
 import { hashToken, makeToken } from '../server/auth/tokens'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import { userAgents } from '../test/userAgents'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import {
-  fill,
-  freezeBrowserClock,
-  press,
-  text
-} from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)

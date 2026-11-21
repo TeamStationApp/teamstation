@@ -22,6 +22,14 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import type { HTTPRequest, Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  type BrowserSession,
+  browserSession,
+  contains,
+  log,
+  maestro
+} from '../../e2e/rigs/refinementsMaestro'
 import { cspFor, originsFor } from '../buildCsp.mjs'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { googlePlaces } from '../server/location/googlePlaces'
@@ -42,14 +50,6 @@ import {
   pointInMapFrame,
   waitInMapFrame
 } from '../test/mapFrameProbe'
-import {
-  type BrowserSession,
-  browserSession,
-  contains,
-  log,
-  maestro
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 import { MAP_FRAME_READY_MS } from './components/pinMapDocument'
 
 const DEVICE = 'mapFramePolicy-web'
@@ -367,7 +367,10 @@ async function isolation(run: Run): Promise<void> {
     'meta[http-equiv="Content-Security-Policy"]',
     node => node.getAttribute('content')
   )
-  expect(policy).equals(cspFor(originsFor('/api/v1', '')))
+  // The policy the build was made with: the media origins it was given.
+  expect(policy).equals(
+    cspFor(originsFor('/api/v1', process.env.TS_MEDIA_ORIGINS ?? ''))
+  )
   expect(policy).includes("script-src 'self' 'wasm-unsafe-eval';")
   // Google's fonts are the page's own; nothing else of Google's may be named,
   // wildcards included.

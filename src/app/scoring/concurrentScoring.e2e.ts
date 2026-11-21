@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 
 import type { Page } from 'puppeteer'
 
+import { browserSession, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import { ConcurrentScoringRig } from '../../test/concurrentScoring/concurrentScoring'
 import { ConcurrentScoringSafariRig } from '../../test/concurrentScoring/concurrentScoringSafari'
 import { conflictingPitches } from '../../test/concurrentScoring/conflicts'
@@ -18,7 +19,6 @@ import { networkRecovery } from '../../test/concurrentScoring/networkRecovery'
 import { pendingStretch } from '../../test/concurrentScoring/pending'
 import { staleTail } from '../../test/concurrentScoring/staleTail'
 import { remoteUpdates } from '../../test/concurrentScoring/updates'
-import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
 import { stackBrowserCoverage } from '../../test/stackBrowserCoverage'
 
 const required = (name: string): string => {

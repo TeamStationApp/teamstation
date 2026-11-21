@@ -5,6 +5,7 @@ import path from 'node:path'
 import type { Duplex } from 'node:stream'
 
 import express from 'express'
+import { rateLimit } from 'express-rate-limit'
 import type { Kysely } from 'kysely'
 import { Pool } from 'pg'
 
@@ -284,8 +285,11 @@ export async function accountHarness(
       res.json({ ok: true, version: 'test', dictation: false })
     })
     app.use(express.static(webRoot, { dotfiles: 'allow' }))
-    app.get('/{*path}', (_req, res) => {
-      res.sendFile(path.join(webRoot, 'index.html'), { dotfiles: 'allow' })
+    // Every other path is the web app's page, read from the disk: a limit far
+    // above what a test asks keeps a stray loop from flooding it.
+    const pages = rateLimit({ windowMs: 1000, limit: 1000 })
+    app.get('/{*path}', pages, (_req, res) => {
+      res.sendFile(path.resolve(webRoot, 'index.html'), { dotfiles: 'allow' })
     })
   }
   app.use(errorHandler)

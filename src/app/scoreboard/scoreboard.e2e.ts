@@ -12,9 +12,10 @@ import puppeteer, {
 } from 'puppeteer'
 import { WebSocket } from 'ws'
 
-import { NO_OVERRIDES, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
-import { makeDatabase } from '../../server/db/database'
-import { override, scoreboardSocketUrl } from '../../test/scoreboardPublish.e2e'
+import {
+  override,
+  scoreboardSocketUrl
+} from '../../../e2e/rigs/scoreboardPublish'
 import {
   OTHER_EMAIL,
   RUNNER_EMAIL,
@@ -22,7 +23,9 @@ import {
   seedScoreboardGames,
   TEAM_NAME,
   VISITORS_NAME
-} from '../../test/seedScoreboardGames.e2e'
+} from '../../../e2e/rigs/seedScoreboardGames'
+import { NO_OVERRIDES, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
+import { makeDatabase } from '../../server/db/database'
 
 /**
  * The scoreboard pages in a real browser, against a running API and web app:
@@ -31,7 +34,7 @@ import {
  *
  *   TS_SCOREBOARD_WEB_URL=http://127.0.0.1:8080 \
  *   TS_API_TEST_URL=http://127.0.0.1:9100/api/v1 \
- *   TS_E2E_DATABASE=AppDb_nativeScoreboard \
+ *   TS_E2E_DATABASE=teamstation_e2eStack \
  *   TS_E2E_SERVER_LOG=server.log \
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 120000 src/app/scoreboard/scoreboard.e2e.ts
@@ -59,7 +62,7 @@ const API = (
   process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
 ).replace(/\/+$/, '')
 const HOST = new URL(API).origin
-const DATABASE = process.env.TS_E2E_DATABASE ?? 'AppDb_nativeScoreboard'
+const DATABASE = process.env.TS_E2E_DATABASE ?? 'teamstation_e2eStack'
 const DATABASE_URL = DATABASE.includes('://')
   ? DATABASE
   : `postgres://localhost:5433/${DATABASE}`
@@ -352,12 +355,14 @@ async function layoutOf(page: Page): Promise<Layout> {
 async function pixelsDiffering(
   browser: Browser,
   a: Uint8Array,
-  b: Uint8Array
+  b: Uint8Array,
+  /** Boxes, [x, y, width, height], whose pixels are not compared. */
+  skip: number[][] = []
 ): Promise<number> {
   const page = await browser.newPage()
   try {
     return await page.evaluate(
-      async (first, second) => {
+      async (first, second, skip) => {
         const pixels = async (base64: string): Promise<Uint8ClampedArray> => {
           const image = new Image()
           image.src = `data:image/png;base64,${base64}`
@@ -372,20 +377,33 @@ async function pixelsDiffering(
         }
         const [one, two] = [await pixels(first), await pixels(second)]
         if (one.length !== two.length) return Infinity
+        const image = new Image()
+        image.src = `data:image/png;base64,${first}`
+        await image.decode()
+        const skipped = (i: number): boolean => {
+          const x = (i / 4) % image.width
+          const y = Math.floor(i / 4 / image.width)
+          return skip.some(
+            ([left, top, width, height]) =>
+              x >= left && x < left + width && y >= top && y < top + height
+          )
+        }
         let count = 0
         for (let i = 0; i < one.length; i += 4) {
           if (
-            one[i] !== two[i] ||
-            one[i + 1] !== two[i + 1] ||
-            one[i + 2] !== two[i + 2] ||
-            one[i + 3] !== two[i + 3]
+            !skipped(i) &&
+            (one[i] !== two[i] ||
+              one[i + 1] !== two[i + 1] ||
+              one[i + 2] !== two[i + 2] ||
+              one[i + 3] !== two[i + 3])
           )
             count++
         }
         return count
       },
       Buffer.from(a).toString('base64'),
-      Buffer.from(b).toString('base64')
+      Buffer.from(b).toString('base64'),
+      skip
     )
   } finally {
     await page.close()
@@ -521,16 +539,50 @@ describe('the scoreboard pages', function () {
       readFileSync(join(FIXTURES, 'scoreboardV1Layout.json'), 'utf8')
     )
     const portedLayout = await layoutOf(ported)
-    expect(portedLayout, 'every part where 1.0 put it').deep.equals(v1Layout)
+    // The board draws in Inter, which the app ships, where 1.0 drew in a
+    // Helvetica Neue that fell back to Arial (2770e3861): each part is where
+    // 1.0 put it, give or take its letters' widths across, and a pixel down.
+    expect(Object.keys(portedLayout.parts), 'the parts 1.0 drew').deep.equals(
+      Object.keys(v1Layout.parts)
+    )
+    for (const [name, drawn, v1] of [
+      ['face', portedLayout.face, v1Layout.face],
+      ...Object.keys(v1Layout.parts).map(key => [
+        key,
+        portedLayout.parts[key],
+        v1Layout.parts[key]
+      ])
+    ] as Array<[string, number[], number[]]>) {
+      const [x, y, width, height] = drawn
+      const [x1, y1, width1, height1] = v1
+      expect(Math.abs(x - x1), `${name} across`).lessThan(7)
+      expect(Math.abs(width - width1), `${name} wide`).lessThan(7)
+      expect(Math.abs(y - y1), `${name} down`).lessThan(1.5)
+      expect(Math.abs(height - height1), `${name} high`).lessThan(1.5)
+    }
     expect(Math.ceil(v1Layout.face[2])).equals(SCOREBOARD_BOARD_SIZE.width)
     expect(Math.ceil(v1Layout.face[3])).equals(SCOREBOARD_BOARD_SIZE.height)
     const clip = { x: 0, y: 0, ...SCOREBOARD_BOARD_SIZE }
     const v1Png = readFileSync(join(FIXTURES, 'scoreboardV1.png'))
     const portedPng = await ported.screenshot({ clip, omitBackground: true })
     await ported.screenshot({ clip, path: join(SHOTS, 'sample-ported.png') })
-    const differing = await pixelsDiffering(browser, v1Png, portedPng)
+    // Every pixel but the letters: each part's box, where 1.0 put it and
+    // where it is now, and a pixel round.
+    const letters = Object.keys(v1Layout.parts).map(key => {
+      const [x, y, width, height] = portedLayout.parts[key]
+      const [x1, y1, width1, height1] = v1Layout.parts[key]
+      const left = Math.floor(Math.min(x, x1)) - 1
+      const top = Math.floor(Math.min(y, y1)) - 1
+      return [
+        left,
+        top,
+        Math.ceil(Math.max(x + width, x1 + width1)) + 1 - left,
+        Math.ceil(Math.max(y + height, y1 + height1)) + 1 - top
+      ]
+    })
+    const differing = await pixelsDiffering(browser, v1Png, portedPng, letters)
     console.log(
-      `      ${differing} of ${clip.width * clip.height} pixels differ from 1.0`
+      `      ${differing} of ${clip.width * clip.height} pixels but the letters differ from 1.0`
     )
     // Antialiasing on the turned bases and round dots differs from one
     // drawing of 1.0 to the next by about 200 pixels; layout does not.
@@ -644,6 +696,13 @@ describe('the scoreboard pages', function () {
       set.replies.some(reply => 'error' in (reply as object)),
       JSON.stringify(set)
     ).equals(false)
+    // A batter and a pitcher, as the sample has, so the board draws all its
+    // rows whatever has been scored on this game before.
+    const named = await publishAt(gameId, group.runner, {
+      batterName: 'A. RIVERA',
+      pitcherName: 'J. WILSON'
+    })
+    named.done()
     const pages: Array<{
       name: string
       path: string
@@ -675,10 +734,9 @@ describe('the scoreboard pages', function () {
         height: 2160
       })
       await one.ready(page)
-      for (const viewport of [
-        { width: 1920, height: 2160 },
-        SCOREBOARD_BOARD_SIZE
-      ]) {
+      // Where Director lays a page out to measure it: Output's width, at
+      // least 2160 high (`measureContent`, WebOverlayController.swift).
+      for (const viewport of [{ width: 1920, height: 2160 }]) {
         const size = await measure(page, viewport)
         sizes.push(
           `${one.name} @ ${viewport.width}×${viewport.height}: ${size.join('×')}`
@@ -692,7 +750,8 @@ describe('the scoreboard pages', function () {
           const boxes = await page.evaluate(() => {
             const box = (name: string): number[] => {
               const node = document.querySelector(`[data-scoreboard="${name}"]`)
-              const team = node?.parentElement
+              // Page code: Sucrase's helpers are not there, so no `?.`.
+              const team = node == null ? null : node.parentElement
               if (node == null || team == null) return []
               const rect = team.getBoundingClientRect()
               const text = node.getBoundingClientRect()
@@ -782,13 +841,20 @@ async function scoreGameScreen(page: Page): Promise<{
   await page.waitForSelector('[aria-label="Copy scoreboard link"]')
   return await page.evaluate(() => {
     const text = String(document.body.textContent)
+    // Each part after the one before it: the game's page stays under the
+    // screen, and its teams may have "Scoreboard" in their names.
+    let from = 0
     const order = [
       'Score game with full stats (ie. pitches, hits, walks, errors)',
       'Full game scoring',
       'Operate simplified scoreboard with only bases, balls, strikes, outs, and inning',
       'Scoreboard',
       'Web Widget Scoreboard Link'
-    ].map(part => text.indexOf(part))
+    ].map(part => {
+      const at = text.indexOf(part, from)
+      if (at >= 0) from = at + part.length
+      return at
+    })
     const link = document.querySelector('[data-testid="scoreboardLink"]')
     // No optional chaining in here: it runs in the page, where Sucrase's
     // helper for it does not exist.
@@ -1019,7 +1085,8 @@ describe('the Score screen and the override dashboard (E10–E11)', function () 
     const saved = page.waitForResponse(
       response =>
         response.request().method() === 'POST' &&
-        response.url().endsWith(`/games/${gameId}/events`) &&
+        // The save asks for its edits back: `…/events?answer=edits`.
+        new URL(response.url()).pathname.endsWith(`/games/${gameId}/events`) &&
         response.status() === 200
     )
     await press(page, 'Ball')
@@ -1030,7 +1097,8 @@ describe('the Score screen and the override dashboard (E10–E11)', function () 
     )
     // Back returns to the Score screen, where the scorer was opened.
     await page.goBack()
-    await page.waitForSelector('[aria-label="Copy scoreboard link"]')
+    // The Score screen stays mounted under the scorer: wait for the address.
+    await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
     expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
     const events = await fetch(`${API}/games/${gameId}/events`, {
       headers: { authorization: `Bearer ${group.runner}` }
