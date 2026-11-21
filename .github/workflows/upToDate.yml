@@ -2,7 +2,7 @@
 # be an ancestor of the branch, and the branch must carry no merge commits,
 # so a branch that merged the base in to catch up does not pass.
 #
-# Pull requests land on develop. A pull request to master is a stable build.
+# Pull requests land on develop. Master does not run this check.
 #
 # A pass goes stale the moment the base moves. The ruleset that requires this
 # check also requires branches to be up to date, which is what makes GitHub
@@ -11,7 +11,7 @@ name: Up to date with the base
 
 on:
   pull_request:
-    branches: [develop, master]
+    branches: [develop]
 
 permissions:
   contents: read
