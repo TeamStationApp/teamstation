@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { ageOn, asBirthMonthBody, birthMonthText, parseBirthMonth } from './age'
+import {
+  ageBandOf,
+  ageOn,
+  asBirthMonthBody,
+  birthMonthText,
+  parseBirthMonth
+} from './age'
 
 describe('ageOn', function () {
   it('reaches an age on the first of the month after the birth month', function () {
@@ -59,5 +65,44 @@ describe('birth month text', function () {
     expect(parseBirthMonth('2012-3')).equals(undefined)
     expect(parseBirthMonth(null)).equals(undefined)
     expect(parseBirthMonth(undefined)).equals(undefined)
+  })
+})
+
+describe('ageBandOf', function () {
+  const now = new Date('2026-11-20T12:00:00Z')
+  const born = (
+    year: number,
+    month: number,
+    isAdult = false
+  ): { birthYear: number; birthMonth: number; isAdult: boolean } => ({
+    birthYear: year,
+    birthMonth: month,
+    isAdult
+  })
+
+  it('is 13 and 18 from the first of the month after the birth month', function () {
+    // Born October 2013 turned 13 on 1 November 2026.
+    expect(ageBandOf(born(2013, 10), now)).equals('minor')
+    expect(ageBandOf(born(2008, 10), now)).equals('adult')
+  })
+
+  it('is one month short until then', function () {
+    // Born November 2013 turns 13 on 1 December 2026.
+    expect(ageBandOf(born(2013, 11), now)).equals('under13')
+    expect(ageBandOf(born(2008, 11), now)).equals('minor')
+  })
+
+  it('lets a birth month win over isAdult', function () {
+    expect(ageBandOf(born(2014, 1, true), now)).equals('under13')
+    expect(ageBandOf(born(2011, 1, true), now)).equals('minor')
+  })
+
+  it('reads isAdult only without a birth month', function () {
+    const none = { birthYear: null, birthMonth: null }
+    expect(ageBandOf({ ...none, isAdult: true }, now)).equals('adult')
+    expect(ageBandOf({ ...none, isAdult: false }, now)).equals('unknown')
+    expect(
+      ageBandOf({ birthYear: 2000, birthMonth: null, isAdult: false }, now)
+    ).equals('unknown')
   })
 })

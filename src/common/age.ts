@@ -22,6 +22,32 @@ export function ageOn(
   return today.getUTCFullYear() - birthYear - (month <= birthMonth ? 1 : 0)
 }
 
+/**
+ * A person's age band, which every chat permission reads:
+ *
+ * - `unknown` — no birth month and not `isAdult`;
+ * - `under13` — under 13 by birth month;
+ * - `minor` — 13 to 17 by birth month;
+ * - `adult` — 18 or older by birth month, or `isAdult` with no birth month.
+ */
+export type AgeBand = 'unknown' | 'under13' | 'minor' | 'adult'
+
+/** The band of a person on `now`; a birth month always wins over `isAdult`. */
+export function ageBandOf(
+  person: {
+    birthYear: number | null
+    birthMonth: number | null
+    isAdult: boolean
+  },
+  now: Date
+): AgeBand {
+  const { birthYear, birthMonth } = person
+  if (birthYear == null || birthMonth == null)
+    return person.isAdult ? 'adult' : 'unknown'
+  const age = ageOn(birthYear, birthMonth, now)
+  return age < 13 ? 'under13' : age < 18 ? 'minor' : 'adult'
+}
+
 /** The earliest birth year a form offers or the server accepts. */
 export const EARLIEST_BIRTH_YEAR = 1900
 
