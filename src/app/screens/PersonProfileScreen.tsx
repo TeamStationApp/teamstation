@@ -263,12 +263,15 @@ export function PersonProfileScreen(
             </View>
           </View>
           {props.onOpenChat != null && (
-            <PersonMessageButton
-              key={person.userId}
-              client={client}
-              userId={person.userId}
-              onOpenChat={props.onOpenChat}
-            />
+            <View style={styles.heroAction}>
+              <PersonMessageButton
+                key={person.userId}
+                client={client}
+                userId={person.userId}
+                name={name}
+                onOpenChat={props.onOpenChat}
+              />
+            </View>
           )}
         </Card>
 
@@ -387,6 +390,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(theme.spaceMdRem)
   },
   heroText: { flex: 1, gap: theme.rem(theme.spaceXsRem) },
+  // The Message pill, on a line of its own at the card's bottom right.
+  heroAction: {
+    alignSelf: 'flex-end',
+    marginTop: theme.rem(theme.spaceSmRem)
+  },
   name: {
     fontFamily: theme.boldTextFont,
     fontSize: theme.rem(1.5),

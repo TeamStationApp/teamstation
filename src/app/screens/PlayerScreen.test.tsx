@@ -274,14 +274,7 @@ describe('a player’s tabs', function () {
   confirmedChatAgeHooks()
   it('opens an eligible player conversation from the hero Message action', async function () {
     const client = playerClient()
-    client.dmCandidates = async () => [
-      {
-        userId: userIdOfGumbo(7),
-        shortName: 'Jordan P',
-        avatarUrl: null,
-        affiliations: ''
-      }
-    ]
+    client.dmReach = async () => 'direct'
     client.createDm = async ids => {
       expect(ids).deep.equals([userIdOfGumbo(7)])
       return asChatConversation(chat({ id: 'cnv_player', title: 'Jordan P' }))
@@ -312,14 +305,7 @@ describe('a player’s tabs', function () {
 
   it('draws its Message action before the age sheet is agreed to', async function () {
     const client = playerClient()
-    client.dmCandidates = async () => [
-      {
-        userId: userIdOfGumbo(7),
-        shortName: 'Jordan P',
-        avatarUrl: null,
-        affiliations: ''
-      }
-    ]
+    client.dmReach = async () => 'direct'
     await render(
       <TestChatAge access="ask">
         <PlayerScreen

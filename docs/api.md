@@ -150,6 +150,9 @@ umpire management return false. This metadata never expands game visibility.
 Older responses may omit the flag; clients treat omission as false. Game detail
 umpire positions include an optional nullable `person.avatarUrl` alongside the
 canonical `userId` and abbreviated `name`.
+The umpire block also carries `leagueId`, sent only to a reader accepted into
+that league, and each `person` carries `openable`: whether the reader may open
+that umpire's league profile (absent means they may not).
 
 ## Game LIVE state
 

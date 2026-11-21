@@ -134,6 +134,7 @@ describe('the app’s ask about notifications', function () {
         avatarUrl: null
       } as unknown as Awaited<ReturnType<TeamStationClient['dmCandidates']>>[0]
     ]
+    proto.dmReach = async () => 'direct'
     proto.createDm = async () =>
       ({
         id: 'cnv_exact',

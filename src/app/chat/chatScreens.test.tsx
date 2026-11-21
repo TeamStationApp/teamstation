@@ -2136,8 +2136,7 @@ describe('chat devices in the app', function () {
             sections: [],
             viewer: { manages: true, admin: false }
           }
-        if (path === '/chat/dm-candidates')
-          return [{ userId: recipient, shortName: 'Mike T', avatarUrl: null }]
+        if (path.startsWith('/chat/dm-reach')) return { reach: 'direct' }
         if (path === '/chat/dms' && method === 'POST') {
           expect(body).deep.equals({ userIds: [recipient] })
           creates++
@@ -2152,7 +2151,7 @@ describe('chat devices in the app', function () {
           'profile Message',
           () => document.querySelector('[data-testid="person-message"]') != null
         )
-        await press('Message')
+        await press('Message Mike Trout')
         await until('direct conversation', () =>
           text().includes('No messages yet')
         )

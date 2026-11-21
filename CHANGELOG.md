@@ -9,6 +9,9 @@
 - added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with a dry run first and `--delete-old` for the old copies afterwards
 - added: Tapping "N edits not sent" opens a sheet of each refused edit, naming its game or team with the server's message, with Try Again and Use Server's Copy; the Game and Team screens show the same held notice
 - added: Anyone accepted into a league can umpire its games once an administrator gives them the umpire role: its administrators, league and season members, anyone with a role on one of its teams, and guardians of those teams' players; followers count for nothing
+- added: A Message button on a person's profile and a player's page, at the bottom right of the top card, for anyone you may message; on a phone it is the message icon alone
+- added: For a player who cannot use chat (no account, or under 13), Message offers their guardians, or with none their coaches, to message instead
+- added: A game's umpires open their league profile, with its Message button, for anyone in that league
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file
