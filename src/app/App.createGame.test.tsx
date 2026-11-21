@@ -3,12 +3,13 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { asSessionUser, TeamStationClient } from '../common/api'
+import { asSessionUser, type TeamStationClient } from '../common/api'
 import { asGroupDetail, asSearchRow } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { press, settle } from '../test/gameFormDom'
 import { App } from './App'
+import { CachingClient } from './sync/cachingClient'
 
 const team = (id: string, name: string): ReturnType<typeof asSearchRow> =>
   asSearchRow({ id, kind: 'team', name, locality: null, imageUrl: null })
@@ -18,7 +19,9 @@ describe('actual app Create Game navigation', () => {
   confirmedChatAgeHooks()
   for (const status of ['pending', 'accepted'])
     it(`opens the ${status === 'accepted' ? 'game' : 'request'} with its notice after Save`, async () => {
-      const proto = TeamStationClient.prototype
+      // The App's client, which keeps documents and queues edits: stubbed
+      // over its own methods as well as those it inherits.
+      const proto = CachingClient.prototype
       const originals = Object.getOwnPropertyDescriptors(proto)
       const sent: Array<Parameters<TeamStationClient['proposeGame']>[0]> = []
       proto.whoAmI = async () =>
@@ -91,6 +94,8 @@ describe('actual app Create Game navigation', () => {
         })
         host.remove()
         window.history.replaceState(null, '', '/')
+        for (const name of Object.getOwnPropertyNames(proto))
+          if (!(name in originals)) Reflect.deleteProperty(proto, name)
         for (const [name, descriptor] of Object.entries(originals))
           Object.defineProperty(proto, name, descriptor)
       }

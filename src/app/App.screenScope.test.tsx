@@ -13,6 +13,7 @@ import { pageOf } from '../test/pageOf'
 import { App, screenScopeOf } from './App'
 import { showRoute } from './navigation/useAddressBar'
 import { gameFixture } from './scoring/isUnscoredGame.test'
+import { CachingClient } from './sync/cachingClient'
 
 /** The screen-scope frames the app sent on one socket. */
 function scopeFrames(socket: FakeSocket): Array<Record<string, unknown>> {
@@ -33,6 +34,10 @@ describe('the scope the visible route holds', () => {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
   let originals: PropertyDescriptorMap
+  const prefetch = Object.getOwnPropertyDescriptor(
+    CachingClient.prototype,
+    'prefetch'
+  )!
   const originalSocket = globalThis.WebSocket
   const originalFetch = globalThis.fetch
   const originalIndexedDB = Object.getOwnPropertyDescriptor(
@@ -45,6 +50,10 @@ describe('the scope the visible route holds', () => {
   beforeEach(() => {
     const api = TeamStationClient.prototype
     originals = Object.getOwnPropertyDescriptors(api)
+    // What Home's first load reads ahead for offline is no screen's read and
+    // holds no scope: counted in `scoring.e2e.ts`'s first-load scenario, and
+    // left out here so each screen's own reads are what is counted.
+    CachingClient.prototype.prefetch = async () => undefined
     sockets = fakeSockets()
     reads = []
     // Exercise the approval poll with a readable, empty key store. Without
@@ -113,6 +122,7 @@ describe('the scope the visible route holds', () => {
   afterEach(async () => {
     await unmount()
     Object.defineProperties(TeamStationClient.prototype, originals)
+    Object.defineProperty(CachingClient.prototype, 'prefetch', prefetch)
     globalThis.WebSocket = originalSocket
     globalThis.fetch = originalFetch
     if (originalIndexedDB == null)
@@ -223,10 +233,13 @@ describe('the scope the visible route holds', () => {
         status: 401
       })
     }) as unknown as typeof fetch
-    // Home goes to the server, and the server refuses the session.
+    // Home goes to the server, and the server refuses the session. The
+    // web's session is its cookie, with no token: a refusal stops the scope
+    // and leaves the shell as it is. (A token's session, the phone's, ends
+    // too: `sessionRefusedOnPhone` in `App.tsx`.)
     Object.defineProperty(TeamStationClient.prototype, 'home', originals.home)
     showRoute({ name: 'home' }, true)
-    await mount(<App initialToken="token-one" />)
+    await mount(<App />)
     const socket = sockets.latest()
     await act(async () => {
       socket.open()
