@@ -834,7 +834,8 @@ async function main(): Promise<void> {
           expect(
             filterGeometry.days.every(
               d => d.width >= 40 && d.height >= 44 && d.circle === 32
-            )
+            ),
+            `day pills ${JSON.stringify(filterGeometry.days)}`
           ).equals(true)
           expect(filterGeometry.timeY[0]).equals(filterGeometry.timeY[1])
           expect(filterGeometry.timeWidth[0]).closeTo(
