@@ -179,6 +179,7 @@ import {
 import { ScoringSettings } from './ScoringSettings'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 import {
+  DEFAULT_LINEUP_WAIT_MS,
   defaultsOf,
   DevelopmentScoringSource,
   type HeldOpening,
@@ -359,6 +360,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   useEffect(() => source.keepTime?.(), [source])
   /** What the open game was opened on: what a swap of its own opens over. */
   const shownReads = useRef<OpenedReads | undefined>(undefined)
+  /**
+   * The teams whose roster was not on the device when scoring opened: their
+   * records field them (`standInSides`) until a roster read lists them.
+   */
+  const standInTeams = useRef(new Set<string>())
   /** The open a swap of this screen's own made already, read from nothing. */
   const adopted = useRef<number | undefined>(undefined)
   const retryRef = useRef(retry)
@@ -435,31 +441,75 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     const load = async (): Promise<void> => {
       // Every read the screen waits on as it opens is the stored one when
       // there is one (the queue's swapped documents after a swap), read from
-      // the server behind it.
+      // the server behind it. Beside the game itself, none waits on the
+      // network: with nothing stored it opens on a stand-in, and hears of
+      // the server's answer once it is stored (#358).
+      // With nothing stored, the server's answer is waited for a moment:
+      // on a working connection it comes first, so a new game starts from
+      // its rosters and defaults; a stalled server costs no more than that.
+      const alone = { gameId: props.gameId, waitMs: DEFAULT_LINEUP_WAIT_MS }
       const game = await props.client.game(props.gameId, { storedFirst: true })
       const roles = await props.client
-        .myRoles({ storedFirst: true })
+        .myRoles({ storedOrNothing: alone })
         .catch(() => undefined)
+      const standInSides: Side[] = []
+      const notStored = (caught: unknown): boolean =>
+        caught instanceof HttpError && caught.code === 'notStored'
       const rights = {
         [game.awayTeamId]: managesRoster(roles, game.awayTeamId),
         [game.homeTeamId]: managesRoster(roles, game.homeTeamId)
       }
-      const loadRoster = async (teamId: string): Promise<RosterEntry[]> => {
+      // The rosters wait one wait between them: a full-name roster refused
+      // within it falls back to the plain one for what is left of it.
+      const rostersBy = Date.now() + DEFAULT_LINEUP_WAIT_MS
+      const plainRoster = async (
+        teamId: string,
+        side: Side,
+        /** Waited for already, as the full-name roster: what is stored only. */
+        waited = false
+      ): Promise<RosterEntry[]> => {
+        try {
+          return await props.client.roster(teamId, {
+            storedOrNothing: waited
+              ? { gameId: props.gameId }
+              : {
+                  gameId: props.gameId,
+                  waitMs: Math.max(0, rostersBy - Date.now())
+                }
+          })
+        } catch (caught: unknown) {
+          if (!notStored(caught)) throw caught
+          // Not on this device yet: its records field the side until it is.
+          standInSides.push(side)
+          return []
+        }
+      }
+      const loadRoster = async (
+        teamId: string,
+        side: Side
+      ): Promise<RosterEntry[]> => {
         try {
           return await props.client.roster(teamId, {
             includeFullNames: rights[teamId],
-            storedFirst: true
+            storedOrNothing: alone
           })
         } catch (caught: unknown) {
+          if (notStored(caught)) {
+            // Its full names are read behind; the plain roster stands in.
+            if (rights[teamId]) {
+              rights[teamId] = false
+              return withoutPrivateNames(await plainRoster(teamId, side, true))
+            }
+            standInSides.push(side)
+            return []
+          }
           if (
             rights[teamId] &&
             caught instanceof HttpError &&
             ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
           ) {
             rights[teamId] = false
-            return withoutPrivateNames(
-              await props.client.roster(teamId, { storedFirst: true })
-            )
+            return withoutPrivateNames(await plainRoster(teamId, side))
           }
           // An unavailable roster is not an empty team: reconciliation would
           // otherwise remove the saved lineup and defense. Offer load retry.
@@ -467,14 +517,22 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         }
       }
       const [away, home, defaults] = await Promise.all([
-        loadRoster(game.awayTeamId),
-        loadRoster(game.homeTeamId),
-        defaultsOf(props.client, game, true)
+        loadRoster(game.awayTeamId, 'away'),
+        loadRoster(game.homeTeamId, 'home'),
+        defaultsOf(props.client, game, true, false, alone)
       ])
       const value = await source.open(game, away, home, undefined, {
-        storedFirst: true
+        storedFirst: true,
+        storedOrNothing: alone,
+        standInSides,
+        defaults
       })
       if (!live) return
+      standInTeams.current = new Set(
+        standInSides.map(side =>
+          side === 'away' ? game.awayTeamId : game.homeTeamId
+        )
+      )
       showOpened(
         {
           game,
@@ -571,6 +629,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           )
           rightsRef.current = currentRights
           setRosterRights(currentRights)
+          // A roster read lists its side: its records stand in no longer.
+          teams.forEach((id, index) => {
+            if (entries[index].status === 'fulfilled')
+              standInTeams.current.delete(id)
+          })
           setRosters(held =>
             Object.fromEntries(
               teams.map((id, index) => {
@@ -823,7 +886,16 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       const context = openedContext.current
       source
         .open(swapped.reads.game, swapped.away, swapped.home, swapped.held, {
-          storedFirst: true
+          storedFirst: true,
+          // A side whose roster is still not on the device keeps what its
+          // records field, on its new side.
+          standInSides: (['away', 'home'] as const).filter(side =>
+            standInTeams.current.has(
+              side === 'away'
+                ? swapped.reads.game.awayTeamId
+                : swapped.reads.game.homeTeamId
+            )
+          )
         })
         .then(value => {
           if (openedContext.current !== context) {

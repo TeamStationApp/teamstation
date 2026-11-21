@@ -8,7 +8,8 @@ import { expect } from 'chai'
 import {
   asRosterEntry,
   REQUEST_DEADLINE_MS,
-  type SaveLineupsBody
+  type SaveLineupsBody,
+  TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { CreateGroup } from '../../common/groupCreation'
@@ -333,6 +334,181 @@ describe('the phone outbox', function () {
   const bodyOf = (row: Record<string, unknown>): Record<string, unknown> =>
     JSON.parse(String(row.body))
 
+  it('waits a moment for an answer it has nothing stored for, takes one that comes in time, passes on a refusal, and gives up on a stalled one (#358)', async function () {
+    let stalled = false
+    const p = phone(async sent => {
+      if (sent.path === '/teams/home/default-lineup')
+        return { body: { lineup: null, fromGameId: null, setAt: null } }
+      if (sent.path === '/teams/away/default-lineup') {
+        stalled = true
+        return await new Promise<Answer>(() => undefined)
+      }
+      if (sent.path === '/teams/gone/default-lineup')
+        return refusal(404, 'notFound', 'Not found')
+      if (sent.path === '/teams/down/default-lineup')
+        return refusal(503, 'unavailable', 'Down')
+      return 'offline'
+    })
+    const waiting = { storedOrNothing: { gameId: 'g1', waitMs: 200 } }
+    // Answered within the wait: what it opens on, and nothing told later.
+    expect(await p.client.defaultLineup('home', waiting)).deep.include({
+      lineup: null
+    })
+    const told: string[] = []
+    const stop = p.client.onStoredChanged('g1', change => {
+      told.push(change)
+    })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals([])
+    stop()
+    // A refusal settles at once, and is the server's word: a refused
+    // full-name roster falls back to the plain one as it always has.
+    const refusedAt = Date.now()
+    const codeOf = async (teamId: string): Promise<string> => {
+      try {
+        await p.client.defaultLineup(teamId, waiting)
+      } catch (error) {
+        return (error as HttpError).code
+      }
+      return 'answered'
+    }
+    expect(await codeOf('gone')).equals('notFound')
+    // No signal, or a server that cannot answer now, is nothing stored.
+    expect(await codeOf('none')).equals('notStored')
+    expect(await codeOf('down')).equals('notStored')
+    expect(Date.now() - refusedAt).lessThan(150)
+    let refused: unknown
+    // A stalled one: the wait, then nothing.
+    const started = Date.now()
+    try {
+      await p.client.defaultLineup('away', waiting)
+    } catch (error) {
+      refused = error
+    }
+    expect(stalled).equals(true)
+    expect((refused as HttpError).code).equals('notStored')
+    expect(Date.now() - started).within(180, 1000)
+  })
+
+  it('answers what it stored, or nothing at once, asks the server behind, and tells the game once the answer is stored (#358)', async function () {
+    let answer!: () => void
+    const gate = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    const p = phone(async sent => {
+      if (sent.path === '/teams/away/default-lineup') {
+        await gate
+        return { body: { lineup: null, fromGameId: null, setAt: null } }
+      }
+      return 'offline'
+    })
+    const alone = { storedOrNothing: { gameId: 'g1' } }
+    let refused: unknown
+    try {
+      await p.client.defaultLineup('away', alone)
+    } catch (error) {
+      refused = error
+    }
+    expect((refused as HttpError).code).equals('notStored')
+    // Asked behind, not waited on.
+    expect(p.sent.map(sent => sent.path)).includes('/teams/away/default-lineup')
+    answer()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // The screen's listener, registered after the answer was stored, hears it.
+    const told: string[] = []
+    const stop = p.client.onStoredChanged('g1', change => {
+      told.push(change)
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(told).deep.equals(['details'])
+    stop()
+    expect(await p.client.defaultLineup('away', alone)).deep.include({
+      lineup: null
+    })
+    // A plain client reads the server, as before.
+    expect(
+      (
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: async () =>
+            new Response(
+              JSON.stringify({ lineup: null, fromGameId: null, setAt: null }),
+              { status: 200 }
+            )
+        }).defaultLineup('away', alone)
+      ).lineup
+    ).equals(null)
+  })
+
+  it('asks again, once the signal is back, for what it had nothing stored for and could not ask offline, and tells the screen (2.harness-review.3)', async function () {
+    let online = false
+    const p = phone(async sent => {
+      if (!online) return 'offline'
+      if (sent.path === '/teams/away/default-lineup')
+        return { body: { lineup: null, fromGameId: null, setAt: null } }
+      return { body: {} }
+    })
+    const told: string[] = []
+    const stop = p.client.onStoredChanged('g1', change => {
+      told.push(change)
+    })
+    let refused: unknown
+    try {
+      await p.client.defaultLineup('away', {
+        storedOrNothing: { gameId: 'g1' }
+      })
+    } catch (error) {
+      refused = error
+    }
+    expect((refused as HttpError).code).equals('notStored')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(p.client.offline).equals(true)
+    expect(told).deep.equals([])
+    // The signal back: a read that succeeds says so.
+    online = true
+    await p.client.game('g1').catch(() => undefined)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(p.client.offline).equals(false)
+    expect(told).includes('details')
+    expect(
+      await p.client.defaultLineup('away', {
+        storedOrNothing: { gameId: 'g1' }
+      })
+    ).deep.include({ lineup: null })
+    stop()
+  })
+
+  it('takes no stored plain roster for a full-name one it could not ask for offline, and asks again once the signal is back (4.harness-review.1)', async function () {
+    let online = true
+    const p = phone(async sent => {
+      if (!online) return 'offline'
+      if (sent.path.startsWith('/teams/away/roster')) return { body: [] }
+      return { body: {} }
+    })
+    // The plain roster is on the phone, the full-name one is not.
+    await p.client.roster('away')
+    online = false
+    const told: string[] = []
+    const stop = p.client.onStoredChanged('g1', change => {
+      told.push(change)
+    })
+    let refused: unknown
+    try {
+      await p.client.roster('away', {
+        includeFullNames: true,
+        storedOrNothing: { gameId: 'g1', waitMs: 200 }
+      })
+    } catch (error) {
+      refused = error
+    }
+    expect((refused as HttpError).code).equals('notStored')
+    online = true
+    await p.client.game('g1').catch(() => undefined)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).includes('details')
+    stop()
+  })
+
   it('reads what a reset confirms from the server’s copy of the game, whoever reads the file (1.harness-review.4)', async function () {
     const docs: Record<string, { body: string; pending?: boolean }> = {}
     const read = async (key: string): Promise<StoredDocument | undefined> =>
@@ -550,6 +726,41 @@ describe('the phone outbox', function () {
     expect(saved.digest).match(/^local-/)
     expect(p.document(lineupsKey('g1'))!.pending).equals(1)
     expect(p.rows()).length(1)
+  })
+
+  it('writes a lineup save onto the stored copy as it is sent, with a local digest, and takes the server’s once it lands (#358)', async function () {
+    let answer!: () => void
+    const gate = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    const p = phone(
+      server({ '/games/g1/lineups': lineupsDoc('D0') }, async () => {
+        await gate
+        return { body: lineupsDoc('D1') }
+      })
+    )
+    await p.client.gameLineups('g1')
+    const saving = p.client.saveLineups('g1', lineupSave('D0', [7, 8]))
+    for (let i = 0; i < 200 && p.posts().length === 0; i++)
+      await new Promise(resolve => setTimeout(resolve, 1))
+    // On its way: the stored copy holds it, as a queued save's would, under
+    // a digest of the phone's own until the server names one.
+    const held = p.document(lineupsKey('g1'))!
+    expect(held.pending).equals(1)
+    const stored = JSON.parse(String(held.body)) as {
+      digest: string
+      home: { current: { batters: Array<{ gumboId: number }> } }
+    }
+    expect(stored.digest).match(/^local-/)
+    expect(stored.home.current.batters.map(b => b.gumboId)).deep.equals([7, 8])
+    expect(
+      (await p.client.gameLineups('g1', { storedFirst: true })).digest
+    ).equals(stored.digest)
+    answer()
+    expect((await saving).digest).equals('D1')
+    const landed = p.document(lineupsKey('g1'))!
+    expect([landed.pending, landed.server_digest]).deep.equals([0, 'D1'])
+    expect(p.rows()).deep.equals([])
   })
 
   it('refuses to queue a game write whose documents the phone does not hold', async function () {
@@ -6224,6 +6435,8 @@ describe('the phone outbox', function () {
           wrap?: (store: DocumentStore) => DocumentStore
           /** Told when a request misses its deadline or a give-up cuts it off. */
           onDeadlineMissed?: () => void
+          /** How long a request may go unanswered before it is given up. */
+          deadlineMs?: number
         } = {}
       ): Promise<{
         g: ReturnType<typeof gameServer>
@@ -6277,7 +6490,7 @@ describe('the phone outbox', function () {
           },
           options.wrap,
           {},
-          undefined,
+          options.deadlineMs,
           options.onDeadlineMissed
         )
         await p.client.game('g1')
@@ -6327,6 +6540,328 @@ describe('the phone outbox', function () {
             plays: Array<{ gumbo: GumboPlay }>
           }
         ).plays
+
+      describe('written onto the documents as it is sent (#358)', function () {
+        /** How many plays of `atBatIndex` the phone's copy of g1 holds. */
+        const copies = (
+          p: ReturnType<typeof phone>,
+          atBatIndex: number
+        ): number =>
+          events(p).filter(row => row.gumbo.about.atBatIndex === atBatIndex)
+            .length
+        const pending = (p: ReturnType<typeof phone>): unknown =>
+          p.document(eventsKey('g1'))?.pending
+
+        it('holds the play on the stored copy while the post is out, reads it the same each time, and takes the server’s answer once it lands', async function () {
+          const h = await heldPost()
+          expect(copies(h.p, 1), 'written as it was sent').equals(1)
+          expect(pending(h.p)).equals(1)
+          const first = await h.p.client.gameEvents('g1', { storedFirst: true })
+          const again = await h.p.client.gameEvents('g1', { storedFirst: true })
+          expect(JSON.stringify(again)).equals(JSON.stringify(first))
+          expect(
+            first.plays.some(row => row.about.atBatIndex === 1),
+            'a stored read shows it'
+          ).equals(true)
+          h.letGo()
+          expect(await h.saving).has.property('answer')
+          expect(copies(h.p, 1)).equals(1)
+          expect(pending(h.p)).equals(0)
+          expect(h.p.rows()).deep.equals([])
+        })
+
+        it('counts it as on its way, not queued, until it is answered, and says so as it goes (3.harness-review.1)', async function () {
+          const h = await heldPost()
+          const told: Array<number | undefined> = []
+          const stop = h.p.client.subscribeOutbox(summary => {
+            told.push(summary.inFlight)
+          })
+          const out = await h.p.client.outboxSummary()
+          expect(out.count, 'not on the banner').equals(0)
+          expect(out.inFlight).equals(1)
+          h.letGo()
+          expect(await h.saving).has.property('answer')
+          await new Promise(resolve => setTimeout(resolve, 20))
+          expect(await h.p.client.outboxSummary()).not.has.property('inFlight')
+          expect(told.at(-1), 'told once answered').equals(undefined)
+          stop()
+        })
+
+        it('takes the write back and throws a refusal to the session, as before, holding nothing (403)', async function () {
+          const h = await heldPost()
+          expect(copies(h.p, 1)).equals(1)
+          h.letGo(refusal(403, 'forbidden', 'Not yours to score'))
+          const done = (await h.saving) as { error?: unknown }
+          expect(done.error).instanceOf(HttpError)
+          expect((done.error as HttpError).code).equals('forbidden')
+          expect(copies(h.p, 1), 'the server’s copy again').equals(0)
+          expect(pending(h.p)).equals(0)
+          expect(h.p.rows()).deep.equals([])
+          expect((await h.p.client.outboxSummary()).games).deep.equals({})
+        })
+
+        it('forgets a refused send’s copy that holds no server body, to be read again, not held by no row (2.harness-review.1)', async function () {
+          const h = await heldPost()
+          h.p.sql(
+            `UPDATE documents SET server_body = NULL WHERE key = '${eventsKey('g1')}'`
+          )
+          h.letGo(refusal(403, 'forbidden', 'Not yours to score'))
+          const done = (await h.saving) as { error?: unknown }
+          expect((done.error as HttpError).code).equals('forbidden')
+          expect(h.p.rows()).deep.equals([])
+          expect(h.p.document(eventsKey('g1'))).equals(undefined)
+        })
+
+        it('keeps a play queued behind a refused send on a copy that holds no server body (4.harness-review.2)', async function () {
+          const h = await heldPost()
+          const behind = h.p.client.saveGameEvents('g1', {
+            plays: [play(1), play(2)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          await new Promise(resolve => setTimeout(resolve, 20))
+          h.p.sql(
+            `UPDATE documents SET server_body = NULL WHERE key = '${eventsKey('g1')}'`
+          )
+          h.letGo(refusal(403, 'forbidden', 'Not yours to score'))
+          const done = (await h.saving) as { error?: unknown }
+          expect((done.error as HttpError).code).equals('forbidden')
+          expect(states(h.p)).deep.equals([['/games/g1/events', 'pending']])
+          expect(copies(h.p, 2), 'the play behind, still on the copy').equals(1)
+          expect(pending(h.p)).equals(1)
+          await behind.catch(() => undefined)
+        })
+
+        it('forgets a refused send’s copy that holds no server body when only a lineup save of its game is queued behind (5.harness-review.1)', async function () {
+          const h = await heldPost()
+          const behind = h.p.client.saveLineups('g1', lineupSave('D0'))
+          await new Promise(resolve => setTimeout(resolve, 20))
+          h.p.sql(
+            `UPDATE documents SET server_body = NULL WHERE key = '${eventsKey('g1')}'`
+          )
+          h.letGo(refusal(403, 'forbidden', 'Not yours to score'))
+          const done = (await h.saving) as { error?: unknown }
+          expect((done.error as HttpError).code).equals('forbidden')
+          // The lineup save writes only the lineups: it holds nothing of the
+          // plays, so their copy is read again, not kept with the refused play.
+          expect(h.p.document(eventsKey('g1'))).equals(undefined)
+          expect(states(h.p)).deep.equals([['/games/g1/lineups', 'pending']])
+          expect(h.p.document(lineupsKey('g1'))?.pending).equals(1)
+          await behind.catch(() => undefined)
+        })
+
+        it('forgets a refused lineup save’s copy that holds no server body when only plays of its game are queued behind (5.harness-review.1)', async function () {
+          const g = gameServer()
+          g.online.value = true
+          let letGo!: (answer: Answer) => void
+          const gate = new Promise<Answer>(resolve => {
+            letGo = resolve
+          })
+          const p = phone(async sent =>
+            sent.method === 'POST' && sent.path === '/games/g1/lineups'
+              ? await gate
+              : await g.handler(sent)
+          )
+          await p.client.game('g1')
+          await p.client.gameLineups('g1')
+          await p.client.gameEvents('g1')
+          const saving = p.client.saveLineups('g1', lineupSave('D0')).then(
+            answer => ({ answer }),
+            (error: unknown) => ({ error })
+          )
+          for (let i = 0; i < 2000 && p.posts().length === 0; i++)
+            await new Promise(resolve => setTimeout(resolve, 1))
+          const behind = p.client.saveGameEvents('g1', {
+            plays: [play(1)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          await new Promise(resolve => setTimeout(resolve, 20))
+          p.sql(
+            `UPDATE documents SET server_body = NULL WHERE key = '${lineupsKey('g1')}'`
+          )
+          letGo(refusal(403, 'forbidden', 'Not yours to score'))
+          const done = (await saving) as { error?: unknown }
+          expect((done.error as HttpError).code).equals('forbidden')
+          expect(p.document(lineupsKey('g1'))).equals(undefined)
+          expect(states(p)).deep.equals([['/games/g1/events', 'pending']])
+          expect(p.document(eventsKey('g1'))?.pending).equals(1)
+          await behind.catch(() => undefined)
+        })
+
+        it('still lets go of a refused send whose undo cannot rebuild the stored copy (1.harness-review.3)', async function () {
+          const h = await heldPost()
+          const behind = h.p.client.saveGameEvents('g1', {
+            plays: [play(1), play(2)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          await new Promise(resolve => setTimeout(resolve, 20))
+          // The save behind cannot be read back onto the server's copy.
+          h.p.sql(`UPDATE outbox SET body = 'not json' WHERE state = 'pending'`)
+          const warn = console.warn
+          const warned: unknown[] = []
+          console.warn = (...args: unknown[]) => {
+            warned.push(args)
+          }
+          try {
+            h.letGo(refusal(403, 'forbidden', 'Not yours to score'))
+            const done = (await h.saving) as { error?: unknown }
+            expect((done.error as HttpError).code).equals('forbidden')
+          } finally {
+            console.warn = warn
+          }
+          expect(warned).length(1)
+          // The refused row is gone, not left in flight to be sent again.
+          expect(states(h.p)).deep.equals([['/games/g1/events', 'pending']])
+          // The row behind still holds the copy (4.harness-review.2).
+          expect(h.p.document(eventsKey('g1'))?.pending).equals(1)
+          await behind.catch(() => undefined)
+        })
+
+        it('takes the write back and throws a stale refusal to the session, which rebases on it, parking nothing (409)', async function () {
+          const h = await heldPost()
+          h.letGo(
+            refusal(409, 'conflict', 'The lineups changed', { stale: true })
+          )
+          const done = (await h.saving) as { error?: unknown }
+          expect((done.error as HttpError).code).equals('conflict')
+          expect(copies(h.p, 1)).equals(0)
+          expect(h.p.rows()).deep.equals([])
+          expect((await h.p.client.outboxSummary()).games).deep.equals({})
+        })
+
+        it('keeps it written once, and queued, when the session lets it go', async function () {
+          const h = await heldPost()
+          h.release()
+          expect(await h.saving).has.property('answer')
+          expect(copies(h.p, 1)).equals(1)
+          expect(states(h.p)).deep.equals([['/games/g1/events', 'pending']])
+          h.letGo()
+        })
+
+        it('requeues it at the request deadline as no signal, still written once', async function () {
+          const h = await heldPost({ deadlineMs: 30 })
+          expect(copies(h.p, 1)).equals(1)
+          expect(await h.saving).has.property('answer')
+          expect(h.p.client.offline).equals(true)
+          expect(copies(h.p, 1), 'the queue’s now, written once').equals(1)
+          expect(pending(h.p)).equals(1)
+          expect(states(h.p)).deep.equals([['/games/g1/events', 'pending']])
+          h.letGo()
+        })
+
+        it('keeps it on the stored copy when a read behind lands while it is out', async function () {
+          const h = await heldPost()
+          // A stored-first read asks the server behind; its answer, without
+          // the play still on its way, lands meanwhile.
+          await h.p.client.gameEvents('g1', { storedFirst: true })
+          await new Promise(resolve => setTimeout(resolve, 30))
+          expect(copies(h.p, 1), 'still written ahead').equals(1)
+          expect(pending(h.p)).equals(1)
+          h.letGo()
+          expect(await h.saving).has.property('answer')
+          expect(copies(h.p, 1)).equals(1)
+          expect(pending(h.p)).equals(0)
+        })
+
+        it('writes it once when a swap behind it writes the send ahead again', async function () {
+          const h = await heldPost()
+          await h.p.client.queueSwap('g1', 'swap')
+          expect(copies(h.p, 1), 'not written twice').equals(1)
+          h.letGo()
+          await h.saving
+          await h.p.client.drainOutbox()
+          expect(writes(h.p)).deep.equals([
+            'POST /games/g1/events',
+            'POST /games/g1/swap-sides'
+          ])
+        })
+
+        it('still undoes a refused send when the swap behind it could not be queued (1.harness-review.6)', async function () {
+          let refuseSwap = true
+          const wrap = (store: DocumentStore): DocumentStore => ({
+            ...store,
+            atomically: async work =>
+              await store.atomically(
+                async tx =>
+                  await work({
+                    ...tx,
+                    enqueue: async row => {
+                      if (refuseSwap && row.path === '/games/g1/swap-sides')
+                        throw new Error('disk full')
+                      return await tx.enqueue(row)
+                    }
+                  })
+              )
+          })
+          const h = await heldPost({ wrap })
+          let failed: unknown
+          try {
+            await h.p.client.queueSwap('g1', 'swap')
+          } catch (error) {
+            failed = error
+          }
+          refuseSwap = false
+          expect(failed, 'the swap was not queued').instanceOf(Error)
+          expect(copies(h.p, 1), 'the swap rolled back, not the send').equals(1)
+          h.letGo(refusal(403, 'forbidden', 'Not yours to score'))
+          const done = (await h.saving) as { error?: unknown }
+          expect((done.error as HttpError).code).equals('forbidden')
+          expect(copies(h.p, 1), 'undone').equals(0)
+          expect(h.p.rows()).deep.equals([])
+          expect((await h.p.client.outboxSummary()).games).deep.equals({})
+        })
+
+        it('sends as before, writing nothing, when the stored copy cannot take it', async function () {
+          const g = gameServer()
+          g.online.value = true
+          const p = phone(g.handler)
+          await p.client.game('g1')
+          await p.client.gameLineups('g1')
+          await p.client.gameEvents('g1')
+          // A copy this build cannot read: the write-ahead throws, and the
+          // send goes out as before.
+          p.sql(
+            `UPDATE documents SET body = '{"plays": 7}' WHERE key = '${eventsKey('g1')}'`
+          )
+          const answer = await p.client.saveGameEvents('g1', {
+            plays: [play(1)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          expect(answer).to.have.property('playsDigest')
+          expect(writes(p)).deep.equals(['POST /games/g1/events'])
+          expect(p.rows()).deep.equals([])
+        })
+
+        it('writes a pitch saved behind it over it at once, and the server takes both in order', async function () {
+          const h = await heldPost()
+          const behind = h.p.client.saveGameEvents('g1', {
+            plays: [play(1), play(2)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          await new Promise(resolve => setTimeout(resolve, 20))
+          expect(copies(h.p, 1)).equals(1)
+          expect(copies(h.p, 2), 'behind it, at once').equals(1)
+          h.letGo()
+          await h.saving
+          await behind
+          await h.p.client.drainOutbox()
+          expect(writes(h.p)).deep.equals([
+            'POST /games/g1/events',
+            'POST /games/g1/events'
+          ])
+          expect(copies(h.p, 2)).equals(1)
+          expect(h.p.rows()).deep.equals([])
+        })
+      })
 
       it("writes a post refused while a swap's transaction runs before its requeue ahead once, and queues it in its place (3.harness-review.5)", async function () {
         const hold: { waiting: boolean; release?: () => void } = {

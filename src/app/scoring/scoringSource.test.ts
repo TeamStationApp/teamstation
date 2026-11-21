@@ -17,6 +17,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { deviceStorage } from '../platform/deviceStorage'
 import { startingSetup, teamsOf } from './developmentSession'
 import {
+  defaultsOf,
   DevelopmentScoringSource,
   memoryStore,
   ServerScoringSource
@@ -102,6 +103,36 @@ const order = (session: ScoringSession, side: 'away' | 'home'): unknown[] =>
   )
 
 describe('the server scoring source with default lineups (U12)', function () {
+  it('passes no storedOrNothing on an open that does not ask for it: Coach Game’s, and the outbox’s older-save rebuild (#358)', async () => {
+    const store = memoryStore()
+    await ScoringSession.open(store, game.id, {
+      gamePk: game.id,
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    const { client: fake } = client(async () => none, store)
+    const options: unknown[] = []
+    const defaultLineup = fake.defaultLineup.bind(fake)
+    fake.defaultLineup = async (teamId, read) => {
+      options.push(read)
+      return await defaultLineup(teamId, read)
+    }
+    const gameEvents = fake.gameEvents.bind(fake)
+    fake.gameEvents = async (gameId, read) => {
+      options.push(read)
+      return await gameEvents(gameId, read)
+    }
+    // Coach Game opens with `OFFLINE_FIRST` only.
+    await new ServerScoringSource(fake).open(game, away, home, undefined, {
+      offlineFirst: true
+    })
+    // The rebuild reads the server's defaults as `defaultsOf(this, game)`.
+    await defaultsOf(fake, game)
+    expect(options.length).greaterThan(0)
+    for (const read of options)
+      expect(read ?? {}).not.to.have.property('storedOrNothing')
+  })
+
   it('reconciles the resumed lineup after an unfinished play without writing it on read', async () => {
     const store = memoryStore()
     const first = await ScoringSession.open(store, game.id, {
@@ -168,6 +199,35 @@ describe('the server scoring source with default lineups (U12)', function () {
     await opened.flush()
     const again = await new ServerScoringSource(fake).open(current, away, home)
     expect(again.state.liveData.boxscore.teams.away.players).includes(901)
+  })
+
+  it('keeps a stand-in side as its records field it at open, and reconciles it with the roster once a reload reads it (#358)', async () => {
+    const store = memoryStore()
+    const first = await ScoringSession.open(store, game.id, {
+      gamePk: game.id,
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    first.apply({ type: 'pitch', call: 'B' })
+    await first.flush()
+    const { client: fake } = client(async () => none, store)
+    // 102 has left the visitors' roster since the records were scored.
+    fake.roster = async id =>
+      id === game.awayTeamId
+        ? away.filter(entry => entry.gumboId !== 102)
+        : home
+    // Nothing stored for the visitors' roster: the side stands in.
+    const opened = await new ServerScoringSource(fake).open(
+      game,
+      [],
+      home,
+      undefined,
+      { standInSides: ['away'] }
+    )
+    expect(opened.state.liveData.boxscore.teams.away.players).includes(102)
+    // A reload reads the roster: the side is reconciled with it as today.
+    await opened.reload()
+    expect(opened.state.liveData.boxscore.teams.away.players).not.includes(102)
   })
 
   it('keeps actual rosters without manufactured players on ordinary scoring entry', async function () {

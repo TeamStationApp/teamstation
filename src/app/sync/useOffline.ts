@@ -168,7 +168,8 @@ export function useOutboxSummary(
 export function useUnsentEditsWarning(
   summary: OutboxSummary | undefined
 ): void {
-  const waiting = (summary?.count ?? 0) > 0
+  // A save on its way counts: the tab's queue is lost with it.
+  const waiting = (summary?.count ?? 0) + (summary?.inFlight ?? 0) > 0
   useEffect(() => {
     // React Native's `window` has no events.
     if (!waiting || typeof window?.addEventListener !== 'function') return

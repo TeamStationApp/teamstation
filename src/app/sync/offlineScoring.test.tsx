@@ -11,6 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import { ScoringSession } from '../../common/scoring/session'
+import type { Side } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   fieldServer,
@@ -1087,6 +1088,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         nodes.item(nodes.length - 1)?.getAttribute('aria-disabled') === 'true'
       )
     }
+    /** Waits up to `ms` for the scoring board's count. */
+    const boardWithin = async (ms: number): Promise<void> => {
+      const end = Date.now() + ms
+      while (Date.now() < end && !/\d balls/.test(text())) await settle(50)
+    }
     const homeOf = (): string | undefined =>
       /Owls \d+ · Hawks \d+|Hawks \d+ · Owls \d+/.exec(text())?.[0]
 
@@ -1144,6 +1150,188 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       expect(net.writes.slice(before)).deep.equals(
         queued.map(row => `${String(row.method)} ${String(row.path)}`)
       )
+    })
+
+    it('opens again at once, with every request held, though the opponent’s default lineup was never stored (#358)', async function () {
+      // The opponent is a team this person may not see: its default lineup
+      // is refused (the server's 404, here a 403), and the phone forgets
+      // what it stored of it.
+      const { client, net } = await preparedPhone(3000)
+      net.refused.set('/teams/away/default-lineup', 403)
+      await open(client)
+      expect(text()).includes('1 balls')
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.replaceChildren()
+      const release = holdAll(net)
+      const started = Date.now()
+      await open(client)
+      // What has nothing stored is waited for a moment at most
+      // (DEFAULT_LINEUP_WAIT_MS), never for the deadlines.
+      await boardWithin(3000)
+      expect(text(), 'opened from the phone, not after the deadlines').includes(
+        '1 balls'
+      )
+      expect(Date.now() - started).lessThan(3000)
+      release()
+    })
+
+    it('keeps a side’s lineup when its roster is not on the phone, opening at once with every request held (#358)', async function () {
+      const { client, net, document: stored } = await preparedPhone(3000)
+      const awayOrder = (): number[] =>
+        (
+          panelProps(
+            document.body.firstElementChild as HTMLElement,
+            'ScoringPanel'
+          ) as { game: ScoringSession }
+        ).game.state.liveData.boxscore.teams.away.battingOrder
+      const reopen = async (): Promise<void> => {
+        await act(async () => {
+          root?.unmount()
+        })
+        document.body.replaceChildren()
+        await open(client)
+      }
+      await open(client)
+      const order = awayOrder()
+      expect(order.length).greaterThan(0)
+      // The away team's rosters are refused from here: the reads behind the
+      // next open, and the next read ahead, forget what the phone stored.
+      net.refused.set('/teams/away/roster', 403)
+      net.refused.set('/teams/away/roster?includeFullNames=true', 403)
+      await reopen()
+      await client.prefetch()
+      await settle(100)
+      expect(await stored(rosterKey('away')), 'not on the phone').equals(
+        undefined
+      )
+      expect(await stored(fullRosterKey('away'))).equals(undefined)
+      const release = holdAll(net)
+      const started = Date.now()
+      await reopen()
+      await boardWithin(3000)
+      expect(text()).includes('1 balls')
+      expect(Date.now() - started).lessThan(3000)
+      expect(awayOrder(), 'the lineup its records hold').deep.equals(order)
+      release()
+    })
+
+    it('opens a swap of the screen’s own with a stand-in side on its new side (2.harness-review.2)', async function () {
+      const { client, net } = await preparedPhone(3000)
+      const reopen = async (): Promise<void> => {
+        await act(async () => {
+          root?.unmount()
+        })
+        document.body.replaceChildren()
+        await open(client)
+      }
+      await open(client)
+      // The away team's roster is not on the phone from here.
+      net.refused.set('/teams/away/roster', 403)
+      net.refused.set('/teams/away/roster?includeFullNames=true', 403)
+      await reopen()
+      await client.prefetch()
+      await settle(100)
+      const release = holdAll(net)
+      const opens: Array<Side[] | undefined> = []
+      const sourceOpen = Object.getOwnPropertyDescriptor(
+        ServerScoringSource.prototype,
+        'open'
+      )!
+      const original = sourceOpen.value as ServerScoringSource['open']
+      ServerScoringSource.prototype.open = async function (
+        this: ServerScoringSource,
+        ...args: Parameters<ServerScoringSource['open']>
+      ) {
+        opens.push(args[4]?.standInSides)
+        return await original.apply(this, args)
+      }
+      try {
+        await reopen()
+        await boardWithin(3000)
+        await click('Open scoring menu')
+        await click('Swap Home and Away')
+        await settle()
+        await click(
+          hasLabel('Confirm Swap') ? 'Confirm Swap' : 'Reset and Swap'
+        )
+        await settle(100)
+        expect(homeOf()).equals('Hawks 0 · Owls 0')
+      } finally {
+        Object.defineProperty(ServerScoringSource.prototype, 'open', sourceOpen)
+        release()
+      }
+      // Opened on its records at away, then, swapped, at home.
+      expect(opens).deep.equals([['away'], ['home']])
+    })
+
+    it('shows a pitch whose save is on its way when scoring opens again (#358)', async function () {
+      const { client, net } = await preparedPhone()
+      await open(client)
+      expect(text()).includes('1 balls')
+      let answer: () => void = () => undefined
+      net.holdPlays = new Promise<void>(resolve => {
+        answer = resolve
+      })
+      await click('Ball')
+      expect(text()).includes('2 balls')
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.replaceChildren()
+      await open(client)
+      expect(text(), 'the pitch on its way').includes('2 balls')
+      await click('Called Strike')
+      expect(text()).includes('1 strikes')
+      net.holdPlays = undefined
+      answer()
+      await act(async () => {
+        await client.drainOutbox()
+      })
+      await settle(50)
+      expect(text()).includes('2 balls')
+      expect(text()).includes('1 strikes')
+    })
+
+    /** A phone that has never opened g1: nothing of it stored. */
+    async function neverStored(
+      requestDeadlineMs?: number
+    ): Promise<Awaited<ReturnType<typeof preparedPhone>>> {
+      const phone = await preparedPhone(requestDeadlineMs)
+      await sql(executors.at(-1)!, 'DELETE FROM documents')
+      return phone
+    }
+    const loading = (): boolean =>
+      document.querySelector('[aria-label="Loading game"]') != null
+
+    it('reads a game never stored on this phone first: Loading game while the server is held, then the board once it answers (#358)', async function () {
+      const { client, net } = await neverStored(3000)
+      const release = holdAll(net)
+      await open(client)
+      await settle(100)
+      expect(loading(), 'the one allowed wait').equals(true)
+      expect(text()).not.includes('balls')
+      release()
+      await boardWithin(3000)
+      expect(text()).includes('1 balls')
+    })
+
+    it('says "Unable to load scoring." with Retry for a game never stored on this phone, offline (#358)', async function () {
+      const { client, net } = await neverStored()
+      net.offline = true
+      const started = Date.now()
+      await open(client)
+      const end = Date.now() + 3000
+      while (Date.now() < end && !text().includes('Unable to load scoring.'))
+        await settle(50)
+      expect(text()).includes('Unable to load scoring.')
+      expect(Date.now() - started, 'no deadline waited').lessThan(3000)
+      expect(hasLabel('Retry loading scoring')).equals(true)
+      net.offline = false
+      await click('Retry loading scoring')
+      await boardWithin(3000)
+      expect(text()).includes('1 balls')
     })
 
     it('closes Confirm Swap at once, shows the exchanged sides and takes the next pitch, and sends the pitches and the swap in order once let go', async function () {

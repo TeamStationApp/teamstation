@@ -66,6 +66,13 @@ describe('the warning before a page with unsent edits unloads', function () {
     expect(warns(), 'unmounted').equals(false)
   })
 
+  it('warns while a save is on its way, not yet in the queue (3.harness-review.1)', async function () {
+    await show({ ...queue(0), inFlight: 1 })
+    expect(warns(), 'a save on its way').equals(true)
+    await show(queue(0))
+    expect(warns(), 'answered').equals(false)
+  })
+
   it('adds nothing where the window has no events, as on the phone', async function () {
     // React Native's `window` is the global object, with no events.
     const events = window as { addEventListener?: unknown }

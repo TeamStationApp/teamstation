@@ -1032,6 +1032,107 @@ export class CachingClient extends TeamStationClient {
     // at once, where waiting out its deadline first kept the screen on its
     // spinner for as many deadlines as it reads. The network is still asked, behind it,
     // and its answer brings the phone back online.
+    // The scoring screen as it opens waits on the network for nothing: what
+    // the phone stored, or nothing at once, with the server asked behind.
+    const alone = options?.storedOrNothing
+    if (alone != null && key != null && opened != null) {
+      const { storedOrNothing: _alone, ...rest } = options ?? {}
+      const shown = await this.readFrom(opened.store, key)
+      if (shown != null) {
+        let value: { cleaned: T } | undefined
+        try {
+          value = { cleaned: cleaner(JSON.parse(shown.body)) }
+        } catch {
+          // A document this version cannot read is no document.
+        }
+        if (value != null) {
+          this.refreshStored(opened, key, path, shown.body, rest).catch(
+            () => undefined
+          )
+          return value.cleaned
+        }
+      }
+      // Nothing stored: the server is asked, and waited for a moment at
+      // most; once its answer is stored, the screen hears of it.
+      let waited = true
+      let decide: () => void = () => undefined
+      const decided = new Promise<void>(resolve => {
+        decide = resolve
+      })
+      // The server's own answer: no stored stand-in for it (a plain roster
+      // for a full-name one) is taken as the answer.
+      const asked = this.request(method, path, asRaw, body, {
+        ...rest,
+        fromServer: true
+      })
+      asked
+        .then(async () => {
+          // Told only of an answer the open did not wait for and take.
+          await decided
+          if (!waited || this.owned !== opened) return
+          const now = await this.readFrom(opened.store, key)
+          if (now == null) return
+          // Only an answer the screen can read is news.
+          cleaner(JSON.parse(now.body))
+          this.tellStored(alone.gameId, 'details')
+        })
+        .catch(() => undefined)
+      asked.catch((error: unknown) => {
+        // No signal, or the server refusing for now: asked again once it
+        // can be, as a stored read is, and the screens told once it is
+        // stored (nothing was shown, so any answer is news).
+        if (
+          this.owned !== opened ||
+          !(isOffline(error) || refusedForNow(error))
+        )
+          return
+        this.unrefreshed.set(key, {
+          opened,
+          path,
+          shown: '',
+          options: rest,
+          refused: refusedForNow(error) ? 1 : 0
+        })
+        if (refusedForNow(error) && !this.offline) this.refreshLater()
+      })
+      const waitMs = alone.waitMs ?? 0
+      if (waitMs > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const answer = await Promise.race([
+          asked.then(
+            raw => ({ raw }),
+            (error: unknown) => ({ error })
+          ),
+          new Promise<undefined>(resolve => {
+            timer = setTimeout(() => {
+              resolve(undefined)
+            }, waitMs)
+          })
+        ])
+        clearTimeout(timer)
+        if (answer != null && 'raw' in answer) {
+          // Answered in time: what it opens on, nothing to tell later.
+          waited = false
+          decide()
+          return cleaner(answer.raw)
+        }
+        // Refused in time: the server's word, as a read that waits gets it,
+        // so a refused full-name roster falls back as it always has. No
+        // signal, or a server that cannot answer now, is nothing stored.
+        if (
+          answer != null &&
+          answer.error instanceof HttpError &&
+          !isOffline(answer.error) &&
+          !refusedForNow(answer.error)
+        ) {
+          waited = false
+          decide()
+          throw answer.error
+        }
+      }
+      decide()
+      throw new HttpError('notStored', 'Not on this device yet.')
+    }
     const offlineFirst = options?.offlineFirst === true && this.offline
     if (
       key != null &&
@@ -1345,12 +1446,19 @@ export class CachingClient extends TeamStationClient {
     )
       return
     const gameId = gameOfPath(path)
+    // Roles, rosters and default lineups are no one game's.
+    this.tellStored(gameId, gameId == null ? 'details' : 'game')
+  }
+
+  /**
+   * Tells the screens reading `gameId` (every screen, with none) that a
+   * stored read changed, or keeps it for the screen still opening.
+   */
+  private tellStored(gameId: string | undefined, change: StoredChange): void {
     const told =
       gameId == null
         ? [...this.storedListeners.values()].flatMap(set => [...set])
         : [...(this.storedListeners.get(gameId) ?? [])]
-    // Roles, rosters and default lineups are no one game's.
-    const change: StoredChange = gameId == null ? 'details' : 'game'
     if (told.length === 0) {
       // Kept for the screen that is still opening on what it showed.
       if (gameId == null) this.missedDetails = true

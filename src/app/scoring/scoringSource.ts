@@ -14,6 +14,7 @@ import {
   type ScoringAction,
   usesOverrideSlots
 } from '../../common/scoring/actions'
+import { gameRosterEntries } from '../../common/scoring/rosterAvailability'
 import {
   type EventStore,
   sameAction,
@@ -23,6 +24,7 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import { appearedIn, reconcileRoster } from '../../common/scoring/startingSetup'
+import type { Side } from '../../common/scoring/state'
 import { withNames } from '../../common/scoring/storedNames'
 import { deviceStorage } from '../platform/deviceStorage'
 import {
@@ -65,7 +67,7 @@ export interface ScoringSource {
     away: RosterEntry[],
     home: RosterEntry[],
     held?: HeldOpening,
-    options?: { storedFirst?: boolean; offlineFirst?: boolean }
+    options?: OpenOptions
   ) => Promise<ScoringSession>
 }
 
@@ -96,6 +98,34 @@ function context(
   }
 }
 
+/** How the scoring screen, or Coach Game, opens a game. */
+export interface OpenOptions {
+  storedFirst?: boolean
+  offlineFirst?: boolean
+  /**
+   * The scoring screen's open (#358): the defaults are what the device
+   * stored, or none at once, the server asked behind. (The plays are read
+   * stored-first: with none stored, the server is read, the one wait.)
+   */
+  storedOrNothing?: { gameId: string; waitMs?: number }
+  /**
+   * The sides whose roster the device did not have: reconciled against the
+   * players their records field until the roster is read.
+   */
+  standInSides?: Side[]
+  /** Both teams' default lineups, when the screen has just read them. */
+  defaults?: DefaultLineups
+}
+
+/**
+ * How long the scoring screen's open waits for a read the device has
+ * nothing stored for (the roles, a roster, a default lineup): on a working
+ * connection its answer comes first, and a new game starts from it; a
+ * stalled server costs no more than this, and a refusal (a team whose
+ * default this reader may not see) nothing (#358).
+ */
+export const DEFAULT_LINEUP_WAIT_MS = 1500
+
 /**
  * Both teams' default lineups. A default that fails to load is none, so the
  * side starts from its roster. `storedFirst`, for the scoring screen as it
@@ -105,12 +135,29 @@ export async function defaultsOf(
   client: TeamStationClient,
   game: GameDetail,
   storedFirst = false,
-  offlineFirst = false
+  offlineFirst = false,
+  /**
+   * The scoring screen's open: what is stored or, with nothing stored, the
+   * server's answer if it comes within a moment, else none.
+   */
+  storedOrNothing?: { gameId: string; waitMs?: number }
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> => {
     try {
-      return (await client.defaultLineup(teamId, { storedFirst, offlineFirst }))
-        .lineup
+      return (
+        await client.defaultLineup(teamId, {
+          storedFirst,
+          offlineFirst,
+          ...(storedOrNothing == null
+            ? {}
+            : {
+                storedOrNothing: {
+                  waitMs: DEFAULT_LINEUP_WAIT_MS,
+                  ...storedOrNothing
+                }
+              })
+        })
+      ).lineup
     } catch {
       return null
     }
@@ -297,11 +344,13 @@ export class ServerScoringSource implements ScoringSource {
     away: RosterEntry[],
     home: RosterEntry[],
     opening?: HeldOpening,
-    options?: { storedFirst?: boolean; offlineFirst?: boolean }
+    options?: OpenOptions
   ): Promise<ScoringSession> {
     const client = this.client
     const storedFirst = options?.storedFirst === true
     const offlineFirst = options?.offlineFirst === true
+    const alone = options?.storedOrNothing
+    const standIn = new Set(options?.standInSides ?? [])
     let currentGame = game
     let rosters = { away, home }
     let first = true
@@ -310,7 +359,8 @@ export class ServerScoringSource implements ScoringSource {
     // every read it waits on is the phone's stored one, when it has one.
     const defaults =
       opening?.defaults ??
-      (await defaultsOf(client, game, storedFirst, offlineFirst))
+      options?.defaults ??
+      (await defaultsOf(client, game, storedFirst, offlineFirst, alone))
     // The context for the game's teams as last read, rebuilt only when they
     // change: every read gives the one its teams call for, whether or not
     // the session keeps that read.
@@ -328,6 +378,8 @@ export class ServerScoringSource implements ScoringSource {
             client.roster(game.homeTeamId)
           ])
           rosters = { away, home }
+          // Both rosters are read now: no side stands in any longer.
+          standIn.clear()
         }
         const later = !first
         if (later) await readTeams(await client.game(gameId))
@@ -384,7 +436,19 @@ export class ServerScoringSource implements ScoringSource {
         reconcileRoster(
           setup,
           teamsOf(currentGame),
-          rosters,
+          // A side whose roster the phone did not have keeps the players
+          // its records field: an empty roster would take them out of the
+          // lineup and off the field.
+          standIn.size === 0
+            ? rosters
+            : {
+                away: standIn.has('away')
+                  ? gameRosterEntries(state, 'away', false)
+                  : rosters.away,
+                home: standIn.has('home')
+                  ? gameRosterEntries(state, 'home', false)
+                  : rosters.home
+              },
           currentGame.guestPlayers,
           currentGame.unrostered,
           appearedIn(state)

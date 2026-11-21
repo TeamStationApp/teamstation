@@ -1353,8 +1353,15 @@ describe('swapping from the scoring menu', function () {
 describe('the scoring open, from what the phone stored', function () {
   it('opens on stored-first reads, reads the game again when one came back different, and a reload reads the server', async function () {
     const reads: string[] = []
-    const note = (name: string, options?: { storedFirst?: boolean }): void => {
-      reads.push(`${name}${options?.storedFirst === true ? ':stored' : ''}`)
+    // What the phone stored, read first or alone (#358): either waits on
+    // the network for nothing.
+    const note = (
+      name: string,
+      options?: { storedFirst?: boolean; storedOrNothing?: unknown }
+    ): void => {
+      const stored =
+        options?.storedFirst === true || options?.storedOrNothing != null
+      reads.push(`${name}${stored ? ':stored' : ''}`)
     }
     let told: ((change: StoredChange) => void) | undefined
     const client = testCachingClient()
