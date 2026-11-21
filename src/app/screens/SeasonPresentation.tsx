@@ -95,6 +95,11 @@ export interface SeasonPresentationProps {
   client: TeamStationClient
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
+  /** Opens a DM with a person, from a people row's Message pill. */
+  onOpenPersonChat?: (chat: {
+    id: string
+    title: string
+  }) => void | Promise<void>
   onLoadChatPreview?: (ids: string[]) => void
   season: SeasonSummary
   onOpenGame: (
@@ -1032,6 +1037,7 @@ export function SeasonPresentation(
             <LevelPeopleTab
               client={client}
               kind="season"
+              onOpenPersonChat={props.onOpenPersonChat}
               id={season.id}
               onOpenPlayer={props.onOpenPlayer}
               onOpenPerson={props.onOpenPerson}

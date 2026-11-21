@@ -6,6 +6,7 @@ import type {
   RosterSection,
   TeamStationClient
 } from '../../common/api'
+import { personMessageAction } from '../chat/PersonMessageButton'
 import { Card } from '../components'
 import { peopleAdds, PeopleList } from '../components/PeopleList'
 import { useSceneReveals } from '../components/sceneShown'
@@ -24,6 +25,11 @@ export interface LevelPeopleTabProps {
   ) => void
   /** Anybody else, as a profile, for whoever manages the level's people. */
   onOpenPerson?: (userId: string, name: string) => void
+  /** Opens a DM with a person, from a row's Message pill. */
+  onOpenPersonChat?: (chat: {
+    id: string
+    title: string
+  }) => void | Promise<void>
   /** The level's name, for the adds' accessible labels. */
   name?: string
   /**
@@ -82,6 +88,11 @@ export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
     <PeopleList
       people={answer.people}
       kept={KEPT}
+      message={
+        props.onOpenPersonChat == null
+          ? undefined
+          : personMessageAction(client, props.onOpenPersonChat)
+      }
       adds={
         answer.admin && onAddPeople != null
           ? peopleAdds(props.name ?? '', onAddPeople)

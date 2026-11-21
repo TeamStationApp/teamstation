@@ -42,6 +42,11 @@ export interface PeopleListProps {
    * empty section's header a blue button the size of Add Game.
    */
   adds?: Partial<Record<RosterSection, PeopleAdd>>
+  /**
+   * The row's own action, drawn at its bottom right beside the row rather
+   * than inside it (the Message pill), or nothing for a row without one.
+   */
+  message?: (person: RosterEntry) => React.ReactNode
 }
 
 /** An add on a people section, opening wherever people are added to it. */
@@ -62,7 +67,8 @@ export function PeopleList({
   people,
   onOpen,
   kept = [],
-  adds = {}
+  adds = {},
+  message
 }: PeopleListProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -104,6 +110,7 @@ export function PeopleList({
                     key={person.userId}
                     person={person}
                     onPress={onOpen?.(person)}
+                    action={message?.(person)}
                   />
                 ))}
               </ListCard>
@@ -162,6 +169,31 @@ type PersonPresentation = Pick<
   affiliations?: string
 }
 export function PersonRow({
+  person,
+  onPress,
+  action
+}: {
+  person: PersonPresentation
+  onPress?: () => void
+  /**
+   * An action of the row's own, on a line under it at its right: a sibling of
+   * the row's press, so assistive technology reaches it as its own button and
+   * pressing it never opens the row.
+   */
+  action?: React.ReactNode
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  const row = <PersonListRow person={person} onPress={onPress} />
+  if (action == null || action === false) return row
+  return (
+    <View testID={`person-row-${person.userId}`}>
+      {row}
+      <View style={styles.rowAction}>{action}</View>
+    </View>
+  )
+}
+
+function PersonListRow({
   person,
   onPress
 }: {
@@ -236,5 +268,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   section: {
     gap: theme.rem(theme.spaceMdRem)
   },
-  emptyAdd: { alignSelf: 'center' as const }
+  emptyAdd: { alignSelf: 'center' as const },
+  rowAction: {
+    flexDirection: 'row' as const,
+    justifyContent: 'flex-end' as const,
+    // Under the row's own inset, so the pill lines up with its chevron.
+    paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+    paddingBottom: theme.rem(theme.cardContentInsetRem),
+    marginTop: -theme.rem(theme.spaceSmRem)
+  }
 }))

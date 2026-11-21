@@ -65,7 +65,8 @@ async function render(
     id: string
     title: string
   }) => void | Promise<void> = () => {},
-  userId = person.userId
+  userId = person.userId,
+  reach?: 'direct' | 'proxies' | null
 ): Promise<void> {
   if (root == null) {
     const host = document.createElement('div')
@@ -76,8 +77,10 @@ async function render(
     root!.render(
       <ThemeProvider>
         <PersonMessageButton
+          name="Mike T"
           client={client as TeamStationClient}
           userId={userId}
+          reach={reach}
           onOpenChat={onOpenChat}
         />
       </ThemeProvider>
@@ -90,32 +93,127 @@ afterEach(async function () {
 })
 
 describe('the person Message hero action', function () {
-  it('waits for exact eligibility and hides unavailable recipients or failed lookups', async function () {
-    const lookup = deferred<ChatPerson[]>()
+  it('waits for the reach and hides people the reader cannot message, or a failed lookup', async function () {
+    const lookup = deferred<'direct' | 'proxies' | null>()
     const client = {
-      dmCandidates: async (query?: string, userId?: string) => {
-        expect([query, userId]).deep.equals(['', person.userId])
+      dmReach: async (userId: string) => {
+        expect(userId).equals(person.userId)
         return await lookup.promise
       }
     }
     await render(client)
     expect(message()).equals(null)
     await settle(() => {
-      lookup.resolve([person])
+      lookup.resolve('direct')
     })
     expect(message()).not.equals(null)
-    await render({ dmCandidates: async () => [] })
+    await render({ dmReach: async () => null })
     expect(message()).equals(null)
     await render({
-      dmCandidates: async () => [{ ...person, userId: 'usr_someone_else' }]
-    })
-    expect(message()).equals(null)
-    await render({
-      dmCandidates: async () => {
+      dmReach: async () => {
         throw new Error('offline')
       }
     })
     expect(message()).equals(null)
+  })
+
+  it('draws the tab bar’s regular pill, named for the person', async function () {
+    await render({ dmReach: async () => 'direct' })
+    expect(message()?.getAttribute('aria-label')).equals('Message Mike T')
+    expect(message()?.getAttribute('role')).equals('button')
+    expect(message()?.textContent).equals('Message')
+    expect(
+      message()?.querySelector('[data-testid="settings-pill-tab"]')
+    ).not.equals(null)
+  })
+
+  it('takes the reach it is given and asks nobody', async function () {
+    let asked = 0
+    await render(
+      {
+        dmReach: async () => {
+          asked++
+          return 'direct'
+        }
+      },
+      undefined,
+      person.userId,
+      'direct'
+    )
+    expect(message()).not.equals(null)
+    expect(asked).equals(0)
+    await render({}, undefined, person.userId, null)
+    expect(message()).equals(null)
+  })
+
+  it('opens the picker for a player who cannot sign in, and messages whom it chooses', async function () {
+    const calls: string[][] = []
+    const opened: unknown[] = []
+    await render(
+      {
+        dmProxies: async () => ({
+          player: { userId: person.userId, shortName: 'Mike T' },
+          kind: 'guardians' as const,
+          people: [{ ...person, userId: 'usr_guardian', shortName: 'Gwen G' }]
+        }),
+        createDm: async ids => {
+          calls.push(ids)
+          return conversation
+        }
+      },
+      chat => {
+        opened.push(chat)
+      },
+      person.userId,
+      'proxies'
+    )
+    await settle(() => {
+      message()!.click()
+    })
+    expect(words()).contains("Mike T doesn't have an account")
+    await settle(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="dm-proxy-usr_guardian"]')!
+        .click()
+    })
+    expect(calls).deep.equals([['usr_guardian']])
+    expect(opened).length(1)
+    expect(document.querySelector('[data-testid="dm-proxy-picker"]')).equals(
+      null
+    )
+  })
+
+  it('closes the picker on Cancel and messages nobody', async function () {
+    let made = 0
+    await render(
+      {
+        dmProxies: async () => ({
+          player: { userId: person.userId, shortName: 'Mike T' },
+          kind: 'coaches' as const,
+          people: [{ ...person, userId: 'usr_coach', shortName: 'Cory C' }]
+        }),
+        createDm: async () => {
+          made++
+          return conversation
+        }
+      },
+      undefined,
+      person.userId,
+      'proxies'
+    )
+    await settle(() => {
+      message()!.click()
+    })
+    expect(words()).contains('Choose a coach to message')
+    await settle(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="dm-proxy-cancel"]')!
+        .click()
+    })
+    expect(document.querySelector('[data-testid="dm-proxy-picker"]')).equals(
+      null
+    )
+    expect(made).equals(0)
   })
 
   it('opens the exact conversation and prevents duplicates while creation and navigation finish', async function () {
@@ -125,7 +223,7 @@ describe('the person Message hero action', function () {
     const opened: unknown[] = []
     await render(
       {
-        dmCandidates: async () => [person],
+        dmReach: async () => 'direct',
         createDm: async ids => {
           calls.push(ids)
           return await created.promise
@@ -173,7 +271,7 @@ describe('the person Message hero action', function () {
     let opened = false
     await render(
       {
-        dmCandidates: async () => [person],
+        dmReach: async () => 'direct',
         createDm: async () => {
           if (calls < failures.length) throw failures[calls++]
           return { ...conversation, title: null }
@@ -200,11 +298,11 @@ describe('the person Message hero action', function () {
   })
 
   it('ignores old eligibility and creation after changing people or leaving', async function () {
-    const lookup = deferred<ChatPerson[]>()
-    await render({ dmCandidates: async () => await lookup.promise })
-    await render({ dmCandidates: async () => [] }, undefined, 'usr_other')
+    const lookup = deferred<'direct' | 'proxies' | null>()
+    await render({ dmReach: async () => await lookup.promise })
+    await render({ dmReach: async () => null }, undefined, 'usr_other')
     await settle(() => {
-      lookup.resolve([person])
+      lookup.resolve('direct')
     })
     expect(message()).equals(null)
     for (const reject of [false, true]) {
@@ -212,7 +310,7 @@ describe('the person Message hero action', function () {
       let opened = false
       await render(
         {
-          dmCandidates: async () => [person],
+          dmReach: async () => 'direct',
           createDm: async () => await created.promise
         },
         () => {
@@ -238,7 +336,7 @@ describe('the person Message hero action', function () {
     let adultFailure = true
     await render(
       {
-        dmCandidates: async () => [person],
+        dmReach: async () => 'direct',
         createDm: async ids => {
           calls.push(ids)
           if (ids.length === 1)
@@ -312,7 +410,7 @@ describe('the person Message hero action', function () {
       const made: string[][] = []
       const opened: string[] = []
       const client = {
-        dmCandidates: async () => [person],
+        dmReach: async () => 'direct',
         createDm: async (ids: string[]) => {
           made.push(ids)
           return conversation
@@ -323,6 +421,7 @@ describe('the person Message hero action', function () {
           <ThemeProvider>
             <TestChatAge access={blocked ? 'blocked' : 'ask'} record={record}>
               <PersonMessageButton
+                name="Mike T"
                 client={client}
                 userId={person.userId}
                 onOpenChat={chat => {
@@ -382,7 +481,7 @@ describe('the person Message hero action', function () {
       root = createRoot(host)
       const made: string[][] = []
       const client = {
-        dmCandidates: async () => [person],
+        dmReach: async () => 'direct',
         createDm: async (ids: string[]) => {
           made.push(ids)
           return conversation
@@ -394,6 +493,7 @@ describe('the person Message hero action', function () {
         <ThemeProvider>
           <TestChatAge access={access}>
             <PersonMessageButton
+              name="Mike T"
               client={client}
               userId={person.userId}
               onOpenChat={() => undefined}
@@ -434,7 +534,7 @@ describe('the person Message hero action', function () {
       root = createRoot(host)
       const made: string[][] = []
       const client = {
-        dmCandidates: async () => [person],
+        dmReach: async () => 'direct',
         createDm: async (ids: string[]) => {
           made.push(ids)
           return conversation
@@ -448,6 +548,7 @@ describe('the person Message hero action', function () {
           <TestChatAge access={access}>
             <SceneShownProvider value={shown}>
               <PersonMessageButton
+                name="Mike T"
                 client={client}
                 userId={person.userId}
                 onOpenChat={() => undefined}
@@ -482,13 +583,14 @@ describe('the person Message hero action', function () {
     document.body.append(host)
     root = createRoot(host)
     const client = {
-      dmCandidates: async () => [person]
+      dmReach: async () => 'direct'
     } as unknown as TeamStationClient
     const page = (shown: boolean): React.ReactElement => (
       <ThemeProvider>
         <TestChatAge access="ask">
           {shown && (
             <PersonMessageButton
+              name="Mike T"
               client={client}
               userId={person.userId}
               onOpenChat={() => undefined}

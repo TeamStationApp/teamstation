@@ -660,15 +660,18 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                 }}
               />
             )}
+            {props.onOpenChat != null && player != null && (
+              <View style={styles.identityAction}>
+                <PersonMessageButton
+                  key={player.userId}
+                  client={client}
+                  userId={player.userId}
+                  name={shortShown}
+                  onOpenChat={props.onOpenChat}
+                />
+              </View>
+            )}
           </View>
-          {props.onOpenChat != null && player != null && (
-            <PersonMessageButton
-              key={player.userId}
-              client={client}
-              userId={player.userId}
-              onOpenChat={props.onOpenChat}
-            />
-          )}
         </Card>
       </CardBand>
 
@@ -1157,13 +1160,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   identityTop: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'flex-start',
     gap: theme.rem(theme.spaceMdRem)
   },
+  // Room for a name before the Message pill takes any: on a phone the pill
+  // goes onto a line of its own, at the right, rather than squeezing it.
   identityText: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: theme.rem(10),
     gap: theme.rem(0.125)
   },
+  // Level with the gear's disc, whose target is the same height.
+  identityAction: { marginLeft: 'auto', marginTop: -theme.rem(0.5) },
   playerName: {
     fontFamily: theme.boldTextFont,
     fontSize: theme.rem(1.5),

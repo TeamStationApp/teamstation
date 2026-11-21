@@ -3028,6 +3028,7 @@ function Shell(props: AppProps): React.ReactElement {
         chats={chatsOf(top.kind, top.id)}
         onOpenChat={openChat}
         onLoadChatPreview={loadChatPreviews}
+        onOpenPersonChat={chatEngine == null ? undefined : openPersonChat}
         initialTab={top.tab}
         onTab={topTab}
         initialWhen={top.when}
@@ -3805,6 +3806,7 @@ function Shell(props: AppProps): React.ReactElement {
         chats={chatsOf('team', top.team.id)}
         onOpenChat={openChat}
         onLoadChatPreview={loadChatPreviews}
+        onOpenPersonChat={chatEngine == null ? undefined : openPersonChat}
       />
     ) : top.name === 'season' ? (
       <SeasonScreen
@@ -3832,6 +3834,7 @@ function Shell(props: AppProps): React.ReactElement {
         chats={chatsOf('season', top.season.id)}
         onOpenChat={openChat}
         onLoadChatPreview={loadChatPreviews}
+        onOpenPersonChat={chatEngine == null ? undefined : openPersonChat}
         initialWhen={top.when}
         onWhen={next => {
           writeTop(current => {
@@ -3909,6 +3912,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
@@ -4001,6 +4005,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}

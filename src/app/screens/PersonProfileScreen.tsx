@@ -261,15 +261,18 @@ export function PersonProfileScreen(
                 {sprintf(contextLine(context.kind), context.name)}
               </Text>
             </View>
+            {props.onOpenChat != null && (
+              <View style={styles.heroAction}>
+                <PersonMessageButton
+                  key={person.userId}
+                  client={client}
+                  userId={person.userId}
+                  name={name}
+                  onOpenChat={props.onOpenChat}
+                />
+              </View>
+            )}
           </View>
-          {props.onOpenChat != null && (
-            <PersonMessageButton
-              key={person.userId}
-              client={client}
-              userId={person.userId}
-              onOpenChat={props.onOpenChat}
-            />
-          )}
         </Card>
 
         {guardianOf.length > 0 && (
@@ -383,10 +386,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(theme.spaceLgRem) },
   hero: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem)
   },
-  heroText: { flex: 1, gap: theme.rem(theme.spaceXsRem) },
+  // Room for a name before the Message pill takes any: on a phone the pill
+  // goes onto a line of its own rather than squeezing the name.
+  heroText: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: theme.rem(10),
+    gap: theme.rem(theme.spaceXsRem)
+  },
+  // The Message pill, at the hero's top right like the other screens' gear.
+  heroAction: { alignSelf: 'flex-start', marginLeft: 'auto' },
   name: {
     fontFamily: theme.boldTextFont,
     fontSize: theme.rem(1.5),

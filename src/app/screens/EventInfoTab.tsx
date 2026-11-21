@@ -58,7 +58,8 @@ export function EventInfoTab({
   eventId,
   event,
   onLoaded,
-  umpires
+  umpires,
+  onOpenPerson
 }: {
   client: TeamStationClient
   eventId: string
@@ -66,6 +67,8 @@ export function EventInfoTab({
   event?: RsvpEvent
   onLoaded?: (info: EventInfo) => void
   umpires?: UmpireGameBlock | null
+  /** Opens an umpire's league card from the Umpires section. */
+  onOpenPerson?: (userId: string, name: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -425,7 +428,7 @@ export function EventInfoTab({
           />
         </>
       )}
-      <GameUmpires umpires={umpires ?? null} />
+      <GameUmpires umpires={umpires ?? null} onOpenPerson={onOpenPerson} />
       {info.canViewAttendance &&
         attendanceSections(info.attendees)
           .filter(group => group.rows.length > 0)

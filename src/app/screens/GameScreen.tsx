@@ -256,6 +256,12 @@ export interface GameScreenProps {
   highlightUntil?: number
   /** Opens one of the two teams, from its name or its mark on the card. */
   onOpenTeam?: (team: TeamSummary) => void
+  /** Opens a person's card at a level: a game umpire's, in the league. */
+  onOpenPerson?: (
+    group: { kind: 'league'; id: string },
+    userId: string,
+    name: string
+  ) => void
   /** Opens one player, from their line in the box score. */
   onOpenPlayer?: (
     userId: string,
@@ -2715,6 +2721,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             eventId={gameId}
             event={game}
             umpires={game.umpires}
+            onOpenPerson={
+              game.umpires?.leagueId == null || props.onOpenPerson == null
+                ? undefined
+                : (userId, name) => {
+                    props.onOpenPerson?.(
+                      { kind: 'league', id: game.umpires!.leagueId! },
+                      userId,
+                      name
+                    )
+                  }
+            }
           />
         )
       ) : (

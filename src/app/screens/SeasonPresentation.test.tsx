@@ -3,7 +3,12 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asSeasonSummary, type TeamStationClient } from '../../common/api'
+import {
+  asRosterEntry,
+  asSeasonSummary,
+  type TeamStationClient
+} from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   chatAgeSheet,
   pillTabs,
@@ -149,5 +154,71 @@ describe('entity chat season sections', function () {
       expect(chatAgeSheet()).equals(null)
       expect(pillTabs().selected).not.equals('Chats')
     }
+  })
+})
+
+describe('a season’s People rows', function () {
+  it('carry a Message pill once the page is given a DM opener', async function () {
+    const people = {
+      people: [
+        asRosterEntry({
+          userId: userIdOfGumbo(271),
+          gumboId: 271,
+          shortName: 'Leo G',
+          jersey: null,
+          positions: [],
+          isPlayer: false,
+          role: 'member',
+          section: 'spectator',
+          staffRoles: [],
+          inheritedFrom: null,
+          message: 'direct'
+        })
+      ],
+      manages: false,
+      admin: false
+    }
+    const reader = new Proxy(
+      {},
+      {
+        get: (_, name) =>
+          name === 'group'
+            ? async () => ({ canSeePeople: true })
+            : name === 'levelPeople'
+              ? async () => people
+              : async () => []
+      }
+    ) as TeamStationClient
+    const render = async (opener?: () => void): Promise<void> => {
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <SeasonPresentation
+              client={reader}
+              season={season}
+              initialTab="people"
+              onOpenGame={() => undefined}
+              onOpenTeam={() => undefined}
+              onOpenPersonChat={opener}
+            />
+          </ThemeProvider>
+        )
+        await delay(30)
+      })
+    }
+    const pill = (): HTMLElement | null =>
+      document.querySelector('[aria-label="Message Leo G"]')
+    await render()
+    expect(document.body.textContent).includes('Leo G')
+    expect(pill()).equals(null)
+    await act(async () => {
+      root?.unmount()
+    })
+    document.body.innerHTML = ''
+    await render(() => {})
+    expect(pill()).not.equals(null)
   })
 })

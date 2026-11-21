@@ -6,9 +6,15 @@ import { Card, ListRow, SectionHeader } from '../components'
 import { useTheme } from '../theme/ThemeContext'
 
 export function GameUmpires({
-  umpires
+  umpires,
+  onOpenPerson
 }: {
   umpires: UmpireGameBlock | null
+  /**
+   * Opens an umpire's league card; given only when the block names its
+   * league, which comes only to a reader who may open those cards.
+   */
+  onOpenPerson?: (userId: string, name: string) => void
 }): React.ReactElement | null {
   const theme = useTheme()
   const people = new Map<
@@ -30,6 +36,7 @@ export function GameUmpires({
     people.set(position.person.userId, held)
   }
   if (people.size === 0) return null
+  const onPerson = umpires?.leagueId == null ? undefined : onOpenPerson
   return (
     <View style={{ gap: theme.rem(0.75) }} testID="game-umpires">
       <View accessibilityRole="header">
@@ -49,6 +56,13 @@ export function GameUmpires({
               userId: person.userId,
               uri: person.avatarUrl
             }}
+            onPress={
+              onPerson == null || person.openable !== true
+                ? undefined
+                : () => {
+                    onPerson(person.userId, person.name)
+                  }
+            }
           />
         </Card>
       ))}

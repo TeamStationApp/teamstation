@@ -10,6 +10,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { LevelPeopleTab } from './LevelPeopleTab'
@@ -478,5 +479,102 @@ describe('a season’s and a league’s People tab', function () {
     })
     expect(people).deep.equals([userIdOfGumbo(201)])
     expect(players).deep.equals([])
+  })
+})
+
+describe('a people row’s Message pill', function () {
+  confirmedChatAgeHooks()
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  const pill = (name: string): HTMLElement | undefined =>
+    [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid="person-message"]'
+      )
+    ].find(node => node.getAttribute('aria-label') === `Message ${name}`)
+
+  async function people(
+    onOpenPersonChat?: (chat: { id: string; title: string }) => void
+  ): Promise<{ opened: string[]; dms: string[][] }> {
+    const opened: string[] = []
+    const dms: string[][] = []
+    const client = {
+      levelPeople: async () => ({
+        people: [
+          entry(101, 'Babe R', { section: 'admin', message: 'direct' }),
+          entry(250, 'Lou L', { section: 'spectator' }),
+          entry(260, 'Quin V', { section: 'spectator', message: 'proxies' })
+        ],
+        manages: true,
+        admin: false
+      }),
+      createDm: async (ids: string[]) => {
+        dms.push(ids)
+        return { id: 'cnv_dm', title: 'Babe R' }
+      }
+    } as unknown as TeamStationClient
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <LevelPeopleTab
+            client={client}
+            kind="league"
+            id="lvl_one"
+            onOpenPerson={userId => {
+              opened.push(userId)
+            }}
+            onOpenPersonChat={onOpenPersonChat}
+          />
+        </ThemeProvider>
+      )
+      await delay(10)
+    })
+    return { opened, dms }
+  }
+
+  it('draws the pill under each row the reader can message, beside the row and not inside it', async function () {
+    await people(() => {})
+    expect(pill('Babe R')).not.equals(undefined)
+    expect(pill('Quin V')).not.equals(undefined)
+    expect(pill('Lou L')).equals(undefined)
+    // Its own button, never inside the row's.
+    expect(pill('Babe R')!.parentElement!.closest('[role="button"]')).equals(
+      null
+    )
+    expect(rowNode('Babe R').contains(pill('Babe R')!)).equals(false)
+  })
+
+  it('opens the DM from the pill without opening the row, which still opens on its own', async function () {
+    const chats: Array<{ id: string; title: string }> = []
+    const { opened, dms } = await people(chat => {
+      chats.push(chat)
+    })
+    await act(async () => {
+      pill('Babe R')!.click()
+      await delay(10)
+    })
+    expect(dms).deep.equals([[userIdOfGumbo(101)]])
+    expect(chats).deep.equals([{ id: 'cnv_dm', title: 'Babe R' }])
+    expect(opened).deep.equals([])
+    await act(async () => {
+      rowNode('Babe R').click()
+      await delay(10)
+    })
+    expect(opened).deep.equals([userIdOfGumbo(101)])
+  })
+
+  it('draws no pill without a DM opener', async function () {
+    await people(undefined)
+    expect(document.querySelector('[data-testid="person-message"]')).equals(
+      null
+    )
   })
 })

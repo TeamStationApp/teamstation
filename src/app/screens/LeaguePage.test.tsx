@@ -643,6 +643,52 @@ describe('the league page', () => {
 })
 
 describe('a league’s People tab', () => {
+  it('puts a Message pill on a row the reader can message once given a DM opener, apart from the chat opener', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    api.levelPeople = async () => ({
+      people: [
+        asRosterEntry({
+          userId: userIdOfGumbo(271),
+          gumboId: 271,
+          shortName: 'Leo G',
+          jersey: null,
+          positions: [],
+          isPlayer: false,
+          role: 'member',
+          section: 'spectator',
+          staffRoles: [],
+          inheritedFrom: null,
+          message: 'direct'
+        })
+      ],
+      manages: false,
+      admin: false
+    })
+    const pill = (): HTMLElement | null =>
+      document.querySelector('[aria-label="Message Leo G"]')
+    const screen = (opener?: () => void): React.ReactElement => (
+      <GroupScreen
+        client={api}
+        groupRef={{ kind: 'league', id: league.id }}
+        initialTab="people"
+        onOpen={() => {}}
+        onCreate={() => {}}
+        onSettings={() => {}}
+        onLink={() => {}}
+        onPrivate={() => {}}
+        onOpenChat={() => {}}
+        onOpenPersonChat={opener}
+      />
+    )
+    await mount(screen())
+    expect(document.body.textContent).includes('Leo G')
+    expect(pill()).equals(null)
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    await mount(screen(() => {}))
+    expect(pill()).not.equals(null)
+  })
   it('lists its people and opens a player’s page and anybody else’s profile', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => detail

@@ -359,6 +359,55 @@ describe('restored access-aware team presentation', () => {
     await press('Manage')
     expect(settings).equals('canonical')
   })
+  it('puts a Message pill on the team tab’s rows once given a DM opener, apart from its chat rows’ opener', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail({ canViewPrivate: true })
+    api.teamGamesPage = async (_id, query) => pageOfGames([], query)
+    api.roster = async () => [
+      asRosterEntry({
+        userId: userIdOfGumbo(201),
+        gumboId: 201,
+        shortName: 'Alfonso S',
+        jersey: '7',
+        positions: ['SS'],
+        isPlayer: true,
+        role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null,
+        message: 'direct'
+      })
+    ]
+    api.teamStats = async () => []
+    api.teamPitchingStats = async () => []
+    api.invites = async () => ({ canInvite: false, invites: [] })
+    const pill = (): HTMLElement | null =>
+      document.querySelector('[aria-label="Message Alfonso S"]')
+    await mount(
+      <TeamPage
+        client={api}
+        id="canonical"
+        initialTab="team"
+        onOpenGame={() => undefined}
+        onOpenChat={() => undefined}
+      />
+    )
+    expect(document.body.textContent).includes('Alfonso S')
+    expect(pill()).equals(null)
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    await mount(
+      <TeamPage
+        client={api}
+        id="canonical"
+        initialTab="team"
+        onOpenGame={() => undefined}
+        onOpenChat={() => undefined}
+        onOpenPersonChat={() => undefined}
+      />
+    )
+    expect(pill()).not.equals(null)
+  })
   it('shows retry after failure, ignores stale responses and clears private access on refresh', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     let fail = true

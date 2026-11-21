@@ -90,7 +90,8 @@ const EVENT: RsvpEvent = {
 }
 async function render(
   client: TeamStationClient,
-  umpires?: UmpireGameBlock
+  umpires?: UmpireGameBlock,
+  onOpenPerson?: (userId: string, name: string) => void
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -103,6 +104,7 @@ async function render(
           eventId="g1"
           event={EVENT}
           umpires={umpires}
+          onOpenPerson={onOpenPerson}
         />
       </ThemeProvider>
     )
@@ -176,6 +178,63 @@ describe('event Info location and family controls', () => {
     expect(
       document.querySelector('[data-testid="event-replies-open"]')
     ).not.equals(null)
+  })
+  it('opens an umpire’s league card from their row when the block names the league', async () => {
+    const block: UmpireGameBlock = {
+      positions: [
+        {
+          slot: 'type:1',
+          typeId: 'type',
+          typeName: 'Plate',
+          ordinal: 1,
+          required: true,
+          person: { userId: 'ump', name: 'Mike T', openable: true }
+        }
+      ]
+    }
+    const opened: Array<[string, string]> = []
+    const open = (userId: string, name: string): void => {
+      opened.push([userId, name])
+    }
+    await render(clientFor(), { ...block, leagueId: 'lea_1' }, open)
+    const row = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>(
+        '[data-testid="umpire-person-ump"] [role="button"]'
+      )
+    expect(row()).not.equals(null)
+    await act(async () => {
+      row()!.click()
+      await Promise.resolve()
+    })
+    expect(opened).deep.equals([['ump', 'Mike T']])
+    await act(async () => {
+      root?.unmount()
+    })
+    // Without the league (a reader who may not open the card), or without
+    // the opener, the row is plain.
+    await render(clientFor(), block, open)
+    expect(row()).equals(null)
+    await act(async () => {
+      root?.unmount()
+    })
+    await render(clientFor(), { ...block, leagueId: 'lea_1' })
+    expect(row()).equals(null)
+    await act(async () => {
+      root?.unmount()
+    })
+    // An umpire whose card no longer opens (their role was taken away).
+    await render(
+      clientFor(),
+      {
+        leagueId: 'lea_1',
+        positions: block.positions.map(position => ({
+          ...position,
+          person: { userId: 'ump', name: 'Mike T' }
+        }))
+      },
+      open
+    )
+    expect(row()).equals(null)
   })
   it('paints the Info the phone stored while the read waits out its deadline, then the server’s answer', async () => {
     const client = clientFor()

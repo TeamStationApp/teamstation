@@ -27,6 +27,7 @@ import type { GroupDetail } from '../../common/publicGroups'
 import type { Role } from '../../common/roles'
 import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
+import { personMessageAction } from '../chat/PersonMessageButton'
 import {
   Badge,
   Card,
@@ -179,6 +180,11 @@ export interface TeamScreenProps {
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
   onLoadChatPreview?: (ids: string[]) => void
+  /** Opens a DM with a person, from a people row's Message pill. */
+  onOpenPersonChat?: (chat: {
+    id: string
+    title: string
+  }) => void | Promise<void>
 }
 
 type TabId = 'videos' | 'schedule' | 'team' | 'stats' | 'chats'
@@ -679,6 +685,11 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               <>
                 <PeopleList
                   people={roster}
+                  message={
+                    props.onOpenPersonChat == null
+                      ? undefined
+                      : personMessageAction(client, props.onOpenPersonChat)
+                  }
                   kept={rosterRead ? TEAM_KEPT : undefined}
                   adds={
                     rosterRead

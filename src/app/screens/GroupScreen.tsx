@@ -70,6 +70,11 @@ export interface GroupScreenProps {
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
   onLoadChatPreview?: (ids: string[]) => void
+  /** Opens a DM with a person, from a people row's Message pill. */
+  onOpenPersonChat?: (chat: {
+    id: string
+    title: string
+  }) => void | Promise<void>
   initialTab?: string
   onTab?: (tab: string, correcting?: TabCorrection) => void
   initialWhen?: When
@@ -87,6 +92,7 @@ export function GroupScreen(props: GroupScreenProps): React.ReactElement {
         chats={props.chats}
         onOpenChat={props.onOpenChat}
         onLoadChatPreview={props.onLoadChatPreview}
+        onOpenPersonChat={props.onOpenPersonChat}
         initialTab={props.initialTab}
         onTab={props.onTab}
         onOpenGame={props.onOpenGame ?? (() => undefined)}
@@ -160,6 +166,7 @@ function GroupContent({
   chats,
   onOpenChat,
   onLoadChatPreview,
+  onOpenPersonChat,
   initialTab,
   onTab,
   initialWhen,
@@ -298,6 +305,7 @@ function GroupContent({
         chats={chats}
         onOpenChat={onOpenChat}
         onLoadChatPreview={onLoadChatPreview}
+        onOpenPersonChat={onOpenPersonChat}
         initialTab={initialTab}
         onTab={onTab}
         initialWhen={initialWhen}
@@ -385,6 +393,7 @@ function GroupContent({
       chats={chats}
       onOpenChat={onOpenChat}
       onLoadChatPreview={onLoadChatPreview}
+      onOpenPersonChat={onOpenPersonChat}
       initialTab={initialTab}
       onTab={onTab}
     />

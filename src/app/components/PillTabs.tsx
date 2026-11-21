@@ -154,7 +154,8 @@ export function PillButton({
   role = 'button',
   onPress,
   disabled = false,
-  accessibilityLabel = label
+  accessibilityLabel = label,
+  testID
 }: {
   label: string
   badge?: string
@@ -166,6 +167,8 @@ export function PillButton({
   onPress?: () => void
   disabled?: boolean
   accessibilityLabel?: string
+  /** The pressable's own test id, for a pill that stands alone. */
+  testID?: string
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const compact = size === 'compact'
@@ -180,6 +183,7 @@ export function PillButton({
       accessibilityLabel={accessibilityLabel}
       disabled={disabled}
       onPress={onPress}
+      testID={testID}
       style={({ pressed }) => [
         styles.target,
         small && styles.targetSmall,

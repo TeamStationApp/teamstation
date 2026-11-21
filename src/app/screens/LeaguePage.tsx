@@ -56,6 +56,11 @@ export interface LeaguePageProps {
   onChanged: () => void
   chats?: ChatLink[]
   onOpenChat?: (chat: ChatLink) => void
+  /** Opens a DM with a person, from a people row's Message pill. */
+  onOpenPersonChat?: (chat: {
+    id: string
+    title: string
+  }) => void | Promise<void>
   onLoadChatPreview?: (ids: string[]) => void
   initialTab?: string
   onTab?: (tab: string, correcting?: TabCorrection) => void
@@ -360,6 +365,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
             <LevelPeopleTab
               client={client}
               kind="league"
+              onOpenPersonChat={props.onOpenPersonChat}
               id={group.id}
               onOpenPlayer={props.onOpenPlayer}
               onOpenPerson={props.onOpenPerson}
