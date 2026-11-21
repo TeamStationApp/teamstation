@@ -13,16 +13,39 @@ import {
   teamsUnder
 } from '../access'
 import { onePerson } from '../admin/people'
-import type { Actor } from '../auth/sessions'
+import { type Actor, isMachine } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { canAdminister, canManagePeople, currentActor } from '../groups/rights'
 import { canHoldRoles, groupName, heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { umpireFamily } from '../umpires/context'
+import { umpireAcceptance } from '../umpires/schedule'
 import { readerOf } from '../users/readerNames'
 import { teamHeadCoach } from './teamHeadCoach'
 import { followersOf, onPeopleList } from './teamRoster'
+
+/**
+ * Whether `userId` (through any merged account) holds the league's umpire
+ * role, and whether the league manages umpires now, as a game's umpire
+ * block requires before it offers their card.
+ */
+async function umpireRole(
+  db: Kysely<Database>,
+  leagueId: string,
+  userId: string
+): Promise<{ held: boolean; managed: boolean }> {
+  const identity = await onePerson(db, userId)
+  const row = await db
+    .selectFrom('league_umpires')
+    .innerJoin('leagues', 'leagues.id', 'league_umpires.league_id')
+    .select('leagues.umpire_management as managed')
+    .where('league_umpires.league_id', '=', leagueId)
+    .where('league_umpires.user_id', 'in', identity.userIds)
+    .executeTakeFirst()
+  return { held: row != null, managed: row?.managed === true }
+}
 
 /**
  * One person as a team, a season or a league sees them, for the profile its
@@ -43,8 +66,13 @@ import { followersOf, onPeopleList } from './teamRoster'
  *   viewer who manages its people; the levels above are for reading.
  *
  * Readable by the level's administrators, coaches and assistants, and by
- * the person themselves; anybody else is answered 404, as is somebody who is
- * not on the level's people list.
+ * the person themselves. A league's umpires are also readable at the league
+ * whether or not its people list holds them: in full, read only, by its
+ * administrators; and, while the league manages umpires, as their card alone
+ * (no family, no sections), to message them from a game, by anybody else
+ * accepted into the league (`umpireAcceptance`), its coaches and assistants
+ * included. A token or Tess opens no card. Anybody else is answered 404,
+ * as is somebody who is not on the level's people list.
  */
 export async function personProfile(
   db: Kysely<Database>,
@@ -71,20 +99,33 @@ export async function personProfile(
   const self = (await onePerson(db, fresh.userId)).userIds.includes(userId)
   const manages = await canManagePeople(db, fresh, ref)
   const admin = manages && (await canAdminister(db, fresh, ref))
-  if (!manages && !self) throw notFound()
-  let editable = manages
-  if (!self && !(await onPeopleList(db, ref, userId, fresh))) {
-    const identity = await onePerson(db, userId)
-    const umpire =
-      ref.kind === 'league' && admin
-        ? await db
-            .selectFrom('league_umpires')
-            .select('user_id')
-            .where('league_id', '=', ref.id)
-            .where('user_id', 'in', identity.userIds)
-            .executeTakeFirst()
-        : undefined
-    if (umpire == null) throw notFound()
+  // Only a league's umpire card is for anybody else.
+  if (!manages && !self && ref.kind !== 'league') throw notFound()
+  const listed = self || (await onPeopleList(db, ref, userId, fresh))
+  const role =
+    !self && ref.kind === 'league'
+      ? await umpireRole(db, ref.id, userId)
+      : { held: false, managed: false }
+  // An umpire is read in full only by the league's administrators, and
+  // read only unless the people list holds them; anyone else accepted into
+  // the league, the league's coaches and assistants among them, opens their
+  // card alone, to message them from a game.
+  const umpireCard =
+    role.managed &&
+    !admin &&
+    (!manages || !listed) &&
+    !isMachine(fresh) &&
+    (manages ||
+      (await umpireAcceptance(
+        db,
+        ref.id,
+        await umpireFamily(db, fresh.userId),
+        false
+      )))
+  if (!manages && !self && !umpireCard) throw notFound()
+  let editable = manages && !umpireCard
+  if (!listed && !umpireCard) {
+    if (!(role.held && admin)) throw notFound()
     // Visibility alone does not authorize the people-list mutation routes.
     editable = false
   }
@@ -128,8 +169,10 @@ export async function personProfile(
       avatarUrl: space == null ? null : imageUrl(space, person.avatarPath),
       canHoldRoles: await canHoldRoles(db, userId)
     },
-    guardianOf: await guardianRows(db, space, ref, children, viewer, readsFull),
-    sections: await sections(db, ref, userId, editable),
+    guardianOf: umpireCard
+      ? []
+      : await guardianRows(db, space, ref, children, viewer, readsFull),
+    sections: umpireCard ? [] : await sections(db, ref, userId, editable),
     viewer: { manages: editable, admin: editable && admin, self }
   }
 }

@@ -149,6 +149,8 @@ describe('chat routes and the DM rules (U5)', function () {
       ['GET', '/chat/conversations/cnv_x/reads'],
       ['GET', '/chat/conversations/cnv_x/log'],
       ['GET', '/chat/dm-candidates'],
+      ['GET', '/chat/dm-reach'],
+      ['GET', '/chat/dm-proxies'],
       ['GET', '/chat/included-adults'],
       ['POST', '/chat/dms'],
       ['POST', '/chat/dms/cnv_x/members'],

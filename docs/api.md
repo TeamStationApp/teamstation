@@ -208,6 +208,18 @@ team, or the one team for a practice/other event. Canonical merged identities
 are deduplicated and disabled people are excluded. Saves recheck the same
 policy; an old reply cannot keep a removed player eligible.
 
+## Messaging a person
+
+`GET /chat/dm-reach?userId=<id>` answers `{ reach }`: `direct` when the viewer
+may start a DM with that person, `proxies` when that person is a player who
+cannot use chat (no account, or under 13) and the viewer may message somebody
+for them instead, and null otherwise. `GET /chat/dm-proxies?userId=<id>` names
+those people, `{ player, kind, people, why }`: their guardians and adult family
+(`guardians`), or, with none the viewer can reach, their teams' staff
+(`coaches`), and `why` (`noAccount` or `tooYoung`); 404 when there is nobody.
+Both apply the same DM rules as `GET /chat/dm-candidates`, and, like every chat
+read, are refused to somebody with no age on file or under 13.
+
 ## Chat age confirmation
 
 Chat is for people 13 and older. `GET /me/account/chat-age` answers whether

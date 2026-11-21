@@ -1,6 +1,7 @@
 import { type Kysely, sql } from 'kysely'
 
 import type { AgeBand } from '../../common/age'
+import type { MessageReach } from '../../common/api'
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
@@ -202,6 +203,32 @@ export class DmFacts {
     const settled = teams.filter(team => !held.includes(team))
     this.settled.set(userId, settled)
     return settled
+  }
+
+  /** Whether this person plays on any team. */
+  async isPlayer(userId: string): Promise<boolean> {
+    return (await this.playerTeams(userId)).length > 0
+  }
+
+  /** Whether this person has an account they can sign in with, at any age. */
+  async hasAccount(userId: string): Promise<boolean> {
+    return (await this.row(userId))?.account === true
+  }
+
+  /**
+   * Whether `creatorId` may ask to message somebody for `playerId`, a player
+   * who cannot use chat: their guardian, their teams' staff, or somebody who
+   * may use chat and plays in a season with them.
+   */
+  async mayNamePlayer(creatorId: string, playerId: string): Promise<boolean> {
+    if (creatorId === playerId) return false
+    const { guardians } = await this.relativesOf(playerId)
+    if (guardians.has(creatorId)) return true
+    if ((await this.staffOf(playerId)).has(creatorId)) return true
+    return (
+      (await this.eligible(creatorId)) &&
+      (await this.sharesSeason(creatorId, playerId))
+    )
   }
 
   /** The seasons these teams play in. */
@@ -1056,6 +1083,118 @@ export async function dmCandidateIds(
     named.push(id)
   }
   return named
+}
+
+/** How a viewer can message somebody, or null when they cannot. */
+export type DmReach = MessageReach | null
+
+/**
+ * Whom to message instead of a player who cannot be messaged themselves,
+ * and why they cannot: no account they can sign in with (`noAccount`), or
+ * one, but under 13, too young for chat (`tooYoung`).
+ */
+export interface DmProxyIds {
+  kind: 'guardians' | 'coaches'
+  ids: string[]
+  why: 'noAccount' | 'tooYoung'
+}
+
+/**
+ * Whether `viewerId` may start a DM with `targetId` alone: the naming rule
+ * and the pair rule, as `dmCandidateIds` applies them. Neither reads the block
+ * policy, which `createDm` applies when the DM is made.
+ */
+async function reachable(
+  facts: DmFacts,
+  viewerId: string,
+  targetId: string
+): Promise<boolean> {
+  return (
+    (await facts.mayName(viewerId, targetId)) &&
+    (await facts.pairRuleBreaks([viewerId, targetId])).length === 0
+  )
+}
+
+/**
+ * The people `viewerId` may message for player `playerId`, who cannot sign
+ * in: their guardians and adult family members, or, with none of those the
+ * viewer can reach, their current coaches. Never the viewer.
+ */
+async function proxiesFor(
+  facts: DmFacts,
+  viewerId: string,
+  playerId: string
+): Promise<DmProxyIds> {
+  const keep = async (ids: Iterable<string>): Promise<string[]> => {
+    const kept: string[] = []
+    for (const id of ids)
+      if (id !== viewerId && (await reachable(facts, viewerId, id)))
+        kept.push(id)
+    return kept
+  }
+  const { guardians, family } = await facts.relativesOf(playerId)
+  const adults: string[] = [...guardians]
+  for (const id of family)
+    if (await facts.isAdultFor(id, playerId)) adults.push(id)
+  const kin = await keep(adults)
+  const why = (await facts.hasAccount(playerId)) ? 'tooYoung' : 'noAccount'
+  if (kin.length > 0) return { kind: 'guardians', ids: kin, why }
+  return {
+    kind: 'coaches',
+    ids: await keep(await facts.staffOf(playerId)),
+    why
+  }
+}
+
+/**
+ * How `viewerId` can message `targetId`: `direct` when they may start a DM
+ * with that person, `proxies` when that person is a player who cannot sign
+ * in, whom the viewer may name as a player, and who has somebody the viewer
+ * can message instead (`dmProxies`), and null otherwise.
+ */
+export async function dmReach(
+  db: Kysely<Database>,
+  viewerId: string,
+  targetId: string,
+  now: Date = new Date()
+): Promise<DmReach> {
+  const facts = new DmFacts(db, now)
+  if (!(await facts.eligible(viewerId))) return null
+  await facts.load([viewerId, targetId])
+  return (await reachOf(facts, viewerId, targetId)).reach
+}
+
+async function reachOf(
+  facts: DmFacts,
+  viewerId: string,
+  targetId: string
+): Promise<{ reach: DmReach; proxies?: DmProxyIds }> {
+  if (targetId === viewerId) return { reach: null }
+  if (await facts.eligible(targetId))
+    return {
+      reach: (await reachable(facts, viewerId, targetId)) ? 'direct' : null
+    }
+  if (!(await facts.isPlayer(targetId))) return { reach: null }
+  if (!(await facts.mayNamePlayer(viewerId, targetId))) return { reach: null }
+  const proxies = await proxiesFor(facts, viewerId, targetId)
+  return proxies.ids.length > 0
+    ? { reach: 'proxies', proxies }
+    : { reach: null }
+}
+
+/**
+ * Whom `viewerId` may message for `playerId`, a player who cannot sign in,
+ * or null when `dmReach` would not answer `proxies` for them.
+ */
+export async function dmProxies(
+  db: Kysely<Database>,
+  viewerId: string,
+  playerId: string,
+  now: Date = new Date()
+): Promise<DmProxyIds | null> {
+  const facts = new DmFacts(db, now)
+  if (!(await facts.eligible(viewerId))) return null
+  return (await reachOf(facts, viewerId, playerId)).proxies ?? null
 }
 
 /**

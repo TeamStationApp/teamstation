@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
-import type { GroupFixture } from '../../test/groupFixtures'
+import { actor, type GroupFixture } from '../../test/groupFixtures'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { seedUmpireCounts } from '../../test/umpireTypes'
 import { atomic } from '../db/atomic'
@@ -105,6 +105,102 @@ describe('umpire signup, credits, removal and leaderboard', function () {
     expect(
       block?.positions.find(p => p.typeId === 'uty_plate')?.person?.userId
     ).equals(person)
+    // The league comes with the block only for a reader accepted into it.
+    expect(block).not.to.have.property('leagueId')
+    expect(
+      (
+        await gameUmpires(
+          f.h.db,
+          'gam_umpire',
+          undefined,
+          undefined,
+          actor(101)
+        )
+      )?.leagueId
+    ).equals(f.leagueA)
+    // 102 administers League B only; 106 has no tie to League A.
+    for (const outsider of [102, 106])
+      expect(
+        await gameUmpires(
+          f.h.db,
+          'gam_umpire',
+          undefined,
+          undefined,
+          actor(outsider)
+        )
+      ).not.to.have.property('leagueId')
+    // A machine token reads the block, with no league and no refusal.
+    const machine = await gameUmpires(
+      f.h.db,
+      'gam_umpire',
+      undefined,
+      undefined,
+      {
+        ...actor(101),
+        apiTokenId: 'tok_machine'
+      }
+    )
+    expect(machine?.positions.length).greaterThan(0)
+    expect(machine).not.to.have.property('leagueId')
+    const detail = async (user: number | null): Promise<any> =>
+      await (
+        await f.h.request('GET', '/games/gam_umpire', undefined, user)
+      ).json()
+    expect((await detail(101)).umpires.leagueId).equals(f.leagueA)
+    const plate = async (): Promise<any> =>
+      (await detail(101)).umpires.positions.find(
+        (p: { typeId: string }) => p.typeId === 'uty_plate'
+      ).person
+    expect((await plate()).openable).equals(true)
+    // Revoked, on a finished game: the slot stays, and its card no longer
+    // opens.
+    await f.h.db
+      .deleteFrom('league_umpires')
+      .where('league_id', '=', f.leagueA)
+      .where('user_id', '=', person)
+      .execute()
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'final' })
+      .where('id', '=', 'gam_umpire')
+      .execute()
+    expect((await plate()).userId).equals(person)
+    expect(await plate()).not.to.have.property('openable')
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'scheduled' })
+      .where('id', '=', 'gam_umpire')
+      .execute()
+    await f.h.db
+      .insertInto('league_umpires')
+      .values({
+        league_id: f.leagueA,
+        user_id: person,
+        granted_by: userIdOfGumbo(101)
+      })
+      .execute()
+    expect((await detail(106)).umpires ?? {}).not.to.have.property('leagueId')
+    // Accepted into League A through a season role, on neither team: the
+    // game's non-member view still names the league.
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'rol_umpire_card_coach',
+        user_id: userIdOfGumbo(106),
+        scope_type: 'season',
+        scope_id: f.playoffs,
+        role: 'coach',
+        granted_by: userIdOfGumbo(101),
+        granted_at: new Date()
+      })
+      .execute()
+    const outsider = await detail(106)
+    expect(outsider.nonMemberView).equals(true)
+    expect(outsider.umpires.leagueId).equals(f.leagueA)
+    await f.h.db
+      .deleteFrom('scope_roles')
+      .where('id', '=', 'rol_umpire_card_coach')
+      .execute()
     expect(
       block?.positions.filter(p => p.typeId === 'uty_field').map(p => p.person)
     ).deep.equals([null])
