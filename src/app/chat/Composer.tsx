@@ -7,6 +7,7 @@ import { GlassView } from '../components/GlassView'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { sendAllowed } from './chatComposeModel'
+import { ChatComposerRow } from './ChatComposerRow'
 import type { PickedFile, PickSource } from './chatFileTypes'
 import {
   type ComposerChange,
@@ -291,7 +292,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           </Pressable>
         </View>
       )}
-      <View style={styles.row}>
+      <ChatComposerRow style={styles.row} collapsable={false}>
         {props.sources.length > 0 && (
           <Pressable
             accessibilityRole="button"
@@ -393,7 +394,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
             color={canSend ? theme.buttonTextColor : theme.tertiaryTextColor}
           />
         </Pressable>
-      </View>
+      </ChatComposerRow>
       {emoji && (
         <EmojiPicker
           onPick={picked => {

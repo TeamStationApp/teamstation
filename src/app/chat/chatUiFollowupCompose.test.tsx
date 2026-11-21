@@ -7,6 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AppState, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
+import { lstrings } from '../locales/strings'
 import { activeConversation } from '../push/activeConversation'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { whileChatBrowserOpen } from './chatBrowserVisibility'
@@ -1402,7 +1403,11 @@ describe('chat conversation shared file preparation and sending', function () {
     )
   })
 
-  it('keeps editing across a partial history read and restores the parked draft when the original disappears', async () => {
+  async function retainOlderEdit(): Promise<{
+    engine: FakeEngine
+    room: string
+    original: ReturnType<typeof message>
+  }> {
     const engine = new FakeEngine()
     const room = 'cnv_aurora'
     const original = message({ mine: true, seq: 8, body: 'Afternoon practice' })
@@ -1417,6 +1422,11 @@ describe('chat conversation shared file preparation and sending', function () {
       engine.update(room, { messages: [], hasEarlier: true, historyBefore: 12 })
       await wait()
     })
+    return { engine, room, original }
+  }
+
+  it('keeps editing across a partial history read and restores the parked draft when the original disappears', async () => {
+    const { engine, room } = await retainOlderEdit()
     expect(input().value).equals('Evening practice')
     await act(async () => {
       engine.update(room, { messages: [], hasEarlier: true, historyBefore: 4 })
@@ -1427,6 +1437,98 @@ describe('chat conversation shared file preparation and sending', function () {
     expect(
       engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
     ).deep.equals([])
+  })
+
+  it('loads an older edit target once when Save follows a partial history refresh', async () => {
+    const { engine, room, original } = await retainOlderEdit()
+    // A stalled cursor keeps the edited text available for a retry.
+    engine.loadEarlier = async id => engine.view(id)!
+    await press('Send')
+    for (
+      let frame = 0;
+      frame < 30 &&
+      document.body.textContent?.includes(lstrings.chat_send_failed) !== true;
+      frame++
+    )
+      await act(async () => {
+        await wait(80)
+      })
+    expect(document.body.textContent).contains(lstrings.chat_send_failed)
+    expect(input().value).equals('Evening practice')
+
+    let resume!: () => void
+    const pending = new Promise<void>(resolve => {
+      resume = resolve
+    })
+    let pages = 0
+    engine.loadEarlier = async id => {
+      pages++
+      await pending
+      engine.update(id, {
+        messages: [original],
+        hasEarlier: false,
+        historyBefore: 8
+      })
+      return engine.view(id)!
+    }
+    await press('Send')
+    await press('Send')
+    expect(pages).equals(1)
+    await act(async () => {
+      resume()
+      await wait()
+    })
+    for (
+      let frame = 0;
+      frame < 30 && input().value !== 'Bring the bats';
+      frame++
+    )
+      await act(async () => {
+        await wait(80)
+      })
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([['edit', room, original.id, 'Evening practice']])
+    expect(input().value).equals('Bring the bats')
+  })
+
+  it('ignores a late history page when the older edit was cancelled during Save', async () => {
+    const { engine, original } = await retainOlderEdit()
+    let resume!: () => void
+    const pending = new Promise<void>(resolve => {
+      resume = resolve
+    })
+    let requested = false
+    engine.loadEarlier = async id => {
+      requested = true
+      await pending
+      engine.update(id, {
+        messages: [original],
+        hasEarlier: false,
+        historyBefore: 8
+      })
+      return engine.view(id)!
+    }
+    await press('Send')
+    expect(requested).equals(true)
+    await press('Cancel edit')
+    await act(async () => {
+      resume()
+      await wait()
+    })
+    for (
+      let frame = 0;
+      frame < 30 && button('Send').getAttribute('aria-disabled') === 'true';
+      frame++
+    )
+      await act(async () => {
+        await wait(80)
+      })
+    expect(input().value).equals('Bring the bats')
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([])
+    expect(document.body.textContent).not.contains(lstrings.chat_send_failed)
   })
 
   it('handles physical Up only in the empty field, reads earlier history and cancels on Escape', async () => {

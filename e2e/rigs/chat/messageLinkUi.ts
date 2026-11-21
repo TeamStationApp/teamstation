@@ -44,6 +44,31 @@ export async function readChatComposer(
   return element.value ?? ''
 }
 
+/** Clear the exact draft and verify the native field even when Android clears only a word. */
+export async function clearChatComposer(
+  m: MaestroDevice,
+  platform: string,
+  expected: string,
+  web?: WebSession
+): Promise<void> {
+  if (platform === 'android') await m.tapOn(composer)
+  assert.equal(await readChatComposer(m, platform, web), expected)
+  await m.eraseText({ characters: expected.length })
+  if (platform !== 'android') return
+  // Android's accessibility Clear can leave React Native's value intact.
+  // Use actual edit keys for any text the optimized command left behind.
+  const remaining = await readChatComposer(m, platform, web)
+  if (remaining !== '' && remaining !== 'Message') {
+    assert(expected.includes(remaining))
+    let rightKeys = remaining.length
+    while (rightKeys-- > 0) await m.pressKey({ key: 'DPAD_RIGHT' })
+    let deleteKeys = remaining.length
+    while (deleteKeys-- > 0) await m.pressKey({ key: 'BACKSPACE' })
+  }
+  const cleared = await readChatComposer(m, platform, web)
+  assert(cleared === '' || cleared === 'Message')
+}
+
 async function waitForComposer(
   m: MaestroDevice,
   observer: Awaited<ReturnType<typeof providerFor>>,

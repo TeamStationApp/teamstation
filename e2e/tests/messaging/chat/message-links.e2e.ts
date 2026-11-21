@@ -11,7 +11,11 @@ import {
   fixtureFor,
   providerFor
 } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
+import {
+  chatLinkUi,
+  clearChatComposer,
+  readChatComposer
+} from '../../../rigs/chat/messageLinkUi'
 
 const composer = { id: 'chat-composer' }
 const exact = (s: string): string =>
@@ -309,7 +313,7 @@ async function copyMessage(
       selector,
       body
     )
-    await m.eraseText({ characters: body.length })
+    await clearChatComposer(m, platform, body, web)
   } else {
     await waitForMenuDismissal(m)
     await m.tapOn(composer)
@@ -323,7 +327,7 @@ async function copyMessage(
       body,
       'Paste must put the complete message in the editable composer'
     )
-    await m.eraseText({ characters: body.length })
+    await clearChatComposer(m, platform, body, web)
     await dismissComposerKeyboard(m, platform)
   }
 }
@@ -659,7 +663,7 @@ async function open(ctx: E2eContext): Promise<void> {
         const draft = 'Draft ' + id
         await m.inputText({ text: draft })
         assert.equal(await readChatComposer(m, platform, web), draft)
-        await m.eraseText({ characters: draft.length })
+        await clearChatComposer(m, platform, draft, web)
         if (web == null) await dismissComposerKeyboard(m, platform)
         await copyMessage(m, web, first, body, platform)
         await copyMessage(m, web, second, caption, platform)

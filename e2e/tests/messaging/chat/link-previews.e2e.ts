@@ -12,7 +12,7 @@ import {
 } from '../../../../src/test/chat2Maestro.e2e'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
 import {
   checkCoveredPreview,
   receiveWithDelayedImage
@@ -101,9 +101,10 @@ async function send(ctx: E2eContext): Promise<void> {
         if (mode === 'pending' && web == null)
           address.searchParams.set('probe', probe)
         const url = address.href
-        const body = mode + ' ' + probe.slice(0, 8) + ' ' + url
+        const body = 'Preview ' + mode + ' ' + probe.slice(0, 8) + ' ' + url
         await m.tapOn({ id: 'chat-composer' })
         await m.inputText({ text: body })
+        assert.equal(await readChatComposer(m, platform, web), body)
         if (mode === 'ready' || mode === 'dismissed') {
           await m.assertVisible({
             id: 'chat-dismiss-link-preview',

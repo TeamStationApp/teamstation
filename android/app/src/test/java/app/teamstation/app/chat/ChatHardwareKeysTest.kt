@@ -4,6 +4,7 @@
 package app.teamstation.app.chat
 
 import android.app.Activity
+import android.app.Instrumentation
 import android.app.Application
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -11,6 +12,7 @@ import android.view.inputmethod.BaseInputConnection
 import android.widget.EditText
 import android.widget.LinearLayout
 import app.teamstation.app.MainActivity
+import app.teamstation.app.MainApplication
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.JavaOnlyMap
 import com.facebook.react.bridge.WritableMap
@@ -23,6 +25,8 @@ import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.R
+import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags
+import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.views.textinput.ReactEditText
 import org.junit.Assert.*
 import org.junit.Test
@@ -36,6 +40,14 @@ import org.robolectric.annotation.Config
 class ChatKeyArgumentsShadow {
   companion object {
     @JvmStatic @Implementation fun createMap(): WritableMap = JavaOnlyMap()
+  }
+}
+
+// ReactViewManager normally reads this setting through the native library.
+@Implements(value = ReactNativeFeatureFlags::class, isInAndroidSdk = false)
+class ChatViewFlagsShadow {
+  companion object {
+    @JvmStatic @Implementation fun enableViewRecyclingForView(): Boolean = false
   }
 }
 
@@ -73,6 +85,33 @@ class ChatHardwareKeysTest {
   private fun event(key: Int = up, action: Int = KeyEvent.ACTION_DOWN, repeat: Int = 0,
                     modifiers: Int = 0, flags: Int = 0, source: Int = InputDevice.SOURCE_KEYBOARD) =
     KeyEvent(1, 1, action, key, repeat, modifiers, 3, 0, flags, source)
+
+  @Test fun applicationRegistersTheChatComposerPackageOnce() {
+    val app = Instrumentation.newApplication(MainApplication::class.java, activity.applicationContext) as MainApplication
+    assertEquals(1, app.reactPackages().filterIsInstance<ChatComposerKeysPackage>().size)
+  }
+
+  @Test
+  @Config(shadows = [ChatViewFlagsShadow::class])
+  fun composerClaimsEscapeBeforeTheInputMethodWhileOtherKeysContinue() {
+    val context = ThemedReactContext(reactContext, activity, "TeamStation", 1)
+    val manager = ChatComposerKeysPackage().createViewManagers(reactContext).single() as ChatComposerKeysManager
+    assertEquals("TSChatComposerKeys", manager.name)
+    assertTrue(manager.createViewInstance(context) is ChatComposerKeysView)
+
+    val row = ChatComposerKeysView(context, handler)
+    (field.parent as android.view.ViewGroup).removeView(field)
+    activity.setContentView(row)
+    row.addView(field)
+    field.requestFocusFromJS()
+    assertSame(field, row.findFocus())
+    field.setTag(R.id.view_tag_native_id, "chatComposerCancelEdit")
+    assertTrue(row.dispatchKeyEventPreIme(event(esc)))
+    assertTrue(row.dispatchKeyEventPreIme(event(esc, KeyEvent.ACTION_UP)))
+    assertEquals(listOf("Escape"), sent)
+    field.setTag(R.id.view_tag_native_id, "tessComposerField")
+    assertFalse(row.dispatchKeyEventPreIme(event(esc)))
+  }
 
   @Test
   @Config(shadows = [ChatKeyArgumentsShadow::class])

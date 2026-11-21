@@ -191,6 +191,8 @@ tasks.register('chatKeysCoverage', JacocoReport) {
         include 'app/teamstation/app/MainActivity.class'
         include 'app/teamstation/app/chat/ChatHardwareKeys*'
         include 'app/teamstation/app/chat/ChatKeyPress*'
+        include 'app/teamstation/app/chat/ChatComposerKeys*'
+        include 'app/teamstation/app/MainApplication*'
     })
     reports {
         xml.required = true

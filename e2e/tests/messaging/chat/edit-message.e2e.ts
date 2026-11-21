@@ -17,7 +17,11 @@ import {
 import { isHubDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
+import {
+  chatLinkUi,
+  clearChatComposer,
+  readChatComposer
+} from '../../../rigs/chat/messageLinkUi'
 
 async function edit(ctx: E2eContext): Promise<void> {
   const f = fixtureFor(ctx)
@@ -124,27 +128,20 @@ async function edit(ctx: E2eContext): Promise<void> {
         }
       }
       const field = { id: 'chat-composer' }
-      const clearComposer = async (expected: string): Promise<void> => {
-        if (platform === 'android') await m.tapOn(field)
-        assert.equal(await readChatComposer(m, platform, web), expected)
-        await m.eraseText({ characters: expected.length })
-        if (platform !== 'android') return
-        // Android's accessibility Clear can leave React Native's value intact.
-        // Use actual edit keys for any text the optimized command left behind.
-        const remaining = await readChatComposer(m, platform, web)
-        if (remaining !== '' && remaining !== 'Message') {
-          assert(expected.includes(remaining))
-          let rightKeys = remaining.length
-          while (rightKeys-- > 0) await m.pressKey({ key: 'DPAD_RIGHT' })
-          let deleteKeys = remaining.length
-          while (deleteKeys-- > 0) await m.pressKey({ key: 'BACKSPACE' })
-        }
-        const cleared = await readChatComposer(m, platform, web)
-        assert(cleared === '' || cleared === 'Message')
-      }
       const enterText = async (text: string): Promise<void> => {
         await m.inputText({ text, keyPress: platform === 'android' })
         assert.equal(await readChatComposer(m, platform, web), text)
+      }
+      const pressLocalEscape = (): void => {
+        execFileSync('adb', [
+          '-s',
+          ctx.device('phone'),
+          'shell',
+          'input',
+          'keyboard',
+          'keyevent',
+          '111'
+        ])
       }
       const editButton = { text: '^Edit$' }
       const draft = 'Please bring the equipment list.'
@@ -269,6 +266,31 @@ async function edit(ctx: E2eContext): Promise<void> {
         )
       }
       assert.equal(await readChatComposer(m, platform, web), originalCaption)
+      if (platform === 'android' && !isHubDevice(ctx.device('phone'))) {
+        // A menu edit brings up the IME over the parked draft. One physical
+        // Escape must reach the editor before the IME can consume it.
+        await m.tapOn(field)
+        const imeVisible = (): boolean =>
+          /\bmInputShown=true\b/.test(
+            execFileSync(
+              'adb',
+              ['-s', ctx.device('phone'), 'shell', 'dumpsys', 'input_method'],
+              { encoding: 'utf8' }
+            )
+          )
+        const deadline = Date.now() + 5000
+        while (!imeVisible() && Date.now() < deadline) await delay(100)
+        assert(
+          imeVisible(),
+          'The soft keyboard must be shown before testing Escape'
+        )
+        pressLocalEscape()
+        await m.assertNotVisible({ text: '^Editing your message$' })
+        assert.equal(await readChatComposer(m, platform, web), draft)
+        await openMenu(original.id)
+        await m.tapOn(editButton)
+        assert.equal(await readChatComposer(m, platform, web), originalCaption)
+      }
       // Android's default element send-keys can replace a field. Type at the
       // live caret so the action exercises the same append as a keyboard.
       await m.inputText({ text: ' updated', keyPress: platform === 'android' })
@@ -323,7 +345,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       assert.equal(await readChatComposer(m, platform, web), draft)
       await openMenu(original.id)
       await m.tapOn(editButton)
-      await clearComposer(originalCaption)
+      await clearChatComposer(m, platform, originalCaption, web)
       const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
       await enterText(editedCaption)
       await m.assertVisible({ id: 'chat-dismiss-link-preview', timeout: 18000 })
@@ -365,7 +387,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       })
       await openMenu(original.id)
       await m.tapOn(editButton)
-      await clearComposer(editedCaption)
+      await clearChatComposer(m, platform, editedCaption, web)
       await m.assertNotVisible({ id: 'chat-dismiss-link-preview' })
       // Removing the preview changes the composer height. Tap its settled Send
       // button after the card and multiline caption have collapsed.
@@ -380,7 +402,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       assert.equal(cleared.preview, undefined)
       if (web != null) await m.tapOn({ text: '^Remove equipment.txt$' })
       await m.tapOn(field)
-      await clearComposer(draft)
+      await clearChatComposer(m, platform, draft, web)
       let keyboardReceipt = ''
       if (platform !== 'ios') {
         const emptyField = await readChatComposer(m, platform, web)
@@ -405,17 +427,9 @@ async function edit(ctx: E2eContext): Promise<void> {
               'The Android hub delivered Up. Cancel restored the draft on this phone. This driver has no Escape mapping.'
           }
         } else {
-          execFileSync('adb', [
-            '-s',
-            ctx.device('phone'),
-            'shell',
-            'input',
-            'keyboard',
-            'keyevent',
-            '111'
-          ])
+          pressLocalEscape()
           keyboardReceipt =
-            'Android delivered Up and keyboard Escape to the focused field.'
+            'Android delivered Up and one keyboard Escape for each menu and keyboard edit.'
         }
         await m.assertNotVisible({ text: '^Editing your message$' })
         assert.equal(await readChatComposer(m, platform, web), emptyField)

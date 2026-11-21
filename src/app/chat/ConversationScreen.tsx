@@ -2325,14 +2325,6 @@ export function ConversationScreen(
       })
     )
       return
-    const editingTarget = editingNow.current
-    if (editingTarget != null) {
-      const latest = current.messages.find(
-        message => message.id === editingTarget.id
-      )
-      if (latest == null || !actionsFor(latest, current).includes('edit'))
-        return
-    }
     const submission = draftOwner.begin(conversationId)
     if (submission == null) return
     const submitted = submission.draft
@@ -2345,6 +2337,36 @@ export function ConversationScreen(
       submitted.editing
     )
     const work = async (): Promise<unknown> => {
+      if (submitted.editing != null) {
+        const targetId = submitted.editing.id
+        let latest = engine.view(conversationId)
+        let original = latest?.messages.find(message => message.id === targetId)
+        if (original == null) {
+          const cancelled = (): boolean =>
+            !mounted.current ||
+            !paneActive.current ||
+            draftOwner.draft(conversationId).editing?.id !== targetId ||
+            engine.view(conversationId)?.composer !== 'enabled'
+          await findOriginal(
+            {
+              view: engine.view.bind(engine),
+              loadEarlier: async () => await discoverPage(cancelled)
+            },
+            conversationId,
+            targetId,
+            cancelled
+          )
+          if (cancelled()) throw new AttentionCancelled()
+          latest = engine.view(conversationId)
+          original = latest?.messages.find(message => message.id === targetId)
+        }
+        if (
+          latest == null ||
+          original == null ||
+          !actionsFor(original, latest).includes('edit')
+        )
+          throw new Error('Message unavailable')
+      }
       if (submission.retry != null) return await submission.retry()
       if (submitted.editing != null) {
         if (preview != null)
