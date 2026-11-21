@@ -228,6 +228,8 @@ describe('entity chat app routing', () => {
     proto.umpireLeagues = async () => [
       { id: 'lea_demo', name: 'Demo League', logoUrl: null }
     ]
+    // No saved schedule filter: the schedule loads as it was opened.
+    proto.umpireAvailability = async () => null
     proto.umpireSchedulePage = async (_league, _query, page) =>
       pageOfUmpireSchedule(
         {

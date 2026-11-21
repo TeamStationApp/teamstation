@@ -13,7 +13,8 @@ import { webSettings } from './web-build-settings.mjs'
 // Line coverage of umpire availability: the saved filter per person and
 // league, its match, the routes that save, read and query it, the
 // commitments read, the profile and list fields, GraphQL and Tess's prompt,
-// from the suites that exercise them. Each file the work adds must have 95%
+// and the schedule's Save filter and the saved filter it applies, from the
+// suites that exercise them. Each file the work adds must have 95%
 // of its lines covered and each file it edits 95% of the lines it changes,
 // read from `TS_COVERAGE_BASE` (origin/develop unless given) to HEAD, the
 // repository's combined bar. `--screens` runs only the app suites, with no
@@ -33,10 +34,11 @@ const specs = [
   'src/server/tess/denyList.test.ts',
   'src/server/openapi.test.ts',
   'src/server/auth/apiKeyFamilies.test.ts',
-  'src/migrate/runner.integration.test.ts'
+  'src/migrate/runner.integration.test.ts',
+  'src/app/navigation/routes.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
-const screens = [].filter(
+const screens = ['src/app/umpires/scheduleUi.test.tsx'].filter(
   file =>
     existsSync(file) &&
     (process.env.TS_UMPIRE_AVAILABILITY_SCREENS == null ||
@@ -64,7 +66,10 @@ const edited = [
   'src/server/openapi.ts',
   'src/server/auth/apiKeyFamilies.ts',
   'src/server/graphql/schema.ts',
-  'src/server/tess/prompt.ts'
+  'src/server/tess/prompt.ts',
+  'src/app/navigation/routes.ts',
+  'src/app/locales/en_US.ts',
+  'src/app/umpires/UmpireScheduleScreen.tsx'
 ]
 
 if (!screensOnly) {

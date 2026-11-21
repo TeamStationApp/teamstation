@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Linking, Platform } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
+import type { UmpireAvailability } from '../../common/umpires'
 import {
   UMPIRE_RANK_SYMBOLS,
   type UmpireSchedule
@@ -20,10 +21,14 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import { GameUmpires } from './GameUmpires'
 import { UmpireLeaderboardView } from './UmpireLeaderboardView'
 import {
+  appliedAvailability,
+  availabilityDiffers,
   initialUmpireGame,
   optionalPositionHeader,
+  routeNamesFilter,
   umpireFilterLabel,
-  UmpireScheduleScreen
+  UmpireScheduleScreen,
+  withAvailability
 } from './UmpireScheduleScreen'
 import { UmpireSignup } from './UmpireSignup'
 describe('scheduleUi.test.tsx', () => {
@@ -465,6 +470,7 @@ describe('scheduleUi.test.tsx', () => {
     }
     client.umpireSchedulePage = async (_id, _query, page) =>
       pageOfUmpireSchedule(schedule, page)
+    client.umpireAvailability = async () => null
     client.umpireLeaderboard = async () => ({
       completed: [{ userId: 'uma', name: 'Uma L', count: 1, symbol: '🏆' }],
       scheduled: [],
@@ -1192,5 +1198,349 @@ describe('scheduleUi.test.tsx', () => {
       root!.render(<ThemeProvider>{screen(true)}</ThemeProvider>)
     })
     expect(held).deep.equals(['held', 'let go', 'held'])
+  })
+  describe('Save filter', () => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const other = zone === 'America/Chicago' ? 'Asia/Tokyo' : 'America/Chicago'
+    const weeknights: UmpireAvailability = {
+      levels: [],
+      days: [0, 1, 2, 3, 4],
+      from: '17:00',
+      to: '23:00',
+      timezone: other
+    }
+    const saveButton = (): HTMLElement | null =>
+      document.querySelector('[data-testid="umpire-save-filter"]')
+    /** A read of the saved filter that answers when the test says. */
+    function deferred<T>(): {
+      promise: Promise<T>
+      resolve: (value: T) => void
+    } {
+      let answer!: (value: T) => void
+      const promise = new Promise<T>(resolve => {
+        answer = resolve
+      })
+      return { promise, resolve: answer }
+    }
+    /** The screen on a route of its own, with every schedule query kept. */
+    async function harness(
+      f: ReturnType<typeof fixture>,
+      start: Partial<UmpireScheduleRoute> = {},
+      leagues: Array<{ id: string; name: string; logoUrl: null }> = []
+    ): Promise<{ route: () => UmpireScheduleRoute; queries: string[] }> {
+      const queries: string[] = []
+      f.client.umpireSchedulePage = async (id, query, page) => {
+        queries.push(`${id}?${query ?? ''}`)
+        return pageOfUmpireSchedule(f.schedule, page)
+      }
+      let current: UmpireScheduleRoute
+      function Harness(): React.ReactElement {
+        const [route, setRoute] = useState<UmpireScheduleRoute>({
+          name: 'umpireSchedule',
+          id: 'demo',
+          ...start
+        })
+        current = route
+        return (
+          <UmpireScheduleScreen
+            client={f.client}
+            route={route}
+            leagues={leagues}
+            onRoute={setRoute}
+          />
+        )
+      }
+      await mount(<Harness />)
+      return { route: () => current, queries }
+    }
+    it('compares the applied filter with the saved one, the zone only where days or times read it', () => {
+      const route: UmpireScheduleRoute = { name: 'umpireSchedule', id: 'demo' }
+      const none = appliedAvailability(route)
+      expect(none).deep.equals({
+        levels: [],
+        days: [],
+        from: null,
+        to: null,
+        timezone: zone
+      })
+      expect(availabilityDiffers(none, null)).equals(false)
+      expect(availabilityDiffers({ ...none, levels: ['majors'] }, null)).equals(
+        true
+      )
+      expect(availabilityDiffers(none, weeknights)).equals(true)
+      const applied = appliedAvailability(withAvailability(route, weeknights))
+      expect(availabilityDiffers(applied, weeknights)).equals(false)
+      expect(
+        availabilityDiffers(
+          { ...applied, days: [4, 3, 2, 1, 0] },
+          { ...weeknights }
+        )
+      ).equals(false)
+      expect(
+        availabilityDiffers({ ...applied, to: '22:00' }, weeknights)
+      ).equals(true)
+      expect(
+        availabilityDiffers({ ...applied, timezone: zone }, weeknights)
+      ).equals(true)
+      const levelsOnly = { ...weeknights, days: [], from: null, to: null }
+      expect(
+        availabilityDiffers(
+          { ...levelsOnly, levels: ['majors'], timezone: zone },
+          { ...levelsOnly, levels: ['majors'] }
+        )
+      ).equals(false)
+      expect(
+        availabilityDiffers(
+          { ...levelsOnly, levels: ['majors'] },
+          { ...levelsOnly, levels: ['aa'] }
+        )
+      ).equals(true)
+      expect(routeNamesFilter({ ...route, priorSeasons: 'true' })).equals(false)
+      expect(routeNamesFilter({ ...route, to: '18:00' })).equals(true)
+      expect(
+        withAvailability(
+          { ...route, priorSeasons: 'true', levels: 'aa' },
+          { ...weeknights, levels: [], days: [] }
+        )
+      ).deep.equals({
+        ...route,
+        priorSeasons: 'true',
+        levels: undefined,
+        days: undefined,
+        from: '17:00',
+        to: '23:00',
+        timezone: other
+      })
+    })
+    it('refuses half a time range in the dialog, so Apply stays off', async () => {
+      const f = fixture()
+      const h = await harness(f)
+      await press('Schedule filters')
+      await press('Start time')
+      await press('Use time')
+      expect(document.body.textContent).contains(
+        'Choose both a start and an end time.'
+      )
+      expect(target('Apply filters').getAttribute('aria-disabled')).equals(
+        'true'
+      )
+      await press('End time')
+      await press('Use time')
+      expect(document.body.textContent).not.contains(
+        'Choose both a start and an end time.'
+      )
+      await press('Start time')
+      await press('Clear filters')
+      await press('End time')
+      await press('Use time')
+      expect(document.body.textContent).contains(
+        'Choose both a start and an end time.'
+      )
+      await press('Cancel')
+      expect(h.route().to).equals(undefined)
+    })
+    it('waits for the saved filter, then applies it with its zone and keeps prior seasons', async () => {
+      const f = fixture()
+      const read = deferred<UmpireAvailability | null>()
+      const leagues: string[] = []
+      f.client.umpireAvailability = async league => {
+        leagues.push(league)
+        return await read.promise
+      }
+      const h = await harness(f, { priorSeasons: 'true' })
+      expect(leagues).deep.equals(['demo'])
+      // No schedule request before the saved filter is known.
+      expect(h.queries).deep.equals([])
+      expect(saveButton()).equals(null)
+      expect(document.body.textContent).contains('Loading…')
+      await act(async () => {
+        read.resolve(weeknights)
+      })
+      expect(h.route()).includes({
+        days: '0,1,2,3,4',
+        from: '17:00',
+        to: '23:00',
+        timezone: other,
+        priorSeasons: 'true'
+      })
+      expect(h.route().levels).equals(undefined)
+      const first = new URLSearchParams(h.queries[0].split('?')[1])
+      expect(first.get('days')).equals('0,1,2,3,4')
+      expect(first.get('from')).equals('17:00')
+      expect(first.get('timezone')).equals(other)
+      expect(h.queries.every(q => q.includes('days=0'))).equals(true)
+      expect(target('Schedule filters').textContent).contains('MTWTF')
+      // Applied equals saved: nothing to save.
+      expect(saveButton()).equals(null)
+    })
+    it('reads no saved filter for an empty league and loads as before', async () => {
+      const f = fixture()
+      const leagues: string[] = []
+      f.client.umpireAvailability = async league => {
+        leagues.push(league)
+        return weeknights
+      }
+      const h = await harness(f, { id: '' })
+      expect(leagues).deep.equals([])
+      expect(h.queries).length(1)
+      expect(h.route().days).equals(undefined)
+      expect(saveButton()).equals(null)
+    })
+    it('leaves a route that names a filter as it is and loads it at once', async () => {
+      const f = fixture()
+      const read = deferred<UmpireAvailability | null>()
+      f.client.umpireAvailability = async () => await read.promise
+      const h = await harness(f, { days: '5' })
+      expect(h.queries).length(1)
+      expect(
+        new URLSearchParams(h.queries[0].split('?')[1]).get('timezone')
+      ).equals(zone)
+      expect(saveButton()).equals(null)
+      await act(async () => {
+        read.resolve(weeknights)
+      })
+      expect(h.route().days).equals('5')
+      expect(h.route().timezone).equals(undefined)
+      // A filter other than the saved one: Save filter, right of the filter.
+      const row = document.querySelector('[data-testid="umpire-filter-row"]')!
+      expect(row.lastElementChild).equals(saveButton())
+      expect(row.firstElementChild).equals(target('Schedule filters'))
+      expect(getComputedStyle(row).flexDirection).equals('row')
+      expect(getComputedStyle(row).flexWrap).equals('wrap')
+      expect(saveButton()!.getAttribute('aria-label')).equals(
+        'Save this filter as your availability'
+      )
+      expect(saveButton()!.textContent).contains('Save filter')
+    })
+    it('shows Save filter for a change, saves the applied filter or null, and hides', async () => {
+      const f = fixture()
+      const saves: Array<[string, UmpireAvailability | null]> = []
+      const save = deferred<undefined>()
+      f.client.saveUmpireAvailability = async (league, availability) => {
+        saves.push([league, availability])
+        await save.promise
+        return availability
+      }
+      const h = await harness(f)
+      // None saved and none applied: nothing to save.
+      expect(h.queries).length(1)
+      expect(saveButton()).equals(null)
+      await press('Schedule filters')
+      await press('Saturday')
+      await press('majors')
+      await press('Apply filters')
+      expect(saveButton()).not.equals(null)
+      await press('Save this filter as your availability')
+      expect(saveButton()!.getAttribute('aria-busy')).equals('true')
+      await act(async () => {
+        save.resolve(undefined)
+      })
+      expect(saves).deep.equals([
+        [
+          'demo',
+          {
+            levels: ['majors'],
+            days: [5],
+            from: null,
+            to: null,
+            timezone: zone
+          }
+        ]
+      ])
+      expect(saveButton()).equals(null)
+      // Clear filters, then Apply: the saved filter is no longer applied.
+      await press('Schedule filters')
+      await press('Clear filters')
+      await press('Apply filters')
+      expect(h.route().days).equals(undefined)
+      expect(saveButton()).not.equals(null)
+      await press('Save this filter as your availability')
+      expect(saves.at(-1)).deep.equals(['demo', null])
+      expect(saveButton()).equals(null)
+    })
+    it('shows the screen’s error when a save fails, and keeps the button', async () => {
+      const f = fixture()
+      f.client.saveUmpireAvailability = async () => {
+        throw new Error('Choose a valid filter.')
+      }
+      await harness(f, { levels: 'majors' })
+      await press('Save this filter as your availability')
+      expect(document.body.textContent).contains('Choose a valid filter.')
+      expect(saveButton()).not.equals(null)
+      expect(saveButton()!.getAttribute('aria-busy')).equals('false')
+    })
+    it('loads unfiltered with no error and no Save filter when the read fails', async () => {
+      const f = fixture()
+      f.client.umpireAvailability = async () => {
+        throw new Error('Saved filter unavailable')
+      }
+      const h = await harness(f, { levels: 'majors' })
+      expect(saveButton()).equals(null)
+      expect(document.body.textContent).not.contains('Saved filter unavailable')
+      const g = fixture()
+      g.client.umpireAvailability = async () => {
+        throw new Error('Saved filter unavailable')
+      }
+      const fresh = await harness(g)
+      expect(fresh.queries).length(1)
+      expect(
+        new URLSearchParams(fresh.queries[0].split('?')[1]).has('days')
+      ).equals(false)
+      expect(document.body.textContent)
+        .contains('Demo Hawks')
+        .and.not.contains('Saved filter unavailable')
+      expect(saveButton()).equals(null)
+      expect(h.route().levels).equals('majors')
+    })
+    it('switches league to that league’s saved filter, and back', async () => {
+      const f = fixture()
+      const saturday: UmpireAvailability = {
+        levels: [],
+        days: [5],
+        from: null,
+        to: null,
+        timezone: zone
+      }
+      const reads: Record<
+        string,
+        ReturnType<typeof deferred<UmpireAvailability | null>>
+      > = {}
+      f.client.umpireAvailability = async league => {
+        reads[league] = deferred<UmpireAvailability | null>()
+        return await reads[league].promise
+      }
+      const h = await harness(f, {}, [
+        { id: 'demo', name: 'Demo League', logoUrl: null },
+        { id: 'visitors', name: 'Demo Visitors', logoUrl: null }
+      ])
+      await act(async () => {
+        reads.demo.resolve(weeknights)
+      })
+      expect(h.route().days).equals('0,1,2,3,4')
+      const before = h.queries.length
+      await press('Demo Visitors')
+      expect(h.route()).includes({ id: 'visitors' })
+      for (const key of ['days', 'from', 'to', 'timezone', 'levels'] as const)
+        expect(h.route()[key], key).equals(undefined)
+      // The next league waits for its own saved filter.
+      expect(h.queries.length).equals(before)
+      await act(async () => {
+        reads.visitors.resolve(saturday)
+      })
+      expect(h.route()).includes({ id: 'visitors', days: '5' })
+      const first = new URLSearchParams(h.queries[before].split('?')[1])
+      expect(h.queries[before].startsWith('visitors?')).equals(true)
+      expect(first.get('days')).equals('5')
+      expect(saveButton()).equals(null)
+      await press('Demo League')
+      await act(async () => {
+        reads.demo.resolve(weeknights)
+      })
+      expect(h.route()).includes({
+        id: 'demo',
+        days: '0,1,2,3,4',
+        timezone: other
+      })
+    })
   })
 })

@@ -60,6 +60,8 @@ it('mounts the shell with role-only mask visibility and preserves header order a
   ]
   proto.umpireNoteTypes = async () => []
   proto.umpireTypes = async () => fixtureTypes
+  // No saved schedule filter: the schedule loads as it was opened.
+  proto.umpireAvailability = async () => null
   proto.setUmpireRequirements = async () => undefined
   proto.umpireSchedulePage = async (_league, _query, page) =>
     pageOfUmpireSchedule(

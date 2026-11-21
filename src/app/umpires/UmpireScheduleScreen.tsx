@@ -12,7 +12,10 @@ import Animated from 'react-native-reanimated'
 
 import type { TeamStationClient, UmpireSchedulePage } from '../../common/api'
 import { initialUmpireGame } from '../../common/nextGame'
-import { umpirePositionName } from '../../common/umpires'
+import {
+  type UmpireAvailability,
+  umpirePositionName
+} from '../../common/umpires'
 import {
   optionalPositionHeader,
   UMPIRE_PAGE_MOST,
@@ -99,6 +102,68 @@ export function umpireFilterLabel(
     .filter(Boolean)
     .join(' · ')
 }
+const deviceZone = (): string =>
+  Intl.DateTimeFormat().resolvedOptions().timeZone
+/** Whether the route names a filter. Prior seasons alone is not one. */
+export function routeNamesFilter(route: UmpireScheduleRoute): boolean {
+  return (['levels', 'days', 'from', 'to'] as const).some(
+    key => route[key] != null
+  )
+}
+/** The filter the route applies, in the zone it is read in. */
+export function appliedAvailability(
+  route: UmpireScheduleRoute
+): UmpireAvailability {
+  return {
+    levels: (route.levels ?? '').split(',').filter(Boolean),
+    days: (route.days ?? '').split(',').filter(Boolean).map(Number),
+    from: route.from ?? null,
+    to: route.to ?? null,
+    timezone: route.timezone ?? deviceZone()
+  }
+}
+const isEmptyAvailability = (a: UmpireAvailability): boolean =>
+  a.levels.length === 0 && a.days.length === 0 && a.from == null && a.to == null
+const sameList = (
+  a: Array<string | number>,
+  b: Array<string | number>
+): boolean => {
+  const sorted = (list: Array<string | number>): string =>
+    JSON.stringify(list.map(String).sort((x, y) => x.localeCompare(y)))
+  return sorted(a) === sorted(b)
+}
+/**
+ * Whether Save filter has something to save: the applied filter is not the
+ * saved one. The zone counts only where days or a time range read it.
+ */
+export function availabilityDiffers(
+  applied: UmpireAvailability,
+  saved: UmpireAvailability | null
+): boolean {
+  if (saved == null) return !isEmptyAvailability(applied)
+  return (
+    !sameList(applied.levels, saved.levels) ||
+    !sameList(applied.days, saved.days) ||
+    applied.from !== saved.from ||
+    applied.to !== saved.to ||
+    (applied.timezone !== saved.timezone &&
+      (applied.days.length > 0 || applied.from != null || applied.to != null))
+  )
+}
+/** The route with a saved filter applied, keeping its prior seasons. */
+export function withAvailability(
+  route: UmpireScheduleRoute,
+  a: UmpireAvailability
+): UmpireScheduleRoute {
+  return {
+    ...route,
+    levels: a.levels.length === 0 ? undefined : a.levels.join(','),
+    days: a.days.length === 0 ? undefined : a.days.join(','),
+    from: a.from ?? undefined,
+    to: a.to ?? undefined,
+    timezone: a.timezone
+  }
+}
 /** An admin may always clear a slot. Anyone else may only before the cutoff. */
 export function assignmentRemovable(
   assignment: { canRemove: boolean },
@@ -170,6 +235,47 @@ export function UmpireScheduleScreen({
     gap: theme.rem(theme.spaceSmRem - 2 * theme.spaceXsRem)
   }
   const chatPill = { marginLeft: theme.rem(theme.spaceXsRem) }
+  // The person's saved filter for the league on show, once its read answers
+  // (or fails, which counts as read with none and offers no Save filter).
+  const [saved, setSaved] = useState<{
+    league: string
+    availability: UmpireAvailability | null
+    failed?: boolean
+  }>()
+  // No league to read one for (none yet, or none at all) is read as none.
+  const savedRead = route.id === '' || saved?.league === route.id
+  const [savingFilter, setSavingFilter] = useState(false)
+  const latestRoute = useRef(route)
+  latestRoute.current = route
+  const latestOnRoute = useRef(onRoute)
+  latestOnRoute.current = onRoute
+  useEffect(() => {
+    // An empty id waits for the leagues, which name the one to open.
+    if (route.id === '') return
+    const league = route.id
+    let current = true
+    client.umpireAvailability(league).then(
+      availability => {
+        if (!current) return
+        setSaved({ league, availability })
+        const shown = latestRoute.current
+        // A route that names a filter, such as a shared link, is left as is.
+        if (
+          availability != null &&
+          !isEmptyAvailability(availability) &&
+          shown.id === league &&
+          !routeNamesFilter(shown)
+        )
+          latestOnRoute.current(withAvailability(shown, availability))
+      },
+      () => {
+        if (current) setSaved({ league, availability: null, failed: true })
+      }
+    )
+    return () => {
+      current = false
+    }
+  }, [client, route.id])
   const [schedule, setSchedule] = useState<UmpireSchedulePage>()
   const [board, setBoard] = useState<UmpireLeaderboard>()
   const [revision, setRevision] = useState(0)
@@ -246,7 +352,7 @@ export function UmpireScheduleScreen({
   const sequence = useRef(0)
   const query = new URLSearchParams({
     view: 'schedule',
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone: route.timezone ?? deviceZone(),
     ...Object.fromEntries(
       (['levels', 'days', 'from', 'to', 'priorSeasons'] as const).flatMap(
         key => (route[key] == null ? [] : [[key, route[key]]])
@@ -276,7 +382,10 @@ export function UmpireScheduleScreen({
     }
   })
   const { apply: applyPage } = list
+  // With no filter named, the first request waits for the saved one.
+  const loads = routeNamesFilter(route) || savedRead
   useEffect(() => {
+    if (!loads) return
     const seq = ++sequence.current
     setSchedule(undefined)
     setBoard(undefined)
@@ -293,7 +402,7 @@ export function UmpireScheduleScreen({
         await applyPage(next)
       }
     }, true)
-  }, [applyPage, client, route.id, query, revision, live, run])
+  }, [applyPage, client, route.id, query, revision, live, run, loads])
   const change = (next: Partial<UmpireScheduleRoute>): void => {
     noteEditor
       .finish()
@@ -338,11 +447,33 @@ export function UmpireScheduleScreen({
       : list.error instanceof Error
         ? list.error.message
         : 'Please try again.'
-  const filterError = umpireFilterError({
-    days,
-    from: from === '' ? undefined : from,
-    to: to === '' ? undefined : to
-  })
+  const filterError =
+    umpireFilterError({
+      days,
+      from: from === '' ? undefined : from,
+      to: to === '' ? undefined : to
+    }) ??
+    ((from === '') !== (to === '')
+      ? 'Choose both a start and an end time.'
+      : null)
+  const applied = appliedAvailability(route)
+  const showSaveFilter =
+    saved?.league === route.id &&
+    saved.failed !== true &&
+    availabilityDiffers(applied, saved.availability)
+  const saveFilter = (): void => {
+    const league = route.id
+    const body = isEmptyAvailability(applied) ? null : applied
+    setSavingFilter(true)
+    run(async () => {
+      try {
+        const availability = await client.saveUmpireAvailability(league, body)
+        if (live()) setSaved({ league, availability })
+      } finally {
+        if (live()) setSavingFilter(false)
+      }
+    }, true)
+  }
   const [noteErrorHeight, setNoteErrorHeight] = useState(0)
   const games = list.rows
   const noteEditor = useUmpireNoteEditor({
@@ -681,6 +812,10 @@ export function UmpireScheduleScreen({
                         id: l.id,
                         view: undefined,
                         levels: undefined,
+                        days: undefined,
+                        from: undefined,
+                        to: undefined,
+                        timezone: undefined,
                         priorSeasons: undefined
                       })
                   }}
@@ -719,16 +854,38 @@ export function UmpireScheduleScreen({
             </View>
           </View>
           {schedule != null && route.pill !== 'leaderboard' && (
-            <Button
-              label={umpireFilterLabel(route, schedule.levels)}
-              icon="filter_alt"
-              accessibilityLabel="Schedule filters"
-              compact
-              kind="secondary"
-              style={{ alignSelf: 'flex-start', maxWidth: '100%' }}
-              labelStyle={{ flexShrink: 1 }}
-              onPress={openFilters}
-            />
+            <View
+              testID="umpire-filter-row"
+              style={{
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: theme.rem(1)
+              }}
+            >
+              <Button
+                label={umpireFilterLabel(route, schedule.levels)}
+                icon="filter_alt"
+                accessibilityLabel="Schedule filters"
+                compact
+                kind="secondary"
+                style={{ alignSelf: 'flex-start', maxWidth: '100%' }}
+                labelStyle={{ flexShrink: 1 }}
+                onPress={openFilters}
+              />
+              {showSaveFilter && (
+                <Button
+                  label={lstrings.umpire_save_filter}
+                  icon="bookmark"
+                  accessibilityLabel={lstrings.umpire_save_filter_named}
+                  compact
+                  kind="secondary"
+                  testID="umpire-save-filter"
+                  busy={savingFilter}
+                  onPress={saveFilter}
+                />
+              )}
+            </View>
           )}
         </View>
       }
@@ -1190,6 +1347,7 @@ export function UmpireScheduleScreen({
                 levels: levels.length === 0 ? undefined : levels.join(','),
                 from: from === '' ? undefined : from,
                 to: to === '' ? undefined : to,
+                timezone: undefined,
                 priorSeasons:
                   schedule?.isAdmin === true && priorSeasons
                     ? 'true'

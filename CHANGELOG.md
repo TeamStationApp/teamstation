@@ -12,6 +12,7 @@
 - added: Each league that manages umpires has an umpire chat for its umpires, kept up to date as the role is given and taken away; the umpire schedule opens it with an Umpire chat button beside Leaderboard
 - added: A league administrator can give themselves the umpire role in Manage Umpires
 - added: League admins can find umpires by availability and read an umpire's commitments through the API, GraphQL and Tess.
+- added: Umpires can save their schedule filter as their availability for each league with Save filter, and it applies when they open that league's schedule.
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
 - changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 - changed: App builds made with the deploy scripts from any branch but master report their logs to the server they talk to, not to production's
