@@ -1,4 +1,5 @@
 import { DEFAULT_EVENT_DURATION_MS } from './eventTime'
+import type { UmpireAvailability } from './umpires'
 
 export interface UmpireInterval {
   startAt: string
@@ -86,6 +87,69 @@ export function umpireFilterError(filters: UmpireFilters): string | null {
     return 'Choose a valid weekday.'
   return null
 }
+function localClock(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).format(date)
+}
+function localDate(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date)
+}
+/**
+ * Whether a saved availability filter leaves a time (and a level) in, as the
+ * schedule's own filter leaves a game in. `null`, no saved filter, allows
+ * everything.
+ *
+ * - `{ start }`: the start, in the saved time zone, falls on a saved day and
+ *   within `from`–`to`, both ends inclusive. With `durationMinutes` the end
+ *   must also fall by `to` on the same local date.
+ * - `{ day, time }`: `day` (0 is Monday) is a saved day, and `time` is
+ *   within `from`–`to`.
+ * - `level`: a saved level, or none are saved.
+ */
+export function availabilityAllows(
+  availability: UmpireAvailability | null,
+  at: { start: Date; durationMinutes?: number } | { day: number; time: string },
+  level?: string
+): boolean {
+  if (availability == null) return true
+  if (
+    level != null &&
+    availability.levels.length > 0 &&
+    !availability.levels.includes(level)
+  )
+    return false
+  const { from, to } = availability
+  if ('day' in at) {
+    if (availability.days.length > 0 && !availability.days.includes(at.day))
+      return false
+    return from == null || to == null || (at.time >= from && at.time <= to)
+  }
+  const filters = {
+    days: availability.days,
+    from: from ?? undefined,
+    to: to ?? undefined
+  }
+  if (
+    !umpireTimeMatches(at.start.toISOString(), availability.timezone, filters)
+  )
+    return false
+  if (at.durationMinutes == null || from == null || to == null) return true
+  const end = new Date(at.start.getTime() + at.durationMinutes * 60000)
+  return (
+    localDate(end, availability.timezone) ===
+      localDate(at.start, availability.timezone) &&
+    localClock(end, availability.timezone) <= to
+  )
+}
 export function umpireTimeMatches(
   startAt: string,
   timezone: string,
@@ -105,12 +169,7 @@ export function umpireTimeMatches(
   )
     return false
   if (filters.from == null || filters.to == null) return true
-  const time = new Intl.DateTimeFormat('en-GB', {
-    timeZone: timezone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  }).format(date)
+  const time = localClock(date, timezone)
   return time >= filters.from && time <= filters.to
 }
 export function umpireWindowsOverlap(

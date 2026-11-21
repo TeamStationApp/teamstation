@@ -6,6 +6,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { type ApiFixture, apiFixture } from '../../test/apiFixture'
 import { apiKeyRoutes } from '../routes/apiKeys'
 import { graphqlRoutes, MAX_QUERY_LENGTH } from '../routes/graphql'
+import { umpireRoutes } from '../routes/umpires'
 import { insertUser } from '../users/insertUser'
 import { MAX_READS } from './restReader'
 import { MAX_DEPTH } from './schema'
@@ -43,8 +44,56 @@ describe('the GraphQL API', function () {
     f = await apiFixture(undefined, undefined, (app, { db }) => {
       app.use('/api/v1', apiKeyRoutes(db, { sessionSecret: 'graphql-test' }))
       app.use('/api/v1', graphqlRoutes({ db, origin: () => origin }))
+      app.use('/api/v1', umpireRoutes(db))
     })
     origin = f.h.origin
+    // Demo League A manages umpires: Ichiro (104) has saved weekday
+    // evenings, Tim Raines (106) nothing, and Ichiro umpires the first game.
+    await f.h.db
+      .updateTable('leagues')
+      .set({ umpire_management: true })
+      .where('id', '=', f.leagueA)
+      .execute()
+    await f.h.db
+      .insertInto('umpire_levels')
+      .values({
+        id: 'ulv_gql',
+        league_id: f.leagueA,
+        name: 'majors',
+        position: 0
+      })
+      .execute()
+    await f.h.db
+      .insertInto('league_umpires')
+      .values(
+        [104, 106].map(person => ({
+          league_id: f.leagueA,
+          user_id: userIdOfGumbo(person),
+          granted_by: userIdOfGumbo(101)
+        }))
+      )
+      .execute()
+    await f.h.db
+      .insertInto('umpire_availability')
+      .values({
+        user_id: userIdOfGumbo(104),
+        league_id: f.leagueA,
+        levels: ['ulv_gql'],
+        days: [0, 1, 2, 3, 4],
+        from_time: '17:00',
+        to_time: '22:00',
+        timezone: 'America/Los_Angeles'
+      })
+      .execute()
+    await f.h.db
+      .insertInto('umpire_assignments')
+      .values({
+        game_id: f.games[0].id,
+        slot: 'uty_plate:1',
+        user_id: userIdOfGumbo(104),
+        assigned_by: userIdOfGumbo(101)
+      })
+      .execute()
     await f.h.db
       .updateTable('games')
       .set({
@@ -705,6 +754,125 @@ describe('the GraphQL API', function () {
         filter: { playerId: alfonso }
       })
       expect(allowed.body.data.stats[0]).deep.include({ pa: 7 })
+    })
+  })
+
+  describe('umpires', function () {
+    const UMPIRES = `query ($league: ID!, $day: Int, $time: String, $level: ID, $strict: Boolean, $availableAt: String, $durationMinutes: Int) {
+      umpires(leagueId: $league, day: $day, time: $time, level: $level, strict: $strict, availableAt: $availableAt, durationMinutes: $durationMinutes) {
+        id name umpireAvailability { levels days from to timezone }
+      }
+    }`
+    const rest = async (query = ''): Promise<unknown[]> =>
+      (
+        (await (
+          await f.h.request(
+            'GET',
+            `/leagues/${f.leagueA}/umpires${query}`,
+            undefined,
+            101
+          )
+        ).json()) as { people: Array<Record<string, unknown>> }
+      ).people.map(({ id, name, umpireAvailability }) => ({
+        id,
+        name,
+        umpireAvailability
+      }))
+
+    it('lists a league’s umpires as the REST list does, filtered the same way', async function () {
+      const all = await ask(101, UMPIRES, { league: f.leagueA })
+      expect(all.body.errors).equals(undefined)
+      expect(all.body.data.umpires).deep.equals(await rest())
+      expect(
+        all.body.data.umpires.map((one: { id: string }) => one.id).sort()
+      ).deep.equals([userIdOfGumbo(104), userIdOfGumbo(106)].sort())
+      const monday = await ask(101, UMPIRES, {
+        league: f.leagueA,
+        day: 0,
+        time: '18:00',
+        strict: true
+      })
+      expect(monday.body.data.umpires).deep.equals(
+        await rest('?day=0&time=18:00&strict=true')
+      )
+      expect(
+        monday.body.data.umpires.map((one: { id: string }) => one.id)
+      ).deep.equals([userIdOfGumbo(104)])
+      const saturday = await ask(101, UMPIRES, {
+        league: f.leagueA,
+        availableAt: '2027-04-18T01:30:00Z',
+        durationMinutes: 60,
+        level: 'ulv_gql'
+      })
+      expect(
+        saturday.body.data.umpires.map((one: { id: string }) => one.id)
+      ).deep.equals([userIdOfGumbo(106)])
+    })
+
+    it('reads an umpire’s commitments as the REST route does', async function () {
+      const game = await f.h.db
+        .selectFrom('games')
+        .select('start_at')
+        .where('id', '=', f.games[0].id)
+        .executeTakeFirstOrThrow()
+      const start = new Date(game.start_at)
+      const from = new Date(start.getTime() - 86400000).toISOString()
+      const to = new Date(start.getTime() + 86400000).toISOString()
+      const answer = await ask(
+        101,
+        `query ($league: ID!, $user: ID!, $from: String!, $to: String!) {
+          umpireCommitments(leagueId: $league, userId: $user, from: $from, to: $to) {
+            gameId leagueId startAt endAt home away role slot
+          }
+        }`,
+        { league: f.leagueA, user: userIdOfGumbo(104), from, to }
+      )
+      expect(answer.body.errors).equals(undefined)
+      const viaRest = (await (
+        await f.h.request(
+          'GET',
+          `/leagues/${f.leagueA}/umpires/${userIdOfGumbo(104)}/commitments?from=${from}&to=${to}`,
+          undefined,
+          101
+        )
+      ).json()) as { commitments: Array<Record<string, unknown>> }
+      expect(answer.body.data.umpireCommitments).deep.equals(
+        viaRest.commitments.map(one => ({ slot: null, ...one }))
+      )
+      expect(answer.body.data.umpireCommitments).deep.include({
+        gameId: f.games[0].id,
+        leagueId: f.leagueA,
+        startAt: viaRest.commitments[0].startAt,
+        endAt: viaRest.commitments[0].endAt,
+        home: viaRest.commitments[0].home,
+        away: viaRest.commitments[0].away,
+        role: 'umpire',
+        slot: 'uty_plate:1'
+      })
+    })
+
+    it('gives a caller who is no league administrator null, with an error', async function () {
+      const answer = await ask(
+        104,
+        `query ($league: ID!, $user: ID!) {
+          umpires(leagueId: $league) { id }
+          umpireCommitments(leagueId: $league, userId: $user, from: "2027-04-01T00:00:00Z", to: "2027-04-02T00:00:00Z") { gameId }
+        }`,
+        { league: f.leagueA, user: userIdOfGumbo(104) }
+      )
+      expect(answer.body.data).deep.equals({
+        umpires: null,
+        umpireCommitments: null
+      })
+      expect(
+        answer.body.errors?.map(error => [
+          error.path?.[0],
+          error.extensions?.status
+        ])
+      ).deep.equals([
+        ['umpires', 403],
+        ['umpireCommitments', 403]
+      ])
     })
   })
 

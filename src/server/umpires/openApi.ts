@@ -1,5 +1,27 @@
 import { UMPIRE_LEADERBOARD_MAX_PAGE } from '../../common/umpireSchedule'
 
+/** A saved umpire availability filter, or null when none is saved. */
+export const umpireAvailabilitySchema = {
+  type: ['object', 'null'],
+  required: ['levels', 'days', 'from', 'to', 'timezone'],
+  description:
+    'A saved umpire availability filter for one league, read in its own ' +
+    '`timezone`: the umpire levels, the weekdays (0 is Monday … 6 is ' +
+    'Sunday) and the `from`–`to` time of day (`HH:mm`, both ends ' +
+    'inclusive). No levels or days means every one; no range means any ' +
+    'time. Null when none is saved.',
+  properties: {
+    levels: { type: 'array', items: { type: 'string' } },
+    days: {
+      type: 'array',
+      items: { type: 'integer', minimum: 0, maximum: 6 }
+    },
+    from: { type: ['string', 'null'], pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
+    to: { type: ['string', 'null'], pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
+    timezone: { type: 'string', description: 'An IANA time zone.' }
+  }
+}
+
 export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   const settings = {
     type: 'object',
@@ -210,7 +232,70 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       'Each of `people` is `{ id, name, avatarUrl, affiliations, ' +
       'certifications }`. `affiliations` is the line under the name: the ' +
       'guarded players, guardians and league teams the caller may see, ' +
-      'named as the caller may read them, empty when none is visible.'
+      'named as the caller may read them, empty when none is visible.' +
+      (path.endsWith('/umpires')
+        ? ' On the umpire list each person also carries ' +
+          '`umpireAvailability`, their saved filter for this league (null ' +
+          'when none is saved). The availability parameters keep only the ' +
+          'people whose saved filter leaves the time in: a filter matches ' +
+          'on the start, read in its own time zone, as the umpire ' +
+          'schedule\u2019s filter matches a game. Somebody with no saved ' +
+          'filter counts as available unless `strict` is true.'
+        : '')
+  const umpireList = paths['/leagues/{leagueId}/umpires'] as Record<
+    string,
+    Record<string, unknown>
+  >
+  umpireList.get.parameters = [
+    ...parameters,
+    {
+      name: 'availableAt',
+      in: 'query',
+      schema: { type: 'string', format: 'date-time' },
+      description:
+        'A game start: keeps people whose saved filter has its weekday and ' +
+        'time of day, read in the filter\u2019s time zone, within `from`–`to` ' +
+        '(both ends inclusive).'
+    },
+    {
+      name: 'durationMinutes',
+      in: 'query',
+      schema: { type: 'integer', minimum: 1, maximum: 1440 },
+      description:
+        'With `availableAt`: the game\u2019s end must also fall by `to` on ' +
+        'the same local day.'
+    },
+    {
+      name: 'day',
+      in: 'query',
+      schema: { type: 'integer', minimum: 0, maximum: 6 },
+      description:
+        'A weekday, 0 is Monday … 6 is Sunday; goes with `time`. Keeps ' +
+        'people whose saved days include it (or who saved no days).'
+    },
+    {
+      name: 'time',
+      in: 'query',
+      schema: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
+      description:
+        'A time of day, `HH:mm`; goes with `day`. Keeps people whose saved ' +
+        'range holds it (or who saved none).'
+    },
+    {
+      name: 'level',
+      in: 'query',
+      schema: { type: 'string' },
+      description:
+        'An umpire level id: keeps people whose saved levels include it, ' +
+        'or who saved none.'
+    },
+    {
+      name: 'strict',
+      in: 'query',
+      schema: { type: 'boolean', default: false },
+      description: 'Leaves out people with no saved filter.'
+    }
+  ]
   const collection = paths['/leagues/{leagueId}/umpires'] as Record<
     string,
     Record<string, unknown>
@@ -472,6 +557,152 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
         200: {
           description:
             'Completed and scheduled people rankings and team credits. Without order, limit or offset, the top ten with at least one game. With any of them, every current league umpire, including those with no games, and anyone else with a game still counted, such as a removed umpire, and page: {order, limit, offset, total}; only the real top ten have a symbol. Each of them needs a league administrator. Pages rank live data, so a signup between two reads can move someone across a page boundary.'
+        }
+      }
+    }
+  }
+  paths['/leagues/{leagueId}/me/umpire-availability'] = {
+    get: {
+      summary: 'Read your saved umpire availability filter for a league',
+      description:
+        'For whoever may open the league\u2019s umpire schedule: a league ' +
+        'administrator or a holder of its umpire role. Anybody else, and a ' +
+        'league that does not manage umpires, gets 404.',
+      security: [{ bearer: [] }],
+      parameters,
+      responses: {
+        ...responses,
+        200: {
+          description: 'The saved filter, null when none is saved',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['availability'],
+                properties: { availability: umpireAvailabilitySchema }
+              }
+            }
+          }
+        }
+      }
+    },
+    put: {
+      summary: 'Save your umpire availability filter for a league',
+      description:
+        'Replaces the saved filter. Null, or a filter with no levels, days ' +
+        'or range, clears it. `timezone` is required; `from` and `to` come ' +
+        'together, with `to` after `from`; every level must be one of the ' +
+        'league\u2019s. Otherwise 400. Who may save is who may read.',
+      security: [{ bearer: [] }],
+      parameters,
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['availability'],
+              properties: { availability: umpireAvailabilitySchema }
+            }
+          }
+        }
+      },
+      responses: {
+        ...responses,
+        200: {
+          description: 'The filter as saved, null when cleared',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['availability'],
+                properties: { availability: umpireAvailabilitySchema }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  paths['/leagues/{leagueId}/umpires/{userId}/commitments'] = {
+    get: {
+      summary:
+        'An umpire\u2019s games in a time window, as a league administrator',
+      description:
+        'The games the umpire is assigned to and the games they play in ' +
+        '(through any merged account) that start from `from` to `to`, ' +
+        'limited to leagues the caller administers, sorted by start. The ' +
+        'window is at most 31 days. A person who does not hold this ' +
+        'league\u2019s umpire role is 404.',
+      security: [{ bearer: [] }],
+      parameters: [
+        ...parameters,
+        {
+          name: 'userId',
+          in: 'path',
+          required: true,
+          schema: { type: 'string' }
+        },
+        {
+          name: 'from',
+          in: 'query',
+          required: true,
+          schema: { type: 'string', format: 'date-time' }
+        },
+        {
+          name: 'to',
+          in: 'query',
+          required: true,
+          schema: { type: 'string', format: 'date-time' }
+        }
+      ],
+      responses: {
+        ...responses,
+        200: {
+          description: 'The commitments',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['commitments'],
+                properties: {
+                  commitments: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: [
+                        'gameId',
+                        'leagueId',
+                        'startAt',
+                        'endAt',
+                        'home',
+                        'away',
+                        'role'
+                      ],
+                      properties: {
+                        gameId: { type: 'string' },
+                        leagueId: { type: 'string' },
+                        startAt: { type: 'string', format: 'date-time' },
+                        endAt: {
+                          type: 'string',
+                          format: 'date-time',
+                          description:
+                            'The stored end, or three hours after the start.'
+                        },
+                        home: { type: 'string' },
+                        away: { type: 'string' },
+                        role: { type: 'string', enum: ['umpire', 'player'] },
+                        slot: {
+                          type: 'string',
+                          description: 'The umpire position, for `umpire`.'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

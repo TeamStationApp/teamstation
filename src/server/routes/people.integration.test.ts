@@ -1173,6 +1173,135 @@ describe('people at a team, a season and a league', function () {
       expect(body.sections.length).greaterThan(0)
       expect(body.viewer.manages).equals(false)
     })
+
+    it('carries the umpire’s saved availability to themselves and the league’s administrators alone', async () => {
+      const umpire = userIdOfGumbo(SEASON_MEMBER)
+      // Null before one is saved, for the person and for an administrator.
+      expect((await card(SEASON_MEMBER, SEASON_MEMBER)).body).deep.include({
+        umpireAvailability: null
+      })
+      expect((await card(SEASON_MEMBER, 101)).body).deep.include({
+        umpireAvailability: null
+      })
+      await f.h.db
+        .insertInto('umpire_availability')
+        .values({
+          user_id: umpire,
+          league_id: f.leagueA,
+          days: [0, 2],
+          from_time: '17:00',
+          to_time: '21:00',
+          timezone: 'America/Chicago'
+        })
+        .execute()
+      const saved = {
+        levels: [],
+        days: [0, 2],
+        from: '17:00',
+        to: '21:00',
+        timezone: 'America/Chicago'
+      }
+      const role = makeId('scopeRole')
+      await f.h.db
+        .insertInto('scope_roles')
+        .values({
+          id: role,
+          user_id: userIdOfGumbo(ASSISTANT),
+          scope_type: 'league',
+          scope_id: f.leagueA,
+          role: 'coach',
+          granted_by: userIdOfGumbo(101),
+          granted_at: new Date()
+        })
+        .execute()
+      await f.h.db
+        .insertInto('league_umpires')
+        .values({
+          league_id: f.leagueA,
+          user_id: userIdOfGumbo(LEAGUE_MEMBER),
+          granted_by: userIdOfGumbo(101)
+        })
+        .execute()
+      try {
+        for (const viewer of [SEASON_MEMBER, 101]) {
+          const { status, body } = await card(SEASON_MEMBER, viewer)
+          expect(status, String(viewer)).equals(200)
+          expect(body.umpireAvailability).deep.equals(saved)
+        }
+        // A coach, an accepted member, a guardian, another umpire and an
+        // administrator of another league read no filter.
+        for (const viewer of [
+          ASSISTANT,
+          MEMBER,
+          GUARDIAN,
+          LEAGUE_MEMBER,
+          102
+        ]) {
+          const { status, body } = await card(SEASON_MEMBER, viewer)
+          if (status === 200)
+            expect(body, String(viewer)).not.to.have.property(
+              'umpireAvailability'
+            )
+          else expect(status, String(viewer)).equals(404)
+        }
+        // A season or team profile never carries it.
+        for (const path of [
+          `/seasons/${f.seasonA}/people/${umpire}`,
+          `/teams/${f.teamA}/people/${userIdOfGumbo(COACH)}`
+        ]) {
+          const { status, body } = await call('GET', path, 101)
+          expect(status, path).equals(200)
+          expect(body, path).not.to.have.property('umpireAvailability')
+        }
+        // Once the role is gone, the administrator reads it no more: off the
+        // list the profile is gone, and on it (a league member) the field
+        // is. The person still reads their own.
+        await f.h.db
+          .insertInto('umpire_availability')
+          .values({
+            user_id: userIdOfGumbo(LEAGUE_MEMBER),
+            league_id: f.leagueA,
+            timezone: 'America/Chicago',
+            days: [5]
+          })
+          .execute()
+        expect(
+          (await card(LEAGUE_MEMBER, 101)).body.umpireAvailability
+        ).deep.include({ days: [5] })
+        await f.h.db
+          .deleteFrom('league_umpires')
+          .where('league_id', '=', f.leagueA)
+          .where('user_id', 'in', [umpire, userIdOfGumbo(LEAGUE_MEMBER)])
+          .execute()
+        expect((await card(SEASON_MEMBER, 101)).status).equals(404)
+        const admin = await card(LEAGUE_MEMBER, 101)
+        expect(admin.status).equals(200)
+        expect(admin.body).not.to.have.property('umpireAvailability')
+        expect((await card(SEASON_MEMBER, SEASON_MEMBER)).body).deep.include({
+          umpireAvailability: saved
+        })
+      } finally {
+        await f.h.db.deleteFrom('scope_roles').where('id', '=', role).execute()
+        await f.h.db
+          .deleteFrom('league_umpires')
+          .where('league_id', '=', f.leagueA)
+          .where('user_id', '=', userIdOfGumbo(LEAGUE_MEMBER))
+          .execute()
+        await f.h.db
+          .insertInto('league_umpires')
+          .values({
+            league_id: f.leagueA,
+            user_id: umpire,
+            granted_by: userIdOfGumbo(101)
+          })
+          .onConflict(oc => oc.doNothing())
+          .execute()
+        await f.h.db
+          .deleteFrom('umpire_availability')
+          .where('user_id', 'in', [umpire, userIdOfGumbo(LEAGUE_MEMBER)])
+          .execute()
+      }
+    })
   })
 
   describe('the person profile', function () {

@@ -6,7 +6,8 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  type Cleaner
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
@@ -53,17 +54,71 @@ export const asUmpireSeasons = asObject({
     })
   )
 })
-const asUmpirePerson = asObject({
-  id: asString,
-  name: asString,
-  avatarUrl: asEither(asString, asLiteral(null)),
-  affiliations: asOptional(asString, ''),
-  certifications: asArray(
-    asObject({ levelId: asString, typeId: asString, enabled: asBoolean })
-  )
+/** A saved umpire availability filter (0 is Monday … 6 is Sunday). */
+export const asUmpireAvailability = asObject({
+  levels: asArray(asString),
+  days: asArray(asNumber),
+  from: asEither(asString, asLiteral(null)),
+  to: asEither(asString, asLiteral(null)),
+  timezone: asString
 })
+/**
+ * A saved filter where one may be left out: absent stays absent (the field
+ * is not for this caller) and null stays null (none is saved), which
+ * `asOptional` would not tell apart.
+ */
+export const asOptionalUmpireAvailability = (
+  raw: unknown
+): ReturnType<typeof asUmpireAvailability> | null | undefined =>
+  raw === undefined
+    ? undefined
+    : asEither(asUmpireAvailability, asLiteral(null))(raw)
+/**
+ * Leaves `umpireAvailability` off a cleaned object when the server left it
+ * off, as `asObject` would otherwise keep the key with nothing in it.
+ */
+export function withoutAbsentAvailability<
+  T extends { umpireAvailability?: unknown }
+>(cleaner: Cleaner<T>): Cleaner<T> {
+  return raw => {
+    const clean = cleaner(raw)
+    if (clean.umpireAvailability !== undefined) return clean
+    const { umpireAvailability: _absent, ...rest } = clean
+    return rest as T
+  }
+}
+export const asUmpireAvailabilityAnswer = asObject({
+  availability: asEither(asUmpireAvailability, asLiteral(null))
+})
+const asUmpirePerson = withoutAbsentAvailability(
+  asObject({
+    id: asString,
+    name: asString,
+    avatarUrl: asEither(asString, asLiteral(null)),
+    affiliations: asOptional(asString, ''),
+    certifications: asArray(
+      asObject({ levelId: asString, typeId: asString, enabled: asBoolean })
+    ),
+    umpireAvailability: asOptionalUmpireAvailability
+  })
+)
 export const asUmpirePeople = asObject({
   people: asArray(asUmpirePerson)
+})
+/** An umpire's games in a window: those they umpire and those they play. */
+export const asUmpireCommitments = asObject({
+  commitments: asArray(
+    asObject({
+      gameId: asString,
+      leagueId: asString,
+      startAt: asString,
+      endAt: asString,
+      home: asString,
+      away: asString,
+      role: asEither(asLiteral('umpire'), asLiteral('player')),
+      slot: asOptional(asString)
+    })
+  )
 })
 export const asUmpireLeagues = asObject({
   leagues: asArray(

@@ -15,6 +15,7 @@ import {
   asLiveStream,
   asManagePage,
   asPage,
+  asPersonProfile,
   asPlayerDetail,
   asPlayerHighlight,
   asPlayerStats,
@@ -3032,6 +3033,169 @@ describe('api client', function () {
       '/leagues/l%2F1/umpire-schedule?view=schedule&paged=1&cursor=a%2Bb',
       '/leagues/l%2F1/umpire-schedule?paged=1'
     ])
+  })
+
+  it('reads, saves and queries umpire availability, and reads commitments', async function () {
+    const availability = {
+      levels: ['ulv_1'],
+      days: [0, 4],
+      from: '17:00',
+      to: '22:00',
+      timezone: 'America/Chicago'
+    }
+    const person = {
+      id: 'usr_1',
+      name: 'Mookie B',
+      avatarUrl: null,
+      affiliations: '',
+      certifications: []
+    }
+    const calls: Call[] = []
+    const answer = stubFetch(200, { availability }, calls)
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: answer.fetch
+    })
+    expect(await client.umpireAvailability('l/1')).deep.equals(availability)
+    expect(
+      await client.saveUmpireAvailability('l/1', availability)
+    ).deep.equals(availability)
+    const cleared = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { availability: null }, calls).fetch
+    })
+    expect(await cleared.saveUmpireAvailability('l/1', null)).equals(null)
+    const people = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        {
+          people: [
+            { ...person, umpireAvailability: availability },
+            { ...person, id: 'usr_2', umpireAvailability: null },
+            { ...person, id: 'usr_3' }
+          ]
+        },
+        calls
+      ).fetch
+    })
+    const listed = await people.umpirePeople('l/1', undefined, {
+      availableAt: '2027-04-13T01:30:00.000Z',
+      durationMinutes: 120,
+      level: 'ulv_1',
+      strict: true
+    })
+    expect(listed.map(one => one.umpireAvailability)).deep.equals([
+      availability,
+      null,
+      undefined
+    ])
+    await people.umpirePeople('l/1', undefined, { day: 0, time: '18:00' })
+    await people.umpirePeople('l/1')
+    // Candidates take no availability parameters.
+    await people.umpirePeople('l/1', 'ma', { day: 0, time: '18:00' })
+    const commitment = {
+      gameId: 'gam_1',
+      leagueId: 'l/1',
+      startAt: '2027-04-13T01:30:00.000Z',
+      endAt: '2027-04-13T04:30:00.000Z',
+      home: 'Demo Rockets',
+      away: 'Demo Comets',
+      role: 'umpire',
+      slot: 'uty_plate:1'
+    }
+    const reads = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        {
+          commitments: [
+            commitment,
+            { ...commitment, role: 'player', slot: undefined }
+          ]
+        },
+        calls
+      ).fetch
+    })
+    const held = await reads.umpireCommitments(
+      'l/1',
+      'usr/1',
+      '2027-04-12T00:00:00Z',
+      '2027-04-14T00:00:00Z'
+    )
+    expect(held.map(one => [one.role, one.slot])).deep.equals([
+      ['umpire', 'uty_plate:1'],
+      ['player', undefined]
+    ])
+    expect(
+      calls.map(call => [
+        call.method,
+        call.url.replace('http://x/api/v1', ''),
+        call.body
+      ])
+    ).deep.equals([
+      ['GET', '/leagues/l%2F1/me/umpire-availability', undefined],
+      [
+        'PUT',
+        '/leagues/l%2F1/me/umpire-availability',
+        JSON.stringify({ availability })
+      ],
+      [
+        'PUT',
+        '/leagues/l%2F1/me/umpire-availability',
+        JSON.stringify({ availability: null })
+      ],
+      [
+        'GET',
+        '/leagues/l%2F1/umpires?availableAt=2027-04-13T01%3A30%3A00.000Z&durationMinutes=120&level=ulv_1&strict=true',
+        undefined
+      ],
+      ['GET', '/leagues/l%2F1/umpires?day=0&time=18%3A00', undefined],
+      ['GET', '/leagues/l%2F1/umpires', undefined],
+      ['GET', '/leagues/l%2F1/umpire-candidates?q=ma', undefined],
+      [
+        'GET',
+        '/leagues/l%2F1/umpires/usr%2F1/commitments?from=2027-04-12T00%3A00%3A00Z&to=2027-04-14T00%3A00%3A00Z',
+        undefined
+      ]
+    ])
+    expect(() =>
+      asPersonProfile({
+        context: { kind: 'league', id: 'l', name: 'Demo League' },
+        person: {
+          userId: userIdOfGumbo(7),
+          shortName: 'Mookie B',
+          fullName: null,
+          avatarUrl: null,
+          canHoldRoles: true
+        },
+        guardianOf: [],
+        sections: [],
+        viewer: { manages: false, admin: false },
+        umpireAvailability: { ...availability, days: 'Monday' }
+      })
+    ).throws()
+  })
+
+  it('reads umpireAvailability on a profile only when the server sends it', function () {
+    const profile = {
+      context: { kind: 'league', id: 'l', name: 'Demo League' },
+      person: {
+        userId: userIdOfGumbo(7),
+        shortName: 'Mookie B',
+        fullName: null,
+        avatarUrl: null,
+        canHoldRoles: true
+      },
+      guardianOf: [],
+      sections: [],
+      viewer: { manages: false, admin: false }
+    }
+    expect(asPersonProfile(profile).umpireAvailability).equals(undefined)
+    expect(
+      asPersonProfile({ ...profile, umpireAvailability: null })
+        .umpireAvailability
+    ).equals(null)
   })
 
   it('cleans a page and refuses a bare array as one', function () {

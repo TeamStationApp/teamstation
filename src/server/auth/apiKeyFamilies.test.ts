@@ -157,6 +157,16 @@ describe('what an API key may call', function () {
     expect(keyNeeds('DELETE', '/leagues/lea_1/umpire-types/uty_1')).equals(
       'umpire:write'
     )
+    // Umpire availability and commitments are in the umpire family.
+    expect(keyNeeds('GET', '/leagues/lea_1/me/umpire-availability')).equals(
+      'umpire:read'
+    )
+    expect(keyNeeds('PUT', '/leagues/lea_1/me/umpire-availability')).equals(
+      'umpire:write'
+    )
+    expect(keyNeeds('GET', '/leagues/lea_1/umpires/usr_1/commitments')).equals(
+      'umpire:read'
+    )
   })
 
   it('matches as Express does: any case, one trailing slash, one segment a parameter', function () {

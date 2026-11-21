@@ -20,6 +20,15 @@ import { noteScopeChange } from '../socket/syncRevision'
 import * as admin from '../umpires/admin'
 import { deleteSlot, leaderboard, saveSlot } from '../umpires/assignments'
 import {
+  availabilityPasses,
+  commitmentWindow,
+  parseAvailabilityQuery,
+  readAvailability,
+  requireOwnAvailability,
+  saveAvailability,
+  umpireCommitments
+} from '../umpires/availability'
+import {
   addNoteType,
   noteTypes,
   removeNoteType,
@@ -279,8 +288,11 @@ export function umpireRoutes(
       }
     }
   )
-  manage('get', '/leagues/:leagueId/umpires', async (trx, league, req) => ({
-    people: await admin.people(
+  // Each umpire carries their saved filter for the league; the availability
+  // parameters keep only the people it leaves in.
+  manage('get', '/leagues/:leagueId/umpires', async (trx, league, req) => {
+    const query = parseAvailabilityQuery(req.query)
+    const people = await admin.people(
       trx,
       league,
       undefined,
@@ -288,7 +300,41 @@ export function umpireRoutes(
       readerOf(req.actor),
       await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
     )
-  }))
+    const saved = await readAvailability(
+      trx,
+      league,
+      people.map(person => person.id)
+    )
+    return {
+      people: people
+        .map(person => ({
+          ...person,
+          umpireAvailability: saved.get(person.id) ?? null
+        }))
+        .filter(
+          person =>
+            query == null ||
+            availabilityPasses(person.umpireAvailability, query)
+        )
+    }
+  })
+  manage(
+    'get',
+    '/leagues/:leagueId/umpires/:userId/commitments',
+    async (trx, league, req) => {
+      const window = commitmentWindow(req.query.from, req.query.to)
+      return {
+        commitments: await umpireCommitments(
+          trx,
+          req.actor!,
+          league,
+          String(req.params.userId),
+          window.from,
+          window.to
+        )
+      }
+    }
+  )
   manage('put', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     await savePeople(trx, league, req.actor!.userId, req.body)
     return {
@@ -322,6 +368,52 @@ export function umpireRoutes(
     }
   )
 
+  // The signed-in person's own saved filter for a league, for whoever may
+  // open its umpire schedule; anybody else is answered 404.
+  router.get(
+    '/leagues/:leagueId/me/umpire-availability',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      await requireOwnAvailability(db, actor, leagueId)
+      const saved = await readAvailability(db, leagueId, [actor.userId])
+      res.json({ availability: saved.get(actor.userId) ?? null })
+    })
+  )
+  router.put(
+    '/leagues/:leagueId/me/umpire-availability',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      const body = req.body
+      if (
+        body == null ||
+        typeof body !== 'object' ||
+        Array.isArray(body) ||
+        !('availability' in body)
+      )
+        throw badRequest('Choose a valid filter.')
+      const availability = await atomic(db, async trx => {
+        await lockKeys(trx, [
+          'creation:parent-graph',
+          `umpires:${leagueId}`,
+          'users.closeInto'
+        ])
+        await requireOwnAvailability(trx, actor, leagueId)
+        return await saveAvailability(
+          trx,
+          leagueId,
+          actor.userId,
+          body.availability
+        )
+      })
+      res.json({ availability })
+    })
+  )
   router.get(
     '/me/umpire-leagues',
     requireActor,

@@ -199,7 +199,10 @@ import {
   type TvPlatform
 } from './tvLogin'
 import {
+  asOptionalUmpireAvailability,
+  asUmpireAvailabilityAnswer,
   asUmpireColumn,
+  asUmpireCommitments,
   asUmpireGameRow,
   asUmpireLeaderboard,
   asUmpireLeagues,
@@ -210,10 +213,12 @@ import {
   asUmpireScheduleHead,
   asUmpireSeasons,
   asUmpireSettings,
-  asUmpireTypes
+  asUmpireTypes,
+  withoutAbsentAvailability
 } from './umpireCleaners'
 import type { UmpireEdit } from './umpireEdits'
 import type {
+  UmpireAvailability,
   UmpireCertification,
   UmpireLevel,
   UmpirePerson,
@@ -2952,42 +2957,70 @@ export type ProfileSection = Omit<
  * people list: who they are, the players they are a guardian of there, and
  * what they hold at that level and the ones above it.
  */
-export const asPersonProfile = asObject({
-  context: asObject({ kind: asPeopleLevel, id: asString, name: asString }),
-  person: asObject({
-    userId: asUserId,
-    shortName: asString,
-    /** Their whole name, for a viewer who may read it; otherwise null. */
-    fullName: asNullable(asString),
-    avatarUrl: asNullable(asString),
-    /** Whether they can hold a role: an account that signs in. */
-    canHoldRoles: asBoolean
-  }),
-  /** The players they guard who play at this level, each with a team. */
-  guardianOf: asArray(
-    asObject({
+export const asPersonProfile = withoutAbsentAvailability(
+  asObject({
+    context: asObject({ kind: asPeopleLevel, id: asString, name: asString }),
+    person: asObject({
       userId: asUserId,
       shortName: asString,
+      /** Their whole name, for a viewer who may read it; otherwise null. */
+      fullName: asNullable(asString),
       avatarUrl: asNullable(asString),
-      teamId: asString
-    })
-  ),
-  sections: asArray(asProfileSection),
-  viewer: asObject({
-    /** An administrator, coach or assistant of the level: the role switches. */
-    manages: asBoolean,
-    /** An administrator of it: the Admin row too. */
-    admin: asBoolean,
+      /** Whether they can hold a role: an account that signs in. */
+      canHoldRoles: asBoolean
+    }),
+    /** The players they guard who play at this level, each with a team. */
+    guardianOf: asArray(
+      asObject({
+        userId: asUserId,
+        shortName: asString,
+        avatarUrl: asNullable(asString),
+        teamId: asString
+      })
+    ),
+    sections: asArray(asProfileSection),
+    viewer: asObject({
+      /** An administrator, coach or assistant of the level: the role switches. */
+      manages: asBoolean,
+      /** An administrator of it: the Admin row too. */
+      admin: asBoolean,
+      /**
+       * The signed-in person, including a merged id of theirs. Absent means no.
+       */
+      self: asOptional(asBoolean, false)
+    }),
     /**
-     * The signed-in person, including a merged id of theirs. Absent means no.
+     * On a league profile, the person's saved umpire availability filter for
+     * the league (null when none is saved), for the person themselves and the
+     * league's admins while the person holds its umpire role. Absent for
+     * everyone else and on team and season profiles.
      */
-    self: asOptional(asBoolean, false)
+    umpireAvailability: asOptionalUmpireAvailability
   })
-})
+)
+/** Narrows a league's umpire list by saved availability filters. */
+export interface UmpireAvailabilityQuery {
+  /** An ISO time the game starts. */
+  availableAt?: string
+  durationMinutes?: number
+  /** 0 is Monday … 6 is Sunday; goes with `time`. */
+  day?: number
+  /** `HH:mm`; goes with `day`. */
+  time?: string
+  level?: string
+  /** People with no saved filter are left out. */
+  strict?: boolean
+}
+export type UmpireCommitment = ReturnType<
+  typeof asUmpireCommitments
+>['commitments'][number]
 export type PersonProfile = Omit<
   ReturnType<typeof asPersonProfile>,
-  'sections'
-> & { sections: ProfileSection[] }
+  'sections' | 'umpireAvailability'
+> & {
+  sections: ProfileSection[]
+  umpireAvailability?: UmpireAvailability | null
+}
 
 /** A season's or league's people, and what this viewer may do with them. */
 export const asLevelPeople = asObject({
@@ -4473,14 +4506,73 @@ export class TeamStationClient {
     )
   }
 
-  async umpirePeople(league: string, query?: string): Promise<UmpirePerson[]> {
+  /**
+   * The league's umpires (admin only), or with `query` the people who could
+   * be made one. `availability` narrows the umpire list by their saved
+   * filters; it is ignored with `query`, whose candidates have none.
+   */
+  async umpirePeople(
+    league: string,
+    query?: string,
+    availability?: UmpireAvailabilityQuery
+  ): Promise<UmpirePerson[]> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(availability ?? {}))
+      if (value != null) params.set(key, String(value))
+    const search = params.toString() === '' ? '' : `?${params.toString()}`
     return (
       await this.request(
         'GET',
-        `/leagues/${encodeURIComponent(league)}/${query == null ? 'umpires' : `umpire-candidates?q=${encodeURIComponent(query)}`}`,
+        `/leagues/${encodeURIComponent(league)}/${query == null ? `umpires${search}` : `umpire-candidates?q=${encodeURIComponent(query)}`}`,
         asUmpirePeople
       )
     ).people
+  }
+
+  /** The signed-in person's saved umpire availability filter for a league. */
+  async umpireAvailability(league: string): Promise<UmpireAvailability | null> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/me/umpire-availability`,
+        asUmpireAvailabilityAnswer
+      )
+    ).availability
+  }
+
+  /** Saves the person's filter for a league; null clears it. */
+  async saveUmpireAvailability(
+    league: string,
+    availability: UmpireAvailability | null
+  ): Promise<UmpireAvailability | null> {
+    return (
+      await this.request(
+        'PUT',
+        `/leagues/${encodeURIComponent(league)}/me/umpire-availability`,
+        asUmpireAvailabilityAnswer,
+        { availability }
+      )
+    ).availability
+  }
+
+  /**
+   * An umpire's games from `from` to `to` (ISO times, at most 31 days
+   * apart), in the leagues the caller administers (admin only).
+   */
+  async umpireCommitments(
+    league: string,
+    userId: string,
+    from: string,
+    to: string
+  ): Promise<UmpireCommitment[]> {
+    const params = new URLSearchParams({ from, to })
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/umpires/${encodeURIComponent(userId)}/commitments?${params.toString()}`,
+        asUmpireCommitments
+      )
+    ).commitments
   }
 
   async saveUmpires(

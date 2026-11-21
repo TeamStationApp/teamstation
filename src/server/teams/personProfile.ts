@@ -20,6 +20,7 @@ import { canAdminister, canManagePeople, currentActor } from '../groups/rights'
 import { canHoldRoles, groupName, heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { mayReadAvailability, readAvailability } from '../umpires/availability'
 import { umpireFamily } from '../umpires/context'
 import { umpireAcceptance } from '../umpires/schedule'
 import { readerOf } from '../users/readerNames'
@@ -73,6 +74,11 @@ async function umpireRole(
  * accepted into the league (`umpireAcceptance`), its coaches and assistants
  * included. A token or Tess opens no card. Anybody else is answered 404,
  * as is somebody who is not on the level's people list.
+ *
+ * A league profile carries `umpireAvailability`, the person's saved umpire
+ * filter for the league, for the person themselves and, while the person
+ * holds the league's umpire role, for its administrators
+ * (`mayReadAvailability`); it follows the caller's rights whoever asks.
  */
 export async function personProfile(
   db: Kysely<Database>,
@@ -173,7 +179,14 @@ export async function personProfile(
       ? []
       : await guardianRows(db, space, ref, children, viewer, readsFull),
     sections: umpireCard ? [] : await sections(db, ref, userId, editable),
-    viewer: { manages: editable, admin: editable && admin, self }
+    viewer: { manages: editable, admin: editable && admin, self },
+    ...(ref.kind === 'league' &&
+    (await mayReadAvailability(db, fresh, ref.id, userId))
+      ? {
+          umpireAvailability:
+            (await readAvailability(db, ref.id, [userId])).get(userId) ?? null
+        }
+      : {})
   }
 }
 

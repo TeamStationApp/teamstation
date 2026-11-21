@@ -782,6 +782,50 @@ const SeasonType: GraphQLObjectType = new GraphQLObjectType({
 
 // --- The query ----------------------------------------------------------
 
+// --- Umpires --------------------------------------------------------------
+
+const UmpireAvailabilityType = new GraphQLObjectType({
+  name: 'UmpireAvailability',
+  description:
+    'A person’s saved umpire filter for one league, read in its own time zone. No levels or days means every one; no range means any time.',
+  fields: {
+    levels: from(list(GraphQLID), 'Umpire level ids.'),
+    days: from(list(GraphQLInt), '0 is Monday … 6 is Sunday.'),
+    from: from(GraphQLString, 'HH:mm, inclusive.'),
+    to: from(GraphQLString, 'HH:mm, inclusive.'),
+    timezone: from(GraphQLString)
+  }
+})
+
+const UmpireType = new GraphQLObjectType({
+  name: 'Umpire',
+  description:
+    'One of a league’s umpires, as GET /leagues/{id}/umpires lists them.',
+  fields: {
+    id: from(required(GraphQLID)),
+    name: from(GraphQLString),
+    umpireAvailability: from(
+      UmpireAvailabilityType,
+      'Their saved filter for the league; null when none is saved.'
+    )
+  }
+})
+
+const UmpireCommitmentType = new GraphQLObjectType({
+  name: 'UmpireCommitment',
+  description: 'A game an umpire is held for: umpiring it or playing in it.',
+  fields: {
+    gameId: from(required(GraphQLID)),
+    leagueId: from(GraphQLID),
+    startAt: from(GraphQLString),
+    endAt: from(GraphQLString),
+    home: from(GraphQLString),
+    away: from(GraphQLString),
+    role: from(GraphQLString, 'umpire or player.'),
+    slot: from(GraphQLString, 'The umpire position, for umpire.')
+  }
+})
+
 const QueryType = new GraphQLObjectType({
   name: 'Query',
   fields: {
@@ -842,6 +886,70 @@ const QueryType = new GraphQLObjectType({
         await seasonDetail({ id: args.id }, context)
         return { id: args.id }
       }
+    },
+    umpires: {
+      type: list(UmpireType),
+      description:
+        'A league’s umpires, for its administrators, as GET /leagues/{id}/umpires lists them; the other arguments narrow them by saved availability (day: 0 is Monday; strict leaves out people with no saved filter).',
+      args: {
+        leagueId: { type: required(GraphQLID) },
+        availableAt: { type: GraphQLString },
+        durationMinutes: { type: GraphQLInt },
+        day: { type: GraphQLInt },
+        time: { type: GraphQLString },
+        level: { type: GraphQLID },
+        strict: { type: GraphQLBoolean }
+      },
+      resolve: async (
+        _root,
+        args: {
+          leagueId: string
+          availableAt?: string
+          durationMinutes?: number
+          day?: number
+          time?: string
+          level?: string
+          strict?: boolean
+        },
+        context: GraphqlContext
+      ) =>
+        (
+          await read<{ people: Json[] }>(
+            context,
+            `/leagues/${id(args.leagueId)}/umpires`,
+            {
+              availableAt: args.availableAt ?? undefined,
+              durationMinutes: args.durationMinutes?.toString(),
+              day: args.day?.toString(),
+              time: args.time ?? undefined,
+              level: args.level ?? undefined,
+              strict: args.strict?.toString()
+            }
+          )
+        ).people
+    },
+    umpireCommitments: {
+      type: list(UmpireCommitmentType),
+      description:
+        'An umpire’s games from from to to (at most 31 days), in the leagues the caller administers, as GET /leagues/{id}/umpires/{userId}/commitments reads them.',
+      args: {
+        leagueId: { type: required(GraphQLID) },
+        userId: { type: required(GraphQLID) },
+        from: { type: required(GraphQLString) },
+        to: { type: required(GraphQLString) }
+      },
+      resolve: async (
+        _root,
+        args: { leagueId: string; userId: string; from: string; to: string },
+        context: GraphqlContext
+      ) =>
+        (
+          await read<{ commitments: Json[] }>(
+            context,
+            `/leagues/${id(args.leagueId)}/umpires/${id(args.userId)}/commitments`,
+            { from: args.from, to: args.to }
+          )
+        ).commitments
     },
     player: {
       type: PlayerType,

@@ -41,12 +41,30 @@ export interface UmpireSeason {
   leaguePictureUrl: string | null
   requirement: UmpireRequirement | null
 }
+/**
+ * A person's saved umpire availability filter for one league: the levels,
+ * the weekdays (0 is Monday … 6 is Sunday) and the `from`/`to` time-of-day
+ * range, read in the time zone it was written in. No levels or days means
+ * every one; no range means any time.
+ */
+export interface UmpireAvailability {
+  levels: string[]
+  days: number[]
+  from: string | null
+  to: string | null
+  timezone: string
+}
 export interface UmpirePerson {
   id: string
   name: string
   avatarUrl: string | null
   affiliations: string
   certifications: UmpireCertification[]
+  /**
+   * The person's saved filter for the league, on an admin's list; null when
+   * none is saved.
+   */
+  umpireAvailability?: UmpireAvailability | null
 }
 export const UMPIRE_HINTS = [
   'majors',
