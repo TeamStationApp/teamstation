@@ -38,6 +38,8 @@ const game = asGameDetail({
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
+  // The reader keeps score for both teams.
+  assignedRoles: { away: ['scorekeeper'], home: ['scorekeeper'] },
   videos: []
 })
 interface ProbeFiber {
@@ -71,8 +73,34 @@ after(async function () {
     await coverage.record(coverageOut)
 })
 let browser: Browser
-/** Leaves every save unanswered, as a server that never replies would. */
+/**
+ * Leaves every save unanswered, as a server that never replies would. The
+ * game's saves wait in `heldSaves` until `releaseSaves` answers them.
+ */
 let holdSaves = false
+const heldSaves: Array<() => Promise<void>> = []
+/** Answers the held saves, in order, as the server would have. */
+async function releaseSaves(): Promise<void> {
+  holdSaves = false
+  for (const answer of heldSaves.splice(0)) await answer()
+}
+/** The fixture game's current count, as the server holds it. */
+interface HeldCount {
+  balls: number
+  strikes: number
+  outs: number
+}
+/** Every request to the API fails, as with no connection at all. */
+let offline = false
+/** The server refuses every save of the game's plays (403). */
+let refuseSaves = false
+/**
+ * Home has something for the queued client to read ahead: the home team on
+ * Home, and game g1, an hour off, in every list of games.
+ */
+let homeWorld = false
+/** The reader keeps score for both teams, as `/me/roles` says. */
+let scorekeeper = false
 /** The away team's name in the mocked game, when a test needs another. */
 let awayTeamName: string | undefined
 async function open(
@@ -84,7 +112,18 @@ async function open(
   probe = false,
   logos?: 'valid' | 'broken',
   uiAnimations = false
-): Promise<{ page: Page; unexpected: string[] }> {
+): Promise<{
+  page: Page
+  unexpected: string[]
+  /** What the server holds of the game's current play: its count. */
+  serverCount: () => HeldCount | undefined
+  /** Whether the server has the game's sides swapped, and its generation. */
+  serverSides: () => { swapped: boolean; generation: number }
+  /** Every API request so far, as `METHOD path?query`. */
+  requests: string[]
+  /** The players the server holds for `teamId` that a test created. */
+  createdPlayers: (teamId: string) => RosterEntry[]
+}> {
   const createdRoster: Record<string, RosterEntry[]> = {}
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
@@ -118,6 +157,8 @@ async function open(
     }>
     currentPlay: unknown
   } = { plays: [], currentPlay: null }
+  /** Home and away as the server keeps them, and the play generation. */
+  const sides = { swapped: false, generation: 0 }
   const keep = (change: {
     plays?: Array<{ about: { atBatIndex: number } }>
     remove?: number[]
@@ -139,10 +180,15 @@ async function open(
     if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
   }
   const unexpected: string[] = []
+  /** Every API request the page made, as `METHOD path?query`, in order. */
+  const requests: string[] = []
   page.on('pageerror', error => {
     console.error('Browser error:', error)
   })
   page.setDefaultTimeout(8000)
+  // A slow machine, as a loaded droplet is: the page's CPU slowed this many times.
+  const throttle = Number(process.env.TS_SCORING_CPU_THROTTLE ?? '1')
+  if (throttle > 1) await page.emulateCPUThrottling(throttle)
   await page.setViewport({ width: 1200, height: 900 })
   await page.setRequestInterception(true)
   page.on('request', request => {
@@ -163,6 +209,72 @@ async function open(
     }
     if (!url.pathname.startsWith('/api/')) {
       request.continue().catch(() => undefined)
+      return
+    }
+    if (offline) {
+      request.abort('internetdisconnected').catch(() => undefined)
+      return
+    }
+    requests.push(`${request.method()} ${url.pathname}${url.search}`)
+    if (
+      homeWorld &&
+      request.method() === 'GET' &&
+      (url.pathname === '/api/v1/me/home' || url.pathname === '/api/v1/events')
+    ) {
+      const listed = {
+        ...game,
+        homeTeamExternal: false,
+        awayTeamExternal: false,
+        startAt: new Date(Date.now() + 3600000).toISOString(),
+        timezone: 'America/Los_Angeles',
+        videoCount: 0
+      }
+      request
+        .respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            url.pathname === '/api/v1/me/home'
+              ? {
+                  teams: [
+                    {
+                      id: 'home',
+                      name: 'Hawks',
+                      shortName: null,
+                      logoPath: null,
+                      logoUrl: null,
+                      record: null,
+                      kind: 'full',
+                      seasonCategory: 'inSeason',
+                      direct: true,
+                      source: 'member'
+                    }
+                  ],
+                  seasons: [],
+                  leagues: []
+                }
+              : url.searchParams.get('paged') === '1'
+                ? {
+                    items: [listed],
+                    nextCursor: null,
+                    prevCursor: null,
+                    anchorId: null,
+                    counts: null
+                  }
+                : [listed]
+          )
+        })
+        .catch(() => undefined)
+      return
+    }
+    if (
+      homeWorld &&
+      request.method() === 'GET' &&
+      url.pathname === '/api/v1/games/g1/plans'
+    ) {
+      request
+        .respond({ status: 200, contentType: 'application/json', body: '[]' })
+        .catch(() => undefined)
       return
     }
     let body: unknown
@@ -191,9 +303,47 @@ async function open(
     }
     const saving =
       request.method() === 'POST' && url.pathname.endsWith('/events')
-    if (saving && holdSaves) return
+    if (saving && refuseSaves) {
+      request
+        .respond({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Not yours to score' })
+        })
+        .catch(() => undefined)
+      return
+    }
+    if (saving && holdSaves && url.pathname !== '/api/v1/games/g1/events')
+      return
     const creatingPlayer =
       request.method() === 'POST' && url.pathname.endsWith('/roster-players')
+    // A swap of home and away, as the server takes one: after the first
+    // pitch it resets the plays, a generation on.
+    if (
+      request.method() === 'POST' &&
+      url.pathname === '/api/v1/games/g1/swap-sides'
+    ) {
+      const atBats = held.plays.length + (held.currentPlay == null ? 0 : 1)
+      if (atBats > 0) {
+        held.plays = []
+        held.currentPlay = null
+        sides.generation++
+      }
+      sides.swapped = !sides.swapped
+      request
+        .respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            homeTeamId: sides.swapped ? 'away' : 'home',
+            awayTeamId: sides.swapped ? 'home' : 'away',
+            generation: sides.generation,
+            reset: { atBats, innings: atBats > 0 ? 1 : 0 }
+          })
+        })
+        .catch(() => undefined)
+      return
+    }
     if (request.method() !== 'GET' && !saving && !creatingPlayer)
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
@@ -216,7 +366,13 @@ async function open(
       }
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
-    else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
+    else if (url.pathname === '/api/v1/me/roles')
+      body = scorekeeper
+        ? {
+            teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+            guardianOf: []
+          }
+        : { teams: {} }
     else if (request.method() === 'GET' && url.pathname === '/api/v1/me/home')
       body = { teams: [], seasons: [], leagues: [] }
     else if (
@@ -278,10 +434,11 @@ async function open(
         await request.respond({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify(held)
+          body: JSON.stringify({ ...held, generation: sides.generation })
         })
       }
-      answer().catch(() => undefined)
+      if (saving && holdSaves) heldSaves.push(answer)
+      else answer().catch(() => undefined)
       return
     } else if (url.pathname === '/api/v1/games/g1') {
       body =
@@ -315,6 +472,17 @@ async function open(
               awayScore: typeof scored === 'number' ? scored : 0,
               homeScore: 0
             }
+      const read = body as typeof game
+      body = sides.swapped
+        ? {
+            ...read,
+            homeTeamId: 'away',
+            awayTeamId: 'home',
+            homeTeamName: read.awayTeamName,
+            awayTeamName: read.homeTeamName,
+            generation: sides.generation
+          }
+        : { ...read, generation: sides.generation }
       if (failed) {
         status = 404
         body = { error: 'Not found' }
@@ -397,6 +565,26 @@ async function open(
       ]
     } else if (url.pathname.endsWith('/live-streams'))
       body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
+    else if (/^\/api\/v1\/events\/[^/]+\/info$/.test(url.pathname))
+      // The game page's Info: the fixture game, with nobody to answer for.
+      body = {
+        id: url.pathname.split('/')[4],
+        eventKind: 'game',
+        title: null,
+        teamId: 'home',
+        teamName: 'Hawks',
+        startAt: null,
+        endAt: null,
+        timezone: 'America/Los_Angeles',
+        venue: null,
+        address: null,
+        latitude: null,
+        longitude: null,
+        status: 'scheduled',
+        canManage: false,
+        attendees: [],
+        replyUserIds: []
+      }
     else {
       unexpected.push(url.pathname)
       status = 500
@@ -411,7 +599,15 @@ async function open(
       .catch(() => undefined)
   })
   await page.goto(`${base}${path}`)
-  return { page, unexpected }
+  return {
+    page,
+    unexpected,
+    serverCount: () =>
+      (held.currentPlay as { count?: HeldCount } | null)?.count,
+    serverSides: () => ({ ...sides }),
+    requests,
+    createdPlayers: teamId => createdRoster[teamId] ?? []
+  }
 }
 /* eslint-disable @typescript-eslint/prefer-optional-chain -- Browser evaluation cannot reference generated Sucrase helpers. */
 async function captureScene(page: Page): Promise<void> {
@@ -1334,8 +1530,15 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('opens an unscored game full screen and protects unsaved plays from browser Back', async function () {
-    const { page, unexpected } = await open('/games/g1')
+  /**
+   * Scores a ball the server holds, leaves with browser Back, and opens
+   * scoring again: at once (`gone` false), as a scorer who comes straight
+   * back does while the screen is still sliding away, or once the screen
+   * and its field have gone. The ball is on screen both ways, and reaches
+   * the server once it answers.
+   */
+  async function backWithHeldBall(gone: boolean): Promise<void> {
+    const { page, unexpected, serverCount } = await open('/games/g1')
     try {
       await startScoring(page)
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
@@ -1344,7 +1547,7 @@ describe('scoring browser', function () {
       const saved = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
-          response.url().endsWith('/games/g1/events')
+          new URL(response.url()).pathname.endsWith('/games/g1/events')
       )
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
@@ -1353,41 +1556,434 @@ describe('scoring browser', function () {
       await page.waitForFunction(
         () => document.querySelector('[aria-label="Save status"]') == null
       )
-      // Back returns to the Score screen.
-      await page.evaluate(() => {
-        history.back()
-      })
-      await page.waitForSelector('[aria-label="Full game scoring"]')
-      expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
-      expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
+      /** Marks the field's canvas, to tell the same screen from a new one. */
+      const mark = async (): Promise<void> => {
+        await page.evaluate(() => {
+          const canvas = document.querySelector('canvas')
+          if (canvas != null) canvas.dataset.backMark = 'kept'
+        })
+      }
+      /** Back, then scoring again: at once, or once the screen has gone. */
+      const backAndReturn = async (): Promise<string> => {
+        await mark()
+        await page.evaluate(() => {
+          history.back()
+        })
+        await page.waitForSelector('[aria-label="Full game scoring"]')
+        expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
+        expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
+        if (gone) {
+          await page.waitForFunction(
+            () =>
+              document.querySelector('[aria-label^="Baseball field"]') == null
+          )
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+        await click(page, 'Full game scoring')
+        await page.waitForFunction(
+          () => location.pathname === '/games/g1/score'
+        )
+        await page.waitForSelector('canvas')
+        const path = await page.evaluate(() =>
+          document.querySelector('canvas[data-back-mark="kept"]') == null
+            ? 'opened anew'
+            : 'shown again'
+        )
+        console.log(`Scoring ${path}`)
+        return path
+      }
+      await backAndReturn()
+      // Held back by the server: the ball has not reached it. It waits on
+      // the tab's own queue of writes, so Back leaves without asking and the
+      // ball is there on the way back in, read from the tab's own copy.
       holdSaves = true
-      await click(page, 'Full game scoring')
-      await page.waitForFunction(() => location.pathname === '/games/g1/score')
-      await page.waitForSelector('canvas')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
-      await page.waitForSelector('[aria-label="Save status"]')
-      const length = await page.evaluate(() => history.length)
-      await page.evaluate(() => {
-        history.back()
-      })
-      await page.waitForFunction(() =>
-        document.body.innerText.includes(
-          '1 change has not reached the server yet and will be lost.'
-        )
+      await page.waitForSelector('[aria-label*="2 balls"]')
+      const returned = await backAndReturn()
+      const count = async (): Promise<string> =>
+        (await page.evaluate(() => {
+          // Plain: the page has no helpers for sucrase's optional chains.
+          const board = document.querySelector('[aria-label*=" balls "]')
+          return board === null ? null : board.getAttribute('aria-label')
+        })) ?? 'no count'
+      console.log('Back in with a held ball:', await count())
+      /** The scoring screen as it opened again, kept as the run's proof. */
+      const shot = async (): Promise<void> => {
+        await page.screenshot({
+          path: join(
+            process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
+            gone ? 'back-screen-gone.png' : 'back-shown-again.png'
+          )
+        })
+      }
+      await page
+        .waitForSelector('[aria-label*="2 balls"]', { timeout: 20000 })
+        .catch(async (error: unknown) => {
+          console.error('Still not 2 balls:', await count())
+          await shot()
+          throw error
+        })
+      // The screen shown again keeps its own Undo history; one opened anew
+      // offers the plays it opened with as the last play, as any game
+      // opened with plays does.
+      await page.waitForSelector(
+        returned === 'opened anew'
+          ? '[aria-label="Undo Last play"]'
+          : '[aria-label="Undo Ball"]'
       )
-      await click(page, 'Cancel')
-      await page.waitForFunction(() => location.pathname === '/games/g1/score')
-      expect(await page.evaluate(() => history.length)).equals(length)
-      await page.evaluate(() => {
-        history.back()
-      })
-      await click(page, 'Discard and Exit')
-      await page.waitForSelector('[aria-label="Full game scoring"]')
-      expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
+      await shot()
+      // The server answers: the held ball is saved, not only drawn.
+      await releaseSaves()
+      const end = Date.now() + 20000
+      while (serverCount()?.balls !== 2) {
+        if (Date.now() > end)
+          throw new Error(
+            `The server holds ${JSON.stringify(serverCount() ?? null)}, not 2 balls`
+          )
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      console.log('The server holds:', JSON.stringify(serverCount()))
       expect(unexpected).deep.equals([])
     } finally {
       holdSaves = false
+      heldSaves.length = 0
+      await page.close()
+    }
+  }
+  it('opens an unscored game full screen and protects unsaved plays from browser Back', async function () {
+    await backWithHeldBall(false)
+  })
+  it('keeps a held ball when the scoring screen has gone before scoring opens again', async function () {
+    await backWithHeldBall(true)
+  })
+  it('keeps scoring offline across leaving, coming back and a swap, and every pitch reaches the server once online', async function () {
+    this.timeout(120000)
+    const { page, unexpected, serverCount, serverSides } =
+      await open('/games/g1')
+    try {
+      const balls = async (n: number): Promise<void> => {
+        await page.waitForSelector(`[aria-label*=" ${n} balls "]`, {
+          timeout: 20000
+        })
+      }
+      /**
+       * Back to the Score screen, and Full game scoring again once the
+       * scoring screen and its field have gone.
+       */
+      const backAndReturn = async (): Promise<void> => {
+        await page.evaluate(() => {
+          history.back()
+        })
+        await page.waitForSelector('[aria-label="Full game scoring"]')
+        await page.waitForFunction(
+          () => document.querySelector('[aria-label^="Baseball field"]') == null
+        )
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        await click(page, 'Full game scoring')
+        await page.waitForFunction(
+          () => location.pathname === '/games/g1/score'
+        )
+        await page.waitForSelector(
+          'canvas, [aria-label="Retry loading scoring"]',
+          { timeout: 20000 }
+        )
+      }
+      await startScoring(page)
+      await page.waitForSelector('canvas')
+      const saved = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname.endsWith('/games/g1/events')
+      )
+      await click(page, 'Ball')
+      await saved
+      // The connection goes: nothing reaches the server from here.
+      offline = true
+      await click(page, 'Ball')
+      await balls(2)
+      await backAndReturn()
+      // What the scorer sees, coming back with no connection.
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      await page.screenshot({
+        path: join(
+          process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
+          'offline-return.png'
+        )
+      })
+      expect(
+        await page.$('[aria-label="Retry loading scoring"]'),
+        'scoring opened offline'
+      ).equals(null)
+      // Scoring opens on the pitches the tab's own copy holds, and says the
+      // connection is gone.
+      await balls(2)
+      await page.waitForSelector('[data-testid="offlineBanner"]')
+      await click(page, 'Ball')
+      await balls(3)
+      // Home and away swapped, still offline: the plays are reset, and the
+      // scorer goes on on the swapped sides.
+      await click(page, 'Open scoring menu')
+      await click(page, 'Swap Home and Away')
+      await click(page, 'Reset and Swap')
+      await page.waitForSelector('[aria-label^="Hawks 0 · Owls 0"]', {
+        timeout: 20000
+      })
+      await click(page, 'Ball')
+      await balls(1)
+      await backAndReturn()
+      await page.waitForSelector('[aria-label^="Hawks 0 · Owls 0"]', {
+        timeout: 20000
+      })
+      await balls(1)
+      await click(page, 'Ball')
+      await balls(2)
+      expect(serverSides().swapped, 'nothing sent while offline').equals(false)
+      // The connection comes back: the swap, then the pitches after it.
+      offline = false
+      const end = Date.now() + 60000
+      while (!serverSides().swapped || serverCount()?.balls !== 2) {
+        if (Date.now() > end)
+          throw new Error(
+            `The server holds ${JSON.stringify({ sides: serverSides(), count: serverCount() ?? null })}`
+          )
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      console.log(
+        'The server holds:',
+        JSON.stringify({ sides: serverSides(), count: serverCount() })
+      )
+      await balls(2)
+      expect(unexpected).deep.equals([])
+    } finally {
+      offline = false
+      await page.close()
+    }
+  })
+  it('shows a refused save in the "edits not sent" banner and sheet, and clears it', async function () {
+    this.timeout(90000)
+    const { page } = await open('/games/g1/score')
+    try {
+      const shot = async (name: string): Promise<void> => {
+        await page.screenshot({
+          path: join(process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp', name)
+        })
+      }
+      await page.waitForSelector('canvas')
+      // Scored with no connection, then refused once it is back.
+      offline = true
+      await click(page, 'Ball')
+      await page.waitForSelector('[aria-label*=" 1 balls "]')
+      refuseSaves = true
+      offline = false
+      const banner = page
+        .waitForFunction(
+          () =>
+            document
+              .querySelector('[data-testid="offlineBannerText"]')
+              ?.textContent?.includes('1 edit not sent') === true,
+          { timeout: 30000 }
+        )
+        .then(() => true)
+        .catch(() => false)
+      const shown = await banner
+      await shot('refused-banner.png')
+      expect(shown, 'the "1 edit not sent" banner').equals(true)
+      await click(page, 'Edits not sent')
+      await page.waitForSelector('[data-testid="heldEditsSheet"]')
+      await page.waitForFunction(() =>
+        document.body.innerText.includes('Not yours to score')
+      )
+      await shot('refused-sheet.png')
+      refuseSaves = false
+      await page.locator('[aria-label^="Use Server\'s Copy"]').click()
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="offlineBannerText"]') == null,
+        { timeout: 20000 }
+      )
+    } finally {
+      offline = false
+      refuseSaves = false
+      await page.close()
+    }
+  })
+  it('warns before the page unloads while a queued edit waits, away from scoring, and not once it is sent', async function () {
+    this.timeout(90000)
+    scorekeeper = true
+    const { page, createdPlayers } = await open('/games/g1/score')
+    try {
+      const unloadAsked = async (): Promise<boolean> => {
+        const asked = new Promise<boolean>(resolve => {
+          const seen = (dialog: {
+            type: () => string
+            dismiss: () => Promise<void>
+          }): void => {
+            if (dialog.type() !== 'beforeunload') return
+            dialog.dismiss().catch(() => undefined)
+            resolve(true)
+          }
+          page.once('dialog', seen)
+          setTimeout(() => {
+            page.off('dialog', seen)
+            resolve(false)
+          }, 4000)
+        })
+        page.reload({ timeout: 4000 }).catch(() => undefined)
+        return await asked
+      }
+      await page.waitForSelector('canvas')
+      // A team player saved with no connection: a team edit, nothing
+      // scored. The rosters and the new player's sheet open first, while the
+      // server answers.
+      await click(page, 'Open scoring menu')
+      await click(page, 'Set Team Rosters')
+      await click(page, 'Create Player')
+      await page.waitForSelector('[aria-label="First Name"]')
+      offline = true
+      await page.locator('[aria-label="First Name"]').fill('Mookie')
+      await page.locator('[aria-label="Last Name"]').fill('Betts')
+      await click(page, 'Save and Create Another Player')
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      await page.keyboard.press('Escape')
+      await new Promise(resolve => setTimeout(resolve, 500))
+      await page.keyboard.press('Escape')
+      await click(page, 'Open scoring menu')
+      await click(page, 'Exit Current Game')
+      await page.waitForFunction(() => location.pathname === '/games/g1')
+      const asked = await unloadAsked()
+      console.log('Leave warning with the player queued:', asked)
+      expect(asked, 'a beforeunload while the player waits').equals(true)
+      // The connection back: the player is sent, and nothing more is asked.
+      offline = false
+      const end = Date.now() + 30000
+      while (
+        !Object.values({ away: 'away', home: 'home' }).some(id =>
+          createdPlayers(id).some(player =>
+            player.shortName.startsWith('Mookie')
+          )
+        )
+      ) {
+        if (Date.now() > end)
+          throw new Error('The player never reached the server')
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      expect(await unloadAsked(), 'nothing waits').equals(false)
+    } finally {
+      offline = false
+      scorekeeper = false
+      await page.close()
+    }
+  })
+  /**
+   * What the base logs for a signed-in first load and for one return on
+   * `homeWorld`, counted: the reads every load or return may make again,
+   * beside one prefetch (`PREFETCH_READS`).
+   */
+  const BASE_FIRST_LOAD: Record<string, number> = {
+    'GET /api/v1/auth/me': 1,
+    'GET /api/v1/me/notifications/summary': 2,
+    'GET /api/v1/me/account/chat-age': 1,
+    'GET /api/v1/me/umpire-leagues': 1,
+    'GET /api/v1/me/roles': 1,
+    'GET /api/v1/health': 1,
+    'GET /api/v1/chat/blocks': 1,
+    'GET /api/v1/chat/conversations': 1,
+    'GET /api/v1/events?played=1&limit=1': 1,
+    'GET /api/v1/live': 1,
+    'GET /api/v1/me/home': 1,
+    'GET /api/v1/users?guardedBy=me': 1,
+    'GET /api/v1/chat/links': 4,
+    'POST /api/v1/analytics/events': 2
+  }
+  // Each foreground read twice: AppState's change and the window's
+  // visibilitychange both reach useForegroundRefresh.
+  const BASE_RETURN: Record<string, number> = {
+    'GET /api/v1/events?played=1&limit=1': 2,
+    'GET /api/v1/me/notifications/summary': 2,
+    'GET /api/v1/chat/links': 3,
+    'POST /api/v1/analytics/events': 1
+  }
+  /** What one prefetch reads for `homeWorld` (cachingClient.ts prefetchOnce). */
+  const PREFETCH_READS: Record<string, number> = Object.fromEntries(
+    [
+      '/me/roles',
+      '/events?when=all&lookbackHours=6',
+      '/events?paged=1&when=upcoming',
+      '/events?paged=1&when=past',
+      '/games/g1',
+      '/games/g1/lineups',
+      '/games/g1/events',
+      '/events/g1/info',
+      '/games/g1/plans',
+      '/teams/home/roster',
+      '/teams/home/default-lineup',
+      '/teams/away/roster',
+      '/teams/away/default-lineup'
+    ].map(path => [`GET /api/v1${path}`, 1])
+  )
+  it('loads the signed-in Home, and returns to it, with a bounded number of API requests', async function () {
+    this.timeout(90000)
+    homeWorld = true
+    const { page, requests, unexpected } = await open('/')
+    try {
+      const counted = (from: number, to: number): Record<string, number> => {
+        const counts: Record<string, number> = {}
+        for (const line of requests.slice(from, to))
+          counts[line] = (counts[line] ?? 0) + 1
+        return counts
+      }
+      const over = (
+        seen: Record<string, number>,
+        base: Record<string, number>
+      ): string[] =>
+        Object.entries(seen)
+          .filter(
+            ([line, count]) =>
+              count > (base[line] ?? 0) + (PREFETCH_READS[line] ?? 0)
+          )
+          .map(([line, count]) => `${line} ×${count}`)
+      await page.waitForSelector('[aria-label="Home"]')
+      const mounted = Date.now()
+      await new Promise(resolve => setTimeout(resolve, 10000))
+      const firstEnd = requests.length
+      const first = counted(0, firstEnd)
+      const visibility = async (state: 'hidden' | 'visible'): Promise<void> => {
+        await page.evaluate(next => {
+          Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            get: () => next
+          })
+          Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            get: () => next === 'hidden'
+          })
+          document.dispatchEvent(
+            new Event('visibilitychange', { bubbles: true })
+          )
+        }, state)
+      }
+      const returns: Array<Record<string, number>> = []
+      let start = firstEnd
+      for (let i = 0; i < 2; i++) {
+        await visibility('hidden')
+        await new Promise(resolve => setTimeout(resolve, 500))
+        start = requests.length
+        await visibility('visible')
+        await new Promise(resolve => setTimeout(resolve, 3000))
+        returns.push(counted(start, requests.length))
+      }
+      const elapsed = Date.now() - mounted
+      console.log('First load:', JSON.stringify(first))
+      console.log('Returns:', JSON.stringify(returns))
+      console.log('Elapsed since Home:', elapsed)
+      expect(elapsed, 'clear of the 30 s refresh').lessThan(25000)
+      expect(over(first, BASE_FIRST_LOAD), 'first load').deep.equals([])
+      for (const seen of returns)
+        expect(over(seen, BASE_RETURN), 'a return').deep.equals([])
+      expect(unexpected).deep.equals([])
+    } finally {
+      homeWorld = false
       await page.close()
     }
   })
