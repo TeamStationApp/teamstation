@@ -494,6 +494,9 @@ export interface OutboxSummary {
 
 export type OutboxListener = (summary: OutboxSummary) => void
 
+/** What a discard came to (`Outbox.discardOutcome`). */
+export type DiscardOutcome = 'inflight' | 'arrived' | 'pending'
+
 /**
  * Something a queued write came to that its screen should say, once it is
  * known: the screen already showed the phone's answer and moved on. Names
@@ -1233,17 +1236,27 @@ export class Outbox {
    * chain with a row in flight is left as it is.
    */
   async discard(chain: string): Promise<boolean> {
+    return (await this.discardOutcome(chain)) === 'arrived'
+  }
+
+  /**
+   * `discard`, answering what it came to: `inflight` when a row of the
+   * chain was on its way and nothing was dropped; `arrived` when the rows
+   * went and the server's copy came back; `pending` when they went and it
+   * did not.
+   */
+  async discardOutcome(chain: string): Promise<DiscardOutcome> {
     const store = await this.options.store()
-    if (store == null) return true
+    if (store == null) return 'arrived'
     const reads = await store.atomically(async tx => {
       const rows = await tx.outbox()
       const own = rows.filter(row => row.chain === chain)
       if (own.some(row => row.state === 'inflight')) return undefined
       return await this.drop(tx, droppedWith(rows, chain))
     })
-    if (reads == null) return false
+    if (reads == null) return 'inflight'
     this.notify()
-    return await this.reread(reads)
+    return (await this.reread(reads)) ? 'arrived' : 'pending'
   }
 
   /**

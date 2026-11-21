@@ -54,6 +54,20 @@ const madePlayer = {
   inheritedFrom: null
 }
 
+/** A game's lineups as the server keeps them, neither side set. */
+const lineupSide = (teamId: string): Record<string, unknown> => ({
+  teamId,
+  teamName: teamId,
+  start: null,
+  changes: [],
+  current: null
+})
+const heldLineups = {
+  away: lineupSide('tem_away'),
+  home: lineupSide('tem_home'),
+  digest: 'D0'
+}
+
 const banner = (): HTMLElement | null =>
   document.querySelector('[data-testid="offlineBanner"]')
 const bannerText = (): string | undefined =>
@@ -120,6 +134,8 @@ describe('the phone shell offline', () => {
     posts: string[]
     refuseSession?: boolean
     refusePlayers?: boolean
+    /** POSTs of a game's lineups answered 403, and the game's reads. */
+    refuseLineups?: boolean
     /** Each POST's path and the token it went with. */
     sentWith?: string[]
   }
@@ -158,6 +174,18 @@ describe('the phone shell offline', () => {
           JSON.stringify({ code: 'unauthorized', message: 'Sign in again' }),
           { status: 401 }
         )
+      if (path.endsWith('/games/g1/lineups')) {
+        if (init?.method === 'POST' && net.refuseLineups === true)
+          return new Response(
+            JSON.stringify({
+              code: 'forbidden',
+              message: 'Only the game’s scorers'
+            }),
+            { status: 403 }
+          )
+        net.posts.push(`GET ${path}`)
+        return new Response(JSON.stringify(heldLineups), { status: 200 })
+      }
       if (init?.method === 'POST' && net.refusePlayers === true)
         return new Response(
           JSON.stringify({
@@ -412,7 +440,13 @@ describe('the phone shell offline', () => {
     }
   })
 
-  it('offers a way out of a player the server refused, from the banner', async () => {
+  /** The banner's line, a button while something is held. */
+  const bannerButton = (): HTMLElement | null =>
+    document.querySelector('[data-testid="offlineBannerButton"]')
+  const heldRow = (kind: string, id: string): HTMLElement | null =>
+    document.querySelector(`[data-testid="heldEdit-${kind}-${id}"]`)
+
+  it('lists a player the server refused from the banner, sends him again, and takes the server’s copy', async () => {
     await earlierLaunch()
     net.offline = false
     net.refusePlayers = true
@@ -425,26 +459,97 @@ describe('the phone shell offline', () => {
       />
     )
     await settle(150)
-    const line = (): HTMLElement | null =>
-      document.querySelector('[data-testid="heldTeamMessage"]')
-    expect(line()?.textContent).equals(
+    expect(bannerText()).equals('1 edit not sent')
+    expect(bannerButton()?.getAttribute('aria-label')).equals('Edits not sent')
+    // Opening the list and cancelling it changes nothing.
+    await act(async () => {
+      bannerButton()!.click()
+    })
+    const row = heldRow('team', 'tem_hawks')
+    expect(row?.textContent).includes('A team')
+    expect(row?.textContent).includes(
       'A player added on this phone was not saved: Only the team’s staff'
     )
-    // Opening the choice and cancelling it changes nothing.
-    await act(async () => {
-      line()!.click()
-    })
-    expect(find('Try Again')).not.equals(undefined)
     await press('Cancel')
-    expect(line()).not.equals(null)
+    expect(heldRow('team', 'tem_hawks')).equals(null)
+    expect(bannerButton()).not.equals(null)
+    // Sent again and refused again: still held, still listed.
     await act(async () => {
-      line()!.click()
+      bannerButton()!.click()
     })
-    await press("Use Server's Copy")
+    await press('Try Again, A team')
     await settle(150)
-    expect(line()).equals(null)
+    expect(heldRow('team', 'tem_hawks')).not.equals(null)
+    await press("Use Server's Copy, A team")
+    await settle(150)
+    expect(heldRow('team', 'tem_hawks'), 'the list closed').equals(null)
     expect(banner(), 'nothing left to say').equals(null)
   })
+
+  it('lists a game whose edits the server refused by name, and takes the server’s copy of it', async () => {
+    // An earlier launch read the game and its lineups, then saved one with
+    // no signal.
+    const client = new CachingClient({
+      baseUrl: '/api/v1',
+      token: 'token-one',
+      openCache,
+      outbox: { setTimer: () => 0, clearTimer: () => undefined }
+    })
+    client.openFor(BETTS.id)
+    await client.home()
+    await client.gameLineups('g1')
+    net.offline = true
+    await client.saveLineups('g1', {
+      side: 'home',
+      base: 'D0',
+      players: [{ gumboId: 7, fullName: 'Player 0', jersey: '0' }],
+      battingOrder: [0],
+      defense: { P: 0 }
+    })
+    await client.drainOutbox()
+    net.offline = false
+    net.refuseLineups = true
+    showRoute({ name: 'home' }, true)
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={BETTS}
+        documentCache={openCache}
+      />
+    )
+    await settle(150)
+    expect(bannerText()).equals('1 edit not sent')
+    await act(async () => {
+      bannerButton()!.click()
+    })
+    const row = heldRow('game', 'g1')
+    expect(row?.textContent).includes('A game')
+    expect(row?.textContent).includes('Not sent: Only the game’s scorers')
+    const reads = net.posts.length
+    await press("Use Server's Copy, A game")
+    await settle(150)
+    expect(heldRow('game', 'g1')).equals(null)
+    expect(banner(), 'nothing left to say').equals(null)
+    // The server's copy of the game was read again.
+    expect(net.posts.slice(reads)).includes('GET /api/v1/games/g1/lineups')
+  })
+
+  it('keeps the line plain offline, where nothing has been refused yet', async () => {
+    await earlierLaunch()
+    net.offline = true
+    showRoute({ name: 'home' }, true)
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={BETTS}
+        documentCache={openCache}
+      />
+    )
+    await settle(150)
+    expect(bannerText()).equals(`${OFFLINE_BANNER} · 1 edit waiting`)
+    expect(bannerButton()).equals(null)
+  })
+
   /** How many writes the person's file still holds, read beside the app. */
   function queuedOnDisk(): number | undefined {
     const file = join(dir, cacheFileName(BETTS.id, 'https://app.example.test'))

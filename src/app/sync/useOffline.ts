@@ -22,6 +22,9 @@ export const SERVER_COPY_PENDING =
 /** A queued write the server refused without saying why. */
 export const DEAD_GAME_FALLBACK =
   'The server would not take a change to this game.'
+/** A held game or team the phone has no name for. */
+export const HELD_GAME_UNNAMED = 'A game'
+export const HELD_TEAM_UNNAMED = 'A team'
 
 /** What signing out with edits still on the phone costs. */
 export function unsentLossText(count: number): string {
@@ -57,6 +60,46 @@ export function offlineBannerText(
 /** What the banner says of a team whose new players the server refused. */
 export function heldTeamText(held: HeldChain): string {
   return `A player added on this phone was not saved: ${held.message ?? DEAD_GAME_FALLBACK}`
+}
+
+/** A game's or a team's queue the server stopped, as the banner lists it. */
+export interface HeldEdit {
+  kind: 'game' | 'team'
+  id: string
+  held: HeldChain
+}
+
+/** `game:<id>` or `team:<id>`: an edit's key among the others. */
+export function heldEditKey(edit: Pick<HeldEdit, 'kind' | 'id'>): string {
+  return `${edit.kind}:${edit.id}`
+}
+
+/** Every held queue on the phone: the games first, then the teams. */
+export function heldEdits(summary: OutboxSummary | undefined): HeldEdit[] {
+  const sorted = (
+    kind: HeldEdit['kind'],
+    held: Record<string, HeldChain> | undefined
+  ): HeldEdit[] =>
+    Object.keys(held ?? {})
+      .sort()
+      .map(id => ({ kind, id, held: held![id] }))
+  return [...sorted('game', summary?.games), ...sorted('team', summary?.teams)]
+}
+
+/**
+ * Whether the banner's list offers Try Again for a held queue, as the
+ * game's own notice and the team's did: every game hold, and a team's only
+ * once the server refused it.
+ */
+export function heldEditRetries(edit: HeldEdit): boolean {
+  return edit.kind === 'game' || edit.held.state === 'dead'
+}
+
+/** What the banner's list says of one held queue. */
+export function heldEditText(edit: HeldEdit): string {
+  return edit.kind === 'game'
+    ? heldGameText(edit.held)!
+    : heldTeamText(edit.held)
 }
 
 /** What a game's screen says of its held queue, if it is held. */
@@ -174,7 +217,7 @@ export function offlineCreateFailure(
     : undefined
 }
 
-/** A game's held queue, what its screen says of it, and the way out. */
+/** A game's or a team's held queue, what its screen says, and the way out. */
 export interface HeldGameControl {
   state: HeldChain['state']
   text: string
@@ -186,6 +229,9 @@ export interface HeldGameControl {
   /** Sends the game's held edits again, from where the server stopped. */
   retry?: () => Promise<void>
 }
+
+/** The same control, for a team's held queue as for a game's. */
+export type HeldControl = HeldGameControl
 
 /** `gameId`'s held queue on the phone, with its discard and retry. */
 export function useHeldGameControl(
@@ -203,5 +249,66 @@ export function useHeldGameControl(
     retry: async () => {
       await client.retryGame(gameId)
     }
+  }
+}
+
+/**
+ * The name of each held game and team, by `heldEditKey`, read from the
+ * phone's own copy while `shown`: read each time it is shown, and again
+ * when the set of holds changes, so a document stored meanwhile names its
+ * hold. Nothing on the web, and nothing for a hold the phone has no copy
+ * to name.
+ */
+export function useHeldNames(
+  client: TeamStationClient,
+  edits: readonly HeldEdit[],
+  shown = true
+): Record<string, string> {
+  const [names, setNames] = useState<Record<string, string>>({})
+  const keys = edits.map(heldEditKey).join('\u0000')
+  useEffect(() => {
+    if (!shown) return
+    if (!(client instanceof CachingClient) || keys === '') {
+      setNames(last => (Object.keys(last).length === 0 ? last : {}))
+      return
+    }
+    let live = true
+    const wanted = keys.split('\u0000').map(key => {
+      const [kind, ...rest] = key.split(':')
+      return { kind: kind as HeldEdit['kind'], id: rest.join(':') }
+    })
+    client
+      .heldNames(wanted)
+      .then(next => {
+        if (live) setNames(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [client, keys, shown])
+  return names
+}
+
+/** `teamId`'s held queue of new players on the phone, with its way out. */
+export function useHeldTeamControl(
+  client: TeamStationClient,
+  teamId: string
+): HeldControl | undefined {
+  const held = useOutboxSummary(client)?.teams[teamId]
+  if (held == null || !(client instanceof CachingClient)) return undefined
+  return {
+    state: held.state,
+    text: heldTeamText(held),
+    discard: async () => await client.discardTeam(teamId),
+    // Only a refused team is sent again: a parked one waits on the game
+    // that names its player, and sending it again would only park it again.
+    ...(held.state === 'dead'
+      ? {
+          retry: async () => {
+            await client.retryTeam(teamId)
+          }
+        }
+      : {})
   }
 }
