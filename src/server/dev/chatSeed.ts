@@ -253,9 +253,8 @@ export interface ChatSeedOptions {
   /** Historical migration fixtures can write the follow table of that era. */
   writeFollow?: typeof setFollow
   /**
-   * People (by key) left with no age and no chat age confirmation; everybody
-   * else gets their age (a birth month, or `is_adult`) and is confirmed
-   * `self`, afresh on every run.
+   * People (by key) left with no age; everybody else gets their age (a birth
+   * month, or `is_adult`, given `self`), afresh on every run.
    */
   noAge?: readonly string[]
 }
@@ -598,8 +597,6 @@ async function upsertPerson(
     is_adult: aged && person.born == null,
     age_source: aged ? ('self' as const) : null,
     age_set_at: aged ? now : null,
-    chat_age_confirmed_at: aged ? now : null,
-    chat_age_source: aged ? ('self' as const) : null,
     merged_into: null,
     updated_at: new Date()
   }

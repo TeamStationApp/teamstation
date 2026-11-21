@@ -28,7 +28,7 @@ run('node', ['scripts/chatCryptoBuild.mjs', 'node', 'wasm'])
 
 const specs = [
   'src/app/chat/declaredAgeGate.test.tsx',
-  'src/app/chat/ChatAgeGate.test.tsx',
+  'src/app/chat/AgeGate.test.tsx',
   'src/app/App.chatAge.test.tsx',
   'src/app/components/AppNav.test.tsx',
   'src/app/chat/PersonMessageButton.test.tsx',

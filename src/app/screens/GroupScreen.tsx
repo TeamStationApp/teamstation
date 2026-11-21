@@ -12,7 +12,7 @@ import {
   type GroupDetail,
   type PublicGroup
 } from '../../common/publicGroups'
-import type { TabCorrection } from '../chat/ChatAgeGate'
+import type { TabCorrection } from '../chat/AgeGate'
 import type { ChatLink } from '../chat/ChatLinks'
 import { Button, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'

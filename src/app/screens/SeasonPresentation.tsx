@@ -29,7 +29,7 @@ import {
   type PublicGame
 } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
-import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
+import { type TabCorrection, useChatsTabGate } from '../chat/AgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Button,

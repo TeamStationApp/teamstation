@@ -4,7 +4,7 @@ import { Text, View } from 'react-native'
 import { ListCard, ListRow, SectionHeader } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { useChatAge } from './ChatAgeGate'
+import { useChatAge } from './AgeGate'
 
 /** An accessible conversation linked from its owning group. */
 export interface ChatLink {

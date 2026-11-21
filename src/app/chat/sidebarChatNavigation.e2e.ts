@@ -61,12 +61,12 @@ async function main(): Promise<void> {
     const sidebar = '[data-testid="navigation-sidebar"]'
     await m.openBrowser({ url: origin + '/' })
     await tap(`${sidebar} [aria-label="Messages"]`)
-    // The age sheet's, by id: the notification ask says Not Now too.
-    await tap('[data-testid="chat-age-decline"]')
+    // The age modal's close control, by id.
+    await tap('[data-testid="chat-age-close"]')
     await page.waitForFunction(() => location.pathname === '/')
     assert.equal(await page.$('[data-testid="chat-workspace"]'), null)
     await tap(`${sidebar} [aria-label="Messages"]`)
-    await tap('[data-testid="chat-age-agree"]')
+    await tap('[data-testid="chat-age-adult"]')
     await page.waitForSelector('[data-testid="chat-workspace"]', {
       timeout: 30000
     })

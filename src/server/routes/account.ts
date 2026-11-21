@@ -15,7 +15,6 @@ import {
   asMyAgeBody,
   outsideAppleRange
 } from '../../common/age'
-import { asChatAgeBody, type ChatAge } from '../../common/chatAge'
 import {
   badRequest,
   conflict,
@@ -143,23 +142,6 @@ async function lockAccount(
     .executeTakeFirst()
   if (user == null) throw closed()
   return user.password_hash
-}
-
-/** Whether, how and when this account unlocked chat. */
-async function readChatAge(
-  db: Kysely<Database>,
-  userId: string
-): Promise<ChatAge> {
-  const row = await db
-    .selectFrom('users')
-    .select(['chat_age_confirmed_at', 'chat_age_source'])
-    .where('id', '=', userId)
-    .executeTakeFirstOrThrow()
-  return {
-    confirmed: row.chat_age_confirmed_at != null,
-    source: row.chat_age_source,
-    confirmedAt: row.chat_age_confirmed_at?.toISOString() ?? null
-  }
 }
 
 /** A person's age as they hold it (`GET /me/account/age`). */
@@ -496,33 +478,6 @@ export function accountRoutes(
         after: { band: age.band }
       })
       res.json(age)
-    })
-  )
-  router.get(
-    '/me/account/chat-age',
-    withAsync(async (req, res) => {
-      res.json(await readChatAge(db, accountId(req)))
-    })
-  )
-  router.put(
-    '/me/account/chat-age',
-    withAsync(async (req, res) => {
-      const userId = accountId(req)
-      const { source } = cleanBody(asChatAgeBody, req.body)
-      // The first confirmation stands: a later one keeps its source and time.
-      const now = new Date()
-      await db
-        .updateTable('users')
-        .set({
-          chat_age_confirmed_at: now,
-          chat_age_source: source,
-          updated_at: now
-        })
-        .where('id', '=', userId)
-        .where('chat_age_confirmed_at', 'is', null)
-        .execute()
-      setAudit(res.locals, { entityType: 'user', entityId: userId })
-      res.json(await readChatAge(db, userId))
     })
   )
   router.put(

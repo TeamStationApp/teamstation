@@ -143,7 +143,7 @@ describe('entity chat season sections', function () {
         null
       )
       await act(async () => {
-        pressChatAge(access === 'ask' ? 'decline' : 'ok')
+        pressChatAge(access === 'ask' ? 'close' : 'ok')
         await delay(20)
       })
       expect(chatAgeSheet()).equals(null)

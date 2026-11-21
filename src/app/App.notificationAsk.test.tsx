@@ -3,15 +3,20 @@ import { after, afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import type { AgeView } from '../common/age'
 import {
   asSessionUser,
   type ChatConversation,
   TeamStationClient
 } from '../common/api'
-import type { ChatAge } from '../common/chatAge'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
-import { chatAgeSheet, pressChatAge } from '../test/chatAgeTesting'
+import {
+  ADULT_AGE,
+  chatAgeSheet,
+  NO_AGE,
+  pressChatAge
+} from '../test/chatAgeTesting'
 import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { AppleAgeOverride } from './chat/DeclaredAgeGate'
@@ -59,7 +64,7 @@ describe('the app’s ask about notifications', function () {
   const global = globalThis as { Notification?: FakeNotification }
   const hadNotification = 'Notification' in global
   const notification = global.Notification
-  let confirmed: ChatAge
+  let confirmed: AgeView
   let asked = 0
   let root: Root | undefined
 
@@ -73,11 +78,7 @@ describe('the app’s ask about notifications', function () {
         return 'default'
       }
     }
-    confirmed = {
-      confirmed: true,
-      source: 'self',
-      confirmedAt: '2027-04-10T12:00:00.000Z'
-    }
+    confirmed = ADULT_AGE
     proto.whoAmI = async () =>
       asSessionUser({ id: ME, displayName: 'Demo User', isAdmin: false })
     proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
@@ -107,13 +108,9 @@ describe('the app’s ask about notifications', function () {
     proto.accountSettings = async () => await new Promise(() => {})
     proto.chatReports = async () => []
     proto.chatLinks = async () => []
-    proto.chatAge = async () => confirmed
-    proto.confirmChatAge = async source => {
-      confirmed = {
-        confirmed: true,
-        source,
-        confirmedAt: '2027-04-12T12:00:00.000Z'
-      }
+    proto.myAge = async () => confirmed
+    proto.setMyAge = async () => {
+      confirmed = ADULT_AGE
       return confirmed
     }
     proto.personProfile = async (kind, id, userId) => ({
@@ -319,7 +316,7 @@ describe('the app’s ask about notifications', function () {
   })
 
   it('waits for the age sheet on entering chat, and asks nothing when it is declined', async function () {
-    confirmed = { confirmed: false, source: null, confirmedAt: null }
+    confirmed = NO_AGE
     await open('/schedule')
     await settle(() => {
       navTab('Chat').click()
@@ -327,7 +324,7 @@ describe('the app’s ask about notifications', function () {
     expect(chatAgeSheet()).not.equals(null)
     expect(ask(), 'never stacked on the age sheet').equals(null)
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     expect(chatAgeSheet()).equals(null)
     expect(ask()).equals(null)
@@ -337,7 +334,7 @@ describe('the app’s ask about notifications', function () {
     expect(chatAgeSheet()).not.equals(null)
     expect(ask()).equals(null)
     await settle(() => {
-      pressChatAge('agree')
+      pressChatAge('adult')
     })
     expect(chatAgeSheet()).equals(null)
     // Once the age sheet has finished going, which jsdom never plays: the

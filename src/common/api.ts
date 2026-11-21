@@ -27,13 +27,13 @@ import {
 } from './age'
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
-import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
 import { asChatBoxCursor } from './chatHistory'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import {
   type ApiError,
   asApiError,
   HttpError,
+  isAgeRequired,
   isUpdateRequired
 } from './errors'
 import {
@@ -4739,6 +4739,11 @@ export class TeamStationClient {
    * reads (`updateRequired`), so the app can say to update it.
    */
   onUpdateRequired?: () => void
+  /**
+   * Told when a chat call is refused because the person has given no age
+   * (`ageRequired`), so the app can read the age again and ask for it.
+   */
+  onAgeRequired?: () => void
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -4862,17 +4867,6 @@ export class TeamStationClient {
       | { apple: AppleRange }
   ): Promise<AgeView> {
     return await this.request('PUT', '/me/account/age', asAgeView, body)
-  }
-
-  async chatAge(): Promise<ChatAge> {
-    return await this.request('GET', '/me/account/chat-age', asChatAge)
-  }
-
-  /** Unlocks chat for this account; the first confirmation stands. */
-  async confirmChatAge(source: ChatAgeSource): Promise<ChatAge> {
-    return await this.request('PUT', '/me/account/chat-age', asChatAge, {
-      source
-    })
   }
 
   async buildsLink(): Promise<string | undefined> {
@@ -8875,6 +8869,7 @@ export class TeamStationClient {
   /** A refusal, after telling `onUpdateRequired` of one this build is too old for. */
   private refusal(error: HttpError): HttpError {
     if (isUpdateRequired(error)) this.onUpdateRequired?.()
+    if (isAgeRequired(error)) this.onAgeRequired?.()
     return error
   }
 }

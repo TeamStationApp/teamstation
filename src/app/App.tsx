@@ -40,7 +40,7 @@ import {
   ChatFrameKey,
   type TabCorrection,
   useChatAgeState
-} from './chat/ChatAgeGate'
+} from './chat/AgeGate'
 import { ChatCoreGate } from './chat/ChatCoreGate'
 import { chatCoreLog, chatStartLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
@@ -887,10 +887,21 @@ function Shell(props: AppProps): React.ReactElement {
     scoringSource.account = signedInAs
   }, [scoringSource, signedInAs])
   /**
-   * Whether this account may see chat: confirmed for its age, or this
-   * device's Apple answer is 13 or more. Every chat surface stands behind it.
+   * Whether this account may see chat: an age band of 13 to 17 or adult, or
+   * this device's Apple answer is 18 or more. Every chat surface stands
+   * behind it. An answer that opens chat reconnects the game socket, which
+   * decides at connect whether it hears chat.
    */
-  const chatAge = useChatAgeState(client, signedInAs, appleAge)
+  const gameSocketRef = useRef<GameSocket | undefined>(undefined)
+  const reconnectForChat = useCallback(() => {
+    gameSocketRef.current?.reconnect()
+  }, [])
+  const chatAge = useChatAgeState(
+    client,
+    signedInAs,
+    appleAge,
+    reconnectForChat
+  )
   const chatOn = chatAge.access === 'allowed'
   /**
    * The ask about notifications, at an RSVP answer and on entering messaging
@@ -984,12 +995,12 @@ function Shell(props: AppProps): React.ReactElement {
         : new GameSocket({ baseUrl: apiBaseUrl, token: client.token }),
     [apiBaseUrl, client, signedInAs]
   )
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    gameSocketRef.current = gameSocket
+    return () => {
       gameSocket?.close()
-    },
-    [gameSocket]
-  )
+    }
+  }, [gameSocket])
   /**
    * The server refused a game screen's subscribe, or a save of a game's plays,
    * because this build is older than the socket's protocol. It stays set: no

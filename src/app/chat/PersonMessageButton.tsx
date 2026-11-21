@@ -7,7 +7,7 @@ import { useSceneShown } from '../components/sceneShown'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
-import { useChatAge, useChatAgeAsk } from './ChatAgeGate'
+import { useChatAge, useChatAgeAsk } from './AgeGate'
 import { reasonOf } from './engine/links'
 import { IncludeAdultSheet } from './IncludeAdultSheet'
 
@@ -17,12 +17,19 @@ export interface PersonMessageButtonProps {
   onOpenChat: (chat: { id: string; title: string }) => void | Promise<void>
 }
 
-/** Eligibility comes from the same rules as New message, never profile visibility. */
+/**
+ * Eligibility comes from the same rules as New message, never profile
+ * visibility. Somebody with no age on file can read no candidates, so until
+ * they answer the button shows on everybody's page but their own and asks
+ * for the age first; the candidates are read once it is given.
+ */
 export function PersonMessageButton(
   props: PersonMessageButtonProps
 ): React.ReactElement | null {
   const { client, userId } = props
-  const { access } = useChatAge()
+  const { access, userId: viewerId } = useChatAge()
+  /** No candidates can be read for somebody with no age on file. */
+  const unread = access === 'ask'
   const askAge = useChatAgeAsk()
   const asking = useRef<(() => void) | undefined>(undefined)
   const theme = useTheme()
@@ -32,11 +39,15 @@ export function PersonMessageButton(
   /** A press made while the age answer was pending, acted on once it is in. */
   const [waiting, setWaiting] = useState(false)
   const [players, setPlayers] = useState<string[]>()
+  /** An answer came, and this person is nobody the viewer may message. */
+  const [refused, setRefused] = useState(false)
   const reading = useLatestRequest()
   const writing = useLatestRequest()
   const pending = useRef(false)
   const opened = useRef(props.onOpenChat)
   opened.current = props.onOpenChat
+  const shownUser = useRef(userId)
+  shownUser.current = userId
   useEffect(() => {
     const current = reading()
     writing()
@@ -45,6 +56,8 @@ export function PersonMessageButton(
     setPlayers(undefined)
     setFailed(false)
     setBusy(false)
+    setRefused(false)
+    if (unread) return
     client
       .dmCandidates('', userId)
       .then(found => {
@@ -52,7 +65,7 @@ export function PersonMessageButton(
           setRecipient(found.find(person => person.userId === userId)?.userId)
       })
       .catch(() => undefined)
-  }, [client, userId, reading, writing])
+  }, [client, userId, reading, writing, unread])
   // A sheet asked for by this button goes with it.
   useEffect(
     () => () => {
@@ -61,17 +74,30 @@ export function PersonMessageButton(
     []
   )
 
-  const start = async (adults: string[] = []): Promise<void> => {
-    if (pending.current || recipient == null) return
+  /** After an age answer: whether this person is a candidate, then the DM. */
+  const startAfterAnswer = async (): Promise<void> => {
+    // The answer opens chat, which reads the candidates again on its own
+    // (above); this read is for the press, so only the person shown counts.
+    const asked = userId
+    const found = await client.dmCandidates('', asked)
+    if (shownUser.current !== asked) return
+    if (found.some(person => person.userId === asked)) {
+      setRecipient(userId)
+      await start([], userId)
+    } else setRefused(true)
+  }
+
+  const start = async (
+    adults: string[] = [],
+    to: string | undefined = recipient
+  ): Promise<void> => {
+    if (pending.current || to == null) return
     pending.current = true
     const current = writing()
     setBusy(true)
     setFailed(false)
     try {
-      const chat: ChatConversation = await client.createDm([
-        recipient,
-        ...adults
-      ])
+      const chat: ChatConversation = await client.createDm([to, ...adults])
       if (!current()) return
       setPlayers(undefined)
       await opened.current({ id: chat.id, title: chat.title ?? '' })
@@ -111,7 +137,10 @@ export function PersonMessageButton(
       },
       onAgreed: () => {
         asking.current = undefined
-        start().catch(() => undefined)
+        const going = recipient == null ? startAfterAnswer() : start()
+        going.catch(() => {
+          setFailed(true)
+        })
       }
     })
   }
@@ -128,7 +157,13 @@ export function PersonMessageButton(
     latestPress.current()
   }, [access, waiting, shown])
 
-  if (recipient == null) return null
+  if (refused)
+    return (
+      <Text accessibilityRole="alert" style={{ color: theme.dangerColor }}>
+        {lstrings.chat_age_not_candidate}
+      </Text>
+    )
+  if (recipient == null && (!unread || userId === viewerId)) return null
   return (
     <View style={{ alignItems: 'flex-end', gap: theme.rem(theme.spaceSmRem) }}>
       <Button

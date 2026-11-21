@@ -531,20 +531,6 @@ const mergedPlayerStats: Action = {
 }
 
 /**
- * Confirms the tab's person for chat, as agreeing to the "Before You Chat"
- * sheet does: until then every chat screen stands behind that sheet. The
- * fixture's people never saw it.
- */
-async function confirmChatAge(tab: Surface, label: string): Promise<void> {
-  const answer = okBody(
-    await tab.api('PUT', '/me/account/chat-age', { source: 'self' }),
-    `${label} confirming its age for chat`
-  ) as { confirmed?: unknown } | null
-  if (answer?.confirmed !== true)
-    throw new Error(`${label} is still not confirmed for chat`)
-}
-
-/**
  * Gives the tab's person an adult age, as answering the age modal does: until
  * then the server refuses them every chat read. An age already given (409
  * `ageSet`) is as good.
@@ -569,8 +555,6 @@ async function chatBetween(
   const receiver = await tabOf(context, reader, farServer(context))
   await giveAdultAge(sender, writer)
   await giveAdultAge(receiver, reader)
-  await confirmChatAge(sender, writer)
-  await confirmChatAge(receiver, reader)
   await receiver.open('/chat')
   await receiver.press(`${chatLabel}*`)
   await receiver.waitForLabel('Message', context.patienceMs)

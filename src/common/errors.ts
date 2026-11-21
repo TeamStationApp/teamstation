@@ -139,6 +139,28 @@ export const forbidden = (
 export const updateRequired = (message: string): HttpError =>
   new HttpError('unavailable', message, { reason: 'updateRequired' })
 
+/** A chat refusal for somebody who has given no age (`ageRequired`). */
+export function isAgeRequired(error: unknown): boolean {
+  if (!(error instanceof HttpError) || error.code !== 'forbidden') return false
+  const details = error.details
+  return (
+    details != null &&
+    typeof details === 'object' &&
+    (details as { reason?: unknown }).reason === 'ageRequired'
+  )
+}
+
+/** A first answer refused because the account already has an age (`ageSet`). */
+export function isAgeSet(error: unknown): boolean {
+  if (!(error instanceof HttpError) || error.code !== 'conflict') return false
+  const details = error.details
+  return (
+    details != null &&
+    typeof details === 'object' &&
+    (details as { reason?: unknown }).reason === 'ageSet'
+  )
+}
+
 /** A refusal `updateRequired` made. */
 export function isUpdateRequired(error: unknown): boolean {
   if (!(error instanceof HttpError)) return false

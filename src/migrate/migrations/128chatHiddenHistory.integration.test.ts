@@ -10,7 +10,13 @@ import {
   testDatabaseUrlOf
 } from '../testDatabase'
 import { migration128ChatHiddenHistory as migration } from './128chatHiddenHistory'
-import { migrations } from './index'
+import { migrations as all } from './index'
+
+// Through this migration: those after it are another test's.
+const migrations = all.slice(
+  0,
+  all.findIndex(m => m.name === migration.name) + 1
+)
 
 /** Every DM member gets a `hidden_before`, null until a rule sets it. */
 describe('chat hidden history migration', function () {

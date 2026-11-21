@@ -243,6 +243,12 @@ const options = {
         ? process.env.TS_DECLARED_AGE_LOWER
         : ''
     ),
+    // Its upper bound, for an answer of 13 to 15 or 16 to 17; the same rule.
+    TS_DECLARED_AGE_UPPER: JSON.stringify(
+      serve && /^-?\d+$/.test(process.env.TS_DECLARED_AGE_UPPER ?? '')
+        ? process.env.TS_DECLARED_AGE_UPPER
+        : ''
+    ),
     // Where the app reports crashes; empty reports nothing (src/app/sentry.ts).
     'process.env.TS_SENTRY_DSN': JSON.stringify(
       process.env.TS_SENTRY_DSN ?? ''

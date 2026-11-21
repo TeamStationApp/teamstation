@@ -3,11 +3,17 @@ import { after, afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import type { AgeView } from '../common/age'
 import { asSessionUser, TeamStationClient } from '../common/api'
-import type { ChatAge, ChatAgeSource } from '../common/chatAge'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
-import { chatAgeSheet, clickPill, pressChatAge } from '../test/chatAgeTesting'
+import {
+  ADULT_AGE,
+  chatAgeSheet,
+  clickPill,
+  NO_AGE,
+  pressChatAge
+} from '../test/chatAgeTesting'
 import { App } from './App'
 import type { AppleAge } from './chat/declaredAge'
 import { AppleAgeOverride } from './chat/DeclaredAgeGate'
@@ -43,8 +49,8 @@ describe('the app before and after the chat age sheet', function () {
   const originals = Object.getOwnPropertyDescriptors(proto)
   const engine = ChatEngine.prototype
   const engineOriginals = Object.getOwnPropertyDescriptors(engine)
-  let confirmed: ChatAge
-  const writes: ChatAgeSource[] = []
+  let confirmed: AgeView
+  const writes: Array<'self' | 'apple'> = []
   let root: Root | undefined
 
   // Each case, since other files restore the client's prototype after theirs.
@@ -81,14 +87,11 @@ describe('the app before and after the chat age sheet', function () {
     proto.seasons = async () => []
     proto.accountSettings = async () => await new Promise(() => {})
     proto.chatReports = async () => []
-    proto.chatAge = async () => confirmed
-    proto.confirmChatAge = async (source: ChatAgeSource) => {
+    proto.myAge = async () => confirmed
+    proto.setMyAge = async body => {
+      const source = 'adult' in body || 'year' in body ? 'self' : 'apple'
       writes.push(source)
-      confirmed = {
-        confirmed: true,
-        source,
-        confirmedAt: '2027-04-12T12:00:00.000Z'
-      }
+      confirmed = { ...ADULT_AGE, ageSource: source }
       return confirmed
     }
     engine.refresh = async () => [conversation(2)]
@@ -108,14 +111,7 @@ describe('the app before and after the chat age sheet', function () {
     account: 'unconfirmed' | 'confirmed',
     apple: AppleAge = 'none'
   ): Promise<void> => {
-    confirmed =
-      account === 'confirmed'
-        ? {
-            confirmed: true,
-            source: 'self',
-            confirmedAt: '2027-04-10T12:00:00.000Z'
-          }
-        : { confirmed: false, source: null, confirmedAt: null }
+    confirmed = account === 'confirmed' ? ADULT_AGE : NO_AGE
     writes.length = 0
     window.history.replaceState(null, '', path)
     const host = document.createElement('div')
@@ -175,7 +171,7 @@ describe('the app before and after the chat age sheet', function () {
     expect(locked()).not.equals(null)
     expect(path()).equals('/chat')
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     expect(chatAgeSheet()).equals(null)
     await untilPath('/schedule')
@@ -185,7 +181,7 @@ describe('the app before and after the chat age sheet', function () {
     })
     expect(chatAgeSheet()).not.equals(null)
     await settle(() => {
-      pressChatAge('agree')
+      pressChatAge('adult')
     })
     expect(writes).deep.equals(['self'])
     expect(chatAgeSheet()).equals(null)
@@ -221,7 +217,7 @@ describe('the app before and after the chat age sheet', function () {
     })
     expect(path()).equals('/chat')
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     await untilPath('/')
     expect(path()).equals('/')
@@ -242,7 +238,7 @@ describe('the app before and after the chat age sheet', function () {
     expect(window.location.search).contains('tab=chats')
     expect(chatAgeSheet()).not.equals(null)
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     await untilPath(address.split('?')[0])
     expect(path() + window.location.search).equals(address)
@@ -264,7 +260,7 @@ describe('the app before and after the chat age sheet', function () {
       expect(window.location.search).contains('tab=chats')
       expect(chatAgeSheet()).not.equals(null)
       await settle(() => {
-        pressChatAge('decline')
+        pressChatAge('close')
       })
       expect(chatAgeSheet()).equals(null)
       await untilPath(page)
@@ -279,7 +275,7 @@ describe('the app before and after the chat age sheet', function () {
     expect(chatAgeSheet()).not.equals(null)
     expect(document.querySelector('[data-testid="chat-composer"]')).equals(null)
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     // The sheet goes in the same render, while the frame slides out.
     expect(chatAgeSheet()).equals(null)
@@ -308,7 +304,7 @@ describe('the app before and after the chat age sheet', function () {
     })
     expect(chatAgeSheet()).not.equals(null)
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     expect(chatAgeSheet()).equals(null)
     expect(window.location.pathname).equals('/account')
@@ -321,7 +317,7 @@ describe('the app before and after the chat age sheet', function () {
       null
     )
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     expect(chatAgeSheet()).equals(null)
     expect(window.location.search).not.contains('tab=chats')
@@ -382,7 +378,7 @@ describe('the app before and after the chat age sheet', function () {
         navTab('Chat').click()
       })
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       expect(starts).greaterThan(0)
     } finally {
@@ -400,11 +396,7 @@ describe('the app before and after the chat age sheet', function () {
     try {
       await open('/schedule', 'unconfirmed')
       expect(starts).equals(0)
-      confirmed = {
-        confirmed: true,
-        source: 'self',
-        confirmedAt: '2027-04-12T12:00:00.000Z'
-      }
+      confirmed = ADULT_AGE
       await settle(() => {
         document.dispatchEvent(new window.Event('visibilitychange'))
       })
@@ -415,17 +407,17 @@ describe('the app before and after the chat age sheet', function () {
     }
   })
 
-  it('opens chat with no sheet when Apple says 13 or older, confirming the account once', async () => {
-    await open('/chat', 'unconfirmed', 'over13')
+  it('opens chat with no sheet when Apple says 18 or older, saving the account’s age once', async () => {
+    await open('/chat', 'unconfirmed', { kind: 'adult', lowerBound: 18 })
     expect(chatAgeSheet()).equals(null)
     expect(locked()).equals(null)
     expect(writes).deep.equals(['apple'])
   })
 
   it('shows only the notice when Apple says under 13, even for a confirmed account', async () => {
-    await open('/chat', 'confirmed', 'under13')
+    await open('/chat', 'confirmed', { kind: 'under13' })
     expect(document.body.textContent).includes('Chat Is for Ages 13 and Up')
-    expect(document.querySelector('[data-testid="chat-age-agree"]')).equals(
+    expect(document.querySelector('[data-testid="chat-age-adult"]')).equals(
       null
     )
     expect(locked()).not.equals(null)

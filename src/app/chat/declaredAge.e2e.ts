@@ -1,13 +1,14 @@
 /**
- * Chat behind the age sheet: every chat entry point drawn, the sheet before
- * the first chat surface of an unconfirmed account, Not Now and asking again,
- * the agreement kept, Apple's 13 or older confirming with no sheet, and the
- * notice for an Apple answer under 13.
+ * Chat behind the age modal: every chat entry point drawn, the modal before
+ * the first chat surface of somebody with no age on file, closing it and
+ * asking again, a year and month checked before Save, 18 or older, Apple's
+ * 18 or older answering with no modal, Apple's 13 to 15 narrowing the
+ * modal, and the notice for an Apple answer under 13.
  *
  * Against the branch's own API and seed, with parent C and coach Hc left
- * unconfirmed:
+ * with no age:
  *
- *   TS_CHAT_SEED_UNCONFIRMED=C,Hc scripts/chat-e2e-reset.sh <run>/seed
+ *   TS_CHAT_SEED_NO_AGE=C,Hc scripts/chat-e2e-reset.sh <run>/seed
  *
  * One Maestro D daemon of the run's own, its device already attached (a
  * Chromium for the web modes, the simulator or the emulator for the phones):
@@ -18,23 +19,24 @@
  *   MAESTRO_D_CLIENT_ROOT=~/git/maestro-d/npm/maestro-d \
  *     node -r sucrase/register src/app/chat/declaredAge.e2e.ts <mode> [key]
  *
- * Every mode signs its device out and in as its person first.
+ * Every mode signs its device out and in as its person first, and the reset
+ * runs again before each web mode that gives C an age.
  *
- * - `web-consent` (a serve with no `TS_DECLARED_AGE_LOWER`): C taps Chat and
- *   meets the sheet, Not Now, again, Hawks' Chats pill and Not Now, then
- *   agrees; the agreement survives a reload.
- * - `web-apple` (a serve with `TS_DECLARED_AGE_LOWER=13`, C unconfirmed):
- *   Chat opens with no sheet, and the account reads `apple`.
- * - `web-under13` (a serve with `12`): confirmed F sees Chat, and the notice.
- * - `web-message` (no stand-in, Hc unconfirmed): Message on parent A's
- *   page, from coach Hc, asks first and makes no DM until it is agreed to.
+ * - `web-age` (a serve with no `TS_DECLARED_AGE_LOWER`): C taps Chat and
+ *   meets the modal, closes it, again from Hawks' Chats pill, then enters a
+ *   year and month (Save stays off for a three-digit year and month 13);
+ *   chat opens, and no modal after a reload.
+ * - `web-adult` (no stand-in): C answers 18 or older.
+ * - `web-apple` (a serve with `TS_DECLARED_AGE_LOWER=18`): Chat opens with
+ *   no modal, and the account reads `apple`.
+ * - `web-apple-minor` (a serve with `13` and `TS_DECLARED_AGE_UPPER=15`):
+ *   no 18 or older, a 17-year-old's year refused, a 14-year-old's taken.
+ * - `web-under13` (a serve with `12`): F sees Chat, and the notice.
+ * - `web-message` (no stand-in, Hc with no age): Message on parent A's
+ *   page, from coach Hc, asks first and makes no DM until an age is given.
  * - `sign-in <key>`: only signs the browser in, for the test that follows.
- * - `ios` (iOS simulator): the `12` stand-in draws Chat and shows F the
- *   notice; `13` opens chat for C with no sheet.
- * - `ios-consent` (iOS simulator, C unconfirmed, no stand-in): Apple's own
- *   prompt declined if it shows, then the sheet, Not Now and the agreement.
- * - `android` (emulator, C unconfirmed): the same, and no sheet after a
- *   relaunch.
+ * - `ios`, `ios-consent`, `android`: the phones (the native age work
+ *   rewrites them for the spinner).
  */
 import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -103,9 +105,11 @@ async function shot(m: Device, name: string): Promise<void> {
 }
 
 const sheet = { id: 'chat-age-sheet' }
-const agree = { id: 'chat-age-agree' }
+const agree = { id: 'chat-age-adult' }
+const enter = { id: 'chat-age-enter' }
+const save = { id: 'chat-age-save' }
 // By id: iOS's own "Save Password?" sheet says Not Now too.
-const decline = { id: 'chat-age-decline' }
+const decline = { id: 'chat-age-close' }
 const ok = { id: 'chat-age-ok' }
 const locked = { id: 'chat-locked' }
 
@@ -124,13 +128,33 @@ async function read<T>(m: Device, expression: string): Promise<T> {
   ) as T
 }
 
-/** The signed-in person's chat age, read by the page with its session. */
-async function chatAge(
-  m: Device
-): Promise<{ confirmed: boolean; source: string | null }> {
+/** The signed-in person's age, read by the page with its session. */
+async function age(m: Device): Promise<{
+  band: string
+  isAdult: boolean
+  ageSource: string | null
+  birthYear: number | null
+}> {
   return await read(
     m,
-    `fetch(${JSON.stringify(api() + '/me/account/chat-age')}, { credentials: 'include' }).then(r => r.json())`
+    `fetch(${JSON.stringify(api() + '/me/account/age')}, { credentials: 'include' }).then(r => r.json())`
+  )
+}
+
+/** Types into one of the modal's fields, its text replaced. */
+async function typeField(m: Device, id: string, text: string): Promise<void> {
+  step(`type ${text} into ${id}`)
+  await read(
+    m,
+    `(() => { const f = document.querySelector('[data-testid="${id}"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(f, ${JSON.stringify(text)}); f.dispatchEvent(new Event('input', { bubbles: true })); return true })()`
+  )
+}
+
+/** Whether the modal's Save can be pressed. */
+async function saveOn(m: Device): Promise<boolean> {
+  return await read<boolean>(
+    m,
+    `Promise.resolve(document.querySelector('[data-testid="chat-age-save"]')?.getAttribute('aria-disabled') !== 'true')`
   )
 }
 
@@ -175,22 +199,20 @@ async function webTab(m: Device, label: string): Promise<void> {
   await m.tapOn({ css: `[role="tab"][aria-label="${label}"]` })
 }
 
-async function webConsent(m: Device): Promise<void> {
+async function webAge(m: Device): Promise<void> {
   await webSignIn(m, 'C')
-  assert.equal((await chatAge(m)).confirmed, false, 'C starts unconfirmed')
+  assert.equal((await age(m)).band, 'unknown', 'C starts with no age')
   await webTab(m, 'Chat')
   await m.assertVisible({ ...sheet, timeout: 20000 })
-  await m.assertVisible({ text: 'Before You Chat' })
-  await m.assertVisible({ text: 'I’m 13 or Older' })
+  await m.assertVisible({ text: 'Your Age' })
+  await m.assertVisible({ text: 'Enter Birth Year and Month' })
+  await m.assertVisible({ text: 'I’m 18 or Older' })
+  await m.assertVisible({ text: '.*keep chat respectful.*' })
   await shot(m, 'web-chat-tap-after.png')
-  step('Not Now')
+  step('close')
   await m.tapOn(decline)
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
-  assert.equal(await address(m), '/', 'Not Now returns to Home')
-  await webTab(m, 'Chat')
-  await m.assertVisible({ ...sheet, timeout: 20000 })
-  await m.tapOn(decline)
-  await m.assertNotVisible({ ...sheet, timeout: 10000 })
+  assert.equal(await address(m), '/', 'closing returns to Home')
 
   const hawks = /Hawks (\S+)/.exec(seedText())?.[1]
   assert(hawks != null, 'the seed table names Hawks')
@@ -199,21 +221,37 @@ async function webConsent(m: Device): Promise<void> {
   await m.assertVisible({ text: 'Team sections', timeout: 20000 })
   await m.tapOn({ text: 'Chats' })
   await m.assertVisible({ ...sheet, timeout: 20000 })
-  await shot(m, 'web-team-chats-after.png')
   await m.tapOn(decline)
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   assert.match(await address(m), /tab=schedule/, 'back on the tab before Chats')
 
   await webTab(m, 'Chat')
   await m.assertVisible({ ...sheet, timeout: 20000 })
-  step('I’m 13 or Older')
-  await m.tapOn(agree)
+  step('Enter Birth Year and Month')
+  await m.tapOn(enter)
+  await m.assertVisible({ id: 'chat-age-year', timeout: 10000 })
+  const order = await read<Array<string | null>>(
+    m,
+    `Promise.resolve([...document.querySelectorAll('[data-testid="chat-age-sheet"] input')].map(f => f.dataset.testid + ' ' + f.getAttribute('inputmode')))`
+  )
+  assert.deepEqual(order, ['chat-age-year numeric', 'chat-age-month numeric'])
+  await shot(m, 'web-age-entry.png')
+  await typeField(m, 'chat-age-year', '202')
+  await typeField(m, 'chat-age-month', '6')
+  assert.equal(await saveOn(m), false, 'a three-digit year is refused')
+  await typeField(m, 'chat-age-year', '2009')
+  await typeField(m, 'chat-age-month', '13')
+  assert.equal(await saveOn(m), false, 'month 13 is refused')
+  await typeField(m, 'chat-age-month', '6')
+  assert.equal(await saveOn(m), true)
+  step('Save')
+  await m.tapOn(save)
   await m.assertNotVisible({ ...sheet, timeout: 20000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
   await notNow(m)
-  const answer = await chatAge(m)
-  assert.equal(answer.confirmed, true)
-  assert.equal(answer.source, 'self')
+  const given = await age(m)
+  assert.equal(given.birthYear, 2009)
+  assert.equal(given.ageSource, 'self')
   step('reload, and Chat again')
   await m.openBrowser({ url: web() + '/' })
   await webTab(m, 'Chat')
@@ -222,13 +260,49 @@ async function webConsent(m: Device): Promise<void> {
   await notNow(m)
 }
 
+async function webAdult(m: Device): Promise<void> {
+  await webSignIn(m, 'C')
+  await webTab(m, 'Chat')
+  await m.assertVisible({ ...sheet, timeout: 20000 })
+  step('I’m 18 or Older')
+  await m.tapOn(agree)
+  await m.assertNotVisible({ ...sheet, timeout: 20000 })
+  await m.assertNotVisible({ ...locked, timeout: 20000 })
+  await notNow(m)
+  const given = await age(m)
+  assert.equal(given.isAdult, true)
+  assert.equal(given.ageSource, 'self')
+}
+
 async function webApple(m: Device): Promise<void> {
   await webSignIn(m, 'C')
   await webTab(m, 'Chat')
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
   await notNow(m)
-  assert.equal((await chatAge(m)).source, 'apple', 'the stand-in confirmed C')
+  assert.equal((await age(m)).ageSource, 'apple', 'the stand-in gave C’s age')
+}
+
+async function webAppleMinor(m: Device): Promise<void> {
+  await webSignIn(m, 'C')
+  await webTab(m, 'Chat')
+  await m.assertVisible({ ...sheet, timeout: 20000 })
+  await m.assertNotVisible({ ...agree, timeout: 2000 })
+  await shot(m, 'web-apple-minor.png')
+  await m.tapOn(enter)
+  await m.assertVisible({ id: 'chat-age-year', timeout: 10000 })
+  const year = new Date().getUTCFullYear()
+  await typeField(m, 'chat-age-year', String(year - 18))
+  await typeField(m, 'chat-age-month', '1')
+  assert.equal(await saveOn(m), false, 'a 17-year-old is outside 13 to 15')
+  await typeField(m, 'chat-age-year', String(year - 15))
+  assert.equal(await saveOn(m), true, 'a 14-year-old is inside it')
+  await m.tapOn(save)
+  await m.assertNotVisible({ ...sheet, timeout: 20000 })
+  await notNow(m)
+  const given = await age(m)
+  assert.equal(given.band, 'minor')
+  assert.equal(given.ageSource, 'apple')
 }
 
 async function webUnder13(m: Device): Promise<void> {
@@ -246,17 +320,10 @@ async function webUnder13(m: Device): Promise<void> {
 
 async function webMessage(m: Device): Promise<void> {
   // A coach opens a parent's page from the team; a parent cannot open a
-  // coach's.
+  // coach's. With no age, Hc can list no chats, so no DM is made until the
+  // age is given: the DM that opens then is the first.
   await webSignIn(m, 'Hc')
   const parent = person('A')
-  const dms = async (): Promise<number> =>
-    (
-      await read<Array<{ kind: string }>>(
-        m,
-        `fetch(${JSON.stringify(api() + '/chat/conversations')}, { credentials: 'include' }).then(r => r.json()).then(b => b.conversations ?? b)`
-      )
-    ).filter(chat => chat.kind === 'dm').length
-  const before = await dms()
   const hawks = /Hawks (\S+)/.exec(seedText())?.[1]
   assert(hawks != null, 'the seed table names Hawks')
   const page = `/teams/${hawks}/people/${parent.userId}`
@@ -268,7 +335,6 @@ async function webMessage(m: Device): Promise<void> {
   await shot(m, 'web-message-after.png')
   await m.tapOn(decline)
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
-  assert.equal(await dms(), before, 'Not Now made no DM')
   await m.tapOn({ id: 'person-message' })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.tapOn(agree)
@@ -409,7 +475,7 @@ async function phoneConsent(
   await navigation(m)
   await m.tapOn({ text: 'Chat' })
   await m.assertVisible({ ...sheet, timeout: 20000 })
-  await m.assertVisible({ text: 'Before You Chat' })
+  await m.assertVisible({ text: 'Your Age' })
   await shot(m, `${platform}-consent-sheet.png`)
   await answerSheet(m, decline)
   // Not Now returns to the tab before Chat: Home, signed in.
@@ -436,8 +502,10 @@ async function main(): Promise<void> {
   const mode = process.argv[2] ?? ''
   // The device stays attached: it is the run's, for the next mode.
   const m = await attach()
-  if (mode === 'web-consent') await webConsent(m)
+  if (mode === 'web-age') await webAge(m)
+  else if (mode === 'web-adult') await webAdult(m)
   else if (mode === 'web-apple') await webApple(m)
+  else if (mode === 'web-apple-minor') await webAppleMinor(m)
   else if (mode === 'web-under13') await webUnder13(m)
   else if (mode === 'web-message') await webMessage(m)
   else if (mode === 'sign-in') await webSignIn(m, process.argv[3] ?? '')

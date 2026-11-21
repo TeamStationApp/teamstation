@@ -7,27 +7,24 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { AppState, Pressable, ScrollView, Text, View } from 'react-native'
+import { AppState } from 'react-native'
 
+import { type AgeBand, asAgeView } from '../../common/age'
 import type { TeamStationClient } from '../../common/api'
-import { asChatAge } from '../../common/chatAge'
-import { Button } from '../components/Button'
-import { CancelAction } from '../components/CancelAction'
-import { Modal } from '../components/Modal'
-import { lstrings } from '../locales/strings'
-import { useInsets } from '../platform/safeArea'
-import { ME_CHAT_AGE } from '../sync/documentKeys'
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { isAgeSet } from '../../common/errors'
+import { ME_AGE } from '../sync/documentKeys'
+import { AgeSheet } from './AgeSheet'
 import type { AppleAge } from './declaredAge'
 
 /**
- * Whether a chat surface may be drawn for the person signed in:
+ * Whether a chat surface may be drawn for the person signed in, from their
+ * age band (`GET /me/account/age`) and this device's Apple answer:
  *
- * - `allowed` — signed out (sign-in keeps its own handling), or confirmed,
- *   or this device's Apple answer is 13 or older;
- * - `blocked` — this device's Apple answer is under 13, whatever the account;
+ * - `allowed` — signed out (sign-in keeps its own handling), a band of 13 to
+ *   17 or adult, or Apple says 18 or older (saved for the account at once);
+ * - `blocked` — under 13, by the band or by this device's Apple answer;
  * - `pending` — Apple, or the server, has not answered yet;
- * - `ask` — anything else: the consent sheet comes first.
+ * - `ask` — no age on file: the age modal comes first.
  */
 export type ChatAccess = 'allowed' | 'blocked' | 'pending' | 'ask'
 
@@ -43,12 +40,22 @@ export interface HeldRequest extends ChatAgeRequest {
   frame: string
 }
 
-type ServerStatus = 'loading' | 'confirmed' | 'unconfirmed' | 'failed'
+type ServerStatus = 'loading' | 'failed' | AgeBand
+
+/** The person's first answer, as the age modal gives it. */
+export type AgeAnswer = { year: number; month: number } | { adult: true }
 
 export interface ChatAgeState {
   access: ChatAccess
-  /** Agrees to the consent sheet; throws, leaving `ask`, when it does not save. */
-  confirm: () => Promise<void>
+  /**
+   * Saves the person's first answer, with this device's Apple range; throws,
+   * leaving `ask`, when it does not save.
+   */
+  answer: (body: AgeAnswer) => Promise<AgeBand>
+  /** This device's Apple answer, which narrows what the modal offers. */
+  apple: AppleAge
+  /** The person signed in, or undefined when nobody is. */
+  userId?: string
   /** Reads the account again after a failed read. */
   retry: () => void
   /** True once a read of this account has failed and not been retried. */
@@ -65,7 +72,8 @@ const noop = (): void => undefined
 
 const allowedState: ChatAgeState = {
   access: 'allowed',
-  confirm: async () => undefined,
+  answer: async () => 'adult',
+  apple: 'none',
   retry: noop,
   failed: false,
   ask: () => noop,
@@ -131,20 +139,29 @@ export function useChatsTabGate<T extends string>(
 }
 
 /**
- * A confirmation is never taken back (the server keeps the first one for
- * good), so a later read — one that fails, or an older answer arriving after
- * an agreement — never turns a known confirmation for this person into
- * anything else.
+ * A known band stands over a later read that fails, or that was asked before
+ * this device's own answer and so answers from before it (`stale`). Any other
+ * read is the account's age now and is kept: a guardian or an administrator
+ * moving it to another band, or an administrator clearing it.
  */
-function keepConfirmed(
+function keepKnown(
   current: { user: string; status: ServerStatus } | undefined,
   userId: string,
-  next: { user: string; status: ServerStatus }
+  next: { user: string; status: ServerStatus },
+  stale = false
 ): { user: string; status: ServerStatus } {
-  return current?.user === userId && current.status === 'confirmed'
+  return current?.user === userId &&
+    (next.status === 'failed' || (stale && next.status === 'unknown')) &&
+    (current.status === 'minor' ||
+      current.status === 'adult' ||
+      current.status === 'under13')
     ? current
     : next
 }
+
+/** A band chat is open to, which the game socket must hear chat for. */
+const readsChat = (status: ServerStatus | undefined): boolean =>
+  status === 'minor' || status === 'adult'
 
 /**
  * The screens' requests for the sheet, one per frame: `ask` records a frame's
@@ -187,58 +204,77 @@ function withoutRequest(
 }
 
 /**
- * One account's chat age, read once per signed-in person, and the access it
- * gives with this device's Apple answer. An Apple answer of 13 or more
- * confirms an unconfirmed account (`apple`) with no sheet.
+ * One account's age band, read once per signed-in person, and the access it
+ * gives with this device's Apple answer. Apple's 18 or older saves the
+ * account's age (`apple`) with no modal. A chat call refused `ageRequired`
+ * reads the band again (`client.onAgeRequired`). Once the band opens chat
+ * after a band that did not (an answer here or elsewhere, or a guardian or
+ * an administrator), `onAnswered` is told, so the game socket reconnects and
+ * hears chat.
  */
 export function useChatAgeState(
   client: TeamStationClient,
   userId: string | undefined,
-  apple: AppleAge
+  apple: AppleAge,
+  onAnswered?: () => void
 ): ChatAgeState {
   const [server, setServer] = useState<{ user: string; status: ServerStatus }>()
   const [attempt, setAttempt] = useState(0)
   const { ask, settle, requests } = useChatAgeRequests()
   const appleSent = useRef(new Set<string>())
+  const answered = useRef(onAnswered)
+  answered.current = onAnswered
+  // Reads are numbered as they are asked; `answeredRead` is the last asked
+  // before this device's latest answer, so a read up to it is stale.
+  const reads = useRef(0)
+  const answeredRead = useRef(0)
 
   useEffect(() => {
     if (userId == null) return
     let live = true
-    // A read again keeps the answer it is replacing, so a sheet open over a
+    // A read again keeps the answer it is replacing, so a modal open over a
     // failed read stays still rather than closing for the read and opening
     // again when it fails.
     setServer(current =>
       current?.user === userId ? current : { user: userId, status: 'loading' }
     )
-    // A phone opens chat at once on a kept confirmation while the read waits:
-    // an unreachable server can take seconds to fail. A confirmation is never
-    // taken back, so the kept one also stands over a read that failed first
-    // (a server error, a captive portal) or answered from an older state. A
-    // kept unconfirmed answer waits for the read, which may find a
-    // confirmation made elsewhere, rather than raise a sheet the read would
-    // take down again.
+    // A phone opens chat at once on a kept band of 13 to 17 or adult while
+    // the read waits: an unreachable server can take seconds to fail. A kept
+    // unknown age waits for the read, which may find an answer made
+    // elsewhere, rather than raise a modal the read would take down again.
     client
-      .cached(ME_CHAT_AGE, asChatAge)
+      .cached(ME_AGE, asAgeView)
       .then(kept => {
-        if (!live || kept?.confirmed !== true) return
-        setServer({ user: userId, status: 'confirmed' })
+        if (!live || (kept?.band !== 'minor' && kept?.band !== 'adult')) return
+        const band = kept.band
+        // It stands over a read that failed first, as over one still out.
+        setServer(current =>
+          current?.user === userId &&
+          current.status !== 'loading' &&
+          current.status !== 'failed'
+            ? current
+            : { user: userId, status: band }
+        )
       })
       .catch(() => undefined)
+    const read = ++reads.current
     client
-      .chatAge()
-      .then(answer => {
+      .myAge()
+      .then(age => {
         if (live)
           setServer(current =>
-            keepConfirmed(current, userId, {
-              user: userId,
-              status: answer.confirmed ? 'confirmed' : 'unconfirmed'
-            })
+            keepKnown(
+              current,
+              userId,
+              { user: userId, status: age.band },
+              read <= answeredRead.current
+            )
           )
       })
       .catch(() => {
         if (live)
           setServer(current =>
-            keepConfirmed(current, userId, { user: userId, status: 'failed' })
+            keepKnown(current, userId, { user: userId, status: 'failed' })
           )
       })
     return () => {
@@ -246,13 +282,44 @@ export function useChatAgeState(
     }
   }, [client, userId, attempt])
 
+  // A chat call refused for want of an age reads the band again.
+  useEffect(() => {
+    if (userId == null) return
+    const refresh = (): void => {
+      setAttempt(value => value + 1)
+    }
+    client.onAgeRequired = refresh
+    return () => {
+      if (client.onAgeRequired === refresh) client.onAgeRequired = undefined
+    }
+  }, [client, userId])
+
   const status: ServerStatus =
     userId != null && server?.user === userId ? server.status : 'loading'
 
-  // A confirmation made on another device reaches this one when it comes back
-  // to the foreground (on events only: no timer polls an unconfirmed account).
+  // The socket registered for chat by the band it had when it connected:
+  // a move from a band that read nothing to one that reads chat reconnects
+  // it, whatever moved it.
+  const before = useRef<{ user?: string; status: ServerStatus }>({
+    status: 'loading'
+  })
   useEffect(() => {
-    if (userId == null || status === 'confirmed' || status === 'loading') return
+    const was = before.current
+    before.current = { user: userId, status }
+    if (
+      was.user === userId &&
+      (was.status === 'unknown' ||
+        was.status === 'under13' ||
+        was.status === 'failed') &&
+      readsChat(status)
+    )
+      answered.current?.()
+  }, [status, userId])
+
+  // An answer given on another device reaches this one when it comes back
+  // to the foreground (on events only: no timer polls an unanswered account).
+  useEffect(() => {
+    if (userId == null || (status !== 'unknown' && status !== 'failed')) return
     const page = (
       globalThis as unknown as {
         document?: {
@@ -275,50 +342,87 @@ export function useChatAgeState(
     }
   }, [status, userId])
 
-  // Apple's 13 or older confirms the account once, as it is in flight or
-  // done; one that fails is sent again after the next read (coming back to
+  const appleRange =
+    typeof apple === 'string' || apple.kind === 'under13' ? undefined : apple
+
+  // Apple's 18 or older is the account's age, saved once, as it is in flight
+  // or done; one that fails is sent again after the next read (coming back to
   // the foreground), and one that lands is read back for a phone to keep.
+  // Chat waits for it (`pending`), with no modal: until it lands the server
+  // refuses every chat call. One the server refuses because the account has
+  // an age already reads that age.
   useEffect(() => {
-    if (userId == null || apple !== 'over13' || status !== 'unconfirmed') return
+    if (userId == null || appleRange?.kind !== 'adult' || status !== 'unknown')
+      return
     if (appleSent.current.has(userId)) return
     appleSent.current.add(userId)
     client
-      .confirmChatAge('apple')
-      .then(answer => {
-        if (!answer.confirmed) throw new Error('Not confirmed')
+      .setMyAge({ apple: { lowerBound: appleRange.lowerBound } })
+      .then(age => {
+        answeredRead.current = reads.current
         setServer(current =>
           current?.user === userId
-            ? { user: userId, status: 'confirmed' }
+            ? { user: userId, status: age.band }
             : current
         )
         setAttempt(value => value + 1)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (isAgeSet(error)) {
+          setAttempt(value => value + 1)
+          return
+        }
         appleSent.current.delete(userId)
       })
-  }, [apple, attempt, client, status, userId])
+  }, [appleRange, attempt, client, status, userId])
 
+  const appleUnder13 = typeof apple !== 'string' && apple.kind === 'under13'
   const access: ChatAccess =
     userId == null
       ? 'allowed'
-      : apple === 'under13'
+      : appleUnder13 || status === 'under13'
         ? 'blocked'
         : apple === 'pending'
           ? 'pending'
-          : status === 'confirmed' || apple === 'over13'
+          : status === 'minor' || status === 'adult'
             ? 'allowed'
-            : status === 'loading'
+            : appleRange?.kind === 'adult'
               ? 'pending'
-              : 'ask'
+              : status === 'loading'
+                ? 'pending'
+                : 'ask'
 
-  const confirm = useCallback(async (): Promise<void> => {
-    if (userId == null) return
-    const answer = await client.confirmChatAge('self')
-    if (!answer.confirmed) throw new Error('Not confirmed')
-    setServer({ user: userId, status: 'confirmed' })
-    // Read it back, so a phone keeps the confirmation for when it is offline.
-    setAttempt(value => value + 1)
-  }, [client, userId])
+  const answer = useCallback(
+    async (body: AgeAnswer): Promise<AgeBand> => {
+      if (userId == null) return 'unknown'
+      const range =
+        appleRange == null
+          ? {}
+          : {
+              apple:
+                appleRange.kind === 'minor'
+                  ? {
+                      lowerBound: appleRange.lowerBound,
+                      upperBound: appleRange.upperBound
+                    }
+                  : { lowerBound: appleRange.lowerBound }
+            }
+      // Answered elsewhere already (another device, or a birth month a
+      // guardian gave): the account's age is the answer.
+      const age = await client
+        .setMyAge({ ...body, ...range })
+        .catch(async (error: unknown) => {
+          if (!isAgeSet(error)) throw error
+          return await client.myAge()
+        })
+      answeredRead.current = reads.current
+      setServer({ user: userId, status: age.band })
+      // Read it back, so a phone keeps the band for when it is offline.
+      setAttempt(value => value + 1)
+      return age.band
+    },
+    [appleRange, client, userId]
+  )
   const retry = useCallback((): void => {
     setAttempt(value => value + 1)
   }, [])
@@ -326,19 +430,21 @@ export function useChatAgeState(
   return useMemo(
     () => ({
       access,
-      confirm,
+      answer,
+      apple,
+      userId,
       retry,
       failed: status === 'failed',
       ask,
       requests,
       settle
     }),
-    [access, confirm, retry, status, ask, requests, settle]
+    [access, answer, apple, userId, retry, status, ask, requests, settle]
   )
 }
 
 /**
- * The one sheet, drawn by the Shell beside the stack rather than in any
+ * The one modal, drawn by the Shell beside the stack rather than in any
  * scene, so it leaves in the render its reason leaves: the Shell's own chat
  * surface on top, or a request from the scene now on top.
  */
@@ -361,65 +467,68 @@ export function ChatAgeHost(props: {
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const pressing = useRef(false)
-  /** The agreement in flight; a withdrawal makes its answer count for nothing. */
+  /** The answer in flight; a withdrawal makes it count for nothing here. */
   const attempt = useRef(0)
-  /** The agreement in flight opens nothing when it lands, and frees the sheet. */
+  /** The answer in flight opens nothing when it lands, and frees the modal. */
   const withdraw = (): void => {
     attempt.current += 1
     pressing.current = false
     setBusy(false)
   }
   const open = owner != null
-  // Whom the sheet is drawn for: the Shell's chat surface or a held request.
+  // Whom the modal is drawn for: the Shell's chat surface or a held request.
   const ownerKey = !open ? undefined : chatSurface ? '' : held?.id
   const { failed: readFailed, retry } = state
   useEffect(() => {
-    // A sheet closed while chat is still locked (Back, an address, the asking
-    // screen going) or handed to another request withdraws the agreement, as
-    // Not Now does. One closed because chat opened lets it finish.
+    // A modal closed while chat is still locked (Back, an address, the asking
+    // screen going) or handed to another request withdraws the answer, as
+    // closing it does. One closed because chat opened lets it finish.
     if (showing) withdraw()
     // Each opening starts with no error from an earlier one.
     setFailed(false)
     if (!open) return
     if (readFailed) retry()
-    // A sheet that opens after a failed read asks the server again.
+    // A modal that opens after a failed read asks the server again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerKey])
   if (owner == null) return null
   const finish = (): void => {
     if (!chatSurface && held != null) state.settle(held.id)
   }
+  const send = (body: AgeAnswer): void => {
+    if (pressing.current) return
+    pressing.current = true
+    const mine = ++attempt.current
+    const current = (): boolean => attempt.current === mine
+    setBusy(true)
+    setFailed(false)
+    state
+      .answer(body)
+      .then(band => {
+        // An answer under 13 leaves the modal up, as the notice.
+        if (!current() || (band !== 'minor' && band !== 'adult')) return
+        finish()
+        owner.onAgreed?.()
+      })
+      .catch(() => {
+        if (current()) setFailed(true)
+      })
+      .finally(() => {
+        if (!current()) return
+        pressing.current = false
+        setBusy(false)
+      })
+  }
   return (
-    <ChatAgeSheet
-      mode={access === 'blocked' ? 'notice' : 'consent'}
+    <AgeSheet
+      mode={access === 'blocked' ? 'notice' : 'ask'}
+      apple={state.apple}
       busy={busy}
       failed={failed}
-      onAgree={() => {
-        if (pressing.current) return
-        pressing.current = true
-        const mine = ++attempt.current
-        const current = (): boolean => attempt.current === mine
-        setBusy(true)
-        setFailed(false)
-        state
-          .confirm()
-          .then(() => {
-            if (!current()) return
-            finish()
-            owner.onAgreed?.()
-          })
-          .catch(() => {
-            if (current()) setFailed(true)
-          })
-          .finally(() => {
-            if (!current()) return
-            pressing.current = false
-            setBusy(false)
-          })
-      }}
+      onAnswer={send}
       onDecline={() => {
-        // A decline while the agreement saves withdraws it: its answer then
-        // opens nothing (a confirmation that lands still unlocks chat).
+        // Closing while the answer saves withdraws it: its answer then opens
+        // nothing here (an answer that lands still opens chat).
         withdraw()
         finish()
         owner.onDecline()
@@ -427,133 +536,3 @@ export function ChatAgeHost(props: {
     />
   )
 }
-
-/** The consent sheet, or the under-13 notice. */
-export function ChatAgeSheet(props: {
-  mode: 'consent' | 'notice'
-  busy?: boolean
-  failed?: boolean
-  onAgree: () => void
-  onDecline: () => void
-}): React.ReactElement {
-  const { mode, busy = false, failed = false, onAgree, onDecline } = props
-  const theme = useTheme()
-  const styles = getStyles(theme)
-  const insets = useInsets()
-  const notice = mode === 'notice'
-  return (
-    <Modal transparent animationType="slide" visible onRequestClose={onDecline}>
-      <View style={styles.scrim}>
-        <Pressable
-          accessibilityLabel={
-            notice ? lstrings.chat_age_under13_ok : lstrings.chat_age_decline
-          }
-          style={styles.behind}
-          onPress={onDecline}
-        />
-        <View
-          style={[
-            styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, theme.rem(1.5)) }
-          ]}
-          testID="chat-age-sheet"
-          accessibilityViewIsModal
-        >
-          <Text style={styles.title} accessibilityRole="header">
-            {notice ? lstrings.chat_age_under13_title : lstrings.chat_age_title}
-          </Text>
-          {/* At large text sizes the words scroll; the buttons stay in reach. */}
-          <ScrollView style={styles.content}>
-            {notice ? (
-              <Text style={styles.body}>{lstrings.chat_age_under13_body}</Text>
-            ) : (
-              <>
-                <Text style={styles.body}>{lstrings.chat_age_body}</Text>
-                <Text style={[styles.body, styles.paragraph]}>
-                  {lstrings.chat_age_rules}
-                </Text>
-              </>
-            )}
-            {failed && (
-              <Text
-                style={[styles.failed, styles.paragraph]}
-                accessibilityRole="alert"
-              >
-                {lstrings.chat_age_failed}
-              </Text>
-            )}
-          </ScrollView>
-          {notice ? (
-            <Button
-              label={lstrings.chat_age_under13_ok}
-              block
-              testID="chat-age-ok"
-              onPress={onDecline}
-            />
-          ) : (
-            <>
-              <Button
-                label={lstrings.chat_age_agree}
-                block
-                busy={busy}
-                disabled={busy}
-                testID="chat-age-agree"
-                onPress={onAgree}
-              />
-              {/* Never disabled: Not Now withdraws an agreement still saving. */}
-              <CancelAction
-                label={lstrings.chat_age_decline}
-                testID="chat-age-decline"
-                onPress={onDecline}
-              />
-            </>
-          )}
-        </View>
-      </View>
-    </Modal>
-  )
-}
-
-const getStyles = cacheStyles((theme: Theme) => ({
-  scrim: { flex: 1, justifyContent: 'flex-end' },
-  behind: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: theme.overlayBackgroundColor
-  },
-  sheet: {
-    width: '100%',
-    maxWidth: theme.rem(36),
-    alignSelf: 'center',
-    backgroundColor: theme.cardBackgroundColor,
-    borderTopLeftRadius: theme.rem(theme.radiusLargeRem),
-    borderTopRightRadius: theme.rem(theme.radiusLargeRem),
-    borderWidth: 1,
-    borderColor: theme.defaultBorderColor,
-    maxHeight: '85%',
-    padding: theme.rem(theme.spaceLgRem),
-    gap: theme.rem(theme.spaceMdRem)
-  },
-  content: { flexGrow: 0 },
-  paragraph: { marginTop: theme.rem(theme.spaceMdRem) },
-  title: {
-    fontFamily: theme.boldTextFont,
-    fontSize: theme.rem(1.125),
-    fontWeight: '700',
-    color: theme.primaryTextColor
-  },
-  body: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.9375),
-    lineHeight: theme.rem(1.375),
-    color: theme.primaryTextColor
-  },
-  failed: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.875),
-    color: theme.dangerColor
-  }
-}))
