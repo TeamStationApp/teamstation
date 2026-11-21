@@ -1802,6 +1802,32 @@ describe('a team’s people by external id', function () {
       expect(held.entity_id).equals(fixtureUserId(known))
     })
 
+    it('links no child to an adult found by address who is known to be under 18', async function () {
+      const { teamId } = await teamWithPlayers('Teen guardian', 'teen-kid', 1)
+      const teen = await existingUser(null, { loginEnabled: true })
+      await giveEmail(teen, 'teen@example.test', true)
+      await database()
+        .updateTable('users')
+        .set({ birth_year: new Date().getUTCFullYear() - 16, birth_month: 1 })
+        .where('id', '=', fixtureUserId(teen))
+        .execute()
+      const answer = await adults(teamId, [
+        {
+          firstName: 'Teen',
+          email: 'teen@example.test',
+          externalId: ext('teen-guardian', 'member'),
+          guardianOf: [ext('teen-kid-1')],
+          staff: false
+        }
+      ])
+      expect(answer.status).equals(200)
+      expect(answer.body.results[0]).deep.include({
+        result: 'matched',
+        guardianLinks: 0,
+        guardiansRefused: 1
+      })
+    })
+
     it('records no id on an account found by address when a team administrator imports it', async function () {
       const teamId = await newTeam('By address, team admin')
       const known = await existingUser(null, { loginEnabled: true })

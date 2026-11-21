@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { openAddsOf, openArrivalsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
-import { ageBandsOf } from '../users/age'
+import { AGE_COLUMNS, bandOfRow } from '../users/age'
 
 /**
  * Who is in each scope chat: the seven audiences.
@@ -85,19 +85,14 @@ export async function eligibleAccounts(
   if (ids.length === 0) return new Set()
   const rows = await db
     .selectFrom('users')
-    .select(['id'])
+    .select(['id', ...AGE_COLUMNS])
     .where('id', 'in', ids)
     .where('merged_into', 'is', null)
     .where('login_enabled', '=', true)
     .where('disabled_at', 'is', null)
     .execute()
-  const bands = await ageBandsOf(
-    db,
-    rows.map(row => row.id),
-    now
-  )
   return new Set(
-    rows.filter(row => bands.get(row.id) !== 'under13').map(row => row.id)
+    rows.filter(row => bandOfRow(row, now) !== 'under13').map(row => row.id)
   )
 }
 

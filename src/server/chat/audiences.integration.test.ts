@@ -158,7 +158,7 @@ describe('chat audiences (U5)', function () {
 
   it('teamMembers: staff, players with accounts 13 and over, plain members and guardians', async function () {
     expect(await audience('teamMembers', fixture.seed.teams.hawks)).deep.equals(
-      sorted([...hawksStaff, 'P', 'A', 'B', 'C', 'N', 'G1', 'G2'])
+      sorted([...hawksStaff, 'P', 'L', 'A', 'B', 'C', 'N', 'G1', 'G2'])
     )
   })
 

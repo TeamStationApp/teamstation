@@ -6,6 +6,7 @@ import { makeId } from '../../common/ids'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { rowsOfPeople } from '../teams/teamStaff'
+import { ageBandOfUser } from '../users/age'
 
 /**
  * Guardians and adult family members of a player.
@@ -39,12 +40,32 @@ export interface Linked {
 }
 
 /**
+ * Refuses a guardian who is known not to be an adult (band 13 to 17, or
+ * under 13): 400 `guardianNotAdult`. Somebody with no age yet is let through,
+ * since invitations and added parents link accounts made a moment ago; their
+ * link counts as a guardian only once they are an adult (`DmFacts`).
+ */
+export async function assertGuardianAge(
+  trx: Kysely<Database>,
+  guardianId: string,
+  now: Date = new Date()
+): Promise<void> {
+  const band = await ageBandOfUser(trx, guardianId, now)
+  if (band === 'minor' || band === 'under13') {
+    throw badRequest('A guardian must be an adult', {
+      reason: 'guardianNotAdult'
+    })
+  }
+}
+
+/**
  * Makes `guardianId` a guardian (or adult family member) of `playerId`, who
  * must be a player on `teamId`.
  *
  * Refuses a guardian who is not an account (`badRequest`, reason
- * `guardianNeedsAccount`), a link of a player to themselves, and a player
- * who has no `is_player` membership on the team (404). Idempotent. A
+ * `guardianNeedsAccount`), a guardian known not to be an adult
+ * (`assertGuardianAge`), a link of a player to themselves, and a player who
+ * has no `is_player` membership on the team (404). Idempotent. A
  * guardian who has no membership on the team gets one, granted by the link;
  * one they already had is left as it was. `actor` is whoever asked, kept
  * for the chat's membership log; nothing here reads it.
@@ -74,6 +95,7 @@ export async function linkGuardian(
       reason: 'guardianNeedsAccount'
     })
   }
+  if (kind === 'guardian') await assertGuardianAge(trx, guardianId)
   const place = await trx
     .selectFrom('memberships')
     .select(['id'])

@@ -268,8 +268,9 @@ export async function completeAttachment(
 /**
  * `GET /chat/attachments/:id`: for a member, a finished attachment with a
  * presigned GET good for 10 minutes; for its uploader, an unfinished one
- * with the parts still missing. Anybody else, and anything unfinished
- * that is not theirs, is not found.
+ * with the parts still missing. Anybody else, anything unfinished that is
+ * not theirs, and anything uploaded before the member's `hidden_before`, is
+ * not found.
  */
 export async function readAttachment(
   context: ChatAttachmentContext,
@@ -291,6 +292,20 @@ export async function readAttachment(
   }
   if (
     (await blockedSenderIds(db, caller.userId)).includes(row.uploader_user_id)
+  )
+    throw notFound()
+  // As `messagesOf` hides a minor's DM history from before they answered,
+  // so the attachments uploaded to it then.
+  const member = await db
+    .selectFrom('chat_members')
+    .select('hidden_before')
+    .where('conversation_id', '=', row.conversation_id)
+    .where('user_id', '=', caller.userId)
+    .executeTakeFirst()
+  if (
+    member?.hidden_before != null &&
+    new Date(row.created_at).getTime() <
+      new Date(member.hidden_before).getTime()
   )
     throw notFound()
   if (row.completed_at == null) {

@@ -1534,6 +1534,11 @@ export interface ChatMembersTable {
   joined_at: Generated<Date>
   left_at: Timestamp | null
   created_at: Generated<Date>
+  /**
+   * Messages before this are not served to this member: set when they gave
+   * an age of 13 to 17 after joining and the DM closed (128chatHiddenHistory).
+   */
+  hidden_before: Timestamp | null
 }
 
 /** The hash-chained record of a chat's membership. */

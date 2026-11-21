@@ -985,7 +985,7 @@ export const enUs = {
   chat_new_too_many: 'A conversation holds at most 20 people.',
   chat_include_title: 'Include another adult',
   chat_include_detail:
-    'This league is a SafeSport Local Affiliated Organization. Messages between an adult and a player under 18 must also include the player’s parent or guardian, an adult family member, or another adult of the team, season or league. Pick at least one.',
+    'This league is a SafeSport Local Affiliated Organization. Messages between an adult and someone 13 to 17 must also include their guardian, an adult family member, or an adult coach, assistant or admin of their team. Pick at least one.',
   chat_include_search: 'Search for an adult',
   chat_include_suggestions: 'Suggested',
   chat_include_results: 'Matches',
@@ -1165,7 +1165,7 @@ export const enUs = {
   manage_safesport_title: 'SafeSport',
   manage_safesport_label: 'SafeSport Local Affiliated Organization',
   manage_safesport_detail:
-    "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to a player under 18 must also include the player's parent or guardian, an adult family member, or another adult of the league. A league that is only a chartered Little League is not one.",
+    "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to someone 13 to 17 on its teams must also include their guardian, an adult family member, or an adult coach, assistant or admin of their team. A league that is only a chartered Little League is not one.",
 
   // Coming in through an invite
   join_header: 'Invitation',

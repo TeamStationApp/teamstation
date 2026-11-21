@@ -49,7 +49,8 @@ const chatNames = new Set([
   '088chatDirtyQueue',
   '099ChatLinkDecisions',
   '113chatHistoryRecovery',
-  '127ageBands'
+  '127ageBands',
+  '128chatHiddenHistory'
 ])
 
 async function scratch(

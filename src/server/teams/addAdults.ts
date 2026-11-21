@@ -18,6 +18,7 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { externalIdLockKey } from '../db/externalIds'
 import { noteScopeChange } from '../socket/syncRevision'
+import { ageBandOfUser } from '../users/age'
 import { isDeleted } from '../users/deleted'
 import {
   claimExternalId,
@@ -344,7 +345,8 @@ async function joinTeam(
  * id that names nobody who plays for this team is counted as missing. Unless
  * a site administrator calls, a player who had a guardian before the call
  * gains no new one, and the caller is linked to nobody: both are counted as
- * refused. An adult who already guards the player is neither.
+ * refused, as is every link for somebody known not to be an adult. An adult
+ * who already guards the player is neither.
  */
 async function linkGuardian(
   trx: Transaction<Database>,
@@ -357,6 +359,10 @@ async function linkGuardian(
   let missing = 0
   let refused = 0
   const adult = (await onePerson(trx, userId)).userId
+  const band = await ageBandOfUser(trx, adult, new Date())
+  // A guardian must be an adult: somebody known to be 13 to 17, or under 13,
+  // guards nobody (an age not yet given is let through).
+  const notAdult = band === 'minor' || band === 'under13'
   for (const externalId of guardianOf) {
     const holder = await externalIdHolder(trx, externalId)
     const playerId = holder.held && 'userId' in holder ? holder.userId : null
@@ -374,6 +380,10 @@ async function linkGuardian(
     // managed back into being.
     if (playerId == null || plays == null || (await isDeleted(trx, playerId))) {
       missing += 1
+      continue
+    }
+    if (notAdult) {
+      refused += 1
       continue
     }
     if (!linking.caller.isAdmin) {

@@ -293,7 +293,6 @@ export function chatRoutes(
         db,
         actor.userId,
         playerIds,
-        query !== '',
         clock()
       )
       const people = await chatPeople(

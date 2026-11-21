@@ -11,7 +11,13 @@ import {
   testDatabaseUrlOf
 } from '../testDatabase'
 import { migration127AgeBands as migration } from './127ageBands'
-import { migrations } from './index'
+import { migrations as all } from './index'
+
+// Through this migration: those after it are another test's.
+const migrations = all.slice(
+  0,
+  all.findIndex(m => m.name === migration.name) + 1
+)
 
 /**
  * Every account gets `is_adult` (false), `age_source` and `age_set_at`
@@ -80,10 +86,9 @@ describe('age bands migration', function () {
     }
     let failure: unknown
     try {
-      await pool.query(
-        `update users set age_source = 'coach' where id = $1`,
-        [before126]
-      )
+      await pool.query(`update users set age_source = 'coach' where id = $1`, [
+        before126
+      ])
     } catch (error) {
       failure = error
     }

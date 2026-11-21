@@ -8620,7 +8620,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`shortName`, `affiliations` the line under the name (guarded ' +
             'players, guardians and teams the caller may see, empty when none ' +
             'is). Empty for ' +
-            'somebody whose only tie is following a team.',
+            'somebody whose only tie is following a team, and for a minor ' +
+            '(13–17) who plays on no team and has no guardian; such a minor ' +
+            'is in nobody else’s list either. 403 `ageRequired` for a ' +
+            'caller with no age, `underAge` under 13.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -8646,14 +8649,14 @@ export function openApiDocument(version: string): OpenApiDocument {
       },
       '/chat/included-adults': {
         get: {
-          summary: 'Adults to include beside players (MAAPP)',
+          summary: 'Adults to include beside minors (MAAPP)',
           description:
-            'For players the caller may name (comma-separated `playerIds`); ' +
-            'otherwise 403 `notCandidate`. Without `q`: their guardians, ' +
-            'adult family members and immediate coaches; with `q`: every ' +
-            'included adult (guardians, family, adult team, season and ' +
-            'league staff) whose name holds it. Never the caller. Each is ' +
-            '`{userId, shortName, compactName?, label}`.',
+            'For minors (13–17) the caller may name (comma-separated ' +
+            '`playerIds`); otherwise 403 `notCandidate`. Their included ' +
+            'adults: guardians, adult family members, and the adult ' +
+            'admins, coaches, assistants, owners and managers of the teams ' +
+            'they play on, whose name holds `q` when given. Never the ' +
+            'caller. Each is `{userId, shortName, compactName?, label}`.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -8682,10 +8685,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Start a DM',
           description:
             '`{userIds}`: 1 to 19 others (400 `dmSize` otherwise). Each must ' +
-            'be somebody the caller may name, and the DM must keep the pair ' +
-            'rule (403 `notCandidate` with `userIds` or `playerIds`) and, in ' +
-            'a SafeSport LAO league, the MAAPP rule (409 `adultRequired` with ' +
-            '`playerIds`). An open one-to-one between the same two is ' +
+            'be somebody the caller may name (a minor, 13–17, only by their ' +
+            'staff, peers and relatives), and the DM must keep the pair rule: ' +
+            'every other member of a minor’s DM is their team’s admin, ' +
+            'coach, assistant, owner or manager, a player of 13–17 or one no ' +
+            'more than 4 years older sharing a team or season, or their adult ' +
+            'guardian or family (403 `notCandidate` with `userIds` or ' +
+            '`playerIds`); and, in a SafeSport LAO league, the MAAPP rule ' +
+            '(409 `adultRequired` with `playerIds`). An open one-to-one between the same two is ' +
             'answered 200 instead of a new one (201). Answers the chat as ' +
             '`GET /chat/conversations` lists it. Audited.',
           security: [{ bearer: [] }],

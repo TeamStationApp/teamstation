@@ -27,8 +27,8 @@ import { mintUserId } from '../users/mintUserId'
  *
  * Who is who, by the key the scenarios use:
  *
- * - **QPLL and Spring 2027:** league admin L, season admin S, season
- *   scorekeeper K.
+ * - **QPLL and Spring 2027:** league admin L (an adult who also plays on
+ *   Hawks), season admin S, season scorekeeper K.
  * - **Site admin** Z.
  * - **Hawks:** admin Ha (an owner membership), coach Hc, scorekeeper Hk,
  *   songkeeper Hs; players P, R and T with accounts, and Q without one;
@@ -83,6 +83,8 @@ export const SEED_PEOPLE: SeedPerson[] = [
     firstName: 'Lena',
     lastName: 'League',
     email: at('L'),
+    // An adult who also plays: on Hawks' roster as a player.
+    team: { key: 'hawks', role: 'member', isPlayer: true },
     roles: [{ on: 'league', role: 'admin' }]
   },
   {

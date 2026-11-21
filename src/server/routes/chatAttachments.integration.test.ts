@@ -512,6 +512,36 @@ describe('chat attachments (U10)', function () {
         (await fixture.call('B', 'GET', '/chat/attachments/cat_none')).status
       ).equals(404)
     })
+
+    it('hides from a member an attachment uploaded before their hidden_before', async function () {
+      const hide = async (at: Date | null): Promise<void> => {
+        await fixture.db
+          .updateTable('chat_members')
+          .set({ hidden_before: at })
+          .where('conversation_id', '=', members)
+          .where('user_id', '=', fixture.id('C'))
+          .execute()
+      }
+      const { created_at: createdAt } = await fixture.db
+        .selectFrom('chat_attachments')
+        .select('created_at')
+        .where('id', '=', uploaded)
+        .executeTakeFirstOrThrow()
+      try {
+        await hide(new Date(new Date(createdAt).getTime() + 1000))
+        expect(
+          (await fixture.call('C', 'GET', `/chat/attachments/${uploaded}`))
+            .status
+        ).equals(404)
+        await hide(new Date(createdAt))
+        expect(
+          (await fixture.call('C', 'GET', `/chat/attachments/${uploaded}`))
+            .status
+        ).equals(200)
+      } finally {
+        await hide(null)
+      }
+    })
   })
 
   describe('clean-up', function () {

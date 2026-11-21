@@ -268,17 +268,26 @@ async function describe(
   const ids = rows.map(row => row.id)
   const hidden = await blockedSenderIds(db, userId)
   const preferences = await preferencesFor(db, userId, ids)
+  // What `messagesOf` would not serve the caller (`hidden_before`) is no
+  // last post, no unread message and no news in the list either.
+  const shown = sql<boolean>`(me.hidden_before is null or m.created_at >= me.hidden_before)`
   const posts = await db
-    .selectFrom('chat_messages')
-    .select(['conversation_id', 'id', 'seq', 'created_at'])
-    .where('conversation_id', 'in', ids)
-    .where('kind', '=', 'post')
-    .$if(hidden.length > 0, query =>
-      query.where('sender_user_id', 'not in', hidden)
+    .selectFrom('chat_messages as m')
+    .leftJoin('chat_members as me', join =>
+      join
+        .onRef('me.conversation_id', '=', 'm.conversation_id')
+        .on('me.user_id', '=', userId)
     )
-    .distinctOn('conversation_id')
-    .orderBy('conversation_id')
-    .orderBy('seq', 'desc')
+    .select(['m.conversation_id', 'm.id', 'm.seq', 'm.created_at'])
+    .where('m.conversation_id', 'in', ids)
+    .where('m.kind', '=', 'post')
+    .where(shown)
+    .$if(hidden.length > 0, query =>
+      query.where('m.sender_user_id', 'not in', hidden)
+    )
+    .distinctOn('m.conversation_id')
+    .orderBy('m.conversation_id')
+    .orderBy('m.seq', 'desc')
     .execute()
   const lastPost = new Map(posts.map(post => [post.conversation_id, post]))
   // Each scope's row, read once: the title, the scope name, the picture
@@ -322,8 +331,11 @@ async function describe(
         from chat_messages m
         left join chat_read_cursors r
           on r.conversation_id = m.conversation_id and r.user_id = ${userId}
+        left join chat_members me
+          on me.conversation_id = m.conversation_id and me.user_id = ${userId}
         where m.conversation_id = any(${ids}::text[])
           and m.seq > coalesce(r.seq, 0)
+          and (me.hidden_before is null or m.created_at >= me.hidden_before)
           and m.sender_user_id <> ${userId}
           and not (m.sender_user_id = any(${hidden}::text[]))
           and m.kind = 'post'
@@ -345,16 +357,22 @@ async function describe(
   const lastAt = new Map(
     (
       await db
-        .selectFrom('chat_messages')
-        .select([
-          'conversation_id',
-          eb => eb.fn.max<Date>('created_at').as('at')
-        ])
-        .where('conversation_id', 'in', ids)
-        .$if(hidden.length > 0, query =>
-          query.where('sender_user_id', 'not in', hidden)
+        .selectFrom('chat_messages as m')
+        .leftJoin('chat_members as me', join =>
+          join
+            .onRef('me.conversation_id', '=', 'm.conversation_id')
+            .on('me.user_id', '=', userId)
         )
-        .groupBy('conversation_id')
+        .select([
+          'm.conversation_id',
+          eb => eb.fn.max<Date>('m.created_at').as('at')
+        ])
+        .where('m.conversation_id', 'in', ids)
+        .where(shown)
+        .$if(hidden.length > 0, query =>
+          query.where('m.sender_user_id', 'not in', hidden)
+        )
+        .groupBy('m.conversation_id')
         .execute()
     ).map(row => [row.conversation_id, new Date(row.at).toISOString()])
   )
@@ -803,14 +821,18 @@ async function labelsOf(
       row => ROLE_WORDS[row.role] ?? 'League'
     )
   } else {
+    // "Player" is a label, whatever the age; who stands by a minor is worked
+    // out by age, as the DM rules do.
     const facts = new DmFacts(db, now)
-    const players = await facts.playersAmong(memberIds)
-    for (const id of players) add(id, 'Player')
-    for (const playerId of players) {
-      const { guardians, family } = await facts.relativesOf(playerId)
+    await facts.load(memberIds)
+    for (const id of memberIds) {
+      if ((await facts.settledTeams(id)).length > 0) add(id, 'Player')
+    }
+    for (const minorId of await facts.minorsAmong(memberIds)) {
+      const { guardians, family } = await facts.relativesOf(minorId)
       for (const id of guardians) add(id, 'Guardian')
       for (const id of family) add(id, 'Family')
-      for (const id of await facts.staffOf(playerId)) add(id, 'Staff')
+      for (const id of await facts.staffOf(minorId)) add(id, 'Staff')
     }
   }
   return new Map(
