@@ -308,7 +308,10 @@ async function open(
         .respond({
           status: 403,
           contentType: 'application/json',
-          body: JSON.stringify({ error: 'Not yours to score' })
+          body: JSON.stringify({
+            code: 'forbidden',
+            message: 'Not yours to score'
+          })
         })
         .catch(() => undefined)
       return
@@ -1669,13 +1672,17 @@ describe('scoring browser', function () {
       }
       /**
        * Back to the Score screen, and Full game scoring again once the
-       * scoring screen and its field have gone.
+       * scoring screen and its field have gone. `offlineSaid`: the Score
+       * screen shows the offline banner (the scorer, as on the phone, draws
+       * none of the shell's chrome).
        */
-      const backAndReturn = async (): Promise<void> => {
+      const backAndReturn = async (offlineSaid = false): Promise<void> => {
         await page.evaluate(() => {
           history.back()
         })
         await page.waitForSelector('[aria-label="Full game scoring"]')
+        if (offlineSaid)
+          await page.waitForSelector('[data-testid="offlineBanner"]')
         await page.waitForFunction(
           () => document.querySelector('[aria-label^="Baseball field"]') == null
         )
@@ -1702,7 +1709,7 @@ describe('scoring browser', function () {
       offline = true
       await click(page, 'Ball')
       await balls(2)
-      await backAndReturn()
+      await backAndReturn(true)
       // What the scorer sees, coming back with no connection.
       await new Promise(resolve => setTimeout(resolve, 1000))
       await page.screenshot({
@@ -1715,10 +1722,8 @@ describe('scoring browser', function () {
         await page.$('[aria-label="Retry loading scoring"]'),
         'scoring opened offline'
       ).equals(null)
-      // Scoring opens on the pitches the tab's own copy holds, and says the
-      // connection is gone.
+      // Scoring opens on the pitches the tab's own copy holds.
       await balls(2)
-      await page.waitForSelector('[data-testid="offlineBanner"]')
       await click(page, 'Ball')
       await balls(3)
       // Home and away swapped, still offline: the plays are reset, and the
@@ -1762,13 +1767,14 @@ describe('scoring browser', function () {
   })
   it('shows a refused save in the "edits not sent" banner and sheet, and clears it', async function () {
     this.timeout(90000)
-    const { page } = await open('/games/g1/score')
+    const { page } = await open('/games/g1')
     try {
       const shot = async (name: string): Promise<void> => {
         await page.screenshot({
           path: join(process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp', name)
         })
       }
+      await startScoring(page)
       await page.waitForSelector('canvas')
       // Scored with no connection, then refused once it is back.
       offline = true
@@ -1776,17 +1782,28 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label*=" 1 balls "]')
       refuseSaves = true
       offline = false
-      const banner = page
+      // The scorer says so on its own screen, in the server's words.
+      await page.waitForFunction(
+        () => document.body.innerText.includes('Not sent: Not yours to score'),
+        { timeout: 30000 }
+      )
+      // The shell's banner, on the Score screen: the scorer, as on the
+      // phone, draws none of the shell's chrome.
+      await page.evaluate(() => {
+        history.back()
+      })
+      await page.waitForSelector('[aria-label="Full game scoring"]')
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label^="Baseball field"]') == null
+      )
+      const shown = await page
+        // A string, not a function: sucrase's `?.` helper is not on the page.
         .waitForFunction(
-          () =>
-            document
-              .querySelector('[data-testid="offlineBannerText"]')
-              ?.textContent?.includes('1 edit not sent') === true,
+          `(document.querySelector('[data-testid="offlineBannerText"]') || {}).textContent === '1 edit not sent'`,
           { timeout: 30000 }
         )
         .then(() => true)
         .catch(() => false)
-      const shown = await banner
       await shot('refused-banner.png')
       expect(shown, 'the "1 edit not sent" banner').equals(true)
       await click(page, 'Edits not sent')
