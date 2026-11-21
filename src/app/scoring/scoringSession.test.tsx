@@ -1353,8 +1353,15 @@ describe('swapping from the scoring menu', function () {
 describe('the scoring open, from what the phone stored', function () {
   it('opens on stored-first reads, reads the game again when one came back different, and a reload reads the server', async function () {
     const reads: string[] = []
-    const note = (name: string, options?: { storedFirst?: boolean }): void => {
-      reads.push(`${name}${options?.storedFirst === true ? ':stored' : ''}`)
+    // What the phone stored, read first or alone (#358): either waits on
+    // the network for nothing.
+    const note = (
+      name: string,
+      options?: { storedFirst?: boolean; storedOrNothing?: unknown }
+    ): void => {
+      const stored =
+        options?.storedFirst === true || options?.storedOrNothing != null
+      reads.push(`${name}${stored ? ':stored' : ''}`)
     }
     let told: ((change: StoredChange) => void) | undefined
     const client = testCachingClient()
@@ -1420,15 +1427,17 @@ describe('the scoring open, from what the phone stored', function () {
     expect(reads).not.includes('roles')
     reads.length = 0
     // A roster or the roles that came back different are read again from
-    // the server, with the game.
+    // the server. With nothing done on the game yet, it is opened again too,
+    // on what is now stored, so a default lineup that arrived shapes it
+    // (#358); once something is done it is read again as after a notice.
     await act(async () => {
       told!('details')
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(reads).includes('roles')
     expect(reads.filter(read => read === 'roster').length).at.least(2)
-    expect(reads).includes('events')
-    expect(reads.filter(read => read.endsWith(':stored'))).deep.equals([])
+    expect(reads).includes('default:stored')
+    expect(reads).includes('events:stored')
     await unmount()
     expect(told).equals(undefined)
   })

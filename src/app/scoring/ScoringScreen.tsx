@@ -431,31 +431,60 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     const load = async (): Promise<void> => {
       // Every read the screen waits on as it opens is the stored one when
       // there is one (the queue's swapped documents after a swap), read from
-      // the server behind it.
+      // the server behind it. Beside the game itself, none waits on the
+      // network: with nothing stored it opens on a stand-in, and hears of
+      // the server's answer once it is stored (#358).
+      const alone = { gameId: props.gameId }
       const game = await props.client.game(props.gameId, { storedFirst: true })
       const roles = await props.client
-        .myRoles({ storedFirst: true })
+        .myRoles({ storedOrNothing: alone })
         .catch(() => undefined)
+      const standInSides: Side[] = []
+      const notStored = (caught: unknown): boolean =>
+        caught instanceof HttpError && caught.code === 'notStored'
       const rights = {
         [game.awayTeamId]: managesRoster(roles, game.awayTeamId),
         [game.homeTeamId]: managesRoster(roles, game.homeTeamId)
       }
-      const loadRoster = async (teamId: string): Promise<RosterEntry[]> => {
+      const plainRoster = async (
+        teamId: string,
+        side: Side
+      ): Promise<RosterEntry[]> => {
+        try {
+          return await props.client.roster(teamId, { storedOrNothing: alone })
+        } catch (caught: unknown) {
+          if (!notStored(caught)) throw caught
+          // Not on this device yet: its records field the side until it is.
+          standInSides.push(side)
+          return []
+        }
+      }
+      const loadRoster = async (
+        teamId: string,
+        side: Side
+      ): Promise<RosterEntry[]> => {
         try {
           return await props.client.roster(teamId, {
             includeFullNames: rights[teamId],
-            storedFirst: true
+            storedOrNothing: alone
           })
         } catch (caught: unknown) {
+          if (notStored(caught)) {
+            // Its full names are read behind; the plain roster stands in.
+            if (rights[teamId]) {
+              rights[teamId] = false
+              return withoutPrivateNames(await plainRoster(teamId, side))
+            }
+            standInSides.push(side)
+            return []
+          }
           if (
             rights[teamId] &&
             caught instanceof HttpError &&
             ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
           ) {
             rights[teamId] = false
-            return withoutPrivateNames(
-              await props.client.roster(teamId, { storedFirst: true })
-            )
+            return withoutPrivateNames(await plainRoster(teamId, side))
           }
           // An unavailable roster is not an empty team: reconciliation would
           // otherwise remove the saved lineup and defense. Offer load retry.
@@ -463,12 +492,14 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         }
       }
       const [away, home, defaults] = await Promise.all([
-        loadRoster(game.awayTeamId),
-        loadRoster(game.homeTeamId),
-        defaultsOf(props.client, game, true)
+        loadRoster(game.awayTeamId, 'away'),
+        loadRoster(game.homeTeamId, 'home'),
+        defaultsOf(props.client, game, true, false, alone)
       ])
       const value = await source.open(game, away, home, undefined, {
-        storedFirst: true
+        storedFirst: true,
+        storedOrNothing: alone,
+        standInSides
       })
       if (!live) return
       showOpened(
@@ -1106,6 +1137,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         onRefreshDetails={quiet => {
           refreshDetails(quiet).catch(() => undefined)
         }}
+        onOpenAgain={() => {
+          setRetry(value => value + 1)
+        }}
         music={music}
         resolveSong={props.resolveSong}
         fadeAppleMusic={props.fadeAppleMusic}
@@ -1209,6 +1243,11 @@ function ScoringPanel(props: {
   detailsProblem?: string
   /** `quiet`: behind a sheet already listing the rosters, which stay. */
   onRefreshDetails: (quiet?: boolean) => void
+  /**
+   * Opens the game again in place, with no loading view: for a default
+   * lineup that reached the device after a game with nothing done opened.
+   */
+  onOpenAgain?: () => void
   game: GameSession
   /** Defaults he can read. A side he cannot see is null, and stays the stored order. */
   visibleDefaults: DefaultLineups
@@ -2736,6 +2775,10 @@ function ScoringPanel(props: {
   // follow the server's.
   const refreshDetailsRef = useRef(props.onRefreshDetails)
   refreshDetailsRef.current = props.onRefreshDetails
+  const openAgainRef = useRef(props.onOpenAgain)
+  openAgainRef.current = props.onOpenAgain
+  const gameRef = useRef(props.game)
+  gameRef.current = props.game
   useEffect(() => {
     if (!persistent) return
     const follow = (): void => {
@@ -2744,7 +2787,15 @@ function ScoringPanel(props: {
       setStaleCheck(value => value + 1)
     }
     const stored = props.client.onStoredChanged(gameId, change => {
-      if (change === 'details') refreshDetailsRef.current(true)
+      if (change === 'details') {
+        refreshDetailsRef.current(true)
+        // Defaults reach a game only as it opens, and shape only one with
+        // nothing done yet.
+        if (gameRef.current.actions.length === 0) {
+          openAgainRef.current?.()
+          return
+        }
+      }
       follow()
     })
     return () => {

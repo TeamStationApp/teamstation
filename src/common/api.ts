@@ -3589,6 +3589,15 @@ export interface RequestOptions {
    */
   offlineFirst?: boolean
   /**
+   * What the device stored for the read, at once, or `notStored` at once
+   * when it stored nothing; the server is asked behind it either way, and
+   * its answer stored. For the scoring screen as it opens, which waits on
+   * the network for nothing (#358). Once an answer is stored for a read
+   * that had none, the `onStoredChanged` listeners of `gameId` are told
+   * `'details'`. A client that stores nothing reads the server.
+   */
+  storedOrNothing?: { gameId: string }
+  /**
    * The server's answer, or the failure: never the phone's stored copy in
    * place of an answer that did not come. For the phone's read behind a
    * stored answer, which must know whether the server was reached.
@@ -3687,16 +3696,20 @@ export const UPLOAD_BODY_CHARS = 64 * 1024
  */
 export type StoredChange = 'game' | 'details'
 
-/** How a read takes `storedFirst` or `offlineFirst`, for the screens that ask for one. */
+/** How a read takes `storedFirst`, `offlineFirst` or `storedOrNothing`, for the screens that ask for one. */
 export interface ReadOptions {
   storedFirst?: boolean
   offlineFirst?: boolean
+  storedOrNothing?: { gameId: string }
 }
 
 function readOptions(options: ReadOptions | undefined): RequestOptions {
   return {
     ...(options?.storedFirst === true ? { storedFirst: true } : {}),
-    ...(options?.offlineFirst === true ? { offlineFirst: true } : {})
+    ...(options?.offlineFirst === true ? { offlineFirst: true } : {}),
+    ...(options?.storedOrNothing == null
+      ? {}
+      : { storedOrNothing: options.storedOrNothing })
   }
 }
 

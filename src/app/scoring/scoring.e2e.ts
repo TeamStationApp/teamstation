@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer, { type Browser, type HTTPRequest, type Page } from 'puppeteer'
 import {
   type Mesh,
   type MeshStandardMaterial,
@@ -101,6 +101,19 @@ let refuseSaves = false
 let homeWorld = false
 /** The reader keeps score for both teams, as `/me/roles` says. */
 let scorekeeper = false
+/**
+ * The away team is one the reader may not see: its default lineup is
+ * answered 404, so the queued client stores none of it.
+ */
+let hiddenOpponent = false
+/** Every API request waits, unanswered, until `releaseStall`. */
+let stallAll = false
+const stalled: Array<() => void> = []
+/** Lets every stalled request go on to its answer. */
+function releaseStall(): void {
+  stallAll = false
+  for (const go of stalled.splice(0)) go()
+}
 /** The away team's name in the mocked game, when a test needs another. */
 let awayTeamName: string | undefined
 async function open(
@@ -215,6 +228,16 @@ async function open(
       request.abort('internetdisconnected').catch(() => undefined)
       return
     }
+    if (stallAll) {
+      stalled.push(() => {
+        handle(request).catch(() => undefined)
+      })
+      return
+    }
+    handle(request).catch(() => undefined)
+  })
+  async function handle(request: HTTPRequest): Promise<void> {
+    const url = new URL(request.url())
     requests.push(`${request.method()} ${url.pathname}${url.search}`)
     if (
       homeWorld &&
@@ -422,6 +445,12 @@ async function open(
     } else if (url.pathname === '/api/v1/games/g1/lineups') {
       status = 404
       body = { error: 'No saved lineup in this events-only fixture' }
+    } else if (
+      hiddenOpponent &&
+      url.pathname === '/api/v1/teams/away/default-lineup'
+    ) {
+      status = 404
+      body = { code: 'notFound', message: 'Not found' }
     } else if (url.pathname.endsWith('/default-lineup'))
       body = { lineup: null, fromGameId: null, setAt: null }
     else if (url.pathname === '/api/v1/health')
@@ -600,7 +629,7 @@ async function open(
         body: JSON.stringify(body)
       })
       .catch(() => undefined)
-  })
+  }
   await page.goto(`${base}${path}`)
   return {
     page,
@@ -1822,6 +1851,57 @@ describe('scoring browser', function () {
     } finally {
       offline = false
       refuseSaves = false
+      await page.close()
+    }
+  })
+  it('opens scoring at once from what is stored while the server stalls', async function () {
+    this.timeout(90000)
+    // The away team's default lineup is one this reader may not see: the
+    // tab stores none of it, as the device run's stack answered it.
+    hiddenOpponent = true
+    const { page, unexpected } = await open('/games/g1')
+    try {
+      await startScoring(page)
+      await page.waitForSelector('canvas')
+      const saved = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname.endsWith('/games/g1/events')
+      )
+      await click(page, 'Ball')
+      await saved
+      await page.evaluate(() => {
+        history.back()
+      })
+      await page.waitForSelector('[aria-label="Full game scoring"]')
+      await page.waitForFunction(
+        () => document.querySelector('[aria-label^="Baseball field"]') == null
+      )
+      // The server takes every request from here and answers none.
+      stallAll = true
+      await click(page, 'Full game scoring')
+      const started = Date.now()
+      const shown = await page
+        .waitForSelector('[aria-label*=" 1 balls "]', { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false)
+      const elapsed = Date.now() - started
+      console.log(
+        `Scoring on a stalled server: ${shown ? `board in ${elapsed} ms` : 'no board in 5 s'}`
+      )
+      await page.screenshot({
+        path: join(
+          process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
+          'open-stalled-web.png'
+        )
+      })
+      expect(shown, 'the board within 5 s, from the tab’s copy').equals(true)
+      releaseStall()
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      expect(unexpected).deep.equals([])
+    } finally {
+      releaseStall()
+      hiddenOpponent = false
       await page.close()
     }
   })
