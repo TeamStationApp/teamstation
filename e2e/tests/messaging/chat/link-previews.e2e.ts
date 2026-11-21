@@ -104,7 +104,10 @@ async function send(ctx: E2eContext): Promise<void> {
         const body = 'Preview ' + mode + ' ' + probe.slice(0, 8) + ' ' + url
         await m.tapOn({ id: 'chat-composer' })
         await m.inputText({ text: body })
-        assert.equal(await readChatComposer(m, platform, web), body)
+        // A native hierarchy read can outlast a pending preview. Observe the
+        // request immediately. The peer verifies the exact body after Send.
+        if (mode !== 'pending' || web != null)
+          assert.equal(await readChatComposer(m, platform, web), body)
         if (mode === 'ready' || mode === 'dismissed') {
           await m.assertVisible({
             id: 'chat-dismiss-link-preview',
