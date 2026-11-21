@@ -8,6 +8,7 @@
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with a dry run first and `--delete-old` for the old copies afterwards
 - added: Tapping "N edits not sent" opens a sheet of each refused edit, naming its game or team with the server's message, with Try Again and Use Server's Copy; the Game and Team screens show the same held notice
+- added: Anyone accepted into a league can umpire its games once an administrator gives them the umpire role: its administrators, league and season members, anyone with a role on one of its teams, and guardians of those teams' players; followers count for nothing
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file

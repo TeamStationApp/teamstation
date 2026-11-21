@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely } from 'kysely'
 
 import type { UmpireSchedulePage } from '../../common/api'
 import { badRequest, forbidden, notFound } from '../../common/errors'
@@ -19,13 +19,12 @@ import {
   umpireEnd,
   umpireFilterError,
   type UmpireFilters,
-  umpireTimeMatches,
-  umpireWindowsOverlap
+  umpireTimeMatches
 } from '../../common/umpireTime'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { now } from '../clock'
-import type { Database, SeasonsTable } from '../db/database'
+import type { Database } from '../db/database'
 import type { ParsedEventList } from '../events/eventListQuery'
 import { canAdminister, requireGroupAdmin } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
@@ -100,21 +99,99 @@ export async function umpireAccess(
   if (role == null) throw forbidden('Not an umpire for this league')
   return await canAdminister(db, actor, { kind: 'league', id: leagueId })
 }
-export async function involvedSeasons(
+/**
+ * Whether the viewer (`family[0]`, through any of its merged accounts) is
+ * accepted into the league at any level, which puts every one of the league's
+ * games in their umpire schedule: they administer it (`leagueAdmin`), are a
+ * member of it or of one of its seasons, hold any role on it, on one of its
+ * seasons or on a team active in one of its seasons, belong in any role to
+ * such a team, or anyone in the family plays on one (a guardian's child). A
+ * team whose `season_teams` row is inactive counts for none of these, and a
+ * follower is never accepted.
+ */
+export async function umpireAcceptance(
   db: Kysely<Database>,
   leagueId: string,
-  family: UmpireIdentity[]
-): Promise<Array<Selectable<SeasonsTable>>> {
-  const teams = [...new Set(family.flatMap(p => p.teamIds))]
-  if (teams.length === 0) return []
-  return await db
-    .selectFrom('seasons')
-    .innerJoin('season_teams as st', 'st.season_id', 'seasons.id')
-    .selectAll('seasons')
-    .where('seasons.league_id', '=', leagueId)
-    .where('st.team_id', 'in', teams)
-    .distinct()
-    .execute()
+  family: UmpireIdentity[],
+  leagueAdmin: boolean
+): Promise<boolean> {
+  if (leagueAdmin) return true
+  const viewer = family[0].userIds
+  // A disabled child gives their guardian nothing, as they give no choice.
+  const players = [
+    ...new Set(
+      family.filter((p, i) => i === 0 || p.active).flatMap(p => p.teamIds)
+    )
+  ]
+  const { accepted } = await db
+    .selectNoFrom(eb => {
+      const activeTeams = eb
+        .selectFrom('season_teams as st')
+        .innerJoin('seasons as s', 's.id', 'st.season_id')
+        .select('st.team_id')
+        .where('s.league_id', '=', leagueId)
+        .where('st.active', '=', true)
+      return eb
+        .or([
+          eb.exists(
+            eb
+              .selectFrom('league_members')
+              .select('id')
+              .where('league_id', '=', leagueId)
+              .where('user_id', 'in', viewer)
+          ),
+          eb.exists(
+            eb
+              .selectFrom('season_members as m')
+              .innerJoin('seasons as s', 's.id', 'm.season_id')
+              .select('m.id')
+              .where('s.league_id', '=', leagueId)
+              .where('m.user_id', 'in', viewer)
+          ),
+          eb.exists(
+            eb
+              .selectFrom('scope_roles as r')
+              .select('r.id')
+              .where('r.user_id', 'in', viewer)
+              .where(rb =>
+                rb.or([
+                  rb.and([
+                    rb('r.scope_type', '=', 'league'),
+                    rb('r.scope_id', '=', leagueId)
+                  ]),
+                  rb.and([
+                    rb('r.scope_type', '=', 'season'),
+                    rb(
+                      'r.scope_id',
+                      'in',
+                      rb
+                        .selectFrom('seasons')
+                        .select('id')
+                        .where('league_id', '=', leagueId)
+                    )
+                  ]),
+                  rb.and([
+                    rb('r.scope_type', '=', 'team'),
+                    rb('r.scope_id', 'in', activeTeams)
+                  ])
+                ])
+              )
+          ),
+          eb.exists(
+            eb
+              .selectFrom('memberships')
+              .select('id')
+              .where('user_id', 'in', viewer)
+              .where('team_id', 'in', activeTeams)
+          ),
+          ...(players.length === 0
+            ? []
+            : [eb.exists(activeTeams.where('st.team_id', 'in', players))])
+        ])
+        .as('accepted')
+    })
+    .executeTakeFirstOrThrow()
+  return accepted === true
 }
 /**
  * The league's umpire schedule as `actor` sees it. The people it names are
@@ -136,11 +213,12 @@ export async function schedule(
   const error = umpireFilterError(filters)
   if (error != null) throw badRequest(error)
   const family = await umpireFamily(db, actor.userId)
-  const involved = await involvedSeasons(db, leagueId, family)
-  const windows = involved.map(s => ({
-    start: calendarDateText(s.starts_on)!,
-    end: calendarDateText(s.ends_on)!
-  }))
+  // Acceptance is league-wide: every game of the league, past or upcoming,
+  // is in the accepted viewer's window, and none is in anyone else's.
+  const inWindow = await umpireAcceptance(db, leagueId, family, isAdmin)
+  // A viewer the window keeps from every game reads none of them.
+  const seesNone =
+    !inWindow && (view === 'umpire' || (view === 'schedule' && !isAdmin))
   const catalog = await types(db, leagueId)
   const notesCatalog = await noteTypes(db, leagueId)
   const notes = await db
@@ -173,14 +251,16 @@ export async function schedule(
     .select(['umpire_management', 'umpire_credits'])
     .where('id', '=', leagueId)
     .executeTakeFirstOrThrow()
-  const games = await db
-    .selectFrom('games')
-    .selectAll()
-    .where('status', '!=', 'cancelled')
-    .where('withdrawn_at', 'is', null)
-    .orderBy('start_at')
-    .orderBy('id')
-    .execute()
+  const games = seesNone
+    ? []
+    : await db
+        .selectFrom('games')
+        .selectAll()
+        .where('status', '!=', 'cancelled')
+        .where('withdrawn_at', 'is', null)
+        .orderBy('start_at')
+        .orderBy('id')
+        .execute()
   const fieldIds = [
     ...new Set(
       games.flatMap(game => (game.field_id == null ? [] : [game.field_id]))
@@ -195,10 +275,9 @@ export async function schedule(
       .execute()
     for (const field of fields) fieldNames.set(field.id, field.name)
   }
-  const assignments = await db
-    .selectFrom('umpire_assignments')
-    .selectAll()
-    .execute()
+  const assignments = seesNone
+    ? []
+    : await db.selectFrom('umpire_assignments').selectAll().execute()
   const byGame = new Map<string, typeof assignments>()
   const byPerson = new Map<string, Set<string>>()
   for (const assignment of assignments) {
@@ -323,19 +402,6 @@ export async function schedule(
         }))
     )
     if (positions.length === 0) continue
-    const past =
-      new Date(game.start_at).getTime() < instant &&
-      game.status !== 'inProgress'
-    const inWindow = past
-      ? involved.some(s => s.id === season.id)
-      : windows.some(w =>
-          umpireWindowsOverlap(w, {
-            start: calendarDateText(season.starts_on)!,
-            end: calendarDateText(season.ends_on)!
-          })
-        )
-    if ((view === 'umpire' || (view === 'schedule' && !isAdmin)) && !inWindow)
-      continue
     if (
       view === 'schedule' &&
       filters.priorSeasons !== true &&
@@ -449,9 +515,11 @@ export async function schedule(
           c => p.userIds.includes(c.user_id) && c.level_id === season.level_id
         )
         const { playing, umpiring } = availability.get(p.userId)!
+        // Rows reach here only inside the viewer's window, so only the
+        // umpire role is left to check.
         const outsideSchedule =
           view === 'schedule' &&
-          (!inWindow || !roles.some(r => family[0].userIds.includes(r.user_id)))
+          !roles.some(r => family[0].userIds.includes(r.user_id))
         const reason = outsideSchedule
           ? 'outside your umpire schedule'
           : playing
