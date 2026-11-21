@@ -10,6 +10,7 @@ import {
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
+import { ADULT_AGE } from '../test/chatAgeTesting'
 import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
@@ -45,11 +46,9 @@ describe('entity chat app routing', () => {
         isAdmin: false
       })
     proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
-    // Confirmed for chat, so the chat surfaces open without the age sheet.
-    proto.chatAge = async () => ({
-      confirmed: true,
-      source: 'self',
-      confirmedAt: '2027-04-10T12:00:00.000Z'
+    // An adult, so the chat surfaces open without the age modal.
+    proto.myAge = async () => ({
+      ...ADULT_AGE
     })
     proto.hasNotifications = async () => false
     proto.group = async ({ kind, id }) =>

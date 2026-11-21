@@ -9,6 +9,7 @@ import {
 } from './declaredAge'
 
 declare const TS_DECLARED_AGE_LOWER: string | undefined
+declare const TS_DECLARED_AGE_UPPER: string | undefined
 
 const UNREADY_TRIES = 10
 const UNREADY_WAIT_MS = 200
@@ -19,6 +20,11 @@ const OverrideContext = createContext<AppleAge | undefined>(undefined)
 /** The build's stand-in for Apple's answer: `''` but on a dev serve. */
 function standInOf(): string {
   return typeof TS_DECLARED_AGE_LOWER === 'string' ? TS_DECLARED_AGE_LOWER : ''
+}
+
+/** The stand-in's upper bound: `''` unless a dev serve was given one. */
+function standInUpperOf(): string {
+  return typeof TS_DECLARED_AGE_UPPER === 'string' ? TS_DECLARED_AGE_UPPER : ''
 }
 
 function normalize(raw: unknown): DeclaredAgeAnswer {
@@ -50,10 +56,11 @@ function normalize(raw: unknown): DeclaredAgeAnswer {
  * absent. A test hands the stand-in in, whatever its bundle defines.
  */
 export async function requestDeclaredAge(
-  raw: string = standInOf()
+  raw: string = standInOf(),
+  upper: string = standInUpperOf()
 ): Promise<DeclaredAgeAnswer> {
-  if (Platform.OS !== 'ios') return webDeclaredAge(raw)
-  if (/^-?\d+$/.test(raw)) return webDeclaredAge(raw)
+  if (Platform.OS !== 'ios') return webDeclaredAge(raw, upper)
+  if (/^-?\d+$/.test(raw)) return webDeclaredAge(raw, upper)
   const native = NativeModules.TSDeclaredAge as
     { request?: () => Promise<unknown> } | undefined
   if (native?.request == null) return { status: 'unsupported' }
@@ -101,16 +108,18 @@ export function DeclaredAgeGateProvider(props: {
   children: React.ReactNode
   /** The stand-in, for a test; the build's own when absent. */
   standIn?: string
+  /** Its upper bound, for a test. */
+  standInUpper?: string
 }): React.ReactElement {
   const override = useContext(OverrideContext)
-  const { standIn } = props
+  const { standIn, standInUpper } = props
   const [age, setAge] = useState<AppleAge>(() =>
     Platform.OS === 'ios' ? 'pending' : 'none'
   )
   useEffect(() => {
     if (override != null) return
     let live = true
-    requestDeclaredAge(standIn)
+    requestDeclaredAge(standIn, standInUpper)
       .then(answer => {
         if (live) setAge(appleAgeOf(answer))
       })
@@ -120,7 +129,7 @@ export function DeclaredAgeGateProvider(props: {
     return () => {
       live = false
     }
-  }, [override, standIn])
+  }, [override, standIn, standInUpper])
   return (
     <AgeContext.Provider value={override ?? age}>
       {props.children}

@@ -278,34 +278,26 @@ describe('the chat seed', function () {
     ).deep.equals({ year: 2011, month: 12 })
   })
 
-  it('gives everybody an age and confirms them for chat, afresh each run, but the keys it is told to leave', async function () {
+  it('gives everybody an age, afresh each run, but the keys it is told to leave', async function () {
     const now = new Date('2027-04-12T12:00:00Z')
     const confirmations = async (): Promise<Record<string, string | null>> => {
       const rows = await database()
         .selectFrom('users')
-        .select([
-          'id',
-          'chat_age_source',
-          'chat_age_confirmed_at',
-          'is_adult',
-          'birth_month',
-          'age_source'
-        ])
+        .select(['id', 'is_adult', 'birth_month', 'age_source', 'age_set_at'])
         .execute()
       const byId = new Map(rows.map(row => [String(row.id), row]))
       const out: Record<string, string | null> = {}
       for (const person of SEED_PEOPLE) {
         const row = byId.get(String(second.people[person.key]?.userId))
-        expect(row?.chat_age_confirmed_at == null, person.key).equals(
-          row?.chat_age_source == null
+        expect(row?.age_set_at == null, person.key).equals(
+          row?.age_source == null
         )
         // Somebody left with no age has neither a flag nor a month.
-        if (row?.chat_age_source == null) {
+        if (row?.age_source == null) {
           expect(row?.is_adult, person.key).equals(false)
           expect(row?.birth_month, person.key).equals(null)
-          expect(row?.age_source, person.key).equals(null)
         }
-        out[person.key] = row?.chat_age_source ?? null
+        out[person.key] = row?.age_source ?? null
       }
       return out
     }
@@ -323,7 +315,7 @@ describe('the chat seed', function () {
       C: null,
       F: null
     })
-    // Without the keys it confirms them again; with them it clears them again.
+    // Without the keys it gives them an age again; with them it clears it again.
     await chatSeed(database(), { password: 'same for all', now })
     expect(await confirmations()).deep.equals(everybody)
     await chatSeed(database(), {

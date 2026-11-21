@@ -12,7 +12,7 @@ import { newIdentityId } from '../../common/chatCrypto/messageIds'
 import { userIdOfGumbo } from '../../common/userId'
 import { TestChatAge } from '../../test/chatAgeTesting'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { useChatAge } from './ChatAgeGate'
+import { useChatAge } from './AgeGate'
 import { ChatLinks } from './ChatLinks'
 import type { ChatEngine, ConversationListItem } from './engine/engine'
 import { entityChats, entityPreviewLoader } from './entityChats'
@@ -176,9 +176,10 @@ describe('entity chat scoped rows', () => {
       document.body.append(host)
       root = createRoot(host)
       const requests: string[][] = []
-      let confirm: (() => Promise<void>) | undefined
+      let answer: (() => Promise<unknown>) | undefined
       function Agree(): null {
-        confirm = useChatAge().confirm
+        const age = useChatAge()
+        answer = async () => await age.answer({ adult: true })
         return null
       }
       await act(async () => {
@@ -204,7 +205,7 @@ describe('entity chat scoped rows', () => {
         null
       )
       await act(async () => {
-        await confirm?.()
+        await answer?.()
       })
       expect(
         document.querySelector('[data-testid="entity-chat-list"]')

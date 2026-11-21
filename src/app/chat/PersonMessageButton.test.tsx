@@ -35,9 +35,9 @@ const words = (): string => document.body.textContent ?? ''
 const sheet = (): HTMLElement | null =>
   document.querySelector('[data-testid="chat-age-sheet"]')
 const agree = (): HTMLElement | null =>
-  document.querySelector('[data-testid="chat-age-agree"]')
+  document.querySelector('[data-testid="chat-age-adult"]')
 const decline = (): HTMLElement | null =>
-  document.querySelector('[data-testid="chat-age-decline"]')
+  document.querySelector('[data-testid="chat-age-close"]')
 const ok = (): HTMLElement | null =>
   document.querySelector('[data-testid="chat-age-ok"]')
 function deferred<T>(): {
@@ -348,13 +348,13 @@ describe('the person Message hero action', function () {
         expect(made).deep.equals([])
         return
       }
-      expect(words()).includes('Before You Chat')
+      expect(words()).includes('Your Age')
       await settle(() => {
         decline()!.click()
       })
       expect(sheet()).equals(null)
       expect(made).deep.equals([])
-      expect(record.confirms).equals(0)
+      expect(record.answers).deep.equals([])
       // Asked again on the next press.
       await settle(() => {
         message()!.click()
@@ -363,7 +363,7 @@ describe('the person Message hero action', function () {
       await settle(() => {
         agree()!.click()
       })
-      expect(record.confirms).equals(1)
+      expect(record.answers).deep.equals([{ adult: true }])
       expect(sheet()).equals(null)
       expect(made).deep.equals([[person.userId]])
       expect(opened).deep.equals(['cnv_direct'])
@@ -476,6 +476,91 @@ describe('the person Message hero action', function () {
       expect(sheet()).equals(null)
       expect(message()!.getAttribute('aria-disabled')).not.equals('true')
     })
+
+  describe('for somebody with no age on file', function () {
+    const draw = async (
+      client: TeamStationClient,
+      userId: string,
+      record = chatAgeRecord(),
+      opened: string[] = []
+    ): Promise<void> => {
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      await settle(() => {
+        root!.render(
+          <ThemeProvider>
+            <TestChatAge access="ask" userId="usr_viewer" record={record}>
+              <PersonMessageButton
+                client={client}
+                userId={userId}
+                onOpenChat={chat => {
+                  opened.push(chat.id)
+                }}
+              />
+            </TestChatAge>
+          </ThemeProvider>
+        )
+      })
+    }
+
+    it('reads no candidates until an answer, then opens the DM', async () => {
+      const lookups: string[] = []
+      const made: string[][] = []
+      const opened: string[] = []
+      const client = {
+        dmCandidates: async (_query: string, userId: string) => {
+          lookups.push(userId)
+          return [person]
+        },
+        createDm: async (ids: string[]) => {
+          made.push(ids)
+          return conversation
+        }
+      } as unknown as TeamStationClient
+      await draw(client, person.userId, chatAgeRecord(), opened)
+      expect(message()).not.equals(null)
+      expect(lookups).deep.equals([])
+      await settle(() => {
+        message()!.click()
+      })
+      await settle(() => {
+        agree()!.click()
+      })
+      expect(lookups).includes(person.userId)
+      expect(made).deep.equals([[person.userId]])
+      expect(opened).deep.equals(['cnv_direct'])
+    })
+
+    it('draws nothing on their own page', async () => {
+      const client = {
+        dmCandidates: async () => [person]
+      } as unknown as TeamStationClient
+      await draw(client, 'usr_viewer')
+      expect(message()).equals(null)
+    })
+
+    it('says so after an answer when this person is nobody they may message', async () => {
+      const made: string[][] = []
+      const client = {
+        dmCandidates: async () => [],
+        createDm: async (ids: string[]) => {
+          made.push(ids)
+          return conversation
+        }
+      } as unknown as TeamStationClient
+      await draw(client, person.userId)
+      await settle(() => {
+        message()!.click()
+      })
+      await settle(() => {
+        agree()!.click()
+      })
+      expect(made).deep.equals([])
+      expect(message()).equals(null)
+      expect(words()).includes('You can’t message this person.')
+    })
+  })
 
   it('withdraws its sheet when the button goes', async () => {
     const host = document.createElement('div')

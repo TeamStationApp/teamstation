@@ -18,8 +18,8 @@ export const HOME_FOLLOWS = 'home.follows'
 export const HOME_GUARDED = 'home.guarded'
 export const HOME_RECENT = 'home.recent'
 export const ME_ROLES = 'me.roles'
-/** Whether this person has unlocked chat: kept, so a confirmed person stays so offline. */
-export const ME_CHAT_AGE = 'me.chatAge'
+/** This person's age band: kept, so chat opens for them offline as online. */
+export const ME_AGE = 'me.age'
 /**
  * The schedule lists an older build kept as documents. The store's upgrade
  * reads them once into the schedule set; nothing writes them now.
@@ -108,7 +108,7 @@ const FIXED: Record<string, string> = {
   '/users?guardedBy=me': HOME_GUARDED,
   '/events?played=1&limit=1': HOME_RECENT,
   '/me/roles': ME_ROLES,
-  '/me/account/chat-age': ME_CHAT_AGE
+  '/me/account/age': ME_AGE
 }
 
 /** Requests naming one team or game: the pattern, and the key of its id. */

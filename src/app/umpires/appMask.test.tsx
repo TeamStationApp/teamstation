@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { asSessionUser, TeamStationClient } from '../../common/api'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
-import { CONFIRMED_CHAT_AGE } from '../../test/chatAgeTesting'
+import { ADULT_AGE } from '../../test/chatAgeTesting'
 import { pageOfUmpireSchedule } from '../../test/pageOf'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { App } from '../App'
@@ -23,8 +23,8 @@ it('mounts the shell with role-only mask visibility and preserves header order a
     })
   proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
   proto.hasNotifications = async () => false
-  // The Shell reads the account's chat age on mount: confirmed here.
-  proto.chatAge = async () => CONFIRMED_CHAT_AGE
+  // The Shell reads the account's age on mount: an adult's here.
+  proto.myAge = async () => ADULT_AGE
   proto.teams = async () => []
   proto.home = async () => ({ teams: [], seasons: [], leagues: [] })
   proto.seasons = async () => []

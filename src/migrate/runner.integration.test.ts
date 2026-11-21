@@ -119,8 +119,11 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the hidden chat history, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the dropped chat age columns, the hidden chat history, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '129dropChatAgeConfirmations'
+    ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '128chatHiddenHistory'
     ])
@@ -278,18 +281,26 @@ describe('migrations', function () {
     await migrateUp(pool, migrations)
   })
 
-  it('adds and removes the chat age confirmation columns', async () => {
+  it('adds the chat age confirmation columns, and drops them again with 129', async () => {
     await migrateUp(pool, migrations)
     await migrateDown(pool, migrations, afterCoach.length)
     const before = await schemaSnapshot(pool)
     expect((await migrateUp(pool, migrations)).applied).deep.equals(
       afterCoach.map(item => item.name)
     )
-    const columns = await pool.query<{ column_name: string }>(
-      `select column_name from information_schema.columns
-      where table_name = 'users' and column_name like 'chat_age_%' order by 1`
-    )
-    expect(columns.rows.map(row => row.column_name)).deep.equals([
+    const chatAgeColumns = async (): Promise<string[]> =>
+      (
+        await pool.query<{ column_name: string }>(
+          `select column_name from information_schema.columns
+          where table_name = 'users' and column_name like 'chat_age_%' order by 1`
+        )
+      ).rows.map(row => row.column_name)
+    // Every migration run: the age bands replaced them.
+    expect(await chatAgeColumns()).deep.equals([])
+    expect(await migrateDown(pool, migrations, 1)).deep.equals([
+      '129dropChatAgeConfirmations'
+    ])
+    expect(await chatAgeColumns()).deep.equals([
       'chat_age_confirmed_at',
       'chat_age_source'
     ])
@@ -310,8 +321,13 @@ describe('migrations', function () {
         })
     expect(refused).equals(3)
     await pool.query('delete from users where id = $1', [userIdOfGumbo(703)])
-    expect(await migrateDown(pool, migrations, afterCoach.length)).deep.equals(
-      afterCoach.map(item => item.name).reverse()
+    expect(
+      await migrateDown(pool, migrations, afterCoach.length - 1)
+    ).deep.equals(
+      afterCoach
+        .map(item => item.name)
+        .reverse()
+        .slice(1)
     )
     expect(await schemaSnapshot(pool)).deep.equals(before)
     await migrateUp(pool, migrations)
@@ -683,7 +699,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '125solverLimit',
           '126groupCoordinates',
           '127ageBands',
-          '128chatHiddenHistory'
+          '128chatHiddenHistory',
+          '129dropChatAgeConfirmations'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

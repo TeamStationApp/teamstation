@@ -654,22 +654,6 @@ const appleRangeSchema = {
     upperBound: { type: 'integer', minimum: 0 }
   }
 }
-const chatAgeResponse = {
-  description: 'Whether, how and when chat was unlocked',
-  content: {
-    'application/json': {
-      schema: {
-        type: 'object',
-        required: ['confirmed', 'source', 'confirmedAt'],
-        properties: {
-          confirmed: { type: 'boolean' },
-          source: { type: ['string', 'null'], enum: ['apple', 'self', null] },
-          confirmedAt: { type: ['string', 'null'], format: 'date-time' }
-        }
-      }
-    }
-  }
-}
 const accountPaths = {
   '/me/account': {
     get: {
@@ -752,47 +736,6 @@ const accountPaths = {
         401: { description: 'Not signed in' },
         403: { description: 'An API key or a machine actor' },
         409: { description: '`ageSet`: the account already has an age' }
-      }
-    }
-  },
-  '/me/account/chat-age': {
-    get: {
-      security: [{ bearer: [] }],
-      summary:
-        'Read whether your account has unlocked chat (signed-in sessions only)',
-      description:
-        'Chat is for people 13 and older. The app opens chat once the account is confirmed, by a shared Apple Declared Age Range of 13 or more (`apple`) or by agreeing to its age sheet (`self`); the chat routes do not read this. API keys and machine actors are refused.',
-      responses: {
-        200: chatAgeResponse,
-        401: { description: 'Not signed in' },
-        403: { description: 'An API key or a machine actor' }
-      }
-    },
-    put: {
-      security: [{ bearer: [] }],
-      summary: 'Confirm your age for chat (signed-in sessions only)',
-      description:
-        'Records how the account was confirmed. The first confirmation stands: a later call answers the source and time already recorded.',
-      requestBody: {
-        required: true,
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              required: ['source'],
-              additionalProperties: false,
-              properties: {
-                source: { type: 'string', enum: ['apple', 'self'] }
-              }
-            }
-          }
-        }
-      },
-      responses: {
-        200: chatAgeResponse,
-        400: { description: 'A missing or unknown source, or another field' },
-        401: { description: 'Not signed in' },
-        403: { description: 'An API key or a machine actor' }
       }
     }
   },

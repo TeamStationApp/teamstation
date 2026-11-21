@@ -117,8 +117,8 @@ class StubApp {
         body: [{ id: 'gam_live', homeTeamName: 'Home', awayTeamName: 'Away' }]
       }
     if (path === '/chat/conversations') return { status: 200, body: [] }
-    if (path === '/me/account/chat-age')
-      return { status: 200, body: { confirmed: true, source: 'self' } }
+    if (path === '/me/account/age')
+      return { status: 200, body: { band: 'adult', isAdult: true } }
     return { status: 200, body: { rows: [{}] } }
   }
 
@@ -154,11 +154,9 @@ class StubSurface implements Surface {
   async open(): Promise<void> {}
   async press(label: string): Promise<void> {
     if (this.app.lacking.has(label)) throw new Error(`No ${label} to press`)
-    // A chat stands behind the age sheet until its person agrees.
+    // A chat stands behind the age modal until its person gives an age.
     if (label.endsWith(' Members*') && !this.app.chatConfirmed.has(this.who))
-      throw new Error(
-        `No ${label} to press, on a screen saying: Before You Chat`
-      )
+      throw new Error(`No ${label} to press, on a screen saying: Your Age`)
     if (/^(Ball|Called Strike|Swing and Miss)$/.test(label)) this.app.pitch()
   }
 
@@ -188,8 +186,8 @@ class StubSurface implements Surface {
     const answer = this.app.answer(method, path)
     if (
       method === 'PUT' &&
-      path === '/me/account/chat-age' &&
-      (answer.body as { confirmed?: boolean } | null)?.confirmed === true
+      path === '/me/account/age' &&
+      (answer.status === 200 || answer.status === 409)
     )
       this.app.chatConfirmed.add(this.who)
     // Who the answer is for: what a stranger or a viewer may not read.
@@ -780,7 +778,7 @@ describe('the browser script', function () {
     ).equals('A viewer was answered an analytics query')
   })
 
-  it('confirms each person for chat before opening it, as the age sheet asks', async function () {
+  it('gives each person an age before opening chat, as the age modal asks', async function () {
     const app = new StubApp()
     for (const name of [
       'send chat and see typing across nodes',
@@ -794,28 +792,8 @@ describe('the browser script', function () {
       'browser.viewerAway'
     ])
     expect(
-      app.calls.filter(call => call === 'PUT /me/account/chat-age')
+      app.calls.filter(call => call === 'PUT /me/account/age')
     ).to.have.length(4)
-  })
-
-  it('fails a chat step whose person cannot be confirmed for chat', async function () {
-    const name = 'send chat and see typing across nodes'
-    const refused = new StubApp()
-    refused.answers.set('PUT /me/account/chat-age', {
-      status: 403,
-      body: { error: 'forbidden' }
-    })
-    expect((await runOne(name, contextFor(refused))).detail).equals(
-      'browser.viewer confirming its age for chat: HTTP 403 {"error":"forbidden"}'
-    )
-    const unconfirmed = new StubApp()
-    unconfirmed.answers.set('PUT /me/account/chat-age', {
-      status: 200,
-      body: { confirmed: false }
-    })
-    expect((await runOne(name, contextFor(unconfirmed))).detail).equals(
-      'browser.viewer is still not confirmed for chat'
-    )
   })
 
   it('gives each chat step’s people an age, taking an age already given as success', async function () {

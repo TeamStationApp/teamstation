@@ -25,7 +25,7 @@ import { HttpError } from '../../common/errors'
 import { eventName, type PlayerRsvpCounts } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
 import type { Role } from '../../common/roles'
-import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
+import { type TabCorrection, useChatsTabGate } from '../chat/AgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Badge,

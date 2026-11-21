@@ -20,7 +20,7 @@ import {
   TestChatAge
 } from '../../test/chatAgeTesting'
 import { rowLeaf, rowTextColor } from '../../test/gameFormDom'
-import type { ChatAccess } from '../chat/ChatAgeGate'
+import type { ChatAccess } from '../chat/AgeGate'
 import { seasonTint } from '../components/teamTile'
 import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
@@ -780,7 +780,7 @@ describe('a league’s People tab', () => {
     expect(chatAgeSheet()).not.equals(null)
     expect(chatList()).equals(null)
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     // Back where it was, and the kept Chats page leaves no sheet behind.
     expect(pillTabs().selected).equals('Teams')
@@ -790,7 +790,7 @@ describe('a league’s People tab', () => {
     })
     expect(chatAgeSheet()).not.equals(null)
     await settle(() => {
-      pressChatAge('agree')
+      pressChatAge('adult')
     })
     expect(chatAgeSheet()).equals(null)
     expect(pillTabs().selected).equals('Chats')
@@ -802,7 +802,7 @@ describe('a league’s People tab', () => {
     await mount(leagueChats(api, 'ask', 'chats'))
     expect(chatAgeSheet()).not.equals(null)
     await settle(() => {
-      pressChatAge('decline')
+      pressChatAge('close')
     })
     expect(pillTabs().selected).equals('Seasons')
     await act(async () => root?.unmount())
@@ -813,7 +813,7 @@ describe('a league’s People tab', () => {
       clickPill('Chats')
     })
     expect(document.body.textContent).includes('Chat Is for Ages 13 and Up')
-    expect(document.querySelector('[data-testid="chat-age-agree"]')).equals(
+    expect(document.querySelector('[data-testid="chat-age-adult"]')).equals(
       null
     )
     await settle(() => {

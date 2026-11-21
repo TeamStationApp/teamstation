@@ -474,19 +474,14 @@ async function apiCall(
 }
 
 /**
- * Gives the page's newly made account an adult age and confirms it for chat,
- * as answering the age sheet does: the seed gives its own people an age, and
- * this one it never saw. Until then the server refuses it every chat read.
+ * Gives the page's newly made account an adult age, as answering the age
+ * modal does: the seed gives its own people an age, and this one it never
+ * saw. Until then the server refuses it every chat read.
  */
 async function confirmChatAge(page: Page): Promise<void> {
   const age = await apiCall(page, 'PUT', '/me/account/age', { adult: true })
   expect(age.status).equals(200)
   expect(age.body?.band).equals('adult')
-  const answer = await apiCall(page, 'PUT', '/me/account/chat-age', {
-    source: 'self'
-  })
-  expect(answer.status).equals(200)
-  expect(answer.body?.confirmed).equals(true)
 }
 
 /** The id of the chat called `title` in the page's person's list. */
@@ -2111,8 +2106,9 @@ describe('chat scenarios in the browser', function () {
 
     const rookie = await signedIn('R')
     await signIn(rookie, seed, 'R')
-    await openChatTab(rookie)
-    await waitForText(rookie, 'You are in no chats yet.')
-    await shot(rookie, 'e19-4-r-no-chats')
+    // R is 12: chat is closed to them, the notice in place of any list.
+    await rookie.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+    await waitForText(rookie, 'Chat Is for Ages 13 and Up')
+    await shot(rookie, 'e19-4-r-under13')
   })
 })

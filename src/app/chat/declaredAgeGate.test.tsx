@@ -69,27 +69,33 @@ describe('the declared age answer', () => {
     expect(calls).equals(0)
   })
 
-  it('reads a numeric stand-in on the web as a shared range', async () => {
-    for (const [standIn, age] of [
-      ['13', 'over13'],
-      ['18', 'over13'],
-      ['12', 'under13'],
-      ['nope', 'none']
+  it('reads a numeric stand-in on the web as a shared range, with its upper bound', async () => {
+    for (const [standIn, upper, age] of [
+      ['13', '', { kind: 'minor', lowerBound: 13, upperBound: 17 }],
+      ['13', '15', { kind: 'minor', lowerBound: 13, upperBound: 15 }],
+      ['18', '', { kind: 'adult', lowerBound: 18 }],
+      ['12', '', { kind: 'under13' }],
+      ['nope', '', 'none']
     ] as const) {
       const seen: AppleAge[] = []
       await mount(
-        <DeclaredAgeGateProvider standIn={standIn}>
+        <DeclaredAgeGateProvider standIn={standIn} standInUpper={upper}>
           <Probe seen={seen} />
         </DeclaredAgeGateProvider>
       )
       await act(async () => {
         await delay(20)
       })
-      expect(seen.at(-1), standIn).equals(age)
+      expect(seen.at(-1), `${standIn} ${upper}`).deep.equals(age)
     }
-    expect(await requestDeclaredAge('13')).deep.equals({
+    expect(await requestDeclaredAge('13', '')).deep.equals({
       status: 'sharing',
       lowerBound: 13
+    })
+    expect(await requestDeclaredAge('16', '17')).deep.equals({
+      status: 'sharing',
+      lowerBound: 16,
+      upperBound: 17
     })
   })
 
@@ -117,7 +123,7 @@ describe('the declared age answer', () => {
       lowerBound: 15,
       upperBound: 17
     })
-    expect(await requestDeclaredAge('12')).deep.equals({
+    expect(await requestDeclaredAge('12', '')).deep.equals({
       status: 'sharing',
       lowerBound: 12
     })
@@ -127,8 +133,15 @@ describe('the declared age answer', () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
     for (const [answer, age] of [
       [{ status: 'declined' }, 'declined'],
-      [{ status: 'sharing', lowerBound: 12 }, 'under13'],
-      [{ status: 'sharing', lowerBound: 13 }, 'over13'],
+      [{ status: 'sharing', lowerBound: 12 }, { kind: 'under13' }],
+      [
+        { status: 'sharing', lowerBound: 13, upperBound: 15 },
+        { kind: 'minor', lowerBound: 13, upperBound: 15 }
+      ],
+      [
+        { status: 'sharing', lowerBound: 18 },
+        { kind: 'adult', lowerBound: 18 }
+      ],
       [{ status: 'unsupported' }, 'none'],
       [{ status: 'unavailable' }, 'none']
     ] as Array<[DeclaredAgeAnswer, AppleAge]>) {
@@ -156,7 +169,7 @@ describe('the declared age answer', () => {
         release?.()
         await delay(10)
       })
-      expect(seen.at(-1), JSON.stringify(answer)).equals(age)
+      expect(seen.at(-1), JSON.stringify(answer)).deep.equals(age)
     }
   })
 
@@ -171,7 +184,7 @@ describe('the declared age answer', () => {
     }
     const seen: AppleAge[] = []
     await mount(
-      <AppleAgeOverride age="under13">
+      <AppleAgeOverride age={{ kind: 'under13' }}>
         <DeclaredAgeGateProvider>
           <Probe seen={seen} />
         </DeclaredAgeGateProvider>
@@ -180,7 +193,7 @@ describe('the declared age answer', () => {
     await act(async () => {
       await delay(20)
     })
-    expect(seen.at(-1)).equals('under13')
+    expect(seen.at(-1)).deep.equals({ kind: 'under13' })
     expect(calls).equals(0)
   })
 

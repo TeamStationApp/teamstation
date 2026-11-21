@@ -167,11 +167,14 @@ export async function modalFixture(
       else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
       else if (u.pathname === '/api/v1/me/notifications/summary')
         body = { hasPending: false }
-      else if (u.pathname === '/api/v1/me/account/chat-age')
+      else if (u.pathname === '/api/v1/me/account/age')
         body = {
-          confirmed: true,
-          source: 'self',
-          confirmedAt: '2026-01-01T00:00:00Z'
+          band: 'adult',
+          birthYear: null,
+          birthMonth: null,
+          isAdult: true,
+          ageSource: 'self',
+          ageSetAt: '2026-01-01T00:00:00Z'
         }
       else if (u.pathname === '/api/v1/analytics/events') body = {}
       else if (

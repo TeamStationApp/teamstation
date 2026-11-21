@@ -3,22 +3,23 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import type { AgeView } from '../../common/age'
 import type { TeamStationClient } from '../../common/api'
-import type { ChatAge, ChatAgeSource } from '../../common/chatAge'
 import { HttpError } from '../../common/errors'
 import { chatAgeSheet, pressChatAge } from '../../test/chatAgeTesting'
+import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   type ChatAccess,
   ChatAgeContext,
   ChatAgeHost,
-  ChatAgeSheet,
   type ChatAgeState,
   ChatFrameKey,
   useChatAge,
   useChatAgeAsk,
   useChatAgeState
-} from './ChatAgeGate'
+} from './AgeGate'
+import { AgeSheet } from './AgeSheet'
 import type { AppleAge } from './declaredAge'
 
 let root: Root | undefined
@@ -43,43 +44,79 @@ async function settle(action: () => void | Promise<void>): Promise<void> {
   })
 }
 
-const unconfirmed: ChatAge = {
-  confirmed: false,
-  source: null,
-  confirmedAt: null
+const unconfirmed: AgeView = {
+  band: 'unknown',
+  birthYear: null,
+  birthMonth: null,
+  isAdult: false,
+  ageSource: null,
+  ageSetAt: null
 }
-const confirmedBy = (source: ChatAgeSource): ChatAge => ({
-  confirmed: true,
-  source,
-  confirmedAt: '2027-04-12T12:00:00.000Z'
+/** An adult who answered by `source`. */
+const confirmedBy = (source: 'self' | 'apple'): AgeView => ({
+  band: 'adult',
+  birthYear: null,
+  birthMonth: null,
+  isAdult: true,
+  ageSource: source,
+  ageSetAt: '2027-04-12T12:00:00.000Z'
 })
+const bandOf = (band: AgeView['band']): AgeView => ({
+  ...unconfirmed,
+  band,
+  ageSource: 'self',
+  ageSetAt: '2027-04-12T12:00:00.000Z'
+})
+const APPLE_ADULT: AppleAge = { kind: 'adult', lowerBound: 18 }
+const APPLE_UNDER13: AppleAge = { kind: 'under13' }
+const APPLE_TEEN: AppleAge = { kind: 'minor', lowerBound: 13, upperBound: 15 }
 
-/** The client's two chat age calls, with what they were asked. */
+/** What the modal sent: `apple` for Apple's own answer, else the body. */
+type Write = 'self' | 'apple' | Record<string, unknown>
+
+/** The client's two age calls, with what they were asked. */
 function fakeClient(options: {
-  read?: () => Promise<ChatAge>
-  write?: (source: ChatAgeSource) => Promise<ChatAge>
+  read?: () => Promise<AgeView>
+  write?: (source: 'self' | 'apple', body: unknown) => Promise<AgeView>
   /** What a phone kept from its last read; none by default, as on the web. */
-  kept?: ChatAge
+  kept?: AgeView
   /** When the kept answer is read back; at once by default. */
   keptRead?: Promise<void>
-}): { client: TeamStationClient; reads: number[]; writes: ChatAgeSource[] } {
+}): {
+  client: TeamStationClient
+  reads: number[]
+  writes: Write[]
+  bodies: unknown[]
+} {
   const reads: number[] = []
-  const writes: ChatAgeSource[] = []
+  const writes: Write[] = []
+  const bodies: unknown[] = []
+  // With no `read` given, the server reads back what it last saved.
+  let saved: AgeView | undefined
   const client = {
     cached: async (key: string) => {
       await options.keptRead
-      return key === 'me.chatAge' ? options.kept : undefined
+      return key === 'me.age' ? options.kept : undefined
     },
-    chatAge: async () => {
+    myAge: async () => {
       reads.push(reads.length)
-      return await (options.read ?? (async () => unconfirmed))()
+      return await (options.read ?? (async () => saved ?? unconfirmed))()
     },
-    confirmChatAge: async (source: ChatAgeSource) => {
+    setMyAge: async (body: { apple?: unknown; adult?: true }) => {
+      const source =
+        body.apple != null && body.adult == null && !('year' in body)
+          ? 'apple'
+          : 'self'
       writes.push(source)
-      return await (options.write ?? (async () => confirmedBy(source)))(source)
+      bodies.push(body)
+      const age = await (
+        options.write ?? (async (from: 'self' | 'apple') => confirmedBy(from))
+      )(source, body)
+      saved = age
+      return age
     }
   } as unknown as TeamStationClient
-  return { client, reads, writes }
+  return { client, reads, writes, bodies }
 }
 
 /** The state for one person and one Apple answer, with the Shell's sheet. */
@@ -90,10 +127,16 @@ function Harness(props: {
   topKey?: string
   chatSurface?: boolean
   onLeave?: () => void
+  onAnswered?: () => void
   seen: { state?: ChatAgeState }
   children?: React.ReactNode
 }): React.ReactElement {
-  const state = useChatAgeState(props.client, props.userId, props.apple)
+  const state = useChatAgeState(
+    props.client,
+    props.userId,
+    props.apple,
+    props.onAnswered
+  )
   props.seen.state = state
   return (
     <ChatAgeContext.Provider value={state}>
@@ -124,34 +167,34 @@ describe('chat age', () => {
     }> = [
       { read: 'unconfirmed', apple: 'none', access: 'ask' },
       { read: 'unconfirmed', apple: 'declined', access: 'ask' },
-      { read: 'unconfirmed', apple: 'over13', access: 'allowed' },
-      { read: 'unconfirmed', apple: 'under13', access: 'blocked' },
+      { read: 'unconfirmed', apple: APPLE_ADULT, access: 'pending' },
+      { read: 'unconfirmed', apple: APPLE_UNDER13, access: 'blocked' },
       { read: 'unconfirmed', apple: 'pending', access: 'pending' },
       { read: 'confirmed', apple: 'none', access: 'allowed' },
       { read: 'confirmed', apple: 'declined', access: 'allowed' },
-      { read: 'confirmed', apple: 'over13', access: 'allowed' },
-      { read: 'confirmed', apple: 'under13', access: 'blocked' },
+      { read: 'confirmed', apple: APPLE_ADULT, access: 'allowed' },
+      { read: 'confirmed', apple: APPLE_UNDER13, access: 'blocked' },
       { read: 'confirmed', apple: 'pending', access: 'pending' },
       { read: 'failed', apple: 'none', access: 'ask' },
       { read: 'failed', apple: 'declined', access: 'ask' },
-      { read: 'failed', apple: 'over13', access: 'allowed' },
-      { read: 'failed', apple: 'under13', access: 'blocked' },
+      { read: 'failed', apple: APPLE_ADULT, access: 'pending' },
+      { read: 'failed', apple: APPLE_UNDER13, access: 'blocked' },
       { read: 'failed', apple: 'pending', access: 'pending' },
       { read: 'loading', apple: 'none', access: 'pending' },
       { read: 'loading', apple: 'declined', access: 'pending' },
-      { read: 'loading', apple: 'over13', access: 'allowed' },
-      { read: 'loading', apple: 'under13', access: 'blocked' },
+      { read: 'loading', apple: APPLE_ADULT, access: 'pending' },
+      { read: 'loading', apple: APPLE_UNDER13, access: 'blocked' },
       { read: 'loading', apple: 'pending', access: 'pending' }
     ]
     for (const { read, apple, access } of cases)
-      it(`is ${access} for an account read as ${read} with Apple ${apple}`, async () => {
+      it(`is ${access} for an account read as ${read} with Apple ${JSON.stringify(apple)}`, async () => {
         const { client } = fakeClient({
           read: async () => {
             if (read === 'loading') return await new Promise(() => {})
             if (read === 'failed') throw new TypeError('fetch failed')
             return read === 'confirmed' ? confirmedBy('self') : unconfirmed
           },
-          // An Apple confirmation in flight keeps chat open while it saves.
+          // An Apple confirmation in flight holds chat (`pending`) until it lands.
           write: async () => await new Promise(() => {})
         })
         const seen: { state?: ChatAgeState } = {}
@@ -186,7 +229,7 @@ describe('chat age', () => {
         <Harness
           client={client}
           userId="usr_a"
-          apple="over13"
+          apple={APPLE_ADULT}
           chatSurface
           seen={seen}
         />
@@ -195,7 +238,7 @@ describe('chat age', () => {
         <Harness
           client={client}
           userId="usr_a"
-          apple="over13"
+          apple={APPLE_ADULT}
           chatSurface
           seen={seen}
         />
@@ -205,7 +248,7 @@ describe('chat age', () => {
       expect(chatAgeSheet()).equals(null)
     })
 
-    it('keeps chat open when an Apple confirmation does not save', async () => {
+    it('holds chat, with no modal, while an Apple confirmation does not save', async () => {
       const { client, writes } = fakeClient({
         write: async () => {
           throw new TypeError('fetch failed')
@@ -213,17 +256,28 @@ describe('chat age', () => {
       })
       const seen: { state?: ChatAgeState } = {}
       await draw(
-        <Harness client={client} userId="usr_a" apple="over13" seen={seen} />
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple={APPLE_ADULT}
+          seen={seen}
+        />
       )
       expect(writes).deep.equals(['apple'])
-      expect(seen.state?.access).equals('allowed')
+      expect(seen.state?.access).equals('pending')
+      expect(chatAgeSheet()).equals(null)
     })
 
     it('reads the account back once Apple\u2019s confirmation lands', async () => {
       const { client, reads, writes } = fakeClient({})
       const seen: { state?: ChatAgeState } = {}
       await draw(
-        <Harness client={client} userId="usr_a" apple="over13" seen={seen} />
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple={APPLE_ADULT}
+          seen={seen}
+        />
       )
       expect(writes).deep.equals(['apple'])
       // The first read, then the one a phone keeps the confirmation from.
@@ -241,7 +295,12 @@ describe('chat age', () => {
       })
       const seen: { state?: ChatAgeState } = {}
       await draw(
-        <Harness client={client} userId="usr_a" apple="over13" seen={seen} />
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple={APPLE_ADULT}
+          seen={seen}
+        />
       )
       expect(writes).deep.equals(['apple'])
       fail = false
@@ -284,7 +343,7 @@ describe('chat age', () => {
   })
 
   describe('the age sheet', () => {
-    it('stands over a chat surface, and Not Now leaves it', async () => {
+    it('stands over a chat surface, and closing it leaves', async () => {
       const { client, writes } = fakeClient({})
       let left = 0
       const seen: { state?: ChatAgeState } = {}
@@ -301,11 +360,21 @@ describe('chat age', () => {
         />
       )
       expect(chatAgeSheet()).not.equals(null)
-      expect(document.body.textContent).includes('Before You Chat')
-      expect(document.body.textContent).includes('13 or Older')
-      expect(document.body.textContent).includes('Not Now')
+      const text = document.body.textContent ?? ''
+      expect(text).includes('Your Age')
+      expect(text).includes('Chat features depend on your age.')
+      expect(text).includes('Enter Birth Year and Month')
+      expect(text).includes('I’m 18 or Older')
+      expect(text).includes('keep chat respectful')
+      // The two buttons, in that order, above the rules.
+      expect(text.indexOf('Enter Birth Year and Month')).lessThan(
+        text.indexOf('I’m 18 or Older')
+      )
+      expect(text.indexOf('I’m 18 or Older')).lessThan(
+        text.indexOf('keep chat respectful')
+      )
       await settle(() => {
-        pressChatAge('decline')
+        pressChatAge('close')
       })
       expect(left).equals(1)
       expect(writes).deep.equals([])
@@ -329,7 +398,7 @@ describe('chat age', () => {
       )
       // The scrim behind the sheet: labelled, but not one of its buttons.
       const scrim = [
-        ...document.querySelectorAll<HTMLElement>('[aria-label="Not Now"]')
+        ...document.querySelectorAll<HTMLElement>('[aria-label="Close"]')
       ].find(node => node.closest('[data-testid="chat-age-sheet"]') == null)
       expect(scrim).not.equals(undefined)
       await settle(() => {
@@ -359,8 +428,8 @@ describe('chat age', () => {
         />
       )
       await settle(() => {
-        pressChatAge('agree')
-        pressChatAge('agree')
+        pressChatAge('adult')
+        pressChatAge('adult')
       })
       expect(writes).deep.equals(['self'])
       await settle(() => {
@@ -389,13 +458,13 @@ describe('chat age', () => {
         />
       )
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       expect(document.body.textContent).includes('That didn’t save')
       expect(chatAgeSheet()).not.equals(null)
       fail = false
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       expect(writes).deep.equals(['self', 'self'])
       expect(chatAgeSheet()).equals(null)
@@ -411,7 +480,7 @@ describe('chat age', () => {
         <Harness
           client={client}
           userId="usr_a"
-          apple="under13"
+          apple={APPLE_UNDER13}
           chatSurface
           onLeave={() => {
             left += 1
@@ -420,7 +489,7 @@ describe('chat age', () => {
         />
       )
       expect(document.body.textContent).includes('Chat Is for Ages 13 and Up')
-      expect(document.querySelector('[data-testid="chat-age-agree"]')).equals(
+      expect(document.querySelector('[data-testid="chat-age-adult"]')).equals(
         null
       )
       await settle(() => {
@@ -510,7 +579,7 @@ describe('chat age', () => {
       )
       fail = true
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       // Agreeing reads the account back (for a phone to keep); that read fails.
       expect(reads.length).equals(2)
@@ -522,7 +591,7 @@ describe('chat age', () => {
       [confirmedBy('self'), 'allowed'],
       [unconfirmed, 'pending']
     ] as const)
-      it(`is ${access} at once on a phone's kept ${kept.confirmed ? 'confirmation' : 'unconfirmed answer'} while the read waits`, async () => {
+      it(`is ${access} at once on a phone's kept ${kept.band === 'adult' ? 'adult band' : 'unknown age'} while the read waits`, async () => {
         const { client } = fakeClient({
           read: async () => await new Promise(() => {}),
           kept
@@ -699,7 +768,7 @@ describe('chat age', () => {
       expect(seen.state?.requests).deep.equals({})
     })
 
-    it('runs Not Now or the agreement once, then clears the request', async () => {
+    it('runs closing or the answer once, then clears the request', async () => {
       const { client } = fakeClient({})
       const seen: { state?: ChatAgeState } = {}
       const cancel: { current?: () => void } = {}
@@ -715,7 +784,7 @@ describe('chat age', () => {
       )
       await press()
       await settle(() => {
-        pressChatAge('decline')
+        pressChatAge('close')
       })
       expect(told).deep.equals(['decline'])
       expect(seen.state?.requests).deep.equals({})
@@ -728,14 +797,14 @@ describe('chat age', () => {
       })
       expect(chatAgeSheet()).not.equals(null)
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       expect(told).deep.equals(['decline', 'agreed'])
       expect(seen.state?.requests).deep.equals({})
       expect(chatAgeSheet()).equals(null)
     })
 
-    for (const way of ['Not Now', 'the backdrop'] as const)
+    for (const way of ['Close', 'the backdrop'] as const)
       it(`withdraws an agreement still saving on ${way}, opening nothing when it lands`, async () => {
         let release: (() => void) | undefined
         const { client, writes } = fakeClient({
@@ -760,16 +829,12 @@ describe('chat age', () => {
         )
         await press()
         await settle(() => {
-          pressChatAge('agree')
+          pressChatAge('adult')
         })
         await settle(() => {
-          if (way === 'Not Now') pressChatAge('decline')
+          if (way === 'Close') pressChatAge('close')
           else
-            [
-              ...document.querySelectorAll<HTMLElement>(
-                '[aria-label="Not Now"]'
-              )
-            ]
+            [...document.querySelectorAll<HTMLElement>('[aria-label="Close"]')]
               .find(
                 node => node.closest('[data-testid="chat-age-sheet"]') == null
               )
@@ -823,7 +888,7 @@ describe('chat age', () => {
         await draw(scene('team'))
         await press()
         await settle(() => {
-          pressChatAge('agree')
+          pressChatAge('adult')
         })
         if (way === 'its frame leaving the top') await draw(scene('game'))
         else
@@ -861,11 +926,11 @@ describe('chat age', () => {
       await draw(scene('team'))
       await press()
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       const agree = (): string | null | undefined =>
         document
-          .querySelector<HTMLElement>('[data-testid="chat-age-agree"]')
+          .querySelector<HTMLElement>('[data-testid="chat-age-adult"]')
           ?.getAttribute('aria-disabled')
       expect(agree()).equals('true')
       await draw(scene('game'))
@@ -889,11 +954,11 @@ describe('chat age', () => {
       )
       await press()
       await settle(() => {
-        pressChatAge('agree')
+        pressChatAge('adult')
       })
       expect(document.body.textContent).includes('That didn’t save')
       await settle(() => {
-        pressChatAge('decline')
+        pressChatAge('close')
       })
       expect(chatAgeSheet()).equals(null)
       await press()
@@ -946,30 +1011,391 @@ describe('chat age', () => {
       await draw(scene('team'))
       expect(chatAgeSheet()).not.equals(null)
       await settle(() => {
-        pressChatAge('decline')
+        pressChatAge('close')
       })
       expect(told).deep.equals(['team'])
     })
   })
 
-  describe('the sheet alone', () => {
-    it('shows its buttons busy while the agreement saves', async () => {
-      let agreed = 0
+  describe('the age modal’s answers', () => {
+    /** Types into one of the modal's fields as a person would. */
+    const type = async (testId: string, value: string): Promise<void> => {
+      const input = document.querySelector<HTMLInputElement>(
+        `[data-testid="${testId}"]`
+      )!
+      await settle(() => {
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, value)
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+    }
+    const saveDisabled = (): string | null | undefined =>
+      document
+        .querySelector('[data-testid="chat-age-save"]')
+        ?.getAttribute('aria-disabled')
+
+    for (const [band, access] of [
+      ['minor', 'allowed'],
+      ['adult', 'allowed'],
+      ['under13', 'blocked'],
+      ['unknown', 'ask']
+    ] as const) {
+      it(`is ${access} for a band of ${band}`, async () => {
+        const { client } = fakeClient({ read: async () => bandOf(band) })
+        const seen: { state?: ChatAgeState } = {}
+        await draw(
+          <Harness client={client} userId="usr_a" apple="none" seen={seen} />
+        )
+        expect(seen.state?.access).equals(access)
+      })
+    }
+
+    it('takes a year first and then a month, numeric fields, each checked before Save', async () => {
+      const now = new Date()
+      let answered = 0
+      const { client, bodies } = fakeClient({
+        write: async () => bandOf('minor')
+      })
+      const seen: { state?: ChatAgeState } = {}
       await draw(
-        <ChatAgeSheet
-          mode="consent"
-          busy
-          onAgree={() => {
-            agreed += 1
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple="none"
+          chatSurface
+          onAnswered={() => {
+            answered += 1
           }}
+          seen={seen}
+        />
+      )
+      await settle(() => {
+        pressChatAge('enter')
+      })
+      const fields = [
+        ...document.querySelectorAll<HTMLInputElement>(
+          '[data-testid="chat-age-sheet"] input'
+        )
+      ]
+      expect(fields.map(field => field.dataset.testid)).deep.equals([
+        'chat-age-year',
+        'chat-age-month'
+      ])
+      for (const field of fields) {
+        expect(field.getAttribute('inputmode')).equals('numeric')
+        expect(field.getAttribute('pattern')).equals('[0-9]*')
+        expect(field.getAttribute('type')).not.equals('number')
+      }
+      expect(saveDisabled()).equals('true')
+      await type('chat-age-year', '202')
+      await type('chat-age-month', '6')
+      expect(saveDisabled()).equals('true')
+      await type('chat-age-year', String(now.getUTCFullYear() - 14))
+      for (const month of ['0', '13']) {
+        await type('chat-age-month', month)
+        expect(saveDisabled(), month).equals('true')
+      }
+      expect(document.body.textContent).includes('a month from 1 to 12')
+      // Letters are dropped; a date in the future is refused.
+      await type('chat-age-year', `${now.getUTCFullYear() + 1}x`)
+      await type('chat-age-month', '1')
+      expect(saveDisabled()).equals('true')
+      await type('chat-age-year', String(now.getUTCFullYear() - 14))
+      expect(saveDisabled()).not.equals('true')
+      await settle(() => {
+        pressChatAge('save')
+      })
+      expect(bodies).deep.equals([
+        { year: now.getUTCFullYear() - 14, month: 1 }
+      ])
+      expect(seen.state?.access).equals('allowed')
+      expect(answered).equals(1)
+    })
+
+    it('shows the notice after an answer under 13, and goes back from the fields', async () => {
+      const { client } = fakeClient({ write: async () => bandOf('under13') })
+      const seen: { state?: ChatAgeState } = {}
+      let left = 0
+      let answered = 0
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple="none"
+          chatSurface
+          onLeave={() => {
+            left += 1
+          }}
+          onAnswered={() => {
+            answered += 1
+          }}
+          seen={seen}
+        />
+      )
+      await settle(() => {
+        pressChatAge('enter')
+      })
+      await settle(() => {
+        pressChatAge('back')
+      })
+      expect(document.querySelector('[data-testid="chat-age-year"]')).equals(
+        null
+      )
+      await settle(() => {
+        pressChatAge('enter')
+      })
+      await type('chat-age-year', String(new Date().getUTCFullYear() - 10))
+      await type('chat-age-month', '1')
+      await settle(() => {
+        pressChatAge('save')
+      })
+      expect(seen.state?.access).equals('blocked')
+      expect(document.body.textContent).includes('Chat Is for Ages 13 and Up')
+      expect(answered).equals(0)
+      await settle(() => {
+        pressChatAge('ok')
+      })
+      expect(left).equals(1)
+    })
+
+    it('saves Apple’s 18 or older with no modal', async () => {
+      const { client, bodies } = fakeClient({})
+      const seen: { state?: ChatAgeState } = {}
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple={APPLE_ADULT}
+          chatSurface
+          seen={seen}
+        />
+      )
+      expect(chatAgeSheet()).equals(null)
+      expect(seen.state?.access).equals('allowed')
+      expect(bodies).deep.equals([{ apple: { lowerBound: 18 } }])
+    })
+
+    it('under Apple’s 13 to 15, offers no 18 or older and refuses dates outside the range', async () => {
+      const now = new Date()
+      const { client, bodies } = fakeClient({
+        write: async () => bandOf('minor')
+      })
+      const seen: { state?: ChatAgeState } = {}
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple={APPLE_TEEN}
+          chatSurface
+          seen={seen}
+        />
+      )
+      expect(document.querySelector('[data-testid="chat-age-adult"]')).equals(
+        null
+      )
+      const sheet = document.querySelector('[data-testid="chat-age-sheet"]')
+      expect(sheet?.textContent).includes(lstrings.chat_age_body_minor)
+      expect(sheet?.textContent).not.includes(lstrings.chat_age_body)
+      await settle(() => {
+        pressChatAge('enter')
+      })
+      // 17, then 14, by January's birth month.
+      await type('chat-age-year', String(now.getUTCFullYear() - 18))
+      await type('chat-age-month', '1')
+      expect(saveDisabled()).equals('true')
+      await type('chat-age-year', String(now.getUTCFullYear() - 15))
+      expect(saveDisabled()).not.equals('true')
+      await settle(() => {
+        pressChatAge('save')
+      })
+      expect(bodies).deep.equals([
+        {
+          year: now.getUTCFullYear() - 15,
+          month: 1,
+          apple: { lowerBound: 13, upperBound: 15 }
+        }
+      ])
+    })
+
+    it('shows only the notice under Apple’s under 13', async () => {
+      const { client } = fakeClient({})
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple={APPLE_UNDER13}
+          chatSurface
+          seen={{}}
+        />
+      )
+      expect(document.body.textContent).includes('Chat Is for Ages 13 and Up')
+      expect(document.querySelector('[data-testid="chat-age-enter"]')).equals(
+        null
+      )
+    })
+
+    it('reads the band again when a chat call is refused for want of an age', async () => {
+      const { client, reads } = fakeClient({})
+      await draw(
+        <Harness client={client} userId="usr_a" apple="none" seen={{}} />
+      )
+      const before = reads.length
+      const told = (client as unknown as { onAgeRequired?: () => void })
+        .onAgeRequired
+      expect(told).not.equals(undefined)
+      await settle(() => {
+        told?.()
+      })
+      expect(reads.length).equals(before + 1)
+      await act(async () => root?.unmount())
+      root = undefined
+      expect(
+        (client as unknown as { onAgeRequired?: () => void }).onAgeRequired
+      ).equals(undefined)
+    })
+    it('takes an age an administrator cleared, and reconnects when an answer arrives from elsewhere', async () => {
+      let band: AgeView['band'] = 'minor'
+      let answered = 0
+      const { client } = fakeClient({ read: async () => bandOf(band) })
+      const seen: { state?: ChatAgeState } = {}
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple="none"
+          onAnswered={() => {
+            answered += 1
+          }}
+          seen={seen}
+        />
+      )
+      expect(seen.state?.access).equals('allowed')
+      // Read as 13 to 17 from the start: the socket heard chat already.
+      expect(answered).equals(0)
+      const told = (): void =>
+        (client as unknown as { onAgeRequired?: () => void }).onAgeRequired?.()
+      band = 'unknown'
+      await settle(told)
+      expect(seen.state?.access).equals('ask')
+      band = 'adult'
+      await settle(told)
+      expect(seen.state?.access).equals('allowed')
+      expect(answered).equals(1)
+    })
+
+    it('keeps its own answer over a read asked before it', async () => {
+      let read = 0
+      let late: ((age: AgeView) => void) | undefined
+      const { client } = fakeClient({
+        read: async () => {
+          read += 1
+          if (read === 1) return unconfirmed
+          if (read === 2)
+            return await new Promise<AgeView>(resolve => {
+              late = resolve
+            })
+          return confirmedBy('self')
+        }
+      })
+      const seen: { state?: ChatAgeState } = {}
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple="none"
+          chatSurface
+          seen={seen}
+        />
+      )
+      expect(seen.state?.access).equals('ask')
+      await settle(() => {
+        ;(client as unknown as { onAgeRequired?: () => void }).onAgeRequired?.()
+      })
+      await settle(() => {
+        pressChatAge('adult')
+      })
+      expect(seen.state?.access).equals('allowed')
+      await settle(() => {
+        late?.(unconfirmed)
+      })
+      expect(seen.state?.access).equals('allowed')
+    })
+
+    it('takes the account’s age when it was already set elsewhere', async () => {
+      let answered = 0
+      let read = 0
+      const { client } = fakeClient({
+        read: async () => {
+          read += 1
+          return read === 1 ? unconfirmed : bandOf('minor')
+        },
+        write: async () => {
+          throw new HttpError('conflict', 'Your age is already set', {
+            reason: 'ageSet'
+          })
+        }
+      })
+      const seen: { state?: ChatAgeState } = {}
+      await draw(
+        <Harness
+          client={client}
+          userId="usr_a"
+          apple="none"
+          chatSurface
+          onAnswered={() => {
+            answered += 1
+          }}
+          seen={seen}
+        />
+      )
+      await settle(() => {
+        pressChatAge('adult')
+      })
+      expect(seen.state?.access).equals('allowed')
+      expect(document.body.textContent).not.includes(lstrings.chat_age_failed)
+      expect(document.querySelector('[data-testid="chat-age-sheet"]')).equals(
+        null
+      )
+      expect(answered).equals(1)
+    })
+  })
+
+  describe('the modal alone', () => {
+    it('shows its buttons busy while an answer saves', async () => {
+      const answers: unknown[] = []
+      await draw(
+        <AgeSheet
+          mode="ask"
+          apple="none"
+          busy
+          onAnswer={body => answers.push(body)}
           onDecline={() => undefined}
         />
       )
-      const agree = document.querySelector<HTMLElement>(
-        '[data-testid="chat-age-agree"]'
+      const adult = document.querySelector<HTMLElement>(
+        '[data-testid="chat-age-adult"]'
       )
-      expect(agree?.getAttribute('aria-disabled')).equals('true')
-      expect(agreed).equals(0)
+      expect(adult?.getAttribute('aria-disabled')).equals('true')
+      expect(answers).deep.equals([])
+    })
+
+    it('leaves out 18 or older under an Apple answer of 13 to 17', async () => {
+      await draw(
+        <AgeSheet
+          mode="ask"
+          apple={APPLE_TEEN}
+          onAnswer={() => undefined}
+          onDecline={() => undefined}
+        />
+      )
+      expect(document.querySelector('[data-testid="chat-age-adult"]')).equals(
+        null
+      )
+      expect(
+        document.querySelector('[data-testid="chat-age-enter"]')
+      ).not.equals(null)
     })
   })
 })

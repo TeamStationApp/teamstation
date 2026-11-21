@@ -115,7 +115,6 @@ const specs = [
   ...globSync('src/server/notifications/*.test.ts'),
   ...globSync('src/server/routes/chat*.test.ts'),
   'src/server/routes/account.age.integration.test.ts',
-  'src/server/routes/account.chatAge.integration.test.ts',
   ...globSync('src/migrate/chat*.test.ts'),
   ...globSync('src/common/chatCrypto/*.test.ts'),
   'src/app/dev/chatIdentityStoreProbe.test.ts',

@@ -104,7 +104,6 @@ run('node_modules/.bin/mocha', [
   './src/test/scoringDomSetup.cjs',
   'src/server/routes/account.integration.test.ts',
   'src/server/routes/account.age.integration.test.ts',
-  'src/server/routes/account.chatAge.integration.test.ts',
   'src/server/routes/password.integration.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordProtocol.test.ts',
