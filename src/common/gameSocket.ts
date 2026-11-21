@@ -804,6 +804,16 @@ export class GameSocket {
     if (this.closed || token === this.token) return
     this.token = token
     this.scopeStopped = false
+    this.reconnect()
+  }
+
+  /**
+   * Hangs up and connects again at once, as a token change does, when
+   * anything is listening: the server decides at connect whether the
+   * connection hears chat, so a person who just gave their age reconnects.
+   */
+  reconnect(): void {
+    if (this.closed) return
     this.hangUp()
     this.attempt = 0
     if (

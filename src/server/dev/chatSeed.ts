@@ -34,9 +34,12 @@ import { mintUserId } from '../users/mintUserId'
  *   songkeeper Hs; players P, R and T with accounts, and Q without one;
  *   invited parents A, B and C, and parent N; fan F, who follows Hawks;
  *   G1 and G2, P's guardians, on Hawks through those links.
- * - **Birth months**, from the day the seed runs: P is 15, R is 12, and T,
- *   born exactly 13 years before this month, is still 12 until the first of
- *   next month; Eagles player E is 16. Nobody else has one.
+ * - **Ages**, from the day the seed runs: P is 15, R is 12, and T, born
+ *   exactly 13 years before this month, is still 12 until the first of next
+ *   month; Eagles player E is 16; M, a minor of 14 who follows Hawks, plays
+ *   on no team and has no guardian. Everybody else is an adult by
+ *   `is_adult`. The keys in `noAge` (`TS_CHAT_SEED_NO_AGE`) are left with
+ *   no age at all.
  * - **Eagles:** admin Ea, coach Ec, scorekeeper Ek, songkeeper Es; player E,
  *   who also follows Hawks; invited parents D and D2.
  * - **Owls:** a full team with nobody on it.
@@ -128,6 +131,14 @@ export const SEED_PEOPLE: SeedPerson[] = [
     lastName: 'Fan',
     email: at('F'),
     follows: ['hawks']
+  },
+  {
+    key: 'M',
+    firstName: 'Morgan',
+    lastName: 'Minor',
+    email: at('M'),
+    follows: ['hawks'],
+    born: { years: 14, months: 1 }
   },
   ...staff('eagles', [
     ['Ea', 'Erin', 'Eastman', 'admin'],
@@ -240,10 +251,11 @@ export interface ChatSeedOptions {
   /** Historical migration fixtures can write the follow table of that era. */
   writeFollow?: typeof setFollow
   /**
-   * People (by key) left without a chat age confirmation; everybody else is
-   * confirmed `self`, afresh on every run.
+   * People (by key) left with no age and no chat age confirmation; everybody
+   * else gets their age (a birth month, or `is_adult`) and is confirmed
+   * `self`, afresh on every run.
    */
-  unconfirmed?: readonly string[]
+  noAge?: readonly string[]
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -323,7 +335,7 @@ export async function chatSeed(
         person,
         password,
         now,
-        options.unconfirmed?.includes(person.key) !== true
+        options.noAge?.includes(person.key) !== true
       )
       const team = person.team
       if (team != null) {
@@ -568,9 +580,10 @@ async function upsertPerson(
   person: SeedPerson,
   password: string | null,
   now: Date,
-  chatAgeConfirmed: boolean
+  aged: boolean
 ): Promise<string> {
-  const born = person.born == null ? undefined : birthMonthOf(now, person.born)
+  const born =
+    person.born == null || !aged ? undefined : birthMonthOf(now, person.born)
   const values = {
     display_name: `${person.firstName} ${person.lastName}`,
     first_name: person.firstName,
@@ -580,8 +593,11 @@ async function upsertPerson(
     login_enabled: password != null,
     birth_year: born?.year ?? null,
     birth_month: born?.month ?? null,
-    chat_age_confirmed_at: chatAgeConfirmed ? now : null,
-    chat_age_source: chatAgeConfirmed ? ('self' as const) : null,
+    is_adult: aged && person.born == null,
+    age_source: aged ? ('self' as const) : null,
+    age_set_at: aged ? now : null,
+    chat_age_confirmed_at: aged ? now : null,
+    chat_age_source: aged ? ('self' as const) : null,
     merged_into: null,
     updated_at: new Date()
   }
@@ -637,8 +653,8 @@ export function describeSeed(seed: ChatSeed): string {
   return lines.join('\n')
 }
 
-/** `TS_CHAT_SEED_UNCONFIRMED`'s comma-separated keys, blanks dropped. */
-export function unconfirmedKeys(raw: string | undefined): string[] {
+/** `TS_CHAT_SEED_NO_AGE`'s comma-separated keys, blanks dropped. */
+export function noAgeKeys(raw: string | undefined): string[] {
   return (raw ?? '')
     .split(',')
     .map(key => key.trim())
@@ -657,7 +673,7 @@ async function main(): Promise<void> {
     const password = process.env.TS_CHAT_SEED_PASSWORD
     const seed = await chatSeed(db, {
       password: password == null || password === '' ? undefined : password,
-      unconfirmed: unconfirmedKeys(process.env.TS_CHAT_SEED_UNCONFIRMED)
+      noAge: noAgeKeys(process.env.TS_CHAT_SEED_NO_AGE)
     })
     console.log(describeSeed(seed))
   } finally {

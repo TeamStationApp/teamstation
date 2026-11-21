@@ -15,7 +15,7 @@ import { MAX_ATTACHMENTS } from '../../common/chatContent'
 import { isIdentityId, isMessageId } from '../../common/chatCrypto/messageIds'
 import { ENVELOPE_KINDS } from '../../common/chatCrypto/seal'
 import { notFound } from '../../common/errors'
-import { chatCaller } from '../chat/keys'
+import { chatAgeRequired, chatCaller } from '../chat/keys'
 import {
   type ChatMessageView,
   type ChatObjectStore,
@@ -200,6 +200,7 @@ export function chatMessageRoutes(
 ): Router {
   const router = Router()
   const clock = options.clock ?? (() => new Date())
+  const ageGate = chatAgeRequired(db, clock)
 
   const mustBeMember = async (
     conversationId: string,
@@ -213,6 +214,7 @@ export function chatMessageRoutes(
   router.post(
     '/chat/conversations/:conversationId/messages',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       skipAudit(res.locals)
       const caller = chatCaller(req.actor)
@@ -239,6 +241,7 @@ export function chatMessageRoutes(
   router.get(
     '/chat/conversations/:conversationId/messages',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.conversationId)
@@ -258,6 +261,7 @@ export function chatMessageRoutes(
   router.put(
     '/chat/conversations/:conversationId/read',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       skipAudit(res.locals)
       const caller = chatCaller(req.actor)
@@ -290,6 +294,7 @@ export function chatMessageRoutes(
   router.post(
     '/chat/reports',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const body = cleanBody(asReportBody, req.body)

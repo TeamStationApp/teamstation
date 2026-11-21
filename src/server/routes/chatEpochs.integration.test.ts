@@ -491,8 +491,10 @@ describe('chat epochs and grants (U7)', function () {
       ).equals(400)
     })
 
-    it('lists nothing to somebody in no chat', async function () {
-      expect(ok(await call('R', 'GET', '/chat/grants'))).deep.equals([])
+    it('refuses the grants to somebody under 13, who is in no chat', async function () {
+      const refused = await call('R', 'GET', '/chat/grants')
+      expect(refused.status).equals(403)
+      expect(refused.body.details.reason).equals('underAge')
     })
   })
 

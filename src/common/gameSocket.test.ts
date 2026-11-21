@@ -1110,6 +1110,31 @@ describe('GameSocket (U16)', function () {
       socket.close()
     })
 
+    it('reconnects at once on reconnect(), subscribing its games again, and not when idle or closed', function () {
+      const { socket } = makeSocket()
+      socket.reconnect()
+      expect(FakeSocket.made).lengthOf(0)
+      const stop = socket.onChat(() => undefined)
+      socket.subscribe('g1', () => undefined)
+      expect(FakeSocket.made).lengthOf(1)
+      last().open()
+      socket.reconnect()
+      expect(FakeSocket.made).lengthOf(2)
+      last().open()
+      expect(last().sent).deep.equals([
+        {
+          type: 'subscribe',
+          gameId: 'g1',
+          id: 'c2',
+          protocol: GAME_SOCKET_PROTOCOL
+        }
+      ])
+      stop()
+      socket.close()
+      socket.reconnect()
+      expect(FakeSocket.made).lengthOf(2)
+    })
+
     it('keeps game subscriptions retrying after a 1008, without the scope', function () {
       const { socket, timers } = makeSocket()
       const heard: ScreenScopeEvent[] = []

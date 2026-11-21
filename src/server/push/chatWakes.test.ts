@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { ChatWake } from '../../common/push'
+import type { ApnsMessage } from './apns'
 import { readMessage } from './chatReads'
 import {
   ANDROID_WAKE_TTL_SECONDS,
@@ -89,6 +90,21 @@ describe('wakeMessage and readMessage on iOS', function () {
       pushType: 'background',
       priority: 5,
       expiration: NOW_SECONDS + 28_800
+    })
+  })
+
+  it('says only that there is a new message in a generic alert', function () {
+    const bodyOf = (sent: ChatWake): unknown =>
+      (
+        (wakeMessage(iphone, sent, false, NOW) as ApnsMessage).payload.aps as {
+          alert?: unknown
+        }
+      ).alert
+    expect(
+      bodyOf({ ...wake(true), from: 'Someone', generic: true })
+    ).deep.equals({ body: 'You have a new message' })
+    expect(bodyOf(wake(true))).deep.equals({
+      body: 'New message from Mookie Betts'
     })
   })
 

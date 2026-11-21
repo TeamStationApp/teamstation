@@ -6,7 +6,6 @@ import {
   audienceOf,
   eligibleSurvivors,
   isEligible,
-  isUnder13,
   type ScopeKind,
   scopeTypeOf
 } from './audiences'
@@ -165,7 +164,7 @@ describe('chat audiences (U5)', function () {
 
   it('teamFans: followers who are no team’s player, and staff', async function () {
     expect(await audience('teamFans', fixture.seed.teams.hawks)).deep.equals(
-      sorted([...hawksStaff, 'F'])
+      sorted([...hawksStaff, 'F', 'M'])
     )
     expect(await audience('teamFans', fixture.seed.teams.eagles)).deep.equals(
       sorted(eaglesStaff)
@@ -302,11 +301,51 @@ describe('chat audiences (U5)', function () {
     expect(await audience('teamFans', external)).deep.equals([])
   })
 
-  it('reads ages from birth months', function () {
-    const now = new Date('2027-04-10T00:00:00Z')
-    expect(isUnder13(null, null, now)).equals(false)
-    expect(isUnder13(2014, 4, now)).equals(true)
-    expect(isUnder13(2014, 3, now)).equals(false)
+  it('keeps everyone whose band is not under 13, an unknown age included', async function () {
+    const db = fixture.db
+    const now = fixture.now
+    const set = async (
+      key: string,
+      fields: {
+        birth_year?: number | null
+        birth_month?: number | null
+        is_adult?: boolean
+        login_enabled?: boolean
+      }
+    ): Promise<void> => {
+      await db
+        .updateTable('users')
+        .set(fields)
+        .where('id', '=', fixture.id(key))
+        .execute()
+    }
+    // C has no age: still eligible, and in Hawks Members.
+    expect(await isEligible(db, fixture.id('C'), now)).equals(true)
+    expect(await audience('teamMembers', fixture.seed.teams.hawks)).includes(
+      'C'
+    )
+    // A birth month under 13 wins over is_adult.
+    const year = now.getUTCFullYear() - 10
+    await set('C', { birth_year: year, birth_month: 1, is_adult: true })
+    try {
+      expect(await isEligible(db, fixture.id('C'), now)).equals(false)
+      expect([
+        ...(await eligibleSurvivors(db, [fixture.id('C')], now))
+      ]).deep.equals([])
+    } finally {
+      await set('C', { birth_year: null, birth_month: null, is_adult: false })
+    }
+    // An account that can't sign in is not.
+    await set('A', { login_enabled: false })
+    try {
+      expect(await isEligible(db, fixture.id('A'), now)).equals(false)
+    } finally {
+      await set('A', { login_enabled: true })
+    }
+    expect(await isEligible(db, makeId('user'), now)).equals(false)
+  })
+
+  it('names each scope kind’s scope type', function () {
     expect(scopeTypeOf('seasonAllStaff')).equals('season')
     expect(scopeTypeOf('leagueOrg')).equals('league')
     expect(scopeTypeOf('teamFans')).equals('team')

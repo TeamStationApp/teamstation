@@ -818,6 +818,29 @@ describe('the browser script', function () {
     )
   })
 
+  it('gives each chat step’s people an age, taking an age already given as success', async function () {
+    const name = 'send chat and see typing across nodes'
+    const app = new StubApp()
+    expect((await runOne(name, contextFor(app))).status).equals('passed')
+    expect(
+      app.calls.filter(call => call === 'PUT /me/account/age')
+    ).to.have.length(2)
+    const given = new StubApp()
+    given.answers.set('PUT /me/account/age', {
+      status: 409,
+      body: { error: 'conflict', details: { reason: 'ageSet' } }
+    })
+    expect((await runOne(name, contextFor(given))).status).equals('passed')
+    const refused = new StubApp()
+    refused.answers.set('PUT /me/account/age', {
+      status: 403,
+      body: { error: 'forbidden' }
+    })
+    expect((await runOne(name, contextFor(refused))).detail).equals(
+      'browser.viewer giving its age: HTTP 403 {"error":"forbidden"}'
+    )
+  })
+
   it('waits for a removed member to leave the chat', async function () {
     const app = new StubApp()
     app.answers.set('GET /chat/conversations', {

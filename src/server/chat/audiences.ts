@@ -1,9 +1,9 @@
 import type { Kysely } from 'kysely'
 
-import { ageOn } from '../../common/age'
 import { openAddsOf, openArrivalsOf } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
+import { ageBandsOf } from '../users/age'
 
 /**
  * Who is in each scope chat: the seven audiences.
@@ -11,9 +11,10 @@ import { rowsOfPeople, STAFF_ROLES, survivors } from '../teams/teamStaff'
  * Every audience is worked out from the roster tables as they stand, never
  * stored: the reconciler diffs it with `chat_members`. Each user id read from
  * a roster table is resolved to its survivor through `merged_into`, and only
- * **eligible** people are kept: an account (unmerged, `login_enabled`) who is
- * not under 13 by the age rule (COPPA; a person with no birth month is not
- * treated as under 13).
+ * **eligible** people are kept: an account (unmerged, `login_enabled`, not
+ * disabled) whose age band is not `under13` (COPPA). An unknown age is
+ * eligible: they are in their chats and can be messaged, and the read gate
+ * (`requireChatAge`) keeps them from reading until they give an age.
  *
  * Direct roles only: a role on a league or season is never a role on its
  * teams here ("only admins of the team, not carried over").
@@ -70,41 +71,44 @@ export function kindsOf(type: ScopeType): readonly ScopeKind[] {
       : LEAGUE_KINDS
 }
 
-/** Under 13 by the age rule; no birth month is never under 13. */
-export function isUnder13(
-  birthYear: number | null,
-  birthMonth: number | null,
+/**
+ * The eligible people among these user ids, as they are (not their
+ * survivors): accounts that can sign in, unmerged and not disabled, whose
+ * band is not `under13`.
+ */
+export async function eligibleAccounts(
+  db: Kysely<Database>,
+  userIds: Iterable<string>,
   now: Date
-): boolean {
-  if (birthYear == null || birthMonth == null) return false
-  return ageOn(birthYear, birthMonth, now) < 13
+): Promise<Set<string>> {
+  const ids = [...new Set(userIds)]
+  if (ids.length === 0) return new Set()
+  const rows = await db
+    .selectFrom('users')
+    .select(['id'])
+    .where('id', 'in', ids)
+    .where('merged_into', 'is', null)
+    .where('login_enabled', '=', true)
+    .where('disabled_at', 'is', null)
+    .execute()
+  const bands = await ageBandsOf(
+    db,
+    rows.map(row => row.id),
+    now
+  )
+  return new Set(
+    rows.filter(row => bands.get(row.id) !== 'under13').map(row => row.id)
+  )
 }
 
-/**
- * Each of these user ids, resolved to its survivor, kept when that survivor
- * is an account and not under 13.
- */
+/** Each of these user ids, resolved to its survivor, kept when that survivor is eligible. */
 export async function eligibleSurvivors(
   db: Kysely<Database>,
   userIds: Iterable<string>,
   now: Date
 ): Promise<Set<string>> {
   const survivorOf = await survivors(db, [...userIds])
-  const ids = [...new Set(survivorOf.values())]
-  if (ids.length === 0) return new Set()
-  const rows = await db
-    .selectFrom('users')
-    .select(['id', 'birth_year', 'birth_month'])
-    .where('id', 'in', ids)
-    .where('merged_into', 'is', null)
-    .where('login_enabled', '=', true)
-    .where('disabled_at', 'is', null)
-    .execute()
-  return new Set(
-    rows
-      .filter(row => !isUnder13(row.birth_year, row.birth_month, now))
-      .map(row => row.id)
-  )
+  return await eligibleAccounts(db, survivorOf.values(), now)
 }
 
 /** Whether one user (as they are, not their survivor) is eligible now. */
@@ -113,15 +117,7 @@ export async function isEligible(
   userId: string,
   now: Date
 ): Promise<boolean> {
-  const row = await db
-    .selectFrom('users')
-    .select(['birth_year', 'birth_month'])
-    .where('id', '=', userId)
-    .where('merged_into', 'is', null)
-    .where('login_enabled', '=', true)
-    .where('disabled_at', 'is', null)
-    .executeTakeFirst()
-  return row != null && !isUnder13(row.birth_year, row.birth_month, now)
+  return (await eligibleAccounts(db, [userId], now)).has(userId)
 }
 
 /** Which of these teams are full and unmerged. */

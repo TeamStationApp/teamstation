@@ -167,12 +167,41 @@ describe('opening a chat wake on the device', function () {
   })
 })
 
+describe('a generic wake', function () {
+  it('says only that there is a new message, fetching nothing, DM or not', async function () {
+    const { wake } = named('dm')
+    const { env: _env, ...bare } = wake
+    for (const dm of [true, false]) {
+      const deps: WakeDeps = {
+        ...depsOf(named('dm')),
+        fetchMessage: async () => {
+          throw new Error('A generic wake fetches nothing')
+        }
+      }
+      expect(
+        await openWake(
+          { ...bare, dm, from: 'Someone', title: null, generic: true },
+          deps
+        )
+      ).deep.equals({
+        title: 'TeamStation',
+        body: 'You have a new message',
+        url: wake.url,
+        tag: `chat:${wake.c}`
+      })
+    }
+  })
+})
+
 describe('the push payload cleaners', function () {
   it('read a wake as the server encodes it, with and without its envelope', function () {
     const { wake } = named('dm')
     expect(asChatWake(JSON.parse(JSON.stringify(wake)))).deep.equals(wake)
     const { env: _env, ...bare } = wake
     expect(asChatWake(JSON.parse(JSON.stringify(bare))).env).equals(undefined)
+    const generic = { ...bare, generic: true as const }
+    expect(asChatWake(JSON.parse(JSON.stringify(generic)))).deep.equals(generic)
+    expect(() => asChatWake({ ...bare, generic: false })).to.throw()
     expect(asPushPayload(JSON.parse(JSON.stringify(wake))).t).equals('chat')
   })
 

@@ -474,10 +474,14 @@ async function apiCall(
 }
 
 /**
- * Confirms the page's newly made account for chat, as agreeing to the age
- * sheet does: the seed confirms its own people, and this one it never saw.
+ * Gives the page's newly made account an adult age and confirms it for chat,
+ * as answering the age sheet does: the seed gives its own people an age, and
+ * this one it never saw. Until then the server refuses it every chat read.
  */
 async function confirmChatAge(page: Page): Promise<void> {
+  const age = await apiCall(page, 'PUT', '/me/account/age', { adult: true })
+  expect(age.status).equals(200)
+  expect(age.body?.band).equals('adult')
   const answer = await apiCall(page, 'PUT', '/me/account/chat-age', {
     source: 'self'
   })

@@ -385,6 +385,40 @@ describe('chat on the socket (U9)', function () {
     })
   })
 
+  describe('registration by age', function () {
+    it('registers no socket for somebody with no age until they give one and reconnect', async function () {
+      const before = socketA.chat.size()
+      const ageless = await fixture.person('ageless', { noAge: true })
+      const first = await connect(urlA, 'ageless')
+      first.send({ type: 'ping', id: 'p1' })
+      await first.next(frame => frame.type === 'pong')
+      expect(socketA.chat.size()).equals(before)
+      const answer = await typing(first, members)
+      expect(answer).deep.include({ type: 'error', code: 'forbidden' })
+      await db
+        .updateTable('users')
+        .set({ is_adult: true })
+        .where('id', '=', ageless)
+        .execute()
+      first.ws.close()
+      const again = await connect(urlA, 'ageless')
+      expect(socketA.chat.size()).equals(before + 1)
+      again.ws.close()
+      for (let i = 0; i < 100 && socketA.chat.size() > before; i++)
+        await wait(20)
+      expect(socketA.chat.size()).equals(before)
+    })
+
+    it('registers no socket for somebody under 13', async function () {
+      const before = socketA.chat.size()
+      const child = await connect(urlA, 'R')
+      child.send({ type: 'ping', id: 'p2' })
+      await child.next(frame => frame.type === 'pong')
+      expect(socketA.chat.size()).equals(before)
+      child.ws.close()
+    })
+  })
+
   describe('member sets', function () {
     it('reads a conversation once, and again after a members hint', async function () {
       const hearer = await connect(urlA, 'C')
