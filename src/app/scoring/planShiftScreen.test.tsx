@@ -7,7 +7,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { type GameLineupsResponse, TeamStationClient } from '../../common/api'
+import type { GameLineupsResponse, TeamStationClient } from '../../common/api'
 import type { PlanCell } from '../../common/gamePlan'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import { ScoringSession as GameSession } from '../../common/scoring/session'
@@ -15,6 +15,7 @@ import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { fieldServer, memoryStorage } from '../../test/offlineFieldServer'
 import { PLAN_START, PLAN_SWAPPED } from '../../test/scoringPlans'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
+import { testCachingClient } from '../../test/testCachingClient'
 import { cacheFileName, openCacheStore } from '../sync/cacheStore'
 import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -180,7 +181,7 @@ async function scoring(innings: Answer): Promise<{
       setup: startingSetup(gameFixture, scoringRoster(1), scoringRoster(10))
     })
   const asked: string[] = []
-  const client = new TeamStationClient({
+  const client = testCachingClient({
     baseUrl: 'http://x/api/v1',
     fetch: async (url: unknown) => {
       const path = String(url).replace('http://x/api/v1', '')

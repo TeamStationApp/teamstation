@@ -294,7 +294,7 @@ describe('actual App scoring player Settings return', function () {
       await waitFor(
         () => document.body.textContent?.includes('JERSEY NUMBER') === true
       )
-      // The web goes on sending the pitch once the screen has closed.
+      // The queue holds the pitch and sends it once the screen has closed.
       await press('Home')
       await press('Home')
       await waitFor(() => currentRoute().name === 'home')

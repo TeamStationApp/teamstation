@@ -381,14 +381,17 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     net.offline = true
     await open(client)
     expect(status()).equals(OFFLINE_BANNER)
-    // At the top, one line, in the web's place above the board: nothing
-    // moves for it there (a phone makes a band, `scoringStatusPlacement`).
+    // At the top, in the web's place above the board, clear of the speaker
+    // and ☰: nothing moves for it there (a phone makes a band,
+    // `scoringStatusPlacement`).
     const line = document.querySelector<HTMLElement>(
       '[aria-label="Save status"]'
     )!
     const frame = line.parentElement!.parentElement!
     expect(frame.style.top).equals('8px')
-    expect(frame.style.height).equals('28px')
+    expect(frame.style.minHeight).equals('28px')
+    expect(frame.style.left).equals('64px')
+    expect(frame.style.right).equals('64px')
     const moved = (): boolean =>
       [...document.querySelectorAll<HTMLElement>('div')].some(node =>
         node.style.transform.includes('translateY(28px)')

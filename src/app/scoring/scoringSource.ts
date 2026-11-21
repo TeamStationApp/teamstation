@@ -15,10 +15,6 @@ import {
   usesOverrideSlots
 } from '../../common/scoring/actions'
 import {
-  sameScoringMutation,
-  type ScoringMutation
-} from '../../common/scoring/scoringMutation'
-import {
   type EventStore,
   sameAction,
   type SaveChange,
@@ -56,9 +52,9 @@ export interface ScoringSource {
    */
   keepTime?: () => () => void
   /**
-   * Opens the game. `held`, on the web after a swap of its own the server
-   * has not answered: opened on the swapped copy the screen holds, never
-   * read, and its saves sent once the swap is. `storedFirst`, for the
+   * Opens the game. `held`, after a swap of its own: opened on the swapped
+   * documents the queue wrote, never read, its saves queued behind the
+   * swap. `storedFirst`, for the
    * scoring screen alone: the defaults and the first read of the plays are
    * the phone's stored ones; every other caller reads the server.
    * `offlineFirst`, for Coach Game: those two reads are the phone's stored
@@ -75,27 +71,14 @@ export interface ScoringSource {
 
 /**
  * A game opened from the copy a swap of this screen's own left, read from
- * nothing: on the web the one still out (`WebWrites.held`), on a phone the
- * documents its queue wrote swapped (`CachingClient.queueSwap`).
+ * nothing: the documents the queue wrote swapped (`CachingClient.queueSwap`),
+ * whose saves it sends behind the swap.
  */
 export interface HeldOpening {
   /** The plays as the swap leaves them, its lineups digest the swap's own. */
   events: StoredGame
   /** Both teams' default lineups, by the new sides. */
   defaults: DefaultLineups
-  /**
-   * The web's: settles once the server took the swap, with the lineups
-   * digest its answer gave the new sides (none from an older server);
-   * rejects once it refused it. A phone's queue sends each save behind the
-   * swap itself.
-   */
-  landed?: Promise<string | undefined>
-  /**
-   * The web's: the accepted scoring its swap was sent on, once `landed`
-   * settled. A save built on the base the swapped copy opened with is
-   * sent on this instead, as the changes ahead of the swap advanced it.
-   */
-  scoringBase?: () => ScoringMutation | null | undefined
 }
 
 function context(
@@ -391,37 +374,8 @@ export class ServerScoringSource implements ScoringSource {
           }
         return { ...stored, context: held.context }
       },
-      save: async (gameId, change, handoff) => {
-        if (opening?.landed == null)
-          return await client.saveGameEvents(gameId, change, handoff)
-        // Behind the swap, as a phone's queue sends it; built on the swap's
-        // own lineups digest, it names the one the swap's answer gave the new
-        // sides, so lineups another device saved since are refused as stale.
-        // An older server answers none: it is read again.
-        const swapped = await opening.landed
-        // Built on the accepted scoring the swapped copy opened with, it
-        // names what the session's changes ahead of the swap left: the
-        // first accepted timeline is the session's own, not a stale base.
-        const sentBase = opening.scoringBase?.()
-        const based =
-          sentBase !== undefined &&
-          change.scoringBase !== undefined &&
-          sameScoringMutation(
-            change.scoringBase,
-            opening.events.scoringMutation ?? null
-          )
-            ? { ...change, scoringBase: sentBase }
-            : change
-        if (based.lineupsBase !== opening.events.lineupsDigest)
-          return await client.saveGameEvents(gameId, based)
-        const { lineupsBase: _swapped, ...rest } = based
-        const lineupsDigest =
-          swapped ?? (await client.gameEvents(gameId)).lineupsDigest
-        return await client.saveGameEvents(
-          gameId,
-          lineupsDigest == null ? rest : { ...rest, lineupsBase: lineupsDigest }
-        )
-      }
+      save: async (gameId, change, handoff) =>
+        await client.saveGameEvents(gameId, change, handoff)
     }
     const session = await ScoringSession.open(store, game.id, held.context, {
       requireCurrentSetup: true,

@@ -23,6 +23,7 @@ import {
 } from '../../test/priorRunnerFixture'
 import { F } from '../../test/scoringGames'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
+import { testCachingClient } from '../../test/testCachingClient'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { topLift } from '../field/fieldSafeArea'
 import type { BaseProjection, FieldPlacement } from '../field/fieldTypes'
@@ -184,7 +185,7 @@ async function mount(
   extra: Partial<ScreenProps> = {}
 ): Promise<(changed: Partial<ScreenProps>) => Promise<void>> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
-  const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  const client = testCachingClient()
   client.game = async () => gameFixture
   client.roster = async teamId => rosters[teamId] ?? []
   client.createGuestPlayer = async (_gameId, _side, player) =>
@@ -358,7 +359,7 @@ describe('scoring screen field wiring', function () {
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
       requireCurrentSetup: true
     })
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => gameFixture
     client.roster = async teamId =>
       scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
@@ -397,7 +398,7 @@ describe('scoring screen field wiring', function () {
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
       requireCurrentSetup: true
     })
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => gameFixture
     client.roster = async teamId =>
       scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
@@ -729,7 +730,7 @@ describe('scoring screen field wiring', function () {
     expect(players().some(player => player.team === 'defense')).equals(true)
     await press('More')
     await press('Place a Runner (Tiebreaker)')
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => gameFixture
     client.roster = async teamId =>
       scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)

@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   type GameLineupsResponse,
   REQUEST_DEADLINE_MS,
-  TeamStationClient
+  type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { PlanCell } from '../../common/gamePlan'
@@ -29,6 +29,7 @@ import {
 import { dictatingHealth, FakeDictationSocket } from '../../test/dictationFakes'
 import { PLAN_SWAPPED } from '../../test/scoringPlans'
 import { scoringRoster } from '../../test/scoringSession'
+import { testCachingClient } from '../../test/testCachingClient'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import { lstrings } from '../locales/strings'
 import { CachingClient } from '../sync/cachingClient'
@@ -267,7 +268,7 @@ async function scoring(
     }
   }
   const digest = { value: 'd1' }
-  const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  const client = testCachingClient()
   if (options.dictation === true) client.health = dictatingHealth
   client.game = async () => gameFixture
   client.roster = async teamId =>
@@ -1960,7 +1961,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
     const queued = options.phone
     const client: TeamStationClient =
       queued == null
-        ? new TeamStationClient({ baseUrl: '/api/v1' })
+        ? testCachingClient()
         : Object.assign(
             new CachingClient({
               baseUrl: '/api/v1',

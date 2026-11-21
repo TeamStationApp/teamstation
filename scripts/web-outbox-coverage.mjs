@@ -46,7 +46,9 @@ const tsSuites = [
   // What the shell says of the queue, and the network watch that wakes it (M3).
   'src/app/sync/useOffline.test.ts',
   'src/app/sync/reachability.test.ts',
-  'src/app/sync/editsPlace.test.ts'
+  'src/app/sync/editsPlace.test.ts',
+  // The scoring source on the queue's swapped documents (M4).
+  'src/app/scoring/scoringSource.test.ts'
 ]
 
 /**
@@ -79,7 +81,13 @@ const appSuites = [
   // The web's App on its in-memory cache, its banners and leave warning (M3).
   { path: 'src/app/App.webCache.test.tsx' },
   { path: 'src/app/App.offlineBanner.test.tsx' },
-  { path: 'src/app/sync/useUnsentEditsWarning.test.tsx' }
+  { path: 'src/app/sync/useUnsentEditsWarning.test.tsx' },
+  // Scoring on the queued client, the web's as the phone's (M4).
+  { path: 'src/app/scoring/scoringSheets.test.tsx' },
+  { path: 'src/app/scoring/rosterDictation.test.tsx' },
+  { path: 'src/app/scoring/visibleLineup.test.tsx' },
+  { path: 'src/app/scoring/scoringScreenField.test.tsx' },
+  { path: 'src/app/scoring/fielderGrab.test.tsx' }
 ]
 const only = process.env.TS_COVERAGE_GREP
 
