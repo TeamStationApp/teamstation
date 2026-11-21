@@ -69,6 +69,9 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const [emoji, setEmoji] = useState(false)
   const [choosing, setChoosing] = useState(false)
   useEffect(() => {
+    if (context?.kind === 'edit') setChoosing(false)
+  }, [context?.kind])
+  useEffect(() => {
     onOverlay?.(emoji || choosing)
     return () => {
       onOverlay?.(false)

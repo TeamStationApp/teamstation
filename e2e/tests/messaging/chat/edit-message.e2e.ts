@@ -63,7 +63,9 @@ async function edit(ctx: E2eContext): Promise<void> {
       assert(incoming != null)
       await enter()
       if (web != null) {
-        await dismissNotificationAsk(web.page, { userId: author.person.userId })
+        await dismissNotificationAsk(web.page, {
+          userId: author.person.userId
+        })
       }
       const row = (id: string): string => 'chat-message-' + id
       const openMenu = async (id: string): Promise<void> => {
@@ -267,6 +269,25 @@ async function edit(ctx: E2eContext): Promise<void> {
       await m.tapOn({ text: '^Back$', timeout: 10000 })
       const listId = 'chat-conversation-' + room
       await m.assertVisible({ id: listId })
+      const openListedConversation = async (id: string): Promise<void> => {
+        if (web != null) {
+          // Back briefly leaves the previous list mounted. Maestro binds its
+          // ID selector before scrolling the chosen row into view.
+          await web.page.waitForFunction(
+            id => {
+              const rows = document.querySelectorAll(
+                '[data-testid="' + id + '"]'
+              )
+              if (rows.length !== 1) return false
+              const bounds = rows[0].getBoundingClientRect()
+              return bounds.width > 0 && bounds.height > 0 && bounds.left >= 0
+            },
+            { timeout: 10000 },
+            id
+          )
+        }
+        await m.tapOn({ id })
+      }
       const other =
         web == null
           ? flattenPublicHierarchy(await m.hierarchy())
@@ -291,12 +312,12 @@ async function edit(ctx: E2eContext): Promise<void> {
         other != null,
         'The fixture needs a second conversation for switching'
       )
-      await m.tapOn({ id: other })
+      await openListedConversation(other)
       await m.assertVisible(field)
       await m.assertNotVisible({ text: '^Editing your message$' })
       await dismissAsk()
       await m.tapOn({ text: '^Back$', timeout: 10000 })
-      await m.tapOn({ id: listId })
+      await openListedConversation(listId)
       await m.assertVisible({ text: '^Editing your message$' })
       assert.equal(
         await readChatComposer(m, platform, web),
@@ -312,8 +333,36 @@ async function edit(ctx: E2eContext): Promise<void> {
       await clearChatComposer(m, platform, originalCaption, web)
       const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
       await enterText(editedCaption)
-      await m.assertVisible({ id: 'chat-dismiss-link-preview', timeout: 18000 })
+      await m.assertVisible({
+        id: 'chat-dismiss-link-preview',
+        timeout: 18000
+      })
       await m.tapOn({ text: '^Send$' })
+      const expectSavedDraft = async (): Promise<void> => {
+        if (platform !== 'android') {
+          await m.assertNotVisible({
+            text: '^Editing your message$',
+            timeout: 12000
+          })
+          assert.equal(await readChatComposer(m, platform, web), draft)
+          return
+        }
+        // Read the restored field and the absence of the edit banner in the
+        // same Android frame while the encrypted save completes.
+        const deadline = Date.now() + 40000
+        do {
+          const nodes = flattenPublicHierarchy(await m.hierarchy())
+          const value = nodes.find(node => node.id === 'chat-composer')?.text
+          const editing = nodes.some(
+            node => node.text === 'Editing your message'
+          )
+          if (value === draft && !editing) return
+          await delay(200)
+        } while (Date.now() < deadline)
+        throw Error(
+          'The edit must close and restore the exact parked draft after saving'
+        )
+      }
       const readBack = async (body: string): Promise<MessageView> => {
         const deadline = Date.now() + 30000
         do {
@@ -329,10 +378,7 @@ async function edit(ctx: E2eContext): Promise<void> {
             : 'Peer did not receive the updated caption on the original'
         )
       }
-      await m.assertNotVisible({
-        text: '^Editing your message$',
-        timeout: 12000
-      })
+      await expectSavedDraft()
       const received = await readBack(editedCaption)
       assert.equal(received.seq, original.seq)
       assert.equal(received.senderUserId, original.senderUserId)
@@ -357,10 +403,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       // button after the card and multiline caption have collapsed.
       if (web == null) await m.waitForAnimationToEnd()
       await m.tapOn({ text: '^Send$' })
-      await m.assertNotVisible({
-        text: '^Editing your message$',
-        timeout: 12000
-      })
+      await expectSavedDraft()
       const cleared = await readBack('')
       assert.deepEqual(cleared.attachments, original.attachments)
       assert.equal(cleared.preview, undefined)

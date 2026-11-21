@@ -1403,6 +1403,30 @@ describe('chat conversation shared file preparation and sending', function () {
     )
   })
 
+  it('closes the attachment chooser when editing and restores the draft on Escape', async () => {
+    const engine = new FakeEngine()
+    const original = message({ mine: true, body: 'Tuesday practice' })
+    engine.update('cnv_aurora', { messages: [original] })
+    await screen(engine, {
+      files: { ...files, PICK_SOURCES: ['photos', 'files'] },
+      draft: { text: 'Bring the bats', picked: [], scrollOffset: 0 }
+    })
+    await press('Attach')
+    expect(button('Photo library')).not.equals(undefined)
+    await press('More message actions')
+    await press('Edit')
+    expect(input().value).equals(original.body)
+    expect(document.activeElement).equals(input())
+    expect(document.querySelector('[aria-label="Photo library"]')).equals(null)
+    await act(async () => {
+      expect(key(input(), { key: 'Escape' }).defaultPrevented).equals(true)
+      await wait()
+    })
+    expect(input().value).equals('Bring the bats')
+    expect(document.body.textContent).not.contains('Editing your message')
+    expect(document.querySelector('[aria-label="Photo library"]')).equals(null)
+  })
+
   async function retainOlderEdit(): Promise<{
     engine: FakeEngine
     room: string

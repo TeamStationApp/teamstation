@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { observedNativeValue } from '../../../../src/test/chat2Maestro.e2e'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+import { chatLinkUi, revealChatTarget } from '../../../rigs/chat/messageLinkUi'
 
 // Run on the simulator host. Maestro derives the installed WDA port from the
 // UUID's final segment. Reuse its existing session so the keyboard keeps focus.
@@ -67,6 +67,18 @@ async function hardware(ctx: E2eContext): Promise<void> {
     await m.inputText({ text: 'Practice draft' })
     await press(82)
     await m.assertNotVisible({ text: '^Editing your message$' })
+    await expectComposerValue('Practice draft')
+    await m.tapOn({ text: '^Attach$' })
+    await m.assertVisible({ text: '^Photo library$' })
+    await revealChatTarget(m, node => node.id === 'chat-bubble-' + message.id)
+    await m.longPressOn({ id: 'chat-bubble-' + message.id })
+    await m.tapOn({ text: '^Edit$' })
+    await m.assertVisible({ text: '^Editing your message$' })
+    await m.assertNotVisible({ text: '^Photo library$' })
+    await expectComposerValue(text)
+    await press(41)
+    await m.assertNotVisible({ text: '^Editing your message$' })
+    await m.assertNotVisible({ text: '^Photo library$' })
     await expectComposerValue('Practice draft')
     await m.eraseText({ characters: 'Practice draft'.length })
   } finally {
