@@ -857,31 +857,38 @@ export const RECIPES: Record<string, Recipe> = {
       })
     for (const scenario of REPLAY_ONCE) {
       runs.push(
-        REPLAY_SPEECH.has(scenario) && !context.speech
+        scenario === 'live'
           ? {
               label: scenario,
-              blocked: 'no xAI speech key in the secrets file or the vault'
+              // Its scorer goes offline, which maestro-d 3.2.0 does not apply.
+              blocked:
+                'skipped until EdgeApp/maestro-d#13: offline no longer applies to a web page'
             }
-          : scenario === 'noAnnouncer' && context.speech
-            ? // It checks the speaker is not offered: a server with no speech.
-              {
+          : REPLAY_SPEECH.has(scenario) && !context.speech
+            ? {
                 label: scenario,
-                args: [],
-                env: { REPLAY_SCENARIO: scenario },
-                prepare: async () => {
-                  prepare()
-                  await context.restartApi({ speech: false })
-                },
-                done: async () => {
-                  await context.restartApi({ speech: true })
+                blocked: 'no xAI speech key in the secrets file or the vault'
+              }
+            : scenario === 'noAnnouncer' && context.speech
+              ? // It checks the speaker is not offered: a server with no speech.
+                {
+                  label: scenario,
+                  args: [],
+                  env: { REPLAY_SCENARIO: scenario },
+                  prepare: async () => {
+                    prepare()
+                    await context.restartApi({ speech: false })
+                  },
+                  done: async () => {
+                    await context.restartApi({ speech: true })
+                  }
                 }
-              }
-            : {
-                label: scenario,
-                args: [],
-                env: { REPLAY_SCENARIO: scenario },
-                prepare
-              }
+              : {
+                  label: scenario,
+                  args: [],
+                  env: { REPLAY_SCENARIO: scenario },
+                  prepare
+                }
       )
     }
     return runs

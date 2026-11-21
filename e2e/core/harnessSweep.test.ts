@@ -63,6 +63,15 @@ describe('the sweep of harness scenarios', function () {
     )
   })
 
+  it('lists a scenario skipped until an issue is fixed with that issue', function () {
+    const [run] = harnessRuns('e2e/tests/platform/browser/observation.e2e.ts', [
+      scenario('platform/browser/observation#network', ['web-chromium'])
+    ])
+    expect(run.skip).equals(
+      'skipped until #361: stopped after 10 minutes on a droplet, with no log'
+    )
+  })
+
   it('leaves the streaming scenarios to their own sweep, unless E2E_STREAMING=1', function () {
     const file = 'e2e/tests/streaming/targeted/drift.e2e.ts'
     expect(harnessDisabled(file, {})).includes('streaming')

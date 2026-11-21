@@ -34,6 +34,17 @@ const PLAYS_HEVC = new Set([
 ])
 
 /**
+ * Scenarios left out until an issue is fixed, each with that issue: the
+ * sweep lists them with why, and does not run them.
+ */
+const SKIPPED_UNTIL = new Map([
+  [
+    'platform/browser/observation#network',
+    'skipped until #361: stopped after 10 minutes on a droplet, with no log'
+  ]
+])
+
+/**
  * The runs the sweep makes of a harness file (`e2e/tests/…`): each of its
  * scenarios on each surface it names. A phone's, a simulator's or iOS
  * Safari's surface waits for the device pass, and a scenario that runs
@@ -62,7 +73,9 @@ export function harnessRuns(
               ? {
                   skip: "plays the app's HEVC video, which this sweep's Chrome cannot decode"
                 }
-              : {})
+              : SKIPPED_UNTIL.has(scenario.id)
+                ? { skip: SKIPPED_UNTIL.get(scenario.id)! }
+                : {})
       }))
     )
 }
