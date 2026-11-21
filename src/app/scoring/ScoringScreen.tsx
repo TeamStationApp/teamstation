@@ -521,11 +521,21 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // refused, is not taken back.
       // This screen owns it from here: a refusal of the swap its saves wait
       // behind closes it and reads the game again here, while shown.
+      // As a single screen takes a refusal of its own swap: the game shown
+      // saves nothing more and is read again. A session a swap of this
+      // screen's own has since taken over is that swap's: left open, its
+      // saves on the refused swap fail and stop, and that swap is refused in
+      // turn with its own count, never left waiting on a closed session.
       const refusedHere = (session: GameSession) => (message: string) => {
         heldSessions.delete(session)
-        session.close()
-        if (!mounted.current || openedContext.current?.session !== session)
-          return
+        const swapped = swappedOver.current === session
+        if (!swapped) session.close()
+        if (!mounted.current) return
+        const shown = openedContext.current?.session
+        // The copy that swap opened, behind the refused one, goes as the
+        // shown copy of a single screen's second swap does.
+        if (swapped && shown != null && shown !== session) shown.close()
+        else if (shown !== session) return
         setSwapNotice(message)
         setRetry(value => value + 1)
       }
