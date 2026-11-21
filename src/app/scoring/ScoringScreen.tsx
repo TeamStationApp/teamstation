@@ -524,6 +524,23 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           ? letGone.session
           : undefined
       takenWrites.current = kept == null ? undefined : letGone?.entry.writes
+      // A swap of the screen that let it go, still out: refused, it is told
+      // here; taken, nothing more is.
+      const outSwap = letGone?.entry.writes
+      if (kept != null && outSwap?.held(props.gameId) != null) {
+        const landed = outSwap.onLanded(props.gameId, () => {
+          landed()
+          takenOver.delete(kept)
+        })
+        takenOver.set(kept, message => {
+          landed()
+          takenOver.delete(kept)
+          kept.close()
+          if (openedContext.current?.session !== kept) return
+          setSwapNotice(message)
+          setRetry(value => value + 1)
+        })
+      }
       const { game } = reads
       const value =
         kept ??
@@ -1171,8 +1188,15 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         webWrites={webWrites}
         onSwapRefused={message => {
           // The game opened on the swap's own copy: it saves nothing more,
-          // and is read from the server again.
-          openedContext.current?.session.close()
+          // and is read from the server again, by the screen that shows it
+          // now: this one, or one that took it back after this one went.
+          const session = openedContext.current?.session
+          const taker = session == null ? undefined : takenOver.get(session)
+          if (taker != null) {
+            taker(message)
+            return
+          }
+          session?.close()
           setSwapNotice(message)
           setRetry(value => value + 1)
         }}
@@ -1284,6 +1308,12 @@ const sameLetGo = (entry: LetGoKey, opened: LetGoKey): boolean =>
  * read the server, which does not have those changes yet.
  */
 const letGo = new Map<GameSession, LetGoEntry>()
+/**
+ * The web's sessions a screen took back from one since gone whose swap may
+ * still be out, with what that screen does when the server refuses the swap:
+ * the gone screen's refusal is told to the screen that shows its session.
+ */
+const takenOver = new Map<GameSession, (message: string) => void>()
 /**
  * Lets `game` go on sending what it has not saved after its screen has
  * gone, and closes it once that is saved, or the server refused it. One
