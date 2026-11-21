@@ -48,7 +48,7 @@ import {
   playerRemovedWords,
   type PlayerRemover
 } from '../notifications/requestInformation'
-import { mayKeepBirthMonth } from '../people/guardians'
+import { maySeeAge } from '../people/guardians'
 import { chatRoutes } from '../routes/chat'
 import { groupRoutes } from '../routes/groups'
 import { guardianRoutes } from '../routes/guardians'
@@ -1941,7 +1941,7 @@ describe('adds made with a notice', function () {
     expect(
       await mayManagePlayer(db!, coach, ids['Open Add'], TEAM.falcons)
     ).equals(true)
-    expect(await mayKeepBirthMonth(db!, coach, ids['Open Add'])).equals(false)
+    expect(await maySeeAge(db!, coach, ids['Open Add'])).equals(false)
     expect(await mayEditName(db!, ids.coach, ids['Open Add'], coach)).equals(
       false
     )

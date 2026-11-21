@@ -18,6 +18,13 @@ import {
   asAccountEmailPending,
   asAccountSettings
 } from './accountSettings'
+import {
+  type AgeView,
+  type AppleRange,
+  asAgeView,
+  asPersonAge,
+  type PersonAge
+} from './age'
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
 import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
@@ -1865,10 +1872,13 @@ export const asPlayerDetail = asObject({
   throws: asOptional(asThrows, null),
   /**
    * `YYYY-MM`, or null when nobody has set it. Absent for anybody who may
-   * not set it: only the team's administrators and coaches and the
-   * player's guardians see it.
+   * not set it: only site administrators and the player's guardians see it.
    */
   birthMonth: asOptional(asNullable(asString)),
+  /** Beside `birthMonth`: the band it and `is_adult` give. */
+  ageBand: asOptional(asLiteral('unknown', 'under13', 'minor', 'adult')),
+  /** Whether the caller may clear it: a site administrator. */
+  mayClearAge: asOptional(asBoolean, false),
   teams: asArray(asPlayerTeam)
 })
 export type PlayerDetail = ReturnType<typeof asPlayerDetail>
@@ -4835,7 +4845,25 @@ export class TeamStationClient {
     )
   }
 
-  /** Whether this account has unlocked chat, and how. */
+  /** The signed-in person's age band, and how they gave it. */
+  async myAge(): Promise<AgeView> {
+    return await this.request('GET', '/me/account/age', asAgeView)
+  }
+
+  /**
+   * The person's first answer: a year and month of birth, 18 or older, or
+   * Apple's range alone when it says 18 or older; each with the device's
+   * Apple range when it has one.
+   */
+  async setMyAge(
+    body:
+      | { year: number; month: number; apple?: AppleRange }
+      | { adult: true; apple?: AppleRange }
+      | { apple: AppleRange }
+  ): Promise<AgeView> {
+    return await this.request('PUT', '/me/account/age', asAgeView, body)
+  }
+
   async chatAge(): Promise<ChatAge> {
     return await this.request('GET', '/me/account/chat-age', asChatAge)
   }
@@ -7323,20 +7351,19 @@ export class TeamStationClient {
   }
 
   /**
-   * Sets a player's year and month of birth, never a day, or clears it with
-   * null. Answers the month as `YYYY-MM`, or null.
+   * Changes a person's age, as a guardian or a site administrator: a year and
+   * month of birth (never a day), `{ adult: true }`, or null to clear it.
    */
-  async setBirthMonth(
+  async setAge(
     userId: string,
-    birth: { year: number; month: number } | null
-  ): Promise<string | null> {
-    const answer = await this.request(
+    age: { year: number; month: number } | { adult: true } | null
+  ): Promise<PersonAge> {
+    return await this.request(
       'PUT',
-      `/players/${encodeURIComponent(userId)}/birth-month`,
-      asObject({ birthMonth: asNullable(asString) }),
-      birth ?? { year: null, month: null }
+      `/people/${encodeURIComponent(userId)}/age`,
+      asPersonAge,
+      age ?? { year: null, month: null }
     )
-    return answer.birthMonth
   }
 
   /** Says whether a league is a SafeSport Local Affiliated Organization. */

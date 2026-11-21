@@ -1777,28 +1777,57 @@ describe('api client', function () {
       url: `http://x/api/v1/teams/tem_1/players/${userIdOfGumbo(42)}/guardians/${userIdOfGumbo(7)}`
     })
 
-    const born = client({ userId: userIdOfGumbo(42), birthMonth: '2012-03' })
+    const minor = {
+      userId: userIdOfGumbo(42),
+      band: 'minor',
+      birthMonth: '2012-03',
+      isAdult: false
+    }
+    const born = client(minor)
     expect(
-      await born.client.setBirthMonth(userIdOfGumbo(42), {
-        year: 2012,
-        month: 3
-      })
-    ).equals('2012-03')
+      await born.client.setAge(userIdOfGumbo(42), { year: 2012, month: 3 })
+    ).deep.equals(minor)
     expect(born.calls[0]).deep.include({
       method: 'PUT',
-      url: `http://x/api/v1/players/${userIdOfGumbo(42)}/birth-month`
+      url: `http://x/api/v1/people/${userIdOfGumbo(42)}/age`
     })
     expect(JSON.parse(born.calls[0].body ?? '')).deep.equals({
       year: 2012,
       month: 3
     })
-    const cleared = client({ userId: userIdOfGumbo(42), birthMonth: null })
-    expect(await cleared.client.setBirthMonth(userIdOfGumbo(42), null)).equals(
-      null
-    )
+    const cleared = client({ ...minor, band: 'unknown', birthMonth: null })
+    expect(
+      (await cleared.client.setAge(userIdOfGumbo(42), null)).birthMonth
+    ).equals(null)
     expect(JSON.parse(cleared.calls[0].body ?? '')).deep.equals({
       year: null,
       month: null
+    })
+
+    const view = {
+      band: 'adult',
+      birthYear: null,
+      birthMonth: null,
+      isAdult: true,
+      ageSource: 'apple',
+      ageSetAt: '2026-11-20T12:00:00.000Z'
+    }
+    const mine = client(view)
+    expect(await mine.client.myAge()).deep.equals(view)
+    expect(mine.calls[0]).deep.include({
+      method: 'GET',
+      url: 'http://x/api/v1/me/account/age'
+    })
+    const given = client(view)
+    expect(
+      await given.client.setMyAge({ apple: { lowerBound: 18 } })
+    ).deep.equals(view)
+    expect(given.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/me/account/age'
+    })
+    expect(JSON.parse(given.calls[0].body ?? '')).deep.equals({
+      apple: { lowerBound: 18 }
     })
 
     const lao = client({ leagueId: 'lea 1', safesportLao: true })

@@ -613,6 +613,47 @@ const graphqlPaths = {
     }
   }
 }
+const ageResponse = {
+  description: 'The account’s age band, and how and when it was given',
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: [
+          'band',
+          'birthYear',
+          'birthMonth',
+          'isAdult',
+          'ageSource',
+          'ageSetAt'
+        ],
+        properties: {
+          band: {
+            type: 'string',
+            enum: ['unknown', 'under13', 'minor', 'adult']
+          },
+          birthYear: { type: ['integer', 'null'] },
+          birthMonth: { type: ['integer', 'null'], minimum: 1, maximum: 12 },
+          isAdult: { type: 'boolean' },
+          ageSource: {
+            type: ['string', 'null'],
+            enum: ['self', 'apple', 'guardian', 'admin', null]
+          },
+          ageSetAt: { type: ['string', 'null'], format: 'date-time' }
+        }
+      }
+    }
+  }
+}
+const appleRangeSchema = {
+  type: 'object',
+  required: ['lowerBound'],
+  additionalProperties: false,
+  properties: {
+    lowerBound: { type: 'integer', minimum: 0 },
+    upperBound: { type: 'integer', minimum: 0 }
+  }
+}
 const chatAgeResponse = {
   description: 'Whether, how and when chat was unlocked',
   content: {
@@ -669,6 +710,49 @@ const accountPaths = {
         }
       },
       responses: { 200: accountResponse }
+    }
+  },
+  '/me/account/age': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'Read your age band (signed-in sessions only)',
+      description:
+        'Every chat permission reads the band: `unknown` (no birth month and not 18 or older) can be messaged but reads no chat until answering; `under13` is in no chat; `minor` (13–17) is limited by the pair rule and, in SafeSport leagues, the second-adult rule; `adult`. A birth month always wins over `isAdult`. API keys and machine actors are refused.',
+      responses: {
+        200: ageResponse,
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
+    },
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Give your age, once (signed-in sessions only)',
+      description:
+        'The first answer only: `{year, month}` (never a day, not in the future), `{adult: true}`, either with the device’s Apple range as `apple`, or `{apple}` alone when its lower bound is 18 or more. An answer outside the Apple range sent with it is 400 `outsideAppleRange` (a lower bound under 18 with no upper bound means up to 17). Once the account has any age (a birth month set by anyone, `isAdult`, or an earlier answer) it is 409 `ageSet`; a guardian or a site administrator changes it through `PUT /people/{userId}/age`. An answer under 13 is kept. Audited.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                year: { type: 'integer', minimum: 1900 },
+                month: { type: 'integer', minimum: 1, maximum: 12 },
+                adult: { type: 'boolean', enum: [true] },
+                apple: appleRangeSchema
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: ageResponse,
+        400: { description: 'A malformed body, or `outsideAppleRange`' },
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' },
+        409: { description: '`ageSet`: the account already has an age' }
+      }
     }
   },
   '/me/account/chat-age': {
@@ -7251,6 +7335,24 @@ export function openApiDocument(version: string): OpenApiDocument {
                         type: ['string', 'null'],
                         enum: ['left', 'right', null]
                       },
+                      birthMonth: {
+                        type: ['string', 'null'],
+                        description:
+                          '`YYYY-MM`, or null when unset; only for site ' +
+                          'administrators and the person\u2019s guardians'
+                      },
+                      ageBand: {
+                        type: 'string',
+                        enum: ['unknown', 'under13', 'minor', 'adult'],
+                        description:
+                          'Beside `birthMonth`: the band it and 18 or older give'
+                      },
+                      mayClearAge: {
+                        type: 'boolean',
+                        description:
+                          'Beside `birthMonth`: whether the caller may clear ' +
+                          'it (a site administrator)'
+                      },
                       teams: {
                         type: 'array',
                         items: { $ref: '#/components/schemas/PlayerTeam' }
@@ -8284,16 +8386,19 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
-      '/players/{userId}/birth-month': {
+      '/people/{userId}/age': {
         put: {
-          summary: "Set or clear a player's birth month",
+          summary: "Change a person's age",
           description:
-            'A year and a month, never a day: `{year, month}`, or ' +
-            '`{year: null, month: null}` to clear it. Any other field is 400. ' +
-            'For administrators and coaches of a team the player plays on, ' +
-            'and the player’s guardians; they alone see it, as `birthMonth` ' +
-            '`YYYY-MM` on `GET /players/{userId}`. Anybody else gets 404. ' +
-            'Audited. Answers `{userId, birthMonth}`.',
+            'For a site administrator, or one of the person’s guardians; ' +
+            'anybody else gets 404, and only they see the birth month on ' +
+            '`GET /players/{userId}`. `{year, month}` (never a day, not in ' +
+            'the future), `{adult: true}`, or `{year: null, month: null}` to ' +
+            'clear it. A guardian cannot make an adult a minor (403 ' +
+            '`adultToMinor`), cannot clear it (403 `clearNotAllowed`), and ' +
+            'cannot give the first age of somebody who has none (409 ' +
+            '`ageNotSet`). Audited. Answers `{userId, band, birthMonth, ' +
+            'isAdult}`.',
           security: [{ bearer: [] }],
           parameters: [userIdParam],
           requestBody: {
@@ -8302,7 +8407,6 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  required: ['year', 'month'],
                   additionalProperties: false,
                   properties: {
                     year: { type: ['integer', 'null'] },
@@ -8310,17 +8414,20 @@ export function openApiDocument(version: string): OpenApiDocument {
                       type: ['integer', 'null'],
                       minimum: 1,
                       maximum: 12
-                    }
+                    },
+                    adult: { type: 'boolean', enum: [true] }
                   }
                 }
               }
             }
           },
           responses: {
-            200: { description: '`{userId, birthMonth}`' },
+            200: { description: '`{userId, band, birthMonth, isAdult}`' },
             400: errorResponse,
             401: errorResponse,
-            404: errorResponse
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },

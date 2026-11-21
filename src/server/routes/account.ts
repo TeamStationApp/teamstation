@@ -9,6 +9,12 @@ import {
   asAccountPasswordBody,
   asAccountPrimaryBody
 } from '../../common/accountSettings'
+import {
+  ageBandOf,
+  type AgeView,
+  asMyAgeBody,
+  outsideAppleRange
+} from '../../common/age'
 import { asChatAgeBody, type ChatAge } from '../../common/chatAge'
 import {
   badRequest,
@@ -152,6 +158,40 @@ async function readChatAge(
     confirmed: row.chat_age_confirmed_at != null,
     source: row.chat_age_source,
     confirmedAt: row.chat_age_confirmed_at?.toISOString() ?? null
+  }
+}
+
+/** A person's age as they hold it (`GET /me/account/age`). */
+async function readAge(
+  db: Kysely<Database>,
+  userId: string,
+  now: Date
+): Promise<AgeView> {
+  const row = await db
+    .selectFrom('users')
+    .select([
+      'birth_year',
+      'birth_month',
+      'is_adult',
+      'age_source',
+      'age_set_at'
+    ])
+    .where('id', '=', userId)
+    .executeTakeFirstOrThrow()
+  return {
+    band: ageBandOf(
+      {
+        birthYear: row.birth_year,
+        birthMonth: row.birth_month,
+        isAdult: row.is_adult
+      },
+      now
+    ),
+    birthYear: row.birth_year,
+    birthMonth: row.birth_month,
+    isAdult: row.is_adult,
+    ageSource: row.age_source,
+    ageSetAt: row.age_set_at?.toISOString() ?? null
   }
 }
 
@@ -392,6 +432,67 @@ export function accountRoutes(
       })
     )
   }
+  router.get(
+    '/me/account/age',
+    withAsync(async (req, res) => {
+      res.json(await readAge(db, accountId(req), new Date()))
+    })
+  )
+  /**
+   * The person's first answer, and only that: once the account has an age of
+   * any kind (a birth month, whoever set it, 18 or older, or an earlier
+   * answer), it is 409 `ageSet`, and only a guardian or a site administrator
+   * changes it (`PUT /people/:userId/age`). An answer under 13 stands.
+   */
+  router.put(
+    '/me/account/age',
+    withAsync(async (req, res) => {
+      const userId = accountId(req)
+      const now = new Date()
+      const body = cleanBody(raw => asMyAgeBody(raw, now), req.body)
+      if (outsideAppleRange(body, now)) {
+        throw badRequest('That age is outside the range Apple shared', {
+          reason: 'outsideAppleRange'
+        })
+      }
+      await db.transaction().execute(async tx => {
+        const user = await tx
+          .selectFrom('users')
+          .select(['birth_year', 'birth_month', 'is_adult', 'age_set_at'])
+          .where('id', '=', userId)
+          .forUpdate()
+          .executeTakeFirstOrThrow()
+        if (
+          user.birth_year != null ||
+          user.birth_month != null ||
+          user.is_adult ||
+          user.age_set_at != null
+        ) {
+          throw conflict('Your age is already set', { reason: 'ageSet' })
+        }
+        await tx
+          .updateTable('users')
+          .set({
+            ...(body.kind === 'month'
+              ? { birth_year: body.year, birth_month: body.month }
+              : { is_adult: true }),
+            age_source: body.apple == null ? 'self' : 'apple',
+            age_set_at: now,
+            updated_at: now
+          })
+          .where('id', '=', userId)
+          .execute()
+      })
+      const age = await readAge(db, userId, now)
+      setAudit(res.locals, {
+        entityType: 'age',
+        entityId: userId,
+        before: { band: 'unknown' },
+        after: { band: age.band }
+      })
+      res.json(age)
+    })
+  )
   router.get(
     '/me/account/chat-age',
     withAsync(async (req, res) => {

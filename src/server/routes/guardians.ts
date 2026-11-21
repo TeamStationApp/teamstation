@@ -2,9 +2,15 @@ import { asBoolean, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { asBirthMonthBody, birthMonthText } from '../../common/age'
+import { ageBandOf, asAgeBody, birthMonthText } from '../../common/age'
 import { asLiteral } from '../../common/asLiteral'
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { asUserId } from '../../common/userId'
 import {
   adminScopes,
@@ -25,14 +31,15 @@ import {
   guardiansOf,
   isGuardianOf,
   linkGuardian,
-  mayKeepBirthMonth,
+  mayChangeAge,
+  maySeeAge,
   unlinkGuardian
 } from '../people/guardians'
 import { inviteUrl } from './invites'
 import type { ManageRouteOptions } from './manage'
 
 /**
- * A player's guardians and adult family members, their birth month, and a
+ * A player's guardians and adult family members, a person's age, and a
  * league's SafeSport setting.
  *
  * - `GET /teams/:teamId/players/:userId/guardians`: for the team's
@@ -42,7 +49,8 @@ import type { ManageRouteOptions } from './manage'
  *   that address can redeem.
  * - `DELETE …/:guardianId`: an administrator or coach, or the guardian
  *   themselves.
- * - `PUT /players/:userId/birth-month`: a year and a month, never a day.
+ * - `PUT /people/:userId/age`: a year and a month (never a day), 18 or
+ *   older, or cleared; by a guardian or a site administrator.
  * - `PUT /manage/league/:leagueId/safesport`: the league's own
  *   administrators say whether it is a SafeSport Local Affiliated
  *   Organization.
@@ -258,50 +266,92 @@ export function guardianRoutes(
   )
 
   /**
-   * A player's year and month of birth, or `{ year: null, month: null }` to
-   * forget it. A body with anything else on it, a day above all, is 400.
+   * A person's age, changed by a guardian or a site administrator:
+   * `{ year, month }`, `{ adult: true }`, or `{ year: null, month: null }` to
+   * clear it (`mayChangeAge` says who may make which change). Anybody else
+   * is answered 404.
    */
   router.put(
-    '/players/:userId/birth-month',
+    '/people/:userId/age',
     requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const userId = userIdParam(req.params.userId)
+      const now = new Date()
       const user = await db
         .selectFrom('users')
-        .select(['birth_year', 'birth_month'])
+        .select(['birth_year', 'birth_month', 'is_adult'])
         .where('id', '=', userId)
         .where('merged_into', 'is', null)
         .executeTakeFirst()
       if (user == null) throw notFound()
-      if (!(await mayKeepBirthMonth(db, actor, userId))) throw notFound()
+      if (!(await maySeeAge(db, actor, userId))) throw notFound()
 
-      const body = cleanBody(asBirthMonthBody, req.body)
+      const body = cleanBody(raw => asAgeBody(raw, now), req.body)
+      const before = {
+        birthYear: user.birth_year,
+        birthMonth: user.birth_month,
+        isAdult: user.is_adult
+      }
+      // Clearing forgets both the month and the flag; 18 or older without a
+      // month replaces a month; a month leaves the flag, which it wins over.
+      const after =
+        body == null
+          ? { birthYear: null, birthMonth: null, isAdult: false }
+          : body.kind === 'adult'
+            ? { birthYear: null, birthMonth: null, isAdult: true }
+            : {
+                birthYear: body.year,
+                birthMonth: body.month,
+                isAdult: user.is_adult
+              }
+      const current = ageBandOf(before, now)
+      const next = body == null ? null : ageBandOf(after, now)
+      const change = mayChangeAge(actor, current, next)
+      if (change === 'adultToMinor') {
+        throw forbidden('Only a site administrator can make an adult a minor', {
+          reason: 'adultToMinor'
+        })
+      }
+      if (change === 'clearNotAllowed') {
+        throw forbidden('Only a site administrator can clear an age', {
+          reason: 'clearNotAllowed'
+        })
+      }
+      if (change === 'notYet') {
+        throw conflict('This person has not given their age yet', {
+          reason: 'ageNotSet'
+        })
+      }
+
       await db
         .updateTable('users')
         .set({
-          birth_year: body?.year ?? null,
-          birth_month: body?.month ?? null,
-          updated_at: new Date()
+          birth_year: after.birthYear,
+          birth_month: after.birthMonth,
+          is_adult: after.isAdult,
+          // A cleared age is no answer at all: the person gives it again.
+          ...(body == null
+            ? { age_source: null, age_set_at: null }
+            : { age_source: actor.isAdmin ? 'admin' : 'guardian' }),
+          updated_at: now
         })
         .where('id', '=', userId)
         .execute()
 
       const birthMonth =
-        body == null ? null : birthMonthText(body.year, body.month)
+        after.birthYear == null || after.birthMonth == null
+          ? null
+          : birthMonthText(after.birthYear, after.birthMonth)
+      const band = ageBandOf(after, now)
       setAudit(res.locals, {
-        entityType: 'birthMonth',
+        entityType: 'age',
         entityId: userId,
-        before: {
-          birthMonth:
-            user.birth_year == null || user.birth_month == null
-              ? null
-              : birthMonthText(user.birth_year, user.birth_month)
-        },
-        after: { birthMonth }
+        before: { band: current },
+        after: { band }
       })
-      res.json({ userId, birthMonth })
+      res.json({ userId, band, birthMonth, isAdult: after.isAdult })
     })
   )
 
