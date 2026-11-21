@@ -335,6 +335,24 @@ describe('umpire availability', function () {
     expect(ids(await list(f.leagueA, '?strict=false'))).deep.equals(all)
   })
 
+  it('names the weekday and time availableAt was matched on, per saved zone', async function () {
+    // Tuesday 18:30 in Los Angeles is already Wednesday in UTC.
+    const answer = await list(f.leagueA, `?availableAt=${tuesdayEvening}`)
+    expect(answer.body.matchedAt).deep.equals([
+      {
+        timezone: 'America/Los_Angeles',
+        weekday: 'Tuesday',
+        date: '2027-04-13',
+        time: '18:30'
+      }
+    ])
+    // A day and time need no reading, and no query matches on none.
+    expect(
+      (await list(f.leagueA, '?day=1&time=18:30')).body
+    ).not.to.have.property('matchedAt')
+    expect((await list(f.leagueA)).body).not.to.have.property('matchedAt')
+  })
+
   it('misses a game whose duration runs past to', async function () {
     // 20:30 in Los Angeles: two hours ends at 22:30, past 22:00.
     const late = '2027-04-14T03:30:00.000Z'

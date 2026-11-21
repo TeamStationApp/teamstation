@@ -191,7 +191,7 @@ const CASES: Case[] = [
   },
   {
     name: 'a chart request draws a chart or a table',
-    text: 'Chart our runs per game.',
+    text: 'Chart the runs per game of Demo Hawks.',
     check: turn =>
       /<svg|<table/i.test(turn.answer) ? null : 'no <svg> or <table>'
   },
@@ -279,6 +279,11 @@ const CASES: Case[] = [
       const id = /\b(?:sea|lea|gam|usr|tem)_\w+/.exec(words)
       if (id != null) return `the answer shows the id ${id[0]}`
       if (!turn.answer.includes('Hank')) return 'Hank Aaron was not named'
+      // The game is on Tuesday, April 13; no other weekday may go with it.
+      if (
+        /\b(?:Mon|Wed|Thu|Fri|Sat|Sun)[a-z]*,? (?:April|Apr) 13\b/.test(words)
+      )
+        return 'the answer gives the game the wrong weekday'
       const near = (name: string, reason: RegExp): boolean =>
         turn.answer
           .split(/\n+/)

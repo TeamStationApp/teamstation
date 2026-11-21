@@ -280,6 +280,50 @@ export function parseAvailabilityQuery(
   return parsed
 }
 
+/** Where `availableAt` falls in one saved filter's time zone. */
+export interface MatchedAt {
+  timezone: string
+  /** `Monday` … `Sunday`. */
+  weekday: string
+  /** `YYYY-MM-DD`. */
+  date: string
+  /** `HH:mm`. */
+  time: string
+}
+
+/**
+ * The weekday, date and time of day of `availableAt` in each time zone the
+ * saved filters use, as the match reads them, so a reader names the day the
+ * filters were matched on rather than working it out.
+ */
+export function matchedAt(
+  start: Date,
+  saved: Iterable<UmpireAvailability | null>
+): MatchedAt[] {
+  const zones = new Set<string>()
+  for (const availability of saved)
+    if (availability != null) zones.add(availability.timezone)
+  return [...zones].sort().map(timezone => ({
+    timezone,
+    weekday: new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      weekday: 'long'
+    }).format(start),
+    date: new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(start),
+    time: new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }).format(start)
+  }))
+}
+
 /** Whether a person's saved filter (or none) passes an availability query. */
 export function availabilityPasses(
   availability: UmpireAvailability | null,

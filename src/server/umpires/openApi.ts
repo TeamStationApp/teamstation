@@ -240,7 +240,11 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
           'people whose saved filter leaves the time in: a filter matches ' +
           'on the start, read in its own time zone, as the umpire ' +
           'schedule\u2019s filter matches a game. Somebody with no saved ' +
-          'filter counts as available unless `strict` is true.'
+          'filter counts as available unless `strict` is true. With ' +
+          '`availableAt` the answer also carries `matchedAt`: for each time ' +
+          'zone the saved filters use, `{ timezone, weekday, date, time }`, ' +
+          'the weekday (`Monday` … `Sunday`), date (`YYYY-MM-DD`) and time ' +
+          'of day (`HH:mm`) the start was matched on there.'
         : '')
   const umpireList = paths['/leagues/{leagueId}/umpires'] as Record<
     string,
