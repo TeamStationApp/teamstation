@@ -156,6 +156,29 @@ describe('the chat crypto core in a browser', () => {
     expect(attempts).equals(2)
   })
 
+  it('a hung instantiate becomes instantiateFailed and the next load tries again', async () => {
+    let calls = 0
+    const { fetch } = served(wasmBytes())
+    const hung = {
+      instantiate: () => {
+        calls += 1
+        return new Promise(() => undefined)
+      }
+    }
+    expect(
+      await loadChatCore({
+        fetch,
+        url: '/m',
+        WebAssembly: hung,
+        instantiateTimeoutMs: 30
+      })
+    ).deep.equals({ ready: false, reason: 'instantiateFailed' })
+    expect(await loadChatCore({ fetch, url: '/m' })).deep.equals({
+      ready: true
+    })
+    expect(calls).equals(1)
+  })
+
   it('a module that will not instantiate is instantiateFailed', async () => {
     const { fetch } = served(new Uint8Array([0, 1, 2, 3]).buffer)
     expect(await loadChatCore({ fetch, url: '/m' })).deep.equals({

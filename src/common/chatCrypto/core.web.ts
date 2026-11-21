@@ -33,6 +33,8 @@ export interface LoadChatCoreOptions {
   url?: string
   integrity?: string
   getRandomValues?: GetRandomValues
+  /** How long `WebAssembly.instantiate` may take. Default 20 seconds. */
+  instantiateTimeoutMs?: number
 }
 
 let status: ChatCoreStatus = { ready: false, reason: 'loading' }
@@ -86,14 +88,25 @@ async function load(options: LoadChatCoreOptions): Promise<ChatCoreStatus> {
     options.getRandomValues ??
     ((array: Uint8Array) => globalThis.crypto.getRandomValues(array))
   let rawCall: RawCall
+  const timeoutMs = options.instantiateTimeoutMs ?? 20000
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    rawCall = await instantiateCore(
-      bytes,
-      getRandomValues,
-      wasm as Pick<typeof WebAssembly, 'instantiate'>
-    )
+    rawCall = await Promise.race([
+      instantiateCore(
+        bytes,
+        getRandomValues,
+        wasm as Pick<typeof WebAssembly, 'instantiate'>
+      ),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error('WebAssembly.instantiate timed out'))
+        }, timeoutMs)
+      })
+    ])
   } catch {
     return { ready: false, reason: 'instantiateFailed' }
+  } finally {
+    if (timer != null) clearTimeout(timer)
   }
   const made = makeCall(rawCall)
   if (!selfTest(made)) return { ready: false, reason: 'selfTestFailed' }
@@ -116,8 +129,9 @@ async function load(options: LoadChatCoreOptions): Promise<ChatCoreStatus> {
 
 /**
  * Loads the core once; every later call answers the same promise. A module
- * that did not arrive is the exception: it may be a moment's network, so
- * the next call (the next chat screen) asks for it again.
+ * that did not arrive, or that would not instantiate (including a compile
+ * that did not finish in time), may be a moment's failure, so the next call
+ * asks again.
  */
 export async function loadChatCore(
   options: LoadChatCoreOptions = {}
@@ -128,7 +142,12 @@ export async function loadChatCore(
   }
   loading ??= load(options).then(settled => {
     status = settled
-    if (!settled.ready && settled.reason === 'fetchFailed') loading = undefined
+    if (
+      !settled.ready &&
+      (settled.reason === 'fetchFailed' ||
+        settled.reason === 'instantiateFailed')
+    )
+      loading = undefined
     return settled
   })
   return await loading

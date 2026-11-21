@@ -10,6 +10,11 @@ import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
 import { App } from '../App'
+import { DeviceApprovalContext } from '../chat/DeviceApprovalPrompt'
+import {
+  type DeviceApprovals,
+  EMPTY_APPROVAL_STATE
+} from '../chat/deviceApprovals'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -1351,5 +1356,100 @@ describe('notifications a page at a time', function () {
     await press('Retry notifications')
     expect(text()).includes('sent row 1.')
     expect(text()).not.includes('You were signed out')
+  })
+})
+
+describe('inbox reload after an approval read', function () {
+  confirmedChatAgeHooks()
+
+  it('reloads the list and the detail only after the approval revision advances', async () => {
+    const item: Notification = {
+      id: 'event_demo_game',
+      requestId: 'request_demo_game',
+      type: 'game',
+      title: 'Demo Hawks at Demo Owls',
+      description: 'Saturday at the demo field.',
+      sentAt: '2026-10-06T12:00:00Z',
+      expiresAt: '2026-10-20T12:00:00Z',
+      status: 'pending',
+      canAct: false,
+      canWithdraw: false,
+      canResend: false,
+      viewed: true
+    }
+    let inbox = 0
+    let detailReads = 0
+    const client = {
+      notifications: async () => {
+        inbox += 1
+        return { items: [item], hasPending: false, nextCursor: null }
+      },
+      notification: async () => {
+        detailReads += 1
+        return item
+      },
+      viewNotification: async () => undefined
+    } as unknown as TeamStationClient
+    let state = {
+      ...EMPTY_APPROVAL_STATE,
+      dismissed: new Set<string>()
+    }
+    const listeners = new Set<() => void>()
+    const controller = {
+      snapshot: () => state,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      }
+    } as unknown as DeviceApprovals
+    const publish = (revision: number): void => {
+      state = { ...state, revision }
+      for (const listener of listeners) listener()
+    }
+
+    await mount(
+      <DeviceApprovalContext.Provider value={controller}>
+        <NotificationsScreen client={client} onOpen={() => undefined} />
+      </DeviceApprovalContext.Provider>
+    )
+    const listed = inbox
+    expect(listed).to.be.greaterThan(0)
+    await act(async () => {
+      await delay(40)
+    })
+    expect(inbox).equals(listed)
+    await act(async () => {
+      publish(1)
+      await delay(30)
+    })
+    expect(inbox).to.be.greaterThan(listed)
+
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    state = { ...EMPTY_APPROVAL_STATE, dismissed: new Set<string>() }
+    await mount(
+      <DeviceApprovalContext.Provider value={controller}>
+        <NotificationDetailScreen
+          client={client}
+          id={item.id}
+          onChanged={() => undefined}
+        />
+      </DeviceApprovalContext.Provider>
+    )
+    const opened = detailReads
+    expect(opened).to.be.greaterThan(0)
+    await act(async () => {
+      await delay(40)
+    })
+    expect(detailReads).equals(opened)
+    await act(async () => {
+      publish(1)
+      await delay(30)
+    })
+    expect(detailReads).to.be.greaterThan(opened)
   })
 })

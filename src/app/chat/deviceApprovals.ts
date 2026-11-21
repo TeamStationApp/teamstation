@@ -31,6 +31,15 @@ export const EMPTY_APPROVAL_STATE: ApprovalState = {
   dismissed: new Set()
 }
 
+/** How long a web shell waits before its first background key read. */
+export function approvalHoldMs(
+  platform: 'web' | 'ios' | 'android' | undefined,
+  override?: number
+): number {
+  if (override != null) return override
+  return platform === 'web' ? 2000 : 0
+}
+
 /** One account-owned decision queue for the shell, inbox and device list. */
 export class DeviceApprovals {
   private state: ApprovalState = EMPTY_APPROVAL_STATE
@@ -44,11 +53,35 @@ export class DeviceApprovals {
   private working = false
   private unsubscribe?: () => void
   private timer?: ReturnType<typeof setInterval>
+  private holdTimer?: ReturnType<typeof setTimeout>
+  private holdUntil = 0
+  private holdCancelled = false
+  private readonly holdMs: number
+  private readonly onPageHide = (): void => {
+    this.cancelHold()
+  }
+
+  /** A restored page, including one kept in the back-forward cache. */
+  private readonly onPageShow = (): void => {
+    if (!this.active || !this.holdCancelled) return
+    this.holdCancelled = false
+    this.holdUntil = 0
+    this.refresh().catch(() => undefined)
+  }
 
   constructor(
     private readonly setup: ChatSetup,
-    private readonly socket?: Pick<GameSocket, 'onChat'>
-  ) {}
+    private readonly socket?: Pick<GameSocket, 'onChat'>,
+    holdMs?: number
+  ) {
+    this.holdMs = approvalHoldMs(setup.device.platform, holdMs)
+  }
+
+  private cancelHold(): void {
+    this.holdCancelled = true
+    if (this.holdTimer != null) clearTimeout(this.holdTimer)
+    this.holdTimer = undefined
+  }
 
   snapshot = (): ApprovalState => this.state
   subscribe = (listener: () => void): (() => void) => {
@@ -66,6 +99,10 @@ export class DeviceApprovals {
   start(): void {
     if (this.active) return
     this.active = true
+    this.holdCancelled = false
+    this.holdUntil = Date.now() + this.holdMs
+    globalThis.window?.addEventListener?.('pagehide', this.onPageHide)
+    globalThis.window?.addEventListener?.('pageshow', this.onPageShow)
     try {
       this.unsubscribe = this.socket?.onChat(event => {
         if (
@@ -77,13 +114,22 @@ export class DeviceApprovals {
     } catch {
       // Polling and foreground refresh still work when a socket cannot open.
     }
-    this.refresh().catch(() => undefined)
+    if (this.holdMs === 0) this.refresh().catch(() => undefined)
+    else {
+      this.holdTimer = setTimeout(() => {
+        this.holdTimer = undefined
+        this.refresh().catch(() => undefined)
+      }, this.holdMs)
+    }
     this.timer = setInterval(() => {
       this.refresh().catch(() => undefined)
     }, 5000)
   }
 
   stop(): void {
+    globalThis.window?.removeEventListener?.('pagehide', this.onPageHide)
+    globalThis.window?.removeEventListener?.('pageshow', this.onPageShow)
+    this.cancelHold()
     this.active = false
     this.lifetime++
     this.followUp = false
@@ -95,7 +141,8 @@ export class DeviceApprovals {
   }
 
   refresh = async (): Promise<void> => {
-    if (!this.active) return
+    if (!this.active || this.holdCancelled) return
+    if (Date.now() < this.holdUntil) return
     if (this.refreshing != null) {
       this.followUp = true
       await this.refreshing
@@ -167,6 +214,10 @@ export class DeviceApprovals {
     decision: 'approve' | 'decline'
   ): Promise<void> => {
     if (!this.active || this.working) return
+    this.holdCancelled = false
+    this.holdUntil = 0
+    if (this.holdTimer != null) clearTimeout(this.holdTimer)
+    this.holdTimer = undefined
     this.working = true
     const lifetime = this.lifetime
     const current = (): boolean =>
