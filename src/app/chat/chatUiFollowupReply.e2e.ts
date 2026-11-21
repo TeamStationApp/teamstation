@@ -408,7 +408,7 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     `const transfer=new DataTransfer();transfer.items.add(new File(['Fixture notes'],'reply-draft.txt',{type:'text/plain'}));document.querySelector('[data-testid="chat-drop-target"]').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));return true;`
   )
   await device.assertVisible({ text: 'Remove reply-draft.txt', timeout: 10000 })
-  await device.tapOn({ text: 'Cancel reply' })
+  await device.tapOn({ css: '[aria-label="Cancel reply"]', timeout: 10000 })
   const retained = await evaluate<{
     text: string
     file: boolean

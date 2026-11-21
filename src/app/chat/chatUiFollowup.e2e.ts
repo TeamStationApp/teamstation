@@ -2176,6 +2176,10 @@ async function composeFull(daemon: Daemon): Promise<void> {
     await m.inputText({ text: marker })
     await m.tapOn({ text: 'Send' })
     await m.assertVisible({ text: marker, timeout: 60000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]:placeholder-shown',
+      timeout: 10000
+    })
     console.log(
       await m.evalBrowserScript({
         script: `${committed(1)}if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Submitted caption not cleared');const wire=JSON.stringify(raw);if(wire.includes(${JSON.stringify(marker)})||wire.includes('notes.txt')||wire.includes('Bring a glove'))throw new Error('Plaintext canary entered message API wire');return JSON.stringify({captionAndTwoFiles:true,postCountDelta:1,ciphertextWireCanaryAbsent:true})`
