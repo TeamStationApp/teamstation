@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import vm from 'node:vm'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
@@ -23,6 +24,8 @@ import {
   withCsp,
   withIntegrity
 } from './buildCsp.mjs'
+import { input as engineInput } from './common/autoScheduler/fixtures.test'
+import { readResult, wireRequest } from './common/scheduler/wire'
 
 const run = promisify(execFile)
 
@@ -62,13 +65,62 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     ).deep.equals({
       api: 'https://devhost1.example-ts.test',
       socket: 'wss://devhost1.example-ts.test',
-      media: ['https://devhost1.example-ts.test', 'https://*.mzstatic.com']
+      media: ['https://devhost1.example-ts.test', 'https://*.mzstatic.com'],
+      logs: undefined
     })
     expect(originsFor('/api/v1')).deep.equals({
       api: undefined,
       socket: undefined,
-      media: []
+      media: [],
+      logs: undefined
     })
+  })
+
+  it('lets the page post its logs to the collector its DSN names, and nowhere else', function () {
+    expect(
+      originsFor(
+        '/api/v1',
+        '',
+        'https://0123abcd@develop-logs.example-ts.test/102'
+      ).logs
+    ).equals('https://develop-logs.example-ts.test')
+    for (const dsn of [
+      '',
+      'not a url',
+      'http://0123abcd@logs.example-ts.test/102',
+      'https://0123abcd:secret@logs.example-ts.test/102',
+      'https://logs.example-ts.test/102',
+      'https://0123abcd@logs.example-ts.test/ingest/102',
+      'https://0123abcd@logs.example-ts.test/102?x=1',
+      'https://0123abcd@logs.example-ts.test/102#x'
+    ])
+      expect(originsFor('/api/v1', '', dsn).logs, dsn).equals(undefined)
+    const policy = directives(
+      cspFor(
+        originsFor(
+          '/api/v1',
+          'https://media.example-ts.test',
+          'https://0123abcd@develop-logs.example-ts.test/102'
+        )
+      )
+    )
+    expect(policy['connect-src']).deep.equals([
+      "'self'",
+      'https://media.example-ts.test',
+      'https://develop-logs.example-ts.test'
+    ])
+    // The collector is only talked to: images and video never come from it.
+    expect(policy['img-src']).deep.equals([
+      "'self'",
+      'data:',
+      'blob:',
+      'https://media.example-ts.test'
+    ])
+    expect(policy['media-src']).deep.equals([
+      "'self'",
+      'blob:',
+      'https://media.example-ts.test'
+    ])
   })
 
   it('writes exactly the planned policy', function () {
@@ -125,7 +177,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
   })
 
   describe('a real build', function () {
-    this.timeout(240000)
+    // A host's first build fetches Emscripten and builds HiGHS with it.
+    this.timeout(900000)
     const root = process.cwd()
     let once: string
     let served: string
@@ -136,6 +189,9 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       served = mkdtempSync(join(tmpdir(), 'ts-web-serve-'))
       // A module an earlier deploy left, which this build must prune.
       writeFileSync(join(once, 'chat-crypto-0123456789abcdef.wasm'), 'old')
+      // And the HiGHS module and worker the scheduler's replace.
+      writeFileSync(join(once, 'highs-0123456789abcdef.wasm'), 'old')
+      writeFileSync(join(once, 'highs-worker-ABCDEFGH.js'), 'old')
       await run(process.execPath, ['src/build.mjs'], {
         cwd: root,
         env: {
@@ -143,7 +199,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
           TS_WEB_OUT_DIR: once,
           TS_API_BASE_URL: 'https://devhost1.example-ts.test/api/v1',
           TS_MEDIA_ORIGINS:
-            'https://devhost1.example-ts.test https://dev-media-bucket.sfo3.digitaloceanspaces.com https://*.mzstatic.com'
+            'https://devhost1.example-ts.test https://dev-media-bucket.sfo3.digitaloceanspaces.com https://*.mzstatic.com',
+          TS_SENTRY_DSN: 'https://0123abcd@logs.example-ts.test/102'
         },
         maxBuffer: 1 << 24
       })
@@ -163,7 +220,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         'https://devhost1.example-ts.test',
         'wss://devhost1.example-ts.test',
         'https://dev-media-bucket.sfo3.digitaloceanspaces.com',
-        'https://*.mzstatic.com'
+        'https://*.mzstatic.com',
+        'https://logs.example-ts.test'
       ])
       expect(policy['style-src']).includes('https://fonts.googleapis.com')
       expect(policy['font-src']).deep.equals([
@@ -206,6 +264,110 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(readFileSync('src/app/scoring/microphone.ts', 'utf8')).contains(
         `WORKLET_URL = '/pcm16kWorklet.js'`
       )
+    })
+
+    it('ships the scheduler as a worker and a module of their own that build with no network', async function () {
+      const files = readdirSync(once)
+      const worker = files.find(name =>
+        /^scheduler-worker-[A-Z0-9]+\.js$/i.test(name)
+      )
+      const module = files.find(name =>
+        /^scheduler-[0-9a-f]{16}\.wasm$/.test(name)
+      )
+      expect(worker, 'the worker').not.equals(undefined)
+      expect(module, 'the module').not.equals(undefined)
+      // One of each: no HiGHS module or worker of an earlier build is left.
+      expect(files.filter(name => name.startsWith('highs-'))).deep.equals([])
+      const bytes = readFileSync(join(once, String(module)))
+      expect(module).equals(
+        `scheduler-${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}.wasm`
+      )
+      const app = files.find(name => /^app-[A-Z0-9]+\.js$/i.test(name))
+      const bundle = readFileSync(join(once, String(app)), 'utf8')
+      // The bundle names both and the module's integrity, and holds no glue.
+      expect(bundle).includes(`/${worker}`)
+      expect(bundle).includes(`/${module}`)
+      expect(bundle).includes(integrityOf(bytes))
+      expect(bundle).not.includes('createSchedulerModule')
+      const workerText = readFileSync(join(once, String(worker)), 'utf8')
+      expect(workerText).includes('createSchedulerModule')
+      // No build-host path in either.
+      for (const text of [bytes.toString('latin1'), workerText])
+        for (const needle of ['/Users/', '/root/'])
+          expect(text).not.includes(needle)
+      // The built worker, in a worker-like context with no network and no
+      // process, loads the module from posted bytes and builds a request.
+      const replies: Array<{ type: string; id?: number; result?: string }> = []
+      let requests = 0
+      const scope: Record<string, unknown> = {
+        WorkerGlobalScope: function WorkerGlobalScope() {},
+        location: { href: 'https://example.test/scheduler-worker.js' },
+        console,
+        setTimeout,
+        clearTimeout,
+        WebAssembly,
+        TextDecoder,
+        TextEncoder,
+        performance,
+        URL,
+        fetch: () => {
+          requests++
+          throw new Error('no network')
+        },
+        XMLHttpRequest: function XMLHttpRequest() {
+          requests++
+          throw new Error('no network')
+        },
+        postMessage: (reply: (typeof replies)[number]) => replies.push(reply)
+      }
+      scope.self = scope
+      scope.globalThis = scope
+      vm.createContext(scope)
+      vm.runInContext(workerText, scope)
+      const post = (data: unknown): void => {
+        ;(scope.onmessage as (event: { data: unknown }) => void)({ data })
+      }
+      const settle = async (count: number): Promise<void> => {
+        for (let i = 0; i < 400 && replies.length < count; i++)
+          await new Promise(resolve => setTimeout(resolve, 25))
+      }
+      const resulted = async (): Promise<(typeof replies)[number]> => {
+        for (let i = 0; i < 400; i++) {
+          const found = replies.find(reply => reply.type === 'result')
+          if (found != null) return found
+          await new Promise(resolve => setTimeout(resolve, 25))
+        }
+        return expect.fail('no result')
+      }
+      post({ type: 'init', bytes: new Uint8Array(bytes).buffer })
+      await settle(1)
+      expect(replies[0]).deep.equals({ type: 'ready' })
+      const run = engineInput()
+      post({
+        type: 'build',
+        id: 1,
+        request: JSON.stringify(wireRequest({ input: run }))
+      })
+      const result = await resulted()
+      expect(result).include({ type: 'result', id: 1 })
+      // The engine's phases come first, as the build reaches each.
+      const phases = replies
+        .filter(reply => reply.type === 'progress')
+        .map(
+          reply =>
+            (
+              JSON.parse(String((reply as { event?: string }).event)) as {
+                phase?: string
+              }
+            ).phase
+        )
+      expect(phases[0]).equals('context')
+      expect(phases.at(-1)).equals('options')
+      const built = readResult(String(result.result), run)
+      if (built.kind !== 'options') expect.fail(built.message)
+      expect(built.options.length).greaterThan(0)
+      expect(built.options[0].games.length).greaterThan(0)
+      expect(requests).equals(0)
     })
 
     it('serves the map frame as a page of its own, with no policy', function () {
@@ -258,6 +420,23 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(directives(policyOf(html))['media-src']).includes("'self'")
       // The bundle's own script is still named from the root, with its hash.
       expect(html).contains(`src="/${bundle}"`)
+    })
+
+    it('ships the notifications’ service worker under its own name, with the bundle’s module', function () {
+      // A service worker is registered by its URL, so `sw.js` is never hashed.
+      const worker = readFileSync(join(once, 'sw.js'), 'utf8')
+      const [module] = readdirSync(once).filter(name =>
+        /^chat-crypto-.*\.wasm$/.test(name)
+      )
+      expect(worker).contains(`/${module}`)
+      expect(worker).contains(integrityOf(readFileSync(join(once, module))))
+      expect(readdirSync(once).filter(name => /^sw\b/.test(name))).deep.equals([
+        'sw.js',
+        'sw.js.map'
+      ])
+      // `pushDevice.ts` registers it from the page, which the policy allows.
+      const html = readFileSync(join(once, 'index.html'), 'utf8')
+      expect(directives(policyOf(html))['worker-src']).includes("'self'")
     })
 
     it('has no chat bench route in the web bundle', function () {
@@ -319,6 +498,11 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(worklet.status).equals(200)
       expect(worklet.headers.get('content-type')).matches(/javascript/)
       expect(await worklet.text()).contains("registerProcessor('pcm16k'")
+      // And the service worker, as JavaScript, from the page's origin.
+      const worker = await fetch(`${address}/sw.js`)
+      expect(worker.status).equals(200)
+      expect(worker.headers.get('content-type')).matches(/javascript/)
+      expect(await worker.text()).contains('/chat-crypto.wasm')
       // Stopped with SIGTERM, so its coverage is written as it exits.
       const stopped = server
       await new Promise<void>(resolve => {

@@ -56,9 +56,11 @@ export const SESSION_COOKIE = 'ts_session'
  * Two ways in on purpose rather than by accident. The web app is served from
  * the same origin as the API and uses a cookie, which is `HttpOnly` so its own
  * JavaScript cannot read it and a script injected onto the page cannot steal
- * it. A phone has no cookie jar, and neither has TS Distributor nor an AI with
- * a scoped token, so the bearer header is the native path rather than a
- * legacy one.
+ * it. The phone app sends the header: its networking keeps the cookie too,
+ * but what reads the session outside it (a notification extension, a
+ * background task) has only the token. TS Distributor and an AI with a
+ * scoped token have no cookie jar at all. So the bearer header is the native
+ * path rather than a legacy one.
  *
  * The header wins when both are present: something that went to the trouble of
  * setting one is being explicit about which identity it means.

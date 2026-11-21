@@ -29,9 +29,10 @@ export interface ApiPath {
  * approvals, Tess herself, the dictation socket, the account's own settings
  * (deletion, password, addresses and name), its API keys and its first-run
  * setup, the key
- * the person's devices share for event control, and the link to test
- * builds. The server refuses each of them to Tess as well (`isMachine`);
- * listed here, she is told why without asking.
+ * the person's devices share for event control, the devices' push
+ * registrations, and the link to test builds. The server refuses each of
+ * them to Tess as well (`isMachine`); listed here, she is told why without
+ * asking.
  */
 const ANY_METHOD: readonly RegExp[] = [
   /^\/auth(\/|$)/,
@@ -46,7 +47,9 @@ const ANY_METHOD: readonly RegExp[] = [
   // Who signed in where and when: for a node administrator's own eyes.
   /^\/node\/(logins|sessions)(\/|$)/,
   // Another person's account, as a node administrator changes it.
-  /^\/users\/[^/]+\/account(\/|$)/
+  /^\/users\/[^/]+\/account(\/|$)/,
+  /^\/push(\/|$)/,
+  /^\/me\/push-registrations(\/|$)/
 ]
 
 /** User Management's people search: the `/users` collection's directory view. */

@@ -1,5 +1,5 @@
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
-import { commonStart, targetTime } from './playbackTimeline'
+import { commonStart, HOLE_MS, targetTime } from './playbackTimeline'
 
 interface ClockPort {
   seek: (seconds: number) => void
@@ -40,7 +40,7 @@ export class PlaybackClock {
     port.loaded = true
     port.duration = duration > 0 ? duration : Infinity
     if (this.wall !== null) this.seekPort(port, this.wall)
-    if (!this.available(this.master) && this.available(index))
+    if (!this.playable(this.master) && this.available(index))
       this.master = index
   }
 
@@ -49,10 +49,10 @@ export class PlaybackClock {
   }
 
   seek(wall: number): void {
-    this.wall = wall
-    for (const port of this.ports) this.seekPort(port, wall)
-    if (!this.available(this.master)) {
-      const next = this.ports.findIndex((_, i) => this.available(i))
+    this.wall = this.pastSharedHole(wall)
+    for (const port of this.ports) this.seekPort(port, this.wall)
+    if (!this.playable(this.master)) {
+      const next = this.ports.findIndex((_, i) => this.playable(i))
       if (next >= 0) this.master = next
     }
   }
@@ -144,9 +144,32 @@ export class PlaybackClock {
     if (port.target !== null && Math.abs(seconds - port.target) > 1)
       return this.wall
     port.target = null
+    const previous = port.position
     port.position = seconds
     if (index === this.master) {
-      this.wall = wallAt(port.timeline.anchors, seconds * 1000)
+      const wall = wallAt(port.timeline.anchors, seconds * 1000)
+      // The master crossing a hole in its own recording must not drag every
+      // other camera forward over it: the game goes on at 1× from a camera
+      // that has this moment, and the master waits at its hole's far side.
+      const expected =
+        this.wall === null ? null : this.wall + (seconds - previous) * 1000
+      if (wall !== null && expected !== null && wall - expected > HOLE_MS) {
+        const next = this.ports.findIndex(
+          p =>
+            p !== port &&
+            p.loaded &&
+            !p.failed &&
+            !p.ended &&
+            targetTime(p.timeline, expected, p.duration)?.available === true
+        )
+        if (next >= 0) {
+          this.master = next
+          this.wall = expected
+          this.seekPort(port, expected)
+          return this.wall
+        }
+      }
+      this.wall = wall
       if (this.wall !== null) {
         for (const other of this.ports) {
           if (other === port || other.settling) continue
@@ -165,14 +188,54 @@ export class PlaybackClock {
   /** A failed master must never hand the clock back to an exhausted camera. */
   fail(index: number): boolean {
     this.ports[index].failed = true
-    if (this.available(this.master)) return false
-    const next = this.ports.findIndex((p, i) => p.loaded && this.available(i))
+    if (this.playable(this.master)) return false
+    const next = this.ports.findIndex((_, i) => this.playable(i))
     if (next >= 0) {
       this.master = next
       return false
     }
     // A pending native load may still supply the clock; load will select it.
     return this.ports.every(p => p.loaded || p.failed)
+  }
+
+  /** A failed camera opened again: it rejoins at the wall once it loads. */
+  retry(index: number): void {
+    const port = this.ports[index]
+    if (port === undefined) return
+    port.loaded = false
+    port.failed = false
+    port.ended = false
+    port.settling = false
+    port.target = null
+  }
+
+  /**
+   * A moment no camera has a picture of, inside an outage they all shared,
+   * goes on from the earliest picture after it: sought into it, every camera
+   * was unavailable there, so ended, and the clock stood still.
+   */
+  private pastSharedHole(wall: number): number {
+    let earliest: number | null = null
+    for (const port of this.ports) {
+      if (!port.loaded || port.failed) continue
+      const target = targetTime(port.timeline, wall, port.duration)
+      if (target === null) continue
+      if (target.available) return wall
+      // Not before its start or past its end: inside a hole in its recording.
+      if (target.seconds <= 0 || target.seconds >= port.duration) continue
+      const shown = wallAt(port.timeline.anchors, target.seconds * 1000)
+      if (shown !== null && (earliest === null || shown < earliest))
+        earliest = shown
+    }
+    return earliest ?? wall
+  }
+
+  /**
+   * Available and loaded: only such a camera can carry the clock, since only
+   * its progress moves the wall. One reopened (`retry`) is not, until it loads.
+   */
+  private playable(index: number): boolean {
+    return this.ports[index]?.loaded && this.available(index)
   }
 
   available(index: number): boolean {

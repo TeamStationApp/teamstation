@@ -7,11 +7,13 @@ import { asTeamSummary, TeamStationClient } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import type { ParentAction } from '../../common/groupLinks'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import type { SearchGroupResult } from '../../common/search/types'
+import { FakeSearchServer } from '../../test/fakeSearchSocket'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { CreateGroupScreen } from './CreateGroupScreen'
-import { DiscoverScreen } from './DiscoverScreen'
 import { HomeScreen } from './HomeScreen'
 import { seasonAllowed } from './ParentChooser'
+import { SEARCH_PLACEHOLDER, SearchScreen } from './SearchScreen'
 
 let root: Root | undefined
 afterEach(async () => {
@@ -140,13 +142,29 @@ describe('Home Add and Create, following, and choosing a new team’s parents', 
     await press('Demo Followed Team')
     expect(opened.at(-1)).deep.equals({ kind: 'team', id: 'team_fan' })
   })
-  it('follows and unfollows from Discover, except what is already on Home', async () => {
+  it('follows and unfollows from Search, except what is already on Home', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     const hawks = group('season', 'season_demo', 'Demo Spring')
-    const mine = group('season', 'season_mine', 'Demo Mine')
-    api.discoverGroups = async () => [hawks, mine]
-    api.follows = async () => []
-    api.ownGroups = async () => [mine]
+    const row = (
+      id: string,
+      name: string,
+      follow: SearchGroupResult['follow']
+    ): SearchGroupResult => ({
+      kind: 'season',
+      id,
+      name,
+      imageUrl: null,
+      cityLine: null,
+      associations: '',
+      follow
+    })
+    // The reader's own season comes with no Follow pill.
+    const server = new FakeSearchServer(() => ({
+      results: [
+        row('season_demo', 'Demo Spring', 'follow'),
+        row('season_mine', 'Demo Mine', null)
+      ]
+    }))
     const calls: string[] = []
     api.follow = async ref => {
       calls.push(`follow:${ref.id}`)
@@ -155,21 +173,32 @@ describe('Home Add and Create, following, and choosing a new team’s parents', 
     api.unfollow = async ref => {
       calls.push(`unfollow:${ref.id}`)
     }
+    let landed = 0
     await mount(
-      <DiscoverScreen
+      <SearchScreen
         client={api}
-        onOpen={() => {}}
-        initialKind="season"
+        signedIn
+        onOpenGroup={() => {}}
+        onOpenPerson={() => {}}
         follow
+        onFollowed={() => {
+          landed++
+        }}
+        searchSocketFactory={server.factory}
       />
     )
-    await settle(300)
+    expect(document.body.textContent).includes(
+      'Follow leagues, seasons and teams to keep them on your Home.'
+    )
+    await fill(SEARCH_PLACEHOLDER, 'Demo')
+    await settle(60)
     expect(control('Follow Demo Mine')).equals(undefined)
     expect(control('Unfollow Demo Mine')).equals(undefined)
     await press('Follow Demo Spring')
     expect(control('Unfollow Demo Spring')).not.equals(undefined)
     await press('Unfollow Demo Spring')
     expect(calls).deep.equals(['follow:season_demo', 'unfollow:season_demo'])
+    expect(landed).equals(2)
   })
   it('keeps a team’s seasons in one league', () => {
     const seasons = [

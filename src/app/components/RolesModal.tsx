@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { type Role, ROLE_FLAGS, type RoleFlag } from '../../common/roles'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
+import { Modal } from './Modal'
 import { RoleSwitches } from './RoleSwitches'
 
 export interface RolesModalProps {

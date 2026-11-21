@@ -18,6 +18,7 @@ import {
 } from '../../common/publicGroups'
 import { seasonTimeFrames } from '../../common/seasonTimeFrames'
 import { userIdOfGumbo } from '../../common/userId'
+import { FakeSearchServer } from '../../test/fakeSearchSocket'
 import { reachEnd } from '../../test/PagedListStandIn'
 import { pageOf, pageOfGames } from '../../test/pageOf'
 import { DateRangePicker } from '../components/DateRangePicker'
@@ -25,7 +26,6 @@ import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { CreateGroupScreen } from './CreateGroupScreen'
-import { DiscoverScreen } from './DiscoverScreen'
 import { GroupLinkScreen } from './GroupLinkScreen'
 import { GroupScreen } from './GroupScreen'
 import { GroupSettingsScreen } from './GroupSettingsScreen'
@@ -35,6 +35,7 @@ import {
   NotificationsScreen
 } from './NotificationsScreen'
 import { PromoteExternalScreen } from './PromoteExternalScreen'
+import { SEARCH_PLACEHOLDER, SearchScreen } from './SearchScreen'
 
 let root: Root | undefined
 afterEach(async () => {
@@ -122,7 +123,7 @@ const notification: Notification = {
 }
 
 describe('creation and organization interface behavior', () => {
-  it('labels matching season dates in discovery and group linking', async () => {
+  it('labels a season by kind and league in search, and by its dates in group linking', async () => {
     const api = client()
     const season = {
       ...group,
@@ -132,11 +133,35 @@ describe('creation and organization interface behavior', () => {
     }
     api.discoverGroups = async () => [season]
     api.ownGroups = async () => [season]
+    const server = new FakeSearchServer(() => ({
+      results: [
+        {
+          kind: 'season',
+          id: season.id,
+          name: season.name,
+          imageUrl: null,
+          cityLine: 'Demo City, Demo Region',
+          associations: 'Demo League',
+          follow: null
+        }
+      ]
+    }))
     await mount(
-      <DiscoverScreen client={api} initialKind="season" onOpen={() => {}} />
+      <SearchScreen
+        client={api}
+        signedIn
+        onOpenGroup={() => {}}
+        onOpenPerson={() => {}}
+        searchSocketFactory={server.factory}
+      />
     )
     await settle()
-    expect(document.body.textContent).includes('Spring 2027')
+    await fill(SEARCH_PLACEHOLDER, 'Demo')
+    await settle()
+    const row = document.querySelector('[data-testid="search-result-row"]')!
+    expect(row.textContent).includes('Season')
+    expect(row.textContent).includes('Demo City, Demo Region')
+    expect(row.textContent).includes('Demo League')
     await act(async () => {
       root!.unmount()
     })
@@ -946,36 +971,52 @@ describe('creation and organization interface behavior', () => {
     expect(saved).equals('Demo Classic')
     expect(completed).equals(true)
   })
-  it('recovers discovery after an error and opens only the selected public group', async () => {
+  it('recovers search after the connection returns and opens only the selected public group', async () => {
     const api = client()
     let opened = ''
-    api.discoverGroups = async () => {
-      throw new Error('Discovery offline')
-    }
+    const server = new FakeSearchServer(frame => ({
+      results:
+        frame.text === 'No match'
+          ? []
+          : [
+              {
+                kind: 'team',
+                id: group.id,
+                name: group.name,
+                imageUrl: null,
+                cityLine: null,
+                associations: '',
+                follow: null
+              }
+            ]
+    }))
+    server.online = false
     await mount(
-      <DiscoverScreen
+      <SearchScreen
         client={api}
-        onOpen={ref => {
+        signedIn
+        onOpenGroup={ref => {
           opened = ref.id
         }}
+        onOpenPerson={() => {}}
+        searchSocketFactory={server.factory}
       />
     )
     await settle()
-    expect(document.body.textContent).includes('Discovery offline')
-    api.discoverGroups = async () => [group]
-    await press('Retry discovery')
+    expect(document.body.textContent).includes('Search needs a connection.')
+    await fill(SEARCH_PLACEHOLDER, 'Demo')
+    server.online = true
+    // The socket tries again a second after it failed.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
     await settle()
+    expect(document.body.textContent).not.includes('Search needs a connection.')
     await press('Open Demo Hawks')
     expect(opened).equals('team_demo')
-    api.discoverGroups = async () => [{ ...group, kind: 'league' }]
-    await press('Leagues')
+    await fill(SEARCH_PLACEHOLDER, 'No match')
     await settle()
-    await press('Seasons')
-    await settle()
-    await fill('Search by name or city', 'No match')
-    api.discoverGroups = async () => []
-    await settle()
-    expect(document.body.textContent).includes('No matching seasons')
+    expect(document.body.textContent).includes('Nothing matches.')
   })
   it('keeps new group actions bound to their route after a previous foreground response arrives', async () => {
     const api = client()

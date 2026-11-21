@@ -179,7 +179,10 @@ async function photoVector(page: Page, h: AccountHarness): Promise<void> {
   await page.$eval('[aria-label^="Account, Mike Trout"]', node => {
     ;(node as HTMLElement).click()
   })
-  await press(page, 'Account')
+  // Wide, the sidebar's account opens the account page itself (develop
+  // a0db231a9); narrower, its menu's Account does.
+  if ((await page.$('[data-testid="sidebar-account-footer"]')) == null)
+    await press(page, 'Account')
   await text(page, 'Email addresses')
   await page.screenshot({ path: join(artifacts!, 'account-photo-after.png') })
 }

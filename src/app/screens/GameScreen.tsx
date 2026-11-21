@@ -44,6 +44,7 @@ import {
   GlassView,
   HandoffView,
   LivePill,
+  LivePillHeld,
   PillTabs,
   Screen,
   SettingsGear,
@@ -81,15 +82,20 @@ import type { PlayerFrom } from '../navigation/gameAngles'
 import { useInsets } from '../platform/safeArea'
 import { landingSec, sameMoment, switchTarget } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
+import { playerDebug } from '../player/debugFlag'
 import { playerEngine } from '../player/engine'
 import { seekTo } from '../player/explicitSeek'
+import { heldSource } from '../player/heldSource'
 import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { playableHere } from '../player/playable'
+import { playbackOutcome, startFetchLog } from '../player/playbackFetchLog'
+import { markSeek, playbackOf } from '../player/playbackSession'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
+import { SinglePlayerReadout } from '../player/SinglePlayerReadout'
 import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
 import {
@@ -174,8 +180,11 @@ export interface GameScreenProps {
   onSettings?: () => void
   /** An explicit section. Bare addresses use the event's current default. */
   initialTab?: Tab
-  /** Start the video, silent, as the videos page's picture always plays. */
-  autoPlay?: boolean
+  /**
+   * Start the video, silent, as the videos page's picture always plays;
+   * `'live'` starts it only when the video it opens on is live.
+   */
+  autoPlay?: boolean | 'live'
   /**
    * Tells the shell what this game is called once it is known.
    *
@@ -446,7 +455,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const requestedTab =
     initialTab ??
-    (autoPlay ||
+    (autoPlay === true ||
+    autoPlay === 'live' ||
     initialVideoId != null ||
     startAtSec != null ||
     (angles?.length ?? 0) > 0
@@ -463,6 +473,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [clockNow, setClockNow] = useState(Date.now)
+  const [heroRowWidth, setHeroRowWidth] = useState<number>()
   const [localTimezone, setLocalTimezone] = useState(viewerTimezone)
   const live = useRef(true)
   const currentGameId = useRef(gameId)
@@ -1076,7 +1087,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, addressAttempt])
+  }, [client, videoId])
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
@@ -1088,6 +1099,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * a spinner that would never end.
    */
   const [playbackFailedFor, setPlaybackFailedFor] = useState<string>()
+  /** When the selected video's address was first answered pending, for its telemetry. */
+  const pendingSince = useRef<{ videoId: string; at: number } | undefined>(
+    undefined
+  )
   useEffect(() => {
     if (videoId == null || nonMemberView || props.signedIn !== true) return
     const forVideoId = videoId
@@ -1098,14 +1113,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // Each video's asks back off from the first wait, not from where the
     // last video's had got to.
     setPlaybackAsks(0)
+    pendingSince.current = undefined
+    const asked = startFetchLog({
+      kind: 'playback',
+      surface: 'game',
+      videoId: forVideoId,
+      attempt: addressAttempt
+    })
     client
       .playback(forVideoId)
       .then(found => {
+        asked.answered(playbackOutcome(found))
         if (!live) return
+        if (found.url == null && found.pending === true)
+          pendingSince.current = { videoId: forVideoId, at: Date.now() }
         setPlayback(found)
         setPlaybackFor(forVideoId)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        asked.failed(error)
         if (!live) return
         setPlayback(undefined)
         setPlaybackFailedFor(forVideoId)
@@ -1113,7 +1139,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, nonMemberView, props.signedIn])
+    // A player that gave up on its address asks for a new one.
+  }, [client, videoId, nonMemberView, props.signedIn, addressAttempt])
 
   // A live video is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then the server
@@ -1141,14 +1168,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       if (live) setPlaybackAsks(asks => asks + 1)
     }
     const timer = setTimeout(() => {
+      const asked = startFetchLog({
+        kind: 'playback',
+        surface: 'game',
+        videoId: forVideoId,
+        attempt: playbackAsks + 1,
+        retryDelayMs: wait
+      })
       client
         .playback(forVideoId)
         .then(found => {
+          asked.answered(playbackOutcome(found))
           if (!live) return
           setPlayback(found)
           if (found.url == null) askAgain()
         })
-        .catch(askAgain)
+        .catch((error: unknown) => {
+          asked.failed(error)
+          askAgain()
+        })
     }, wait)
     return () => {
       live = false
@@ -1235,6 +1273,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(props.autoPlay)
   autoPlayRef.current = props.autoPlay
+  // The game's own copy of the row when it has one: the selected entry is a
+  // snapshot, and a recording that has finished must not be watched as live.
+  const freshStatus = (
+    game?.videos.find(item => item.id === video?.id) ?? video
+  )?.status
+  // Whether the video the player opens on is live, for `autoPlay: 'live'`.
+  const playingLive = useRef(false)
+  playingLive.current = freshStatus === 'live'
   const placeFor = useRef<{
     video?: VideoSummary
     videoId?: string
@@ -1242,11 +1288,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     /** Asks the server, for a video that was live when it was opened. */
     isLive?: () => Promise<boolean>
   }>({})
-  // The game's own copy of the row when it has one: the selected entry is a
-  // snapshot, and a recording that has finished must not be watched as live.
-  const freshStatus = (
-    game?.videos.find(item => item.id === video?.id) ?? video
-  )?.status
   placeFor.current = {
     video,
     videoId: video?.id,
@@ -1296,6 +1337,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const suspended = useRef(false)
   suspended.current = standDown
   /**
+   * The attached player is loading itself afresh: a pause now is the reset's,
+   * not the viewer's, and must not stop what recovers it from playing again.
+   */
+  const recovering = useRef(false)
+  /** `?debug=1`: what the player is doing, drawn over it. */
+  const debug = useMemo(() => playerDebug(), [])
+  const debugState = useCallback(
+    (): string =>
+      `recovering ${String(recovering.current)} wants ${String(viewerWants.current)} suspended ${String(suspended.current)}`,
+    []
+  )
+  /**
    * Where the single player had got to, sampled as it plays.
    *
    * Read from the element when the angles open, it was always zero: React runs
@@ -1305,6 +1358,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * is the one that comes back.
    */
   const lastTime = useRef(0)
+  /** The video `lastTime` was sampled from. */
+  const lastTimeFor = useRef<string | undefined>(undefined)
+  /** The video whose first attach `autoPlay` has had: a new address for it does not autoplay again. */
+  const autoPlayedFor = useRef<string | undefined>(undefined)
   /** The picture's own mapping onto the wall clock, from its stream's dates. */
   const mappingRef = useRef<WallMapping | null>(null)
   /** The server's wall timeline for it, as its board has it. */
@@ -1351,13 +1408,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const onTime = (): void => {
       if (!suspended.current && element.currentTime > 0) {
         lastTime.current = element.currentTime
+        lastTimeFor.current = placeFor.current.videoId
       }
     }
     const onPlay = (): void => {
       viewerWants.current = true
     }
     const onPause = (): void => {
-      if (!suspended.current) viewerWants.current = false
+      if (!suspended.current && !recovering.current) viewerWants.current = false
     }
     element.addEventListener('timeupdate', onTime)
     element.addEventListener('play', onPlay)
@@ -1428,6 +1486,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * was opened at (`startAtSec`) rather than standing down at 0.
    */
   const attached = useRef(false)
+  /**
+   * The video playing when its player gave up on the address, and whether the
+   * viewer was watching it: the new address picks up as it was. A recording
+   * resumes at its moment; a live game rejoins at its live point, which the
+   * first play gives.
+   */
+  const gaveUpOn = useRef<{ videoId: string; live: boolean } | null>(null)
+  gaveUpOn.current =
+    videoId == null ? null : { videoId, live: freshStatus === 'live' }
+  const playAfterAddress = useRef(false)
   useLayoutEffect(() => {
     const element = playerNode
     covered.current =
@@ -1466,6 +1534,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const playOnEntry = watchPlayRequest.current === gameId
     watchPlayRequest.current = null
     if (playOnEntry) viewerWants.current = true
+    const playAgain = playAfterAddress.current
+    playAfterAddress.current = false
     attached.current = true
     // Only this attachment may answer a refused play. A detached picture
     // must not restart after its metadata or play promise arrives late.
@@ -1475,6 +1545,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       Promise.resolve(element.play()).catch((error: unknown) => {
         const refused =
           error instanceof Error && error.name === 'NotAllowedError'
+        if (refused) playbackOf(element)?.refused()
         if (!refused || !current || element.muted) return
         element.muted = true
         setCardSound(false)
@@ -1504,10 +1575,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       element,
       playbackUrl,
       () => {
+        const gaveUp = gaveUpOn.current
+        if (gaveUp?.live === true)
+          playAfterAddress.current = viewerWants.current
+        // Only once it has played: before that, a link's moment or a resume
+        // still pending is where the new address goes, not the start.
+        else if (gaveUp != null && lastTimeFor.current === gaveUp.videoId) {
+          setResumeAt({
+            videoId: gaveUp.videoId,
+            sec: lastTime.current,
+            playing: viewerWants.current
+          })
+        }
         setAddressAttempt(attempt => attempt + 1)
       },
       {
         wantsToPlay: () => !suspended.current && viewerWants.current,
+        onRecovery: now => {
+          if (current) recovering.current = now
+        },
         onWallMapping: mapping => {
           mappingRef.current = mapping
           if (mapping == null) noDates()
@@ -1522,6 +1608,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
     const resume = resumeAtRef.current
     const { videoId, playbackFor: forId } = placeFor.current
+    const waited = pendingSince.current
+    if (waited != null && waited.videoId === videoId) {
+      playbackOf(element)?.pending(Date.now() - waited.at)
+      pendingSince.current = undefined
+    }
 
     const stop = (): void => {
       clearTimeout(datesTimer)
@@ -1530,6 +1621,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
     const stand = (): void => {
       current = false
+      recovering.current = false
       if (playAttached.current === play) playAttached.current = null
       detach()
     }
@@ -1592,8 +1684,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           element.removeEventListener('loadedmetadata', loaded)
           stop()
           // As the viewer's own seek, so nothing that joins a live stream at
-          // its edge takes it back.
-          seekTo(element, target)
+          // its edge takes it back; reported as the restore it is.
+          seekTo(element, target, 'restore')
           if (resume.playing || playOnEntry) play()
           setResumeAt(undefined)
         }
@@ -1613,6 +1705,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         }
       }
       const apply = (): void => {
+        markSeek(element, 'restore')
         element.currentTime =
           resume.sec ?? resumeSecondsAt(placed, resume.wallMs, element.duration)
         if (resume.playing || playOnEntry) play()
@@ -1651,7 +1744,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       }
     }
 
-    if (playOnEntry || autoPlayRef.current === true) {
+    // A live game reached by its Videos address plays as it would from a tap
+    // on Videos: a viewer following a link to a game in progress came to
+    // watch it, and a still first picture looks like a broken stream.
+    // The first attach of a video only: a new address for it (the player gave
+    // up) plays as the viewer had it, `playAgain`, paused or not.
+    const firstAttach = autoPlayedFor.current !== placeFor.current.videoId
+    autoPlayedFor.current = placeFor.current.videoId
+    const asked =
+      firstAttach &&
+      (autoPlayRef.current === true ||
+        (autoPlayRef.current === 'live' && playingLive.current))
+    if (playOnEntry || playAgain || asked) {
       // Silent unless a highlight brought it here, which every browser lets
       // start on its own; heard, it falls back to silent if refused. If it
       // will not start at all, a tap opens the player, and saying so would
@@ -1957,9 +2061,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const actionShellHeight = theme.rem(1.5)
+  // The actions keep the four slots the full set takes, so a button is the
+  // same size whatever its person may do. Where four in a row cannot hold the
+  // longest label and its half-height padding, as at 320 points, the four go
+  // two to a row: the web cannot shrink a label to fit.
+  const twoRows =
+    heroRowWidth != null &&
+    heroRowWidth - 2 * theme.rem(theme.cardContentInsetRem) <
+      4 * theme.rem(4.5) + 3 * theme.rem(theme.spaceSmRem)
+  // Two to a row: half the row, less half the gap between.
+  const slot = twoRows ? { flexBasis: '40%' as const } : null
   const actionButtons =
     heroActions.length === 0 ? undefined : (
-      <View testID="game-hero-actions" style={styles.heroActions}>
+      <View
+        testID="game-hero-actions"
+        style={[
+          styles.heroActions,
+          twoRows ? { flexWrap: 'wrap', rowGap: theme.rem(0.25) } : null
+        ]}
+        onLayout={event => {
+          setHeroRowWidth(event.nativeEvent.layout.width)
+        }}
+      >
         {heroActions.map(action => (
           <Pressable
             key={action.id}
@@ -1969,7 +2092,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             accessibilityState={{
               disabled: action.id === 'record' && recording.busy === true
             }}
-            style={styles.heroAction}
+            style={[styles.heroAction, slot]}
             onPress={() => {
               if (action.id === 'score') {
                 const player = playerRef.current
@@ -2026,7 +2149,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           </Pressable>
         ))}
         {Array.from({ length: 4 - heroActions.length }, (_, index) => (
-          <View key={`space-${index}`} style={styles.heroAction} />
+          <View key={`space-${index}`} style={[styles.heroAction, slot]} />
         ))}
       </View>
     )
@@ -2300,12 +2423,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             // phone's audio session to whatever was playing.
             <>
               <VideoView
-                source={playback.url}
+                // A phone's detach leaves its player holding the stream, so
+                // the angles take the address away; the resume brings the
+                // moment back when they close.
+                source={heldSource(playback.url, {
+                  anglesUp: showAngles,
+                  platform: Platform.OS
+                })}
                 onHandle={takePlayer}
                 controls={false}
                 muted={!cardSound}
                 live={freshStatus === 'live'}
               />
+              {debug ? (
+                <SinglePlayerReadout element={playerNode} state={debugState} />
+              ) : null}
               {/* Black while the full-screen player is up, its source
                   detached, and on its way back to where that player left it:
                   the frame it had before, or the recording's first, is not
@@ -2635,77 +2767,82 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      <View style={styles.watch}>
-        <View style={styles.tabPane} testID="gameSection">
-          {/*
+      {/* Every live pill on the page holds still while it stands down:
+          under the angles it is still the screen on show, and a pulse
+          nobody sees still commits the tree every frame on Android. */}
+      <LivePillHeld value={standDown}>
+        <View style={styles.watch}>
+          <View style={styles.tabPane} testID="gameSection">
+            {/*
             Watch is a layout of its own, a full-height scroller like the
             sections' Screen, with the same hero and pills in the same place:
             crossing it slides only what is under the pills, as Info and Box
             Score do between themselves. Held sideways it shows no hero, so
             the two have no head in common and slide whole.
           */}
-          <TabPages
-            fill
-            keepHead={!short}
-            page={tab === 'watch' ? 'watch' : 'sections'}
-            index={tabIndex}
-          >
-            {tab === 'watch' ? (
-              <GameWatchLayout
-                key="watch"
-                pinned={pinned}
-                head={scoreboard}
-                player={player}
-                description={description}
-                sections={sections}
-                // A game nothing was recorded of has nothing to have
-                // highlights of: "No videos." is the whole of the tab.
-                highlightList={video == null ? null : highlightList}
-                footer={
-                  <>
-                    <StreamFooter
-                      client={client}
-                      gameId={gameId}
-                      onPublishing={setPublishing}
-                      signedIn={props.signedIn}
-                      hasVideo={video != null}
-                      onPlay={playVideo}
-                    />
-                  </>
-                }
-                layout={layout}
-                short={short}
-                sideBySide={sideBySide && !noVideoHere}
-                headerHeight={headerHeight}
-                tabsHeight={tabsHeight}
-                height={height}
-                pagedList
-                style={styles.tabPane}
-                contentStyle={[
-                  styles.watchContent,
-                  styles.watchStacked,
-                  { paddingBottom: screenBottom }
-                ]}
-              />
-            ) : (
-              <Screen key="sections" {...pinned.screen} wide>
-                <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
-                <PillBand part={pinned.pillBand}>{tabs}</PillBand>
-                <TabPages page={tab} index={tabIndex}>
-                  <PinnedContent
-                    key={tab}
-                    part={pinned.content}
-                    testID="eventTabContent"
-                  >
-                    {below}
-                  </PinnedContent>
-                </TabPages>
-                <PinnedSpacer part={pinned.spacer} />
-              </Screen>
-            )}
-          </TabPages>
+            <TabPages
+              fill
+              keepHead={!short}
+              page={tab === 'watch' ? 'watch' : 'sections'}
+              index={tabIndex}
+            >
+              {tab === 'watch' ? (
+                <GameWatchLayout
+                  key="watch"
+                  pinned={pinned}
+                  head={scoreboard}
+                  player={player}
+                  description={description}
+                  sections={sections}
+                  // A game nothing was recorded of has nothing to have
+                  // highlights of: "No videos." is the whole of the tab.
+                  highlightList={video == null ? null : highlightList}
+                  footer={
+                    <>
+                      <StreamFooter
+                        client={client}
+                        gameId={gameId}
+                        onPublishing={setPublishing}
+                        signedIn={props.signedIn}
+                        hasVideo={video != null}
+                        onPlay={playVideo}
+                      />
+                    </>
+                  }
+                  layout={layout}
+                  short={short}
+                  sideBySide={sideBySide && !noVideoHere}
+                  headerHeight={headerHeight}
+                  tabsHeight={tabsHeight}
+                  height={height}
+                  pagedList
+                  style={styles.tabPane}
+                  contentStyle={[
+                    styles.watchContent,
+                    styles.watchStacked,
+                    { paddingBottom: screenBottom }
+                  ]}
+                />
+              ) : (
+                <Screen key="sections" {...pinned.screen} wide>
+                  <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
+                  <PillBand part={pinned.pillBand}>{tabs}</PillBand>
+                  <TabPages page={tab} index={tabIndex}>
+                    <PinnedContent
+                      key={tab}
+                      part={pinned.content}
+                      testID="eventTabContent"
+                    >
+                      {below}
+                    </PinnedContent>
+                  </TabPages>
+                  <PinnedSpacer part={pinned.spacer} />
+                </Screen>
+              )}
+            </TabPages>
+          </View>
         </View>
-      </View>
+      </LivePillHeld>
       {membershipWarning && props.signedIn !== null && (
         <VideoMembershipSheet
           client={client}

@@ -1,12 +1,12 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { buildOptions } from '../../common/autoScheduler'
 import { makeId } from '../../common/ids'
 import {
   asPreparedPreview,
   type SchedulePreview
 } from '../../common/schedulePreviews'
+import { buildSchedule, engineResult } from '../../common/scheduler/engine'
 import { userIdOfGumbo } from '../../common/userId'
 import { schedulerWorld } from '../../test/schedulerWorld'
 import { hashToken } from '../auth/tokens'
@@ -39,7 +39,9 @@ describe('device preview lifecycle', function () {
       )
       expect(response.status, await response.clone().text()).equals(201)
       const prepared = asPreparedPreview(await response.json())
-      const result = buildOptions(prepared.input)
+      const result = engineResult(
+        await buildSchedule({ input: prepared.input })
+      )
       const path = `/schedule-previews/${prepared.id}/result`
       await h.db
         .updateTable('user_api_keys')
@@ -88,7 +90,9 @@ describe('device preview lifecycle', function () {
           )
         ).status
       ).equals(409)
-      const result = buildOptions(prepared.input)
+      const result = engineResult(
+        await buildSchedule({ input: prepared.input })
+      )
       expect(result.options.length).greaterThan(0)
       const path = `/schedule-previews/${prepared.id}/result`
       expect((await f.h.request('PUT', path, result, 102)).status).equals(403)

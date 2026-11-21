@@ -12,9 +12,12 @@ import { withQueryReplies } from '../../test/queryReplies'
 import * as rights from '../groups/rights'
 import {
   completePreview,
+  discardPreparation,
   editPreview,
+  latestPreview,
   preparePreview,
-  type PreviewRow
+  type PreviewRow,
+  SOLVER_LIMIT_MS
 } from './previews'
 import * as reschedules from './reschedule'
 import type { Snapshot } from './snapshot'
@@ -62,17 +65,54 @@ const pending = (id: string): PreviewRow => ({
   published_option: null,
   published_at: null,
   removed_games: null,
-  result_hash: null
+  result_hash: null,
+  proven_optimal: null
 })
 
 /** A storage-boundary stub; transactions and query generation still run through Kysely. */
 async function stored(
   rows: Map<string, PreviewRow>,
   work: Parameters<typeof withQueryReplies>[1],
-  seen: string[] = []
+  seen: string[] = [],
+  /** Each league's own solver limit, as `league_schedule_setups` holds it. */
+  limits = new Map<string, number | null>()
 ): Promise<void> {
   await withQueryReplies(query => {
     seen.push(query.sql)
+    if (query.sql.includes('from "league_schedule_setups"')) {
+      const league = String(query.parameters[0])
+      return limits.has(league) ? [{ solver_limit_ms: limits.get(league) }] : []
+    }
+    if (query.sql.includes('order by "created_at" desc')) {
+      const [league, ...statuses] = query.parameters
+      return [...rows.values()]
+        .filter(
+          row => row.league_id === league && statuses.includes(row.status)
+        )
+        .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
+        .slice(0, 1)
+        .map(row => {
+          // Only the listed columns, and the snapshot's season ids as the
+          // JSON path reads them.
+          expect(query.sql).not.include('"input"')
+          expect(query.sql).include(
+            `jsonb_path_query_array(input, '$.engine.seasons[*].id')`
+          )
+          return {
+            id: row.id,
+            status: row.status,
+            created_at: row.created_at,
+            published_at: row.published_at,
+            season_ids: (
+              row.input as { engine: { seasons: Array<{ id: string }> } }
+            ).engine.seasons.map(season => season.id)
+          }
+        })
+    }
+    if (query.sql.startsWith('delete from "schedule_previews" where "id"')) {
+      rows.delete(String(query.parameters[0]))
+      return []
+    }
     if (query.sql.startsWith('select'))
       return [rows.get(String(query.parameters[0]))].filter(row => row != null)
     if (query.sql.startsWith('insert')) {
@@ -182,6 +222,94 @@ describe('device preview state transitions without a database', () => {
         clock
       ).catch((error: unknown) => error)
       expect(refused).instanceOf(Error)
+    })
+  })
+  it('gives the device two minutes, or a test server the league’s own limit, and discards a build still waiting', async () => {
+    authorize()
+    mock.method(reschedules, 'gamesToReschedule', async () => [])
+    mock.method(snapshotModule, 'snapshot', async () => snapshot())
+    const rows = new Map<string, PreviewRow>([
+      ['built', { ...pending('built'), status: 'open' }]
+    ])
+    const request = { mode: 'full', existing: 'workAround' } as const
+    const limit = async (
+      limits: Map<string, number | null>,
+      testSettings?: boolean
+    ): Promise<{ id: string; solverLimitMs: number }> => {
+      let prepared: { id: string; solverLimitMs: number } | undefined
+      await stored(
+        rows,
+        async db => {
+          prepared = await preparePreview(
+            db,
+            actor,
+            'league',
+            request,
+            clock,
+            testSettings == null ? undefined : { testSettings }
+          )
+        },
+        [],
+        limits
+      )
+      return prepared!
+    }
+    const own = new Map([['league', 3000]])
+    expect(SOLVER_LIMIT_MS).equals(120000)
+    expect((await limit(own)).solverLimitMs).equals(SOLVER_LIMIT_MS)
+    expect((await limit(own, false)).solverLimitMs).equals(SOLVER_LIMIT_MS)
+    expect((await limit(own, true)).solverLimitMs).equals(3000)
+    expect(
+      (await limit(new Map([['league', null]]), true)).solverLimitMs
+    ).equals(SOLVER_LIMIT_MS)
+    const waiting = await limit(new Map(), true)
+    expect(waiting.solverLimitMs).equals(SOLVER_LIMIT_MS)
+    await stored(rows, async db => {
+      await discardPreparation(db, actor, waiting.id)
+      expect(rows.has(waiting.id)).equals(false)
+      // One already built is kept.
+      const refused = await discardPreparation(db, actor, 'built').catch(
+        (error: unknown) => error
+      )
+      expect(refused).include({ status: 409 })
+      expect(rows.has('built')).equals(true)
+    })
+  })
+  it('gives the league’s latest open or published preview, or none', async () => {
+    authorize()
+    const engine = input()
+    const at = (day: string): Date => new Date(`2027-01-${day}T12:00:00Z`)
+    const rows = new Map<string, PreviewRow>([
+      ['building', { ...pending('building'), created_at: at('09') }],
+      [
+        'published',
+        {
+          ...pending('published'),
+          status: 'published',
+          created_at: at('05'),
+          published_at: at('06')
+        }
+      ]
+    ])
+    await stored(rows, async db => {
+      expect(await latestPreview(db, actor, 'league')).deep.equals({
+        id: 'published',
+        status: 'published',
+        createdAt: at('05').toISOString(),
+        seasonIds: engine.seasons.map(season => season.id),
+        publishedAt: at('06').toISOString()
+      })
+      rows.set('open', {
+        ...pending('open'),
+        status: 'open',
+        created_at: at('07')
+      })
+      expect(await latestPreview(db, actor, 'league')).include({
+        id: 'open',
+        status: 'open',
+        publishedAt: null
+      })
+      expect(await latestPreview(db, actor, 'elsewhere')).equals(null)
     })
   })
   it('refuses editing a building preview, missing preparation and stale sources without changing the source', async () => {

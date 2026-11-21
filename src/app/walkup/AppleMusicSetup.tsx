@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react'
 import {
   Image,
   Linking,
-  Modal,
   Pressable,
   ScrollView,
   StatusBar,
@@ -13,6 +12,7 @@ import {
 import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
 import { Icon } from '../components/Icon'
+import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { MODAL_ORIENTATIONS } from '../scoring/modalOrientations'

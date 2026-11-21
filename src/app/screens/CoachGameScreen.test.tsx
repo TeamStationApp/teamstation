@@ -923,6 +923,77 @@ describe('Coach Game (U25)', function () {
     expect(node('Save Rosters')).not.equals(null)
   })
 
+  it('keeps a Create Player sheet opened while a save is out, and draws the server’s lineup once it closes', async function () {
+    const held = server()
+    const games = new DevelopmentScoringSource()
+    let session: ScoringSession | undefined
+    await coach(held, {
+      source: {
+        open: async (game, away, home) => {
+          session = await games.open(game, away, home)
+          return session
+        }
+      }
+    })
+    await stageChange()
+    let answer!: () => void
+    const answered = new Promise<void>(resolve => {
+      answer = resolve
+    })
+    const saveLineups = held.client.saveLineups.bind(held.client)
+    // The server keeps the save with its first two batters the other way
+    // round, so what the screen reads back differs from what it drew.
+    held.client.saveLineups = async (gameId, body) => {
+      await answered
+      const saved = await saveLineups(gameId, body)
+      const live = session!
+      const game = copyState(live.resumable().state)
+      const team = game.liveData.boxscore.teams[body.side]
+      team.battingOrder = body.battingOrder.flatMap(index => {
+        const id = team.players[index]
+        return id == null ? [] : [id]
+      })
+      team.battingOrder = [
+        team.battingOrder[1],
+        team.battingOrder[0],
+        ...team.battingOrder.slice(2)
+      ]
+      expect(
+        live.apply({ type: 'lineup', kind: 'roster', setup: setupOf(game) })
+          .problems
+      ).deep.equals([])
+      await live.flush()
+      return saved
+    }
+    const lineup = (): string[] =>
+      [...document.querySelectorAll('[aria-label^="Reorder "]')].map(
+        n => n.getAttribute('aria-label') ?? ''
+      )
+    await click('Save Rosters')
+    const drawn = lineup()
+    await click('Create Player')
+    expect(node('First Name')).not.equals(null)
+    answer()
+    await settle()
+    await settle()
+    // The coach's sheet stays over the lineup as he saved it.
+    expect(node('First Name')).not.equals(null)
+    expect(lineup()).deep.equals(drawn)
+    const cancels = document.querySelectorAll<HTMLElement>(
+      '[aria-label="Cancel"]'
+    )
+    await act(async () => {
+      cancels[cancels.length - 1].click()
+    })
+    await settle()
+    expect(node('First Name')).equals(null)
+    // Closed with nothing made: the server's lineup is drawn.
+    await waitFor(
+      () => lineup()[0] === drawn[1] && lineup()[1] === drawn[0],
+      'the server’s order'
+    )
+  })
+
   it('shows the game’s refusal and keeps the staged change', async function () {
     const held = server()
     held.answer = async () => {

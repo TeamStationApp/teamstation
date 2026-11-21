@@ -15,6 +15,7 @@ import { runTurn } from './agent'
 import { storeAttachment } from './attachments'
 import {
   compact,
+  contextLimits,
   DESCRIBE_SYSTEM,
   responseText,
   SUMMARY_SYSTEM,
@@ -22,6 +23,8 @@ import {
 } from './compaction'
 import { loadConversation, type StoredMessage } from './conversation'
 import { countTokens } from './messagesApi'
+
+const { compactAbove, inputCeiling } = contextLimits(TEST_SETTINGS.model)
 
 type Block = Record<string, any>
 
@@ -39,9 +42,9 @@ const description: Reply = body =>
   )
 
 /**
- * Compaction keeps the conversation under the window: above 150,000 tokens
+ * Compaction keeps the conversation under the window: above 750,000 tokens
  * attachments become descriptions and everything before the last three turns
- * becomes the summary; a request is never sent above 200,000.
+ * becomes the summary; a request is never sent above 1,000,000.
  */
 describe("Tess's compaction", function () {
   this.timeout(60000)
@@ -82,14 +85,14 @@ describe("Tess's compaction", function () {
   }
   const systemOf = (body: Block): string => body.system[0].text
 
-  it('compacts above 150,000: describes attachments, summarizes all but the last 3 turns, and sends the summary first', async () => {
+  it('compacts above 750,000: describes attachments, summarizes all but the last 3 turns, and sends the summary first', async () => {
     await turn('first', say('About first'), [
       await attach('old.csv', 'text/csv', Buffer.from('a,b').toString('base64'))
     ])
     await turn('second')
     await turn('third')
     w.model.reply(
-      say('About fourth', { input_tokens: 150001 }),
+      say('About fourth', { input_tokens: compactAbove + 1 }),
       description,
       say('They asked about first, second and third.')
     )
@@ -201,24 +204,66 @@ describe("Tess's compaction", function () {
     expect(request.messages[2].content[0].text).equals('two')
   })
 
-  it('does nothing below 150,000', async () => {
-    // 150,000 with its answer.
-    await turn('one', say('Fine', { input_tokens: 149980 }))
+  it('does nothing below 750,000', async () => {
+    // 750,000 with its answer.
+    await turn('one', say('Fine', { input_tokens: compactAbove - 20 }))
     expect(w.model.calls.map(call => call.path)).deep.equals(['/messages'])
     expect((await loadConversation(w.h.db, userId())).summary).equals(null)
+  })
+
+  it('retains source-sized conversations beyond the old 150K threshold across turns', async () => {
+    await turn(
+      'Explain these source excerpts',
+      say('The source explains it.', {
+        input_tokens: 300000
+      })
+    )
+    await turn('How do those pieces connect?')
+    expect(w.model.calls.map(call => call.path)).deep.equals([
+      '/messages',
+      '/messages'
+    ])
+    const conversation = await loadConversation(w.h.db, userId())
+    expect(conversation.summary).equals(null)
+    expect(conversation.messages).length(4)
+  })
+
+  it('still compacts an older model override at 150K', async () => {
+    for (const text of ['one', 'two', 'three']) await turn(text)
+    w.model.calls.length = 0
+    w.model.reply(
+      say('About four', { input_tokens: 150001 }),
+      say('They asked about one.')
+    )
+    w.model.count(30000)
+    const deps = w.deps()
+    await runTurn(
+      {
+        ...deps,
+        settings: { ...deps.settings, model: 'claude-sonnet-4-5' }
+      },
+      w.user(101),
+      { text: 'four' }
+    )
+    expect((await loadConversation(w.h.db, userId())).summary).equals(
+      'They asked about one.'
+    )
+    expect(
+      w.model.messageCalls().every(call => call.model === 'claude-sonnet-4-5')
+    ).equals(true)
   })
 
   it('compacts a long conversation before a message without attachments, measured when its stored size is near', async () => {
     for (const text of ['one', 'two', 'three', 'four']) await turn(text)
     await w.h.db
       .updateTable('tess_conversations')
-      .set({ context_tokens: 149000 })
+      .set({ context_tokens: compactAbove - 1000 })
       .execute()
     w.model.calls.length = 0
-    // 149,000 and the message at its most is above 150,000: it is counted.
+    // 749,000 and the message at its most is above 750,000: it is counted.
     w.model.reply(say('Summary of one.'), say('About five'))
     // Then the message alone, then compacted.
-    w.model.count(170000, 3000, 30000)
+    w.model.count(compactAbove + 20000, 3000, 30000)
     await runTurn(w.deps(), w.user(101), { text: 'five'.repeat(1000) })
     expect(w.model.calls.map(call => call.path)).deep.equals([
       '/messages/count_tokens',
@@ -235,11 +280,11 @@ describe("Tess's compaction", function () {
     )
   })
 
-  it('takes a short message at the stored size when it stays under 150,000', async () => {
+  it('takes a short message at the stored size when it stays under 750,000', async () => {
     await turn('one')
     await w.h.db
       .updateTable('tess_conversations')
-      .set({ context_tokens: 149000 })
+      .set({ context_tokens: compactAbove - 1000 })
       .execute()
     w.model.calls.length = 0
     await turn('two')
@@ -250,11 +295,11 @@ describe("Tess's compaction", function () {
     await turn('one')
     await w.h.db
       .updateTable('tess_conversations')
-      .set({ context_tokens: 149000 })
+      .set({ context_tokens: compactAbove - 1000 })
       .execute()
     w.model.calls.length = 0
     // Measured below the threshold after all: nothing is compacted.
-    w.model.count(140000)
+    w.model.count(compactAbove - 10000)
     await turn('two'.repeat(1000))
     expect(w.model.calls.map(call => call.path)).deep.equals([
       '/messages/count_tokens',
@@ -267,7 +312,7 @@ describe("Tess's compaction", function () {
     for (const text of ['one', 'two', 'three', 'four']) await turn(text)
     w.model.calls.length = 0
     w.model.reply(say('Summary of one.'), say('Summary of one to three.'))
-    w.model.count(160000, 20000)
+    w.model.count(compactAbove + 10000, 20000)
     const measure = async (): Promise<number> =>
       await countTokens(
         TEST_SETTINGS,
@@ -288,7 +333,7 @@ describe("Tess's compaction", function () {
     )
   })
 
-  it('refuses an attachment that would take the conversation over 200,000 once compacted, keeping the attachment for a resend but not the message', async () => {
+  it('refuses an attachment that would take the conversation over 1,000,000 once compacted, keeping the attachment for a resend but not the message', async () => {
     await turn('one')
     const big = await attach(
       'huge.csv',
@@ -296,11 +341,16 @@ describe("Tess's compaction", function () {
       Buffer.from('x,y\n'.repeat(100)).toString('base64')
     )
     w.model.calls.length = 0
-    // Over 150,000 with it, though it would fit alone; compaction
+    // Over 750,000 with it, though it would fit alone; compaction
     // summarizes all it can, down to the last turn and then to none, and
     // with the summary it is still too large.
     w.model.reply(say('They said one.'))
-    w.model.count(250000, 180000, 230000, 230000)
+    w.model.count(
+      inputCeiling + 58192,
+      inputCeiling - 11808,
+      inputCeiling + 38192,
+      inputCeiling + 38192
+    )
     const answer = await w.h.request('POST', '/me/tess/messages', {
       text: 'Read this',
       attachmentIds: [big]
@@ -343,12 +393,18 @@ describe("Tess's compaction", function () {
     w.model.calls.length = 0
     await w.h.db
       .updateTable('tess_conversations')
-      .set({ context_tokens: 195000 })
+      .set({ context_tokens: inputCeiling + 3192 })
       .execute()
-    // The last turn alone is still above 150,000; with none kept, the
+    // The last turn alone is still above 750,000; with none kept, the
     // message has room.
     w.model.reply(say('They said one.'), say('They said one and two.'))
-    w.model.count(195000, 1000, 160000, 160000, 3000)
+    w.model.count(
+      inputCeiling + 3192,
+      1000,
+      compactAbove + 10000,
+      compactAbove + 10000,
+      3000
+    )
     w.model.reply(say('About three'))
     await runTurn(w.deps(), w.user(101), { text: 'three' })
     const conversation = await loadConversation(w.h.db, userId())
@@ -409,7 +465,8 @@ describe("Tess's compaction", function () {
                 source: { type: 'base64', media_type: 'image/png', data: '' }
               }
             ]
-          }
+          },
+          { type: 'tool_limit' }
         ]
       },
       {
@@ -435,6 +492,8 @@ describe("Tess's compaction", function () {
     expect(lines.slice(3)).deep.equals([
       'Tool error: HTTP 404',
       'Tool result: rows [image]',
+      // The tool-limit notice is a note, never something the person said.
+      'Note: Tess reached her tool limit and answered from what she had.',
       'Note: Confirmed',
       'Note: The person stopped Tess before she finished.'
     ])

@@ -52,6 +52,31 @@ afterEach(async function () {
   document.body.innerHTML = ''
 })
 
+async function type(label: string, next: string): Promise<void> {
+  const field = document.querySelector<HTMLInputElement>(
+    `input[aria-label="${label}"]`
+  )
+  if (field == null) throw new Error(`no field ${label}`)
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )!.set!.call(field, next)
+    field.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await delay()
+  })
+}
+const buttonLabels = (): string[] =>
+  [...document.querySelectorAll<HTMLElement>('[role="button"]')].map(
+    node => node.getAttribute('aria-label') ?? node.textContent ?? ''
+  )
+const isDisabled = (label: string): boolean =>
+  [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+    .find(
+      node => (node.getAttribute('aria-label') ?? node.textContent) === label
+    )
+    ?.getAttribute('aria-disabled') === 'true'
+
 /** The value at the right of a row, by its section and label. */
 function shown(name: string): string {
   const node = [
@@ -89,10 +114,12 @@ describe('NodeSettingsCard', function () {
   function fake(fail?: Error): {
     client: TeamStationClient
     saved: NodeSettings[]
+    keys: Array<string | null>
     recover: () => void
     store: (settings: NodeSettings) => void
   } {
     const saved: NodeSettings[] = []
+    const keys: Array<string | null> = []
     let failing = fail
     let stored = structuredClone(defaultNodeSettings)
     const client = {
@@ -102,13 +129,23 @@ describe('NodeSettingsCard', function () {
       },
       setNodeSettings: async (settings: NodeSettings) => {
         saved.push(settings)
-        stored = structuredClone(settings)
-        return structuredClone(settings)
+        // The key is not a setting a save changes.
+        stored = { ...structuredClone(settings), jev: stored.jev }
+        return structuredClone(stored)
+      },
+      setJevKey: async (apiKey: string) => {
+        keys.push(apiKey)
+        stored = { ...stored, jev: { configured: true } }
+      },
+      clearJevKey: async () => {
+        keys.push(null)
+        stored = { ...stored, jev: { configured: false } }
       }
     } as unknown as TeamStationClient
     return {
       client,
       saved,
+      keys,
       recover: () => {
         failing = undefined
       },
@@ -132,7 +169,8 @@ describe('NodeSettingsCard', function () {
         ...defaultNodeSettings.highlights,
         leadSecByEventType: { strikeout: 10, walk: 90 }
       },
-      distribution: defaultNodeSettings.distribution
+      distribution: defaultNodeSettings.distribution,
+      jev: defaultNodeSettings.jev
     })
     await render(server.client)
     expect(text().toLowerCase()).contains('scoreboard settings')
@@ -156,8 +194,12 @@ describe('NodeSettingsCard', function () {
     // A play type's rewind beyond the wheel shows at its last stop.
     expect(shown('Rewind length: walk')).equals('60 s')
     expect(shown('Play past the event')).equals('5 s')
-    // No free text, and no range repeated on the rows.
-    expect(document.querySelector('input')).equals(null)
+    // No free text but the Jev key, and no range repeated on the rows.
+    expect(
+      [...document.querySelectorAll('input')].map(input =>
+        input.getAttribute('aria-label')
+      )
+    ).deep.equals(['Jev API key'])
     expect(text()).not.contains('0–1')
   })
 
@@ -426,6 +468,78 @@ describe('NodeSettingsCard', function () {
     server.recover()
     await press('Retry')
     expect(shown('Show for games from')).equals('2026-10-01')
+  })
+
+  it('sets a Jev key, then replaces or removes it, never showing it', async function () {
+    const server = fake()
+    await render(server.client)
+    expect(text().toLowerCase()).contains('jev ranking')
+    expect(text()).contains('No key is set.')
+    const field = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Jev API key"]'
+    )
+    expect(field?.type).equals('password')
+    expect(buttonLabels()).contains('Set')
+    expect(buttonLabels()).not.contains('Replace')
+    expect(buttonLabels()).not.contains('Remove')
+    // Nothing typed, nothing to set.
+    expect(isDisabled('Set')).equals(true)
+    await press('Set')
+    expect(server.keys).deep.equals([])
+
+    await type('Jev API key', '  ts-first-key  ')
+    expect(isDisabled('Set')).equals(false)
+    await press('Set')
+    expect(server.keys).deep.equals(['ts-first-key'])
+    expect(field?.value).equals('')
+    expect(text()).contains('A key is set.')
+    expect(buttonLabels()).not.contains('Set')
+    expect(isDisabled('Replace')).equals(true)
+    expect(text()).not.contains('ts-first-key')
+
+    await type('Jev API key', 'ts-second-key')
+    await press('Replace')
+    expect(server.keys).deep.equals(['ts-first-key', 'ts-second-key'])
+
+    // Save and Reset to defaults leave the key as it is.
+    await press('Reset to defaults')
+    expect(buttonLabels()).contains('Remove')
+    await press('Save')
+    expect(server.saved.at(-1)!.jev).deep.equals({ configured: true })
+    expect(buttonLabels()).contains('Remove')
+
+    await press('Remove')
+    expect(server.keys.at(-1)).equals(null)
+    expect(text()).contains('No key is set.')
+    expect(buttonLabels()).contains('Set')
+    expect(buttonLabels()).not.contains('Remove')
+  })
+
+  it('shows Replace and Remove for a key already set, and says why a change was refused', async function () {
+    const server = fake()
+    server.store({ ...defaultNodeSettings, jev: { configured: true } })
+    Object.assign(server.client, {
+      setJevKey: async () => {
+        throw new Error('Only a node administrator can set the Jev key')
+      },
+      clearJevKey: async () => {
+        // Not an Error: the card says its own words.
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'refused'
+      }
+    })
+    await render(server.client)
+    expect(buttonLabels()).contains('Replace')
+    expect(buttonLabels()).contains('Remove')
+    await type('Jev API key', 'ts-key')
+    await press('Replace')
+    expect(text()).contains('Only a node administrator can set the Jev key')
+    // Typing again clears the message.
+    await type('Jev API key', 'ts-key-2')
+    expect(text()).not.contains('Only a node administrator')
+    await press('Remove')
+    expect(text()).contains('The Jev key could not be changed. Retry.')
+    expect(buttonLabels()).contains('Remove')
   })
 
   it('says so when a save is refused', async function () {

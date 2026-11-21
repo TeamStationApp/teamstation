@@ -37,7 +37,7 @@
  */
 
 import { LIVE_DELAY_SEC } from '../liveDelay'
-import { type AngleVideo, secondsAt, startMs } from '../wallClock'
+import { type AngleVideo, secondsAt, startMs, wallAt } from '../wallClock'
 
 /** How far out a follower may be before it is worth a seek. */
 export const TOLERANCE_SEC = 0.1
@@ -154,6 +154,51 @@ export function nudgeRate(
  * somewhere new.
  */
 export const REPLACE_SEC = 3
+
+/**
+ * How much later than the moment a tile's own first picture of it may be:
+ * no more than speed closes (`NUDGE_MAX_SEC`).
+ */
+export const HOLE_SEC = NUDGE_MAX_SEC
+
+/**
+ * How far past the first picture after a hole its timeline is read again,
+ * to see that it stays past the moment: a half-second SEI point and a
+ * segment's arrival point both fall inside it.
+ */
+export const HOLE_PROBES_SEC = [1, 4]
+
+/**
+ * Where a tile waits when the moment falls inside a hole in its own
+ * recording — its camera's stream was away and came back — or null when it
+ * has a picture of the moment.
+ *
+ * Its mapping puts a moment inside the hole at the first picture after it
+ * (`mediaAt`), which is later in the game by up to the hole. A tile sent
+ * there and played showed it early and ran on that far ahead of the others:
+ * every look after found it where the mapping said the moment was, the
+ * first picture after the hole, and nothing it could correct. It waits at
+ * that picture instead, paused, until the game reaches it.
+ *
+ * Only for a hole in the timeline itself: the recording's pictures after
+ * that one have to stay that far past the moment as well. One point out of
+ * line — a frame whose own clock jumped and came back — puts its picture
+ * past the moment though the recording, a moment on, is showing it, and a
+ * tile held there waited on a hole that was never there. Where the tile's
+ * player happens to land is no part of it: this reads the mapping alone.
+ */
+export function farSideOfHole(
+  video: AngleVideo,
+  wallMs: number
+): number | null {
+  const target = secondsAt(video, wallMs)
+  if (target == null) return null
+  const past = (sec: number): boolean => {
+    const shown = wallAt(video, target + sec)
+    return shown != null && shown - sec * 1000 - wallMs > HOLE_SEC * 1000
+  }
+  return past(0) && HOLE_PROBES_SEC.every(past) ? target : null
+}
 
 /**
  * Whether it is worth moving this tile at all.

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+import { logOrigin } from './common/observability/dsn/index.ts'
+
 /**
  * The web page's Content-Security-Policy and Subresource Integrity, as pure
  * functions `build.mjs` calls (and `buildCsp.integration.test.ts` checks).
@@ -22,6 +24,9 @@ import { createHash } from 'node:crypto'
  * - `<socket>` is that origin with `ws:` or `wss:`.
  * - `<media>` is `TS_MEDIA_ORIGINS`, space-separated, which a deployment
  *   takes from `src/deploy/mediaOrigins.mjs`.
+ * - `<logs>` is the origin of the build's `TS_SENTRY_DSN`, where the page
+ *   sends its logs, in `connect-src` only; none for no DSN or one the
+ *   logger would refuse (`dsn.ts`).
  */
 
 /** The origin of an absolute http(s) URL, or undefined for a relative one. */
@@ -35,13 +40,14 @@ export function socketOriginOf(origin) {
   return origin.replace(/^http/i, 'ws')
 }
 
-/** The origins a build allows, from its API URL and its media list. */
-export function originsFor(apiBaseUrl, mediaOrigins = '') {
+/** The origins a build allows, from its API URL, its media list and its DSN. */
+export function originsFor(apiBaseUrl, mediaOrigins = '', logDsn = '') {
   const api = originOf(apiBaseUrl)
   return {
     api,
     socket: api == null ? undefined : socketOriginOf(api),
-    media: mediaOrigins.split(/\s+/).filter(origin => origin !== '')
+    media: mediaOrigins.split(/\s+/).filter(origin => origin !== ''),
+    logs: logOrigin(logDsn)
   }
 }
 
@@ -59,7 +65,7 @@ export function cspFor(origins) {
     "font-src 'self' https://fonts.gstatic.com",
     `img-src ${list("'self'", 'data:', 'blob:', media)}`,
     `media-src ${list("'self'", 'blob:', media)}`,
-    `connect-src ${list("'self'", origins.api, origins.socket, media)}`,
+    `connect-src ${list("'self'", origins.api, origins.socket, media, origins.logs)}`,
     "worker-src 'self' blob:",
     "frame-src 'self' blob:",
     "object-src 'none'",

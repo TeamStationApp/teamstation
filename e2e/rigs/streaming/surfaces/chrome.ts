@@ -267,19 +267,28 @@ export class ChromeSurface implements SoakSurfaceDriver {
     const block = await this.player()
     // The controls may be up already, and a press on the grid then hides
     // them: the control is tried first, and the grid pressed only when it
-    // takes no pointer.
+    // takes no pointer. A press can still leave them down (it toggles them,
+    // and they hide again on their own), so then Tab, which the player
+    // answers by showing the bar and its controls whatever their state.
     for (let attempt = 0; ; attempt++) {
       try {
         await this.device.tapOn({ text: label })
         return
       } catch (error) {
         if (
-          attempt === 2 ||
+          attempt === 3 ||
           !(error as Error).message.includes('not actionable')
         )
           throw error
       }
-      await this.device.tapOnPoint(this.gridPoint(block, 1, 0))
+      if (attempt === 0) {
+        await this.device.tapOnPoint(this.gridPoint(block, 1, 0))
+      } else {
+        await this.device.evalBrowserScript({
+          script:
+            "window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))"
+        })
+      }
       await this.sleep(300)
     }
   }

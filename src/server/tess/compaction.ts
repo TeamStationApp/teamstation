@@ -18,11 +18,11 @@ import {
 import { MAX_TOKENS, type MessagesResponse } from './messagesApi'
 
 /**
- * Keeps a conversation under the model's window. Above 150,000 tokens it is
+ * Keeps a conversation under the model's window. Above its threshold it is
  * compacted: every attachment it holds is described and its bytes dropped,
  * and everything before its last three turns is summarized into the
  * conversation's summary, which every later request starts with. A request
- * is never sent above 200,000 with the room its answer may take.
+ * reserves room for the answer within the model's window.
  *
  * Pictures are cheap in tokens but not in bytes, and the provider refuses a
  * request body over 32 MB. So the pictures a request carries are kept to one
@@ -33,15 +33,24 @@ import { MAX_TOKENS, type MessagesResponse } from './messagesApi'
  * a tool's result), so no tool call is parted from its result.
  */
 
-export const COMPACT_ABOVE = 150000
-export const CEILING = 200000
 export const KEPT_TURNS = 3
 
 /**
- * The most a request may hold: the window less the answer's room, since the
- * provider refuses a request whose input and `max_tokens` exceed it.
+ * Sonnet 5.5 supports 1M tokens without a beta header, under its plain,
+ * dated or provider-prefixed id. Keep a quarter of
+ * that window for tool rounds before the next compaction, and reserve the
+ * full answer budget in every request. Unverified model overrides retain
+ * the conservative 200K window and 150K compaction threshold.
  */
-export const INPUT_CEILING = CEILING - MAX_TOKENS
+export function contextLimits(model: string): {
+  compactAbove: number
+  inputCeiling: number
+} {
+  const ceiling = /(^|[./])claude-sonnet-5-5($|[-@:])/.test(model)
+    ? 1000000
+    : 200000
+  return { compactAbove: ceiling * 0.75, inputCeiling: ceiling - MAX_TOKENS }
+}
 
 /**
  * The fewest characters a token takes, for an estimate that does not fall
@@ -62,8 +71,9 @@ export function base64Length(bytes: number): number {
 
 /**
  * The most base64 a request's pictures may come to: a message of five
- * pictures at the limit, 25 MiB. The rest of a request is held to 200,000
- * tokens, a few MB at most, so the body stays clear of the provider's 32 MB.
+ * pictures at the limit, 25 MiB. The rest of a request is held to at most 1M
+ * tokens; if the provider still refuses its byte size, attachments become
+ * descriptions before the request is retried.
  */
 export const PICTURE_BYTES =
   TESS_MAX_ATTACHMENTS * base64Length(TESS_MAX_IMAGE_BYTES)
@@ -97,13 +107,14 @@ export async function compact(
   measure: () => Promise<number>,
   options: { keepNone?: boolean } = {}
 ): Promise<number> {
+  const { compactAbove } = contextLimits(deps.settings.model)
   await describeAttachments(deps, userId)
   await summarizeBefore(deps, userId, KEPT_TURNS)
   let tokens = await measure()
-  if (tokens > COMPACT_ABOVE && (await summarizeBefore(deps, userId, 1)))
+  if (tokens > compactAbove && (await summarizeBefore(deps, userId, 1)))
     tokens = await measure()
   if (
-    tokens > COMPACT_ABOVE &&
+    tokens > compactAbove &&
     options.keepNone === true &&
     (await summarizeBefore(deps, userId, 0))
   )
@@ -287,6 +298,10 @@ export function transcriptOf(
         lines.push(`Note: ${block.text}`)
       else if (block.type === 'stopped')
         lines.push('Note: The person stopped Tess before she finished.')
+      else if (block.type === 'tool_limit')
+        lines.push(
+          'Note: Tess reached her tool limit and answered from what she had.'
+        )
       else if (block.type === 'tool_use')
         lines.push(
           `Tess used ${block.name} ${clip(JSON.stringify(block.input))}`

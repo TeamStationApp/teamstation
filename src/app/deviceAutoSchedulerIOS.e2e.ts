@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
+import { maestro } from '../../e2e/rigs/refinementsMaestro'
 import type { SeasonScheduleSettings } from '../common/seasonScheduling'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
@@ -13,7 +14,6 @@ import {
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
-import { maestro } from '../test/refinementsMaestro.e2e'
 
 async function main(): Promise<void> {
   const device = process.env.TS_AUTO_SCHEDULER_IOS_DEVICE

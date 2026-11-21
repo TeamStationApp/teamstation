@@ -45,7 +45,9 @@ function faultServer(status = 200): {
       ? {
           errors: [{ at: 5, method: 'GET', path: '/api/v1/teams', status: 500 }]
         }
-      : { fault: null }
+      : url.endsWith('/jev')
+        ? { passThrough: false, rule: {}, queries: {}, requests: [] }
+        : { fault: null }
     return new Response(JSON.stringify(body), { status })
   }) as typeof fetch
   return { fetchFn, calls }
@@ -70,6 +72,47 @@ describe('a droplet stack', function () {
         url: 'https://e2e-04.example.test/__e2e/errors?since=3',
         method: 'GET',
         auth: 'Bearer tok'
+      }
+    ])
+  })
+
+  it('reads and scripts the Jev stand-in through the fault server', async function () {
+    const { fetchFn, calls } = faultServer()
+    const stack = dropletStackHandle(
+      { id: HANDLE.id, origin: HANDLE.origin, handle: HANDLE },
+      { fetchFn }
+    )
+    expect((await stack.jev?.read())?.requests).deep.equals([])
+    await stack.jev?.set({ passThrough: true })
+    expect(calls.map(call => [call.method, call.url, call.body])).deep.equals([
+      ['GET', 'https://e2e-04.example.test/__e2e/jev', undefined],
+      ['PUT', 'https://e2e-04.example.test/__e2e/jev', '{"passThrough":true}']
+    ])
+    const bare = dropletStackHandle(
+      {
+        id: HANDLE.id,
+        origin: HANDLE.origin,
+        handle: { ...HANDLE, faults: undefined }
+      },
+      { fetchFn }
+    )
+    expect(bare.jev).equals(undefined)
+  })
+
+  it('calls any route of the fault server, with the token', async function () {
+    const { fetchFn, calls } = faultServer()
+    const control = faultControl(HANDLE.faults, fetchFn)
+    expect(
+      await control.call('PUT', 'speech', { heard: 'Ball one.' })
+    ).deep.equals({
+      fault: null
+    })
+    expect(calls).deep.equals([
+      {
+        url: 'https://e2e-04.example.test/__e2e/speech',
+        method: 'PUT',
+        auth: 'Bearer tok',
+        body: '{"heard":"Ball one."}'
       }
     ])
   })

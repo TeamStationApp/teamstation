@@ -123,6 +123,8 @@ describe('what an API key may call', function () {
       /^\w+ \/oauth\//,
       /^\w+ \/auth\//,
       /^\w+ \/me\/api-keys/,
+      /^\w+ \/push\//,
+      /^\w+ \/me\/push-registrations/,
       /^\w+ \/me\/builds/
     ]
     const leaked = routes.filter(route => {

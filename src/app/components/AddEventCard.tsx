@@ -1,5 +1,5 @@
 import React from 'react'
-import { Pressable, Text } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -14,16 +14,19 @@ export function AddEventCard({
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
+  // Centred by a row of its own: a list footer on the web is a plain block,
+  // where the button's own alignment does nothing.
   if (variant === 'game')
     return (
-      <Button
-        label="Add Game"
-        accessibilityLabel="Add Game"
-        testID="add-game-button"
-        color={theme.scoreActionColor}
-        style={{ alignSelf: 'center' }}
-        onPress={onPress}
-      />
+      <View style={styles.gameRow}>
+        <Button
+          label="Add Game"
+          accessibilityLabel="Add Game"
+          testID="add-game-button"
+          color={theme.scoreActionColor}
+          onPress={onPress}
+        />
+      </View>
     )
   return (
     <Pressable
@@ -38,6 +41,9 @@ export function AddEventCard({
   )
 }
 const getStyles = cacheStyles((theme: Theme) => ({
+  gameRow: {
+    alignItems: 'center' as const
+  },
   card: {
     alignSelf: 'stretch' as const,
     alignItems: 'center' as const,

@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url'
 
 import buildInfoTools from '../scripts/build-info.cjs'
 import { buildWasm, findCargo } from '../scripts/chatCryptoBuild.mjs'
+import { buildWasm as buildSchedulerWasm } from '../scripts/schedulerBuild.mjs'
+import { buildServiceWorker } from '../scripts/serviceWorkerBuild.mjs'
 import { webSettings } from '../scripts/web-build-settings.mjs'
 import {
   cspFor,
@@ -14,6 +16,7 @@ import {
   withCsp,
   withIntegrity
 } from './buildCsp.mjs'
+import { workerOutDir, workerUrl } from './buildWorker.mjs'
 import { ASSET_LOADER } from './esbuildLoaders.mjs'
 
 /**
@@ -73,11 +76,16 @@ if (!serve && /\/\/(127\.0\.0\.1|localhost|\[::1\])/.test(apiBaseUrl)) {
 /**
  * The page's Content-Security-Policy (`buildCsp.mjs`), written into every
  * build: the API and its socket from `TS_API_BASE_URL` when that is absolute,
- * and the media origins the deploy names in `TS_MEDIA_ORIGINS`
- * (space-separated; `src/deploy/mediaOrigins.mjs` prints them).
+ * the media origins the deploy names in `TS_MEDIA_ORIGINS`
+ * (space-separated; `src/deploy/mediaOrigins.mjs` prints them), and the log
+ * collector `TS_SENTRY_DSN` names, so the bundle may post its logs.
  */
 const policy = cspFor(
-  originsFor(apiBaseUrl, process.env.TS_MEDIA_ORIGINS ?? '')
+  originsFor(
+    apiBaseUrl,
+    process.env.TS_MEDIA_ORIGINS ?? '',
+    process.env.TS_SENTRY_DSN ?? ''
+  )
 )
 
 /**
@@ -121,7 +129,7 @@ const wasmFile = serve
 const workerOptions = {
   entryPoints: ['src/app/platform/passwordWorker.ts'],
   bundle: true,
-  outdir: 'dist',
+  outdir: workerOutDir(),
   entryNames: serve ? 'password-worker' : 'password-worker-[hash]',
   format: 'iife',
   target: ['es2021'],
@@ -138,6 +146,48 @@ if (workerFile == null) throw new Error('Password worker build failed')
 if (serve) {
   const workerContext = await context(workerOptions)
   await workerContext.watch()
+}
+
+/**
+ * The Auto-Scheduler's engine and HiGHS, as our own WebAssembly
+ * (`scripts/schedulerBuild.mjs wasm`, with the pinned Emscripten), which the
+ * page asks for only when it builds a schedule: a worker of its own carrying
+ * Emscripten's glue ahead of `schedulerWorker.ts`, and the module beside it
+ * under a hashed name (plain `scheduler.wasm` under `--serve`). The bundle is
+ * told both and the module's sha384; `engine.web.ts` fetches the module,
+ * checks it, and posts it to the worker, which always instantiates from the
+ * posted bytes. Under `--serve` a change to the engine needs a restart.
+ */
+const scheduler = await buildSchedulerWasm()
+const schedulerWasmBytes = await readFile(scheduler.wasm)
+const schedulerWasmFile = serve
+  ? 'scheduler.wasm'
+  : `scheduler-${createHash('sha256').update(schedulerWasmBytes).digest('hex').slice(0, 16)}.wasm`
+const schedulerWorkerOptions = {
+  entryPoints: ['src/app/platform/schedulerWorker.ts'],
+  bundle: true,
+  outdir: out,
+  entryNames: serve ? 'scheduler-worker' : 'scheduler-worker-[hash]',
+  format: 'iife',
+  target: ['es2021'],
+  minify: !serve,
+  sourcemap: true,
+  metafile: true,
+  // The glue first, so `createSchedulerModule` is a global of the worker.
+  banner: { js: await readFile(scheduler.glue, 'utf8') }
+}
+for (const name of await readdirSafe(out))
+  if (/^(highs|scheduler)-worker-[A-Z0-9]+\.js(\.map)?$/i.test(name))
+    await rm(`${out}/${name}`)
+const schedulerWorkerBuild = await build(schedulerWorkerOptions)
+const schedulerWorkerFile = Object.keys(
+  schedulerWorkerBuild.metafile.outputs
+).find(name => name.endsWith('.js'))
+if (schedulerWorkerFile == null)
+  throw new Error('Scheduler worker build failed')
+if (serve) {
+  const schedulerContext = await context(schedulerWorkerOptions)
+  await schedulerContext.watch()
 }
 
 const options = {
@@ -176,7 +226,14 @@ const options = {
     TS_CHAT_WASM_URL: JSON.stringify(`/${wasmFile}`),
     TS_CHAT_WASM_INTEGRITY: JSON.stringify(integrityOf(wasmBytes)),
     TS_PASSWORD_WORKER_URL: JSON.stringify(
-      '/' + workerFile.replace(/^dist\//, '')
+      workerUrl(workerFile, workerOutDir())
+    ),
+    TS_SCHEDULER_WORKER_URL: JSON.stringify(
+      `/${path.basename(schedulerWorkerFile)}`
+    ),
+    TS_SCHEDULER_WASM_URL: JSON.stringify(`/${schedulerWasmFile}`),
+    TS_SCHEDULER_WASM_INTEGRITY: JSON.stringify(
+      integrityOf(schedulerWasmBytes)
     ),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // A dev-server stand-in for Apple's age-range answer. Production and a
@@ -206,6 +263,9 @@ const options = {
 }
 
 await mkdir(out, { recursive: true })
+// The notifications' service worker, as `sw.js`, with the bundle's defines
+// (`scripts/serviceWorkerBuild.mjs`).
+await buildServiceWorker({ out, serve, define: options.define })
 const template = withCsp(
   await readFile('src/app/web/index.html', 'utf8'),
   policy
@@ -270,6 +330,13 @@ for (const name of await readdirSafe(out)) {
   }
 }
 await writeFile(`${out}/${wasmFile}`, wasmBytes)
+for (const name of await readdirSafe(out))
+  if (
+    /^(highs|scheduler)-[0-9a-f]+\.wasm$/.test(name) &&
+    name !== schedulerWasmFile
+  )
+    await rm(`${out}/${name}`)
+await writeFile(`${out}/${schedulerWasmFile}`, schedulerWasmBytes)
 
 if (serve) {
   // No integrity here: the watch rebuilds `app.js` after this page is
@@ -285,7 +352,11 @@ if (serve) {
     // Overridable because two worktrees are often being served at once, and
     // the second one silently failing to bind is a confusing way to spend ten
     // minutes. `TS_API_BASE_URL` moves the API port to match.
-    port: Number(process.env.TS_SERVE_PORT ?? 8080)
+    port: Number(process.env.TS_SERVE_PORT ?? 8080),
+    // Loopback only: esbuild otherwise listens on every interface, and on a
+    // droplet that is its public address. A phone reaches the app through
+    // the end-to-end stack's own proxy, never this server directly.
+    host: '127.0.0.1'
   })
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)

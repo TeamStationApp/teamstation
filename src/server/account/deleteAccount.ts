@@ -185,6 +185,10 @@ export async function deleteAccount(
       .deleteFrom('notification_receipts')
       .where('user_id', 'in', userIds)
       .execute()
+    // Every device's push address, with its switches, and which events they
+    // were reminded of.
+    for (const table of ['push_registrations', 'push_reminders_sent'] as const)
+      await trx.deleteFrom(table).where('user_id', 'in', userIds).execute()
     // Their conversation with Tess: what they said and attached, the changes
     // she proposed, and the tokens it used.
     for (const table of [

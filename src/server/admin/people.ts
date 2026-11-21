@@ -546,6 +546,7 @@ async function moveAndClose(
 
   await keepSignIns(db, closing, keeping)
   await moveFollows(db, closing, keeping)
+  await moveReminders(db, closing, keeping)
   await keepTheFullerName(db, closing, keeping)
   // Keys never move between user ids: the closed row's sessions and chat
   // devices are revoked, and the survivor takes its place in its open DMs.
@@ -669,6 +670,27 @@ async function moveFollows(
     .deleteFrom('follows')
     .where('user_id', '=', closing)
     .where('group_type', '=', 'team')
+    .execute()
+}
+
+/**
+ * The closing row's RSVP reminders go to the survivor. A reminder written
+ * down under either row stays written down, once, under the survivor, so an
+ * event start is never reminded of twice.
+ */
+async function moveReminders(
+  db: Kysely<Database>,
+  closing: string,
+  keeping: string
+): Promise<void> {
+  await sql`insert into push_reminders_sent
+      (event_kind, event_id, user_id, start_at, sent_at)
+    select event_kind, event_id, ${keeping}, start_at, sent_at
+      from push_reminders_sent where user_id = ${closing}
+    on conflict do nothing`.execute(db)
+  await db
+    .deleteFrom('push_reminders_sent')
+    .where('user_id', '=', closing)
     .execute()
 }
 

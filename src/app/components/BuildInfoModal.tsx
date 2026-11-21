@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Pressable, Text, TextInput, View } from 'react-native'
+import { Pressable, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { type BuildInfo, buildInfo } from '../../common/distribution'
@@ -12,6 +12,10 @@ import { RenderErrorProbe } from '../sentry'
 import { nativeCrash } from '../sentrySdk'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { Modal } from './Modal'
+
+/** Where the IP geolocation credit links, as DB-IP's licence asks. */
+const DB_IP_URL = 'https://db-ip.com'
 
 export type { ServerControl }
 
@@ -159,6 +163,19 @@ export function BuildInfoModal({
                 {serverNote}
               </Text>
             )}
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.label}>{lstrings.about_credits}</Text>
+            {/* DB-IP's free database places a reader's searches near them;
+                its CC BY 4.0 licence asks for this credit and link. */}
+            <Pressable
+              accessibilityRole="link"
+              onPress={() => {
+                openExternal(DB_IP_URL).catch(() => undefined)
+              }}
+            >
+              <Text style={styles.link}>{lstrings.about_ip_credit}</Text>
+            </Pressable>
           </View>
           {betaUrl != null && betaUrl !== '' && (
             <Button

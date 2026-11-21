@@ -6,6 +6,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { buildSchedule } from '../../../common/scheduler/engine'
 import { migrations } from '../../../migrate/migrations'
 import { migrateUp } from '../../../migrate/runner'
 import {
@@ -13,6 +14,7 @@ import {
   testDatabaseUrl
 } from '../../../migrate/testDatabase'
 import { readPasswordRecord } from '../../auth/passwords'
+import { preparePreview } from '../../autoScheduler/previews'
 import { type Database, makeDatabase } from '../../db/database'
 import { accountMailEnabled } from '../../email/accountMail'
 import { serverConfig } from '../../serverConfig'
@@ -28,8 +30,15 @@ import {
 } from './cli'
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
+import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import {
+  hasGroupCoordinates,
+  runSearch,
+  SEARCH_JEV_PLACEHOLDER
+} from './search'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
+import { RATE_LIMIT_SCALE, runTess } from './tess'
 
 const MAILBOX = 'testmailbox@example.test'
 const adminUrl = testDatabaseUrl
@@ -103,6 +112,8 @@ describe('the fixtures script', function () {
     ).deep.equals({ world: 'baseline', mailbox: MAILBOX })
     expect(Object.keys(WORLDS)).includes('team-with-roster')
     expect(Object.keys(WORLDS)).includes('streaming')
+    expect(Object.keys(WORLDS)).includes('packed-league')
+    expect(Object.keys(WORLDS)).includes('packed-league-limit')
   })
 })
 
@@ -243,6 +254,120 @@ describe('fixture worlds', function () {
     expect(team.name).includes(a.nonce)
   })
 
+  it('packed-league gives its admin a league of six seasons, ready to schedule, under each nonce', async function () {
+    const run = async (): Promise<FixtureManifest> =>
+      await runPackedLeague({
+        db: the(),
+        mailbox: MAILBOX,
+        nonce: makeNonce()
+      })
+    const [a, b] = [await run(), await run()]
+    expect(a.world).equals('packed-league')
+    expect(a.ids.league).not.equals(b.ids.league)
+    const teamsOf = (m: FixtureManifest): string[] =>
+      Object.entries(m.ids)
+        .filter(([key]) => key.startsWith('tem_'))
+        .map(([, id]) => id)
+    expect(teamsOf(a)).lengthOf(51)
+    expect(teamsOf(a).filter(id => teamsOf(b).includes(id))).deep.equals([])
+    expect(a.accounts.admin.userId).not.equals(b.accounts.admin.userId)
+    expect(isTestAddress(MAILBOX, a.accounts.admin.email)).equals(true)
+    const administers = await the()
+      .selectFrom('scope_roles')
+      .select('role')
+      .where('user_id', '=', a.accounts.admin.userId)
+      .where('scope_type', '=', 'league')
+      .where('scope_id', '=', a.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(administers.role).equals('admin')
+    const setup = await the()
+      .selectFrom('league_schedule_setups')
+      .select(['season_ids', 'field_ids', 'avoid_head_coach_conflicts'])
+      .where('league_id', '=', a.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(setup.season_ids).lengthOf(6)
+    expect(setup.field_ids).lengthOf(5)
+    expect(setup.avoid_head_coach_conflicts).equals(true)
+    const settings = await the()
+      .selectFrom('season_schedule_settings')
+      .select(['season_id', 'field_ids'])
+      .where('season_id', 'in', setup.season_ids)
+      .execute()
+    expect(settings).lengthOf(6)
+    for (const row of settings) expect(row.field_ids).lengthOf(1)
+    // Six head coaches coach a team in two seasons.
+    const coaches = await the()
+      .selectFrom('scope_roles')
+      .select('user_id')
+      .where('is_head_coach', '=', true)
+      .where('scope_id', 'in', teamsOf(a))
+      .execute()
+    expect(coaches).lengthOf(51)
+    expect(new Set(coaches.map(row => row.user_id)).size).equals(45)
+    // The server's own preparation reads it as the packed league: built by
+    // the engine, its seasons get 10, 10, 12, 14, 16 and 16 games per team.
+    const prepared = await preparePreview(
+      the(),
+      { userId: a.accounts.admin.userId, isAdmin: false, scopes: [] },
+      a.ids.league,
+      { mode: 'full' },
+      { now: () => new Date('2026-11-16T08:00:00Z') }
+    )
+    const built = await buildSchedule({ input: prepared.input })
+    if (built.kind !== 'options') expect.fail(built.message)
+    expect(
+      built.targets.map(target => target.regular).sort((x, y) => x - y)
+    ).deep.equals([10, 10, 12, 14, 16, 16])
+  })
+
+  it('packed-league-limit is the packed league with a 3 s solver limit', async function () {
+    const m = await runPackedLeagueLimit({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    expect(m.world).equals('packed-league-limit')
+    const setup = await the()
+      .selectFrom('league_schedule_setups')
+      .select(['season_ids', 'solver_limit_ms'])
+      .where('league_id', '=', m.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(setup.season_ids).lengthOf(6)
+    expect(setup.solver_limit_ms).equals(3000)
+    const admin = {
+      userId: m.accounts.admin.userId,
+      isAdmin: false,
+      scopes: []
+    }
+    const clock = { now: () => new Date('2026-11-16T08:00:00Z') }
+    // Only a test server gives the device the league's own limit.
+    expect(
+      (
+        await preparePreview(
+          the(),
+          admin,
+          m.ids.league,
+          { mode: 'full' },
+          clock,
+          {
+            testSettings: true
+          }
+        )
+      ).solverLimitMs
+    ).equals(3000)
+    expect(
+      (
+        await preparePreview(
+          the(),
+          admin,
+          m.ids.league,
+          { mode: 'full' },
+          clock
+        )
+      ).solverLimitMs
+    ).equals(120000)
+  })
+
   it('streaming gives the coach the home team, an empty game and one with two videos', async function () {
     const world = await runStreaming({
       db: the(),
@@ -323,6 +448,267 @@ describe('fixture worlds', function () {
     ).deep.equals(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
     // The world runs on a database the baseline accepts: no other address.
     expect(await refuseRealAddresses(the(), MAILBOX)).not.equals(undefined)
+  })
+
+  it('search gives each scenario its own named organizations, people in and out of reach, and a Jev key', async function () {
+    const { searchOnce } = await import('../../search/engine')
+    const { jevKey } = await import('../../nodeSettings')
+    const world = await runSearch({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const other = await runSearch({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    expect(Object.keys(world.accounts).sort()).deep.equals([
+      'child',
+      'coach',
+      'guardian',
+      'hawk',
+      'nodeAdmin',
+      'reliever',
+      'seasonPlayer',
+      'stranger',
+      'teammate'
+    ])
+    expect(await jevKey(the())).equals(SEARCH_JEV_PLACEHOLDER)
+    const admin = await the()
+      .selectFrom('users')
+      .select('is_admin')
+      .where('id', '=', world.accounts.nodeAdmin.userId as never)
+      .executeTakeFirstOrThrow()
+    expect(admin.is_admin).equals(true)
+    // Every league and team has the coordinates of its city.
+    expect(await hasGroupCoordinates(the())).equals(true)
+    const placed = await the()
+      .selectFrom('teams')
+      .select(['name', 'latitude'])
+      .where('name', 'like', `%${world.nonce}`)
+      .execute()
+    expect(placed.length).equals(9)
+    expect(placed.every(row => row.latitude != null)).equals(true)
+
+    const deps = {
+      space: {
+        endpoint: '',
+        region: '',
+        bucket: '',
+        accessKeyId: '',
+        secretAccessKey: '',
+        pathStyle: false
+      },
+      jevBaseUrl: 'http://127.0.0.1:1',
+      log: () => undefined
+    }
+    const actor = (
+      role: string
+    ): { userId: string; isAdmin: boolean; scopes: [] } => ({
+      userId: world.accounts[role].userId,
+      isAdmin: false,
+      scopes: []
+    })
+    const ask = (
+      text: string,
+      location: any = null
+    ): { text: string; location: any; mode: 'all' } => ({
+      text,
+      location,
+      mode: 'all' as const
+    })
+    const names = async (
+      role: string | null,
+      text: string,
+      location: any = null
+    ): Promise<string[]> =>
+      (
+        await searchOnce(
+          the(),
+          role == null ? null : actor(role),
+          ask(text, location),
+          deps
+        )
+      ).results.map(result => result.name)
+    const tag = world.nonce
+
+    // One field finds the four kinds, the world's own only.
+    const coach = await searchOnce(
+      the(),
+      actor('coach'),
+      ask(`hawk ${tag}`),
+      deps
+    )
+    const kinds = new Set(coach.results.map(result => result.kind))
+    expect([...kinds].sort()).deep.equals([
+      'league',
+      'person',
+      'season',
+      'team'
+    ])
+    // Another world's match one typed word of two, after all of this one's.
+    const mine = coach.results.map(result => result.name.endsWith(tag))
+    expect(mine.lastIndexOf(true)).lessThan(
+      coach.results.findIndex(result => result.name.endsWith(other.nonce))
+    )
+    const follow = (name: string): unknown =>
+      coach.results.find(result => result.name === `${name} ${tag}`)
+    expect((follow('Demo Hawks') as any).follow).equals(null)
+    expect((follow('Ridge Hawks') as any).follow).equals('follow')
+    const shown = coach.results.map(result => result.name)
+    expect(shown.indexOf(`Hawks Blue ${tag}`)).lessThan(
+      shown.indexOf(`Hawks Gold ${tag}`)
+    )
+
+    // The guardian finds the child's teammate only by both names, shortened.
+    expect(await names('guardian', 'Freddie')).includes('Freddie F')
+    expect(await names('guardian', 'Freeman')).deep.equals([])
+    expect(await names('guardian', 'Freddie Freeman')).deep.equals([
+      'Freddie F'
+    ])
+    expect(await names('guardian', 'Yoshinobu Yamamoto')).deep.equals([])
+    // Signed out: organizations, and nobody.
+    const signedOut = await names(null, `hawk ${tag}`)
+    expect(signedOut).includes(`Ridge Hawks ${tag}`)
+    expect(signedOut.some(name => name.startsWith('LaTroy'))).equals(false)
+    expect(await names(null, 'LaTroy Hawkins')).deep.equals([])
+
+    // Add Player finds a player of the same season, never one of another league.
+    const adding = async (text: string): Promise<string[]> =>
+      (
+        await searchOnce(
+          the(),
+          actor('coach'),
+          { text, location: null, mode: 'people', forTeam: world.ids.team },
+          deps
+        )
+      ).results.map(result => result.name)
+    expect(await adding('Corbin')).deep.equals(['Corbin Burnes'])
+    expect(await adding('Yoshinobu Yamamoto')).deep.equals([])
+    expect(await adding('Freddie')).deep.equals([])
+
+    // The pills the location scenarios tap.
+    const pills = async (text: string): Promise<string[]> =>
+      (await searchOnce(the(), actor('coach'), ask(text), deps)).locations.map(
+        location => location.label
+      )
+    expect((await pills('san die'))[0]).equals('San Diego, CA')
+    expect(await pills('californ')).includes('California')
+
+    // San Diego first, then the cities around it by distance; no people.
+    const sanDiego = {
+      kind: 'city',
+      id: 'geonames:5391811',
+      label: 'San Diego, CA',
+      city: 'San Diego',
+      region: 'California',
+      country: 'US',
+      latitude: 32.71571,
+      longitude: -117.16472
+    }
+    const widened = await searchOnce(
+      the(),
+      actor('coach'),
+      ask(`hawk ${tag}`, sanDiego),
+      deps
+    )
+    // Another world's are in the same rings, after this one's in each.
+    const teams = widened.results
+      .filter(result => result.kind === 'team' && result.name.endsWith(tag))
+      .map(result => result.name.replace(` ${tag}`, ''))
+    expect(teams).deep.equals([
+      'Demo Hawks',
+      'Bay Hawks',
+      'Ridge Hawks',
+      'Hawks Blue',
+      'Hawks Gold',
+      'East Hawks',
+      'North Hawks',
+      'Desert Hawks',
+      'Capital Hawks'
+    ])
+    expect(widened.results.some(result => result.kind === 'person')).equals(
+      false
+    )
+    // California only, with no widening.
+    const california = await names('coach', `hawk ${tag}`, {
+      kind: 'region',
+      id: 'region:US:California',
+      label: 'California',
+      region: 'California',
+      country: 'US'
+    })
+    expect(california).includes(`Capital Hawks ${tag}`)
+    expect(california.some(name => name.startsWith('Desert'))).equals(false)
+  })
+
+  it('search knows a database without organization coordinates', async function () {
+    const { sql } = await import('kysely')
+    await the()
+      .transaction()
+      .execute(async trx => {
+        await sql`alter table leagues drop column latitude cascade`.execute(trx)
+        expect(await hasGroupCoordinates(trx)).equals(false)
+        throw new Error('rolled back')
+      })
+      .catch((error: unknown) => {
+        expect((error as Error).message).equals('rolled back')
+      })
+    expect(await hasGroupCoordinates(the())).equals(true)
+  })
+
+  it('tess gives the admin Demo Hawks in the umpired league, eight games, a player the admin cannot see and room for its sign-in codes, twice over', async function () {
+    const worlds = [
+      await runTess({ db: the(), mailbox: MAILBOX, nonce: makeNonce() }),
+      await runTess({ db: the(), mailbox: MAILBOX, nonce: makeNonce() })
+    ]
+    const [world, again] = worlds
+    expect(again.ids.teamA).not.equals(world.ids.teamA)
+    const hawks = await the()
+      .selectFrom('teams')
+      .select('name')
+      .where('id', '=', world.ids.teamA)
+      .executeTakeFirstOrThrow()
+    expect(hawks.name).equals('Demo Hawks')
+    const games = await the()
+      .selectFrom('games')
+      .select(['id', 'status'])
+      .where(eb =>
+        eb.or([
+          eb('home_team_id', '=', world.ids.teamA),
+          eb('away_team_id', '=', world.ids.teamA)
+        ])
+      )
+      .execute()
+    expect(games).length(8)
+    expect(games.filter(game => game.status === 'final')).length(7)
+    const umpire = await the()
+      .selectFrom('league_umpires')
+      .select('user_id')
+      .where('league_id', '=', world.ids.league)
+      .executeTakeFirstOrThrow()
+    expect(umpire.user_id).equals(world.accounts.admin.userId)
+    const hidden = await the()
+      .selectFrom('memberships')
+      .select(['team_id', 'jersey'])
+      .where('user_id', '=', world.ids.hiddenPlayer as never)
+      .executeTakeFirstOrThrow()
+    expect(hidden.team_id).equals(world.ids.standaloneTeam)
+    const adminTeams = await the()
+      .selectFrom('memberships')
+      .select('team_id')
+      .where('user_id', '=', world.accounts.admin.userId as never)
+      .execute()
+    expect(adminTeams.map(row => row.team_id)).not.includes(
+      world.ids.standaloneTeam
+    )
+    const scale = await the()
+      .selectFrom('system_settings')
+      .select('value')
+      .where('key', '=', 'test.rateLimitScale')
+      .executeTakeFirstOrThrow()
+    expect(scale.value).equals(RATE_LIMIT_SCALE)
   })
 
   it('creates accounts with no role by default and distinct passwords', async function () {

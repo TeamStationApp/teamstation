@@ -1,10 +1,11 @@
-import { buildOptionsAsync } from '../common/autoScheduler'
 import { asPreparedPreview } from '../common/schedulePreviews'
+import { buildSchedule, engineResult } from '../common/scheduler/engine'
 
 /**
  * Integration fixtures emulate the device computation between the two HTTP
- * calls, yielding as a device does, so the server in the same process keeps
- * serving (and closing idle connections) while it runs.
+ * calls with the C++ engine's Node addon, which builds on a libuv worker, so
+ * the server in the same process keeps serving (and closing idle
+ * connections) while it runs.
  */
 export async function deviceSchedulerResponse(
   request: (method: string, path: string, body?: unknown) => Promise<Response>,
@@ -23,7 +24,12 @@ export async function deviceSchedulerResponse(
   const completed = await request(
     'PUT',
     `/schedule-previews/${prepared.id}/result`,
-    await buildOptionsAsync(prepared.input)
+    engineResult(
+      await buildSchedule({
+        input: prepared.input,
+        limitMs: prepared.solverLimitMs
+      })
+    )
   )
   return new Response(await completed.text(), {
     status: completed.ok ? 201 : completed.status,

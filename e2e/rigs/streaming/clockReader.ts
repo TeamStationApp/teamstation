@@ -186,25 +186,41 @@ function labelAt(picture: Picture, frame: Box, dx: number, dy: number): string {
 }
 
 /**
- * The epoch millisecond a reading shows, taking the bench day from `nearMs`
- * (the moment the picture was taken): the reading is the instant on the bench
- * clock closest to it.
+ * When a camera's burned clock read zero, and how long it runs before it
+ * reads zero again: a fixture's clock counts from its start and starts over
+ * each loop, as a day's clock does at midnight.
+ */
+export interface ClockBase {
+  startedAtMs: number
+  loopMs: number
+}
+
+export const DAY_MS = 86_400_000
+
+/** How far the publisher's clock may run ahead of this machine's. */
+export const CLOCK_SKEW_MS = 5000
+
+/** A clock that shows the time of day on a bench `offsetMinutes` from UTC. */
+export function benchClock(offsetMinutes = 0): ClockBase {
+  return { startedAtMs: -offsetMinutes * 60_000, loopMs: DAY_MS }
+}
+
+/**
+ * The epoch millisecond a reading shows: in the latest loop of `base` whose
+ * frame is not after `nearMs`, the moment the picture was taken, since a
+ * watcher never shows a frame before it was sent. A scrub back further than
+ * a whole loop would read a loop too late.
  */
 export function readingEpochMs(
   reading: Pick<ClockReading, 'msOfDay'>,
   nearMs: number,
-  offsetMinutes = 0
+  base: ClockBase
 ): number {
-  const day = 86_400_000
-  const offset = offsetMinutes * 60_000
-  const localNear = nearMs + offset
-  const midnight = Math.floor(localNear / day) * day
-  const candidates = [-day, 0, day].map(
-    shift => midnight + shift + reading.msOfDay - offset
+  const { startedAtMs, loopMs } = base
+  const loop = Math.floor(
+    (nearMs + CLOCK_SKEW_MS - startedAtMs - reading.msOfDay) / loopMs
   )
-  return candidates.reduce((best, at) =>
-    Math.abs(at - nearMs) < Math.abs(best - nearMs) ? at : best
-  )
+  return startedAtMs + Math.max(0, loop) * loopMs + reading.msOfDay
 }
 
 /**

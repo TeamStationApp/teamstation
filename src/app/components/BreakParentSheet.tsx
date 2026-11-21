@@ -1,9 +1,10 @@
 import React from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import type { ParentPreview } from '../../common/groupLinks'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { Modal } from './Modal'
 
 export interface BreakParentSheetProps {
   preview: ParentPreview

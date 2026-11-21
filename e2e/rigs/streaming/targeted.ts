@@ -4,7 +4,17 @@ import { join } from 'node:path'
 
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
-import { MIN_CONFIDENCE, readingEpochMs, type TileClock } from './clockReader'
+import {
+  type ClockBase,
+  MIN_CONFIDENCE,
+  readingEpochMs,
+  type TileClock
+} from './clockReader'
+import {
+  DropletPublisher,
+  type DropletPublisherOptions,
+  requirePublisher
+} from './dropletPublisher'
 import { type OwnerApi, ownerApi } from './ownerApi'
 import type { SoakSampler } from './soakRun'
 import { signInApp } from './soakSignIn'
@@ -27,14 +37,14 @@ import {
   signInTv,
   type StreamingWorld,
   TV_APP,
-  tvKit
+  tvKit,
+  TvSignInError
 } from './streamingSession'
 import { ChromeSurface } from './surfaces/chrome'
 import { MobileSafariSurface } from './surfaces/mobileSafari'
 import { NativeAppSurface } from './surfaces/nativeApp'
 import type { SoakSurfaceDriver } from './surfaces/surface'
-import type { TvRemote } from './surfaces/tv'
-import { SyntheticPublisher } from './syntheticPublisher'
+import type { TvCapture, TvRemote } from './surfaces/tv'
 
 /**
  * The targeted streaming scenarios' runner (`e2e/tests/streaming/targeted/`).
@@ -130,12 +140,13 @@ export function fractionFor(
 export function tileMoments(
   clocks: TileClock[],
   atMs: number,
-  offsetMinutes = 0
+  baseOf: (angle: string) => ClockBase | undefined
 ): Map<string, number> {
   const out = new Map<string, number>()
   for (const { angle, reading } of clocks) {
     if (reading == null || reading.confidence < MIN_CONFIDENCE) continue
-    out.set(angle, readingEpochMs(reading, atMs, offsetMinutes))
+    const base = baseOf(angle)
+    if (base != null) out.set(angle, readingEpochMs(reading, atMs, base))
   }
   return out
 }
@@ -307,7 +318,8 @@ export interface TargetedSession {
   record: Recorder
   /** When the cameras started publishing. */
   takeStartMs: number
-  offsetMinutes: number
+  /** Where a camera's burned clock starts, by its label. */
+  clockBase: (label: string) => ClockBase | undefined
   streamId: (label: string) => string
   /** A look at a watcher: its probe, with each tile's clock where the surface reads clocks. */
   look: (watcher: Watcher) => Promise<Look>
@@ -368,7 +380,7 @@ export function lookFrom(
   probe: Awaited<ReturnType<SoakSurfaceDriver['probe']>>,
   clocks: TileClock[],
   atMs: number,
-  offsetMinutes: number
+  baseOf: (angle: string) => ClockBase | undefined
 ): Look {
   if (probe.tiles == null) {
     return {
@@ -377,7 +389,7 @@ export function lookFrom(
       ...(probe.reason == null ? {} : { reason: probe.reason })
     }
   }
-  const moments = tileMoments(clocks, atMs, offsetMinutes)
+  const moments = tileMoments(clocks, atMs, baseOf)
   return {
     atMs,
     tiles: probe.tiles.map(tile => ({
@@ -394,6 +406,8 @@ export interface PublisherLike {
   start: () => Promise<void>
   stop: () => Promise<void>
   cut: (seconds: number) => Promise<void>
+  /** Where its burned clock starts, once it has started. */
+  clockBase: () => ClockBase | undefined
 }
 
 /** What `runTargeted` reaches outside this process; the real ones unless a test stands in. */
@@ -408,14 +422,12 @@ export interface TargetedDeps {
   tvKit: (
     ctx: E2eContext,
     settings: StreamingWorld['settings']
-  ) => { tv: TargetedDriver; remote: TvRemote }
+  ) => { tv: TargetedDriver; remote: TvRemote; capture?: TvCapture }
   signInTv: typeof signInTv
   signInApp: typeof signInApp
   recordSessions: (world: StreamingWorld, file: string) => Promise<void>
   memorySamplers: typeof memorySamplers
-  publisher: (
-    options: ConstructorParameters<typeof SyntheticPublisher>[0]
-  ) => PublisherLike
+  publisher: (options: DropletPublisherOptions) => PublisherLike
   run: (command: string, args: string[]) => Promise<unknown>
   now: () => number
   sleep: (ms: number) => Promise<void>
@@ -431,7 +443,7 @@ export const realTargetedDeps: TargetedDeps = {
     await recordSessions(world, file)
   },
   memorySamplers,
-  publisher: options => new SyntheticPublisher(options),
+  publisher: options => new DropletPublisher(options),
   run: async (command, args) => await run(command, args),
   now: Date.now,
   sleep: realSleep
@@ -450,7 +462,17 @@ export async function runTargeted(
   deps: TargetedDeps = realTargetedDeps
 ): Promise<TargetedOutcome> {
   const world = await deps.openWorld({ ctx, cwd, synthetic: setup.synthetic })
-  const kit = deps.deviceKit(ctx, world.settings)
+  let publisher: ReturnType<typeof requirePublisher>
+  let kit: ReturnType<TargetedDeps['deviceKit']>
+  try {
+    // Before any device: a stack with no publisher droplet has no cameras.
+    publisher = requirePublisher(world.handle)
+    kit = deps.deviceKit(ctx, world.settings)
+  } catch (error) {
+    // The world's log mirror would otherwise hold the run open.
+    await world.close()
+    throw error
+  }
   const record = new Recorder(ctx.artifact('targeted.jsonl'), kit.saveShot)
   const watchers: Watcher[] = []
   const urlFiles: string[] = []
@@ -499,14 +521,18 @@ export async function runTargeted(
           }
         })
       } else if (role === 'tv') {
-        const { tv, remote } = deps.tvKit(ctx, world.settings)
+        const { tv, remote, capture } = deps.tvKit(ctx, world.settings)
         try {
           await deps.signInTv(remote, world)
         } catch (error) {
           // A TV that never gets past signing in is the TV's failure, not the
-          // run's: the other watchers carry on without it.
+          // run's: the other watchers carry on without it. What its screen
+          // held and a picture of it say why.
+          if (error instanceof TvSignInError) {
+            writeFileSync(ctx.artifact('tv-signin-dump.txt'), error.lastDump)
+          }
           await record.step(
-            { role },
+            { role, ...(capture == null ? {} : { screenshot: capture }) },
             'sign-in',
             'TeamStation TV opens and signs in',
             (error as Error).message,
@@ -544,7 +570,7 @@ export async function runTargeted(
           surface: new MobileSafariSurface({
             name: role,
             device,
-            gameUrl: world.links.web,
+            gameUrl: safariGameUrl(world.links.web),
             ...(setup.safariAngle == null ? {} : { angle: setup.safariAngle }),
             saveShot: kit.saveShot
           }),
@@ -585,14 +611,7 @@ export async function runTargeted(
       urlFiles.push(urlFile)
       publishers.set(
         stream.label,
-        deps.publisher({
-          ffmpeg: world.settings.ffmpeg,
-          urlFile,
-          label: stream.label,
-          ...(world.settings.offsetMinutes == null
-            ? {}
-            : { offsetMinutes: world.settings.offsetMinutes })
-        })
+        deps.publisher({ publisher, urlFile, label: stream.label })
       )
     }
     const takeStartMs = deps.now()
@@ -617,7 +636,8 @@ export async function runTargeted(
       }
     }
 
-    const offsetMinutes = world.settings.offsetMinutes ?? 0
+    const clockBase = (label: string): ClockBase | undefined =>
+      publishers.get(label)?.clockBase()
     const look = async (watcher: Watcher): Promise<Look> => {
       const atMs = deps.now()
       const probe = await watcher.surface.probe()
@@ -627,7 +647,7 @@ export async function runTargeted(
       } catch {
         // No clocks is a look without moments, not a failed look.
       }
-      return lookFrom(probe, clocks, atMs, offsetMinutes)
+      return lookFrom(probe, clocks, atMs, clockBase)
     }
     const session: TargetedSession = {
       world,
@@ -636,7 +656,7 @@ export async function runTargeted(
       owner: ownerApi({ api: world.handle.api, token: world.ownerToken }),
       record,
       takeStartMs,
-      offsetMinutes,
+      clockBase,
       streamId: label => {
         const stream = world.world.streams.find(s => s.label === label)
         if (stream == null) throw new Error(`no synthetic camera "${label}"`)
@@ -708,4 +728,18 @@ export async function runTargeted(
       .map(([surface]) => surface),
     steps: ctx.artifact('targeted.jsonl')
   }
+}
+
+/**
+ * The game page Safari opens: with `SAFARI_DEBUG=1`, under `?debug=1`, so
+ * every screenshot carries the player's readout of what its tile is doing.
+ */
+export function safariGameUrl(
+  link: string,
+  env: Record<string, string | undefined> = process.env
+): string {
+  if (env.SAFARI_DEBUG !== '1') return link
+  const url = new URL(link)
+  url.searchParams.set('debug', '1')
+  return url.toString()
 }

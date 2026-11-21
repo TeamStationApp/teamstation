@@ -36,6 +36,24 @@ export interface LocalSettings {
    * `stack prune` adds `reap`.
    */
   stackProvider?: { command: string[] }
+  /**
+   * A maestro-d hub to drive devices through instead of a daemon on this
+   * machine: its address, and a file (mode 0600) holding its client token.
+   * Device ids are then the hub's, `<udid>@<hub>`.
+   */
+  maestroHub?: {
+    address: string
+    tokenFile: string
+    /** Signs WebDriverAgent on a hub's real iPhones and iPads. */
+    teamId?: string
+  }
+  /**
+   * The bench camera's stream, and where each device's screen sits in its
+   * frame and its field's place at rest there (`w:h:x:y:fieldY`, then `:cw` or
+   * `:ccw` for a phone held sideways), worked out afresh before each run that
+   * reads motion (`e2e/rigs/app/keyboardMotion.ts`).
+   */
+  webcam?: { url: string; crops?: Record<string, string> }
 }
 
 export function settingsPath(env = process.env): string {
@@ -52,11 +70,20 @@ export function expandHome(value: unknown, home = homedir()): unknown {
     : value
 }
 
+/** `~/` expanded in a value, and in the strings of an object one level down. */
+function expandSetting(value: unknown): unknown {
+  if (value == null || typeof value !== 'object' || Array.isArray(value))
+    return expandHome(value)
+  return Object.fromEntries(
+    Object.entries(value).map(([key, inner]) => [key, expandHome(inner)])
+  )
+}
+
 export function loadSettings(path = settingsPath()): LocalSettings {
   if (!existsSync(path)) return {}
   const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
   return Object.fromEntries(
-    Object.entries(raw).map(([key, value]) => [key, expandHome(value)])
+    Object.entries(raw).map(([key, value]) => [key, expandSetting(value)])
   )
 }
 

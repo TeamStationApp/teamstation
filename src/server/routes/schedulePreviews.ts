@@ -11,7 +11,9 @@ import {
 import type { Actor } from '../auth/sessions'
 import {
   completePreview,
+  discardPreparation,
   editPreview,
+  latestPreview,
   preparePreview,
   previewFor,
   previewView
@@ -50,10 +52,15 @@ const param = (value: unknown): string => {
  */
 export function schedulePreviewRoutes(
   db: Kysely<Database>,
-  options: { clock?: Clock } = {}
+  options: {
+    clock?: Clock
+    /** A test server: a league's own solver limit is honoured. */
+    testSettings?: boolean
+  } = {}
 ): Router {
   const router = Router()
   const clock = options.clock ?? realClock
+  const testSettings = options.testSettings === true
   // Builds were once made here, on the server; the device makes them now,
   // from a preparation. An app from before that is told to update instead
   // of being sent a reply it cannot read.
@@ -69,9 +76,19 @@ export function schedulePreviewRoutes(
     withAsync(async (req, res) => {
       const leagueId = param(req.params.leagueId)
       const request = clean(asPreviewRequest, req.body)
-      res
-        .status(201)
-        .json(await preparePreview(db, actor(req), leagueId, request, clock))
+      res.status(201).json(
+        await preparePreview(db, actor(req), leagueId, request, clock, {
+          testSettings
+        })
+      )
+    })
+  )
+  router.delete(
+    '/schedule-previews/:previewId/preparation',
+    requireActor,
+    withAsync(async (req, res) => {
+      await discardPreparation(db, actor(req), param(req.params.previewId))
+      res.json({ discarded: true })
     })
   )
   router.put(
@@ -112,6 +129,13 @@ export function schedulePreviewRoutes(
       const leagueId = param(req.params.leagueId)
       await requireGroupAdmin(db, actor(req), { kind: 'league', id: leagueId })
       res.json({ items: await gamesToReschedule(db, leagueId, clock) })
+    })
+  )
+  router.get(
+    '/leagues/:leagueId/schedule-previews/latest',
+    requireActor,
+    withAsync(async (req, res) => {
+      res.json(await latestPreview(db, actor(req), param(req.params.leagueId)))
     })
   )
   router.get(

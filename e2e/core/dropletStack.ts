@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import type { AttachedHandle, StackEntry } from './attach'
 import type { FixtureManifest } from './fixtures'
 import type { ServerError } from './invariants'
+import type { JevControl, JevView } from './jevStub'
 import { ROOT } from './manifest'
 import { BlockedError, HarnessError } from './result'
 import type { StackHandle } from './spec'
@@ -139,8 +140,14 @@ export async function seedOnStack(
 
 /** The fault server's control route on a droplet, by its token. */
 export interface FaultControl {
+  /** Any of the fault server's control routes, `route` under /__e2e/. */
+  call: (method: string, route: string, body?: unknown) => Promise<unknown>
   setFault: (fault: string | null) => Promise<void>
   serverErrors: (since: number) => Promise<ServerError[]>
+  /** The Jev stand-in's script and the requests it has seen since it was set. */
+  jev: () => Promise<JevView>
+  /** Replaces the Jev stand-in's script; what it leaves out is the default. */
+  setJev: (control: Partial<JevControl>) => Promise<JevView>
 }
 
 export function faultControl(
@@ -170,6 +177,7 @@ export function faultControl(
     return await reply.json()
   }
   return {
+    call,
     setFault: async fault => {
       await call('PUT', 'fault', { fault })
     },
@@ -178,7 +186,9 @@ export function faultControl(
         (await call('GET', `errors?since=${since}`)) as {
           errors: ServerError[]
         }
-      ).errors
+      ).errors,
+    jev: async () => (await call('GET', 'jev')) as JevView,
+    setJev: async control => (await call('PUT', 'jev', control)) as JevView
   }
 }
 
@@ -222,7 +232,8 @@ export function dropletStackHandle(
       : {
           setFault: async (fault: string | null) => {
             await control.setFault(fault)
-          }
+          },
+          jev: { read: control.jev, set: control.setJev }
         })
   }
 }

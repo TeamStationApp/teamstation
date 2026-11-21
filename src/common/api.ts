@@ -134,9 +134,12 @@ import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
+  asLatestPreview,
   asPublication,
   asSchedulePreview,
+  type BuildSession,
   type GameToReschedule,
+  type LatestPreview,
   type PreviewRequest,
   type Publication,
   type SchedulePreview
@@ -177,6 +180,7 @@ import type {
 } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import { SCORING_FEATURE_HEADER, SCORING_FEATURES } from './scoring/teamRecord'
+import { SEARCH_RESULTS_MAX } from './search/types'
 import {
   asScheduleSetup,
   asSeasonScheduleSettings,
@@ -2322,8 +2326,26 @@ const cleanRosterCandidate = asObject({
 })
 export const asRosterCandidate: Cleaner<RosterCandidate> = cleanRosterCandidate
 
-/** The most rows one roster search answers: there are no further pages. */
-export const ROSTER_CANDIDATE_MAX = 100
+/**
+ * A player a search found, with the typed words, folded, that found him
+ * (`matched`): a search keeps anybody any one typed word finds, so these
+ * may be fewer than were typed. Absent when nothing typed found him.
+ */
+export type FoundRosterCandidate = RosterCandidate & { matched?: string[] }
+const cleanFoundWords = asObject({ matched: asOptional(asArray(asString)) })
+export const asFoundRosterCandidate: Cleaner<FoundRosterCandidate> = raw => {
+  const candidate = asRosterCandidate(raw)
+  const { matched } = cleanFoundWords(raw)
+  return matched == null || matched.length === 0
+    ? candidate
+    : { ...candidate, matched }
+}
+
+/**
+ * The most rows one roster search answers, as the search engine shows them:
+ * there are no further pages.
+ */
+export const ROSTER_CANDIDATE_MAX = SEARCH_RESULTS_MAX
 
 /**
  * An existing player's add: their entry, with the notice their side was sent
@@ -3541,6 +3563,15 @@ export interface RequestOptions {
    */
   deadline?: boolean
   /**
+   * Leaves `offline` as it was, whatever the request finds: its failure is
+   * not the phone going offline, and its answer not the phone back. For the
+   * device's own background calls (push registration), which run at moments
+   * of their own, such as an iPhone coming back from the system's
+   * notification prompt, and say nothing of the screen in front of the
+   * person. The app's own requests still say when the network is gone.
+   */
+  keepsOffline?: boolean
+  /**
    * The phone answers what it stored for the read at once, when it stored
    * anything, and asks the server behind it: for the scoring screen's own
    * reads as it opens. The web keeps nothing, and reads the server.
@@ -3744,6 +3775,20 @@ class TimedOut extends DeadlinePassed {
   ) {
     super(message)
   }
+}
+
+/** A device's own two notification switches, as its Account shows them. */
+export interface PushSwitches {
+  messages: boolean
+  rsvpEvents: boolean
+}
+
+/** `POST /me/push-registrations`: one device's push address and switches. */
+export interface PushRegistration extends PushSwitches {
+  platform: 'ios' | 'android' | 'web'
+  /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
+  address: string
+  environment: 'production' | 'development'
 }
 
 export interface ClientOptions {
@@ -4601,6 +4646,16 @@ export class TeamStationClient {
     return await this.request('PUT', '/node/settings', asNodeSettings, settings)
   }
 
+  /** A node administrator sets or replaces search's Jev API key. */
+  async setJevKey(apiKey: string): Promise<void> {
+    await this.request('PUT', '/node/jev-key', asUnknownOk, { apiKey })
+  }
+
+  /** A node administrator removes the Jev API key. */
+  async clearJevKey(): Promise<void> {
+    await this.request('DELETE', '/node/jev-key', asUnknownOk)
+  }
+
   /** Whether a game's board shows over its videos, and where. */
   async scoreboardOverlay(gameId: string): Promise<ScoreboardOverlay> {
     return await this.request(
@@ -4689,6 +4744,11 @@ export class TeamStationClient {
     this.onDeadlineMissed = options.onDeadlineMissed
   }
 
+  /** Sets `offline` to what a request found, unless it keeps it (`keepsOffline`). */
+  private found(options: RequestOptions, offline: boolean): void {
+    if (options.keepsOffline !== true) this.offline = offline
+  }
+
   /** Tells `onDeadlineMissed`; a listener that throws is not the request's failure. */
   protected deadlineMissed(): void {
     try {
@@ -4700,6 +4760,79 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  /**
+   * The VAPID public key a browser subscribes to push with, or null while
+   * the server sends no Web Push.
+   */
+  async webPushKey(): Promise<string | null> {
+    try {
+      return (
+        await this.request(
+          'GET',
+          '/push/web-key',
+          asObject({ publicKey: asString })
+        )
+      ).publicKey
+    } catch (error) {
+      if (error instanceof HttpError && error.code === 'notFound') return null
+      throw error
+    }
+  }
+
+  /**
+   * Where this signed-in device is woken: a phone's token or a browser's
+   * subscription (`address`, its JSON). Posting the same one again keeps one
+   * registration, moved to this session. Like the other push registration
+   * calls, it gives up as `offline` past the request deadline: the device
+   * sends them one after another, and one left hanging on a stalled link
+   * would hold up every one behind it, sign-out's among them. None of them
+   * changes the client's `offline` (`keepsOffline`): the device sends them
+   * in the background, and the phone's banner is for the app's own requests.
+   */
+  async registerPush(registration: PushRegistration): Promise<string> {
+    return (
+      await this.request(
+        'POST',
+        '/me/push-registrations',
+        asObject({ id: asString }),
+        registration,
+        { deadline: true, keepsOffline: true }
+      )
+    ).id
+  }
+
+  /**
+   * Changes this device's switches on the registration this session made
+   * (`registerPush`'s id); a switch left out keeps its value.
+   */
+  async updatePush(
+    id: string,
+    change: Partial<PushSwitches>
+  ): Promise<PushSwitches> {
+    const { messages, rsvpEvents } = await this.request(
+      'PATCH',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asObject({ messages: asBoolean, rsvpEvents: asBoolean }),
+      change,
+      { deadline: true, keepsOffline: true }
+    )
+    return { messages, rsvpEvents }
+  }
+
+  /**
+   * Deletes one of the caller's push registrations (`registerPush`'s id): at
+   * sign-out, while the session is still there to say whose it is.
+   */
+  async unregisterPush(id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asUnknownOk,
+      undefined,
+      { deadline: true, keepsOffline: true }
+    )
   }
 
   /** Whether this account has unlocked chat, and how. */
@@ -5733,37 +5866,113 @@ export class TeamStationClient {
     )
   }
 
-  /** Builds a preview of the league's schedule. See `PreviewRequest`. */
+  /**
+   * Builds a preview on this device: the server prepares the run, this
+   * platform's engine builds it, and the result is stored. The session
+   * hears each step with its time and the engine's progress, answers each
+   * time limit, and aborts the build, which discards the preparation and
+   * rejects with the `canceled` failure, until the result is stored. A
+   * build the engine cannot make, or a device that cannot run it, discards
+   * the preparation and throws its typed failure (`EngineFailureError`),
+   * and nothing is sent; so does any other error from the engine or the
+   * upload. Once a result has been sent, the server may have stored it
+   * though its answer was lost: when the discard is refused because the
+   * preview is built, that preview is opened instead, since it was kept,
+   * unless the server discarded it (a recalculation that placed nothing).
+   * Cancel during a wait between uploads discards at once.
+   */
   async buildSchedulePreview(
     leagueId: string,
     request: PreviewRequest,
+    session: BuildSession = {},
     /**
      * The waits before each retry while the device is offline or the server
      * fails, about a minute and a half in all.
      */
     retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000, 30000, 30000]
   ): Promise<SchedulePreview> {
+    const { onProgress, signal } = session
+    // This platform's engine: the web's worker, the phones' native module.
+    const engine = await import('./scheduler/engine')
+    // Read afresh at each step: the admin cancels while the build runs.
+    const aborted = (): boolean => signal?.aborted === true
+    const canceled = (): Error =>
+      new engine.EngineFailureError('canceled', engine.CANCELED.message)
+    if (aborted()) throw canceled()
+    onProgress?.({ kind: 'phase-start', phase: 'preparing' })
+    let started = Date.now()
     const prepared = await this.request(
       'POST',
       `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/preparations`,
       asPreparedPreview,
       request
     )
-    const { buildOptionsAsync } = await import('./autoScheduler')
+    onProgress?.({
+      kind: 'phase',
+      phase: 'preparing',
+      ms: Date.now() - started
+    })
+    // Whether a result has been sent, which the server may have stored.
+    let sent = false
+    // A canceled or failed build leaves nothing behind on the server.
+    const discard = async (
+      failure: unknown = canceled()
+    ): Promise<SchedulePreview> => {
+      try {
+        await this.cancelSchedulePreparation(prepared.id)
+      } catch (error) {
+        // The result arrived though its answer did not, so the server kept
+        // the preview: open it rather than call it discarded. A preview the
+        // server discarded itself, as a recalculation that placed nothing
+        // again, is not opened: the build's own failure says why.
+        if (sent && error instanceof HttpError && error.code === 'conflict') {
+          const kept = await this.schedulePreview(prepared.id)
+          if (kept.status === 'open' || kept.status === 'published') return kept
+        }
+        // The discard's own failure is not the build's.
+      }
+      throw failure
+    }
+    if (aborted()) return await discard()
+    let built: Awaited<ReturnType<typeof engine.buildSchedule>>
+    try {
+      built = await engine.buildSchedule(
+        { input: prepared.input, limitMs: prepared.solverLimitMs },
+        { onProgress, onLimit: session.onLimit, signal }
+      )
+    } catch (error) {
+      return await discard(error)
+    }
+    if (aborted() || (built.kind === 'failure' && built.failure === 'canceled'))
+      return await discard()
+    if (built.kind === 'failure')
+      return await discard(
+        new engine.EngineFailureError(built.failure, built.message)
+      )
     // The options are stored as built, summaries and all.
-    const result = await buildOptionsAsync(prepared.input)
-    // A search can take minutes, so while the device is offline or the
+    const result = engine.engineResult(built)
+    // A build can take minutes, so while the device is offline or the
     // server fails (a deploy, a proxy, a fault) the same result is sent
     // again, which the server accepts once. A refusal of the result itself
     // is final.
+    onProgress?.({ kind: 'phase-start', phase: 'upload' })
+    started = Date.now()
     for (let attempt = 0; ; attempt++) {
+      if (aborted()) return await discard()
       try {
-        return await this.request(
+        sent = true
+        const preview = await this.request(
           'PUT',
           `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
           asSchedulePreview,
           result
         )
+        onProgress?.({
+          kind: 'phase',
+          phase: 'upload',
+          ms: Date.now() - started
+        })
+        return preview
       } catch (error) {
         const wait = retryDelaysMs[attempt]
         if (
@@ -5771,10 +5980,41 @@ export class TeamStationClient {
           !(error instanceof HttpError) ||
           !['offline', 'unavailable', 'internal'].includes(error.code)
         )
-          throw error
-        await new Promise(resolve => setTimeout(resolve, wait))
+          return await discard(error)
+        // Cancel during the wait discards at once.
+        await new Promise<void>(resolve => {
+          const done = (): void => {
+            clearTimeout(timer)
+            signal?.removeEventListener('abort', done)
+            resolve()
+          }
+          const timer = setTimeout(done, wait)
+          signal?.addEventListener('abort', done)
+          if (aborted()) done()
+        })
       }
     }
+  }
+
+  /**
+   * Discards a preview's preparation while its build has not been stored,
+   * as when the admin cancels it.
+   */
+  async cancelSchedulePreparation(previewId: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/schedule-previews/${encodeURIComponent(previewId)}/preparation`,
+      asUnknown
+    )
+  }
+
+  /** The league's most recent open or published preview, or null. */
+  async latestSchedulePreview(leagueId: string): Promise<LatestPreview | null> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/latest`,
+      asLatestPreview
+    )
   }
 
   async schedulePreview(previewId: string): Promise<SchedulePreview> {
@@ -6914,7 +7154,7 @@ export class TeamStationClient {
     limit?: number
     capped?: boolean
     signal?: AbortSignal
-  }): Promise<RosterCandidate[]> {
+  }): Promise<FoundRosterCandidate[]> {
     const params = new URLSearchParams({ forTeam: ask.teamId })
     if (ask.gameId != null) params.set('forGame', ask.gameId)
     if (ask.q != null && ask.q !== '') params.set('q', ask.q)
@@ -6923,7 +7163,7 @@ export class TeamStationClient {
     return await this.request(
       'GET',
       `/users?${params.toString()}`,
-      asArray(asRosterCandidate),
+      asArray(asFoundRosterCandidate),
       undefined,
       ask.signal == null ? {} : { signal: ask.signal }
     )
@@ -8066,6 +8306,20 @@ export class TeamStationClient {
   }
 
   /**
+   * Keeps the people a search for `teamId` found, each with the typed words
+   * that found him (`matched`), as the ones Add Existing Player lists at
+   * once and offline: what an answer of `rosterCandidates` keeps by itself,
+   * for an answer that came another way (the search socket). The web keeps
+   * none.
+   */
+  async keepRosterCandidates(
+    _teamId: string,
+    _rows: ReadonlyArray<RosterCandidate & { matched?: string[] }>
+  ): Promise<void> {
+    return undefined
+  }
+
+  /**
    * The games this client keeps on the device for one schedule's window
    * (`scope` such as `me` or `team:<id>`), as the page its screen paints
    * before its read returns. The web keeps none: an empty page, which a
@@ -8347,13 +8601,13 @@ export class TeamStationClient {
           )
             throw this.refusal(errorFrom(caught.status, ''))
         }
-        this.offline = true
+        this.found(options, true)
         throw new HttpError(
           'offline',
           'Cannot reach TeamStation. Check your connection and try again.'
         )
       }
-      this.offline = false
+      this.found(options, false)
       if (
         answer.status === 401 &&
         !(method === 'POST' && path.startsWith('/auth/'))
@@ -8419,7 +8673,7 @@ export class TeamStationClient {
       // The caller's own cancel is its own, never no signal.
       if (cancelled || (options.signal?.aborted === true && !expired))
         throw caught
-      this.offline = true
+      this.found(options, true)
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
@@ -8428,7 +8682,7 @@ export class TeamStationClient {
       if (timer != null) clearTimeout(timer)
       options.signal?.removeEventListener('abort', callerAborted)
     }
-    this.offline = false
+    this.found(options, false)
     if (
       response.status === 401 &&
       !(method === 'POST' && path.startsWith('/auth/'))
@@ -8455,7 +8709,7 @@ export class TeamStationClient {
         throw caught
       if (caught instanceof DeadlinePassed) this.deadlineMissed()
       if (!response.ok) throw this.refusal(errorFrom(response.status, ''))
-      this.offline = true
+      this.found(options, true)
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'

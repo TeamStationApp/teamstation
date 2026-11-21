@@ -3,13 +3,19 @@ import { after, afterEach, before, describe, it } from 'mocha'
 import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
+import { TIME_LIMIT_CAUSE } from '../../common/autoScheduler/capacity'
 import type {
   FairnessRow,
   PlannedGame,
   ScheduleOption
 } from '../../common/autoScheduler/types'
 import { foreignZoneName } from '../../common/eventTime'
-import type { AddedGame, SchedulePreview } from '../../common/schedulePreviews'
+import type {
+  AddedGame,
+  BuildSession,
+  SchedulePreview
+} from '../../common/schedulePreviews'
+import { EngineFailureError } from '../../common/scheduler/wire'
 import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
 import {
   chooseCalendarDate,
@@ -128,6 +134,7 @@ function previewOf(overrides: Partial<SchedulePreview> = {}): SchedulePreview {
       option({ reasons: ['Demo Hawks plays 4 of its 5 games on Saturdays'] })
     ],
     blocking: null,
+    provenOptimal: true,
     edits: { option: 0, rejectedGameKeys: [], addedGames: [] },
     replacing: 2,
     publishedOption: null,
@@ -166,7 +173,11 @@ function previewOf(overrides: Partial<SchedulePreview> = {}): SchedulePreview {
 
 function fakeClient(
   first: SchedulePreview | Error,
-  options: { failEdit?: boolean } = {}
+  options: {
+    failEdit?: boolean
+    /** The device's recalculation, given the modal's session. */
+    engine?: (session: BuildSession) => Promise<void>
+  } = {}
 ): {
   client: TeamStationClient
   edits: Array<{
@@ -227,8 +238,13 @@ function fakeClient(
       }
       return current
     },
-    buildSchedulePreview: async (_leagueId: string, request: unknown) => {
+    buildSchedulePreview: async (
+      _leagueId: string,
+      request: unknown,
+      session: BuildSession
+    ) => {
       record.builds.push(request)
+      await options.engine?.(session)
       return { ...current, id: 'spv_two' }
     },
     publishSchedulePreview: async (_id: string, chosen: number) => {
@@ -925,5 +941,69 @@ describe('a schedule preview', () => {
     expect(text()).not.includes('Publish this option')
     // A discarded preview is not recalculated, edited or not.
     expect(recalculateDisabled()).equals(true)
+  })
+
+  it('recalculates in the modal, and says there when it fails', async () => {
+    let session: BuildSession | undefined
+    let fail = false
+    let release = (): void => undefined
+    const edited = previewOf({
+      edits: { option: 0, rejectedGameKeys: ['g1'], addedGames: [] }
+    })
+    const fake = fakeClient(edited, {
+      engine: async given => {
+        session = given
+        given.onProgress?.({ kind: 'phase', phase: 'context', ms: 30 })
+        // The build runs until the test lets it finish.
+        if (!fail)
+          await new Promise<void>(resolve => {
+            release = resolve
+          })
+        if (fail)
+          throw new EngineFailureError('broken', 'The model is too large')
+      }
+    })
+    const opened: string[] = []
+    await show(fake.client, opened)
+    await tapText('Recalculate')
+    expect(text()).includes('Building schedule')
+    expect(text()).includes('Fields and dates read (0.0 s)')
+    release()
+    await settle(50)
+    expect(session).not.equals(undefined)
+    expect(opened).deep.equals(['spv_two'])
+    fail = true
+    await tapText('Recalculate')
+    await settle(50)
+    expect(text()).includes('The schedule couldn’t be built')
+    expect(text()).includes('The model is too large')
+    expect(opened).deep.equals(['spv_two'])
+  })
+
+  it('says a season short at the time limit was not proven the best', async () => {
+    const fake = fakeClient(
+      previewOf({
+        provenOptimal: false,
+        options: [
+          option({
+            unmet: [
+              {
+                seasonId: 'sea_a',
+                message:
+                  'every team gets 3 of the 4 requested regular-season games',
+                cause: TIME_LIMIT_CAUSE
+              }
+            ]
+          })
+        ]
+      })
+    )
+    await show(fake.client)
+    expect(text()).includes(
+      'Demo Regular: every team gets 3 of the 4 requested regular-season games.'
+    )
+    expect(text()).includes(
+      'Why: Not proven optimal: stopped at the time limit.'
+    )
   })
 })

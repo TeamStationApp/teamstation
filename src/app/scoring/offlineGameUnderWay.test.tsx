@@ -88,8 +88,16 @@ describe('a game under way, read ahead and opened with no signal', function () {
       baseUrl: 'http://x/api/v1',
       token: 'token-1',
       fetch: net.fetch,
-      openCache: async userId => {
-        const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+      openCache: async (userId, apiBaseUrl) => {
+        const executor = nodeSqliteExecutor(
+          join(
+            dir,
+            cacheFileName(
+              userId,
+              new URL(apiBaseUrl, 'https://app.example.test').href
+            )
+          )
+        )
         executors.push(executor)
         return await openCacheStore(executor)
       },

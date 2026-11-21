@@ -23,6 +23,17 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import type { Frame } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  type BrowserSession,
+  browserSession,
+  contains,
+  fill,
+  log,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { eventLocalFields, zoneName } from '../common/eventTime'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import type { ScheduleSetup } from '../common/seasonScheduling'
@@ -49,17 +60,6 @@ import {
   MORE_PARKS
 } from '../test/googlePlacesStub'
 import { isShownMapFrame } from '../test/mapFrameProbe'
-import {
-  type BrowserSession,
-  browserSession,
-  contains,
-  fill,
-  log,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 const WIDTH = 402
 const HEIGHT = 874
@@ -701,7 +701,8 @@ async function f2(run: Run): Promise<void> {
     // In the Auto-Scheduler, playoffs joins the run and saves a number.
     await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
     await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
-    await clickLabel(b, 'Demo Playoffs')
+    // The season's checkbox, "Auto-schedule <season>" (a86703d7e).
+    await clickLabel(b, 'Auto-schedule Demo Playoffs')
     await labelled(b, 'Demo Playoffs Regular-season games: 0')
     await scrollToText(b, 'SELECT SEASONS TO AUTO SCHEDULE.')
     await gridTo(b, 'Demo Playoffs Regular-season games: 0')
@@ -834,10 +835,12 @@ async function f3(run: Run): Promise<void> {
   ]
   const setupOf = (seasonId: string): string =>
     `/groups/league/${fx.f.leagueA}/scheduler/seasons/${seasonId}`
-  // seasonA's first period, from Mar 1, ends on May 20.
+  // seasonA's first period, from Mar 1, ends on May 20. A season's periods
+  // each end on a date (a86703d7e): Mar 1 runs to the day before Jun 1, and
+  // Jun 1 to the season's last day.
   await run.visit(setupOf(fx.f.seasonA))
-  await contains(b.page, 'From Mar 1')
-  await contains(b.page, 'From Jun 1')
+  await contains(b.page, 'Mar 1 – May 31')
+  await contains(b.page, 'Jun 1 – Jul 31')
   await clickLabel(b, 'Change the end of Windows from Monday, March 1, 2027')
   await labelled(b, 'Choose 2027-05-31')
   await tapLabel(b, 'Choose 2027-05-20')
@@ -845,8 +848,8 @@ async function f3(run: Run): Promise<void> {
   await contains(b.page, 'Time windows saved.')
   await run.visit(setupOf(fx.f.seasonA))
   await contains(b.page, 'Mar 1 – May 20')
-  await contains(b.page, 'From Jun 1')
-  expect(await pageText(b)).not.includes('From Mar 1')
+  await contains(b.page, 'Jun 1 – Jul 31')
+  expect(await pageText(b)).not.includes('Mar 1 – May 31')
   // Each period now has its Starts and Ends card, so the section is taller
   // than the before shot's: the section's title goes under the header to
   // keep both periods' headings clear of the floating nav bar.
@@ -861,7 +864,7 @@ async function f3(run: Run): Promise<void> {
     const nav = document.querySelector('[role="tablist"]:not([aria-label])')
     return {
       first: box('Mar 1 – May 20').top,
-      second: box('From Jun 1').bottom,
+      second: box('Jun 1 – Jul 31').bottom,
       nav: nav === null ? innerHeight : nav.getBoundingClientRect().top
     }
   })
@@ -952,7 +955,7 @@ async function f3(run: Run): Promise<void> {
   expect(await stored()).deep.equals(copied)
   await writeFile(join(run.artifacts, 'window-gap-build.log'), lines.join('\n'))
   await run.pass(
-    `seasonA's first period ends May 20: after a reload its headings read "Mar 1 – May 20" and "From Jun 1"; the Early warnings say "${gap}"; a build with Work around places none of Option 1's ${days.length} games on May 21 – May 31 (window-gap-build.log); the playoffs copy Demo Regular's windows as one period, Mar 1 – May 20 (shifted 0 days, the June period dropped after the playoffs' end), and a second copy asks "Replace this season’s game windows?" before replacing them`
+    `seasonA's first period ends May 20: after a reload its headings read "Mar 1 – May 20" and "Jun 1 – Jul 31"; the Early warnings say "${gap}"; a build with Work around places none of Option 1's ${days.length} games on May 21 – May 31 (window-gap-build.log); the playoffs copy Demo Regular's windows as one period, Mar 1 – May 20 (shifted 0 days, the June period dropped after the playoffs' end), and a second copy asks "Replace this season’s game windows?" before replacing them`
   )
 }
 
@@ -1457,10 +1460,19 @@ async function f7(run: Run): Promise<void> {
     { timeout: 15000 }
   )
   await new Promise(resolve => setTimeout(resolve, 1000))
+  // The scene on top: the Auto-Scheduler beneath it stays mounted, with its
+  // "Open <season>" links (a86703d7e).
   const rows = await b.page.evaluate(() =>
-    [...document.querySelectorAll('[aria-label^="Open "]')].map(node =>
-      String(node.getAttribute('aria-label')).slice('Open '.length)
-    )
+    [
+      ...document.querySelectorAll(
+        '[data-scene-role="top"] [aria-label^="Open "]'
+      )
+    ]
+      .map(node =>
+        String(node.getAttribute('aria-label')).slice('Open '.length)
+      )
+      // The header's link back to the Field Manager is not a venue row.
+      .filter(name => name !== 'the Field Manager')
   )
   expect(rows).deep.equals([EXAMPLE_PARK.name, ...MORE_PARKS])
   expect(rows.length).greaterThanOrEqual(10)

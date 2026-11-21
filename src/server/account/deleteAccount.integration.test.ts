@@ -531,6 +531,65 @@ describe('deleting an account', function () {
     }
   })
 
+  it('removes the person’s push addresses, with their switches, and reminders sent, and nobody else’s', async () => {
+    const proof = 'b9'.repeat(32)
+    const leaving = await person('Tony Gwynn', 'gwynn@example.test', proof)
+    const staying = await person('Wade Boggs', 'boggs@example.test', proof)
+    for (const [n, who] of [leaving, staying].entries()) {
+      const session = await h.db
+        .selectFrom('auth_sessions')
+        .select('id')
+        .where('user_id', '=', who.id)
+        .executeTakeFirstOrThrow()
+      await h.db
+        .insertInto('push_registrations')
+        .values({
+          id: `psh_delete_${n}`,
+          user_id: who.id,
+          session_id: session.id,
+          platform: 'android',
+          address_key: `token-delete-${n}`,
+          address: `token-delete-${n}`,
+          environment: 'production',
+          messages: true,
+          rsvp_events: true
+        })
+        .execute()
+      await h.db
+        .insertInto('push_reminders_sent')
+        .values({
+          event_kind: 'teamEvent',
+          event_id: 'tev_delete',
+          user_id: who.id,
+          start_at: new Date('2027-05-01T22:00:00.000Z')
+        })
+        .execute()
+    }
+    const left = async (
+      table: 'push_registrations' | 'push_reminders_sent',
+      userId: string
+    ): Promise<number> =>
+      (
+        await h.db
+          .selectFrom(table)
+          .select('user_id')
+          .where('user_id', '=', userId)
+          .execute()
+      ).length
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+
+    for (const table of [
+      'push_registrations',
+      'push_reminders_sent'
+    ] as const) {
+      expect(await left(table, leaving.id), table).equals(0)
+      expect(await left(table, staying.id), table).equals(1)
+    }
+  })
+
   it('keeps nothing Tess writes after it, from a turn still running or one begun later', async () => {
     const leaving = await person(
       'Willie Stargell',

@@ -7,8 +7,12 @@ import { describe, it } from 'mocha'
 
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
-import type { TileClock } from './clockReader'
-import type { SoakSettings, StreamingWorld } from './streamingSession'
+import { benchClock, type TileClock } from './clockReader'
+import {
+  type SoakSettings,
+  type StreamingWorld,
+  TvSignInError
+} from './streamingSession'
 import { awaitable, type Call, fakeDevice, png } from './surfaces/fakes.test'
 import type { SurfaceProbe } from './surfaces/surface'
 import {
@@ -19,6 +23,7 @@ import {
   overall,
   Recorder,
   runTargeted,
+  safariGameUrl,
   spreadMs,
   type StepRecord,
   type TargetedDeps,
@@ -65,6 +70,15 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 }
 
 describe('the targeted helpers', function () {
+  it('opens Safari’s game page under ?debug=1 only when SAFARI_DEBUG=1 says so', function () {
+    const link = 'https://e2e-01.teamstation.app/games/game_1?tab=watch'
+    expect(safariGameUrl(link, {})).equals(link)
+    expect(safariGameUrl(link, { SAFARI_DEBUG: '0' })).equals(link)
+    expect(safariGameUrl(link, { SAFARI_DEBUG: '1' })).equals(
+      'https://e2e-01.teamstation.app/games/game_1?tab=watch&debug=1'
+    )
+  })
+
   it('puts the bar at a moment of the take, within its ends', function () {
     expect(fractionFor(T0 + 30_000, T0, T0 + 120_000)).equals(0.25)
     expect(fractionFor(T0 - 1, T0, T0 + 120_000)).equals(0)
@@ -80,8 +94,13 @@ describe('the targeted helpers', function () {
         clock('SynthC', T0, 0.5),
         { angle: 'SynthD', reading: null }
       ],
-      T0
+      T0,
+      () => benchClock()
     )
+    // An angle with no clock base yet has no moment.
+    expect([
+      ...tileMoments([clock('SynthA', T0)], T0, () => undefined)
+    ]).deep.equals([])
     expect([...moments]).deep.equals([
       ['SynthA', T0 + 1000],
       ['SynthB', T0 + 1400]
@@ -218,7 +237,9 @@ describe('the targeted helpers', function () {
       bar: 0.5,
       foreground: true
     }
-    expect(lookFrom(probe, [clock('SynthA', T0 + 500)], T0, 0)).deep.equals({
+    expect(
+      lookFrom(probe, [clock('SynthA', T0 + 500)], T0, () => benchClock())
+    ).deep.equals({
       atMs: T0,
       tiles: [
         { angle: 'SynthA', advancing: true, notice: null, wallMs: T0 + 500 },
@@ -235,11 +256,13 @@ describe('the targeted helpers', function () {
         { tiles: null, bar: null, foreground: null, reason: 'gone' },
         [],
         T0,
-        0
+        () => benchClock()
       )
     ).deep.equals({ atMs: T0, tiles: null, reason: 'gone' })
     expect(
-      lookFrom({ tiles: null, bar: null, foreground: null }, [], T0, 0)
+      lookFrom({ tiles: null, bar: null, foreground: null }, [], T0, () =>
+        benchClock()
+      )
     ).deep.equals({ atMs: T0, tiles: null })
   })
 })
@@ -344,7 +367,6 @@ function rig(
     tvRemote: { command: ['remote'], env: {} },
     ndiCapture: { command: ['ndi'] },
     tvJoinSteps: [],
-    ffmpeg: 'f',
     shaper: '/Users/dev/.config/teamstation-e2e/shaper.mjs',
     shapedIps: { iphone: '192.0.2.1' },
     ...options.settings
@@ -355,7 +377,11 @@ function rig(
       id: 'streamtest-1',
       origin: 'https://stack.example.test',
       api: 'https://stack.example.test/api/v1',
-      rtmp: 'rtmp://h:1936'
+      rtmp: 'rtmp://h:1936',
+      publisher: {
+        url: 'https://pub.example.test/__e2e/publishers',
+        token: 'pt'
+      }
     },
     settings,
     world: {
@@ -440,7 +466,7 @@ function rig(
     },
     publisher: publisher => {
       log.push(
-        `publisher ${publisher.label} ${publisher.ffmpeg} ${readFileSync(publisher.urlFile, 'utf8')} ${String(publisher.offsetMinutes)}`
+        `publisher ${publisher.label} ${publisher.publisher.url} ${readFileSync(publisher.urlFile, 'utf8')}`
       )
       return {
         start: async () => {
@@ -451,7 +477,9 @@ function rig(
         },
         cut: async seconds => {
           log.push(`cut ${publisher.label} ${seconds}`)
-        }
+        },
+        // The rig's readings are drawn on the bench clock.
+        clockBase: () => benchClock()
       }
     },
     run: async (command, args) => {
@@ -504,7 +532,8 @@ describe('running a targeted scenario', function () {
           '/Users/dev/.config/teamstation-e2e/shaper.mjs'
         )
         expect(session.shapedIps).deep.equals({ iphone: '192.0.2.1' })
-        expect(session.offsetMinutes).equals(0)
+        expect(session.clockBase('SynthA')).deep.equals(benchClock())
+        expect(session.clockBase('SynthZ')).equals(undefined)
         expect(session.streamId('SynthB')).equals('st-b')
         expect(() => session.streamId('SynthZ')).throws(
           'no synthetic camera "SynthZ"'
@@ -534,7 +563,7 @@ describe('running a targeted scenario', function () {
     expect(r.log).includes('signed in app.teamstation.develop tok')
     expect(r.log).includes(`sessions ${join(r.dir, 'sessions.json')}`)
     expect(r.log).includes(
-      'publisher SynthA f rtmp://h:1936/live/key-a undefined'
+      'publisher SynthA https://pub.example.test/__e2e/publishers rtmp://h:1936/live/key-a'
     )
     expect(r.log).includes('cdp Fetch.enable')
     expect(r.log).includes('cdp on Fetch.requestPaused')
@@ -636,13 +665,13 @@ describe('running a targeted scenario', function () {
   })
 
   it('hands back the watchers that failed a step, with the summary written', async function () {
-    const r = rig({ settings: { offsetMinutes: 60 }, androidJoinFails: false })
+    const r = rig({ androidJoinFails: false })
     const outcome = await runTargeted(
       r.ctx,
       '/repo',
       { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
       async session => {
-        expect(session.offsetMinutes).equals(60)
+        expect(session.clockBase('SynthA')).deep.equals(benchClock())
         expect(session.now()).equals(T0 + 1000)
         await session.record.check(
           session.watchers[0],
@@ -659,11 +688,45 @@ describe('running a targeted scenario', function () {
       failed: ['android'],
       steps: join(r.dir, 'targeted.jsonl')
     })
-    expect(r.log).includes('publisher SynthA f rtmp://h:1936/live/key-a 60')
+    expect(r.log).includes(
+      'publisher SynthA https://pub.example.test/__e2e/publishers rtmp://h:1936/live/key-a'
+    )
     expect(summary(r.dir)).deep.equals({
       verdicts: { android: 'failed' },
       steps: 1
     })
+  })
+
+  it('is blocked before any device on a stack with no publisher droplet', async function () {
+    const r = rig()
+    const open = r.deps.openWorld
+    let closed = 0
+    r.deps.openWorld = async options => {
+      const world = await open(options)
+      return {
+        ...world,
+        handle: { ...world.handle, publisher: undefined },
+        close: async () => {
+          closed += 1
+          await world.close()
+        }
+      }
+    }
+    let failure: unknown
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
+      async () => {},
+      r.deps
+    ).catch((error: unknown) => {
+      failure = error
+    })
+    expect(failure).instanceOf(BlockedError)
+    expect(String(failure)).includes('has no publisher droplet')
+    expect(r.log.filter(line => line.startsWith('attach'))).deep.equals([])
+    // Its log mirror is let go: nothing holds the run open.
+    expect(closed).equals(1)
   })
 
   it('is blocked when every watcher was, or none took a step', async function () {
@@ -696,6 +759,7 @@ describe('running a targeted scenario', function () {
   it('lets go of everything when the scenario throws', async function () {
     const r = rig()
     r.deps.publisher = () => ({
+      clockBase: () => undefined,
       start: async () => {},
       stop: async () => {
         throw new Error('already stopped')
@@ -818,5 +882,36 @@ describe('a TV that never signs in', function () {
     const steps = readFileSync(join(r.dir, 'targeted.jsonl'), 'utf8')
     expect(steps).contains('"step":"sign-in","surface":"tv"')
     expect(steps).contains('the TV is still signing in after 8 looks')
+  })
+
+  it('keeps what its screen last held and a picture of it', async function () {
+    const r = rig()
+    const kit = r.deps.tvKit
+    r.deps.tvKit = (ctx, settings) => ({
+      ...kit(ctx, settings),
+      capture: async () => png(2, 2)
+    })
+    r.deps.signInTv = async () => {
+      throw new TvSignInError(
+        'the TV is still signing in after 8 looks',
+        "Other, identifier: 'tv-brand-screen'"
+      )
+    }
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { synthetic: ['SynthA'], watchers: ['tv', 'iphone'], leadMs: 0 },
+      async () => {},
+      r.deps
+    ).catch(() => undefined)
+    expect(readFileSync(join(r.dir, 'tv-signin-dump.txt'), 'utf8')).equals(
+      "Other, identifier: 'tv-brand-screen'"
+    )
+    const signIn = readFileSync(join(r.dir, 'targeted.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { step: string; screenshot?: string })
+      .find(step => step.step === 'sign-in')
+    expect(signIn?.screenshot).equals('sign-in-tv-1.png')
   })
 })

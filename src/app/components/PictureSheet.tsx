@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { GroupPicture } from '../../common/groupCreation'
@@ -8,6 +8,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
 import { GroupPictureChooser, type PictureOwner } from './GroupPictureChooser'
+import { Modal } from './Modal'
 
 export function PictureSheet({
   client,

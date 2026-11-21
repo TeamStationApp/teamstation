@@ -306,18 +306,33 @@ export function buildMatchups(
       if (exhibitionTeams.includes(opponent)) exhibition.push([team, opponent])
   })
 
-  const oriented = orient([...regular, ...exhibition], own)
+  return keyMatchups(
+    season.id,
+    orient([...regular, ...exhibition], own),
+    regular.length
+  )
+}
+
+/**
+ * Oriented pairs as matchups, keyed `season:home:away:n`, the first
+ * `regularCount` regular and the rest exhibition.
+ */
+export function keyMatchups(
+  seasonId: string,
+  oriented: Array<[string, string]>,
+  regularCount: number
+): Matchup[] {
   const seen = new Map<string, number>()
   return oriented.map(([home, away], i) => {
-    const base = `${season.id}:${home}:${away}`
+    const base = `${seasonId}:${home}:${away}`
     const n = (seen.get(base) ?? 0) + 1
     seen.set(base, n)
     return {
       key: `${base}:${n}`,
-      seasonId: season.id,
+      seasonId,
       homeTeamId: home,
       awayTeamId: away,
-      exhibition: i >= regular.length
+      exhibition: i >= regularCount
     }
   })
 }

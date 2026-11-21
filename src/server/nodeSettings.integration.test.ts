@@ -7,6 +7,8 @@ import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import {
   distributionSettings,
   forgetScoreboardSettings,
+  JEV_KEY_SETTING,
+  jevKey,
   replayPitchSec,
   replaySettings,
   scoreboardOverlayFor,
@@ -50,7 +52,8 @@ describe('node settings', function () {
     distribution: {
       betaBuildsUrl: 'https://builds.example.test',
       appStoreUrl: 'https://apps.example.test/app'
-    }
+    },
+    jev: { configured: false }
   }
 
   it('lets only a node administrator read and set them, all at once, and records who', async () => {
@@ -347,5 +350,96 @@ describe('node settings', function () {
     expect(read.scoreboard.speedHoldSec).equals(7)
     expect(read.highlights.lagSec).equals(9)
     expect(await speedHoldMs(f.h.db)).equals(7000)
+  })
+
+  it('sets, replaces and clears the Jev key, which no answer ever carries', async () => {
+    const first = 'ts-test-key-first'
+    const second = 'ts-test-key-second'
+    expect(await jevKey(f.h.db)).equals(null)
+
+    const set = await f.h.request(
+      'PUT',
+      '/node/jev-key',
+      { apiKey: `  ${first} ` },
+      105
+    )
+    expect(set.status).equals(200)
+    const setText = await set.text()
+    expect(JSON.parse(setText)).deep.equals({ configured: true })
+    expect(setText).not.contains(first)
+    // Read on every call: no cache to forget.
+    expect(await jevKey(f.h.db)).equals(first)
+    const read = await f.h.request('GET', '/node/settings', undefined, 105)
+    const readText = await read.text()
+    expect((JSON.parse(readText) as NodeSettings).jev).deep.equals({
+      configured: true
+    })
+    expect(readText).not.contains(first)
+
+    const replace = await f.h.request(
+      'PUT',
+      '/node/jev-key',
+      { apiKey: second },
+      105
+    )
+    expect(replace.status).equals(200)
+    expect(await jevKey(f.h.db)).equals(second)
+    const row = await f.h.db
+      .selectFrom('system_settings')
+      .select(['updated_by'])
+      .where('key', '=', JEV_KEY_SETTING)
+      .executeTakeFirstOrThrow()
+    expect(row.updated_by).equals(userIdOfGumbo(105))
+
+    // A settings save neither sets nor clears it, whatever it says.
+    const saved = await f.h.request(
+      'PUT',
+      '/node/settings',
+      { ...changed, jev: { configured: false } },
+      105
+    )
+    expect(saved.status).equals(200)
+    const savedText = await saved.text()
+    expect((JSON.parse(savedText) as NodeSettings).jev).deep.equals({
+      configured: true
+    })
+    expect(savedText).not.contains(second)
+    expect(await jevKey(f.h.db)).equals(second)
+
+    for (const apiKey of ['', '   ', 'two words', 'x'.repeat(513), 42]) {
+      const bad = await f.h.request('PUT', '/node/jev-key', { apiKey }, 105)
+      expect(bad.status, String(apiKey)).equals(400)
+    }
+    expect(await jevKey(f.h.db)).equals(second)
+
+    const cleared = await f.h.request('DELETE', '/node/jev-key', undefined, 105)
+    expect(cleared.status).equals(200)
+    expect(await cleared.json()).deep.equals({ configured: false })
+    expect(await jevKey(f.h.db)).equals(null)
+    expect(
+      (
+        (await (
+          await f.h.request('GET', '/node/settings', undefined, 105)
+        ).json()) as NodeSettings
+      ).jev
+    ).deep.equals({ configured: false })
+    // Clearing again is no error.
+    expect(
+      (await f.h.request('DELETE', '/node/jev-key', undefined, 105)).status
+    ).equals(200)
+  })
+
+  it('reads a stored key that is not a string as no key', async () => {
+    await f.h.db
+      .insertInto('system_settings')
+      .values({ key: JEV_KEY_SETTING, value: JSON.stringify(7) })
+      .execute()
+    expect(await jevKey(f.h.db)).equals(null)
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: JSON.stringify('') })
+      .where('key', '=', JEV_KEY_SETTING)
+      .execute()
+    expect(await jevKey(f.h.db)).equals(null)
   })
 })

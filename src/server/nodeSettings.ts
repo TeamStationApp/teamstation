@@ -203,8 +203,71 @@ export async function nodeSettings(
     radar: await radarSettings(db),
     highlights: await highlightSettings(db, true),
     replay: await replaySettings(db, Date.now(), true),
-    distribution: await distributionSettings(db, Date.now(), true)
+    distribution: await distributionSettings(db, Date.now(), true),
+    jev: { configured: (await jevKey(db)) != null }
   }
+}
+
+/** The `system_settings` key Jev's API key is stored under. */
+export const JEV_KEY_SETTING = 'jev.apiKey'
+
+/** The longest Jev key a node administrator may set. */
+export const JEV_KEY_MAX = 512
+
+/**
+ * The node's Jev API key, or null when none is set. Read on every call, with
+ * no cache, so a save reaches every worker at once. Never returned by a
+ * route and never logged.
+ */
+export async function jevKey(db: Kysely<Database>): Promise<string | null> {
+  const row = await db
+    .selectFrom('system_settings')
+    .select('value')
+    .where('key', '=', JEV_KEY_SETTING)
+    .executeTakeFirst()
+  const value: unknown = row?.value
+  return typeof value === 'string' && value !== '' ? value : null
+}
+
+/** A node administrator sets or replaces the Jev key; the row records who. */
+export async function setJevKey(
+  db: Kysely<Database>,
+  actor: Actor,
+  apiKey: string
+): Promise<void> {
+  const admin = await requireNodeAdmin(
+    db,
+    actor,
+    'Only a node administrator can set the Jev key'
+  )
+  const json = JSON.stringify(apiKey)
+  await db
+    .insertInto('system_settings')
+    .values({ key: JEV_KEY_SETTING, value: json, updated_by: admin.userId })
+    .onConflict(oc =>
+      oc.column('key').doUpdateSet({
+        value: json,
+        updated_at: new Date(),
+        updated_by: admin.userId
+      })
+    )
+    .execute()
+}
+
+/** A node administrator clears the Jev key, so search ranks without Jev. */
+export async function clearJevKey(
+  db: Kysely<Database>,
+  actor: Actor
+): Promise<void> {
+  await requireNodeAdmin(
+    db,
+    actor,
+    'Only a node administrator can remove the Jev key'
+  )
+  await db
+    .deleteFrom('system_settings')
+    .where('key', '=', JEV_KEY_SETTING)
+    .execute()
 }
 
 /**

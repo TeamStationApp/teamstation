@@ -8,7 +8,6 @@ import React, {
 import {
   Animated,
   KeyboardAvoidingView,
-  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -26,6 +25,7 @@ import {
   SafeAreaView
 } from 'react-native-safe-area-context'
 
+import { Modal } from '../components/Modal'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
 import { useScoringSheetTheme } from './scoringSheetTheme'

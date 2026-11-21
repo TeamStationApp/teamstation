@@ -12,6 +12,11 @@ import path from 'node:path'
 
 import { asObject, asOptional, asString } from 'cleaners'
 
+import {
+  isMasterBranch,
+  PRODUCTION_ORIGIN,
+  serverLogDsn
+} from '../../Masonfile'
 import { privateJson, type Settings } from './config'
 import type { Processes } from './process'
 
@@ -43,11 +48,31 @@ const asSentryToken = asObject({
  */
 export { sentryRelease } from '../../src/common/sentry/release'
 
-/** What reaches the build: the DSN the bundle reports to, and nothing secret. */
+/** The project number a DSN names (its path), 101 when it names none. */
+export function dsnProject(dsn: string): number {
+  const project = Number(new URL(dsn).pathname.slice(1))
+  return Number.isInteger(project) && project > 0 ? project : 101
+}
+
+/**
+ * What reaches the build: the DSN the bundle reports to, and nothing secret.
+ * Master's build keeps the configured DSN. Every other branch's reports to
+ * its app's own server (`serverLogDsn`, with the configured project), so a
+ * branch build's logs never land among production's: a branch with no server
+ * of its own, or whose settings still name production's, reports nothing.
+ * The seat a build talks to is not part of a build context, so the branch
+ * alone decides.
+ */
 export function sentryBuildEnvironment(
-  sentry: SentrySettings | undefined
+  sentry: SentrySettings | undefined,
+  branch?: string,
+  apiOrigin?: string
 ): NodeJS.ProcessEnv {
-  return sentry == null ? {} : { TS_SENTRY_DSN: sentry.dsn }
+  if (sentry == null) return {}
+  if (isMasterBranch(branch)) return { TS_SENTRY_DSN: sentry.dsn }
+  if (apiOrigin == null || new URL(apiOrigin).origin === PRODUCTION_ORIGIN)
+    return {}
+  return { TS_SENTRY_DSN: serverLogDsn(apiOrigin, dsnProject(sentry.dsn)) }
 }
 
 /** sentry-cli's own variables, the token among them, so none is on a command line. */

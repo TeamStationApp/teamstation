@@ -1,13 +1,8 @@
 import React from 'react'
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  useWindowDimensions,
-  View
-} from 'react-native'
+import { Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
 
 import { CancelAction } from '../components/CancelAction'
+import { Modal } from '../components/Modal'
 import { useTheme } from '../theme/ThemeContext'
 import { UmpireHeading } from './shared'
 export function UmpireDialog({

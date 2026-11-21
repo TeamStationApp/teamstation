@@ -88,7 +88,6 @@ export interface FieldCanvasProps {
   ) => void
   onRunnerCancel?: () => void
   onMovementComplete?: (id: string, generation: number) => void
-  registerKeyboard?: (handler: ((key: string) => boolean) | null) => void
   registerInterruption?: (cancel: (() => void) | null) => void
   interaction?: FieldInteractionPolicy
   onFieldPlacement?: (event: FieldPlacement) => void
@@ -102,8 +101,7 @@ export interface FieldCanvasProps {
    * The scorer accepted the trajectory at `angle`: `dragged` when his drag
    * on the field turned the angle, `false` for a gesture that left it where
    * it was (up or down by no more than `TAP_SLOP_PX`, and then `angle` is
-   * where it started), and absent from the keyboard, whose arrows leave no
-   * gesture to tell by.
+   * where it started).
    */
   onTrajectoryAccepted?: (
     angle: number,

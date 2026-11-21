@@ -63,6 +63,11 @@ export interface ScreenProps {
    */
   onScroll?: Parameters<typeof Animated.ScrollView>[0]['onScroll']
   /**
+   * A drag of the page begins: Search puts its keyboard away here, with the
+   * keyboard's own animation.
+   */
+  onScrollBeginDrag?: () => void
+  /**
    * The scroll view itself, for a screen that scrolls it to a place of its
    * own choosing — a team's schedule, opened at the next game.
    */
@@ -147,6 +152,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
     centreContent = false,
     contentStyle,
     onScroll,
+    onScrollBeginDrag,
     scrollRef,
     onLayout,
     pagedList
@@ -161,6 +167,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
   const scroller = useActiveRef(scrollRef)
   const handleScroll = useActiveRef(onScroll)
   const handleLayout = useActiveRef(onLayout)
+  const handleScrollBeginDrag = useActiveRef(onScrollBeginDrag)
   // Clear while it slides against another layout of its screen, whose
   // content shows beside its own.
   const clear = usePageSliding()
@@ -222,6 +229,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
       ref={scroller}
       style={[styles.fill, clear && styles.clear]}
       onScroll={handleScroll}
+      onScrollBeginDrag={handleScrollBeginDrag}
       onLayout={handleLayout}
       scrollEventThrottle={16}
       // Without this the first tap on a button while a field has focus only

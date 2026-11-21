@@ -86,3 +86,12 @@ ios/build-sim/
 crates/chat-crypto/target/
 src/common/chatCrypto/node/
 src/common/chatCrypto/wasm/
+android/app/google-services.json
+
+# HiGHS source and CMake, fetched by scripts/highsSource.mjs
+/native/highs/vendor/
+
+# The Auto-Scheduler engine's build products (scripts/schedulerBuild.mjs):
+# its CMake builds, and the Node addon the tests and scripts load.
+/native/scheduler/build/
+src/common/scheduler/node/

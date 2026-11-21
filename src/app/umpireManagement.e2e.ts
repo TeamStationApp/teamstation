@@ -3,8 +3,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { umpireDate } from '../common/umpireTime'
-import { userIdOfGumbo } from '../common/userId'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   type BrowserSession,
   browserSession,
@@ -12,15 +11,17 @@ import {
   contains,
   fill,
   maestro,
+  show,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { umpireDate } from '../common/umpireTime'
+import { userIdOfGumbo } from '../common/userId'
 import {
   readyUmpireBrowser,
   UMPIRE_BROWSER_NOW,
   umpireBrowserFixture
 } from '../test/umpireBrowserFixture'
 import { seedUmpireCounts } from '../test/umpireTypes'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 async function main(): Promise<void> {
   const artifacts = process.env.TS_UMPIRE_ARTIFACTS
   if (artifacts == null) throw new Error('Supply TS_UMPIRE_ARTIFACTS')
@@ -321,9 +322,9 @@ async function main(): Promise<void> {
           await open('/games/gam_umpire_g1')
           // Uma reads her own slot, so the game's umpires name her in full:
           // her row's title, then its position.
-          await contains(page, 'Uma LeePlate')
+          await contains(page, 'Uma Lee\nPlate')
           await m.scrollUntilVisible({
-            element: { text: 'Plate' },
+            element: { text: 'Umpires' },
             direction: 'down'
           })
           await shot('game-screen-after.png')
@@ -425,7 +426,8 @@ async function main(): Promise<void> {
           await signIn(103, '/')
           await tap(m, 'Umpire Schedule')
           await contains(page, 'Demo Visitors')
-          await tap(m, 'League view', 'tab')
+          // The league switcher is a row of leagues in the header.
+          await show(m, 'Demo Visitors')
           await shot('league-switcher-after.png')
           await tap(m, 'Schedule filters')
           await tap(m, 'majors')
@@ -433,7 +435,8 @@ async function main(): Promise<void> {
           await tap(m, 'Demo Visitors')
           await contains(page, 'No games match this schedule.')
           const switched = new URL(page.url())
-          expect(switched.searchParams.get('view')).equals('umpire')
+          // A switch opens the league in its own default view, unfiltered.
+          expect(switched.searchParams.has('view')).equals(false)
           expect(switched.searchParams.has('levels')).equals(false)
           await tap(m, 'Schedule filters')
           await chooseTime('Start time', '18:00')
@@ -765,6 +768,29 @@ async function main(): Promise<void> {
           expect(narrowDays.right).at.most(narrowDays.clipRight)
           expect(narrowDays.width).at.least(40)
           await page.setViewport({ width: 390, height: 844 })
+          // The day row lays itself out again at the new width: every pill
+          // has its 32-point circle back before it is measured.
+          await page.waitForFunction(
+            () =>
+              [
+                'Monday',
+                'Tuesday',
+                'Wednesday',
+                'Thursday',
+                'Friday',
+                'Saturday',
+                'Sunday'
+              ].every(name => {
+                const pill = document.querySelector(`[aria-label="${name}"]`)
+                const circle = pill === null ? null : pill.firstElementChild
+                return (
+                  circle !== null &&
+                  circle.getBoundingClientRect().width === 32 &&
+                  pill!.getBoundingClientRect().width >= 40
+                )
+              }),
+            { timeout: 15000 }
+          )
           const filterGeometry = await page.evaluate(() => {
             const names = [
               'Monday',
@@ -808,7 +834,8 @@ async function main(): Promise<void> {
           expect(
             filterGeometry.days.every(
               d => d.width >= 40 && d.height >= 44 && d.circle === 32
-            )
+            ),
+            `day pills ${JSON.stringify(filterGeometry.days)}`
           ).equals(true)
           expect(filterGeometry.timeY[0]).equals(filterGeometry.timeY[1])
           expect(filterGeometry.timeWidth[0]).closeTo(

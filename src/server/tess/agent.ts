@@ -9,11 +9,10 @@ import {
 } from './changes'
 import {
   compact,
-  COMPACT_ABOVE,
+  contextLimits,
   describeAttachments,
   estimateTokens,
-  fitPictures,
-  INPUT_CEILING
+  fitPictures
 } from './compaction'
 import {
   appendMessages,
@@ -25,7 +24,8 @@ import {
   type ModelDeps,
   requestMessages,
   saveContextTokens,
-  type StoredBlock
+  type StoredBlock,
+  TOOL_LIMIT_NOTICE
 } from './conversation'
 import type { Credentials } from './loopback'
 import {
@@ -40,10 +40,12 @@ import {
   type MessagesStreamEvent,
   type SystemBlock,
   TessStopped,
+  type TextBlock,
   type ToolResultBlock,
   type ToolUseBlock
 } from './messagesApi'
 import { systemBlocks } from './prompt'
+import { openSourceIndex, sourceIndexPath } from './sourceTools'
 import { stepLabel } from './stepLabels'
 import { runTool, type ToolOutcome, TOOLS } from './tools'
 import { withTurn } from './turns'
@@ -58,9 +60,10 @@ import { userContext } from './userContext'
  */
 
 /** How many responses of one turn may ask for tools. */
-export const MAX_TOOL_ROUNDS = 10
+export const MAX_TOOL_ROUNDS = 20
 
 export const TOOL_LIMIT = 'Tool limit reached; answer with what you have'
+export { TOOL_LIMIT_NOTICE }
 export const TOO_LARGE_NOW =
   'That answer is too large for the conversation now. Ask for less, or answer with what you have.'
 /** The result of a tool call left unrun when the person stopped the turn. */
@@ -69,6 +72,8 @@ export const STOPPED_BEFORE_RUN = 'Not run: the person stopped Tess first'
 export interface TessDeps extends ModelDeps {
   /** This server's own origin, read when a tool runs: see `loopback.ts`. */
   origin: () => string
+  /** Optional index override for isolated tests. */
+  sourceIndex?: string
 }
 
 /** Who Tess is answering, and the credentials her tools act with. */
@@ -323,7 +328,8 @@ async function systemFor(
   user: TessUser
 ): Promise<SystemBlock[]> {
   return systemBlocks({
-    user: await userContext(deps.db, user.userId, user.isAdmin)
+    user: await userContext(deps.db, user.userId, user.isAdmin),
+    source: openSourceIndex(deps.sourceIndex ?? sourceIndexPath())
   })
 }
 
@@ -366,7 +372,7 @@ async function buildRequest(
  * attachments is measured with
  * `count_tokens`; one without is taken at the size the last request and its
  * answer had, with the message's own at its most, and measured when that
- * comes to more than 150,000. Above 150,000 the conversation is compacted
+ * exceeds the model's threshold. Above that the conversation is compacted
  * first, down to nothing but the message when it must be; still too large
  * with the message, it is refused. Compaction cannot make the message
  * itself smaller, so it is measured alone first: one that would not fit
@@ -382,6 +388,7 @@ async function guard(
   content: StoredBlock[],
   onEvent?: TurnEvents
 ): Promise<void> {
+  const { compactAbove, inputCeiling } = contextLimits(deps.settings.model)
   let told = false
   const preparing = async (): Promise<void> => {
     if (told) return
@@ -401,37 +408,37 @@ async function guard(
       ? await measure()
       : (await contextTokensOf(deps.db, userId)) +
         estimateTokens(JSON.stringify(content))
-  if (ids.length === 0 && tokens > COMPACT_ABOVE) tokens = await measure()
+  if (ids.length === 0 && tokens > compactAbove) tokens = await measure()
   const refused = (): HttpError =>
     tooLarge(
       ids.length > 0
         ? 'That attachment is too large for the conversation'
         : 'The conversation is too long to go on'
     )
-  if (tokens > COMPACT_ABOVE) {
+  if (tokens > compactAbove) {
     const alone = await countTokens(
       deps.settings,
       await buildRequest(deps, userId, system, content, true),
       { fetch: deps.fetch }
     )
-    if (alone + (tokens > alone ? MAX_TOKENS : 0) > INPUT_CEILING)
+    if (alone + (tokens > alone ? MAX_TOKENS : 0) > inputCeiling)
       throw refused()
     await preparing()
     tokens = await compact(deps, userId, measure, { keepNone: true })
   }
-  if (tokens <= INPUT_CEILING) return
+  if (tokens <= inputCeiling) return
   throw refused()
 }
 
 /**
  * Tess answers the stored conversation: call, run the tools asked for, call
- * again, until she answers in text. At the tenth response that still asks for
- * tools the round is closed: each call is answered with an error and one last
- * call, which may use no tool, gives her answer. A call the provider refuses
+ * again, until she answers in text. After MAX_TOOL_ROUNDS tool batches, the
+ * next call permits no tools and asks for her final answer. Any tool calls
+ * returned despite that choice receive an error. A call the provider refuses
  * for its length is sent again, once, after the conversation is compacted;
  * one it refuses for its bytes, once, after its attachments are described.
- * The size of the last request and its answer is saved, and above 150,000
- * the conversation is compacted; a compaction that fails then leaves the
+ * The size of the last request and its answer is saved; above the model's
+ * threshold the conversation is compacted; a compaction that fails then leaves the
  * answer as it is, to be tried again before the next message. When she
  * fails after storing a round, the size it had is saved, so the next
  * message is measured against it. Each call is streamed, and what it tells
@@ -452,6 +459,7 @@ async function respond(
   onEvent?: TurnEvents
 ): Promise<void> {
   const { db, settings } = deps
+  const { compactAbove } = contextLimits(settings.model)
   const { userId } = user
   const relay = relayOf(onEvent)
   const step = async (
@@ -492,8 +500,9 @@ async function respond(
     } catch (error) {
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
-      if (isTooLong(error)) known = await compact(deps, userId, measure)
-      else await describeAttachments(deps, userId)
+      if (isTooLong(error)) {
+        known = await compact(deps, userId, measure)
+      } else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
       return await once(toolChoice)
     }
@@ -501,9 +510,10 @@ async function respond(
   let last: MessagesResponse
   // The changes the turn has proposed, which one hold confirms together.
   const proposals = { count: 0 }
+  const source = openSourceIndex(deps.sourceIndex ?? sourceIndexPath())
   try {
     for (let round = 1; ; round += 1) {
-      const response = await call()
+      const response = await call(round > MAX_TOOL_ROUNDS ? 'none' : undefined)
       last = response
       const calls = response.content.filter(
         (block): block is ToolUseBlock => block.type === 'tool_use'
@@ -512,7 +522,8 @@ async function respond(
         await storeAnswer(deps, userId, response)
         break
       }
-      if (round >= MAX_TOOL_ROUNDS) {
+      if (round > MAX_TOOL_ROUNDS) {
+        // Defend against a provider returning tool calls despite toolChoice:none.
         const results: ToolResultBlock[] = calls.map(call => ({
           type: 'tool_result',
           tool_use_id: call.id,
@@ -537,7 +548,8 @@ async function respond(
         credentials: user.credentials,
         origin: deps.origin(),
         now: deps.now?.() ?? new Date(),
-        proposals
+        proposals,
+        source
       }
       const outcomes: ToolOutcome[] = []
       for (const call of calls) {
@@ -572,24 +584,37 @@ async function respond(
         outcomes.map(outcome => outcome.result)
       )
       // A result too large to keep failed after all.
-      for (const [at, result] of results.entries())
+      for (const [at, result] of results.entries()) {
         if (result.content === TOO_LARGE_NOW)
           await step(calls[at].id, stepLabel(calls[at]), 'failed')
+      }
       const changes: StoredBlock[] = outcomes.flatMap(outcome =>
         outcome.changeId == null
           ? []
           : [{ type: 'change' as const, id: outcome.changeId }]
       )
+      // After the last tool round she is told why the next call has no tools.
+      // It is stored as a mark, so a summary never credits it to the person.
+      const closing = round === MAX_TOOL_ROUNDS
       await appendMessages(db, userId, [
         { role: 'assistant', content: [...response.content, ...changes] },
-        { role: 'user', content: results }
+        {
+          role: 'user',
+          content: closing ? [...results, { type: 'tool_limit' }] : results
+        }
       ])
       known = sizeAfter(response, results)
-      request = withExchange(request, response.content, results)
+      request = withExchange(
+        request,
+        response.content,
+        closing
+          ? [...results, { type: 'text', text: TOOL_LIMIT_NOTICE }]
+          : results
+      )
     }
   } catch (error) {
     // Still too long once compacted: the next message compacts again first.
-    const size = isTooLong(error) ? Math.max(known, COMPACT_ABOVE + 1) : known
+    const size = isTooLong(error) ? Math.max(known, compactAbove + 1) : known
     if (size > 0) await saveContextTokens(db, userId, size)
     if (!(error instanceof TessStopped)) throw error
     await appendMessages(db, userId, [
@@ -599,7 +624,7 @@ async function respond(
   }
   const tokens = inputOf(last) + last.usage.outputTokens
   await saveContextTokens(db, userId, tokens)
-  if (tokens <= COMPACT_ABOVE) return
+  if (tokens <= compactAbove) return
   try {
     await compact(deps, userId, measure)
   } catch (error) {
@@ -662,7 +687,7 @@ async function storeAnswer(
 function withExchange(
   request: MessagesRequest,
   calls: ContentBlock[],
-  results: ToolResultBlock[]
+  results: Array<ToolResultBlock | TextBlock>
 ): MessagesRequest {
   const messages: MessageParam[] = [
     ...request.messages,
@@ -708,8 +733,8 @@ function contentOf(result: ToolResultBlock): string {
 /**
  * Tool results that keep the next request, `request` with this round, under
  * the ceiling: a result that would not fit at its estimate is replaced by a
- * note asking for less. When the round takes the request above 150,000 it is
- * counted, and the largest results give way until it fits.
+ * note asking for less. Above the model's threshold the round is counted,
+ * and the largest results give way until it fits.
  */
 async function fitted(
   deps: TessDeps,
@@ -717,12 +742,13 @@ async function fitted(
   response: MessagesResponse,
   results: ToolResultBlock[]
 ): Promise<ToolResultBlock[]> {
+  const { compactAbove, inputCeiling } = contextLimits(deps.settings.model)
   const tooLarge = (result: ToolResultBlock): ToolResultBlock => ({
     ...result,
     content: TOO_LARGE_NOW,
     is_error: true
   })
-  let room = INPUT_CEILING - inputOf(response) - response.usage.outputTokens
+  let room = inputCeiling - inputOf(response) - response.usage.outputTokens
   const kept = results.map(result => {
     const tokens = estimateTokens(contentOf(result))
     if (tokens <= room) {
@@ -731,14 +757,14 @@ async function fitted(
     }
     return tooLarge(result)
   })
-  if (INPUT_CEILING - room <= COMPACT_ABOVE) return kept
+  if (inputCeiling - room <= compactAbove) return kept
   for (;;) {
     const tokens = await countTokens(
       deps.settings,
       withExchange(request, response.content, kept),
       { fetch: deps.fetch }
     )
-    if (tokens <= INPUT_CEILING) return kept
+    if (tokens <= inputCeiling) return kept
     let largest = -1
     kept.forEach((result, at) => {
       if (

@@ -79,7 +79,10 @@ describe('native virtualized chat history', function () {
       },
       useKeyboardController: () => ({
         setEnabled: (value: boolean) => enabled.push(value)
-      })
+      }),
+      // No keyboard up: a conversation that leaves lets go at once.
+      KeyboardController: { isVisible: () => false },
+      KeyboardEvents: { addListener: () => ({ remove: () => undefined }) }
     })
     stand('@legendapp/list/keyboard', {
       KeyboardAwareLegendList: React.forwardRef(

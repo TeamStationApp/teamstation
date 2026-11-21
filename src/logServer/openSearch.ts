@@ -4,6 +4,7 @@ import {
   APPS,
   type EventRecord,
   LEVELS,
+  PROPERTY_TYPES,
   userId
 } from '../common/observability/contract'
 
@@ -111,40 +112,8 @@ export class OpenSearch {
   async setup(): Promise<void> {
     const keyword = { type: 'keyword', ignore_above: 128 }
     const properties: Record<string, unknown> = {}
-    for (const key of [
-      'pg',
-      'mt',
-      'sp',
-      'ec',
-      'id',
-      'ty',
-      'vi',
-      'ps',
-      'op',
-      'rp',
-      'c',
-      'f0',
-      'f1',
-      'f2'
-    ])
-      properties[key] = keyword
-    for (const key of [
-      'ms',
-      'pos',
-      'dur',
-      'rt',
-      'bytes',
-      'status',
-      'n',
-      'l0',
-      'l1',
-      'l2',
-      'c0',
-      'c1',
-      'c2'
-    ])
-      properties[key] = { type: 'double' }
-    for (const key of ['ok', 'on']) properties[key] = { type: 'boolean' }
+    for (const [key, type] of Object.entries(PROPERTY_TYPES))
+      properties[key] = type === 'keyword' ? keyword : { type }
     // Updating an existing policy requires its sequence number; reuse an already installed policy.
     let existing = false
     try {

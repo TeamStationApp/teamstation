@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { executablePath } from 'puppeteer'
 
 import { readSeedTable } from '../../test/chatSeedTable'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Device {
   openLink: (options: { link: string }) => Promise<unknown>
@@ -63,6 +64,8 @@ export async function openRecoveryChat(
     css: '[data-testid="chat-conversation-list"]',
     timeout: 60000
   })
+  // The Chat tab asks about notifications once per person per browser.
+  await dismissNotificationAskOn(m)
 }
 
 /**
@@ -371,6 +374,7 @@ async function main(): Promise<void> {
       css: '[data-testid="chat-composer"]',
       timeout: 30000
     })
+    if (!group) await dismissNotificationAskOn(m)
     const conversationId = await read<string>(
       m,
       'return JSON.stringify(location.pathname.split("/")[2])'

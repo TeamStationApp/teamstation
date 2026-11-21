@@ -6,8 +6,9 @@
  */
 
 // TeamStation: React Native's cmake-utils/default-app-setup/OnLoad.cpp as it
-// ships, with one addition: cxxModuleProvider returns the chat crypto core's
-// C++ TurboModule (native/chatCrypto/NativeChatCrypto.cpp) by name. Everything
+// ships, with two additions: cxxModuleProvider returns the chat crypto core's
+// C++ TurboModule (native/chatCrypto/NativeChatCrypto.cpp) and the
+// Auto-Scheduler's (native/scheduler/phone/NativeScheduler.cpp) by name. Everything
 // else, the app's own Java TurboModules included, is provided as before.
 
 // This C++ file is part of the default configuration used by apps and is placed
@@ -38,6 +39,7 @@
 #include <autolinking.h>
 #include <fbjni/fbjni.h>
 #include "NativeChatCrypto.h"
+#include "NativeScheduler.h"
 #include <react/renderer/componentregistry/ComponentDescriptorProviderRegistry.h>
 
 #ifdef REACT_NATIVE_APP_CODEGEN_HEADER
@@ -80,6 +82,12 @@ std::shared_ptr<TurboModule> cxxModuleProvider(
   // The chat crypto core (native/chatCrypto, src/app/chat/NativeChatCrypto.ts).
   if (name == NativeChatCrypto::kModuleName) {
     return std::make_shared<NativeChatCrypto>(jsInvoker);
+  }
+
+  // The Auto-Scheduler's engine over HiGHS (native/scheduler,
+  // src/app/scheduling/NativeScheduler.ts).
+  if (name == NativeScheduler::kModuleName) {
+    return std::make_shared<NativeScheduler>(jsInvoker);
   }
 
   // And we fallback to the CXX module providers autolinked

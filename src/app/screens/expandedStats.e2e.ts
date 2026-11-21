@@ -5,6 +5,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import { userIdOfGumbo } from '../../common/userId'
+
 interface Bounds {
   x: number
   y: number
@@ -233,7 +235,7 @@ async function main(): Promise<void> {
         await gesture({ x: width - 35, y: pitchingY }, { x: 30, y: pitchingY })
       assert((await find('BAA')) != null, 'Last pitching column is reachable')
       await shot('pitching-detail')
-      await open('/players/102?tab=stats', 'Career')
+      await open(`/players/${userIdOfGumbo(102)}?tab=stats`, 'Career')
       await shot('player-pitcher-after')
       // A player's figures are a table of rows, a team each; its columns
       // scroll sideways beside the team names.
@@ -257,7 +259,7 @@ async function main(): Promise<void> {
       await shot('player-decisions')
       await sidewaysTo('BAA')
       await shot('player-pitching-detail')
-      await open('/players/101?tab=stats', 'Career')
+      await open(`/players/${userIdOfGumbo(101)}?tab=stats`, 'Career')
       await shot('player-hitter-after')
       await reach('Batting')
       await sidewaysTo('PIK')
@@ -271,7 +273,7 @@ async function main(): Promise<void> {
       )
       await shot('player-hitter-bottom')
     }
-    await open('/players/101?tab=stats', '.*Alex L.*')
+    await open(`/players/${userIdOfGumbo(101)}?tab=stats`, '.*Alex L.*')
     for (let i = 0; i < 8 && (await find('Filter')) == null; i++)
       await gesture(
         { x: width - 20, y: 250 },

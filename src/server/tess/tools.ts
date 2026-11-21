@@ -12,6 +12,7 @@ import type {
   ToolResultBlock,
   ToolUseBlock
 } from './messagesApi'
+import { isSourceTool, SOURCE_TOOLS, type SourceIndex } from './sourceTools'
 
 /**
  * Tess's tools. `api_get` reads the API as the person, and `graphql_query`
@@ -39,10 +40,11 @@ export const MAX_DETAIL_LABEL = 40
 export const MAX_DETAIL_VALUE = 120
 
 export const TOOLS: ToolDefinition[] = [
+  ...SOURCE_TOOLS,
   {
     name: 'api_get',
     description:
-      'Reads the TeamStation API as the person you are helping, with their permissions: a GET of one path from the API index, written without /api/v1. Answers the HTTP status and the JSON body. Use it for every fact.',
+      'Reads the TeamStation API as the person you are helping, with their permissions: a GET of one path from the API index, written without /api/v1. Answers the HTTP status and the JSON body. Use it for facts about teams, games and people; use the source tools for implementation questions.',
     input_schema: {
       type: 'object',
       properties: {
@@ -168,6 +170,8 @@ export interface ToolContext {
   now: Date
   /** How many changes this turn has proposed so far, over all its rounds. */
   proposals: { count: number }
+  /** Read-only release index; holds no user or per-turn state. */
+  source?: SourceIndex
 }
 
 /** One tool call's result, and the change it proposed, if any. */
@@ -189,6 +193,17 @@ export async function runTool(
       is_error: true
     }
   })
+  if (isSourceTool(call.name)) {
+    if (context.source == null)
+      return fail('Source tools are unavailable in this turn.')
+    return {
+      result: {
+        type: 'tool_result',
+        tool_use_id: call.id,
+        ...context.source.run(call.name, call.input)
+      }
+    }
+  }
   if (call.name === 'api_get') {
     let input: ReturnType<typeof asApiGet>
     try {

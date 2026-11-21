@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { IncludedAdult, TeamStationClient } from '../../common/api'
 import { Button, TextField } from '../components'
 import { Icon } from '../components/Icon'
+import { Modal } from '../components/Modal'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'

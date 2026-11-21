@@ -18,6 +18,7 @@ import type {
   ScheduleOption
 } from './autoScheduler/types'
 import { isRecord } from './groupCreation'
+import type { EngineDecision, EngineEvent, EngineLimit } from './scheduler/wire'
 import { asFieldSize, type FieldSize } from './venues'
 
 /** What happens to a season's upcoming games when a schedule is built. */
@@ -211,6 +212,8 @@ export const asSchedulePreview = asObject({
   createdAt: asString,
   options: asArray(asWireOption),
   blocking: asEither(asNull, asString),
+  /** False when the admin took the best schedule found at the time limit. */
+  provenOptimal: asOptional(asBoolean, true),
   edits: asObject({
     option: asNumber,
     rejectedGameKeys: asArray(asString),
@@ -300,6 +303,22 @@ export function editedGames(
   )
 }
 
+/**
+ * The league's most recent open or published preview
+ * (`GET /leagues/:leagueId/schedule-previews/latest`), or null.
+ */
+export const asLatestPreview = asEither(
+  asNull,
+  asObject({
+    id: asString,
+    status: asLiteral('open', 'published'),
+    createdAt: asString,
+    seasonIds: asArray(asString),
+    publishedAt: asEither(asNull, asString)
+  })
+)
+export type LatestPreview = NonNullable<ReturnType<typeof asLatestPreview>>
+
 /** A publication's outcome. */
 export const asPublication = asObject({
   preview: asSchedulePreview,
@@ -366,9 +385,44 @@ export function rescheduleReasonLabel(reason: RescheduleReason): string {
 /** Authorized input prepared by the server for this device. */
 export const asPreparedPreview = asObject({
   id: asString,
-  input: (raw: unknown): EngineInput => asUnknown(raw) as EngineInput
+  input: (raw: unknown): EngineInput => asUnknown(raw) as EngineInput,
+  /**
+   * How long the device's solver may run before it asks whether to go on:
+   * two minutes, or a test server's limit for the league.
+   */
+  solverLimitMs: asOptional(asNumber, 120_000)
 })
 export type PreparedPreview = ReturnType<typeof asPreparedPreview>
+
+/**
+ * A step of a build the client times around the engine: the server's
+ * preparation before it, and the upload of the result after.
+ */
+export interface ClientPhase {
+  kind: 'phase'
+  phase: 'preparing' | 'upload'
+  ms: number
+}
+
+/** One of the client's steps has started; its `phase` event follows. */
+export interface ClientPhaseStart {
+  kind: 'phase-start'
+  phase: 'preparing' | 'upload'
+}
+
+/** What a build reports while it runs: the client's steps and the engine's events. */
+export type BuildEvent = ClientPhaseStart | ClientPhase | EngineEvent
+
+/**
+ * How the device's build of a preview is followed and steered: each event
+ * as it happens, the answer at each time limit, and the abort that cancels
+ * it, discarding the preparation.
+ */
+export interface BuildSession {
+  onProgress?: (event: BuildEvent) => void
+  onLimit?: (limit: EngineLimit) => Promise<EngineDecision>
+  signal?: AbortSignal
+}
 
 /** ISO 8601 date-times that name their offset, so they mean one instant. */
 const ZONED_INSTANT =
@@ -428,5 +482,9 @@ export function asPreviewResult(raw: unknown): EngineResult {
     throw new TypeError('A blocked schedule cannot contain options')
   if (options.length === 0 && (blocking == null || blocking === ''))
     throw new TypeError('Explain why the schedule has no options')
-  return { options, blocking }
+  if (raw.provenOptimal !== undefined && typeof raw.provenOptimal !== 'boolean')
+    throw new TypeError('Say whether the schedule was proven the best')
+  return raw.provenOptimal === false
+    ? { options, blocking, provenOptimal: false }
+    : { options, blocking }
 }

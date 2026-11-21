@@ -39,6 +39,7 @@ import { useSceneShown } from '../components/sceneShown'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useScreenScope } from '../hooks/useScreenScope'
+import { loggedFetch, playbackOutcome } from '../player/playbackFetchLog'
 import { HOME_GUARDED, HOME_LISTS, HOME_RECENT } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -84,6 +85,9 @@ export interface HomeScreenProps {
    */
   onOpenUmpireSchedule?: () => void
 }
+
+/** A live-list answer this slow is logged even when nothing changed. */
+const SLOW_LIVE_LIST_MS = 2000
 
 /**
  * The first screen: the last game played, the players you are a guardian of,
@@ -231,10 +235,27 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
    * in an hour.
    */
   const beginLook = useLatestRequest()
+  // The live list is asked every half minute while the page is open: only
+  // its first answer, a change in how many games are live, or a slow answer
+  // is worth a log line, so an idle page does not log for ever.
+  const liveCountSaid = useRef<number | undefined>(undefined)
   const look = useCallback(async (): Promise<void> => {
     const current = beginLook()
     try {
-      const now = await client.liveNow()
+      const now = await loggedFetch(
+        {
+          kind: 'live_now',
+          surface: 'card',
+          worthSaying: (_outcome, count, ms) => {
+            const changed = count !== liveCountSaid.current
+            liveCountSaid.current = count
+            return changed || ms >= SLOW_LIVE_LIST_MS
+          }
+        },
+        async () => await client.liveNow(),
+        () => 'ok',
+        found => found.length
+      )
       if (!current()) return
       setLive(now)
       const first = now[0]
@@ -248,7 +269,11 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       // the same stream — and it would tear the stream down and start it
       // again, every half minute, in front of somebody watching.
       if (playing.current === first.videoId) return
-      const playback = await client.playback(first.videoId)
+      const playback = await loggedFetch(
+        { kind: 'playback', surface: 'card', videoId: first.videoId },
+        async () => await client.playback(first.videoId),
+        playbackOutcome
+      )
       if (!current() || playback.url == null) return
       playing.current = first.videoId
       setLiveUrl(playback.url)

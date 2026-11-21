@@ -34,11 +34,16 @@ export interface Emulation {
   h264?: boolean
 }
 
-/** The browser maestro-d starts: its own Chromium, or Chrome for real video. */
+/**
+ * The browser maestro-d starts: its own Chromium, or Chrome for real video.
+ * That Chrome is TS_E2E_H264_CHROME where it is set (a droplet's Google
+ * Chrome: puppeteer's Chrome for Testing on Linux plays no H.264), else
+ * puppeteer's.
+ */
 export async function browserFor(
   emulation: Emulation,
   chrome: () => string | Promise<string> = async () =>
-    await puppeteer.executablePath()
+    process.env.TS_E2E_H264_CHROME ?? (await puppeteer.executablePath())
 ): Promise<string> {
   if (emulation.h264 !== true) return 'chromium'
   const path = await chrome()
@@ -100,7 +105,10 @@ export async function connectToMaestroChromium(
     .split('\n')
   const browser = await puppeteer.connect({
     browserWSEndpoint: `ws://127.0.0.1:${port}${path}`,
-    defaultViewport: null
+    defaultViewport: null,
+    // Maestro observes requests. This read-only connection needs no duplicate
+    // network events or renderer cache of downloaded response bodies.
+    networkEnabled: false
   })
   const page = (await browser.pages()).find(p => p.url() === targetUrl)
   if (page == null) throw new Error(`No browser target at ${targetUrl}`)

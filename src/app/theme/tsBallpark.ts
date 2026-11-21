@@ -20,6 +20,8 @@ import type { Theme } from './types'
 const palette = {
   selectorGray: '#D9DDD6',
   white: '#FFFFFF',
+  /** A warm gray that a white mark reads on, as a close button. */
+  closeGray: '#4E4A42',
   transparent: '#00000000',
 
   // The greens, dark to light. `forest` is the brand: buttons, active pills,
@@ -37,6 +39,8 @@ const palette = {
   creamPressed: '#E2E7DB',
   fieldLine: '#E3EBD9',
   stone: '#D3DCCB',
+  // A chosen search location's pill.
+  beige: '#EADFC8',
 
   // Text, warm charcoal rather than black.
   bark: '#1A2116',
@@ -175,6 +179,8 @@ export const tsBallpark: Theme = {
   pillTextColor: palette.bark,
   pillActiveBackground: palette.forest,
   pillActiveTextColor: palette.white,
+  pillCloseColor: palette.closeGray,
+  pillCloseMarkColor: palette.white,
 
   // The header, and the navigation that becomes a sidebar on a wide screen.
   headerBackgroundColor: palette.white,

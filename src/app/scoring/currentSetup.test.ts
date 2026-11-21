@@ -13,7 +13,6 @@ import { userIdOfGumbo } from '../../common/userId'
 import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
-import { fieldKey } from '../field/fieldKeyboard'
 import { projectPlayerLabel } from '../field/playerPresentation'
 import {
   assignDefender,
@@ -450,7 +449,7 @@ describe('current scoring setup', function () {
     )
     expect(withRosterDetails(original, {})).equals(original)
   })
-  it('uses all nine centered square placeholders with visible edge bounds and keyboard setup taps', function () {
+  it('uses all nine centered square placeholders with visible edge bounds', function () {
     const session = game()
     for (const slot of POSITIONS)
       session.liveData.boxscore.teams.home.defense[slot] = null
@@ -472,20 +471,6 @@ describe('current scoring setup', function () {
       expect(plate.y).within(26, 818)
       expect(plate.emptyPosition).equals(true)
     }
-    const tapped: string[] = []
-    const props = {
-      players,
-      selected: players[0].id,
-      onSelect: () => undefined,
-      view: 'home' as const,
-      zoom: 1,
-      tapIds: players.map(player => player.id),
-      onPlayerTap: (id: string) => tapped.push(id)
-    }
-    expect(fieldKey(props, ' ')).equals(true)
-    expect(fieldKey(props, 'Enter')).equals(true)
-    expect(tapped).deep.equals(['empty-P', 'empty-P'])
-    expect(players[0].keyboardOrigin).equals(undefined)
   })
   it('edits only at rest and keeps active-play interactions intact', function () {
     const state = initialScoringState(game())

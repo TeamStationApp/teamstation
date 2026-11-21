@@ -73,6 +73,8 @@ async function main(): Promise<void> {
     const visit = async (path: string): Promise<void> => {
       await page.goto(h.origin + path, { waitUntil: 'domcontentloaded' })
     }
+    // In the page, never the navigation sidebar, whose account row reads
+    // the signed-in person's name (develop a0db231a9).
     const clickNamed = async (fragment: string): Promise<void> => {
       await page.waitForFunction(
         (word: string) =>

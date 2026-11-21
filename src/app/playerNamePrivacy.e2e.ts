@@ -3,6 +3,14 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import {
+  absent,
+  browserSession,
+  capture,
+  contains,
+  maestro,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import type { PlayerNamePrivacy } from '../common/playerNamePrivacy'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
@@ -19,14 +27,6 @@ import {
   TEAMMATE,
   TROUT
 } from '../test/playerNamePrivacyFixture'
-import {
-  absent,
-  browserSession,
-  capture,
-  contains,
-  maestro,
-  tap
-} from '../test/refinementsMaestro.e2e'
 import {
   dropPrefix,
   quiet,
@@ -116,11 +116,33 @@ async function main(): Promise<void> {
   const ROSTER = `/teams/${f.teamA}?tab=team`
   const PLAYER = `/players/${userIdOfGumbo(ALEX)}`
   const BOX = `/games/${gameId}?tab=boxScore`
+  /**
+   * A lineup reads `1. <name>` first. Its rows wrap between first and last
+   * name (901790a25), so the page's lines are read as one.
+   */
+  const batsFirst = async (name: string): Promise<void> => {
+    await page
+      .waitForFunction(
+        (text: string) =>
+          document.body.innerText.replace(/\s+/g, ' ').includes(text),
+        { timeout: 30000 },
+        `1. ${name}`
+      )
+      .catch(async (error: unknown) => {
+        console.error(
+          'Missing text',
+          `1. ${name}`,
+          await page.evaluate(() => document.body.innerText)
+        )
+        throw error
+      })
+  }
   /** The coach's own game screen, on its Lineup tab: `1. <name>` bats first. */
   const coachGame = async (name: string, file: string): Promise<void> => {
-    await open(`/games/${gameId}/coach/${f.teamA}`, 'Batting — Demo Hawks')
+    // The screen opens on whichever tab it opens on; its Lineup tab is what is read.
+    await open(`/games/${gameId}/coach/${f.teamA}`, 'Lineup')
     await m.tapOn({ css: '[aria-label="Lineup"]' })
-    await contains(page, `1. ${name}`)
+    await batsFirst(name)
     await capture(m, artifacts!, file)
   }
 
@@ -411,9 +433,18 @@ async function main(): Promise<void> {
     await capture(m, artifacts!, 'scoring-overlay-after.png')
     await m.tapOn({ css: '[aria-label="Open scoring menu"]' })
     await tap(m, 'Set Team Rosters')
-    await m.tapOn({ css: '[aria-label="Away Team"]' })
+    // The sheet draws its tabs again as it finishes opening: a tap that finds
+    // the tab it aimed at replaced is made again on the new one.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await m.tapOn({ css: '[aria-label="Away Team"]' })
+        break
+      } catch (error) {
+        if (attempt === 3 || !String(error).includes('detached')) throw error
+      }
+    }
     await m.tapOn({ css: '[aria-label="Lineup"]' })
-    await contains(page, '1. Alex Lee')
+    await batsFirst('Alex Lee')
     await capture(m, artifacts!, 'scoring-lineup-after.png')
     console.log('E4 PASS: the diamond reads Alex L, the lineup sheet Alex Lee')
     await signIn(101)
@@ -622,7 +653,9 @@ async function main(): Promise<void> {
       events,
       TEAMMATE
     )
-    expect(teammate).match(/^\{"plays":/)
+    // The teammate is answered the events (develop aa70c77db puts the
+    // attributed scoring updates beside the plays), never a refusal.
+    expect(JSON.parse(teammate)).to.have.property('plays').that.is.an('array')
     expect(teammate).not.include('modelNames')
     expect(teammate).not.include('firstName')
     expect(teammate).not.include('lastName')
@@ -632,6 +665,10 @@ async function main(): Promise<void> {
       await logged(model, 'curl -s "$BASE/games/$GAME/events"', events)
     ).include('unauthorized')
     console.log('11 PASS: only an admitted reader holds a model name')
+  } catch (error) {
+    // What the browser showed when a step failed.
+    await capture(m, artifacts!, 'failed.png').catch(() => undefined)
+    throw error
   } finally {
     await browser.disconnect()
     await m.detach().catch(() => undefined)

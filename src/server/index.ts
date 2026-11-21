@@ -1,6 +1,6 @@
 import './sentry/instrument'
 
-import { fork } from 'node:child_process'
+import { fork, type ForkOptions } from 'node:child_process'
 import cluster from 'node:cluster'
 import { randomBytes } from 'node:crypto'
 import { availableParallelism } from 'node:os'
@@ -9,9 +9,14 @@ import path from 'node:path'
 import express from 'express'
 
 import { defaultTvAppOrigin } from '../common/tvLogin'
-import { deliverSignInCode } from './auth/codeDelivery'
+import { accountCodeSender, deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
-import { type BackgroundJobs, startBackgroundJobs } from './backgroundJobs'
+import {
+  type BackgroundJobs,
+  skipWhileRunning,
+  startBackgroundJobs,
+  type Stoppable
+} from './backgroundJobs'
 import { versionOf } from './buildVersion'
 import { makeValkeyCache } from './cache/valkeyCache'
 import type { ChangeFeed } from './changeFeed/feed'
@@ -35,14 +40,20 @@ import {
   type GuardianInvitation,
   guardianInviteSender,
   mailConfigured,
-  sendInvitation,
-  sendSignInCode
+  sendInvitation
 } from './email/sendMail'
 import { jsonBody } from './jsonBody'
 import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
 import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
+import {
+  answerIpLookup,
+  type IpChannel,
+  ipLookupsFrom,
+  ipPlacesConfigOf,
+  startIpPlaces
+} from './location/ipPlaces'
 import { FeedHolder, type MediaContext } from './media/mediaContext'
 import { republishOwnedImages, settlesWithin } from './media/republishImages'
 import { spaceConfigured } from './media/spacesHls'
@@ -58,6 +69,14 @@ import { oauthInteractionRoutes } from './oauth/routes'
 import { requestLogs, startServerLogging } from './observability/logging'
 import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
+import { pushSettings, webPushKey } from './push/config'
+import {
+  chatRequestOf,
+  makePushEnqueuer,
+  type PushEnqueuer,
+  readRequestOf
+} from './push/queue'
+import { queueReminders } from './push/rsvpReminders'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
@@ -98,6 +117,7 @@ import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
+import { pushRoutes } from './routes/push'
 import { scheduleRoutes } from './routes/schedule'
 import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
@@ -120,6 +140,8 @@ import {
   quit,
   scoreboardPrefix
 } from './scoreboard/scoreboardStore'
+import { warmLocationsInBackground } from './search/locations'
+import { attachSearchSocket } from './search/socket'
 import {
   eventControlIssuerOf,
   primaryHost,
@@ -137,6 +159,7 @@ import {
   type StatsBuilderHandle
 } from './statsBuilder/serverHooks'
 import {
+  supervise,
   type SupervisedChild,
   superviseStatsBuilder
 } from './statsBuilder/supervisor'
@@ -400,6 +423,43 @@ function startLocalCopyWarnings(db: ReturnType<typeof makeDatabase>): void {
   timer.unref?.()
 }
 
+/** How often events about to start are looked for, to remind who said yes. */
+const RSVP_REMINDER_INTERVAL_MS = 5 * 60 * 1000
+
+function logError(message: string): void {
+  console.error(message)
+}
+
+/** The API's side of the push queue, on this process's own connection. */
+function pushEnqueuer(): PushEnqueuer {
+  return makePushEnqueuer(serverConfig, logError)
+}
+
+/**
+ * Asks the push sender to remind people of the events they said yes to, two
+ * hours ahead: once Valkey is first there on the way up, and then every five
+ * minutes, one request for each event start in the window. The sender writes
+ * each reminder down before it sends it, so a request queued again, or by a
+ * second node, sends nothing twice; one lost with Valkey away is queued again
+ * by the next sweep. Answers how to stop: the timer, and the sweep's own
+ * queue client.
+ */
+function startRsvpReminders(db: ReturnType<typeof makeDatabase>): Stoppable {
+  const queue = pushEnqueuer()
+  const sweep = skipWhileRunning(async () => {
+    await queueReminders(db, new Date(), queue, logError)
+  })
+  queue.whenReady(sweep)
+  const timer = setInterval(sweep, RSVP_REMINDER_INTERVAL_MS)
+  timer.unref?.()
+  return {
+    stop: async () => {
+      clearInterval(timer)
+      await queue.close()
+    }
+  }
+}
+
 /**
  * Where uploads wait while their parts arrive: a Director's recordings, and
  * chat attachments under `chat/`.
@@ -442,6 +502,14 @@ function jobsOn(
   db: ReturnType<typeof makeDatabase>,
   feed: () => ChangeFeed
 ): BackgroundJobs<StatsBuilderHandle> {
+  const forkChild = (
+    modulePath: string,
+    args: string[],
+    options: ForkOptions
+  ): SupervisedChild => fork(modulePath, args, options) as SupervisedChild
+  const say = (message: string): void => {
+    console.log(message)
+  }
   return {
     reopenInterrupted: () => {
       reopenInterrupted(db)
@@ -455,6 +523,7 @@ function jobsOn(
     startLocalCopyWarnings: () => {
       startLocalCopyWarnings(db)
     },
+    startRsvpReminders: () => startRsvpReminders(db),
     startChatAttachmentPurge: () => {
       startChatAttachmentPurge(db)
     },
@@ -466,21 +535,25 @@ function jobsOn(
         console.log(message)
       })
     },
+    // The only process that reads the push keys and sends.
+    startPushSender: () =>
+      supervise({
+        fork: forkChild,
+        log: say,
+        clock: () => new Date(),
+        modulePath: require.resolve('./push/sender/start'),
+        name: 'push sender'
+      }),
     startStatsBuilder: () =>
       startStatsBuilder({
         enabled: serverConfig.statsBuilder,
         supervise: () =>
           superviseStatsBuilder({
-            fork: (modulePath, args, options) =>
-              fork(modulePath, args, options) as SupervisedChild,
-            log: message => {
-              console.log(message)
-            },
+            fork: forkChild,
+            log: say,
             clock: () => new Date()
           }),
-        log: message => {
-          console.log(message)
-        }
+        log: say
       })
   }
 }
@@ -519,6 +592,15 @@ function runPrimary(workerCount: number): void {
   const forceExit = forceStop(builder, code => {
     process.exit(code)
   })
+  // The primary holds the IP database, one copy for the server, keeps it
+  // fresh, and answers its workers' lookups.
+  const ipPlacesConfig = ipPlacesConfigOf(serverConfig.ipPlaces)
+  const ipPlaces =
+    ipPlacesConfig == null ? undefined : startIpPlaces(ipPlacesConfig)
+  if (ipPlaces != null)
+    cluster.on('message', (worker, message) => {
+      answerIpLookup(ipPlaces, worker, message)
+    })
   console.log(`teamstation ${VERSION}: forking ${workerCount} workers`)
   for (let i = 0; i < workerCount; i++) cluster.fork()
 
@@ -556,6 +638,7 @@ function runPrimary(workerCount: number): void {
   const stop = (signal: string): void => {
     if (stopping) return
     stopping = true
+    ipPlaces?.stop()
     stopRelay(relay).catch(() => undefined)
     builder.stop(signal).catch((error: unknown) => {
       console.error('stats builder: stop failed', error)
@@ -656,6 +739,9 @@ function runWorker(): void {
     db,
     { log }
   )
+  // What a new post asks the push sender for; never waited on, and dropped
+  // with Valkey away.
+  const pushQueue = pushEnqueuer()
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -803,13 +889,17 @@ function runWorker(): void {
       freshEpochsEnabled: () => serverConfig.chatHistoryRecoveryEnabled
     })
   )
-  // A delete takes the attachments only it referenced off the Space.
+  // A delete takes the attachments only it referenced off the Space; a new
+  // post asks the push sender to wake the members' phones and browsers, and
+  // a read to take what that showed down from the reader's other devices.
   app.use(
     '/api/v1',
     chatMessageRoutes(db, mediaContext, {
       objects: spaceConfigured(serverConfig.space)
         ? spaceObjectStore(serverConfig.space)
-        : undefined
+        : undefined,
+      wakes: async message => await pushQueue.add(chatRequestOf(message)),
+      reads: async read => await pushQueue.addRead(readRequestOf(read))
     })
   )
   // Its parts are raw bytes, read by its own `express.raw` (9 MiB a part).
@@ -875,7 +965,10 @@ function runWorker(): void {
   )
   app.use('/api/v1', venueRoutes(db, mediaContext, { places: placesProvider }))
   app.use('/api/v1', schedulingSetupRoutes(db))
-  app.use('/api/v1', schedulePreviewRoutes(db))
+  app.use(
+    '/api/v1',
+    schedulePreviewRoutes(db, { testSettings: serverConfig.testSettings })
+  )
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {
@@ -887,16 +980,19 @@ function runWorker(): void {
     '/api/v1',
     accountRoutes(db, {
       ...mediaContext,
-      sendCode: async (email, code) => {
-        if (!mailConfigured(serverConfig.smtp))
-          throw new Error('Email is not configured')
-        await sendSignInCode(serverConfig.smtp, email, code)
-      }
+      sendCode: accountCodeSender(serverConfig.smtp)
     })
   )
   app.use(
     '/api/v1',
     apiKeyRoutes(db, { sessionSecret: serverConfig.sessionSecret })
+  )
+  app.use(
+    '/api/v1',
+    pushRoutes(db, {
+      // The public half only: the keys that send are the push sender's.
+      webPushKey: webPushKey(pushSettings(serverConfig))
+    })
   )
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
@@ -946,6 +1042,12 @@ function runWorker(): void {
       console.log(
         `worker ${process.pid} listening on ${serverConfig.listenHost}:${serverConfig.listenPort}`
       )
+      // The place catalog and its search indexes, built once the worker
+      // listens rather than by the first search, in short stretches that
+      // leave requests answered meanwhile. A search waits for them.
+      warmLocationsInBackground(line => {
+        console.log(`worker ${process.pid}: ${line}`)
+      })
     }
   )
   // One upgrade listener. Node delivers an upgrade to every listener on the
@@ -975,9 +1077,28 @@ function runWorker(): void {
           allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
           listenForUpgrades: false
         })
+  // Where a reader's address is: looked up here when this is the only
+  // process, else by the primary that forked this worker.
+  const ipPlacesConfig = ipPlacesConfigOf(serverConfig.ipPlaces)
+  const localIpPlaces =
+    ipPlacesConfig != null && cluster.isPrimary
+      ? startIpPlaces(ipPlacesConfig)
+      : undefined
+  const ipPlaces =
+    ipPlacesConfig == null
+      ? undefined
+      : (localIpPlaces ?? ipLookupsFrom(process as IpChannel))
+  // The search field's socket, for anybody, signed in or not.
+  const searchSocket = attachSearchSocket({
+    db,
+    deps: { space: mediaContext.space, jevBaseUrl: serverConfig.jev.baseUrl },
+    allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
+    ...(ipPlaces == null ? {} : { ipPlaces })
+  })
   const unbindUpgrades = bindUpgrades(server, [
     (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
     (req, socket, head) => dictation?.acceptUpgrade(req, socket, head) === true,
+    (req, socket, head) => searchSocket.acceptUpgrade(req, socket, head),
     (req, socket, head) => {
       scoreboard.hub.handleUpgrade(req, socket, head)
       return true
@@ -1000,6 +1121,8 @@ function runWorker(): void {
     if (closing) return
     closing = true
     dictation?.close()
+    searchSocket.close()
+    localIpPlaces?.stop()
     unbindUpgrades()
     // Before the server: an upgraded socket is not one of its connections,
     // so closing the server would leave every scoreboard socket open.
@@ -1014,6 +1137,7 @@ function runWorker(): void {
         await stopRelay(relay)
         await feed.close()
         await rosterCache.close()
+        await pushQueue.close()
         await Promise.all([quit(playlistSubscriber), quit(playlistClient)])
         await db.destroy()
       },

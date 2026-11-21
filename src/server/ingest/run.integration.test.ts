@@ -116,12 +116,16 @@ function fake(
         isReady: true,
         isOpen: true,
         connect: options.connectValkey ?? (async () => undefined),
-        close: async () => {
+        ping: async () => 'PONG',
+        destroy: () => {
           f.order.push('valkey closed')
+          client.isReady = false
+          client.isOpen = false
         }
-      } as unknown as ScoreboardClient
-      f.valkeyClients.push(client)
-      return client
+      }
+      const out = client as unknown as ScoreboardClient
+      f.valkeyClients.push(out)
+      return out
     },
     startLiveController: async next => {
       f.started.push(next)
@@ -289,7 +293,7 @@ describe('the ingest process', function () {
     expect(f.valkeys).deep.equals([
       {
         url: 'redis://valkey.example.test:6380',
-        name: 'live playlists',
+        name: 'ingest',
         caFile: '/etc/valkey-ca.pem'
       }
     ])

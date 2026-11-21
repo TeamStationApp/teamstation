@@ -182,8 +182,19 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     first.apply({ type: 'pitch', call: 'B' })
     await first.flush()
     const net = fieldServer(started.games.get('g1')!)
-    const openCache = async (userId: string): Promise<DocumentStore> => {
-      const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+    const openCache = async (
+      userId: string,
+      apiBaseUrl: string
+    ): Promise<DocumentStore> => {
+      const executor = nodeSqliteExecutor(
+        join(
+          dir,
+          cacheFileName(
+            userId,
+            new URL(apiBaseUrl, 'https://app.example.test').href
+          )
+        )
+      )
       executors.push(executor)
       return await openCacheStore(executor)
     }

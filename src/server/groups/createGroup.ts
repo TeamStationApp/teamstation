@@ -10,6 +10,7 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { coordinateColumns } from '../location/places'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
@@ -95,6 +96,7 @@ export async function createGroup(
           id,
           name: body.name,
           locality: body.locality,
+          ...coordinateColumns(body.locality),
           picture_catalog_id: picture?.id ?? null,
           logo_path: prefix,
           logo_sha256: picture?.sha256 ?? null,
@@ -126,6 +128,7 @@ export async function createGroup(
           name: body.name,
           league_id: leagueId,
           locality: body.locality ?? null,
+          ...coordinateColumns(body.locality),
           picture_catalog_id: picture?.id ?? null,
           logo_path: prefix,
           logo_sha256: picture?.sha256 ?? null,

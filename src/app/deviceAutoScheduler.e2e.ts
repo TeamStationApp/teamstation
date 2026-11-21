@@ -5,6 +5,15 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import type { HTTPRequest } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  browserSession,
+  capture,
+  contains,
+  fill,
+  maestro,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { coversGame, effectiveAvailability } from '../common/fieldAvailability'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import type { SeasonScheduleSettings } from '../common/seasonScheduling'
@@ -16,15 +25,6 @@ import {
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
-import {
-  browserSession,
-  capture,
-  contains,
-  fill,
-  maestro,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
   const dir = process.env.TS_AUTO_SCHEDULER_ARTIFACTS
@@ -67,7 +67,9 @@ async function main(): Promise<void> {
         scheduler,
         before ? 'SCHEDULE SETTINGS' : 'SELECT SEASONS TO AUTO SCHEDULE.'
       ],
-      ['constraints', constraints, 'Max games on weekdays'],
+      // The season's own page: its windows, blackout days, size and fields;
+      // its weekday limits are the grid's since a86703d7e.
+      ['constraints', constraints, 'Times are local to each field.'],
       [
         'venue',
         `/venues/${state.venueId}`,
@@ -89,14 +91,33 @@ async function main(): Promise<void> {
     const label = async (name: string): Promise<void> => {
       await b.m.tapOn({ css: `[aria-label="${name}"]`, timeout: 15000 })
     }
+    // An open cell selects its number a tick after focus lands, so typing
+    // replaces it; text typed before then is caught in that selection.
+    const selected = async (name: string): Promise<void> => {
+      await b.page.waitForFunction(
+        (selector: string) => {
+          const input = document.querySelector(selector)
+          return (
+            input instanceof HTMLInputElement &&
+            document.activeElement === input &&
+            input.value.length > 0 &&
+            input.selectionStart === 0 &&
+            input.selectionEnd === input.value.length
+          )
+        },
+        { timeout: 15000 },
+        `input[aria-label="Edit ${name}"]`
+      )
+    }
     await b.m.openBrowser({ url: fx.f.h.origin + scheduler })
     await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
     const body = await b.page.evaluate(() => document.body.textContent)
     expect(body).not.includes('FIELDS FOR THIS RUN')
     expect(body).not.includes('SCHEDULE SETTINGS')
     expect(await b.page.$$('[data-testid="season-schedule-grid"]')).length(1)
-    await label('Demo Playoffs')
-    await label('Demo Playoffs')
+    // Off and on again: the season's checkbox, "Auto-schedule <season>" (a86703d7e).
+    await label('Auto-schedule Demo Playoffs')
+    await label('Auto-schedule Demo Playoffs')
     const rowLabels = [
       'Game length in minutes',
       'Time between games in minutes',
@@ -105,9 +126,7 @@ async function main(): Promise<void> {
     ]
     await label('Demo Regular Game length in minutes: 90')
     for (const [index, value] of ['95', '15', '4', '1'].entries()) {
-      await b.page.waitForSelector(
-        `input[aria-label="Edit Demo Regular ${rowLabels[index]}"]`
-      )
+      await selected(`Demo Regular ${rowLabels[index]}`)
       await b.m.inputText({ text: value })
       await b.m.pressKey({ key: 'TAB' })
     }
@@ -126,6 +145,7 @@ async function main(): Promise<void> {
     await label(
       'Demo Regular Most games a team plays on weekdays in a week: 200'
     )
+    await selected('Demo Regular Most games a team plays on weekdays in a week')
     await b.m.inputText({ text: '201' })
     await b.m.pressKey({ key: 'ENTER' })
     await contains(b.page, 'Max weekday games: choose 0 to 200.')
@@ -211,6 +231,9 @@ async function main(): Promise<void> {
     b.page.on('request', intercept)
     await label(
       'Demo Regular Most games a team plays on the weekend in a week: 200'
+    )
+    await selected(
+      'Demo Regular Most games a team plays on the weekend in a week'
     )
     await b.m.inputText({ text: '3' })
     await b.m.pressKey({ key: 'ENTER' })
@@ -354,6 +377,10 @@ async function main(): Promise<void> {
     const coverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
     if (coverage != null)
       await recordBrowserCoverage([b.page], fx.f.h.origin, coverage)
+  } catch (error) {
+    // What the browser showed when a step failed.
+    await capture(b.m, dir, 'failed.png').catch(() => undefined)
+    throw error
   } finally {
     await writeFile(join(dir, 'device-scheduling.log'), lines.join('\n') + '\n')
     await b.browser.disconnect()

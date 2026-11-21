@@ -45,9 +45,10 @@ import {
 } from './judge'
 import { type DetectRow, ledgerPath, readLedger } from './ledger'
 import { readLegacy } from './legacy'
+import { connectDaemon } from './maestro'
 import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
 import { type PlanResource, planScenarios } from './plan'
-import { prepareApp } from './prepare'
+import { prepareApp, prepareAppOnHub, preparesOnHub } from './prepare'
 import { BlockedError, HarnessError } from './result'
 import { runScenario } from './run'
 import { runMany } from './runMany'
@@ -350,11 +351,17 @@ export async function main(argv: string[]): Promise<number> {
       if (values.app == null || values.device == null) {
         throw new Error('prepare wants --app and --device')
       }
-      prepareApp({
+      const prepare = {
         app: values.app,
         device: values.device[0],
         packagePath: values.package
-      })
+      }
+      if (preparesOnHub(settings, prepare.device))
+        await prepareAppOnHub(
+          prepare,
+          await connectDaemon(settings, `prepare-${process.pid}`)
+        )
+      else prepareApp(prepare)
       print({ prepared: values.app })
       return 0
     }

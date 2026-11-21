@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react'
-import { Modal, Pressable, View } from 'react-native'
+import { Pressable, View } from 'react-native'
 
 import { ButtonIcon } from '../components/ButtonIcon'
+import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'

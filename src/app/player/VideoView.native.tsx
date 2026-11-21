@@ -79,6 +79,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
     bump(count => count + 1)
   })
   const handle = handleRef.current
+  handle.engine = Platform.OS === 'android' ? 'exoplayer' : 'avplayer'
   // Android ignores the same source handed to it twice (`clearBeforeReload`).
   handle.clearBeforeReload = Platform.OS === 'android'
   // And says it can play before it says it has a picture (`readyOnBuffer`).
@@ -172,6 +173,10 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       onSeek={handle.handleSeek}
       onPlaybackStateChanged={handle.handlePlaybackState}
       onBuffer={handle.handleBuffer}
+      // For the playback telemetry's heartbeat: ExoPlayer's line throughput
+      // estimate, or AVPlayer's declared bitrate of the variant it plays.
+      reportBandwidth
+      onBandwidthUpdate={handle.handleBandwidth}
       bufferingStrategy={
         heapShare == null
           ? BufferingStrategyType.DEFAULT

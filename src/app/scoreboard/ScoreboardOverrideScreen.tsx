@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   type GestureResponderEvent,
-  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -14,6 +13,7 @@ import {
 import { applyOverrides } from '../../common/scoreboard'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { useHeaderSlot } from '../components/headerSlot'
+import { Modal } from '../components/Modal'
 import { lstrings, sprintf } from '../locales/strings'
 import { routePath } from '../navigation/routes'
 import { cacheStyles } from '../theme/ThemeContext'

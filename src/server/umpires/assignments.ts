@@ -1,6 +1,7 @@
-import type { Kysely, Transaction } from 'kysely'
+import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
+import { DEFAULT_EVENT_DURATION_MS } from '../../common/eventTime'
 import { umpirePositions } from '../../common/umpires'
 import {
   UMPIRE_LEADERBOARD_MAX_PAGE,
@@ -10,11 +11,15 @@ import {
   type UmpireLeaderboardQuery,
   type UmpireRank
 } from '../../common/umpireSchedule'
-import { hardUmpireConflict } from '../../common/umpireTime'
+import { hardUmpireConflict, umpireEnd } from '../../common/umpireTime'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { now } from '../clock'
-import type { Database } from '../db/database'
+import type {
+  Database,
+  GamesTable,
+  UmpireAssignmentsTable
+} from '../db/database'
 import { canAdminister } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
@@ -149,6 +154,99 @@ export async function recheckUmpireAssignments(
     .where('status', '!=', 'cancelled')
     .where('withdrawn_at', 'is', null)
     .execute()
+  await recheckAgainst(
+    db,
+    game,
+    assignments,
+    games,
+    async id => await umpireIdentity(db, id)
+  )
+}
+
+/**
+ * `recheckUmpireAssignments` for each of many games, in the order they are
+ * passed to the function this answers, with the same effects in the same
+ * order: the assignments, the games, and the games each of `gameIds` that
+ * holds an assignment overlaps, read once here instead of on every call.
+ * With no assignment at all, nothing more is read and nothing is checked.
+ */
+export async function umpireRechecker(
+  db: Transaction<Database>,
+  gameIds: readonly string[]
+): Promise<(gameId: string) => Promise<void>> {
+  let live = await db.selectFrom('umpire_assignments').selectAll().execute()
+  if (live.length === 0 || gameIds.length === 0) return async () => {}
+  const targets = new Map(
+    (
+      await db
+        .selectFrom('games')
+        .selectAll()
+        .where('id', 'in', gameIds)
+        .execute()
+    ).map(game => [game.id, game])
+  )
+  // A game with an assignment of its own is checked against every game it
+  // overlaps; any other only against the games that hold an assignment.
+  const assigned = new Set(live.map(a => a.game_id))
+  const edited = [...targets.values()].filter(game => assigned.has(game.id))
+  const games = await db
+    .selectFrom('games')
+    .selectAll()
+    .where('status', '!=', 'cancelled')
+    .where('withdrawn_at', 'is', null)
+    .where(eb =>
+      eb.or([
+        eb('id', 'in', [...assigned]),
+        ...edited.map(game => {
+          const { startAt } = umpireInterval(game)
+          // A second either side covers the database's finer clock.
+          const from = new Date(Date.parse(startAt) - 1000)
+          const to = new Date(umpireEnd(umpireInterval(game)) + 1000)
+          return eb.and([
+            eb('start_at', '<', to),
+            eb(
+              sql<Date>`coalesce(end_at, start_at + ${`${DEFAULT_EVENT_DURATION_MS} milliseconds`}::interval)`,
+              '>',
+              from
+            )
+          ])
+        })
+      ])
+    )
+    .execute()
+  const people = new Map<string, Promise<UmpireIdentity>>()
+  const identity = async (id: string): Promise<UmpireIdentity> => {
+    let person = people.get(id)
+    if (person == null) {
+      person = umpireIdentity(db, id)
+      people.set(id, person)
+    }
+    return await person
+  }
+  return async gameId => {
+    const game = targets.get(gameId)
+    if (game == null) throw new Error(`No game ${gameId} to recheck`)
+    const removed = await recheckAgainst(db, game, live, games, identity)
+    if (removed.size > 0) live = live.filter(a => !removed.has(a))
+  }
+}
+
+/**
+ * Takes away each of `assignments` that `game`'s time or teams now make
+ * impossible, of those to `game` itself or to a game it overlaps, and
+ * answers those it took away. `games` are the games not cancelled, or at
+ * least those holding an assignment and, when `game` holds one, those it
+ * overlaps.
+ */
+async function recheckAgainst(
+  db: Transaction<Database>,
+  game: Selectable<GamesTable>,
+  assignments: Array<Selectable<UmpireAssignmentsTable>>,
+  games: Array<Selectable<GamesTable>>,
+  identity: (id: string) => Promise<UmpireIdentity>
+): Promise<Set<Selectable<UmpireAssignmentsTable>>> {
+  const gameId = game.id
+  const removed = new Set<Selectable<UmpireAssignmentsTable>>()
   const byId = new Map(games.map(g => [g.id, g]))
   for (const assignment of assignments) {
     const assignedGame = byId.get(assignment.game_id)
@@ -159,7 +257,7 @@ export async function recheckUmpireAssignments(
       !hardUmpireConflict(umpireInterval(game), umpireInterval(assignedGame))
     )
       continue
-    const person = await umpireIdentity(db, assignment.user_id)
+    const person = await identity(assignment.user_id)
     const invalid = edited
       ? games.some(
           other =>
@@ -172,7 +270,10 @@ export async function recheckUmpireAssignments(
                   person.userIds.includes(a.user_id)
               ))
         )
-      : byId.has(gameId) && umpireIsPlaying(person, game)
+      : // `game` itself is one of the games not cancelled.
+        game.status !== 'cancelled' &&
+        game.withdrawn_at == null &&
+        umpireIsPlaying(person, game)
     if (invalid) {
       await db
         .deleteFrom('umpire_assignments')
@@ -180,8 +281,10 @@ export async function recheckUmpireAssignments(
         .where('slot', '=', assignment.slot)
         .execute()
       noteScopeChange(db, { gameId: assignment.game_id })
+      removed.add(assignment)
     }
   }
+  return removed
 }
 /**
  * A game's umpire positions and who holds each, named in full to a `reader`

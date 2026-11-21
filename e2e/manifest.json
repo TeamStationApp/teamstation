@@ -1,6 +1,1308 @@
 {
   "scenarios": [
     {
+      "id": "account/rate-limits/password#refused-at-the-limit",
+      "title": "Too many wrong passwords are refused at the limit, and reset restores it",
+      "kind": "e2e",
+      "covers": [
+        "src/server/auth/rateLimit.ts",
+        "src/server/routes/auth.ts"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web",
+        "reverse-proxy"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/rate-limits/password",
+      "file": "e2e/tests/account/rate-limits/password.e2e.ts"
+    },
+    {
+      "id": "account/sign-in/password#baseline-account",
+      "title": "A person signs in with a password on each surface, and sees only their own team",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/auth.ts",
+        "src/server/auth/passwords.ts",
+        "src/app/screens/LoginScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password",
+      "file": "e2e/tests/account/sign-in/password.e2e.ts"
+    },
+    {
+      "id": "account/sign-in/password#own-team-only",
+      "title": "A person signs in with a password on each surface, and sees only their own team",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/auth.ts",
+        "src/server/auth/passwords.ts",
+        "src/app/screens/LoginScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password",
+      "file": "e2e/tests/account/sign-in/password.e2e.ts"
+    },
+    {
+      "id": "account/sign-in/password#wrong-password-refused",
+      "title": "A person signs in with a password on each surface, and sees only their own team",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/auth.ts",
+        "src/server/auth/passwords.ts",
+        "src/app/screens/LoginScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password",
+      "file": "e2e/tests/account/sign-in/password.e2e.ts"
+    },
+    {
+      "id": "app-shell/chat/composer-keyboard#rides-keyboard",
+      "title": "A conversation’s composer rides the keyboard on a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/ChatHistoryList.native.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [
+        "searchKeyboardChatAccount"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/chat/composer-keyboard",
+      "file": "e2e/tests/app-shell/chat/composer-keyboard.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#box-score-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#box-score-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#location-row-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#location-row-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#result-pill-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#result-pill-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-filter-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-filter-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-row-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#schedule-row-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#stream-address-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#stream-address-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#thumbnails-desktop",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/lists/list-screens#thumbnails-phone",
+      "title": "List screens lay out their thumbnails, rows, filters and stream address",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/**",
+        "src/app/components/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "missing-font",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/lists/list-screens",
+      "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/keyboard-dock#rides-keyboard",
+      "title": "Search’s dock rides the keyboard up and down on a phone, with its location pills above the field",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/screens/SearchDock.native.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts",
+        "src/app/components/LocationPill.tsx"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/keyboard-dock",
+      "file": "e2e/tests/app-shell/search/keyboard-dock.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/keyboard-dock#sign-in-field",
+      "title": "Search’s dock rides the keyboard up and down on a phone, with its location pills above the field",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/screens/SearchDock.native.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts",
+        "src/app/components/LocationPill.tsx"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/keyboard-dock",
+      "file": "e2e/tests/app-shell/search/keyboard-dock.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/live-jev#real-ranking",
+      "title": "The real Jev model ranks a search and names its model",
+      "kind": "e2e",
+      "covers": [
+        "src/server/search/jev.ts",
+        "src/server/search/socket.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "jev"
+      ],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/live-jev",
+      "file": "e2e/tests/app-shell/search/live-jev.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#backspace-removes",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#city-widens",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#near-reader",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#state-filters",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts",
+        "src/server/location/ipPlaces.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#jev-down",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#jev-reorders",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#mixed-kinds",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#stale-typing",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/open#each-kind",
+      "title": "A search result opens its own league, season, team or player page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/open",
+      "file": "e2e/tests/app-shell/search/open.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/pill-device#backspace-removes",
+      "title": "A chosen place’s pill centres its close circle at its end and goes with Backspace, on a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/LocationPill.tsx",
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/theme/pill.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/pill-device",
+      "file": "e2e/tests/app-shell/search/pill-device.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/pill-device#x-centred",
+      "title": "A chosen place’s pill centres its close circle at its end and goes with Backspace, on a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/LocationPill.tsx",
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/theme/pill.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/search/pill-device",
+      "file": "e2e/tests/app-shell/search/pill-device.e2e.ts"
+    },
+    {
       "id": "app-shell/splash/android-launch#dismiss",
       "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
       "kind": "e2e",
@@ -361,6 +1663,3039 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "id": "assistant/chat/android-chat#bubble-closes-chat-and-opens-settings",
+      "title": "On Android Tess is a full-screen chat that the hardware Back closes, with her links and her sheet",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/useTessBack.native.ts",
+        "src/app/tess/pickAttachments.native.ts",
+        "src/app/tess/AttachPicker.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/android-chat",
+      "file": "e2e/tests/assistant/chat/android-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/android-chat#button-before-notifications",
+      "title": "On Android Tess is a full-screen chat that the hardware Back closes, with her links and her sheet",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/useTessBack.native.ts",
+        "src/app/tess/pickAttachments.native.ts",
+        "src/app/tess/AttachPicker.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/android-chat",
+      "file": "e2e/tests/assistant/chat/android-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/android-chat#hardware-back-closes-only-the-chat",
+      "title": "On Android Tess is a full-screen chat that the hardware Back closes, with her links and her sheet",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/useTessBack.native.ts",
+        "src/app/tess/pickAttachments.native.ts",
+        "src/app/tess/AttachPicker.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/android-chat",
+      "file": "e2e/tests/assistant/chat/android-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/android-chat#sheet-offers-photo-and-file",
+      "title": "On Android Tess is a full-screen chat that the hardware Back closes, with her links and her sheet",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/useTessBack.native.ts",
+        "src/app/tess/pickAttachments.native.ts",
+        "src/app/tess/AttachPicker.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/android-chat",
+      "file": "e2e/tests/assistant/chat/android-chat.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model",
+      "title": "A file dropped on her panel and a picture chosen from it both reach the model with the message",
+      "covers": [
+        "src/app/tess/AttachPanel.tsx",
+        "src/app/tess/Composer.tsx",
+        "src/app/tess/tessUploads.ts",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "api-500",
+        "not-saved"
+      ],
+      "spec": "assistant/chat/attachments",
+      "file": "e2e/tests/assistant/chat/attachments.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/column-divider#drag-resizes-and-reload-keeps",
+      "title": "Her column's divider resizes it by mouse and by keyboard, the pane follows, and a reload keeps the width",
+      "covers": [
+        "src/app/tess/TessDivider.tsx",
+        "src/app/tess/tessLayout.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/column-divider",
+      "file": "e2e/tests/assistant/chat/column-divider.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/column-divider#keyboard-moves-it-16-points-a-press",
+      "title": "Her column's divider resizes it by mouse and by keyboard, the pane follows, and a reload keeps the width",
+      "covers": [
+        "src/app/tess/TessDivider.tsx",
+        "src/app/tess/tessLayout.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/column-divider",
+      "file": "e2e/tests/assistant/chat/column-divider.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/composer#shift-enter-is-a-new-line",
+      "title": "Her chat is titled beside her icon, the + is small and plain, and Shift+Enter is a new line while Enter sends",
+      "covers": [
+        "src/app/tess/Composer.tsx",
+        "src/app/tess/TessChat.tsx"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/composer",
+      "file": "e2e/tests/assistant/chat/composer.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/composer#title-and-plain-plus",
+      "title": "Her chat is titled beside her icon, the + is small and plain, and Shift+Enter is a new line while Enter sends",
+      "covers": [
+        "src/app/tess/Composer.tsx",
+        "src/app/tess/TessChat.tsx"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/composer",
+      "file": "e2e/tests/assistant/chat/composer.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/confirm-hold#card-shows-the-change",
+      "title": "A change Tess proposes is shown on a card, and only a full three-second hold makes it",
+      "covers": [
+        "src/app/tess/ChangeBatch.tsx",
+        "src/app/tess/HoldToConfirm.tsx",
+        "src/server/routes/tess.ts",
+        "src/server/tess/turns.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "not-saved",
+        "wrong-data",
+        "api-500"
+      ],
+      "spec": "assistant/chat/confirm-hold",
+      "file": "e2e/tests/assistant/chat/confirm-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/confirm-hold#early-release-runs-nothing",
+      "title": "A change Tess proposes is shown on a card, and only a full three-second hold makes it",
+      "covers": [
+        "src/app/tess/ChangeBatch.tsx",
+        "src/app/tess/HoldToConfirm.tsx",
+        "src/server/routes/tess.ts",
+        "src/server/tess/turns.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "not-saved",
+        "wrong-data",
+        "api-500"
+      ],
+      "spec": "assistant/chat/confirm-hold",
+      "file": "e2e/tests/assistant/chat/confirm-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/confirm-hold#full-hold-makes-the-change",
+      "title": "A change Tess proposes is shown on a card, and only a full three-second hold makes it",
+      "covers": [
+        "src/app/tess/ChangeBatch.tsx",
+        "src/app/tess/HoldToConfirm.tsx",
+        "src/server/routes/tess.ts",
+        "src/server/tess/turns.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "not-saved",
+        "wrong-data",
+        "api-500"
+      ],
+      "spec": "assistant/chat/confirm-hold",
+      "file": "e2e/tests/assistant/chat/confirm-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/header-button#absent-without-tess",
+      "title": "The header offers Tess before Notifications, and offers nothing where the server has no Tess",
+      "covers": [
+        "src/app/tess/useTessAvailable.ts",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift",
+        "missing-font",
+        "blank-screen",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/header-button",
+      "file": "e2e/tests/assistant/chat/header-button.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/header-button#before-notifications",
+      "title": "The header offers Tess before Notifications, and offers nothing where the server has no Tess",
+      "covers": [
+        "src/app/tess/useTessAvailable.ts",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift",
+        "missing-font",
+        "blank-screen",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/header-button",
+      "file": "e2e/tests/assistant/chat/header-button.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/links-in-pane#angle-link-fills-only-the-pane",
+      "title": "What Tess links to opens in the pane beside her, and over what the pane already shows",
+      "covers": [
+        "src/app/tess/WayBubble.tsx",
+        "src/app/tess/TessMarkdown.tsx",
+        "src/app/tess/TessOverlayLayer.tsx",
+        "src/server/tess/playerLinks.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "wrong-data",
+        "api-500",
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/links-in-pane",
+      "file": "e2e/tests/assistant/chat/links-in-pane.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/links-in-pane#bubble-closes-an-open-chart",
+      "title": "What Tess links to opens in the pane beside her, and over what the pane already shows",
+      "covers": [
+        "src/app/tess/WayBubble.tsx",
+        "src/app/tess/TessMarkdown.tsx",
+        "src/app/tess/TessOverlayLayer.tsx",
+        "src/server/tess/playerLinks.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "wrong-data",
+        "api-500",
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/links-in-pane",
+      "file": "e2e/tests/assistant/chat/links-in-pane.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/links-in-pane#chart-opens-over-the-angle-view",
+      "title": "What Tess links to opens in the pane beside her, and over what the pane already shows",
+      "covers": [
+        "src/app/tess/WayBubble.tsx",
+        "src/app/tess/TessMarkdown.tsx",
+        "src/app/tess/TessOverlayLayer.tsx",
+        "src/server/tess/playerLinks.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "wrong-data",
+        "api-500",
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/links-in-pane",
+      "file": "e2e/tests/assistant/chat/links-in-pane.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/links-in-pane#hidden-player-is-not-shown",
+      "title": "What Tess links to opens in the pane beside her, and over what the pane already shows",
+      "covers": [
+        "src/app/tess/WayBubble.tsx",
+        "src/app/tess/TessMarkdown.tsx",
+        "src/app/tess/TessOverlayLayer.tsx",
+        "src/server/tess/playerLinks.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "wrong-data",
+        "api-500",
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/links-in-pane",
+      "file": "e2e/tests/assistant/chat/links-in-pane.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/links-in-pane#player-name-links-to-the-profile",
+      "title": "What Tess links to opens in the pane beside her, and over what the pane already shows",
+      "covers": [
+        "src/app/tess/WayBubble.tsx",
+        "src/app/tess/TessMarkdown.tsx",
+        "src/app/tess/TessOverlayLayer.tsx",
+        "src/server/tess/playerLinks.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "wrong-data",
+        "api-500",
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/links-in-pane",
+      "file": "e2e/tests/assistant/chat/links-in-pane.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/links-in-pane#way-bubble-opens-team-settings",
+      "title": "What Tess links to opens in the pane beside her, and over what the pane already shows",
+      "covers": [
+        "src/app/tess/WayBubble.tsx",
+        "src/app/tess/TessMarkdown.tsx",
+        "src/app/tess/TessOverlayLayer.tsx",
+        "src/server/tess/playerLinks.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "wrong-data",
+        "api-500",
+        "layout-shift"
+      ],
+      "spec": "assistant/chat/links-in-pane",
+      "file": "e2e/tests/assistant/chat/links-in-pane.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#attach-sheet-and-cancelled-picker",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#bubble-closes-chat-and-opens-settings",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#each-microphone-hold-becomes-a-message",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#early-release-runs-nothing-and-a-hold-does",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#full-screen-chat",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#header-order",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#reopens-on-the-same-conversation",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#sideways-stays-full-screen",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#table-full-screen-loads-nothing-remote",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/phone-chat#thinking-shows-before-the-answer",
+      "title": "On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/phone-chat",
+      "file": "e2e/tests/assistant/chat/phone-chat.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/push-to-talk#each-hold-becomes-a-message",
+      "title": "What is said while her microphone is held becomes her next message",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 1,
+      "faults": [
+        "socket-drop",
+        "api-500"
+      ],
+      "spec": "assistant/chat/push-to-talk",
+      "file": "e2e/tests/assistant/chat/push-to-talk.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/real-model#adding-a-game-proposes-and-writes-nothing",
+      "title": "Against the real model, Tess declines, links, proposes, reads and refuses as her prompt says",
+      "kind": "integration",
+      "covers": [
+        "src/server/tess/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "tess-model"
+      ],
+      "apps": [],
+      "secrets": [
+        "anthropic"
+      ],
+      "costUsd": 0.05,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "assistant/chat/real-model",
+      "file": "e2e/tests/assistant/chat/real-model.integration.ts"
+    },
+    {
+      "id": "assistant/chat/real-model#chart-request-draws-a-chart-or-table",
+      "title": "Against the real model, Tess declines, links, proposes, reads and refuses as her prompt says",
+      "kind": "integration",
+      "covers": [
+        "src/server/tess/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "tess-model"
+      ],
+      "apps": [],
+      "secrets": [
+        "anthropic"
+      ],
+      "costUsd": 0.05,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "assistant/chat/real-model",
+      "file": "e2e/tests/assistant/chat/real-model.integration.ts"
+    },
+    {
+      "id": "assistant/chat/real-model#off-topic-declined-with-no-tool",
+      "title": "Against the real model, Tess declines, links, proposes, reads and refuses as her prompt says",
+      "kind": "integration",
+      "covers": [
+        "src/server/tess/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "tess-model"
+      ],
+      "apps": [],
+      "secrets": [
+        "anthropic"
+      ],
+      "costUsd": 0.05,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "assistant/chat/real-model",
+      "file": "e2e/tests/assistant/chat/real-model.integration.ts"
+    },
+    {
+      "id": "assistant/chat/real-model#recording-a-pitch-is-refused",
+      "title": "Against the real model, Tess declines, links, proposes, reads and refuses as her prompt says",
+      "kind": "integration",
+      "covers": [
+        "src/server/tess/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "tess-model"
+      ],
+      "apps": [],
+      "secrets": [
+        "anthropic"
+      ],
+      "costUsd": 0.05,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "assistant/chat/real-model",
+      "file": "e2e/tests/assistant/chat/real-model.integration.ts"
+    },
+    {
+      "id": "assistant/chat/real-model#stats-question-reads-the-api",
+      "title": "Against the real model, Tess declines, links, proposes, reads and refuses as her prompt says",
+      "kind": "integration",
+      "covers": [
+        "src/server/tess/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "tess-model"
+      ],
+      "apps": [],
+      "secrets": [
+        "anthropic"
+      ],
+      "costUsd": 0.05,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "assistant/chat/real-model",
+      "file": "e2e/tests/assistant/chat/real-model.integration.ts"
+    },
+    {
+      "id": "assistant/chat/real-model#team-settings-answered-with-a-path-link",
+      "title": "Against the real model, Tess declines, links, proposes, reads and refuses as her prompt says",
+      "kind": "integration",
+      "covers": [
+        "src/server/tess/**",
+        "src/server/routes/tess.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "tess-model"
+      ],
+      "apps": [],
+      "secrets": [
+        "anthropic"
+      ],
+      "costUsd": 0.05,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "assistant/chat/real-model",
+      "file": "e2e/tests/assistant/chat/real-model.integration.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/refusals#off-topic-declined-with-no-tool",
+      "title": "Tess declines what is off topic with no tool, and a scoring write is refused before any card",
+      "covers": [
+        "src/server/tess/denyList.ts",
+        "src/server/tess/tools.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "wrong-data",
+        "api-garbage"
+      ],
+      "spec": "assistant/chat/refusals",
+      "file": "e2e/tests/assistant/chat/refusals.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/refusals#scoring-write-refused-before-any-card",
+      "title": "Tess declines what is off topic with no tool, and a scoring write is refused before any card",
+      "covers": [
+        "src/server/tess/denyList.ts",
+        "src/server/tess/tools.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "wrong-data",
+        "api-garbage"
+      ],
+      "spec": "assistant/chat/refusals",
+      "file": "e2e/tests/assistant/chat/refusals.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote",
+      "title": "A chart opens over the pane with the chat still usable, and rich HTML loads nothing remote",
+      "covers": [
+        "src/app/tess/RichBlock.tsx",
+        "src/app/tess/RichFrame.tsx",
+        "src/app/tess/RichViewer.tsx",
+        "src/app/tess/richDocument.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "layout-shift",
+        "missing-font"
+      ],
+      "spec": "assistant/chat/rich-content",
+      "file": "e2e/tests/assistant/chat/rich-content.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/space-hold#a-tap-records-until-the-next-tap",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/space-hold#held-in-the-field-listens",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/space-hold#held-on-the-page-listens",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/space-hold#quick-press-activates-a-focused-tab",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/space-hold#quick-press-types-a-space",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/space-hold#rolled-press-keeps-the-order",
+      "title": "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
+      "covers": [
+        "src/app/tess/TessPanel.tsx",
+        "src/app/scoring/spaceToTalk.ts",
+        "src/app/scoring/dictationControls.tsx",
+        "src/server/dictation/**"
+      ],
+      "minutes": 2,
+      "faults": [
+        "socket-drop",
+        "hidden-element"
+      ],
+      "spec": "assistant/chat/space-hold",
+      "file": "e2e/tests/assistant/chat/space-hold.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#back-closes-her-and-keeps-the-address",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#column-beside-pane",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#dj-screen-keeps-her",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#fills-window-when-narrow",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#scoring-takes-the-window",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#team-screen-narrows-beside-her",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/split-view#video-keeps-playing",
+      "title": "On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window",
+      "covers": [
+        "src/app/tess/**",
+        "src/app/navigation/**",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 2,
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "spec": "assistant/chat/split-view",
+      "file": "e2e/tests/assistant/chat/split-view.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order",
+      "title": "A reply streams in: her thinking first, each step running then done, her text growing, then a closed thought to open",
+      "covers": [
+        "src/app/tess/TessMessage.tsx",
+        "src/app/tess/TessThinking.tsx",
+        "src/app/tess/useTess.ts",
+        "src/server/tess/turns.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "api-hang",
+        "api-garbage"
+      ],
+      "spec": "assistant/chat/streaming-reply",
+      "file": "e2e/tests/assistant/chat/streaming-reply.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/tablet-split#bubble-navigates-the-pane-and-chat-stays",
+      "title": "On a tablet on its side Tess sits beside the app; upright she fills it, and DJ Game hides her",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/TessOverlayLayer.native.tsx",
+        "src/app/tess/tessLayout.ts",
+        "src/app/navigation/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/tablet-split",
+      "file": "e2e/tests/assistant/chat/tablet-split.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/tablet-split#column-beside-the-app",
+      "title": "On a tablet on its side Tess sits beside the app; upright she fills it, and DJ Game hides her",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/TessOverlayLayer.native.tsx",
+        "src/app/tess/tessLayout.ts",
+        "src/app/navigation/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/tablet-split",
+      "file": "e2e/tests/assistant/chat/tablet-split.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/tablet-split#dj-game-hides-her-and-leaving-brings-her-back",
+      "title": "On a tablet on its side Tess sits beside the app; upright she fills it, and DJ Game hides her",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/TessOverlayLayer.native.tsx",
+        "src/app/tess/tessLayout.ts",
+        "src/app/navigation/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/tablet-split",
+      "file": "e2e/tests/assistant/chat/tablet-split.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/tablet-split#upright-fills-the-screen",
+      "title": "On a tablet on its side Tess sits beside the app; upright she fills it, and DJ Game hides her",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/TessOverlayLayer.native.tsx",
+        "src/app/tess/tessLayout.ts",
+        "src/app/navigation/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/tablet-split",
+      "file": "e2e/tests/assistant/chat/tablet-split.e2e.ts"
+    },
+    {
+      "id": "assistant/chat/tablet-split#viewer-over-the-pane-only",
+      "title": "On a tablet on its side Tess sits beside the app; upright she fills it, and DJ Game hides her",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tess/TessOverlayLayer.native.tsx",
+        "src/app/tess/tessLayout.ts",
+        "src/app/navigation/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "user",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "assistant/chat/tablet-split",
+      "file": "e2e/tests/assistant/chat/tablet-split.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "id": "assistant/chat/weekly-usage#week-adds-up-to-the-model-calls",
+      "title": "The week's usage adds up to what the model really answered",
+      "covers": [
+        "src/server/tess/usage.ts",
+        "src/server/routes/tess.ts"
+      ],
+      "minutes": 1,
+      "faults": [
+        "api-500"
+      ],
+      "spec": "assistant/chat/weekly-usage",
+      "file": "e2e/tests/assistant/chat/weekly-usage.e2e.ts"
+    },
+    {
+      "id": "people/add-existing/add-player-device#keyboard",
+      "title": "Add Player’s field rides the keyboard on a phone while its header stays put, and Add to Roster stays above it",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/AddPlayerScene.tsx",
+        "src/app/screens/KeyboardForm.native.tsx",
+        "src/app/screens/SearchFieldDock.tsx",
+        "src/app/components/SearchField.tsx",
+        "src/app/components/keyboardControllerOwner.native.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [
+        "addPlayerAccount"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "people/add-existing/add-player-device",
+      "file": "e2e/tests/people/add-existing/add-player-device.e2e.ts"
+    },
+    {
+      "id": "people/add-existing/engine#scoring-offline",
+      "title": "Add Player finds only people in the adder’s groups, and offline filters the kept players with no stale rows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/hooks/useRosterCandidates.ts",
+        "src/app/screens/AddPlayerScene.tsx",
+        "src/app/scoring/ExistingPlayerSheet.tsx",
+        "src/server/users/rosterCandidates.ts",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/add-existing/engine",
+      "file": "e2e/tests/people/add-existing/engine.e2e.ts"
+    },
+    {
+      "id": "people/add-existing/engine#team-settings",
+      "title": "Add Player finds only people in the adder’s groups, and offline filters the kept players with no stale rows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/hooks/useRosterCandidates.ts",
+        "src/app/screens/AddPlayerScene.tsx",
+        "src/app/scoring/ExistingPlayerSheet.tsx",
+        "src/server/users/rosterCandidates.ts",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/add-existing/engine",
+      "file": "e2e/tests/people/add-existing/engine.e2e.ts"
+    },
+    {
+      "id": "people/search/reach#people-in-groups-only",
+      "title": "Search finds people only in the reader’s groups, by the name they are shown, and nobody signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/server/search/reach.ts",
+        "src/server/search/gather.ts",
+        "src/server/search/socket.ts",
+        "src/app/screens/SearchScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/search/reach",
+      "file": "e2e/tests/people/search/reach.e2e.ts"
+    },
+    {
+      "id": "people/search/reach#signed-out",
+      "title": "Search finds people only in the reader’s groups, by the name they are shown, and nobody signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/server/search/reach.ts",
+        "src/server/search/gather.ts",
+        "src/server/search/socket.ts",
+        "src/app/screens/SearchScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/search/reach",
+      "file": "e2e/tests/people/search/reach.e2e.ts"
+    },
+    {
+      "id": "platform/browser/observation#network",
+      "title": "Browser observations read the page without capturing network responses",
+      "kind": "integration",
+      "covers": [
+        "e2e/core/browserCdp.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 1,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/browser/observation",
+      "file": "e2e/tests/platform/browser/observation.integration.ts"
+    },
+    {
+      "id": "platform/node-admin/jev-key#set-and-clear",
+      "title": "The node administrator sets and removes the Jev key, which no route or log shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/server/nodeSettings.ts",
+        "src/server/routes/nodeAdministration.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/node-admin/jev-key",
+      "file": "e2e/tests/platform/node-admin/jev-key.e2e.ts"
+    },
+    {
+      "id": "platform/push/browser#dms-mentions-reminders",
+      "title": "A browser's notification switches are its own, a DM, a mention and an RSVPed event's reminder notify it and nothing else does, and a tap opens what it is about",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/push/**",
+        "scripts/push-coverage.mjs",
+        "scripts/serviceWorkerBuild.mjs",
+        "src/app/notifications.e2e.ts",
+        "src/app/platform/notificationSwitches*",
+        "src/app/platform/pushDevice*",
+        "src/app/platform/pushState.ts",
+        "src/app/push/**",
+        "src/app/web/sw.ts",
+        "src/server/push/**",
+        "src/server/routes/push.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/push/browser",
+      "file": "e2e/tests/platform/push/browser.e2e.ts"
+    },
+    {
+      "id": "platform/push/phone#dms-mentions-reminders",
+      "title": "A DM, a mention and an RSVPed event’s reminder notify the phone, decrypted on it, and a tap opens what each is about",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/*/java/app/teamstation/app/push/**",
+        "e2e/rigs/push/**",
+        "ios/TeamStation/Push/**",
+        "ios/TeamStationNotifications/**",
+        "mobile/test/teamStationAppNotifications.e2e.ts",
+        "scripts/push-coverage.mjs",
+        "src/app/platform/notificationSwitches*",
+        "src/app/platform/pushDevice*",
+        "src/app/platform/pushState.ts",
+        "src/app/push/**",
+        "src/server/push/**",
+        "src/server/routes/push.ts"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 25,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/push/phone",
+      "file": "e2e/tests/platform/push/phone.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#limit-accept",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#limit-continue",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#log-and-cancel",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#no-solver",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#previous-preview",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/build-modal#publish",
+      "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/scheduling/buildLog.ts",
+        "src/app/screens/AutoSchedulerScreen.tsx",
+        "src/app/screens/SchedulePreviewScreen.tsx",
+        "src/common/scheduler/**",
+        "src/server/autoScheduler/**",
+        "src/server/groups/rights.ts",
+        "src/server/routes/schedulePreviews.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "packed-league-limit"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/build-modal",
+      "file": "e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#no-webassembly",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#packed-league",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#tampered-module",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/exact-counts#worker-reuse",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/platform/schedulerWorker.ts",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/exact-counts",
+      "file": "e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts"
+    },
+    {
+      "id": "schedule/auto-scheduler/native-solver#packed-league",
+      "title": "The Auto-Scheduler builds a packed league at its exact counts with the C++ engine compiled into the app, logging the build in its modal",
+      "kind": "e2e",
+      "covers": [
+        "src/common/autoScheduler/**",
+        "src/common/scheduler/**",
+        "src/app/components/ScheduleBuildModal.tsx",
+        "src/app/screens/schedulePreviewCalendar.ts",
+        "native/scheduler/**",
+        "native/highs/**",
+        "ios/TeamStation/Scheduler/**",
+        "android/app/src/main/jni/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "preferred"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "app-crash"
+      ],
+      "manual": false,
+      "spec": "schedule/auto-scheduler/native-solver",
+      "file": "e2e/tests/schedule/auto-scheduler/native-solver.e2e.ts"
+    },
+    {
+      "id": "schedule/rsvp/eligibility#roster-removal",
+      "title": "RSVP lists only eligible people, and follows a roster removal",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/events.ts",
+        "src/app/screens/**",
+        "src/common/eventInfo.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "api-hang",
+        "api-garbage",
+        "wrong-data"
+      ],
+      "manual": false,
+      "spec": "schedule/rsvp/eligibility",
+      "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [
@@ -623,6 +4958,8 @@
       "covers": [
         "e2e/rigs/streaming/**",
         "src/app/player/**",
+        "src/app/tv/**",
+        "src/app/screens/GameScreen.tsx",
         "src/server/live/**",
         "src/server/ingest/**"
       ],
@@ -991,6 +5328,51 @@
       "file": "e2e/tests/streaming/targeted/gap-seek.e2e.ts"
     },
     {
+      "id": "streaming/targeted/long-cuts#repeat-64s",
+      "title": "A camera cut for 64 s again and again plays again on iPhone Safari and Chrome after every cut",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/screens/GameScreen.tsx",
+        "src/server/live/**",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 35,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/long-cuts",
+      "file": "e2e/tests/streaming/targeted/long-cuts.e2e.ts"
+    },
+    {
       "id": "streaming/targeted/owner-panel#unanswered-read",
       "title": "The owner's camera panel shows a camera ended after one of its reads went unanswered for 90 s, without a reload",
       "kind": "e2e",
@@ -1083,6 +5465,50 @@
       "file": "e2e/tests/streaming/targeted/publisher-outage.e2e.ts"
     },
     {
+      "id": "streaming/targeted/rapid-scrub#safari-20",
+      "title": "Twenty rapid scrubs on iPhone Safari, each after a scrub to the live edge, the picture moving again within 10 s of each",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/screens/GameScreen.tsx",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 32,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/rapid-scrub",
+      "file": "e2e/tests/streaming/targeted/rapid-scrub.e2e.ts"
+    },
+    {
       "id": "streaming/targeted/receiver-outage#180s",
       "title": "A watcher whose own network is out for three minutes plays again within 30 s, and keeps a pause and a rewind across the outage",
       "kind": "e2e",
@@ -1137,6 +5563,73 @@
       "manual": false,
       "spec": "streaming/targeted/receiver-outage",
       "file": "e2e/tests/streaming/targeted/receiver-outage.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/stream-cuts#ladder-15min",
+      "title": "A camera cut for 4 to 64 s plays again on every watcher within 5 s of its return",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/tv/**",
+        "src/app/screens/GameScreen.tsx",
+        "src/server/live/**",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "tv",
+              "needs": [
+                "apple-tv"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 30,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/stream-cuts",
+      "file": "e2e/tests/streaming/targeted/stream-cuts.e2e.ts"
     },
     {
       "id": "streaming/targeted/tv#cameras",

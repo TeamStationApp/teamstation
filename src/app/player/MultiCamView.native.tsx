@@ -3,7 +3,6 @@ import {
   Animated,
   type GestureResponderEvent,
   LayoutAnimation,
-  Modal,
   NativeModules,
   PanResponder,
   StatusBar,
@@ -13,6 +12,7 @@ import {
 } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
+import { Modal } from '../components/Modal'
 import { lstrings, sprintf } from '../locales/strings'
 import { useVideoAnalytics } from '../observability/useVideoAnalytics'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -583,7 +583,7 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, onWallMapping }
+      { wantsToPlay, onWallMapping, surface: 'grid' }
     )
     const start = (): void => {
       onAttached(videoId, handle, toSec)

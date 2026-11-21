@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import Hls from 'hls.js'
-import { after, afterEach, before, describe, it } from 'mocha'
+import { after, afterEach, before, beforeEach, describe, it } from 'mocha'
 
 import {
   APPLE_VENDOR,
@@ -10,8 +10,14 @@ import {
   HLS_MIME_TYPE,
   hlsEngine,
   reportsLiveStalls,
-  type RetryClock
+  RESTORE_PROGRESS_MS,
+  RETRY_BACK_SEC,
+  type RetryClock,
+  SEEK_STUCK_MS
 } from './attachHls'
+import { LIVE_DELAY_SEC } from './liveDelay'
+import { REJOIN_GIVE_UP_MS } from './liveRejoin'
+import { playbackOf } from './playbackSession'
 import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
@@ -105,6 +111,8 @@ class FakeVideo {
   ended = false
   currentTime = 0
   seekable = { length: 0, start: () => 0, end: () => 0 }
+  seeking = false
+  buffered = { length: 0, start: (_i: number) => 0, end: (_i: number) => 0 }
   readyState = 0
   loads = 0
   plays = 0
@@ -174,6 +182,41 @@ class FakeVideo {
   }
 }
 const onceOf = new WeakMap<() => void, () => void>()
+
+/**
+ * Safari's own player on an iPhone, which loads nothing into an element
+ * until it is played: `load()` empties it and leaves it paused, blank, and
+ * only a `play()` brings metadata and a picture. A desktop player would load
+ * to its first frame by itself and say `canplay`; this one never does.
+ */
+class IphoneVideo extends FakeVideo {
+  /** What the element reaches once it is played after a load. */
+  reloadedAt = 0
+  /** Whether `load()` says `pause`, as a playing element reset may. */
+  pausesOnLoad = false
+
+  load(): void {
+    super.load()
+    const wasPlaying = !this.paused
+    this.paused = true
+    this.readyState = 0
+    this.currentTime = 0
+    this.seekable = { length: 0, start: () => 0, end: () => 0 }
+    if (wasPlaying && this.pausesOnLoad) this.emit('pause')
+  }
+
+  async play(): Promise<void> {
+    this.plays += 1
+    this.paused = false
+    this.emit('play')
+    if (this.readyState === 0 && this.src !== '') {
+      this.readyState = 4
+      this.currentTime = this.reloadedAt
+      this.emit('loadedmetadata')
+      this.emit('canplay')
+    }
+  }
+}
 
 /** A clock that only moves when the test says so. */
 function manualClock(): RetryClock & { advance: (ms: number) => void } {
@@ -691,8 +734,9 @@ describe('the browser’s own player, when it stumbles', function () {
         for (let j = 0; j < 10; j++) await Promise.resolve()
       }
       expect(video.loads, 'loaded again').equals(1)
+      // Played with the load, since an iPhone loads nothing until it is.
+      expect(video.plays, 'and played').equals(1)
       // A reloaded element starts at the newest footage; it is put back.
-      video.paused = true
       video.currentTime = 428
       video.emit('loadedmetadata')
       expect(video.currentTime).equals(388)
@@ -702,6 +746,237 @@ describe('the browser’s own player, when it stumbles', function () {
     } finally {
       globalThis.fetch = realFetch
     }
+  })
+
+  it('plays an iPhone again after it loads a live game afresh, since it shows nothing until played', async function () {
+    const video = new IphoneVideo()
+    const clock = manualClock()
+    // Safari stopped at 388 s after a long cut; the server's playlist has
+    // come back and carries on growing.
+    let count = 100
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () => {
+      count += 3
+      const segments = Array.from(
+        { length: count },
+        (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
+      )
+      return new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    }
+    try {
+      video.paused = false
+      video.readyState = 4
+      video.currentTime = 388
+      video.reloadedAt = 450
+      video.seekable = { length: 1, start: () => 0, end: () => 388 }
+      const detach = attachNativeHls(
+        video,
+        url,
+        undefined,
+        { wantsToPlay: () => true, isLive: () => true },
+        clock
+      )
+      for (let i = 0; i < 8; i++) {
+        clock.advance(5000)
+        for (let j = 0; j < 10; j++) await Promise.resolve()
+      }
+      expect(video.loads, 'loaded again').equals(1)
+      expect(video.plays, 'played, so it loads at all').equals(1)
+      expect(video.paused, 'and is playing').equals(false)
+      expect(video.currentTime, 'back where it was').equals(388)
+      detach()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
+  /**
+   * An iPhone that stood still at 388 s through a 64 s publisher cut, while
+   * the server's playlist carried on after it, reloaded by the watch and put
+   * back at 388 s. `progresses` says whether that position then plays.
+   */
+  async function reloadAfterCut(progresses: boolean): Promise<{
+    video: IphoneVideo
+    clock: ReturnType<typeof manualClock>
+    said: boolean[]
+    detach: () => void
+    restore: () => void
+  }> {
+    const video = new IphoneVideo()
+    const clock = manualClock()
+    const said: boolean[] = []
+    let count = 100
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () => {
+      count += 3
+      const segments = Array.from(
+        { length: count },
+        (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
+      )
+      return new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    }
+    video.paused = false
+    video.readyState = 4
+    video.currentTime = 388
+    video.reloadedAt = 522
+    video.seekable = { length: 1, start: () => 0, end: () => 388 }
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      {
+        wantsToPlay: () => true,
+        isLive: () => true,
+        onRecovery: now => said.push(now)
+      },
+      clock
+    )
+    for (let i = 0; i < 12 && video.loads === 0; i++) {
+      clock.advance(5000)
+      for (let j = 0; j < 10; j++) await Promise.resolve()
+    }
+    expect(video.loads, 'loaded again').equals(1)
+    expect(video.currentTime, 'put back where it stood').equals(388)
+    // After the reload the playlist reaches 567 s, the cut a hole in it.
+    video.seekable = { length: 1, start: () => 0, end: () => 567 }
+    // The element pauses itself in the hole, as the iPhone's did.
+    if (!progresses) {
+      video.paused = true
+      video.emit('pause')
+    }
+    for (let s = 1; s <= 9; s++) {
+      if (progresses) video.currentTime = 388 + s
+      clock.advance(1000)
+    }
+    return {
+      video,
+      clock,
+      said,
+      detach,
+      restore: () => {
+        globalThis.fetch = realFetch
+      }
+    }
+  }
+
+  it('rejoins the live point, playing, when the position put back after a cut never plays', async function () {
+    const run = await reloadAfterCut(false)
+    try {
+      expect(run.video.currentTime, 'still waiting in the hole').equals(388)
+      const plays = run.video.plays
+      run.clock.advance(1000)
+      expect(run.video.currentTime, 'the live point').equals(567 - 45)
+      expect(run.video.plays, 'played again').equals(plays + 1)
+      expect(run.video.paused).equals(false)
+      expect(run.said, 'and the recovery is over').deep.equals([true, false])
+      // It is not moved again.
+      run.video.currentTime = 530
+      run.clock.advance(20_000)
+      expect(run.video.currentTime).equals(530)
+      run.detach()
+    } finally {
+      run.restore()
+    }
+  })
+
+  it('stays where the viewer was when the position put back after a reload plays on', async function () {
+    const run = await reloadAfterCut(true)
+    try {
+      run.clock.advance(1000)
+      run.clock.advance(20_000)
+      expect(run.video.currentTime, 'where the viewer was').equals(397)
+      expect(run.video.paused).equals(false)
+      expect(run.said, 'and the recovery is over').deep.equals([true, false])
+      run.detach()
+    } finally {
+      run.restore()
+    }
+  })
+
+  it('puts a restored position that played on back where it got to, after a second error', async function () {
+    const run = await reloadAfterCut(true)
+    try {
+      // Inside the restore's check, it has played on to 397 s: then an error.
+      run.video.error = { code: 2 }
+      run.video.emit('error')
+      run.video.error = null
+      run.clock.advance(1000)
+      run.video.emit('loadedmetadata')
+      expect(
+        run.video.currentTime,
+        'where it got to, not the first restore'
+      ).equals(397)
+      run.detach()
+    } finally {
+      run.restore()
+    }
+  })
+
+  it('plays an iPhone again after an error’s reload, though the reset said pause', function () {
+    const video = new IphoneVideo()
+    video.pausesOnLoad = true
+    const clock = manualClock()
+    attachNativeHls(video, url, undefined, undefined, clock)
+    video.src = url
+    video.paused = false
+    video.readyState = 4
+    video.emit('play')
+    video.currentTime = 120
+    fail(video)
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+    expect(video.plays).equals(1)
+    expect(video.paused).equals(false)
+    expect(video.currentTime).equals(120)
+  })
+
+  it('leaves an iPhone paused after a reload when the viewer had paused it', function () {
+    const video = new IphoneVideo()
+    const clock = manualClock()
+    attachNativeHls(video, url, undefined, { wantsToPlay: () => false }, clock)
+    fail(video)
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+    expect(video.plays).equals(0)
+  })
+
+  it('tells its owner a reload is under way, so a pause it causes is not read as the viewer’s', function () {
+    const video = new IphoneVideo()
+    video.pausesOnLoad = true
+    const clock = manualClock()
+    const said: boolean[] = []
+    // The owner's own pause listener, as the game page has: it runs first.
+    let viewerWants = true
+    let recovering = false
+    video.addEventListener('pause', () => {
+      if (!recovering) viewerWants = false
+    })
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      {
+        wantsToPlay: () => viewerWants,
+        onRecovery: now => {
+          recovering = now
+          said.push(now)
+        }
+      },
+      clock
+    )
+    video.src = url
+    video.paused = false
+    video.readyState = 4
+    fail(video)
+    clock.advance(1000)
+    expect(viewerWants).equals(true)
+    expect(video.plays).equals(1)
+    expect(said).deep.equals([true, false])
+    // A later pause is the viewer's again.
+    video.paused = true
+    video.emit('pause')
+    expect(viewerWants).equals(false)
+    detach()
   })
 
   it('ignores a load stopped on purpose, and a second error while waiting', function () {
@@ -805,6 +1080,636 @@ describe('the browser’s own player, when it stumbles', function () {
   })
 })
 
+describe('a seek Safari’s own player never finishes (#326)', function () {
+  const url = 'https://example.com/media/vid_example/index.m3u8'
+
+  /**
+   * Back from full screen, sent to 667.8 s, 0.2 s before the end of the one
+   * segment it held (664.0–668.0): Safari began the seek and stood there.
+   */
+  function stuck(intent?: PlayIntent): {
+    video: FakeVideo
+    clock: ReturnType<typeof manualClock>
+    detach: () => void
+    seek: (to: number) => void
+  } {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      intent ?? { wantsToPlay: () => true, isLive: () => true },
+      clock
+    )
+    video.readyState = 1
+    video.buffered = {
+      length: 1,
+      start: () => 664,
+      end: () => 668
+    }
+    const seek = (to: number): void => {
+      video.currentTime = to
+      video.seeking = true
+      video.emit('seeking')
+    }
+    seek(667.8)
+    return { video, clock, detach, seek }
+  }
+
+  it('sends a seek still unfinished after 5 s to the start of the segment it holds, once', function () {
+    const { video, clock } = stuck()
+    clock.advance(SEEK_STUCK_MS - 1)
+    expect(video.currentTime, 'not yet').equals(667.8)
+    clock.advance(1)
+    expect(video.currentTime).equals(664)
+    expect(video.loads).equals(0)
+  })
+
+  it('leaves a seek that finishes in time alone', function () {
+    const { video, clock } = stuck()
+    clock.advance(2000)
+    video.seeking = false
+    video.emit('seeked')
+    clock.advance(10_000)
+    expect(video.currentTime).equals(667.8)
+    expect(video.loads).equals(0)
+  })
+
+  it('reloads when the retried seek stands unfinished too, or no buffered range holds the target', function () {
+    const twice = stuck()
+    twice.clock.advance(SEEK_STUCK_MS)
+    // The retry's own seek, from the segment's start, stands as well.
+    twice.video.emit('seeking')
+    twice.clock.advance(SEEK_STUCK_MS)
+    expect(twice.video.loads).equals(1)
+
+    const nowhere = stuck()
+    nowhere.video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    nowhere.clock.advance(SEEK_STUCK_MS)
+    expect(nowhere.video.loads).equals(1)
+  })
+
+  it('counts each new seek afresh, and stops watching once emptied or detached', function () {
+    const { video, clock, seek } = stuck()
+    clock.advance(SEEK_STUCK_MS)
+    video.emit('seeking')
+    // The viewer seeks again before the retry is judged: a new seek, a new retry.
+    seek(667.5)
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime).equals(664)
+    expect(video.loads).equals(0)
+
+    const emptied = stuck()
+    emptied.video.emit('emptied')
+    emptied.clock.advance(SEEK_STUCK_MS * 3)
+    expect(emptied.video.currentTime).equals(667.8)
+
+    const gone = stuck()
+    gone.detach()
+    gone.clock.advance(SEEK_STUCK_MS * 3)
+    expect(gone.video.currentTime).equals(667.8)
+    expect(gone.video.loads).equals(1)
+  })
+
+  it('leaves a seek alone while its footage is still arriving, however slowly', function () {
+    const { video, clock } = stuck()
+    for (let i = 0; i < 5; i++) {
+      clock.advance(2000)
+      video.emit('progress')
+    }
+    expect(video.currentTime, 'still loading after 10 s').equals(667.8)
+    expect(video.loads).equals(0)
+    // Then nothing more arrives: stuck after all.
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime).equals(664)
+  })
+
+  it('reloads at most once a seek: the reload’s own seek back is never reloaded again', function () {
+    const { video, clock } = stuck()
+    // Nothing held at the target: straight to a reload.
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(1)
+    // The reload loads it afresh and goes back to the target, slowly.
+    video.emit('loadedmetadata')
+    expect(video.currentTime).equals(667.8)
+    video.seeking = true
+    video.emit('seeking')
+    for (let i = 0; i < 20; i++) clock.advance(SEEK_STUCK_MS)
+    expect(video.loads, 'one reload, not one every 3 s').equals(1)
+  })
+
+  it('keeps a live viewer’s rewind after the watch reloads, and if the way back wedges too, moves it to live once instead of reloading again', function () {
+    let recovering = false
+    const { video, clock } = stuck({
+      wantsToPlay: () => true,
+      isLive: () => true,
+      onRecovery: now => {
+        recovering = now
+      }
+    })
+    video.seekable = { length: 1, start: () => 0, end: () => 1200 }
+    // Nothing held at the target: one reload.
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(1)
+    video.emit('emptied')
+    video.emit('loadedmetadata')
+    expect(video.currentTime, 'back to the rewind').equals(667.8)
+    // Safari says canplay before the queued seeking of the way back, so the
+    // recovery has ended by the time that seeking is heard.
+    video.readyState = 4
+    video.emit('canplay')
+    video.seeking = true
+    video.emit('seeking')
+    clock.advance(SEEK_STUCK_MS - 1)
+    expect(
+      video.currentTime,
+      'the rewind is kept while it may still load'
+    ).equals(667.8)
+    // The way back wedged too: the last step, once.
+    clock.advance(1)
+    expect(video.currentTime).equals(1200 - LIVE_DELAY_SEC)
+    expect(recovering, 'the viewer’s pauses count again').equals(false)
+    video.emit('seeking')
+    for (let i = 0; i < 40; i++) clock.advance(SEEK_STUCK_MS)
+    expect(video.loads, 'still one reload after two minutes').equals(1)
+  })
+
+  it('ends the recovery of a recording whose way back wedges too, and leaves it where it is', function () {
+    let recovering = false
+    const { video, clock } = stuck({
+      wantsToPlay: () => true,
+      onRecovery: now => {
+        recovering = now
+      }
+    })
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    expect(recovering).equals(true)
+    video.emit('emptied')
+    video.emit('loadedmetadata')
+    video.seeking = true
+    video.emit('seeking')
+    clock.advance(SEEK_STUCK_MS)
+    expect(recovering).equals(false)
+    expect(video.currentTime).equals(667.8)
+    expect(video.loads).equals(1)
+  })
+
+  it('leaves a stuck seek to an error’s reload already scheduled, and to a player that gave up', function () {
+    const { video, clock } = stuck()
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    // An error first: its reload is scheduled a second on.
+    video.error = { code: 2 }
+    video.emit('error')
+    clock.advance(SEEK_STUCK_MS - 1)
+    expect(video.loads, 'the error’s own reload').equals(1)
+  })
+
+  it('starts each seek afresh once the last one finished, and forgets a retry’s seek a reload dropped', function () {
+    const { video, clock, seek } = stuck()
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(1)
+    video.emit('emptied')
+    video.emit('loadedmetadata')
+    video.emit('seeking')
+    video.seeking = false
+    video.emit('seeked')
+    // Later, a seek of the viewer's wedges: it may reload in its turn.
+    seek(300)
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(2)
+
+    const dropped = stuck()
+    dropped.clock.advance(SEEK_STUCK_MS)
+    expect(dropped.video.currentTime, 'the retry').equals(664)
+    // A reload drops the retry before its seeking is heard; the viewer seeks.
+    dropped.video.emit('emptied')
+    dropped.seek(667.8)
+    dropped.clock.advance(SEEK_STUCK_MS)
+    expect(
+      dropped.video.currentTime,
+      'a retry of its own, not taken for the old one'
+    ).equals(664)
+    expect(dropped.video.loads).equals(0)
+  })
+
+  it('reloads after a seek that went back to 0 without taking the next reload for the watch’s', function () {
+    const { video, clock, seek } = stuck()
+    video.buffered = { length: 1, start: () => 0, end: () => 4 }
+    seek(0)
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(1)
+    // Nothing to go back to: the flag is cleared all the same.
+    video.emit('loadedmetadata')
+    video.readyState = 4
+    video.emit('canplay')
+    // A cut later: an error's reload, which arms the restore check.
+    video.currentTime = 500
+    video.seekable = { length: 1, start: () => 0, end: () => 900 }
+    video.error = { code: 2 }
+    video.emit('error')
+    clock.advance(1000)
+    expect(video.loads).equals(2)
+    video.emit('loadedmetadata')
+    expect(video.currentTime).equals(500)
+    clock.advance(RESTORE_PROGRESS_MS)
+    expect(video.currentTime, 'the restore check moves it to live').equals(
+      900 - LIVE_DELAY_SEC
+    )
+  })
+
+  it('counts a viewer’s seek after a reload afresh, the reload’s pending seek being gone', function () {
+    const { video, clock, seek } = stuck()
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(1)
+    // Emptied before the way back's seeking was heard; the viewer seeks.
+    video.emit('emptied')
+    seek(300)
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads, 'the viewer’s own stuck seek may reload').equals(2)
+  })
+
+  it('retries a stuck seek no more than a segment back, however long the range it is in', function () {
+    const { video, clock, seek } = stuck()
+    // Played from the start: one range of everything held.
+    video.buffered = { length: 1, start: () => 0, end: () => 90 }
+    seek(80)
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime).equals(80 - RETRY_BACK_SEC)
+  })
+
+  it('takes its last step once: the jump to live, wedged as well, is not jumped again', function () {
+    const { video, clock } = stuck()
+    let end = 1200
+    video.seekable = { length: 1, start: () => 0, end: () => end }
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    video.emit('emptied')
+    video.emit('loadedmetadata')
+    video.emit('seeking')
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime).equals(1200 - LIVE_DELAY_SEC)
+    // Safari says seeking for the jump, and it stands too while live grows.
+    video.emit('seeking')
+    end = 1300
+    for (let i = 0; i < 10; i++) clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime, 'one jump, left to finish').equals(
+      1200 - LIVE_DELAY_SEC
+    )
+    expect(video.loads).equals(1)
+  })
+
+  it('takes a seeking heard once for two seeks as the later one’s: a viewer’s seek over the last step is watched again', function () {
+    const { video, clock } = stuck()
+    video.seekable = { length: 1, start: () => 0, end: () => 1200 }
+    video.buffered = { length: 0, start: () => 0, end: () => 0 }
+    clock.advance(SEEK_STUCK_MS)
+    video.emit('emptied')
+    video.emit('loadedmetadata')
+    video.emit('seeking')
+    // The way back wedged: the last step jumps to live...
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime).equals(1200 - LIVE_DELAY_SEC)
+    // ...and, in the same moment, the viewer seeks: one seeking, at theirs.
+    video.currentTime = 500
+    video.emit('seeking')
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads, 'the viewer’s wedged seek is the watch’s again').equals(
+      2
+    )
+  })
+
+  it('keeps the restore check for a recovery’s own way back that wedged: a black hole still goes to live', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      { wantsToPlay: () => true, isLive: () => true },
+      clock
+    )
+    // An error reload of a live player stood in a publisher's hole at 388 s.
+    video.currentTime = 388
+    video.seekable = { length: 1, start: () => 0, end: () => 900 }
+    video.error = { code: 2 }
+    video.emit('error')
+    clock.advance(1000)
+    expect(video.loads).equals(1)
+    video.emit('loadedmetadata')
+    // Its way back to 388 wedges: the watch reloads.
+    video.seeking = true
+    video.emit('seeking')
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(2)
+    video.emit('loadedmetadata')
+    expect(video.currentTime).equals(388)
+    // This time it lands, but stands black in the hole.
+    video.emit('seeking')
+    video.seeking = false
+    video.emit('seeked')
+    clock.advance(RESTORE_PROGRESS_MS)
+    expect(video.currentTime, 'the restore check moves it to live').equals(
+      900 - LIVE_DELAY_SEC
+    )
+  })
+
+  it('goes back to a rewind made during a restore check, not to where the restore put it', function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      { wantsToPlay: () => true, isLive: () => true },
+      clock
+    )
+    // An error reload restores a live player to 600 s; its check is armed.
+    video.currentTime = 600
+    video.seekable = { length: 1, start: () => 0, end: () => 900 }
+    video.error = { code: 2 }
+    video.emit('error')
+    clock.advance(1000)
+    video.emit('loadedmetadata')
+    video.emit('seeking')
+    video.seeking = false
+    video.emit('seeked')
+    // Inside the check's window, the viewer rewinds to 300 s; it wedges.
+    video.currentTime = 300
+    video.seeking = true
+    video.emit('seeking')
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.loads).equals(2)
+    video.emit('loadedmetadata')
+    expect(video.currentTime).equals(300)
+  })
+
+  it('watches a grid tile’s seeks the same way', function () {
+    const { video, clock } = stuck({
+      wantsToPlay: () => false,
+      buffer: { aheadSec: 30 }
+    })
+    clock.advance(SEEK_STUCK_MS)
+    expect(video.currentTime).equals(664)
+  })
+})
+
+describe('Safari’s own live player, run out of footage during a long cut', function () {
+  const url = 'https://example.com/media/vid_example/index.m3u8'
+  const OPEN = '#EXTM3U\n#EXTINF:4.000000,\nseg1.m4s\n'
+  const CLOSED = `${OPEN}#EXT-X-ENDLIST\n`
+  const realFetch = globalThis.fetch
+  /** What the stubbed server answers for the playlist, and how often it was read. */
+  let playlist = OPEN
+  let reads = 0
+  beforeEach(function () {
+    playlist = OPEN
+    reads = 0
+    globalThis.fetch = async () => {
+      reads += 1
+      return new Response(playlist)
+    }
+  })
+  afterEach(function () {
+    globalThis.fetch = realFetch
+  })
+
+  /** Lets the stubbed fetches and the rejoin's promises settle. */
+  const settle = async (): Promise<void> => {
+    // A Response's body is read on a later turn of the event loop.
+    for (let i = 0; i < 5; i++) {
+      await new Promise(resolve => setImmediate(resolve))
+    }
+  }
+
+  /**
+   * A live SynthA at 93.5 s when its camera went away for 64 s: Safari played
+   * to the end of what it had, paused and said `ended`, and the playlist then
+   * carried on growing under it while it stood there (#327).
+   *
+   * `followsPauses` is the game page's own wish, which a pause clears and a
+   * play sets, heard before the player's; otherwise `wants` answers.
+   */
+  function ranOut(
+    options: {
+      wants?: () => boolean
+      followsPauses?: boolean
+      intent?: Partial<PlayIntent>
+    } = {}
+  ): {
+    video: FakeVideo
+    clock: ReturnType<typeof manualClock>
+    grow: (endSec: number) => void
+    detach: () => void
+    viewer: { wants: boolean }
+  } {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    const viewer = { wants: true }
+    if (options.followsPauses === true) {
+      video.addEventListener('pause', () => {
+        viewer.wants = false
+      })
+      video.addEventListener('play', () => {
+        viewer.wants = true
+      })
+    }
+    const wants =
+      options.wants ??
+      (options.followsPauses === true ? () => viewer.wants : () => true)
+    const detach = attachNativeHls(
+      video,
+      url,
+      undefined,
+      { wantsToPlay: wants, isLive: () => true, ...options.intent },
+      clock
+    )
+    video.paused = false
+    video.readyState = 4
+    video.emit('play')
+    video.currentTime = 93.5
+    video.seekable = { length: 1, start: () => 0, end: () => 81.4 }
+    video.paused = true
+    video.ended = true
+    video.emit('pause')
+    video.emit('ended')
+    return {
+      video,
+      clock,
+      viewer,
+      detach,
+      grow: endSec => {
+        video.ended = false
+        video.seekable = { length: 1, start: () => 0, end: () => endSec }
+      }
+    }
+  }
+
+  it('plays on from where it stopped once there is footage after it', function () {
+    const { video, clock, grow } = ranOut()
+    clock.advance(4000)
+    expect(video.plays, 'nothing to play yet').equals(0)
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.paused).equals(false)
+    expect(video.currentTime).equals(93.5)
+    expect(video.loads, 'no reload').equals(0)
+  })
+
+  it('rejoins the live point when the game has moved further on than that', function () {
+    const { video, clock, grow } = ranOut()
+    grow(200)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.currentTime).equals(200 - LIVE_DELAY_SEC)
+  })
+
+  it('plays again for the game page, whose wish the end’s own pause cleared', function () {
+    const { video, clock, grow, viewer } = ranOut({ followsPauses: true })
+    expect(viewer.wants, 'the page read the end as a pause').equals(false)
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.paused).equals(false)
+  })
+
+  it('stays paused when it was wanted at the end and is not by the time there is footage', function () {
+    let wanted = true
+    const { video, clock, grow } = ranOut({ wants: () => wanted })
+    wanted = false
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(0)
+    expect(video.paused).equals(true)
+  })
+
+  it('leaves it where the viewer scrubbed during the wait, paused: their seek ends the run-out', function () {
+    const { video, clock, grow } = ranOut({ followsPauses: true })
+    video.currentTime = 50
+    video.seeking = true
+    video.emit('seeking')
+    video.seeking = false
+    video.emit('seeked')
+    grow(200)
+    clock.advance(4000)
+    expect(video.currentTime).equals(50)
+    expect(video.plays).equals(0)
+  })
+
+  it('stops looking after ten minutes, on a play, and once detached', function () {
+    const late = ranOut()
+    late.clock.advance(REJOIN_GIVE_UP_MS + 2000)
+    late.grow(900)
+    late.clock.advance(2000)
+    expect(late.video.plays, 'given up').equals(0)
+
+    const played = ranOut()
+    played.video.emit('play')
+    played.grow(125.4)
+    played.clock.advance(4000)
+    expect(played.video.plays, 'a play settled it').equals(0)
+
+    const gone = ranOut()
+    gone.detach()
+    gone.grow(125.4)
+    gone.clock.advance(4000)
+    expect(gone.video.plays, 'detached').equals(0)
+  })
+
+  it('leaves an open playlist to the look: nothing reloads while the camera is away', async function () {
+    const { video, clock, grow } = ranOut()
+    for (let i = 0; i < 15; i++) {
+      clock.advance(2000)
+      await settle()
+    }
+    expect(reads, 'read every 10 s').greaterThan(1)
+    expect(video.loads).equals(0)
+    expect(video.plays).equals(0)
+    grow(125.4)
+    clock.advance(2000)
+    expect(video.plays).equals(1)
+    expect(video.loads).equals(0)
+  })
+
+  it('hands a closed playlist to the rejoin, which loads it afresh once it is open again', async function () {
+    playlist = CLOSED
+    const { video, clock, grow } = ranOut({ followsPauses: true })
+    clock.advance(10_000)
+    await settle()
+    // The look's read, then liveRejoin's own at once: still closed.
+    expect(reads).equals(2)
+    expect(video.loads).equals(0)
+    playlist = OPEN
+    // liveRejoin looks again 5 s on, finds it open, and rejoins.
+    clock.advance(5000)
+    await settle()
+    expect(video.loads).equals(1)
+    expect(video.plays, 'played, so an iPhone loads it').equals(1)
+    // Footage after the stop no longer moves it: the look was handed over.
+    grow(300)
+    const at = video.currentTime
+    clock.advance(4000)
+    expect(video.plays).equals(1)
+    expect(video.currentTime).equals(at)
+  })
+
+  it('leaves it paused when the viewer played and paused it while the closed playlist was awaited', async function () {
+    playlist = CLOSED
+    const { video, clock } = ranOut({ followsPauses: true })
+    clock.advance(10_000)
+    await settle()
+    // Before liveRejoin's look finds it open: a play and then a pause.
+    video.paused = false
+    video.emit('play')
+    video.paused = true
+    video.emit('pause')
+    playlist = OPEN
+    clock.advance(5000)
+    await settle()
+    expect(video.loads).equals(1)
+    expect(video.plays).equals(0)
+  })
+
+  it('leaves a game that really ended alone: no footage a segment past the stop, and the closed playlist goes to the rejoin, which stops', async function () {
+    playlist = CLOSED
+    const { video, clock } = ranOut({
+      intent: { isLive: () => false }
+    })
+    // The last seekable end a hair past where it stopped, as it can be.
+    video.seekable = { length: 1, start: () => 0, end: () => 93.54 }
+    for (let i = 0; i < 30; i++) {
+      clock.advance(2000)
+      await settle()
+    }
+    expect(video.plays).equals(0)
+    expect(video.loads).equals(0)
+  })
+
+  it('leaves a grid tile, a recording and a player that has not run out alone', function () {
+    const tile = ranOut({ intent: { buffer: { aheadSec: 30 } } })
+    tile.grow(125.4)
+    tile.clock.advance(4000)
+    // Its one silent play at attach (`primeSilently`), and no other.
+    expect(tile.video.plays, 'a grid tile').equals(1)
+
+    const preview = ranOut({ intent: { preview: true } })
+    preview.grow(125.4)
+    preview.clock.advance(4000)
+    expect(preview.video.plays, 'a card preview').equals(0)
+
+    const recording = ranOut({ intent: { isLive: undefined } })
+    recording.grow(125.4)
+    recording.clock.advance(4000)
+    expect(recording.video.plays, 'a recording').equals(0)
+  })
+})
+
 describe('a live game whose playlist was closed under the player', function () {
   const url = 'https://example.com/media/vid_example/master.m3u8'
   type Stubbed = Record<string, unknown>
@@ -872,6 +1777,111 @@ describe('a live game whose playlist was closed under the player', function () {
     })
     return { detach, hls: loads[0].hls }
   }
+
+  it('closes its playback session before it empties the player', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video, () => true)
+    const session = playbackOf(video)
+    if (session == null) throw new Error('no playback session')
+    const order: string[] = []
+    session.detach = () => {
+      order.push('session')
+    }
+    const running = hls as unknown as { destroy: () => void }
+    const destroy = running.destroy.bind(running)
+    running.destroy = () => {
+      order.push('player')
+      destroy()
+    }
+    detach()
+    expect(order).deep.equals(['session', 'player'])
+  })
+
+  it('tells its playback session what hls.js reports', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const proto = Hls.prototype as unknown as Stubbed
+    const saved = {
+      recoverMediaError: proto.recoverMediaError,
+      startLoad: proto.startLoad,
+      stopLoad: proto.stopLoad
+    }
+    proto.recoverMediaError = () => undefined
+    proto.startLoad = () => undefined
+    proto.stopLoad = () => undefined
+    const realNow = Date.now
+    try {
+      const { detach, hls } = attach(video, () => true)
+      const session = playbackOf(video)
+      expect(session).not.equals(undefined)
+      const said: unknown[][] = []
+      if (session == null) return
+      session.hlsError = (...args: unknown[]) => {
+        said.push(['error', ...args])
+      }
+      session.recovery = (kind: string) => {
+        said.push(['recovery', kind])
+      }
+      session.bandwidth = (bps: number) => {
+        said.push(['bandwidth', bps])
+      }
+      session.bitrate = (bps: number) => {
+        said.push(['bitrate', bps])
+      }
+      session.targetDuration = (sec: number) => {
+        said.push(['target', sec])
+      }
+      Object.defineProperty(hls, 'levels', { value: [{ bitrate: 4_300_000 }] })
+      Object.defineProperty(hls, 'bandwidthEstimate', { value: 8_000_000 })
+      emit(hls, Hls.Events.ERROR, {
+        type: 'networkError',
+        details: 'fragLoadError',
+        fatal: false
+      })
+      emit(hls, Hls.Events.ERROR, {
+        type: 'mediaError',
+        details: 'bufferStalledError',
+        fatal: true
+      })
+      emit(hls, Hls.Events.ERROR, {
+        type: 'networkError',
+        details: 'levelLoadError',
+        fatal: true
+      })
+      Date.now = () => realNow() + 10 * 60_000
+      emit(hls, Hls.Events.ERROR, {
+        type: 'networkError',
+        details: 'levelLoadError',
+        fatal: true
+      })
+      emit(hls, Hls.Events.FRAG_LOADED)
+      emit(hls, Hls.Events.LEVEL_SWITCHED, { level: 0 })
+      emit(hls, Hls.Events.LEVEL_SWITCHED, { level: 3 })
+      emit(hls, Hls.Events.LEVEL_LOADED, {
+        details: { live: true, targetduration: 6 }
+      })
+      expect(said).deep.equals([
+        ['error', 'networkError', 'fragLoadError', false],
+        ['error', 'mediaError', 'bufferStalledError', true],
+        ['recovery', 'media_recover'],
+        ['error', 'networkError', 'levelLoadError', true],
+        ['recovery', 'network_retry'],
+        ['error', 'networkError', 'levelLoadError', true],
+        ['recovery', 'give_up'],
+        ['bandwidth', 8_000_000],
+        ['bitrate', 4_300_000],
+        ['target', 6]
+      ])
+      detach()
+      expect(playbackOf(video)).equals(undefined)
+    } finally {
+      Date.now = realNow
+      proto.recoverMediaError = saved.recoverMediaError
+      proto.startLoad = saved.startLoad
+      proto.stopLoad = saved.stopLoad
+    }
+  })
 
   it('rejoins the live edge of a game it was following, playing again', async function () {
     stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')

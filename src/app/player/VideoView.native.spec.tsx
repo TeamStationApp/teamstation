@@ -15,10 +15,10 @@ afterEach(async function () {
   document.body.replaceChildren()
 })
 
-/** What `VideoView.native` handed the phone's player. */
-async function handed(
+/** Renders `VideoView.native`, the same root each time, as a re-render. */
+async function show(
   props: Partial<React.ComponentProps<typeof VideoView>>
-): Promise<Record<string, unknown>> {
+): Promise<void> {
   if (root == null) {
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -33,6 +33,13 @@ async function handed(
       />
     )
   })
+}
+
+/** What `VideoView.native` handed the phone's player. */
+async function handed(
+  props: Partial<React.ComponentProps<typeof VideoView>>
+): Promise<Record<string, unknown>> {
+  await show(props)
   const node = document.querySelector('[data-video-props]')!
   return JSON.parse(node.getAttribute('data-video-props')!) as Record<
     string,
@@ -57,6 +64,29 @@ describe("the phone's picture and its audio session (U33a)", function () {
     // A card's preview, which says neither, is not primary.
     const preview = await handed({})
     expect(preview.disableFocus).equals(true)
+  })
+})
+
+describe("the phone's picture with no source (issue 317)", function () {
+  it('releases the player for no source and keeps the handle, then takes the address again', async function () {
+    const handles: unknown[] = []
+    const onHandle = (handle: unknown): void => {
+      handles.push(handle)
+    }
+    const first = await handed({ onHandle })
+    expect(first.source).deep.include({
+      uri: 'https://media.example.test/v1/index.m3u8'
+    })
+    const kept = handles.at(-1)
+    expect(kept).not.equals(null)
+
+    await show({ onHandle, source: null })
+    expect(document.querySelector('[data-video-props]')).equals(null)
+    expect(handles).not.includes(null)
+
+    const again = await handed({ onHandle })
+    expect(again.source).deep.equals(first.source)
+    expect(handles.at(-1)).equals(kept)
   })
 })
 

@@ -28,6 +28,7 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   addGame,
   addPerson,
+  connectedClient,
   dropPrefix,
   type Person,
   requireRedis,
@@ -48,7 +49,12 @@ import {
   scoreboardFromGame,
   writeGameScoreboard
 } from './gameSource'
-import type { ScoreboardClient, ScoreboardStore } from './scoreboardStore'
+import {
+  quit,
+  type ScoreboardClient,
+  type ScoreboardStore,
+  ScoreboardUnavailable
+} from './scoreboardStore'
 
 /**
  * The game's own scoring as a scoreboard source, on a scratch database and a
@@ -312,13 +318,77 @@ describe('the game as a scoreboard source', function () {
     )
 
     logged.length = 0
-    const gone = { ...store, isReady: () => false }
+    const gone = {
+      ...store,
+      writeGame: async () => {
+        throw new ScoreboardUnavailable()
+      }
+    }
     expect(await writeGameScoreboard({ db, store: gone, log }, gameId)).equals(
       undefined
     )
     expect(logged).deep.equals([
       `scoreboard: game ${gameId} not written: The scoreboard is unavailable`
     ])
+  })
+
+  it('reads nothing from Postgres for a game it could not write, with Valkey away', async function () {
+    const gameId = await addGame(db, {
+      homeTeamId: home,
+      awayTeamId: away,
+      startAt: new Date()
+    })
+    let reads = 0
+    const counted = new Proxy(db, {
+      get: (target, key, receiver) => {
+        if (key === 'selectFrom') reads++
+        return Reflect.get(target, key, receiver)
+      }
+    })
+    const unreachable = { ...store, reachable: () => false }
+    logged.length = 0
+    expect(
+      await writeGameScoreboard(
+        { db: counted, store: unreachable, log },
+        gameId
+      )
+    ).equals(undefined)
+    expect(reads).equals(0)
+    expect(logged).deep.equals([
+      `scoreboard: game ${gameId} not written: The scoreboard is unavailable`
+    ])
+  })
+
+  it('writes the first game update through a fresh command-client reconnect', async function () {
+    const gameId = await addGame(db, {
+      homeTeamId: home,
+      awayTeamId: away,
+      startAt: new Date()
+    })
+    // The empty game must clear a board left by earlier scoring.
+    await store.writeGame(gameId, { inGame: true }, Date.now(), 1)
+    const admin = await connectedClient()
+    try {
+      const id = await client.clientId()
+      let readyAtEntry: boolean | undefined
+      let reachableAtEntry: boolean | undefined
+      const writing = new Promise<
+        Awaited<ReturnType<typeof writeGameScoreboard>>
+      >((resolve, reject) => {
+        client.once('error', () => {
+          readyAtEntry = client.isReady
+          reachableAtEntry = store.reachable()
+          writeGameScoreboard({ db, store, log }, gameId).then(resolve, reject)
+        })
+      })
+      expect(await admin.clientKill({ filter: 'ID', id })).equals(1)
+      expect((await writing)?.kind).equals('written')
+      expect(readyAtEntry).equals(false)
+      expect(reachableAtEntry).equals(true)
+      expect(await admin.hGet(store.keyOf(gameId), 'game')).equals(null)
+    } finally {
+      await quit(admin)
+    }
   })
 
   it('shows a game before its first pitch, and clears the board of a game reset to nothing (S10)', async function () {

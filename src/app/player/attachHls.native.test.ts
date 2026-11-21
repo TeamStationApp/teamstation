@@ -5,6 +5,7 @@ import type { OnVideoErrorData, VideoRef } from 'react-native-video'
 import { attachHls } from './attachHls.native'
 import { seekTo } from './explicitSeek'
 import { NativeVideoHandle } from './nativeVideoHandle'
+import { playbackOf } from './playbackSession'
 
 const URL = 'https://media.example.test/videos/vid_00000000/index.m3u8'
 
@@ -365,6 +366,20 @@ describe('a phone watching a live game whose camera is away', function () {
     // The reload the error had scheduled was cancelled with it.
     for (const run of timers.splice(0)) run()
     expect(gaveUp()).equals(false)
+  })
+
+  it('tells its playback session a play after a failure is a reload, not a stall reload', async function () {
+    const { handle } = await watching()
+    const session = playbackOf(handle)
+    if (session == null) throw new Error('no playback session')
+    const kinds: string[] = []
+    session.recovery = (kind: string) => {
+      kinds.push(kind)
+    }
+    handle.handleError(playlistStuck)
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    await handle.play()
+    expect(kinds).deep.equals(['reload'])
   })
 
   it('loads the stream again when the viewer presses play on a player that gave up', async function () {

@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import { PNG } from 'pngjs'
 
+import { clockSamplePoints } from '../chromeFrames'
 import { drawnPicture } from '../clockReader.test'
 import { type Call, fakeDevice, jsonFixture, noSleep, png } from './fakes.test'
 import {
@@ -649,16 +650,43 @@ describe('performing a schedule action', function () {
 
 describe('Safari watching one angle in the game page’s player', function () {
   /** A white landscape page with the frame of `epochMs` at half size, 100 px in and 300 down. */
-  function page(epochMs: number | null): Uint8Array {
+  /**
+   * A page with the player at (100, 300): its picture at that moment, black
+   * (reloading), or none. `hidden` covers those digits of its clock (0 the
+   * hours' tens … 8 the last of the milliseconds), as the player's controls
+   * do when they come up over it.
+   */
+  function page(
+    epochMs: number | null | 'black',
+    hidden: number[] = []
+  ): Uint8Array {
     const out = new PNG({ width: 1000, height: 700 })
     out.data.fill(255)
-    if (epochMs != null) {
+    if (epochMs === 'black') {
+      for (let y = 300; y < 660; y++) {
+        for (let x = 100; x < 740; x++) {
+          const at = (y * out.width + x) * 4
+          out.data[at] = out.data[at + 1] = out.data[at + 2] = 0
+        }
+      }
+    } else if (epochMs != null) {
       const frame = drawnPicture('SYNTHA', 2, epochMs)
       for (let y = 0; y < frame.height; y++) {
         for (let x = 0; x < frame.width; x++) {
           const from = (y * frame.width + x) * 4
           const to = ((y + 300) * out.width + x + 100) * 4
           for (let c = 0; c < 4; c++) out.data[to + c] = frame.data[from + c]
+        }
+      }
+    }
+    const points = clockSamplePoints()
+    for (const digit of hidden) {
+      for (const [x, y] of points[digit]) {
+        for (let dy = -4; dy <= 4; dy++) {
+          for (let dx = -4; dx <= 4; dx++) {
+            const at = ((300 + y * 2 + dy) * out.width + 100 + x * 2 + dx) * 4
+            out.data[at] = out.data[at + 1] = out.data[at + 2] = 26
+          }
         }
       }
     }
@@ -701,6 +729,89 @@ describe('Safari watching one angle in the game page’s player', function () {
       names.indexOf('scrollUntilVisible')
     )
     expect(names).not.includes('swipe')
+  })
+
+  it('starts the player with a tap on its picture when it stands still, and leaves a moving one alone', async function () {
+    // The page shows its first picture and waits: two looks apart read the
+    // same clock. After the tap it moves.
+    const still = single([
+      page(61_000_000),
+      page(61_000_000),
+      page(61_003_000),
+      page(61_004_500)
+    ])
+    await still.surface.join()
+    const points = still.calls
+      .filter(([name, arg]) => name === 'tapOn' && 'point' in (arg as object))
+      .map(([, arg]) => (arg as { point: string }).point)
+    expect(points).length(1)
+    // The middle of the picture: 640 × 360 at (100, 300) on a 1000 × 700 page.
+    const [x, y] = points[0].split(',').map(part => Number.parseFloat(part))
+    expect(x).closeTo(42, 1.5)
+    expect(y).closeTo(68.6, 1.5)
+    const moving = single([page(61_000_000), page(61_001_000)])
+    await moving.surface.join()
+    expect(
+      moving.calls.filter(
+        ([name, arg]) => name === 'tapOn' && 'point' in (arg as object)
+      )
+    ).length(0)
+  })
+
+  it('taps again when its tap paused a player that was just starting on its own', async function () {
+    // Still while it loads; the tap catches it starting and pauses it; the
+    // next tap plays it again.
+    const caught = single([
+      page(61_000_000),
+      page(61_000_000),
+      page(61_000_500),
+      page(61_000_500),
+      page(61_003_000),
+      page(61_004_500)
+    ])
+    await caught.surface.join()
+    expect(
+      caught.calls.filter(
+        ([name, arg]) => name === 'tapOn' && 'point' in (arg as object)
+      )
+    ).length(2)
+  })
+
+  it('does not call a frozen frame turning black moving, and finds a picture the full-screen pill hid', async function () {
+    const reloading = await single([
+      page(61_000_000),
+      page('black')
+    ]).surface.probe()
+    expect(reloading.tiles?.[0].advancing).equals(null)
+    // The first look finds no picture (the pill over it); 2.5 s later it does.
+    const covered = await single([
+      page(null),
+      page(61_000_000),
+      page(61_002_000)
+    ]).surface.probe()
+    expect(covered.tiles).deep.equals([
+      { angle: 'SynthA', advancing: true, notice: null }
+    ])
+  })
+
+  it('trusts a clock half hidden by the controls only for an answer it can give', async function () {
+    const motion = async (
+      a: Uint8Array,
+      b: Uint8Array
+    ): Promise<boolean | null | undefined> =>
+      (await single([a, b]).surface.probe()).tiles?.[0].advancing
+    // The hours' tens under the controls reads as 0, as it is: frozen is still.
+    // (08:20:00: the hours' tens is a 0.)
+    expect(await motion(page(30_000_000, [0]), page(30_000_000))).equals(false)
+    // A step a playing clock makes between the frames is moving.
+    expect(await motion(page(30_000_000, [0]), page(30_002_000))).equals(true)
+    // The seconds' tens under them reads 0 for 4: the jump is not believed.
+    expect(await motion(page(61_000_000, [4]), page(61_000_000))).equals(null)
+    // No clock in either frame, only the picture: the pixels decide.
+    const all = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    expect(await motion(page(61_000_000, all), page(61_000_000, all))).equals(
+      false
+    )
   })
 
   it('finds the player on the screenshot, tells it moving or still, and reads its clock', async function () {

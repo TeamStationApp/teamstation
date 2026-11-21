@@ -1,8 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { buildOptions } from '../../common/autoScheduler'
 import { field, input, season } from '../../common/autoScheduler/fixtures.test'
+import { buildSchedule, engineResult } from '../../common/scheduler/engine'
 import { deviceInput, type Snapshot } from './snapshot'
 
 const snap = (): Snapshot => ({
@@ -17,7 +17,7 @@ const snap = (): Snapshot => ({
   fields: [field()]
 })
 describe('the input a device searches', () => {
-  it('sends the device tokens for other games, outside teams, seasons and coaches, and its games name only the run’s own', () => {
+  it('sends the device tokens for other games, outside teams, seasons and coaches, and its games name only the run’s own', async () => {
     const held = snap()
     const engine = {
       ...held.engine,
@@ -71,7 +71,9 @@ describe('the input a device searches', () => {
         ...each.exhibitionTeams
       ])
     ])
-    for (const option of buildOptions(sent).options)
+    const built = engineResult(await buildSchedule({ input: sent }))
+    expect(built.options.length).greaterThan(0)
+    for (const option of built.options)
       for (const placed of option.games)
         expect(own.has(placed.homeTeamId) && own.has(placed.awayTeamId)).equals(
           true

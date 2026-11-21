@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
+
 import { expect } from 'chai'
 import type { Request } from 'express'
 import { Kysely, PostgresDialect } from 'kysely'
-import { after, before, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { HttpError } from '../../common/errors'
@@ -11,7 +13,14 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
-import { checkLimits, clientIp, recordAttempts } from './rateLimit'
+import { limitGoogleLookup } from '../location/googleLookupLimits'
+import { serverConfig } from '../serverConfig'
+import {
+  checkLimits,
+  clientIp,
+  type LimitRule,
+  recordAttempts
+} from './rateLimit'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_ratelimit_${Date.now()}`
@@ -165,6 +174,140 @@ describe('rate limits', function () {
    * Rows are dropped as they age, by the limiter itself, so the table stays
    * proportional to recent traffic and no sweeper has to exist.
    */
+  describe('the test scale', function () {
+    const the = (): Kysely<Database> => {
+      if (db == null) throw new Error('no database')
+      return db
+    }
+
+    const rule = (scope: string, limit: number, fixed = false): LimitRule => ({
+      scope,
+      key: 'k',
+      limit,
+      windowSec: 60,
+      ...(fixed ? { fixed } : {})
+    })
+
+    /** How many attempts the rule allows before refusing. */
+    async function allowed(target: LimitRule): Promise<number> {
+      for (let count = 0; count < 200; count++) {
+        try {
+          await checkLimits(the(), [target])
+        } catch (error) {
+          expect(error).instanceOf(HttpError)
+          return count
+        }
+        await recordAttempts(the(), [target])
+      }
+      return 200
+    }
+
+    async function setScale(value: unknown): Promise<void> {
+      await the()
+        .insertInto('system_settings')
+        .values({ key: 'test.rateLimitScale', value: JSON.stringify(value) })
+        .onConflict(oc =>
+          oc.column('key').doUpdateSet({ value: JSON.stringify(value) })
+        )
+        .execute()
+    }
+
+    const saved = serverConfig.testSettings
+    afterEach(async function () {
+      serverConfig.testSettings = saved
+      await the()
+        .deleteFrom('system_settings')
+        .where('key', '=', 'test.rateLimitScale')
+        .execute()
+    })
+
+    it('with testSettings off, ignores the row and runs no query', async function () {
+      serverConfig.testSettings = false
+      await setScale(0.2)
+      expect(await allowed(rule('off.row', 5))).equals(5)
+      const queries: string[] = []
+      const watched = new Kysely<Database>({
+        dialect: new PostgresDialect({
+          pool: new Pool({ connectionString: scratchUrl })
+        }),
+        log: event => {
+          if (event.level === 'query') queries.push(event.query.sql)
+        }
+      })
+      await checkLimits(watched, [rule('off.query', 5)])
+      await watched.destroy()
+      expect(queries.join()).not.includes('system_settings')
+    })
+
+    it('with no row, refuses at exactly the rule’s own limit', async function () {
+      serverConfig.testSettings = true
+      expect(await allowed(rule('none', 5))).equals(5)
+    })
+
+    it('scales every rule, up and down, rounding up and never to nothing', async function () {
+      serverConfig.testSettings = true
+      await setScale(0.2)
+      expect(await allowed(rule('low.five', 5))).equals(1)
+      expect(await allowed(rule('low.ten', 10))).equals(2)
+      expect(await allowed(rule('low.one', 1))).equals(1)
+      expect(await allowed(rule('low.seven', 7))).equals(2)
+      await setScale(10)
+      expect(await allowed(rule('high', 5))).equals(50)
+    })
+
+    it('takes a change at once, with no restart', async function () {
+      serverConfig.testSettings = true
+      await setScale(0.2)
+      const target = rule('live', 5)
+      await recordAttempts(the(), [target])
+      let refused = false
+      try {
+        await checkLimits(the(), [target])
+      } catch {
+        refused = true
+      }
+      expect(refused).equals(true)
+      await setScale(100)
+      await checkLimits(the(), [target])
+    })
+
+    it('leaves a fixed rule alone', async function () {
+      serverConfig.testSettings = true
+      await setScale(100)
+      expect(await allowed(rule('fixed.high', 3, true))).equals(3)
+      await setScale(0.2)
+      expect(await allowed(rule('fixed.low', 3, true))).equals(3)
+    })
+
+    it('never loosens a paid provider’s budget', async function () {
+      serverConfig.testSettings = true
+      await setScale(100)
+      const userId = 'usr_budget'
+      let count = 0
+      try {
+        for (; count < 60; count++) {
+          await limitGoogleLookup(the(), userId, true)
+        }
+      } catch (error) {
+        expect(error).instanceOf(HttpError)
+      }
+      expect(count).equals(30)
+    })
+
+    it('falls back to 1 on a bad value', async function () {
+      serverConfig.testSettings = true
+      for (const [name, value] of Object.entries({
+        zero: 0,
+        negative: -1,
+        text: 'many',
+        nothing: false
+      })) {
+        await setScale(value)
+        expect(await allowed(rule(`bad.${name}`, 3)), name).equals(3)
+      }
+    })
+  })
+
   it('prunes attempts that have left the window', async function () {
     if (db == null) this.skip()
     const key = 'pruned@example.com'
@@ -187,5 +330,36 @@ describe('rate limits', function () {
       .where('key', '=', key)
       .execute()
     expect(rows.length).equals(1)
+  })
+})
+
+describe('production’s limits', function () {
+  /** Every rule's number as the route declares it, so a change is deliberate. */
+  function declared(file: string): Record<string, number> {
+    const text = readFileSync(file, 'utf8')
+    return Object.fromEntries(
+      [...text.matchAll(/scope: '([a-zA-Z.]+)',\s*limit: (\d+)/g)].map(row => [
+        row[1],
+        Number(row[2])
+      ])
+    )
+  }
+
+  it('are locked for each sign-in and invitation rule', function () {
+    expect(declared('src/server/routes/auth.ts')).to.include({
+      'emailCode.address': 5,
+      'emailCode.ip': 20,
+      'password.address': 10,
+      'password.ip': 50,
+      'verify.address': 10,
+      'verify.ip': 50,
+      'link.token': 10,
+      'link.ip': 50
+    })
+    expect(declared('src/server/routes/invites.ts')).to.include({
+      'invite.address': 5,
+      'invite.ip': 20,
+      'invite.code': 30
+    })
   })
 })

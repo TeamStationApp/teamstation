@@ -6,7 +6,16 @@ import { createRoot, type Root } from 'react-dom/client'
 import { asGameSummary, TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
 import { userIdOfGumbo } from '../../common/userId'
+import {
+  createModalPresence,
+  ModalPresenceProvider
+} from '../components/modalPresence'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
+import type { AskReason } from '../push/notificationAsk'
+import {
+  type NotificationAskActions,
+  NotificationAskContext
+} from '../push/notificationAskContext'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { eventReplyRows, EventRsvpModal } from './EventRsvpModal'
 
@@ -254,5 +263,51 @@ describe('quick event RSVP and player pills', () => {
       })
       expect(document.body.textContent).includes(title)
     }
+  })
+
+  it('asks about notifications after each answer that saves, a guardian’s for a child too, and holds the ask while open', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.eventInfo = async () => info()
+    const asked: AskReason[] = []
+    const asks: NotificationAskActions = {
+      request: reason => asked.push(reason),
+      withdraw: () => undefined
+    }
+    const modals = createModalPresence(40)
+    let fail = false
+    client.saveRsvp = async (_id, id, response) => {
+      if (fail) throw new Error('Save unavailable')
+      return { userId: id, response }
+    }
+    await render(
+      <ModalPresenceProvider presence={modals}>
+        <NotificationAskContext.Provider value={asks}>
+          <EventRsvpModal
+            client={client}
+            game={game}
+            teamId="home"
+            onClose={() => undefined}
+            onCounts={() => undefined}
+          />
+        </NotificationAskContext.Provider>
+      </ModalPresenceProvider>
+    )
+    expect(modals.open(), 'open, the sheet is counted as a modal').equals(1)
+    // The signed-in parent's own answer.
+    await click(`event-rsvp-${userIdOfGumbo(101)}-0`)
+    expect(asked).deep.equals(['rsvp'])
+    // Their child's, answered by them as guardian: no, then maybe.
+    await click(`event-rsvp-${userIdOfGumbo(103)}-2`)
+    await click(`event-rsvp-${userIdOfGumbo(103)}-1`)
+    expect(asked).deep.equals(['rsvp', 'rsvp', 'rsvp'])
+    // An answer that does not save asks nothing.
+    fail = true
+    await click(`event-rsvp-${userIdOfGumbo(104)}-0`)
+    expect(asked).length(3)
+    await act(async () => root?.unmount())
+    root = undefined
+    expect(modals.open(), 'still going').equals(1)
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(modals.open(), 'gone, it lets go').equals(0)
   })
 })

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Modal, Pressable, Switch, Text, View } from 'react-native'
+import { Pressable, Switch, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { NodeAccount } from '../../common/nodeAdministration'
@@ -13,6 +13,7 @@ import {
 } from '../components'
 import { ActionList } from '../components/ActionRow'
 import { CancelAction } from '../components/CancelAction'
+import { Modal } from '../components/Modal'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'

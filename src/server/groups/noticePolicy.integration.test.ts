@@ -4065,9 +4065,15 @@ describe('adds made with a notice', function () {
         )
       ).map(row => row.userId)
     expect(await search('')).includes(ids['Guarded New'])
-    // A stranger whose names are all short is found by typing them whole.
-    await person('Bo Li', { teamId: 'tem_noticeGuardedFar' })
-    expect(await search('Bo Li')).includes(ids['Bo Li'])
+    expect(await search('guarded')).includes(ids['Guarded New'])
+    // A stranger, on a team the coach has no tie to, is found by no words:
+    // typing his short names whole once found him, and no longer does.
+    await db!
+      .insertInto('teams')
+      .values({ id: 'tem_noticeOutsiders', name: 'Far Terns' })
+      .execute()
+    await person('Bo Li', { teamId: 'tem_noticeOutsiders' })
+    expect(await search('Bo Li')).not.includes(ids['Bo Li'])
     expect(await search('Bo')).not.includes(ids['Bo Li'])
   })
 

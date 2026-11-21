@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Keyboard,
   Linking,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -19,6 +18,7 @@ import {
 } from '../../common/tvLogin'
 import { Button, Screen } from '../components'
 import { CancelAction } from '../components/CancelAction'
+import { Modal } from '../components/Modal'
 import { QrScanner, qrScannerSupported } from '../scoring/qrScanner'
 import type { QrScannerProps } from '../scoring/qrScannerProps'
 import { ScopedThemeProvider } from '../theme/ThemeContext'

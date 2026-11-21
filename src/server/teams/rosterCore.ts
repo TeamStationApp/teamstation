@@ -12,10 +12,11 @@ import { type Kysely, sql } from 'kysely'
 
 import { asBats, asThrows, type RosterEntry } from '../../common/api'
 import { asWalkUpSong, type WalkUpSong } from '../../common/walkUpSong'
-import { onceAMinute, type ValkeyCache } from '../cache/valkeyCache'
+import type { ValkeyCache } from '../cache/valkeyCache'
 import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { teamWalkUpSongs } from '../routes/walkUpSongs'
+import { onceAMinute } from '../valkey/client'
 
 /**
  * The `users` columns a team's core reads: those the member query selects and

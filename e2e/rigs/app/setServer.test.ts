@@ -2,7 +2,10 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  appLink,
+  openInApp,
   parseSetServerArgs,
+  runSetServerCli,
   type ServerDevice,
   serverLink,
   setServer
@@ -19,12 +22,59 @@ function phone(): { device: ServerDevice; calls: Array<[string, unknown]> } {
       launchApp: record('launchApp'),
       stopApp: record('stopApp'),
       openLink: record('openLink'),
+      tapOn: record('tapOn'),
       assertVisible: record('assertVisible')
     }
   }
 }
 
 describe('setServer', function () {
+  it('opens a page of the app from a stopped app, by its develop link', async function () {
+    expect(appLink('/groups/league/l1/scheduler')).equals(
+      'teamstation-develop://groups/league/l1/scheduler'
+    )
+    const android = phone()
+    await openInApp({
+      platform: 'android',
+      udid: 'phone-1',
+      appId: 'app.teamstation.develop',
+      link: appLink('chat'),
+      device: android.device
+    })
+    expect(android.calls).deep.equals([
+      ['stopApp', { appId: 'app.teamstation.develop' }],
+      ['openLink', { link: 'teamstation-develop://chat' }]
+    ])
+    const iphone = phone()
+    const ran: string[][] = []
+    await openInApp({
+      platform: 'ios',
+      udid: 'phone-2',
+      appId: 'app.teamstation.develop',
+      link: appLink('chat'),
+      device: iphone.device,
+      run: async (file, args) => {
+        ran.push([file, ...args])
+      }
+    })
+    expect(iphone.calls.map(([name]) => name)).deep.equals(['stopApp'])
+    expect(ran).deep.equals([
+      [
+        'xcrun',
+        'devicectl',
+        'device',
+        'process',
+        'launch',
+        '--device',
+        'phone-2',
+        '--terminate-existing',
+        '--payload-url',
+        'teamstation-develop://chat',
+        'app.teamstation.develop'
+      ]
+    ])
+  })
+
   it('names the server in its develop build’s own link', function () {
     expect(serverLink('ios', 'https://e2e-03.teamstation.app')).equals(
       'teamstation-develop://server?origin=https%3A%2F%2Fe2e-03.teamstation.app'
@@ -35,6 +85,35 @@ describe('setServer', function () {
     expect(serverLink('android', null)).equals(
       'teamstation-develop://server?clear=1'
     )
+  })
+
+  it('hands a hub iPhone the link through its leased device, and answers the system’s Open', async function () {
+    const { device, calls } = phone()
+    const ran: string[][] = []
+    await setServer({
+      platform: 'ios',
+      udid: 'PHONE-UDID@hub',
+      appId: 'app.teamstation.develop',
+      origin: 'https://develop3.teamstation.app',
+      device,
+      hub: true,
+      run: async (file, args) => {
+        ran.push([file, ...args])
+      }
+    })
+    expect(ran, 'devicectl here cannot see a hub device').deep.equals([])
+    expect(calls.map(([name]) => name)).deep.equals([
+      'stopApp',
+      'openLink',
+      'tapOn',
+      'assertVisible',
+      'launchApp'
+    ])
+    expect(calls[1][1]).deep.equals({
+      link: serverLink('ios', 'https://develop3.teamstation.app')
+    })
+    // Tapped only when the system asks; skipped when it does not.
+    expect(calls[2][1]).deep.equals({ text: 'Open', optional: true })
   })
 
   it('opens the link on a phone, waits for the app to keep it, then launches it fresh', async function () {
@@ -207,5 +286,94 @@ describe('setServer', function () {
     expect(() => parseSetServerArgs(['--platform'])).to.throw(
       'unknown or empty option'
     )
+  })
+
+  it('runs its command line through a hub device, a local one and the TV, and always lets go', async function () {
+    const calls: unknown[][] = []
+    const deps = (simulator = false): any => ({
+      connect: async (_settings: unknown, name: string) => {
+        calls.push(['connect', name])
+        return {
+          attach: async () => ({}),
+          shutdown: async () => calls.push(['shutdown'])
+        }
+      },
+      attach: async (_daemon: unknown, _dir: string, options: unknown) => {
+        calls.push(['attach', options])
+        return {}
+      },
+      settings: () => ({}),
+      isSimulator: () => simulator,
+      point: async (options: any) => {
+        calls.push(['point', options.platform, options.hub, options.simulator])
+      },
+      log: (line: string) => calls.push(['log', line])
+    })
+    const base = [
+      '--app-id',
+      'app.teamstation.develop',
+      '--origin',
+      'https://develop3.teamstation.app'
+    ]
+    await runSetServerCli(
+      ['--platform', 'ios', '--device', 'u@hub', '--daemon', 'd', ...base],
+      deps(true)
+    )
+    expect(calls).deep.equals([
+      ['connect', 'd'],
+      ['attach', { device: 'u@hub', appId: 'app.teamstation.develop' }],
+      ['point', 'ios', true, false],
+      ['shutdown'],
+      [
+        'log',
+        'app.teamstation.develop on u@hub uses https://develop3.teamstation.app from its next launch, and is launched'
+      ]
+    ])
+    calls.length = 0
+    await runSetServerCli(
+      ['--platform', 'ios', '--device', 'sim-1', ...base],
+      deps(true)
+    )
+    expect(calls[2]).deep.equals(['point', 'ios', false, true])
+    calls.length = 0
+    await runSetServerCli(
+      [
+        '--platform',
+        'tvos',
+        '--device',
+        'tv',
+        '--app-id',
+        'a',
+        '--origin',
+        'clear'
+      ],
+      deps()
+    )
+    expect(calls).deep.equals([
+      ['point', 'tvos', undefined, undefined],
+      [
+        'log',
+        'a on tv uses its own server from its next launch, and is launched'
+      ]
+    ])
+    // A failure still lets the device go.
+    calls.length = 0
+    const failing = {
+      ...deps(),
+      point: async () => {
+        throw new Error('no notice')
+      }
+    }
+    let error: unknown
+    try {
+      await runSetServerCli(
+        ['--platform', 'android', '--device', 'p@hub', ...base],
+        failing
+      )
+    } catch (caught) {
+      error = caught
+    }
+    expect(String(error)).includes('no notice')
+    expect(calls.at(-1)).deep.equals(['shutdown'])
   })
 })

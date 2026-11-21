@@ -12,28 +12,11 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { cp, mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 
 import { expect } from 'chai'
 
-import { buildOptions } from '../common/autoScheduler'
-import { asPreparedPreview } from '../common/schedulePreviews'
-import { googlePlaces } from '../server/location/googlePlaces'
-import {
-  api,
-  type AutoSchedulerFixture,
-  autoSchedulerFixture,
-  bookSecondGame,
-  EXHIBITION,
-  FIELD_ONE_HOURS,
-  G1,
-  SEASON_A_SETTINGS,
-  SEASON_A_WINDOWS,
-  seedThrough
-} from '../test/autoSchedulerFixture'
-import { interceptGoogleMaps } from '../test/googleMapsIntercept'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { mapFrameOf, waitInMapFrame } from '../test/mapFrameProbe'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   absent,
   type BrowserSession,
@@ -45,8 +28,26 @@ import {
   maestro,
   show,
   tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { asPreparedPreview } from '../common/schedulePreviews'
+import { buildSchedule, engineResult } from '../common/scheduler/engine'
+import { googlePlaces } from '../server/location/googlePlaces'
+import {
+  api,
+  type AutoSchedulerFixture,
+  autoSchedulerFixture,
+  bookSecondGame,
+  EXHIBITION,
+  FIELD_ONE_HOURS,
+  G1,
+  SEASON_A_SETTINGS,
+  SEASON_A_WINDOWS,
+  SEASON_ENDS_ON,
+  seedThrough
+} from '../test/autoSchedulerFixture'
+import { interceptGoogleMaps } from '../test/googleMapsIntercept'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { mapFrameOf, waitInMapFrame } from '../test/mapFrameProbe'
 
 const WIDTH = 402
 const HEIGHT = 874
@@ -132,10 +133,14 @@ async function allowLocation(run: Run, b: BrowserSession): Promise<void> {
 }
 
 /** Waits for the address bar to read a path. */
-async function at(b: BrowserSession, path: RegExp): Promise<string> {
+async function at(
+  b: BrowserSession,
+  path: RegExp,
+  timeout = 15000
+): Promise<string> {
   await b.page.waitForFunction(
     (source: string) => new RegExp(source).test(location.pathname),
-    { timeout: 15000 },
+    { timeout },
     path.source
   )
   return await b.page.evaluate(() => location.pathname)
@@ -217,10 +222,10 @@ async function e1(run: Run): Promise<void> {
   await at(admin, /\/scheduler$/)
   await admin.m.tapOn({ text: 'Field Manager', timeout: 15000 })
   await at(admin, /\/scheduler\/fields$/)
-  await contains(admin.page, 'Claimed venues nearby')
+  await contains(admin.page, 'CLAIMED VENUES NEARBY')
   await contains(admin.page, 'Harbor Field')
   await fill(admin.m, 'Search venues', 'Example Park')
-  await contains(admin.page, 'Unclaimed venues')
+  await contains(admin.page, 'UNCLAIMED VENUES')
   await capture(admin.m, artifacts, 'field-manager-search.png')
   await tapLabel(admin, 'Open Example Park')
   await at(admin, /^\/venues\/place\/example-park$/)
@@ -247,8 +252,8 @@ async function e1(run: Run): Promise<void> {
   await contains(admin.page, 'Demo League A')
   await absent(admin.page, 'Claim pending')
   await run.visit(admin, `/groups/league/${fx.f.leagueA}/scheduler/fields`)
-  await contains(admin.page, 'Your leagues’ venues')
-  await contains(admin.page, 'Claimed venues nearby')
+  await contains(admin.page, 'YOUR LEAGUES’ VENUES')
+  await contains(admin.page, 'CLAIMED VENUES NEARBY')
   await capture(admin.m, artifacts, 'field-manager-list.png')
   await run.pass(
     'E1',
@@ -376,12 +381,15 @@ async function e2(run: Run): Promise<void> {
   await contains(admin.page, '5:00 PM – 9:00 PM')
   // The year's dates, October to September.
   await tapLabel(admin, 'Dates: Open all year')
-  for (let month = 0; month < 24; month++) {
+  // The calendar opens on this month, which can be after October 2026.
+  const opening = new Date().getFullYear() * 12 + new Date().getMonth()
+  const toOctober = 2026 * 12 + 9 - opening
+  for (let month = 0; month < Math.abs(toOctober); month++) {
     const shown = await admin.page.evaluate(
       () => document.querySelector('[aria-label="2026-10-01"]') != null
     )
     if (shown) break
-    await tapLabel(admin, 'Previous month')
+    await tapLabel(admin, toOctober < 0 ? 'Previous month' : 'Next month')
   }
   await tapLabel(admin, '2026-10-01')
   for (let month = 0; month < 12; month++) {
@@ -961,9 +969,9 @@ async function e6(run: Run): Promise<void> {
   const admin = await run.session('autoScheduler-e6', 101)
   await run.visit(admin, scheduler)
   await contains(admin.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
-  await tapLabel(admin, 'Demo Regular')
+  await tapLabel(admin, 'Auto-schedule Demo Regular')
   await contains(admin.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
-  await tapLabel(admin, 'Demo Playoffs')
+  await tapLabel(admin, 'Auto-schedule Demo Playoffs')
   await tapLabel(admin, 'Demo Playoffs Size: 60/90')
   await tapLabel(admin, '55/80')
   await tapLabel(admin, 'Demo Playoffs Size: 55/80')
@@ -987,16 +995,24 @@ async function e6(run: Run): Promise<void> {
   }
   await tapText(admin, 'Add another time window')
   const march = 'Windows from Monday, March 1, 2027'
-  await contains(admin.page, 'From Mar 1')
+  // A season's window ends on a date: the first runs to the season's end.
+  await contains(admin.page, 'Mar 1 – Jul 31')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, march, day, '17:30', '21:00')
   await setDay(admin, march, 'Saturday', '08:00', '18:00')
   await tapText(admin, 'Add another time window')
   await chooseDate(admin, '2027-06-01')
   const june = 'Windows from Tuesday, June 1, 2027'
-  await contains(admin.page, 'From Jun 1')
+  // June 1 splits it: March's window now ends the day before.
+  await contains(admin.page, 'Mar 1 – May 31')
+  await contains(admin.page, 'Jun 1 – Jul 31')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, june, day, '18:00', '21:00')
+  // SEASON_A_WINDOWS as the season page saves them, each with its end.
+  const windows = [
+    { ...SEASON_A_WINDOWS[0], until: '2027-05-31' },
+    { ...SEASON_A_WINDOWS[1], until: SEASON_ENDS_ON }
+  ]
   // The last day's save may still be on its way.
   const read = async (): Promise<Record<string, unknown>> =>
     await fx.f.h.db
@@ -1007,8 +1023,7 @@ async function e6(run: Run): Promise<void> {
   let saved = await read()
   for (
     let tries = 0;
-    tries < 50 &&
-    JSON.stringify(saved.windows) !== JSON.stringify(SEASON_A_WINDOWS);
+    tries < 50 && !isDeepStrictEqual(saved.windows, windows);
     tries++
   ) {
     await new Promise(resolve => setTimeout(resolve, 200))
@@ -1022,7 +1037,7 @@ async function e6(run: Run): Promise<void> {
     exhibition_games: 1,
     doubleheaders: 'ifNecessary'
   })
-  expect(saved.windows).deep.equals(SEASON_A_WINDOWS)
+  expect(saved.windows).deep.equals(windows)
   // Back to the grid: the warnings, live.
   await run.visit(admin, scheduler)
   await contains(admin.page, 'EARLY WARNINGS')
@@ -1049,7 +1064,7 @@ async function e6(run: Run): Promise<void> {
   })
   await scrollToText(admin, 'SELECT SEASONS TO AUTO SCHEDULE.', 'start')
   await capture(admin.m, artifacts, 'scheduler-grid.png')
-  await tapLabel(admin, 'Demo Playoffs')
+  await tapLabel(admin, 'Auto-schedule Demo Playoffs')
   await gone(admin, 'Demo Playoffs has no chosen field')
   expect(await buildEnabled(admin)).equals(true)
   const setup = await fx.f.h.db
@@ -1103,7 +1118,9 @@ async function chooseDate(b: BrowserSession, date: string): Promise<void> {
 
 /** The preview the address bar names, once it is open. */
 async function openPreview(b: BrowserSession): Promise<string> {
-  const path = await at(b, /\/scheduler\/previews\/[^/]+$/)
+  // The browser builds the options itself (7ede60340): one asking for more
+  // games than the fields hold searches longest.
+  const path = await at(b, /\/scheduler\/previews\/[^/]+$/, 180000)
   await contains(b.page, 'Publish this option')
   return decodeURIComponent(path.slice(path.lastIndexOf('/') + 1))
 }
@@ -1287,10 +1304,20 @@ async function e7(run: Run): Promise<void> {
             )
       return title == null ? null : title.innerText
     })
-  const firstStuck = await stuck()
+  // As one week's end pushes its head up, for about a head's height, none
+  // sits at the rows' bottom until the next arrives: scroll on in short steps.
+  const stuckSoon = async (): Promise<string | null> => {
+    for (let step = 0; step < 6; step++) {
+      const title = await stuck()
+      if (title !== null) return title
+      await wheel(admin, 30)
+    }
+    return await stuck()
+  }
+  const firstStuck = await stuckSoon()
   expect(firstStuck).matches(/^Week \d+ · /)
   await wheel(admin, 900)
-  const laterStuck = await stuck()
+  const laterStuck = await stuckSoon()
   expect(laterStuck).matches(/^Week \d+ · /)
   expect(Number(/\d+/.exec(laterStuck!)![0])).greaterThan(
     Number(/\d+/.exec(firstStuck!)![0])
@@ -1661,15 +1688,14 @@ async function e10(run: Run): Promise<void> {
   const capacity = await storedPreview(run, capacityId)
   trace('E10 const unmet = capacity.options[0].unmet[')
   const unmet = capacity.options[0].unmet[0]
-  const missingTeamGames = capacity.options[0].fairness
-    .filter(row => !row.exhibitionTeam)
-    .reduce((total, row) => total + Math.max(0, 40 - row.regularGames), 0)
-  expect(missingTeamGames).greaterThan(0)
-  expect(unmet.message).equals(
-    `${missingTeamGames} requested team games remain unplaced`
+  // Short of 40 for every team: the same count each ("every team gets…"),
+  // or one apart team by team ("Demo Rockets gets 33 of 40…; the others get
+  // 34 of 40"), as the fixture's ids and the hour of the run fall.
+  expect(unmet.message).matches(
+    /^(every team gets \d+ of the 40 requested regular-season games|[^;]+ gets \d+ of 40 regular-season games(?:; [^;]+ gets? \d+ of 40)+)$/
   )
   expect(unmet.cause).equals(
-    'The submitted option leaves requested games unplaced within the selected constraints.'
+    'not enough 50/70 field time to give every team 40 games'
   )
   trace('E10 const counts = new Set')
   const counts = new Set(
@@ -1766,7 +1792,7 @@ async function e10(run: Run): Promise<void> {
     lines,
     'PUT',
     `/schedule-previews/${preparation.id}/result`,
-    buildOptions(preparation.input)
+    engineResult(await buildSchedule({ input: preparation.input }))
   )
   const first = JSON.parse(completed.replace(/\nHTTP \d+\n$/, '')) as {
     id: string
@@ -1794,7 +1820,7 @@ async function e10(run: Run): Promise<void> {
     lines,
     'PUT',
     `/schedule-previews/${nextPreparation.id}/result`,
-    buildOptions(nextPreparation.input)
+    engineResult(await buildSchedule({ input: nextPreparation.input }))
   )
   const built = JSON.parse(nextCompleted.replace(/\nHTTP \d+\n$/, '')) as {
     id: string
@@ -1833,6 +1859,8 @@ async function e11(run: Run): Promise<void> {
   const built = await api<{
     id: string
     options: Array<{ games: Array<{ key: string }> }>
+    // E10 published the league's games: working around them leaves nothing
+    // to place, so this preview plans the season afresh. It is never published.
   }>(
     fx,
     101,
@@ -1990,7 +2018,20 @@ async function main(): Promise<void> {
     // The full pass, E11, runs E1 to E11 on one fixture; E0's before
     // shots are taken on the base branch.
     for (const [id, scenario] of Object.entries(SCENARIOS))
-      if (fullPass ? id !== 'E0' : only === id) await scenario(run)
+      if (fullPass ? id !== 'E0' : only === id) {
+        try {
+          await scenario(run)
+        } catch (error) {
+          // What each open browser showed when the scenario failed.
+          for (const [index, session] of sessions.entries())
+            await capture(
+              session.m,
+              artifacts,
+              `${id}-failed-${index}.png`
+            ).catch(() => undefined)
+          throw error
+        }
+      }
     const coverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
     if (coverage != null)
       await recordBrowserCoverage(

@@ -118,7 +118,7 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/components/Badge.tsx',
     'src/app/components/PillTabs.tsx',
     'src/app/theme/pill.ts',
-    'src/app/screens/DiscoverScreen.tsx',
+    'src/app/screens/SearchScreen.tsx',
     'src/app/screens/GroupScreen.tsx',
     'src/app/screens/GroupLinkScreen.tsx',
     'src/app/screens/GroupSettingsScreen.tsx',
@@ -255,7 +255,6 @@ if (!reportOnly) {
       '--only',
       scenario
     ])
-  run('node', ['-r', 'sucrase/register', 'src/app/settingsPillSweep.e2e.ts'])
   run('node', [
     '-r',
     'sucrase/register',

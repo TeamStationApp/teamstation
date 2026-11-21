@@ -59,6 +59,8 @@ export interface TessRouteOptions {
   /** The Messages API's `fetch`, replaced in tests. */
   fetch?: typeof fetch
   now?: () => Date
+  /** Optional release index override for isolated tests. */
+  sourceIndex?: string
   /** How often a streamed turn sends a comment to keep its connection open. */
   keepAliveMs?: number
 }
@@ -106,6 +108,7 @@ export function tessRoutes(
 
   // Only ever built past the gate above, which answered 503 without settings.
   const deps = (): TessDeps => ({
+    sourceIndex: options.sourceIndex,
     db,
     settings: options.settings!,
     origin: options.origin,

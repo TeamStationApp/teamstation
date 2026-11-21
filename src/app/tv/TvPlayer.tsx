@@ -39,6 +39,7 @@ import {
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
+import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import type { Rect as TileRect } from '../player/multiCam/layout'
 import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
@@ -83,6 +84,8 @@ import { angleNeighbor, tvLayout } from './tvLayout'
 const HIGHLIGHTS_PANEL_WIDTH = 420
 const LAYOUT_DURATION = 240
 const STATS_SCROLL_SENSITIVITY = 0.5
+/** How long a reopened live camera plays on before its retries start over. */
+const RETRIES_RESET_AFTER_SEC = 10
 
 interface Angle {
   name: string
@@ -180,6 +183,12 @@ export function TvPlayer({
   const [wall, setWall] = useState<number | null>(null)
   const [failures, setFailures] = useState<number[]>([])
   const [buffering, setBuffering] = useState<number[]>([])
+  /** How many times each angle's player has been opened again after an error. */
+  const [reopened, setReopened] = useState<number[]>([])
+  const retries = useRef<number[]>([])
+  /** Each reopened camera's playback since it loaded: where it last was, and how much it has played. */
+  const playedSince = useRef<Array<{ at: number; sec: number } | null>>([])
+  const retryTimers = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const [state, dispatch] = useReducer(playbackReducer, 0, initialPlayback)
   const current = useRef(state)
   current.current = state
@@ -289,6 +298,9 @@ export function TvPlayer({
     setError(null)
     setAngles(null)
     setFailures([])
+    setReopened([])
+    retries.current = []
+    playedSince.current = []
     setStats(EMPTY_STATS)
     const load = async (): Promise<void> => {
       const game = await client.game(request.game.id)
@@ -334,15 +346,9 @@ export function TvPlayer({
       }
       if (!active) return
       loaded.forEach((angle, index) => {
-        const queue = new NativeSeekQueue(
-          seconds => refs.current[index]?.seek(seconds, 0),
-          () => {
-            clock.current.settled(index)
-          }
-        )
-        seekQueues.current[index] = queue
+        seekQueues.current[index] = seekQueue(index)
         clock.current.register(index, angle.timeline, seconds => {
-          queue.request(seconds)
+          seekQueues.current[index]?.request(seconds)
         })
       })
       dispatch({ type: 'reset', count: loaded.length })
@@ -404,6 +410,8 @@ export function TvPlayer({
       statisticsRefresh.current = null
       generation.current = activeGeneration + 1
       clearInterval(timer)
+      retryTimers.current.forEach(clearTimeout)
+      retryTimers.current = []
     }
   }, [client, request, retry])
   const previousOverlay = useRef(false)
@@ -784,6 +792,39 @@ export function TvPlayer({
     }
     dispatch({ type: 'pause' })
   }
+  function seekQueue(index: number): NativeSeekQueue {
+    return new NativeSeekQueue(
+      seconds => refs.current[index]?.seek(seconds, 0),
+      () => {
+        clock.current.settled(index)
+      }
+    )
+  }
+  /**
+   * A live camera whose player failed — AVPlayer gives up on a playlist that
+   * stopped growing while its publisher was away — is opened again, backing
+   * off as the phone's grid does, and rejoins the others at the wall clock
+   * once it loads. The others play on meanwhile.
+   */
+  function reopenLater(index: number): boolean {
+    const wait = livePlaybackRetryDelay(retries.current[index] ?? 0)
+    if (wait === undefined) return false
+    const activeGeneration = generation.current
+    clearTimeout(retryTimers.current[index])
+    retryTimers.current[index] = setTimeout(() => {
+      if (generation.current !== activeGeneration) return
+      retries.current[index] = (retries.current[index] ?? 0) + 1
+      seekQueues.current[index] = seekQueue(index)
+      clock.current.retry(index)
+      setBuffering(previous => previous.filter(i => i !== index))
+      setReopened(previous => {
+        const next = [...previous]
+        next[index] = (next[index] ?? 0) + 1
+        return next
+      })
+    }, wait)
+    return true
+  }
   const loaded = (index: number, duration: number): void => {
     clock.current.load(
       index,
@@ -985,6 +1026,7 @@ export function TvPlayer({
                 }}
               >
                 <TransportVideo
+                  key={reopened[index] ?? 0}
                   ref={ref => {
                     refs.current[index] = ref
                   }}
@@ -1002,11 +1044,27 @@ export function TvPlayer({
                   progressUpdateInterval={250}
                   onLoad={event => {
                     loaded(index, event.duration)
+                    // Its retries start over only once it plays on: a camera
+                    // that loads and fails again each time backs off to the end.
+                    playedSince.current[index] = null
+                    setFailures(previous => previous.filter(i => i !== index))
                   }}
                   onSeek={event => {
                     seekQueues.current[index]?.complete(event.seekTime)
                   }}
                   onProgress={event => {
+                    if ((retries.current[index] ?? 0) > 0) {
+                      const was = playedSince.current[index]
+                      const step = was == null ? 0 : event.currentTime - was.at
+                      const sec =
+                        (was?.sec ?? 0) + (step > 0 && step < 1 ? step : 0)
+                      playedSince.current[index] =
+                        sec >= RETRIES_RESET_AFTER_SEC
+                          ? null
+                          : { at: event.currentTime, sec }
+                      if (sec >= RETRIES_RESET_AFTER_SEC)
+                        retries.current[index] = 0
+                    }
                     progress(index, event.currentTime)
                   }}
                   onBuffer={event => {
@@ -1033,6 +1091,8 @@ export function TvPlayer({
                     const unavailable = clock.current.fail(index)
                     loaded(index, 0)
                     setFailures(previous => [...new Set([...previous, index])])
+                    if (angle.video.status === 'live' && reopenLater(index))
+                      return
                     if (unavailable)
                       setError('The cameras could not play. Try again.')
                   }}

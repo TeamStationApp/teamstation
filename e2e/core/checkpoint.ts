@@ -79,6 +79,26 @@ export interface JudgeRuntime {
   authoritative: boolean
 }
 
+/**
+ * The indices, among a CSS selector's matches, of those drawn on the page,
+ * as maestro-d must find each to mask it: with a size, inside the window,
+ * visible, laid out (maestro-d's own rule turns down an element whose
+ * offsetParent is null), and not in a scene kept behind the shown one, which
+ * keeps its size and styles: `StackNavigator`'s SceneFrame names each
+ * scene's role, and only the top or incoming one is shown. Neither a hit test
+ * nor aria-hidden would do: an ActionRow draws its emblem with no pointer
+ * events, and an open menu hides the whole page from assistive technology. maestro-d's page helper is not asked: a
+ * reload clears it until its next lookup.
+ */
+async function drawnMatches(device: any, css: string): Promise<number[]> {
+  const result = (await device.evalBrowserScript({
+    script: `return JSON.stringify([...document.querySelectorAll(${JSON.stringify(css)})].map((n, i) => { const r = n.getBoundingClientRect(); const style = getComputedStyle(n); const laidOut = n.offsetParent !== null || style.position === 'fixed' || style.position === 'sticky'; const shown = r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight && laidOut && (typeof n.checkVisibility !== 'function' || n.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })); const scene = n.closest('[data-scene-role]'); const onTop = scene === null || ['top', 'incoming'].includes(String(scene.getAttribute('data-scene-role'))); return shown && onTop ? i : -1 }).filter(i => i >= 0))`
+  })) as { data?: unknown }
+  return typeof result.data === 'string'
+    ? (JSON.parse(result.data) as number[])
+    : []
+}
+
 /** The device a checkpoint looks at, with what its checks need to know about it. */
 export interface CheckpointTarget {
   device: any
@@ -190,7 +210,13 @@ export class Checkpoints {
         key: goldenKey(env.scenarioId, id, env.surface, target.deviceClass),
         golden: goldenOn(env.surface, spec.golden),
         manifest: readGoldenManifest(env.root),
-        store: env.settings.goldenStore
+        store: env.settings.goldenStore,
+        ...(typeof target.device.evalBrowserScript === 'function'
+          ? {
+              drawn: async (css: string) =>
+                await drawnMatches(target.device, css)
+            }
+          : {})
       })
       if (record.visual.verdict === 'fail') {
         record.failure = record.visual.detail ?? 'the screen moved'

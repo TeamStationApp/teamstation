@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { attachDevice, connectDaemon } from '../../core/maestro'
+import { attachDevice, connectDaemon, isHubDevice } from '../../core/maestro'
 import { iosIsSimulator } from '../../core/prepare'
 import { loadSettings } from '../../core/settings'
 
@@ -26,6 +26,7 @@ export interface ServerDevice {
   launchApp: (options: { appId: string; stopApp?: boolean }) => Promise<unknown>
   stopApp: (options: { appId: string }) => Promise<unknown>
   openLink: (options: { link: string }) => Promise<unknown>
+  tapOn: (options: Record<string, unknown>) => Promise<unknown>
   assertVisible: (options: Record<string, unknown>) => Promise<unknown>
 }
 
@@ -55,6 +56,61 @@ function hostOf(origin: string | null): string {
   return origin == null ? 'this build' : new URL(origin).host
 }
 
+/** A develop build's own link to a page of the app: `groups/league/x/scheduler`. */
+export function appLink(path: string): string {
+  return `${PHONE_SCHEME}://${path.replace(/^\/+/, '')}`
+}
+
+/**
+ * Opens `link` in a phone's app from a stopped app, so the launch reads it:
+ * the app routes only the link it was launched with. An iPhone gets it
+ * handed to the app by its id, since on a phone the system's own handling
+ * of a link stops short of the app it names; a simulator takes it through
+ * simctl.
+ */
+export async function openInApp(options: {
+  platform: 'ios' | 'android'
+  udid: string
+  appId: string
+  link: string
+  device: Pick<ServerDevice, 'stopApp' | 'openLink' | 'tapOn'>
+  /** An iOS simulator, which takes the link through simctl, not devicectl. */
+  simulator?: boolean
+  /**
+   * A device on a maestro-d hub (`<udid>@<hub>`), which devicectl here cannot
+   * see: an iPhone there takes the link through the leased device.
+   */
+  hub?: boolean
+  run?: Run
+}): Promise<void> {
+  const { platform, udid, appId, link, device } = options
+  await device.stopApp({ appId })
+  if (platform === 'ios' && options.simulator === true) {
+    // A simulator's system hands its own app the link: devicectl sees only
+    // phones.
+    await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
+  } else if (platform === 'ios' && options.hub === true) {
+    // The system asks once before a link opens the app it names.
+    await device.openLink({ link })
+    await device.tapOn({ text: 'Open', optional: true })
+  } else if (platform === 'ios') {
+    await (options.run ?? realRun)('xcrun', [
+      'devicectl',
+      'device',
+      'process',
+      'launch',
+      '--device',
+      udid,
+      '--terminate-existing',
+      '--payload-url',
+      link,
+      appId
+    ])
+  } else {
+    await device.openLink({ link })
+  }
+}
+
 export async function setServer(options: {
   platform: AppPlatform
   udid: string
@@ -65,6 +121,11 @@ export async function setServer(options: {
   device?: ServerDevice
   /** An iOS simulator, which takes the link through simctl, not devicectl. */
   simulator?: boolean
+  /**
+   * A device on a maestro-d hub (`<udid>@<hub>`), which devicectl here cannot
+   * see: an iPhone there takes the link through the leased device.
+   */
+  hub?: boolean
   run?: Run
   sleep?: (ms: number) => Promise<void>
 }): Promise<void> {
@@ -99,29 +160,16 @@ export async function setServer(options: {
   const device = options.device
   if (device == null)
     throw new Error(`setServer on ${platform} needs a maestro-d device`)
-  await device.stopApp({ appId })
-  if (platform === 'ios' && options.simulator === true) {
-    // A simulator's system hands its own app the link: devicectl sees only
-    // phones.
-    await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
-  } else if (platform === 'ios') {
-    // Handed to the develop app by its id: on a phone, the system's own
-    // handling of a link stops short of the app it names.
-    await (options.run ?? realRun)('xcrun', [
-      'devicectl',
-      'device',
-      'process',
-      'launch',
-      '--device',
-      udid,
-      '--terminate-existing',
-      '--payload-url',
-      link,
-      appId
-    ])
-  } else {
-    await device.openLink({ link })
-  }
+  await openInApp({
+    platform,
+    udid,
+    appId,
+    link,
+    device,
+    simulator: options.simulator,
+    hub: options.hub,
+    run: options.run
+  })
   await device.assertVisible({
     text: `.*${escapeRegExp(hostOf(origin))}.*Restart TeamStation.*`
   })
@@ -161,36 +209,64 @@ export function parseSetServerArgs(argv: string[]): {
   }
 }
 
-if (require.main === module) {
-  const run = async (): Promise<void> => {
-    const args = parseSetServerArgs(process.argv.slice(2))
-    if (args.platform === 'tvos') {
-      await setServer(args)
-    } else {
-      const daemon = await connectDaemon(loadSettings(), args.daemon)
-      try {
-        const device = (await attachDevice(
-          daemon,
-          join(tmpdir(), `setServer-${process.pid}`),
-          {
-            device: args.udid,
-            appId: args.appId
-          }
-        )) as unknown as ServerDevice
-        await setServer({
-          ...args,
-          device,
-          simulator: args.platform === 'ios' && iosIsSimulator(args.udid)
-        })
-      } finally {
-        await daemon.shutdown()
-      }
+/** What the command line reaches for, so a test can stand in for each. */
+export interface SetServerCliDeps {
+  connect: typeof connectDaemon
+  attach: typeof attachDevice
+  settings: typeof loadSettings
+  isSimulator: typeof iosIsSimulator
+  point: typeof setServer
+  log: (line: string) => void
+}
+
+/**
+ * The command line: a phone through maestro-d (a hub's, for an
+ * `<udid>@<hub>` id), the TV through devicectl. The daemon is shut down,
+ * or a hub's leases ended, however the pointing goes.
+ */
+export async function runSetServerCli(
+  argv: string[],
+  deps: SetServerCliDeps = {
+    connect: connectDaemon,
+    attach: attachDevice,
+    settings: loadSettings,
+    isSimulator: iosIsSimulator,
+    point: setServer,
+    log: line => {
+      console.log(line)
     }
-    console.log(
-      `${args.appId} on ${args.udid} uses ${args.origin ?? 'its own server'} from its next launch, and is launched`
-    )
   }
-  run().catch((error: unknown) => {
+): Promise<void> {
+  const args = parseSetServerArgs(argv)
+  if (args.platform === 'tvos') {
+    await deps.point(args)
+  } else {
+    const daemon = await deps.connect(deps.settings(), args.daemon)
+    try {
+      const device = (await deps.attach(
+        daemon,
+        join(tmpdir(), `setServer-${process.pid}`),
+        { device: args.udid, appId: args.appId }
+      )) as unknown as ServerDevice
+      const hub = isHubDevice(args.udid)
+      await deps.point({
+        ...args,
+        device,
+        hub,
+        simulator:
+          args.platform === 'ios' && !hub && deps.isSimulator(args.udid)
+      })
+    } finally {
+      await daemon.shutdown()
+    }
+  }
+  deps.log(
+    `${args.appId} on ${args.udid} uses ${args.origin ?? 'its own server'} from its next launch, and is launched`
+  )
+}
+
+if (require.main === module) {
+  runSetServerCli(process.argv.slice(2)).catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })

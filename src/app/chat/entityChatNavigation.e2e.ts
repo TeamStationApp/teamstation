@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
+
 async function main(): Promise<void> {
   const {
     MAESTRO_D_CLIENT_ROOT,
@@ -22,10 +24,10 @@ async function main(): Promise<void> {
     resolve(MAESTRO_D_CLIENT_ROOT, 'dist/cjs/index.js')
   )
   const daemon = await MaestroD.connect({ name: MAESTRO_D, spawn: false })
+  const devices = (await daemon.status()).devices as Array<{ id: string }>
   assert(
-    (await daemon.status()).devices.some(
-      (device: { id: string }) => device.id === MAESTRO_DEVICE
-    ) === true
+    devices.some(device => device.id === MAESTRO_DEVICE),
+    `daemon ${MAESTRO_D} has no ${MAESTRO_DEVICE}: ${JSON.stringify(devices.map(device => device.id))}`
   )
   const m = await daemon.attach({ device: MAESTRO_DEVICE })
   const read = async (expression: string): Promise<any> =>
@@ -58,6 +60,8 @@ async function main(): Promise<void> {
     const conversation = '/chat/' + row.slice('entity-chat-'.length)
     await at(conversation)
     await m.assertVisible({ id: 'chat-message-pane', timeout: 30000 })
+    // Opening a conversation asks about notifications once per person.
+    await dismissNotificationAskOn(m)
     assert.equal(
       await read(
         'document.querySelector(\'[role="tab"][aria-label="Home"]\').innerHTML'

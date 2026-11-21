@@ -5,26 +5,11 @@ import {
   type Property,
   userId
 } from './contract'
+import { logEndpoint } from './dsn'
 import { EventQueue, type QueueStorage } from './queue'
 
 /** Only a public routing DSN is accepted. Administrative credentials never belong in clients. */
-export function logEndpoint(dsn: string): string | undefined {
-  try {
-    const url = new URL(dsn)
-    if (
-      url.protocol !== 'https:' ||
-      url.password !== '' ||
-      url.search !== '' ||
-      url.hash !== '' ||
-      !/^[a-zA-Z0-9_-]{1,64}$/.test(url.username) ||
-      !/^\/[0-9]{1,20}$/.test(url.pathname)
-    )
-      return undefined
-    return url.origin + '/ingest' + url.pathname
-  } catch {
-    return undefined
-  }
-}
+export { logEndpoint }
 
 export interface LoggerOptions {
   app: AppCode

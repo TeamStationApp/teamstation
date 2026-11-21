@@ -1,10 +1,10 @@
 import React from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text } from 'react-native'
 
-import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { ButtonIcon } from './ButtonIcon'
+import { Sheet } from './Sheet'
 
 export interface WarningSheetProps {
   message: string
@@ -28,73 +28,47 @@ export function WarningSheet({
 }: WarningSheetProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
-  const insets = useInsets()
   return (
-    <Modal transparent visible animationType="slide" onRequestClose={onClose}>
-      <View style={styles.scrim}>
-        <Pressable
-          accessibilityLabel="Close warning"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.behind}
-        />
-        <View
-          testID="warningSheet"
-          accessibilityViewIsModal
-          style={[
-            styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, theme.rem(1.5)) }
-          ]}
-        >
-          <Pressable
-            accessibilityLabel="Close warning"
-            accessibilityRole="button"
-            onPress={onClose}
-            style={styles.close}
-          >
-            <ButtonIcon name="close">
-              <Text style={styles.closeText}>×</Text>
-            </ButtonIcon>
-          </Pressable>
-          <ScrollView style={styles.content}>
-            <Text accessibilityRole="alert" style={styles.message}>
-              {message}
-            </Text>
-            {detail != null && <Text style={styles.detail}>{detail}</Text>}
-            {children}
-          </ScrollView>
-          <Button
-            label={actionLabel}
-            onPress={onAction}
-            busy={busy}
-            color="#1565C0"
-            textColor="#FFFFFF"
-            style={styles.action}
-          />
-        </View>
-      </View>
-    </Modal>
+    <Sheet
+      onClose={onClose}
+      closeLabel="Close warning"
+      closeRole="button"
+      style={styles.sheet}
+      testID="warningSheet"
+    >
+      <Pressable
+        accessibilityLabel="Close warning"
+        accessibilityRole="button"
+        onPress={onClose}
+        style={styles.close}
+      >
+        <ButtonIcon name="close">
+          <Text style={styles.closeText}>×</Text>
+        </ButtonIcon>
+      </Pressable>
+      <ScrollView style={styles.content}>
+        <Text accessibilityRole="alert" style={styles.message}>
+          {message}
+        </Text>
+        {detail != null && <Text style={styles.detail}>{detail}</Text>}
+        {children}
+      </ScrollView>
+      <Button
+        label={actionLabel}
+        onPress={onAction}
+        busy={busy}
+        color="#1565C0"
+        textColor="#FFFFFF"
+        style={styles.action}
+      />
+    </Sheet>
   )
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  scrim: { flex: 1, justifyContent: 'flex-end' },
-  behind: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: theme.overlayBackgroundColor
-  },
   sheet: {
-    width: '100%',
-    maxWidth: theme.rem(36),
     maxHeight: '85%',
-    alignSelf: 'center',
     backgroundColor: '#FFD54F',
-    borderTopLeftRadius: theme.rem(theme.radiusLargeRem),
-    borderTopRightRadius: theme.rem(theme.radiusLargeRem),
     padding: theme.rem(1.5),
     shadowColor: '#000000',
     shadowOpacity: 0.18,

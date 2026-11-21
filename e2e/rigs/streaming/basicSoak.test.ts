@@ -10,6 +10,7 @@ import {
   basicReport,
   basicScrub,
   basicWindows,
+  machineLine,
   planActions,
   playState,
   watchersFromEnv
@@ -155,7 +156,7 @@ function fakeSession(): {
     owner: { endCamera: async () => {} },
     record,
     takeStartMs: T0,
-    offsetMinutes: 0,
+    clockBase: () => undefined,
     streamId: label => label,
     look,
     seekTo: async () => null,
@@ -200,6 +201,40 @@ describe('the basic streaming soak', function () {
     expect(basicWindows(5).final).deep.equals([6 * MIN, 6 * MIN])
   })
 
+  it('cycles only the scrub kinds a scenario names, from a different one per watcher', function () {
+    const plan = planActions(0, 10 * MIN, 2, MIN, ['rapidScrub', 'scrubRight'])
+    expect(plan.slice(0, 4).map(p => [p.watcher, p.action])).deep.equals([
+      [0, 'rapidScrub'],
+      [1, 'scrubRight'],
+      [0, 'scrubRight'],
+      [1, 'rapidScrub']
+    ])
+    expect(new Set(plan.map(p => p.action))).deep.equals(
+      new Set(['rapidScrub', 'scrubRight'])
+    )
+  })
+
+  it('does only rapid scrubs and samples no memory when a scenario says so', async function () {
+    const fake = fakeSession()
+    const scenario = basicScrub({
+      minutes: 6,
+      random: () => 0.5,
+      actions: ['rapidScrub'],
+      memory: false,
+      frameLog: false
+    })
+    expect(scenario.setup.memory).equals(false)
+    expect(basicScrub({ minutes: 6, random: () => 0.5 }).setup.memory).equals(
+      true
+    )
+    await scenario.run(fake.session)
+    const recoveries = fake.steps
+      .filter(s => s.step.startsWith('recover-'))
+      .map(s => s.step)
+    expect(recoveries.length).greaterThan(0)
+    expect(new Set(recoveries)).deep.equals(new Set(['recover-rapidScrub']))
+  })
+
   it('records every look, every scrub’s recovery, every frame and memory, and writes its report', async function () {
     const fake = fakeSession()
     await basicScrub({ minutes: 6, random: () => 0.5 }).run(fake.session)
@@ -231,8 +266,10 @@ describe('the basic streaming soak', function () {
       true
     )
     expect(fake.calls).includes('chrome jump')
-    // Safari watches one angle and is never scrubbed, only looked at.
-    expect(fake.calls.filter(call => call.startsWith('safari'))).deep.equals([])
+    // Safari watches one angle in the page's player, and is scrubbed as the others are.
+    expect(
+      fake.calls.filter(call => call.startsWith('safari scrub')).length
+    ).greaterThan(0)
     expect(of('safari', 'playing').length).greaterThan(0)
     const frames = steps.filter(s => s.step.startsWith('frames-'))
     expect(frames.map(s => [s.step, s.verdict])).deep.include.members([
@@ -253,6 +290,48 @@ describe('the basic streaming soak', function () {
     expect(
       fake.written.get('chrome-frames.jsonl')!.split('\n').length
     ).greaterThan(100)
+  })
+
+  it('leaves Chrome unlogged when told, with no Chrome section in its report', async function () {
+    const fake = fakeSession()
+    await basicScrub({ minutes: 3, random: () => 0.5, frameLog: false }).run(
+      fake.session
+    )
+    expect(fake.installs()).equals(0)
+    expect(fake.written.get('basic-report.md')).not.contains(
+      'Chrome, every presented frame'
+    )
+  })
+
+  it('keeps waiting through a look whose motion is unknown, and judges the next', async function () {
+    const fake = fakeSession()
+    const look = fake.session.look
+    let scrubs = 0
+    let unknownNext = false
+    // Safari's first look after each scrub straddles the seek: motion unknown.
+    fake.session.look = async w => {
+      const seen = await look(w)
+      if (w.role !== 'safari') return seen
+      const now = fake.calls.filter(c => c.startsWith('safari ')).length
+      if (now > scrubs) {
+        scrubs = now
+        unknownNext = true
+      }
+      if (unknownNext) {
+        unknownNext = false
+        return {
+          ...seen,
+          tiles: (seen.tiles ?? []).map(t => ({ ...t, advancing: null }))
+        }
+      }
+      return seen
+    }
+    await basicScrub({ minutes: 6, random: () => 0.5 }).run(fake.session)
+    const recoveries = fake.steps.filter(
+      s => s.surface === 'safari' && s.step.startsWith('recover-')
+    )
+    expect(recoveries.length).greaterThan(0)
+    expect(recoveries.every(s => s.verdict === 'passed')).equals(true)
   })
 
   it('blocks the memory of a sampler that threw or gave nothing, rather than leaving it out', async function () {
@@ -345,5 +424,32 @@ describe('the basic streaming soak', function () {
     expect(report).contains('Verdict: **passed**')
     expect(report).contains('| iphone | 1/1 | – | 1/1 | 2.4 s |')
     expect(report).not.contains('every presented frame')
+    expect(report).not.contains('## This Mac')
+  })
+
+  it("reads this machine's load every 30 s, and says whether it kept up", async function () {
+    const fake = fakeSession()
+    let reading = 0
+    await basicScrub({
+      minutes: 6,
+      random: () => 0.5,
+      machine: { load: () => [3, 5, 21][reading++ % 3], cores: 18 }
+    }).run(fake.session)
+    const loads = fake.written
+      .get('mac-load.jsonl')!
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { atMs: number; load: number })
+    expect(loads.length).greaterThanOrEqual(12)
+    expect(loads[1].atMs - loads[0].atMs).greaterThanOrEqual(30_000)
+    expect(fake.written.get('basic-report.md')).contains(
+      `## This Mac\n\n${machineLine({ cores: 18, loads: loads.map(row => row.load) })}`
+    )
+    expect(machineLine({ cores: 18, loads: [3, 5, 4] })).equals(
+      'Load average (1 min), every 30 s: median 4.0, highest 5.0, on 18 cores; under the core count throughout.'
+    )
+    expect(machineLine({ cores: 18, loads: [3, 21, 25] })).equals(
+      'Load average (1 min), every 30 s: median 21.0, highest 25.0, on 18 cores; over it in 2 of 3 readings.'
+    )
   })
 })

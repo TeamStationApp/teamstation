@@ -1,6 +1,7 @@
 import type { Kysely, Transaction } from 'kysely'
 
 import type { Database } from '../db/database'
+import { teamFacts } from './teamFacts'
 
 /** The team a merged team became, however many merges ago. */
 export async function followMerges(
@@ -11,11 +12,7 @@ export async function followMerges(
   const seen = new Set<string>()
   while (!seen.has(id)) {
     seen.add(id)
-    const row = await db
-      .selectFrom('teams')
-      .select(['merged_into'])
-      .where('id', '=', id)
-      .executeTakeFirst()
+    const row = await teamFacts(db, id)
     if (row?.merged_into == null) return id
     id = row.merged_into
   }

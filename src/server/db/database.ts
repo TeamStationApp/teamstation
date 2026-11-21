@@ -99,6 +99,12 @@ export interface LeaguesTable {
   umpire_credits: Generated<boolean>
   id: string
   locality: Json | null
+  /**
+   * Where its locality is, from the places catalog, or null when the catalog
+   * has no such city (126groupCoordinates). Written with every locality.
+   */
+  latitude: number | null
+  longitude: number | null
   picture_catalog_id: Generated<string | null>
   name: string
   short_name: string | null
@@ -168,6 +174,9 @@ export interface TeamsTable {
   id: string
   league_id: Generated<string | null>
   locality: Json | null
+  /** As a league's: its locality's coordinates, or null (126groupCoordinates). */
+  latitude: number | null
+  longitude: number | null
   picture_catalog_id: Generated<string | null>
   custodian_type: Generated<'league' | 'season' | 'team' | null>
   custodian_id: Generated<string | null>
@@ -595,6 +604,40 @@ export interface DeviceSessionsTable {
   auth_session_id: string
   user_id: string
   started_at: Timestamp
+}
+
+/** One signed-in device's push address, live while its session is. */
+export interface PushRegistrationsTable {
+  id: string
+  user_id: string
+  session_id: string
+  platform: 'ios' | 'android' | 'web'
+  /** The token itself, or a web subscription's endpoint. */
+  address_key: string
+  /** The APNs or FCM token, or the Web Push subscription's JSON. */
+  address: string
+  environment: 'production' | 'development'
+  /** This device's "Notify for direct messages and mentions". */
+  messages: Generated<boolean>
+  /** This device's "Notify for RSVPed events". */
+  rsvp_events: Generated<boolean>
+  created_at: Generated<Date>
+  seen_at: Generated<Date>
+  /**
+   * When a push service refused a send to this address for good (a token for
+   * another environment or app), after which nothing is sent to it until the
+   * device posts it again; null while it is good.
+   */
+  rejected_at: Date | null
+}
+
+/** A reminder sent before an event's start, so it is sent once. */
+export interface PushRemindersSentTable {
+  event_kind: 'game' | 'teamEvent'
+  event_id: string
+  user_id: string
+  start_at: Timestamp
+  sent_at: Generated<Date>
 }
 
 export interface ApiTokensTable {
@@ -1197,6 +1240,11 @@ export interface SchedulePreviewsTable {
   removed_games: number | null
   /** The completed device result's hash, so a retry of it is recognized. */
   result_hash: string | null
+  /**
+   * Whether the solver proved its options the best schedule; false when the
+   * admin took one at the time limit, null for a preview from before.
+   */
+  proven_optimal: Generated<boolean | null>
 }
 
 /** A game a publication proposed. */
@@ -1249,6 +1297,11 @@ export interface LeagueScheduleSetupsTable {
   /** Fields added from other venues, listed whether chosen or not. */
   added_field_ids: Generated<string[]>
   updated_at: Generated<Date>
+  /**
+   * A test server's limit on the device solver's time for this league's
+   * builds (`125solverLimit`); null keeps the two minutes.
+   */
+  solver_limit_ms: Generated<number | null>
 }
 
 /** A warning about a game's field, once it has been announced. */
@@ -1684,6 +1737,8 @@ export interface Database {
   audit_log: AuditLogTable
   user_api_keys: UserApiKeysTable
   plate_appearances: PlateAppearancesTable
+  push_registrations: PushRegistrationsTable
+  push_reminders_sent: PushRemindersSentTable
   game_play_archives: GamePlayArchivesTable
   tv_login_requests: TvLoginRequestsTable
   auth_sessions: AuthSessionsTable
@@ -1769,7 +1824,8 @@ export interface Database {
 }
 
 /** The kinds of long-running process, each with its own size of pool. */
-export type DatabaseRole = 'worker' | 'primary' | 'statsBuilder' | 'ingest'
+export type DatabaseRole =
+  'worker' | 'primary' | 'statsBuilder' | 'ingest' | 'pushSender'
 
 export interface PoolOptions {
   role?: DatabaseRole

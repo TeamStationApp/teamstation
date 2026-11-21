@@ -1,17 +1,30 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { get as httpGet } from 'node:http'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { createServer as createHttpServer, get as httpGet } from 'node:http'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { gzipSync } from 'node:zlib'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
+import { generateVAPIDKeys } from 'web-push'
+import WebSocket from 'ws'
 
+import { SEARCH_SOCKET_PATH } from '../common/search/types'
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { dropScratchDatabase, testDatabaseUrl } from '../migrate/testDatabase'
+import { pushTestPrefix } from '../test/pushQueueKit'
+import { testRedisUrl } from '../test/scoreboardKit'
 
 /**
  * The server as `npm start` runs it, in its own process on a scratch
@@ -36,10 +49,46 @@ async function freePort(): Promise<number> {
   })
 }
 
+/** One signed-out search through the server's search socket: its first frame. */
+async function searchSignedOut(
+  base: string
+): Promise<{ type: string; seq?: number }> {
+  const ws = new WebSocket(
+    `${base.replace(/^http/, 'ws')}${SEARCH_SOCKET_PATH}`
+  )
+  try {
+    return await new Promise((resolve, reject) => {
+      ws.once('error', reject)
+      ws.once('message', data => {
+        resolve(JSON.parse((data as Buffer).toString('utf8')))
+      })
+      ws.once('open', () => {
+        ws.send(
+          JSON.stringify({
+            type: 'search',
+            seq: 1,
+            text: 'nobody here',
+            location: null,
+            mode: 'all'
+          })
+        )
+      })
+    })
+  } finally {
+    ws.close()
+  }
+}
+
 describe('the server process', function () {
   this.timeout(120000)
   const name = `teamstation_server_start_${Date.now()}_${process.pid}`
   const scratchUrl = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
+  const member = userIdOfGumbo(4701)
+  // A pair that can sign, so Web Push stays on.
+  const webPush = {
+    ...generateVAPIDKeys(),
+    subject: 'mailto:push@example.test'
+  }
   let admin: Pool | undefined
   let dir = ''
 
@@ -69,7 +118,7 @@ describe('the server process', function () {
   /** Starts it with `workers`, waits for every worker, then hands it over. */
   async function start(
     workers: number,
-    run: (base: string) => Promise<void>,
+    run: (base: string, said: () => string) => Promise<void>,
     settings: Record<string, unknown> = {}
   ): Promise<number | null> {
     const port = await freePort()
@@ -85,6 +134,8 @@ describe('the server process', function () {
         clusterWorkers: workers,
         statsBuilder: false,
         logRequests: false,
+        // The push queue, and the change feed's keys, on a prefix of its own.
+        redis: { url: testRedisUrl, prefix: pushTestPrefix() },
         appLinks: {
           apps: [
             { origin: 'https://app.teamstation.app' },
@@ -141,7 +192,7 @@ describe('the server process', function () {
         .catch(reject)
     })
     try {
-      await run(`http://127.0.0.1:${port}`)
+      await run(`http://127.0.0.1:${port}`, () => said)
     } finally {
       server.kill('SIGTERM')
     }
@@ -202,9 +253,88 @@ describe('the server process', function () {
     expect(code).equals(0)
   })
 
+  it('reads its push settings and answers the push routes', async function () {
+    const code = await start(
+      1,
+      async base => {
+        // Mounted, and for a signed-in session only.
+        const key = await fetch(`${base}/api/v1/push/web-key`)
+        expect(key.status).equals(401)
+        const register = await fetch(`${base}/api/v1/me/push-registrations`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ platform: 'ios', address: '00ab'.repeat(16) })
+        })
+        expect(register.status).equals(401)
+      },
+      {
+        push: {
+          webPush,
+          logFile: join(dir, 'push.jsonl')
+        }
+      }
+    )
+    expect(code).equals(0)
+  })
+
+  it('starts with a push key it cannot read, and leaves only that service off', async function () {
+    const code = await start(
+      1,
+      async (base, said) => {
+        const health = await fetch(`${base}/api/v1/health`)
+        expect(health.status).equals(200)
+        const key = await fetch(`${base}/api/v1/push/web-key`)
+        expect(key.status).equals(401)
+        // Said by the push sender, the one process that reads the keys.
+        const deadline = Date.now() + 30000
+        while (!said().includes('push sender: started')) {
+          if (Date.now() > deadline) throw new Error('no push sender')
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        expect(said()).match(/push: APNs is off, its key cannot be read: /)
+        expect(said()).match(/push: FCM is off, its key cannot be read: /)
+        expect(said()).not.match(/push: Web Push is off/)
+      },
+      {
+        push: {
+          apns: {
+            keyId: 'KEY1234567',
+            teamId: 'TEAM123456',
+            p8Key: '-----BEGIN PRIVATE KEY-----\\nMIGTAgEAMBMG',
+            topic: 'app.example.test'
+          },
+          fcm: {
+            projectId: 'demo-project',
+            clientEmail: 'push@demo-project.iam.example.test',
+            privateKey: 'not a key'
+          },
+          webPush
+        }
+      }
+    )
+    expect(code).equals(0)
+  })
+
+  it('starts and serves with Valkey away, and the push queue says so', async function () {
+    const code = await start(
+      1,
+      async (base, said) => {
+        const health = await fetch(`${base}/api/v1/health`)
+        expect(health.status).equals(200)
+        const deadline = Date.now() + 30000
+        while (!/push queue: .*ECONNREFUSED/.test(said())) {
+          if (Date.now() > deadline) throw new Error(`nothing said: ${said()}`)
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      },
+      { redis: { url: 'redis://127.0.0.1:1', prefix: 'away' } }
+    )
+    expect(code).equals(0)
+  })
+
   for (const workers of [1, 2]) {
     it(`serves the chat routes with ${workers === 1 ? 'one process' : 'a primary and two workers'}, and stops on SIGTERM`, async function () {
-      const code = await start(workers, async base => {
+      const code = await start(workers, async (base, said) => {
         const health = await fetch(`${base}/api/v1/health`)
         expect(health.status).equals(200)
         const tv = await fetch(`${base}/api/v1/auth/tv/start`, {
@@ -220,8 +350,75 @@ describe('the server process', function () {
         expect(chats.status).equals(401)
         const unknown = await fetch(`${base}/api/v1/no-such-route`)
         expect(unknown.status).equals(404)
+        // The search socket takes its upgrade, signed out too.
+        const frame = await searchSignedOut(base)
+        expect(frame).include({ type: 'results', seq: 1 })
+        // Each worker builds the place catalog's search indexes once it
+        // listens, without waiting for a search.
+        const deadline = Date.now() + 20000
+        const ready = (): number =>
+          (said().match(/: search places ready in \d+ ms/g) ?? []).length
+        while (ready() < workers && Date.now() < deadline)
+          await new Promise(resolve => setTimeout(resolve, 50))
+        expect(ready()).equals(workers)
       })
       expect(code).equals(0)
+    })
+
+    it(`downloads the IP database from ${workers === 1 ? 'the one process' : 'the primary alone'}, and keeps searching when it is unreadable`, async function () {
+      const asked: string[] = []
+      const standIn = createHttpServer((request, response) => {
+        asked.push(request.url ?? '')
+        response.end(gzipSync('not a database'))
+      })
+      await new Promise<void>(resolve => {
+        standIn.listen(0, '127.0.0.1', resolve)
+      })
+      const address = standIn.address()
+      const standInPort =
+        typeof address === 'object' && address != null ? address.port : 0
+      const ipDir = join(dir, `ip-places-${workers}`)
+      try {
+        const code = await start(
+          workers,
+          async (base, said) => {
+            const deadline = Date.now() + 20000
+            while (
+              !said().includes('no database from') &&
+              Date.now() < deadline
+            )
+              await new Promise(resolve => setTimeout(resolve, 50))
+            expect(said().match(/IP places: no database from/g)).length(1)
+            const now = new Date()
+            const month = now.toISOString().slice(0, 7)
+            const last = new Date(
+              Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)
+            )
+              .toISOString()
+              .slice(0, 7)
+            // Both broken: this month's, then last month's, and no more.
+            expect(asked).deep.equals([
+              `/dbip-city-lite-${month}.mmdb.gz`,
+              `/dbip-city-lite-${last}.mmdb.gz`
+            ])
+            // Nothing unreadable is swapped in.
+            expect(readdirSync(ipDir)).deep.equals([])
+            expect(await searchSignedOut(base)).include({
+              type: 'results',
+              seq: 1
+            })
+          },
+          {
+            ipPlaces: {
+              dir: ipDir,
+              source: `http://127.0.0.1:${standInPort}/dbip-city-lite-{month}.mmdb.gz`
+            }
+          }
+        )
+        expect(code).equals(0)
+      } finally {
+        standIn.close()
+      }
     })
 
     it(`runs background jobs only where the flag is on, with ${workers === 1 ? 'one process' : 'a primary and two workers'}`, async function () {
@@ -233,14 +430,18 @@ describe('the server process', function () {
           )
           return Number(rows[0].count)
         }
-        const builders = async (): Promise<number> => {
+        const connected = async (role: string): Promise<number> => {
           const { rows } = await scratch.query<{ count: string }>(
             `select count(*) from pg_stat_activity
-             where datname = $1 and application_name = 'teamstation-statsBuilder'`,
-            [name]
+             where datname = $1 and application_name = $2`,
+            [name, `teamstation-${role}`]
           )
           return Number(rows[0].count)
         }
+        const builders = async (): Promise<number> =>
+          await connected('statsBuilder')
+        const senders = async (): Promise<number> =>
+          await connected('pushSender')
         const waitFor = async (
           ready: () => Promise<boolean>
         ): Promise<void> => {
@@ -251,7 +452,57 @@ describe('the server process', function () {
           }
         }
 
-        // A mark left for whoever drains on start.
+        const reminded = async (): Promise<number> => {
+          const { rows } = await scratch.query<{ count: string }>(
+            'select count(*) from push_reminders_sent where event_id = $1',
+            [eventId]
+          )
+          return Number(rows[0].count)
+        }
+
+        // Somebody who said yes to an event starting within the hour.
+        const eventId = `tev_jobs_${workers}`
+        await scratch.query(
+          `insert into users (id, display_name) values ($1, 'Nolan Ryan')
+             on conflict do nothing`,
+          [member]
+        )
+        await scratch.query(
+          `insert into teams (id, name) values ('tem_jobs', 'Hawks')
+             on conflict do nothing`
+        )
+        await scratch.query(
+          `insert into memberships (id, user_id, team_id)
+             values ('mem_jobs', $1, 'tem_jobs') on conflict do nothing`,
+          [member]
+        )
+        // Signed in on a phone with RSVPed events on.
+        await scratch.query(
+          `insert into auth_sessions (id, user_id, token_hash, expires_at)
+             values ('ses_jobs', $1, 'hash_jobs', now() + interval '1 day')
+             on conflict do nothing`,
+          [member]
+        )
+        await scratch.query(
+          `insert into push_registrations
+             (id, user_id, session_id, platform, address_key, address, environment, rsvp_events)
+             values ('psh_jobs', $1, 'ses_jobs', 'android', 'token-jobs', 'token-jobs', 'production', true)
+             on conflict do nothing`,
+          [member]
+        )
+        await scratch.query(
+          `insert into team_events (id, team_id, title, start_at)
+             values ($1, 'tem_jobs', 'Batting cage', now() + interval '1 hour')`,
+          [eventId]
+        )
+        await scratch.query(
+          `insert into team_event_rsvps (event_id, user_id, response)
+             values ($1, $2, 'yes')`,
+          [eventId, member]
+        )
+        // A mark left for whoever drains on start, and only that one: the
+        // rows above mark their team too.
+        await scratch.query('delete from chat_dirty')
         await scratch.query(
           "insert into chat_dirty (scope_type, scope_id) values ('team', 'tm_jobs')"
         )
@@ -263,20 +514,38 @@ describe('the server process', function () {
             await new Promise(resolve => setTimeout(resolve, 2000))
             expect(await marks()).equals(1)
             expect(await builders()).equals(0)
+            expect(await senders()).equals(0)
+            expect(await reminded()).equals(0)
           },
           { backgroundJobs: false, statsBuilder: true }
         )
         expect(off).equals(0)
 
+        let stopped = (): string => ''
         const on = await start(
           workers,
-          async () => {
+          async (_base, said) => {
             await waitFor(async () => (await marks()) === 0)
             await waitFor(async () => (await builders()) > 0)
+            // The primary queues the event's start; its push sender, forked
+            // and supervised, reminds of it.
+            await waitFor(async () =>
+              said().includes(
+                `push sender: sent 1 RSVP reminder(s) for teamEvent ${eventId}`
+              )
+            )
+            expect(await senders()).greaterThan(0)
+            expect(await reminded()).equals(1)
+            stopped = said
           },
-          { statsBuilder: true }
+          // Its transport: the push log, as a seat without keys has. With
+          // none for the phone, the reminder would be given back unsent.
+          { statsBuilder: true, push: { logFile: join(dir, 'jobs.jsonl') } }
         )
         expect(on).equals(0)
+        // Stopped with the server, its connections gone with it.
+        expect(stopped()).match(/push sender: stopped on SIGTERM/)
+        expect(await senders()).equals(0)
       } finally {
         await scratch.end()
       }

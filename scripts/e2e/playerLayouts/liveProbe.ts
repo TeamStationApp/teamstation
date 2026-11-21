@@ -35,7 +35,7 @@ import {
   signedIn,
   videoReadings,
   webSession
-} from '../../../src/app/player/playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
 import { TeamStationClient } from '../../../src/common/api'
 import { serverConfig } from '../../../src/server/serverConfig'
 

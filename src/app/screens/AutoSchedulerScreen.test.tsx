@@ -6,9 +6,12 @@ import { Keyboard, Platform } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type {
+  BuildSession,
   GameToReschedule,
+  LatestPreview,
   PreviewRequest
 } from '../../common/schedulePreviews'
+import { EngineFailureError } from '../../common/scheduler/wire'
 import type {
   ScheduleSettings,
   ScheduleSetup,
@@ -34,7 +37,11 @@ import {
   venueDetail,
   venueField
 } from '../../test/venueDom'
-import { AutoSchedulerScreen, chosenSeasons } from './AutoSchedulerScreen'
+import {
+  AutoSchedulerScreen,
+  chosenSeasons,
+  latestLabel
+} from './AutoSchedulerScreen'
 
 const SETTINGS: ScheduleSettings = {
   fieldSize: '50/70',
@@ -138,6 +145,10 @@ function fakeClient(
     failChoice?: boolean
     existing?: number
     failBuild?: boolean
+    /** The device's build, given the modal's session, before it answers. */
+    engine?: (session: BuildSession) => Promise<void>
+    /** The league's previous preview; an Error fails its read. */
+    latest?: LatestPreview | null | Error
     listed?: GameToReschedule[]
     /** Fields of other venues, listed once chosen, as the server does. */
     registry?: SetupField[]
@@ -186,13 +197,19 @@ function fakeClient(
         ]
       }),
     gamesToReschedule: async () => options.listed ?? [],
+    latestSchedulePreview: async () => {
+      if (options.latest instanceof Error) throw options.latest
+      return options.latest ?? null
+    },
     buildSchedulePreview: async (
       _leagueId: string,
-      request: PreviewRequest
+      request: PreviewRequest,
+      session: BuildSession
     ) => {
       record.sent.push('build')
       record.builds.push(request)
       if (options.failBuild === true) throw new Error('The engine stopped')
+      await options.engine?.(session)
       if (options.existing != null && request.existing == null)
         throw new HttpError(
           'conflict',
@@ -711,6 +728,46 @@ describe('the Auto-Scheduler setup', () => {
     expect(calls.builds).equals(1)
   })
 
+  it('takes one build for a double tap, while it readies and while it runs', async () => {
+    let release = (): void => undefined
+    let finish = (): void => undefined
+    const fake = fakeClient(setupOf(), {
+      holdFirstSave: new Promise(resolve => {
+        release = resolve
+      }),
+      engine: async () => {
+        await new Promise<void>(resolve => {
+          finish = resolve
+        })
+      }
+    })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapLabel('Demo Regular Game length in minutes: 90')
+    await fill('Edit Demo Regular Game length in minutes', '75')
+    await key('Enter')
+    // Tapped twice while the cell's save is still on its way.
+    await tapText('Build schedule')
+    await settle(20)
+    expect(disabled(buildButton())).equals(true)
+    await tapText('Build schedule')
+    release()
+    await settle(50)
+    expect(fake.saves).length(1)
+    expect(fake.builds).deep.equals([{ mode: 'full' }])
+    // And again while the build runs in the modal.
+    expect(disabled(buildButton())).equals(true)
+    await tapText('Build schedule')
+    await settle(20)
+    expect(fake.builds).length(1)
+    await act(async () => {
+      finish()
+    })
+    await settle(20)
+    expect(calls.builds).equals(1)
+    expect(disabled(buildButton())).equals(false)
+  })
+
   it('checks a build again on what a cell’s save in flight stored', async () => {
     let release = (): void => undefined
     const fake = fakeClient(
@@ -1063,6 +1120,7 @@ describe('the Auto-Scheduler setup', () => {
     await show(fakeClient(setupOf(), { failBuild: true }).client, calls)
     await tapText('Build schedule')
     await settle(20)
+    expect(text()).includes('The schedule couldn’t be built')
     expect(text()).includes('The engine stopped')
   })
 
@@ -1123,5 +1181,151 @@ describe('the Auto-Scheduler setup', () => {
     await settle(20)
     expect(fake.builds.at(-1)).deep.equals({ mode: 'full' })
     expect(calls.builds).equals(2)
+  })
+
+  it('shows a build in the modal, with its log, and opens the preview', async () => {
+    let session: BuildSession | undefined
+    let finish = (): void => undefined
+    const fake = fakeClient(setupOf(), {
+      engine: async given => {
+        session = given
+        await new Promise<void>(resolve => {
+          finish = resolve
+        })
+      }
+    })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapText('Build schedule')
+    await settle(20)
+    expect(text()).includes('Building schedule')
+    // The button keeps its label: the modal shows the build.
+    expect(buildButton().textContent).equals('Build schedule')
+    await act(async () => {
+      session?.onProgress?.({
+        kind: 'phase',
+        phase: 'model',
+        ms: 1200,
+        detail: { columns: 23776, rows: 10685 }
+      })
+    })
+    expect(text()).includes(
+      'Model: 23,776 possible games, 10,685 rules (1.2 s)'
+    )
+    await act(async () => {
+      finish()
+    })
+    await settle(20)
+    expect(calls.builds).equals(1)
+    expect(
+      document.querySelector('[data-testid="schedule-build-modal"]')
+    ).equals(null)
+  })
+
+  it('cancels a build from the modal, and opens nothing', async () => {
+    let session: BuildSession | undefined
+    const fake = fakeClient(setupOf(), {
+      engine: async given => {
+        session = given
+        await new Promise<void>((_resolve, reject) => {
+          given.signal?.addEventListener('abort', () => {
+            reject(new EngineFailureError('canceled', 'The build was canceled'))
+          })
+        })
+      }
+    })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapText('Build schedule')
+    await settle(20)
+    await tapText('Cancel')
+    await settle(20)
+    expect(session?.signal?.aborted).equals(true)
+    expect(calls.builds).equals(0)
+    expect(text()).not.includes('Building schedule')
+    expect(text()).not.includes('could not')
+  })
+
+  it('says when this device can’t run the scheduler', async () => {
+    const fake = fakeClient(setupOf(), {
+      engine: async () => {
+        throw new EngineFailureError(
+          'noSolver',
+          'This browser has no WebAssembly'
+        )
+      }
+    })
+    const calls = { fieldManager: 0, seasons: [] as string[], builds: 0 }
+    await show(fake.client, calls)
+    await tapText('Build schedule')
+    await settle(20)
+    expect(text()).includes('This device can’t run the scheduler')
+    expect(text()).includes('This browser has no WebAssembly')
+    expect(calls.builds).equals(0)
+    await tapText('Close')
+    await settle(20)
+    expect(text()).not.includes('This device can’t run the scheduler')
+  })
+
+  it('offers the league’s previous preview above Build schedule, and opens it', async () => {
+    const latest: LatestPreview = {
+      id: 'spv_last',
+      status: 'open',
+      createdAt: '2027-03-02T20:15:00.000Z',
+      seasonIds: ['sea_a'],
+      publishedAt: null
+    }
+    const opened: string[] = []
+    await mount(
+      <AutoSchedulerScreen
+        client={fakeClient(setupOf(), { latest }).client}
+        leagueId="lea_a"
+        leagueName="Demo League A"
+        onFieldManager={() => undefined}
+        onOpenSeason={() => undefined}
+        onOpenSeasonPage={() => undefined}
+        onOpenPreview={id => {
+          opened.push(id)
+        }}
+      />
+    )
+    await settle(50)
+    const labels = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].map(node => node.textContent)
+    const previous = labels.indexOf('Show previous schedule preview')
+    expect(previous).at.least(0)
+    expect(previous).below(labels.indexOf('Build schedule'))
+    expect(text()).matches(/Built Mar 2, \d{1,2}:\d{2} [AP]M/)
+    await tapText('Show previous schedule preview')
+    expect(opened).deep.equals(['spv_last'])
+  })
+
+  it('hides the previous preview when the league has none, or it can’t be read', async () => {
+    for (const latest of [null, new Error('down')]) {
+      await show(fakeClient(setupOf(), { latest }).client, {
+        fieldManager: 0,
+        seasons: [],
+        builds: 0
+      })
+      expect(text()).includes('Build schedule')
+      expect(text()).not.includes('Show previous schedule preview')
+      await unmount()
+    }
+  })
+
+  it('says when the previous preview was built or published', () => {
+    const latest: LatestPreview = {
+      id: 'spv_last',
+      status: 'published',
+      createdAt: '2027-03-01T20:15:00.000Z',
+      seasonIds: [],
+      publishedAt: '2027-03-02T20:15:00.000Z'
+    }
+    expect(latestLabel(latest)).equals('Published Mar 2')
+    expect(latestLabel({ ...latest, publishedAt: null })).matches(
+      /^Built Mar 1, \d{1,2}:15 [AP]M$/
+    )
+    expect(latestLabel({ ...latest, status: 'open' })).matches(/^Built Mar 1/)
   })
 })

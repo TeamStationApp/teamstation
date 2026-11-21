@@ -27,6 +27,7 @@ export default [
       'src/app/**/*.tsx',
       'src/common/**/*.ts',
       // The app's own test helpers, in its project.
+      'src/test/chatWakeCases.ts',
       'src/test/fakeScoreboardSocket.ts',
       'src/test/PagedListStandIn.tsx',
       'src/test/responderDrag.ts',
@@ -38,6 +39,25 @@ export default [
     }
   },
 
+  // Every modal of the app's is counted while on show (`modalPresence`), so
+  // the ask about notifications never stacks on one: React Native's own
+  // `Modal` is drawn only through the app's.
+  {
+    files: ['src/app/**/*.ts', 'src/app/**/*.tsx'],
+    ignores: ['src/app/components/Modal.tsx', 'src/app/**/*.test.*'],
+    rules: {
+      // By name, so the TV code's `import * as ReactNative` stays allowed.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportDeclaration[source.value='react-native'] > ImportSpecifier[imported.name='Modal']",
+          message: "Use the app's Modal (src/app/components/Modal)."
+        }
+      ]
+    }
+  },
+
   // The server and its tests read their types from the server's own project,
   // as `npm run typecheck` does. Under the root tsconfig every one of them
   // would share a program holding the whole app as well, and one ESLint
@@ -45,6 +65,7 @@ export default [
   {
     files: ['src/server/**/*.ts', 'src/migrate/**/*.ts', 'src/test/**/*.ts'],
     ignores: [
+      'src/test/chatWakeCases.ts',
       'src/test/fakeScoreboardSocket.ts',
       'src/test/scoringHelpers.ts',
       'src/test/scoreboardServer.e2e.ts',
@@ -93,8 +114,21 @@ export default [
   },
 
   {
+    files: ['e2e/**/*.ts', 'e2e/**/*.tsx'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.e2e.json'
+      }
+    }
+  },
+
+  {
     files: [
       'scripts/stampWallClockSei.ts',
+      'scripts/packedLeagueCounts.ts',
+      'scripts/highsNativeSmokeModel.ts',
+      'scripts/searchProbe.ts',
       'scripts/chat-history-recovery-fixtures.ts',
       'scripts/chat-history-recovery-link.ts',
       'scripts/chat-history-recovery-native-scenes.ts',
@@ -102,6 +136,7 @@ export default [
       'scripts/chat-history-recovery-ui-scenes.ts',
       'scripts/chat-history-recovery-chat2.ts',
       'scripts/chat-history-recovery-relay.ts',
+      'scripts/pushWakeVectors.ts',
       'scripts/e2e/**/*.ts',
       'scripts/splash/**/*.ts',
       'scripts/testModels.test.ts',
@@ -128,11 +163,19 @@ export default [
     ignores: [
       '**/lib/**',
       '**/dist/**',
+      // Coverage reports, and the web builds browser scripts keep beside them.
+      'coverage/**',
       '.cursor/**',
       '.test-tools/**',
       'tools/**',
       // Rust: the chat crypto core and its build products.
       'crates/**',
+      // The Auto-Scheduler's C++ builds: HiGHS's vendored source and CMake's
+      // trees, whose compiler_depend.ts files are timestamps, not TypeScript.
+      'native/highs/vendor/**',
+      'native/scheduler/build/**',
+      // Gradle's outputs: test and coverage reports carry their own scripts.
+      'android/**/build/**',
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that
       // diverge from the Node server's standard-kit config. It has its

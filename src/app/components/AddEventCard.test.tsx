@@ -26,7 +26,10 @@ describe('schedule event creation entry card', () => {
         const button = document.querySelector(
           '[data-testid="add-game-button"]'
         )!
-        expect(getComputedStyle(button).alignSelf).equals('center')
+        // Its own row centres it, whatever block holds the row.
+        const row = getComputedStyle(button.parentElement!)
+        expect(row.display).equals('flex')
+        expect(row.alignItems).equals('center')
       }
     })
 })

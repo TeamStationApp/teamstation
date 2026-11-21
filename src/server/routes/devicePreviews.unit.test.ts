@@ -122,6 +122,17 @@ describe('device preview HTTP boundary', () => {
           { status: 403 }
         )
         expect(complete.mock.callCount()).equals(3)
+        // A canceled build's preparation is discarded.
+        admin = true
+        const discard = mock.method(
+          previews,
+          'discardPreparation',
+          async () => undefined
+        )
+        expect(
+          await request('/schedule-previews/preview/preparation', 'DELETE', {})
+        ).deep.equals({ discarded: true })
+        expect(discard.mock.calls[0].arguments[2]).equals('preview')
       }
     )
   })

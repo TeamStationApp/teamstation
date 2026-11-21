@@ -6,16 +6,15 @@ import {
 import type { LegendListRef } from '@legendapp/list/react-native'
 import React, { useEffect, useImperativeHandle, useRef } from 'react'
 import { Platform, type View } from 'react-native'
-import {
-  KeyboardProvider,
-  useKeyboardController
-} from 'react-native-keyboard-controller'
+import { KeyboardProvider } from 'react-native-keyboard-controller'
 import {
   type SharedValue,
   useDerivedValue,
   useSharedValue
 } from 'react-native-reanimated'
 
+// A phone-only module, so it takes the phone's owner by name.
+import { useKeyboardControllerOwner } from '../components/keyboardControllerOwner.native'
 import type {
   ChatHistoryHandle,
   ChatHistoryKeyboard,
@@ -130,9 +129,6 @@ export function ChatHistoryList<T>(
 /** The scroll view's inset already holds the composer and the keyboard. */
 const noEndPadding = (): number => 0
 
-/** Conversations that currently hold the Android keyboard coordination. */
-const owners = new Set<object>()
-
 /**
  * The composer floats over the end of the history. Its measured height plus
  * the clearance below it is the list's end inset; the keyboard adds only what
@@ -173,18 +169,7 @@ export function useChatHistoryKeyboard(
       }
     }
   })
-  const { setEnabled } = useKeyboardController()
-  useEffect(() => {
-    // iOS never resizes its window for the keyboard; the root keeps it on.
-    if (Platform.OS !== 'android' || !options.active) return
-    const owner = {}
-    owners.add(owner)
-    setEnabled(true)
-    return () => {
-      owners.delete(owner)
-      if (owners.size === 0) setEnabled(false)
-    }
-  }, [options.active, setEnabled])
+  useKeyboardControllerOwner(options.active)
   return {
     composerRef,
     onComposerLayout,

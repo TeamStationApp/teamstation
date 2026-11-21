@@ -40,6 +40,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { maestro, type MaestroHandle } from '../../e2e/rigs/refinementsMaestro'
 import type { EventLocation } from '../common/eventInfo'
 import type { VenueDetail } from '../common/venues'
 import { googlePlaces } from '../server/location/googlePlaces'
@@ -56,7 +57,6 @@ import {
   googlePlacesStub,
   MORE_PARKS
 } from '../test/googlePlacesStub'
-import { maestro, type MaestroHandle } from '../test/refinementsMaestro.e2e'
 
 const APP_ID = 'app.teamstation.app'
 const ADMIN = 101

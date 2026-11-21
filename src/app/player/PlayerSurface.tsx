@@ -15,6 +15,7 @@ import {
 } from './multiCam/barParts'
 import type { Rect } from './multiCam/layout'
 import { scrubSeeks } from './multiCam/scrubSeeks'
+import { markSeek } from './playbackSession'
 import {
   type ControlGroup,
   type GridZone,
@@ -270,7 +271,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     () =>
       scrubSeeks(sec => {
         const video = videoRef.current
-        if (video != null) seekTo(video, sec)
+        if (video != null) seekTo(video, sec, 'scrub', false)
       }),
     [videoRef]
   )
@@ -487,6 +488,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
               const end = seekableEndOf(video)
               if (end == null || !Number.isFinite(end) || end <= 0) return
               const to = Math.max(video.currentTime, end)
+              markSeek(video, 'jump_to_present')
               aimAt(to, false)
               seeks.end(to)
             }}

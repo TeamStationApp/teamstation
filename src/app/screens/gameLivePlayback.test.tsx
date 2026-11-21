@@ -222,6 +222,58 @@ describe('a live video whose first segment is not written yet', function () {
   })
 })
 
+describe('a live game whose picture ran out during a long camera cut (#327)', function () {
+  it('plays it again on Safari’s own player once footage follows, though the end’s pause read as the viewer’s', async function () {
+    this.timeout(20_000)
+    const prototype = window.HTMLMediaElement.prototype
+    const original = Object.getOwnPropertyDescriptor(prototype, 'canPlayType')!
+    // Safari's own HLS player: jsdom says Apple, and this says it plays HLS.
+    prototype.canPlayType = () => 'maybe'
+    try {
+      await page('live', [there])
+      const video = document.querySelector('video')!
+      let paused = false
+      let ended = false
+      let played = 0
+      let end = 81.4
+      video.play = async () => {
+        played += 1
+        paused = false
+        video.dispatchEvent(new window.Event('play'))
+      }
+      video.load = () => undefined
+      Object.defineProperty(video, 'paused', { get: () => paused })
+      Object.defineProperty(video, 'ended', { get: () => ended })
+      Object.defineProperty(video, 'seekable', {
+        get: () => ({ length: 1, start: () => 0, end: () => end })
+      })
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+        video.dispatchEvent(new window.Event('play'))
+      })
+      // It plays to the end of what it has during the cut, pauses and ends.
+      video.currentTime = 93.5
+      paused = true
+      ended = true
+      await act(async () => {
+        video.dispatchEvent(new window.Event('pause'))
+        video.dispatchEvent(new window.Event('ended'))
+      })
+      const before = played
+      await wait(2500)
+      expect(played, 'nothing to play yet').equals(before)
+      // The camera is back: the playlist goes on under it.
+      ended = false
+      end = 125.4
+      await until(() => played > before)
+      expect(paused).equals(false)
+      expect(video.currentTime).equals(93.5)
+    } finally {
+      Object.defineProperty(prototype, 'canPlayType', original)
+    }
+  })
+})
+
 describe('starting a live game at the latest footage', function () {
   for (const platform of ['ios', 'web'] as const)
     it(`puts the picture at a highlight selected before the first Play, ${platform === 'ios' ? 'for the player it opens in the app' : 'playing it there in a browser'}`, async function () {

@@ -34,6 +34,7 @@ export const idPrefixes = {
   loginRequest: 'lgr',
   membership: 'mem',
   plateAppearance: 'pap',
+  pushRegistration: 'psh',
   rateEvent: 'rte',
   scopeRole: 'rol',
   schedulePreview: 'spv',

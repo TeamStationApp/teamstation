@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { AccessibilityInfo, Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -247,6 +247,34 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     platformWas = null
   })
 
+  it('draws the picture’s readout under ?debug=1, and nothing without it', async function () {
+    const readout = (): Element | null =>
+      document.querySelector('[data-testid="singlePlayerReadout"]')
+    await page([videoOf('v1', START)])
+    expect(readout()).equals(null)
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    document.body.replaceChildren()
+    // The test page has a window but no global `location`; the flag reads it.
+    window.history.replaceState(null, '', '/?debug=1')
+    Object.assign(globalThis, { location: window.location })
+    try {
+      await page([videoOf('v1', START)])
+      expect(readout()?.textContent).match(/(paused|playing) ready \d/)
+      expect(readout()?.textContent).includes('recovering false')
+    } finally {
+      Reflect.deleteProperty(globalThis, 'location')
+      window.history.replaceState(null, '', '/')
+      try {
+        sessionStorage.removeItem('teamstation.playerDebug')
+      } catch {
+        // No storage in this page: nothing was remembered.
+      }
+    }
+  })
+
   it('has no browser controls, and revealing then opening keeps its moment', async function () {
     const view = await page([videoOf('v1', START, 2), videoOf('v2', START)])
     const video = inline()
@@ -453,6 +481,30 @@ describe("the videos page's picture and the full-screen player (U12)", function 
       const refused = answer === 'NotAllowedError'
       expect(video.muted, label).equals(refused)
       expect(tries, label).equals(refused ? 2 : 1)
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+  })
+
+  it('in a browser, plays a live game opened at its Videos, and leaves a finished one still', async function () {
+    // A link to a game's Videos asks for play only when the video is live.
+    for (const [status, plays] of [
+      ['live', true],
+      ['ready', false]
+    ] as const) {
+      await page([{ ...videoOf('v1', START), status }], {
+        initialTab: 'watch',
+        autoPlay: 'live'
+      })
+      const video = inline()
+      const { played } = drive(video, 0)
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(played() > 0, status).equals(plays)
+      // Silent, as every browser lets a picture start on its own.
+      if (plays) expect(video.muted, status).equals(true)
       await act(async () => {
         root?.unmount()
       })
@@ -701,6 +753,126 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
     await waitToLand()
     expect(video.currentTime).closeTo(40, 0.001)
+  })
+
+  it('in the app, lands a picture that comes back from nothing at the grid’s moment, playing (issue 317)', async function () {
+    // The app hands its own player no source while the angles are up, so it
+    // returns as a fresh player: at its start, until its metadata says so.
+    asApp()
+    const from = { videoId: 'v1', sec: 40 }
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from
+    })
+    const video = inline()
+    // No address for the page's own player while the angles are up.
+    expect(video.getAttribute('data-has-source')).equals('false')
+    const { played } = drive(video, 40)
+    const tile = [...document.querySelectorAll('video')].at(-1)!
+    drive(tile, 40)
+    Object.defineProperty(tile, 'paused', { configurable: true, value: false })
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    video.currentTime = 0
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+    // The address back once they close, for a fresh player to load.
+    expect(video.getAttribute('data-has-source')).equals('true')
+    const landing = (): Element | null =>
+      document.querySelector('[data-testid="gameVideoLanding"]')
+    expect(landing()).not.equals(null)
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    await waitToLand()
+    expect(video.currentTime).closeTo(40, 0.001)
+    expect(played()).greaterThan(0)
+  })
+
+  it('in the app, holds the page’s live pill still under the angles, and pulses it once they close (issue 317)', async function () {
+    asApp()
+    // Motion allowed, so the pill on show pulses; this suite's browser would
+    // otherwise answer that the viewer asked for less.
+    // Kept to put back as they were, not called here.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const query = AccessibilityInfo.isReduceMotionEnabled
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const subscribe = AccessibilityInfo.addEventListener
+    AccessibilityInfo.isReduceMotionEnabled = async () => false
+    AccessibilityInfo.addEventListener = () => ({
+      remove: () => undefined
+    })
+    try {
+      const view = await page(
+        [{ ...videoOf('v1', START), status: 'live', receiving: true }],
+        {
+          angles: ['v1'],
+          audioId: 'v1',
+          from: { videoId: 'v1', sec: 40 }
+        }
+      )
+      const pills = (): HTMLElement[] => [
+        ...document.querySelectorAll<HTMLElement>('[aria-label="Live now"]')
+      ]
+      const opacities = async (): Promise<Set<string>> => {
+        const seen = new Set<string>()
+        for (let i = 0; i < 6; i++) {
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 60))
+          })
+          for (const pill of pills()) seen.add(pill.style.opacity)
+        }
+        return seen
+      }
+      expect(pills().length).greaterThan(0)
+      // Under the angles: every pill on the page holds at full.
+      expect([...(await opacities())]).deep.equals(['1'])
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(
+            `[aria-label="${lstrings.angles_close}"]`
+          )!
+          .click()
+      })
+      await view.rerender({
+        angles: undefined,
+        audioId: undefined,
+        from: undefined
+      })
+      // Shown again: the pulse runs.
+      expect([...(await opacities())].some(value => value !== '1')).equals(true)
+    } finally {
+      AccessibilityInfo.isReduceMotionEnabled = query
+      AccessibilityInfo.addEventListener = subscribe
+    }
+  })
+
+  it('in a browser, keeps the page player’s address while the angles are up (issue 317)', async function () {
+    // A browser's detach already lets hls.js and its buffers go.
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from: { videoId: 'v1', sec: 40 }
+    })
+    expect(inline().getAttribute('data-has-source')).equals('true')
+    // Closed, as a viewer leaves them, before the page goes.
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
   })
 
   it('puts the picture back at the player’s moment, playing as the player was, when Back takes the player away', async function () {
@@ -956,6 +1128,165 @@ describe('Videos tab autoplay', function () {
         expect(video.paused).equals(false)
         expect(video.muted).equals(true)
       })
+
+  it('gives up on a recording before it played, and still opens the new address at the link’s moment', async function () {
+    this.timeout(20000)
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    try {
+      ready = 0
+      let asks = 0
+      await page(
+        [videoOf('v1', START)],
+        { autoPlay: false, startAtSec: 600 },
+        {
+          playback: async videoId => {
+            asks += 1
+            return {
+              ...playable(videoId),
+              url: `/media/${videoId}/master.m3u8?ask=${asks}`
+            }
+          }
+        }
+      )
+      const first = inline()
+      Object.defineProperty(first, 'error', {
+        configurable: true,
+        get: () => ({ code: 2 })
+      })
+      // It fails before any metadata, so before any position of its own.
+      for (const waitMs of [1100, 2100, 4100, 0]) {
+        await act(async () => {
+          first.dispatchEvent(new window.Event('error'))
+          await new Promise(resolve => setTimeout(resolve, waitMs))
+        })
+      }
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+      expect(asks).equals(2)
+      const video = inline()
+      expect(video.src).includes('ask=2')
+      await act(async () => {
+        ready = 4
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(video.currentTime, 'the link’s moment, not the start').equals(600)
+    } finally {
+      if (canPlay != null) Object.defineProperty(proto, 'canPlayType', canPlay)
+      else Reflect.deleteProperty(proto, 'canPlayType')
+    }
+  })
+
+  for (const autoPlay of [false, 'live'] as const)
+    for (const watching of [true, false])
+      it(`asks for a new address when Safari's player gives up on a live game${autoPlay === 'live' ? ' opened at its Videos' : ''}, and ${watching ? 'plays it as the viewer was' : 'leaves it paused as the viewer had it'}`, async function () {
+        this.timeout(20000)
+        const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+        Object.defineProperty(proto, 'canPlayType', {
+          configurable: true,
+          value: () => 'maybe'
+        })
+        try {
+          let asks = 0
+          await page(
+            [{ ...videoOf('v1', START), status: 'live' }],
+            { autoPlay },
+            {
+              playback: async videoId => {
+                asks += 1
+                return {
+                  ...playable(videoId),
+                  url: `/media/${videoId}/master.m3u8?ask=${asks}`
+                }
+              }
+            }
+          )
+          const first = inline()
+          expect(first.src).includes('ask=1')
+          await act(async () => {
+            if (watching) first.dispatchEvent(new window.Event('play'))
+            else {
+              // Paused by the viewer, though it started on its own.
+              first.pause()
+              first.dispatchEvent(new window.Event('pause'))
+            }
+          })
+          // Four failures, each after the wait the player gives the one
+          // before, and it gives up on the address.
+          Object.defineProperty(first, 'error', {
+            configurable: true,
+            get: () => ({ code: 2 })
+          })
+          const before = plays.length
+          for (const waitMs of [1100, 2100, 4100, 0]) {
+            await act(async () => {
+              first.dispatchEvent(new window.Event('error'))
+              await new Promise(resolve => setTimeout(resolve, waitMs))
+            })
+          }
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 50))
+          })
+          expect(asks).equals(2)
+          const video = inline()
+          expect(video.src).includes('ask=2')
+          expect(plays.length > before).equals(watching)
+          expect(video.paused).equals(!watching)
+        } finally {
+          if (canPlay != null)
+            Object.defineProperty(proto, 'canPlayType', canPlay)
+          else Reflect.deleteProperty(proto, 'canPlayType')
+        }
+      })
+
+  it("plays a live game on after Safari's player reloads itself, though the reset said pause", async function () {
+    this.timeout(10000)
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    try {
+      await page([{ ...videoOf('v1', START), status: 'live' }], {
+        autoPlay: false
+      })
+      const video = inline()
+      await act(async () => {
+        await video.play()
+        video.dispatchEvent(new window.Event('play'))
+      })
+      Object.defineProperty(video, 'error', {
+        configurable: true,
+        get: () => ({ code: 2 })
+      })
+      const before = plays.length
+      await act(async () => {
+        video.dispatchEvent(new window.Event('error'))
+        // The element resets itself, and says it is paused.
+        video.pause()
+        video.dispatchEvent(new window.Event('pause'))
+        await new Promise(resolve => setTimeout(resolve, 1100))
+      })
+      expect(plays.length, 'played with the reload').greaterThan(before)
+      expect(video.paused).equals(false)
+      // Once it has pictures again, a pause is the viewer's.
+      await act(async () => {
+        video.dispatchEvent(new window.Event('canplay'))
+        video.pause()
+        video.dispatchEvent(new window.Event('pause'))
+        video.dispatchEvent(new window.Event('error'))
+        await new Promise(resolve => setTimeout(resolve, 2100))
+      })
+      expect(video.paused).equals(true)
+    } finally {
+      if (canPlay != null) Object.defineProperty(proto, 'canPlayType', canPlay)
+      else Reflect.deleteProperty(proto, 'canPlayType')
+    }
+  })
 
   it('starts a paused recording at its saved position when Videos is selected again', async function () {
     await page([videoOf('v1', START)], { initialTab: 'boxScore' })

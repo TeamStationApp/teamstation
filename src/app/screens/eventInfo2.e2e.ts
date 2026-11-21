@@ -24,6 +24,7 @@ import {
   pointInMapFrame,
   waitInMapFrame
 } from '../../test/mapFrameProbe'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -251,10 +252,21 @@ async function main(): Promise<void> {
       )
         return
       const request = response.request()
+      // A body that never ends, as a page left for another holds its open
+      // requests, is logged as unavailable rather than waited for.
+      const within = async <T>(read: Promise<T>, fallback: T): Promise<T> =>
+        await Promise.race([
+          read.catch(() => fallback),
+          new Promise<T>(resolve =>
+            setTimeout(() => {
+              resolve(fallback)
+            }, 10000)
+          )
+        ])
       network.push(
         (async () => {
-          const body = await response.text().catch(() => '<unavailable>')
-          const posted = await request.fetchPostData().catch(() => undefined)
+          const body = await within(response.text(), '<unavailable>')
+          const posted = await within(request.fetchPostData(), undefined)
           const path = new URL(response.url())
           const log = `$ browser ${request.method()} ${path.pathname}${path.search}\n${posted ?? ''}\n${response.status()} ${body}\n`
           appendFileSync(networkLog, log)
@@ -598,25 +610,25 @@ async function main(): Promise<void> {
       'Independent self/child replies, continuous gradient, keyboard and Maybe persistence passed'
     )
     await m.tapOn({ text: 'Done' })
+    // An RSVP asks about notifications once per person per device.
+    await dismissNotificationAskOn(m)
     await wait(
       `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-usr_111111111111111111112k"]')?.textContent==='Maybe'`
     )
     const persisted = asEventInfo(
       await (await f.h.request('GET', `/events/${gameId}/info`)).json()
     )
-    assert.deepEqual(
-      persisted.replyUserIds,
-      [101, 103, 104, 115].map(userIdOfGumbo)
-    )
+    // RSVP is for the team's own: the reader's child outside it, 115, is
+    // neither answered for nor listed.
+    assert.deepEqual(persisted.replyUserIds, [101, 103, 104].map(userIdOfGumbo))
     // The reader, 101, reads their own name in full.
     assert.equal(
       persisted.attendees.find(row => row.userId === userIdOfGumbo(101))?.name,
       'Babe Ruth'
     )
     assert.equal(
-      persisted.attendees.find(row => row.userId === userIdOfGumbo(115))
-        ?.isTeamParticipant,
-      false
+      persisted.attendees.find(row => row.userId === userIdOfGumbo(115)),
+      undefined
     )
     for (const id of [102, 109, 110])
       assert(!persisted.attendees.some(row => row.userId === userIdOfGumbo(id)))
@@ -781,7 +793,8 @@ async function main(): Promise<void> {
       })
     }
     await cookie(105)
-    await open(`/games/${gameId}`, 'event-reply-row-usr_111111111111111111112p')
+    // On neither team yet, 105 answers for their child 103 alone.
+    await open(`/games/${gameId}`, 'event-reply-row-usr_111111111111111111112n')
     assert.equal(
       await evaluate(
         `document.querySelector('[data-testid="event-attendance-teams"]')==null`
@@ -854,7 +867,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PUT',
-          `/events/${gameId}/rsvps/116`,
+          `/events/${gameId}/rsvps/${userIdOfGumbo(116)}`,
           { response: 'yes' },
           116
         )
@@ -1200,8 +1213,15 @@ async function main(): Promise<void> {
       .get('destination')!
       .split(',')
       .map(Number)
-    assert(Math.abs(directionsLatitude - venueCenter.lat) < 0.000001)
-    assert(Math.abs(directionsLongitude - venueCenter.lng) < 0.000001)
+    // Leaflet keeps its center on whole pixels once the frame is laid out:
+    // the directions agree with it to within one of the map's pixels.
+    const pixel = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      `(()=>{const a=window.eventMap.containerPointToLatLng([0,0]),b=window.eventMap.containerPointToLatLng([1,1]);return{lat:Math.abs(a.lat-b.lat),lng:Math.abs(a.lng-b.lng)}})()`
+    )
+    const agree = `directions ${directionsLatitude},${directionsLongitude}; map center ${venueCenter.lat},${venueCenter.lng}; a pixel ${pixel.lat},${pixel.lng}`
+    assert(Math.abs(directionsLatitude - venueCenter.lat) <= pixel.lat, agree)
+    assert(Math.abs(directionsLongitude - venueCenter.lng) <= pixel.lng, agree)
     console.log('Venue-only directions agree with the displayed map center')
     assert(
       (
@@ -1403,7 +1423,9 @@ async function main(): Promise<void> {
             awayScore: 0,
             homeScore: 0,
             description: 'Ground out'
-          }
+          },
+          // A play begins a game once it has a pitch or a ball in play.
+          playEvents: [{ isPitch: true, details: { isInPlay: true } }]
         }
       ]
     })
@@ -1418,7 +1440,20 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}?tab=info`)
     assert.equal(await selected(), 'Info')
     await m.openBrowser({ url: f.h.origin + `/games/${gameId}?tab=watch` })
-    await m.assertVisible({ text: 'No videos', timeout: 15000 })
+    // A visible copy: a hidden page can hold one too, which the first
+    // match by text may be. Every copy, where and how drawn, if none is.
+    const noVideos = `[...document.querySelectorAll('*')].filter(n => n.childElementCount === 0 && n.textContent.trim() === 'No videos').map(n => { const r = n.getBoundingClientRect(); let hidden = ''; for (let e = n; e != null; e = e.parentElement) { const c = getComputedStyle(e); if (c.visibility === 'hidden' || c.display === 'none' || c.opacity === '0') hidden = hidden || e.tagName + ' ' + c.visibility + '/' + c.display + '/' + c.opacity } return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), hidden, shown: r.width > 0 && r.x >= 0 && r.x < innerWidth && hidden === '' } })`
+    const until = Date.now() + 15000
+    let copies: Array<{ shown: boolean }> = []
+    while (Date.now() < until) {
+      copies = await evaluate<Array<{ shown: boolean }>>(noVideos)
+      if (copies.some(copy => copy.shown)) break
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+    assert.ok(
+      copies.some(copy => copy.shown),
+      `No videos shown: ${JSON.stringify(copies)}`
+    )
     await m.openBrowser({ url: f.h.origin + `/games/${gameId}?tab=boxScore` })
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
@@ -1429,7 +1464,12 @@ async function main(): Promise<void> {
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
       timeout: 15000
     })
-    await tap({ css: '[role="tab"][aria-label="Videos"]' }, 'UP')
+    await tap(
+      {
+        css: '[role="tab"][aria-label="Videos"]:not([data-testid="navigation-sidebar"] *)'
+      },
+      'UP'
+    )
     await m.assertVisible({ text: 'No videos' })
     await m.back()
     await m.assertVisible({
@@ -1440,6 +1480,8 @@ async function main(): Promise<void> {
       'First scoring activity, explicit Info/Videos/Box Score and browser Back passed'
     )
     const endingId = 'gam_default_three_hour_end'
+    // The default end falls 25 s out: the page must mount on Info before it,
+    // which a loaded machine took more than 7 s to do.
     await f.h.db
       .insertInto('games')
       .values({
@@ -1447,7 +1489,7 @@ async function main(): Promise<void> {
         home_team_id: f.teamA,
         away_team_id: f.teamB,
         season_id: null,
-        start_at: new Date(Date.now() - 10800000 + 7000),
+        start_at: new Date(Date.now() - 10800000 + 25000),
         end_at: null
       })
       .execute()
@@ -1455,7 +1497,7 @@ async function main(): Promise<void> {
     assert.equal(await selected(), 'Info')
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
-      timeout: 15000
+      timeout: 40000
     })
     assert.equal(
       await evaluate(
@@ -1517,11 +1559,32 @@ async function main(): Promise<void> {
       id: 'event-reply-row-usr_111111111111111111112k',
       timeout: 20000
     })
-    const savedFold = await f.h.db
-      .selectFrom('team_events')
-      .selectAll()
-      .where('id', '=', dstEvent.id)
-      .executeTakeFirstOrThrow()
+    // The toast says saved as the request leaves; the row follows it.
+    interface EventRow {
+      start_at: Date
+      end_at: Date | null
+    }
+    const savedRow = async (
+      stale: (row: EventRow) => boolean
+    ): Promise<EventRow> => {
+      const read = async (): Promise<EventRow> =>
+        await f.h.db
+          .selectFrom('team_events')
+          .selectAll()
+          .where('id', '=', dstEvent.id)
+          .executeTakeFirstOrThrow()
+      let row = await read()
+      for (
+        const until = Date.now() + 10000;
+        stale(row) && Date.now() < until;
+        row = await read()
+      )
+        await new Promise(resolve => setTimeout(resolve, 250))
+      return row
+    }
+    const savedFold = await savedRow(
+      row => row.end_at?.toISOString() === '2027-11-07T09:32:00.000Z'
+    )
     assert.equal(savedFold.end_at!.toISOString(), '2027-11-07T09:30:00.000Z')
     assert.equal(
       savedFold.end_at!.getTime() - savedFold.start_at.getTime(),
@@ -1545,11 +1608,9 @@ async function main(): Promise<void> {
       id: 'event-reply-row-usr_111111111111111111112k',
       timeout: 20000
     })
-    const roundedStart = await f.h.db
-      .selectFrom('team_events')
-      .select('start_at')
-      .where('id', '=', dstEvent.id)
-      .executeTakeFirstOrThrow()
+    const roundedStart = await savedRow(
+      row => row.start_at.toISOString() === '2027-11-07T09:32:00.000Z'
+    )
     assert.equal(
       roundedStart.start_at.toISOString(),
       '2027-11-07T09:30:00.000Z'
@@ -1596,11 +1657,9 @@ async function main(): Promise<void> {
       id: 'event-reply-row-usr_111111111111111111112k',
       timeout: 20000
     })
-    const midnight = await f.h.db
-      .selectFrom('team_events')
-      .selectAll()
-      .where('id', '=', dstEvent.id)
-      .executeTakeFirstOrThrow()
+    const midnight = await savedRow(
+      row => row.start_at.toISOString() === '2027-11-08T07:58:00.000Z'
+    )
     assert.equal(midnight.start_at.toISOString(), '2027-11-08T08:00:00.000Z')
     console.log(
       'Loaded repeated-hour end remains45 minutes; near-midnight start rounds two minutes forward'
@@ -1647,10 +1706,14 @@ async function main(): Promise<void> {
       ),
       false
     )
-    assert(
-      await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-reply-row-usr_111111111111111111112n"]')!=null`
-      )
+    // A guardian replies only for children who play on a participating
+    // roster: 103 no longer plays, so 109 replies for himself alone.
+    assert.deepEqual(direct.replyUserIds, [userIdOfGumbo(109)])
+    assert.equal(
+      await evaluate<string>(
+        `[...document.querySelectorAll('[data-testid^="event-reply-row-"]')].map(n=>n.getAttribute('data-testid')).join(',')`
+      ),
+      `event-reply-row-${userIdOfGumbo(109)}`
     )
     console.log(
       'Direct away affiliation wins over private guardian control for a home-team non-player'
@@ -1693,6 +1756,7 @@ async function main(): Promise<void> {
       await (await f.h.request('GET', `/teams/${f.teamA}/games`)).json()
     ).find((row: { id: string }) => row.id === quickGameId).playerRsvps
     await tap({ text: 'Done' })
+    await dismissNotificationAskOn(m)
     await see({ id: `schedule-rsvps-${quickGameId}` }, 'UP')
     assert.equal(
       Number(
@@ -1714,6 +1778,7 @@ async function main(): Promise<void> {
       'Team schedule player-only counts and compact guardian RSVP modal persist; general schedule excludes the controls'
     )
     await Promise.all(network)
+    console.log('Network log written; collecting browser coverage')
     const requireCoverage = createRequire(join(process.cwd(), 'package.json'))
     const convert = requireCoverage('v8-to-istanbul')
     const map = requireCoverage('istanbul-lib-coverage').createCoverageMap({})

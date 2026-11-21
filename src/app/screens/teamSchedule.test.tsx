@@ -1044,8 +1044,16 @@ describe('a team’s schedule with no signal', function () {
           status: answer.status
         })
       },
-      openCache: async userId => {
-        const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+      openCache: async (userId, apiBaseUrl) => {
+        const executor = nodeSqliteExecutor(
+          join(
+            dir,
+            cacheFileName(
+              userId,
+              new URL(apiBaseUrl, 'https://app.example.test').href
+            )
+          )
+        )
         executors.push(executor)
         return await openCacheStore(executor)
       }
@@ -1103,8 +1111,16 @@ describe('a team opened before, with every request held', function () {
           status: answer.status
         })
       },
-      openCache: async userId => {
-        const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+      openCache: async (userId, apiBaseUrl) => {
+        const executor = nodeSqliteExecutor(
+          join(
+            dir,
+            cacheFileName(
+              userId,
+              new URL(apiBaseUrl, 'https://app.example.test').href
+            )
+          )
+        )
         executors.push(executor)
         return await openCacheStore(executor)
       }

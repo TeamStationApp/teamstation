@@ -7,19 +7,13 @@ import React, {
   useRef,
   useState
 } from 'react'
-import {
-  AppState,
-  Modal,
-  Pressable,
-  ScrollView,
-  Text,
-  View
-} from 'react-native'
+import { AppState, Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { asChatAge } from '../../common/chatAge'
 import { Button } from '../components/Button'
 import { CancelAction } from '../components/CancelAction'
+import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { ME_CHAT_AGE } from '../sync/documentKeys'

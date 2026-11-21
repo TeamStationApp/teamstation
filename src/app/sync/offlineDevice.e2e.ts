@@ -2419,8 +2419,9 @@ async function step7(): Promise<void> {
       `offline: Add Existing lists ${FIXTURE.candidate.name}`,
       choose != null
     )
-    await m.hideKeyboard().catch(() => undefined)
     if (choose != null) {
+      // The search handles taps while the keyboard is open. Hiding it first
+      // moves this row (or dismisses the sheet), invalidating its bounds.
       await tapNode(choose)
       await pause(1500)
       // Add to Roster opens with the jersey field focused: on iOS the number
@@ -2480,6 +2481,8 @@ async function step7(): Promise<void> {
       }
       await shot('addExistingOffline')
     } else {
+      // No row to tap: an open keyboard would only hide later controls.
+      await m.hideKeyboard().catch(() => undefined)
       await shot('addExistingOffline')
       await tryTap(/^Cancel$/, 3000)
     }

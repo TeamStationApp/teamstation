@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { AppState, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -843,6 +843,61 @@ describe('chat read sessions preserve personal unread', function () {
     }
   })
 
+  it('reads nothing while iOS covers the app (inactive), and reads once it is active again', async function () {
+    const { engine, reads } = unreadSessionEngine()
+    const current = engine.views.get('cnv_aurora')!
+    engine.update('cnv_aurora', {
+      conversation: { ...current.conversation, unread: 2 }
+    })
+    const originalState = Object.getOwnPropertyDescriptor(
+      AppState,
+      'currentState'
+    )
+    let state = 'inactive'
+    Object.defineProperty(AppState, 'currentState', {
+      configurable: true,
+      get: () => state
+    })
+    const change = async (next: string): Promise<void> => {
+      state = next
+      await act(async () => {
+        // React Native Web reports a change on visibilitychange.
+        document.dispatchEvent(new window.Event('visibilitychange'))
+        await wait()
+      })
+    }
+    try {
+      await screen(engine)
+      await act(async () => {
+        const opened = engine.views.get('cnv_aurora')!
+        engine.update('cnv_aurora', {
+          messages: [
+            ...opened.messages,
+            message({
+              id: 'msg_covered',
+              seq: 2,
+              senderName: 'Shohei Ohtani',
+              body: 'Arrives under Notification Center'
+            })
+          ],
+          conversation: { ...opened.conversation, unread: 3 }
+        })
+        await wait()
+      })
+      await type('Typed under the app switcher')
+      expect(reads, 'an inactive app must not read').deep.equals([])
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(3)
+      await change('active')
+      await type('Typed once active')
+      expect(reads.some(([id]) => id === 'cnv_aurora')).equals(true)
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(0)
+    } finally {
+      if (originalState == null)
+        Reflect.deleteProperty(AppState, 'currentState')
+      else Object.defineProperty(AppState, 'currentState', originalState)
+    }
+  })
+
   it('keeps Mark unread through hiding the remembered narrow pane and width-only reveal, then clears it on explicit row selection', async function () {
     const { engine, reads } = unreadSessionEngine()
     const state = newChatWorkspaceState()
@@ -1614,6 +1669,26 @@ describe('chat conversation shared file preparation and sending', function () {
     expect(document.body.textContent).contains('other.pdf')
     expect(drafts.get('cnv_solstice')?.text).equals('Other draft')
   })
+
+  for (const [first, other] of [
+    ['Cancel reply', 'Remove notes.pdf'],
+    ['Remove notes.pdf', 'Cancel reply']
+  ])
+    it(`keeps the rest of a restored reply draft with a file after ${first}`, async function () {
+      await screen(new FakeEngine(), {
+        draft: {
+          text: 'Caption',
+          picked: [prepared()],
+          scrollOffset: 0,
+          replyTo: message({
+            senderName: 'Shohei Ohtani',
+            body: 'Original body'
+          })
+        }
+      })
+      await press(first)
+      expect(document.querySelector(`[aria-label="${other}"]`)).not.equals(null)
+    })
 
   it('retains a reply draft and prepared files on failed Enter sending and clears only after success', async function () {
     const engine = new FakeEngine()

@@ -85,7 +85,18 @@ export interface NodeSettings {
   radar: RadarSettings
   replay: ReplaySettings
   distribution: DistributionSettings
+  jev: JevSettings
 }
+
+/**
+ * Jev's search ranking. The key itself is set and cleared through its own
+ * routes and never read back: the settings only say whether one is set.
+ */
+export interface JevSettings {
+  configured: boolean
+}
+
+export const defaultJevSettings: JevSettings = { configured: false }
 
 /** The 3D replay's pacing. */
 export interface ReplaySettings {
@@ -135,7 +146,8 @@ export const defaultNodeSettings: NodeSettings = {
   highlights: defaultHighlightTimings,
   radar: defaultRadarSettings,
   replay: defaultReplaySettings,
-  distribution: defaultDistributionSettings
+  distribution: defaultDistributionSettings,
+  jev: defaultJevSettings
 }
 
 /** The longest any of the second-valued settings may be. */
@@ -173,6 +185,7 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
  */
 export function asNodeSettings(raw: unknown): NodeSettings {
   const { replay, distribution, ...rest } = asNodeSettingsUpdate(raw)
+  const jev = (raw as Record<string, unknown>).jev
   return {
     ...rest,
     scoreboard: {
@@ -181,19 +194,29 @@ export function asNodeSettings(raw: unknown): NodeSettings {
         rest.scoreboard.tvLandscape ?? defaultScoreboardSettings.tvLandscape
     },
     replay: replay ?? defaultReplaySettings,
-    distribution: distribution ?? defaultDistributionSettings
+    distribution: distribution ?? defaultDistributionSettings,
+    // A server from before Jev says nothing: no key.
+    jev: jev == null ? defaultJevSettings : asJevSettings(jev)
   }
+}
+
+export function asJevSettings(raw: unknown): JevSettings {
+  const value = record(raw, 'jev')
+  if (typeof value.configured !== 'boolean')
+    throw new TypeError('jev.configured must be true or false')
+  return { configured: value.configured }
 }
 
 /**
  * A save from the node administration screen. An app from before the replay
  * section sends no `replay`, and its save keeps the stored pitch delay. An
  * app from before the about-screen links sends no `distribution`, and its
- * save keeps the stored URLs.
+ * save keeps the stored URLs. `jev` is read only: a save that carries it
+ * changes nothing, as the key has its own routes.
  */
 export type NodeSettingsUpdate = Omit<
   NodeSettings,
-  'replay' | 'distribution'
+  'replay' | 'distribution' | 'jev'
 > & {
   replay?: ReplaySettings
   distribution?: DistributionSettings

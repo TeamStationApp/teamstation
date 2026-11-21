@@ -4,7 +4,6 @@ import { createRequire } from 'node:module'
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
 
-import { TeamStationClient } from '../../common/api'
 import {
   API,
   finish,
@@ -19,7 +18,8 @@ import {
   videoReadings,
   type WebSession,
   webSession
-} from './playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
+import { TeamStationClient } from '../../common/api'
 
 /**
  * The live multi-angle scenarios in a browser (E6, E7): the angle switch and
@@ -187,12 +187,17 @@ describe('live multi-angle in a browser', function () {
     // later than it plus the time since the tap.
     const atOpen = await inlineWall()
     const tapped = Date.now()
-    const hidden = await session.page.$eval(
-      '[data-testid="gameVideoOpen"]',
-      node => node.getAttribute('tabindex') === '-1'
-    )
-    if (hidden) await session.page.click('[data-testid="gameVideoOpen"]')
+    // A first tap only reveals hidden controls (develop 44b04fbc7); the
+    // open square stays focusable, so whether they showed is read from
+    // whether the player opened, and a second tap inside the reveal opens it.
     await session.page.click('[data-testid="gameVideoOpen"]')
+    const opened = await session.page
+      .waitForFunction(`(() => ${GRID_VIDEOS}.length > 0)()`, { timeout: 1000 })
+      .then(
+        () => true,
+        () => false
+      )
+    if (!opened) await session.page.click('[data-testid="gameVideoOpen"]')
     try {
       await session.page.waitForFunction(
         `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 && !v[0].paused })()`,

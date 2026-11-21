@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   absent,
   type BrowserSession,
@@ -14,9 +15,8 @@ import {
   log,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
 import { refinementsFixture } from '../test/seasonGameRefinementsFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 /** Finished follow-up, with genuine HTTP routes and isolated synthetic data. */
 async function main(): Promise<void> {
@@ -81,7 +81,14 @@ async function main(): Promise<void> {
           .respond({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify([{ ...recentRows[0], videoCount: 1 }])
+            // Home shows a game started less than three days ago: an hour ago.
+            body: JSON.stringify([
+              {
+                ...recentRows[0],
+                videoCount: 1,
+                startAt: new Date(Date.now() - 60 * 60 * 1000).toISOString()
+              }
+            ])
           })
           .catch(() => undefined)
       } else request.continue().catch(() => undefined)
@@ -152,7 +159,7 @@ async function main(): Promise<void> {
           )
         ].map(n => n.textContent)
       )
-      expect(tabs).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+      expect(tabs).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
       await absent(b.page, 'Open team videos and stats')
       await absent(b.page, 'Create Game')
     }
@@ -196,7 +203,7 @@ async function main(): Promise<void> {
       await contains(
         b.page,
         label === 'Add Person to Team'
-          ? 'Send invite'
+          ? 'Add people'
           : label === 'Create Invite Link'
             ? 'Invite Spectators'
             : 'City'
@@ -265,8 +272,8 @@ async function main(): Promise<void> {
     await tap(b.m, 'Open Demo Hawks')
     await shell()
     await visit('/discover')
-    await fill(b.m, 'Search by name or city', 'Demo Hawks')
-    await tap(b.m, 'Open Demo Hawks, Demo City, Demo Region, US')
+    await fill(b.m, 'Search leagues, seasons, teams and people', 'Demo Hawks')
+    await tap(b.m, 'Open Demo Hawks, Demo City, Demo Region')
     await shell()
     await pass(
       'B3 Home, season Teams/standings, league children, Search and private/group/legacy-tab addresses'
@@ -306,22 +313,31 @@ async function main(): Promise<void> {
     const v = await make('restore-public', 1440, 1000, false)
     const requests: string[] = []
     v.page.on('request', r => requests.push(r.url()))
+    // A visitor's team page opens on its Videos; Stats says membership is
+    // required, below.
     await v.m.openBrowser({ url: f.h.origin + `/groups/team/${f.teamA}` })
-    await contains(v.page, 'membership is required')
+    await contains(v.page, 'GAME VIDEO LIBRARY')
     await capture(v.m, artifacts, 'public-team-after.png')
     await capture(v.m, artifacts, 'public-team-videos-after.png')
     await tap(v.m, 'Schedule', 'tab')
     await contains(v.page, 'SCHEDULE AND RESULTS')
     await capture(v.m, artifacts, 'public-team-schedule-after.png')
     await tap(v.m, 'Team', 'tab')
-    await contains(v.page, 'STAFF AND COACHES')
+    await contains(v.page, 'TEAM INFORMATION')
+    await contains(v.page, 'ADMINS')
     await capture(v.m, artifacts, 'public-team-directory-after.png')
     await tap(v.m, 'Stats', 'tab')
-    await contains(v.page, 'membership is required')
+    await contains(
+      v.page,
+      'You need to be a member of this team to see individual player stats.'
+    )
     await capture(v.m, artifacts, 'public-team-stats-after.png')
+    // No private collection: the public game listing says so (`public=1`).
     expect(
-      requests.filter(url =>
-        /\/teams\/[^/]+\/(games|stats|roster|pitching)/.test(url)
+      requests.filter(
+        url =>
+          /\/teams\/[^/]+\/(games|stats|roster|pitching)/.test(url) &&
+          new URL(url).searchParams.get('public') !== '1'
       )
     ).deep.equals([])
     await v.m.openBrowser({ url: f.h.origin + `/teams/${f.teamA}?tab=team` })
@@ -329,7 +345,11 @@ async function main(): Promise<void> {
     await v.m.openBrowser({
       url: f.h.origin + `/groups/team/${seed.teams.Foxes}`
     })
-    await contains(v.page, 'membership is required')
+    await tap(v.m, 'Stats', 'tab')
+    await contains(
+      v.page,
+      'You need to be a member of this team to see individual player stats.'
+    )
     await absent(v.page, 'Manage')
     await pass(
       'B4 public and placeholder shell, public private-route compatibility, no private HTTP collections'
@@ -366,7 +386,7 @@ async function main(): Promise<void> {
           )
         ].map(n => n.textContent)
       )
-    ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
+    ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats', 'Chats'])
     await absent(b.page, 'Open team videos and stats')
     await absent(b.page, 'Create Game')
     await pass(
@@ -382,13 +402,13 @@ async function main(): Promise<void> {
       103
     )
     expect(declined.status).equals(200)
-    await b.m.command('evalBrowserScript', {
-      script: 'window.dispatchEvent(new Event("focus"))'
-    })
-    await b.page.waitForFunction(() => {
-      const text = document.body.textContent
-      return text !== null && !text.includes('Pending approval')
-    })
+    // The team page reads again on its scope's change notices, which this
+    // harness does not send; a fresh read shows the declined row gone.
+    await visit(`/teams/${f.teamA}?tab=schedule`)
+    await shell()
+    await b.page.waitForFunction(
+      () => !document.body.innerText.includes('Pending approval')
+    )
     expect(b.page.url()).includes('tab=schedule')
     await tap(b.m, 'Manage')
     await contains(b.page, 'Delete declined entry')

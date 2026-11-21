@@ -12,6 +12,7 @@ import { lstrings } from '../../locales/strings'
 import { CARD_HIDE_MS } from '../cardScrub'
 import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
+import { markSeek } from '../playbackSession'
 import type { PlayIntent } from '../playIntent'
 import {
   type GridZone,
@@ -43,8 +44,11 @@ import {
   correctionFor,
   endFor,
   everythingEnded,
+  farSideOfHole,
   hasStalled,
   holdExpired,
+  HOLE_PROBES_SEC,
+  HOLE_SEC,
   isFinished,
   isOurSilence,
   JOIN_LEAD_SEC,
@@ -200,6 +204,12 @@ function secondsSince(now: number, since: number | undefined): number {
 
 /** How often a joining tile looks to see whether the game has reached it. */
 const JOIN_POLL_MS = 30
+
+/**
+ * How long before the game reaches a tile waiting where it stands that it is
+ * started: about what a player takes from being told to play to moving.
+ */
+const START_LEAD_MS = 150
 
 /** How far past the seekable end a tile's place may be and still count. */
 const SEEKABLE_SLACK_SEC = 0.25
@@ -433,8 +443,13 @@ export function useMultiCam(
   const tileMappings = useRef(new Map<string, WallMapping | null>())
   const fallbackRef = useRef(fallbackMapping)
   fallbackRef.current = fallbackMapping
-  /** How far a tile's player can reach, for its newest footage. */
-  const seekableEndRef = useRef<(id: string) => number | null>(() => null)
+  /**
+   * How far a tile's player can reach, for its newest footage, and whether
+   * its player has gone quiet about it (`TileHandle.seekableQuiet`).
+   */
+  const seekableEndRef = useRef<
+    (id: string) => { end: number | null; quiet: boolean }
+  >(() => ({ end: null, quiet: false }))
   /**
    * The best mapping a tile has now: the server's wall timeline, then its
    * player's own.
@@ -444,7 +459,10 @@ export function useMultiCam(
    * after their pictures on a live ingest, and later still after a camera
    * stalled. A grid placed by them drew every board step that far ahead of its
    * picture, and two angles out of step by the stall. Its newest footage is
-   * the timeline's wall time at what the player can reach.
+   * the timeline's wall time at what the player can reach — or, from a
+   * player that has stopped saying what it can reach, the later of that and
+   * the timeline's own newest picture: an iPhone tile paused to wait for its
+   * live footage reports nothing more, and waited for good.
    */
   const mappingOf = (id: string): WallMapping | null => {
     const served = fallbackRef.current?.(id) ?? null
@@ -452,8 +470,11 @@ export function useMultiCam(
     return {
       ...served,
       newestWall: () => {
-        const end = seekableEndRef.current(id)
-        return (end == null ? null : served.wallAt(end)) ?? served.newestWall()
+        const { end, quiet } = seekableEndRef.current(id)
+        const reached = end == null ? null : served.wallAt(end)
+        const known = served.newestWall()
+        if (reached == null) return known
+        return quiet && known != null ? Math.max(reached, known) : reached
       }
     }
   }
@@ -565,7 +586,9 @@ export function useMultiCam(
   const seekedAt = useRef(new Map<string, number>())
   seekableEndRef.current = id => {
     const element = elements.current.get(id)
-    return element == null ? null : seekableEndOf(element)
+    return element == null
+      ? { end: null, quiet: false }
+      : { end: seekableEndOf(element), quiet: element.seekableQuiet === true }
   }
   /** Tiles that have had pictures at some point, for telling a stall apart. */
   const everStarted = useRef(new Set<string>())
@@ -598,6 +621,13 @@ export function useMultiCam(
   const shortSince = useRef(new Map<string, number>())
   /** Where each held tile was last moved to by the gate (`placeHeld`). */
   const heldPlace = useRef(new Map<string, number>())
+  /**
+   * Where each tile waiting at the far side of a hole in its recording was
+   * sent (`farSideOfHole`), once for each place: a player that lands a
+   * little off it — Safari's, on a live stream, by up to a segment — waits
+   * where it landed rather than being sent there again on every look.
+   */
+  const farSent = useRef(new Map<string, number>())
   /** When the first live tile had a picture, for a grid with no moment yet. */
   const liveSince = useRef<number | null>(null)
   /**
@@ -1037,6 +1067,13 @@ export function useMultiCam(
           stopJoining(video.id)
           return
         }
+        // Held for the game, though its player started itself: an iPhone's
+        // does when its rate is put back to 1 while it is paused
+        // (react-native-video's `setRate` plays it to change the rate), and
+        // the handle takes that for a play. Left running, it moved on as
+        // fast as the game, never reached, and the watchdog leaves a joining
+        // tile to its join: it ran that far ahead for good.
+        if (!element.paused) element.pause()
         const now = gameNow(video.id)
         const there = wallAt(video, element.currentTime)
         // Nothing to follow: as good a guess as any is the lead itself.
@@ -1058,10 +1095,134 @@ export function useMultiCam(
   const joinAheadRef = useRef(joinAhead)
   joinAheadRef.current = joinAhead
 
+  /**
+   * Starts a paused tile from where it stands the moment the game reaches
+   * its picture, less the time a player takes to start (`START_LEAD_MS`):
+   * a tile waiting at the far side of a hole in its recording.
+   *
+   * Not `joinAhead`. That tile has waited at its picture for as long as the
+   * hole lasted, and holds it; sent on from there to join, every player
+   * emptied its buffer for a place it had not loaded, an iPhone's said it
+   * was ready there only seconds later, paused, and the join, finding it not
+   * ready when the game came, sent it further on each time: it stood still
+   * for ten seconds after the game reached it, twenty on a browser. Started
+   * where it stands, it needs nothing it does not already hold, and a phone
+   * that is short there fills as it plays.
+   *
+   * Given up for the watchdog to look again if the place it should wait at
+   * moves, as it does when the camera's footage after the hole arrives.
+   */
+  const startWhereItStands = (
+    video: VideoSummary & AngleVideo,
+    element: TileHandle,
+    /** The first picture after the hole it waits at (`farSideOfHole`). */
+    waitsAt: number
+  ): void => {
+    stopJoining(video.id)
+    if (element.playbackRate !== 1) element.playbackRate = 1
+    intents.current.set(video.id, false)
+    const at = wallAt(video, element.currentTime)
+    const from = gameNow(video.id) ?? atWallRef.current
+    // Its own silence until then is the wait, not a stall.
+    if (at != null && from != null && at > from) {
+      seekedAt.current.set(video.id, Date.now() + (at - from))
+    }
+    joining.current.set(
+      video.id,
+      setInterval(() => {
+        if (elements.current.get(video.id) !== element) {
+          stopJoining(video.id)
+          return
+        }
+        // Held for the game, though its player started itself (`joinAhead`).
+        if (!element.paused) element.pause()
+        const now = gameNow(video.id)
+        const there = wallAt(video, element.currentTime)
+        if (there == null) return
+        if (now == null) {
+          // Nothing else plays to bring the game here: unless another tile
+          // is to carry it, this one does, and the clock follows it.
+          const at = atWallRef.current
+          if (at == null || crossingRef.current(at) == null) return
+        } else {
+          // Given up when the place to wait at moves; not for where its
+          // player landed, a little off it, which is where it waits.
+          const wanted = farSideOfHole(video, now)
+          if (wanted != null && Math.abs(wanted - waitsAt) > 0.5) {
+            stopJoining(video.id)
+            return
+          }
+          if (now < there - START_LEAD_MS) return
+        }
+        stopJoining(video.id)
+        seekedAt.current.set(video.id, Date.now())
+        const go =
+          playingRef.current &&
+          flowing.current &&
+          !leftOut.current.has(video.id)
+        intents.current.set(video.id, go)
+        if (go) playTile(element)
+      }, JOIN_POLL_MS)
+    )
+  }
+  const startWhereItStandsRef = useRef(startWhereItStands)
+  startWhereItStandsRef.current = startWhereItStands
+
+  /**
+   * Where the game goes on from when no tile has a picture of this moment
+   * and one has a hole in its recording there: the first picture after the
+   * earliest such hole, on the wall. Null while any tile the grid waits for
+   * shows the moment, or none covers it.
+   *
+   * A tile waits at the far side of its hole for the game to get there
+   * (`farSideOfHole`), and the game is only ever where a playing tile's
+   * picture is. With nobody else to bring it, a tile waiting for the game
+   * waited on a clock it was itself meant to drive: one angle, scrubbed
+   * into a hole, stood still under `Waiting for the pictures` for good. So
+   * the tile with the earliest picture after its hole plays from there, as a
+   * lone player would, and the clock follows it.
+   */
+  const crossing = (wallMs: number): number | null => {
+    let earliest: number | null = null
+    for (const video of chosen) {
+      const element = elements.current.get(video.id)
+      if (element == null || urls[video.id] == null) continue
+      if (leftOut.current.has(video.id) || tiles[video.id]?.ended) continue
+      const correction = correctionFor({
+        wallMs,
+        follower: {
+          video,
+          atSec: element.currentTime,
+          mediaSec: endOfTile(video, element),
+          newestSec: newestSecOf(video)
+        }
+      })
+      if (correction.kind === 'park') {
+        // Its camera has this moment, its footage is only on its way: the
+        // game waits for it here. Taken for a tile without the moment, the
+        // game was carried over a cut camera's hole the moment the others
+        // reached their live edge, and they waited at it for footage that
+        // did not exist yet.
+        if (correction.reason === 'notYet') return null
+        continue
+      }
+      const farSide = farSideOfHole(video, wallMs)
+      // This one shows the moment: it carries the game.
+      if (farSide == null) return null
+      const shown = wallAt(video, farSide)
+      if (shown != null && (earliest == null || shown < earliest)) {
+        earliest = shown
+      }
+    }
+    return earliest
+  }
+  const crossingRef = useRef(crossing)
+  crossingRef.current = crossing
+
   /** Puts every tile on one instant, and says what each of them did. */
   const alignTo = useCallback(
     (
-      wallMs: number,
+      asked: number,
       toleranceSec?: number,
       /**
        * Whether the tiles should run. Left out, each runs when the view is
@@ -1079,6 +1240,14 @@ export function useMultiCam(
       mode: 'exact' | 'open' | 'settle' = 'exact'
     ): void => {
       const settle = mode !== 'exact'
+      // Nothing shows this moment, and a tile's recording goes on past a
+      // hole in it: the game goes on from there (`crossing`).
+      const carried = crossingRef.current(asked)
+      const wallMs = carried ?? asked
+      if (carried != null) {
+        atWallRef.current = carried
+        setAtWallMs(carried)
+      }
       for (const video of chosen) {
         const element = elements.current.get(video.id)
         if (element == null) continue
@@ -1102,6 +1271,7 @@ export function useMultiCam(
           toleranceSec
         })
         if (correction.kind === 'park') {
+          farSent.current.delete(video.id)
           intents.current.set(video.id, false)
           element.pause()
           // Waiting for its live footage to reach the game: left where it is,
@@ -1140,6 +1310,44 @@ export function useMultiCam(
           }))
           continue
         }
+        // The moment is inside a hole in its own recording: it waits at the
+        // first picture after the hole, paused, until the game gets there,
+        // and is then started on it as any paused tile is. Played from there,
+        // it ran ahead of the others by the rest of the hole, and nothing
+        // here could see it, since that picture is where its mapping puts
+        // every moment inside the hole.
+        const farSide = farSideOfHole(video, wallMs)
+        if (farSide != null) {
+          intents.current.set(video.id, false)
+          if (!element.paused) element.pause()
+          const sent = farSent.current.get(video.id)
+          if (
+            Math.abs(element.currentTime - farSide) > 0.5 &&
+            (sent == null || Math.abs(sent - farSide) > 0.5)
+          ) {
+            farSent.current.set(video.id, farSide)
+            element.currentTime = farSide
+            seekedAt.current.set(video.id, Date.now())
+          } else if (
+            element.seeking !== true &&
+            run &&
+            crawlRate.current === 0
+          ) {
+            // There, or where its player landed sent there, and still:
+            // started from there when the game arrives.
+            startWhereItStandsRef.current(video, element, farSide)
+          }
+          setTiles(current =>
+            current[video.id]?.parked == null
+              ? current
+              : {
+                  ...current,
+                  [video.id]: { ...current[video.id], parked: null }
+                }
+          )
+          continue
+        }
+        farSent.current.delete(video.id)
         // A tile a little out, while it plays, is brought back by speed: a
         // seek costs more than the gap everywhere but Chrome (`align.ts`).
         const target = secondsAt(video, wallMs)
@@ -1231,8 +1439,15 @@ export function useMultiCam(
    * played, have not finished, and have not been left out.
    */
   const awaited = useCallback(
-    (instant: number, finished?: Map<string, boolean>): VideoSummary[] =>
-      chosen.filter(video => {
+    (
+      asked: number,
+      finished?: Map<string, boolean>,
+      /** `asked` is already where the game goes on from (`crossing`). */
+      crossed = false
+    ): VideoSummary[] => {
+      // Where the game goes on from, when nothing shows this moment.
+      const instant = crossed ? asked : (crossingRef.current(asked) ?? asked)
+      return chosen.filter(video => {
         // An angle with no address is never coming; `undefined` is one still
         // being asked for, which is.
         if (urls[video.id] === null || leftOut.current.has(video.id)) {
@@ -1241,6 +1456,9 @@ export function useMultiCam(
         if (finished?.get(video.id) ?? tiles[video.id]?.ended) {
           return false
         }
+        // Nor one whose camera has no picture of it, inside a hole in its
+        // recording: it waits there for the game (`farSideOfHole`).
+        if (farSideOfHole(video, instant) != null) return false
         const element = elements.current.get(video.id)
         const correction = correctionFor({
           wallMs: instant,
@@ -1252,7 +1470,8 @@ export function useMultiCam(
           }
         })
         return correction.kind !== 'park'
-      }),
+      })
+    },
     [chosen, tiles, urls]
   )
 
@@ -1379,9 +1598,11 @@ export function useMultiCam(
    * was ready, is left out, and the rest go without it.
    */
   const gate = useCallback(
-    (instant: number, finished?: Map<string, boolean>): boolean => {
+    (asked: number, finished?: Map<string, boolean>): boolean => {
       const now = Date.now()
-      const awaiting = awaited(instant, finished)
+      // Where the game goes on from, when nothing shows this moment.
+      const instant = crossingRef.current(asked) ?? asked
+      const awaiting = awaited(instant, finished, true)
       const alone = awaiting.length === 1
       const waits = awaiting.map(video => {
         const element = elements.current.get(video.id)
@@ -1428,8 +1649,19 @@ export function useMultiCam(
       // From where the heard tile actually is, which is never moved: starting
       // from the clock's last reading instead moved every tile on each
       // restart, and on a phone every move is a moment of buffering.
-      const waited = awaited(instant, finished)
-      const from = waited.find(video => video.id === heardId) ?? waited[0]
+      const waited = awaited(instant, finished, true)
+      // Not one a hole away, while another has the moment (`acrossHole`).
+      const near = (video: VideoSummary & AngleVideo): boolean => {
+        const element = elements.current.get(video.id)
+        return (
+          element != null && !acrossHole(video, element.currentTime, instant, 3)
+        )
+      }
+      const from =
+        waited.find(video => video.id === heardId && near(video)) ??
+        waited.find(near) ??
+        waited.find(video => video.id === heardId) ??
+        waited[0]
       const fromElement = from == null ? null : elements.current.get(from.id)
       const there =
         from == null || fromElement == null
@@ -1439,8 +1671,13 @@ export function useMultiCam(
       // word: right after a seek its picture still stands where the seek
       // came from, and starting from there undid the seek.
       const startAt =
-        there != null && Math.abs(there - instant) < 3000 ? there : instant
-      if (startAt !== instant) {
+        there != null &&
+        fromElement != null &&
+        from != null &&
+        mediaApartSec(from, fromElement.currentTime, instant) < 3
+          ? there
+          : instant
+      if (startAt !== asked) {
         atWallRef.current = startAt
         setAtWallMs(startAt)
       }
@@ -1526,6 +1763,11 @@ export function useMultiCam(
           `ready ${element.readyState}  ` +
           `at ${element.currentTime.toFixed(1)}  ` +
           `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
+          `end ${seekableEndOf(element)?.toFixed(1) ?? '—'}  ` +
+          (element.networkState == null
+            ? ''
+            : `net ${element.networkState}  `) +
+          (element.seeking === true ? 'seeking  ' : '') +
           `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
           (tile?.parked != null ? `  parked ${tile.parked}` : '') +
           (leftOut.current.has(video.id) ? '  left out' : '') +
@@ -1699,11 +1941,32 @@ export function useMultiCam(
       // the truth about where the game is; it is the thing to be corrected.
       const there = wallAt(tile.video, tileElement.currentTime)
       return (
-        there != null && (instant == null || Math.abs(there - instant) < 2000)
+        there != null &&
+        (instant == null ||
+          mediaApartSec(tile.video, tileElement.currentTime, instant) < 2)
       )
     })
 
-    const leader = masterOf(showing, heardId)
+    // The clock is a tile with the moment, not one a hole away from it
+    // (`acrossHole`). Only when no other camera covers the moment does one
+    // across its hole carry the game, as a lone tile has to: one whose
+    // footage is merely on its way is a camera to wait for.
+    const near = showing.filter(tile => {
+      const tileElement = elements.current.get(tile.id)
+      return (
+        instant == null ||
+        tileElement == null ||
+        !acrossHole(tile.video, tileElement.currentTime, instant, 2)
+      )
+    })
+    const across = new Set(
+      showing.filter(tile => !near.includes(tile)).map(tile => tile.id)
+    )
+    const othersCover = covering.some(tile => !across.has(tile.id))
+    const leader = masterOf(
+      near.length > 0 ? near : othersCover ? [] : showing,
+      heardId
+    )
     if (leader != null) setMasterId(leader)
     const leaderVideo = chosen.find(video => video.id === leader)
     const leaderElement = leader == null ? null : elements.current.get(leader)
@@ -1726,6 +1989,18 @@ export function useMultiCam(
       // element once a second to keep up the fiction.
       const end = takeRef.current?.toMs
       wallMs = Math.min(instant + WATCHDOG_MS, end ?? Number.MAX_SAFE_INTEGER)
+    } else if (
+      playing &&
+      instant != null &&
+      across.size > 0 &&
+      near.length === 0 &&
+      othersCover
+    ) {
+      // Only tiles that have played on over their hole show anything, and
+      // another camera covers the moment: the game goes on at its own pace
+      // into the hole, where they wait at its far side and the game waits for
+      // the others' footage, rather than leaping the outage with them.
+      wallMs = instant + WATCHDOG_MS
     }
 
     // A tile that was left out joins in once it holds enough where the game
@@ -1783,6 +2058,11 @@ export function useMultiCam(
 
     if (debug) showReadout(wallMs, AHEAD_SEC)
 
+    // At once, as well as for the next render: the next look measures the
+    // tiles against it, and one render late it was two seconds behind a
+    // tile that had played on — far enough to hold the grid and to start it
+    // again from before where the pictures were.
+    atWallRef.current = wallMs
     setAtWallMs(wallMs)
     // A master that has stopped drawing is not a clock to pull everybody
     // back to. Aligning to it put the others back a second on every tick
@@ -1919,10 +2199,15 @@ export function useMultiCam(
     (wallMs: number, final = true): void => {
       if (final) {
         settledAtRef.current(wallMs)
+        for (const element of elements.current.values())
+          markSeek(element, 'scrub', false)
         scrubber.end(wallMs)
         return
       }
       // The playhead goes with the finger; the pictures follow at their pace.
+      // Each seek on the way is the viewer's scrub too.
+      for (const element of elements.current.values())
+        markSeek(element, 'scrub', false)
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
       scrubber.move(wallMs)
@@ -2357,6 +2642,8 @@ export function useMultiCam(
     const target = livePointRef.current()
     if (target == null || !Number.isFinite(target)) return
     const here = gameNowRef.current('') ?? atWallRef.current
+    for (const element of elements.current.values())
+      markSeek(element, 'jump_to_present')
     scrub(Math.max(target, here ?? target))
   }
 
@@ -2547,6 +2834,60 @@ export function useMultiCam(
         holdExpired(Date.now() - (tiles[id]?.stalledSince ?? 0))),
     bufferFor
   }
+}
+
+/**
+ * Whether a tile at `atSec`, `withinSec` of the moment `wallMs` in its own
+ * media (`mediaApartSec`), is past a hole in its recording from it: just
+ * before a hole, the moment and the first picture after it are a second
+ * apart in media and the whole outage apart on the wall. Taken for the
+ * clock while another tile had the moment, that tile carried the game over
+ * the outage, and every other camera stood at its live edge waiting for
+ * footage that did not exist yet. One frame whose own clock jumped and came
+ * back is no hole, as the probes past it show (`HOLE_PROBES_SEC`). Only a
+ * tile ahead of the moment is caught: the probes look forward, the way a
+ * tile plays into its hole.
+ */
+export function acrossHole(
+  video: AngleVideo,
+  atSec: number,
+  wallMs: number,
+  withinSec: number
+): boolean {
+  if (mediaApartSec(video, atSec, wallMs) >= withinSec) return false
+  if (farSideOfHole(video, wallMs) != null) return true
+  const ahead = (sec: number): boolean => {
+    const shown = wallAt(video, atSec + sec)
+    return (
+      shown != null &&
+      shown - sec * 1000 - wallMs > (withinSec + HOLE_SEC) * 1000
+    )
+  }
+  return ahead(0) && HOLE_PROBES_SEC.every(ahead)
+}
+
+/**
+ * How far a tile at `atSec` is from the moment `wallMs`, in its own
+ * seconds: the pictures between them, rather than the wall time.
+ *
+ * Across a hole in its recording the two part. A lone tile that had just
+ * played over a hole a second and a half wide was, on the wall, more than
+ * the two seconds out it may be and still be the clock, though one picture
+ * on from where the clock had last read it: the grid held it, found it too
+ * far from the moment to start from, and sent it back before the hole, to
+ * play over it again — round and round, a few seconds at a time.
+ */
+function mediaApartSec(
+  video: AngleVideo,
+  atSec: number,
+  wallMs: number
+): number {
+  const target = secondsAt(video, wallMs)
+  if (target != null) return Math.abs(atSec - target)
+  const there = wallAt(video, atSec)
+  return there == null
+    ? Number.POSITIVE_INFINITY
+    : Math.abs(there - wallMs) / 1000
 }
 
 /**

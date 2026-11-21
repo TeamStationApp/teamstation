@@ -4,13 +4,11 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { TeamStationClient } from '../../common/api'
-import { narrateTimeline } from '../../common/replay/narration'
 import {
-  replayContextOf,
-  replayTimelineOf
-} from '../../common/replay/replayTimeline'
-import { CHEER_GAIN, CROWD_IDLE_GAIN } from './crowdCheer'
+  maestroDriver,
+  placeFielder,
+  setTrajectory
+} from '../../../e2e/rigs/fieldPointer'
 import {
   artifactsDir,
   attachWeb,
@@ -20,7 +18,14 @@ import {
   sessionFor,
   shot,
   signInWeb
-} from './kit.e2e'
+} from '../../../e2e/rigs/replayKit'
+import { TeamStationClient } from '../../common/api'
+import { narrateTimeline } from '../../common/replay/narration'
+import {
+  replayContextOf,
+  replayTimelineOf
+} from '../../common/replay/replayTimeline'
+import { CHEER_GAIN, CROWD_IDLE_GAIN } from './crowdCheer'
 import { stepHalfEnds } from './replayGaps'
 
 /**
@@ -174,7 +179,10 @@ function screenRecorder(m: Device): { stop: (path: string) => Promise<void> } {
   const frames: Array<{ file: string; at: number }> = []
   const state = { running: true }
   const dir = mkdtemp(join(tmpdir(), 'replay-frames-'))
-  const loop = (async () => {
+  // A screenshot that fails ends the recording, and the failure is the
+  // stop's: thrown here, it would end the run before the flow's own error,
+  // as when the flow fails and its device is detached.
+  const loop = (async (): Promise<void> => {
     const into = await dir
     while (state.running) {
       const file = join(
@@ -184,11 +192,18 @@ function screenRecorder(m: Device): { stop: (path: string) => Promise<void> } {
       await writeFile(file, await m.screenshot())
       frames.push({ file, at: Date.now() })
     }
-  })()
+  })().then(
+    () => undefined,
+    (error: unknown) => {
+      state.running = false
+      return error instanceof Error ? error : new Error(String(error))
+    }
+  )
   return {
     async stop(path) {
       state.running = false
-      await loop
+      const failed = await loop
+      if (failed != null) throw failed
       const end = Date.now()
       const list = frames
         .map(
@@ -252,6 +267,46 @@ const CARD_LOG = `
 `
 
 const CARD = CARD_TEXT
+
+/**
+ * The card's first words, and the box score as they show, waited for in the
+ * page: "Play ball!" shows for two seconds, which one look after another from
+ * here can miss on a slow machine. Answers at once when the card has words,
+ * and waits up to 15 s for them.
+ */
+const FIRST_CARD = (press = false): string => `
+  return JSON.stringify(await new Promise(resolve => {
+    const read = () => ${CARD};
+    const box = () => document.querySelector('[data-testid="replay-box-score"]')?.textContent ?? '';
+    // With \`press\`, the rewind is pressed in the same moment, at "Play ball!".
+    const answer = () => {
+      const card = read(), at = Date.now();
+      if (${press} && card.startsWith('Play ball!'))
+        document.querySelector('[data-testid="replay-rewind"]').click();
+      return { card, box: box(), at };
+    };
+    if (read() !== '') return resolve(answer());
+    const observer = new MutationObserver(() => {
+      if (read() === '') return;
+      observer.disconnect();
+      resolve(answer());
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    setTimeout(() => { observer.disconnect(); resolve(answer()); }, 15000);
+  }));
+`
+
+async function firstCard(
+  m: Device,
+  press = false
+): Promise<{ card: string; box: string; at: number }> {
+  const result = (await m.evalBrowserScript({ script: FIRST_CARD(press) })) as {
+    data?: unknown
+  }
+  return typeof result.data === 'string'
+    ? (JSON.parse(result.data) as { card: string; box: string; at: number })
+    : { card: '', box: '', at: 0 }
+}
 
 async function openGame(m: Device, gameId: string): Promise<void> {
   await m.openBrowser({ url: `${required('REPLAY_WEB_URL')}/games/${gameId}` })
@@ -340,6 +395,12 @@ async function replay(m: Device): Promise<void> {
   assert.ok((await pillLabels(m)).includes('Replay'), 'no Replay pill')
   await m.tapOn({ text: 'Replay' })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+  // Read before anything else: "Play ball!" shows for two seconds.
+  const opening = (await firstCard(m)).card
+  assert.ok(
+    opening.startsWith('Play ball!'),
+    `the replay opens on Play ball!, not ${opening}`
+  )
   await m.assertVisible({ id: 'replay-exit' })
   await m.assertVisible({ id: 'replay-speaker' })
   await m.assertVisible({ id: 'replay-pause' })
@@ -367,7 +428,6 @@ async function replay(m: Device): Promise<void> {
   )
   const changes: number[] = []
   let last = await cardUntil(m, 'the card', text => text !== '', 15000)
-  assert.ok(last.startsWith('Play ball!'), 'the replay opens on Play ball!')
   await shot(m, 'replay-open')
   while (changes.length < 8) {
     const before = last
@@ -435,6 +495,8 @@ async function replay(m: Device): Promise<void> {
   // The pitchers, in the order they pitched: once Gil has relieved Cole,
   // the visitors' pitching lists Cole first. The box score names them as the
   // card does, by first name and last initial.
+  // Gil and Garcia both read "Luis G" (develop 2971c5fd7); in the visitors'
+  // pitching lines only Gil pitches.
   const pitching = `
     const deck = document.querySelector('[data-testid="replay-box-score"]');
     const text = deck.textContent;
@@ -1202,7 +1264,34 @@ async function tapButton(m: Device, name: string): Promise<void> {
     ? `[aria-label^=${JSON.stringify(name.slice(0, -1))}]`
     : `[aria-label=${JSON.stringify(name)}]`
   const css = `:is(button, [role="button"])${label}`
-  await m.tapOn({ css })
+  try {
+    await m.tapOn({ css })
+  } catch (error) {
+    // The scorer redraws its controls as the game moves: a button replaced
+    // as it was tapped is tapped again, once, as it is now.
+    if (!String(error).includes('detached')) throw error
+    await wait(500)
+    await m.tapOn({ css })
+  }
+}
+
+/**
+ * Taps Finish at-bat when the scorer shows it, and says whether it did. An
+ * at-bat can close by itself between the look and the tap (a walk does): a
+ * button gone by then was nothing to finish.
+ */
+async function finishIfOpen(m: Device): Promise<boolean> {
+  if (!(await hasControl(m, 'Finish at-bat'))) return false
+  try {
+    await m.tapOn({
+      css: ':is(button, [role="button"])[aria-label="Finish at-bat"]',
+      timeout: 3000
+    })
+    return true
+  } catch (error) {
+    if (await hasControl(m, 'Finish at-bat')) throw error
+    return false
+  }
 }
 
 /** Whether a control the scorer can tap is on the page, and enabled. */
@@ -1232,26 +1321,14 @@ async function untilControl(
   }
 }
 
-/** A key on the scorer's field, as the keyboard sends it. */
-async function fieldKey(m: Device, key: string): Promise<void> {
-  await evalJson<boolean>(
-    m,
-    `const field = document.querySelector('[role="application"]');
-     field.focus();
-     field.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }));
-     return true`
-  )
-  await wait(300)
-}
-
-/** The scorer records a hit, placed and angled from the keyboard. */
+/** The scorer records a hit up the middle, at the angle the screen offers. */
 async function hit(m: Device, outcome: 'Single' | 'Double'): Promise<void> {
   await tapButton(m, 'Swing in Play')
   await tapButton(m, outcome)
   await untilControl(m, 'Tap or drag a player to where the ball was fielded')
-  for (const key of [' ', 'ArrowUp', 'Enter']) await fieldKey(m, key)
-  await untilControl(m, 'Drag up and down for ball trajectory.')
-  await fieldKey(m, 'Enter')
+  const field = maestroDriver(m)
+  await placeFielder(field, 'CF')
+  await setTrajectory(field)
 }
 
 async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
@@ -1436,8 +1513,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     // Each pitch writes a different card: ball three, a foul, ball four and
     // the next batter's first pitch.
     for (const control of ['Ball', 'Foul Ball', 'Ball', 'Called Strike']) {
-      if (await hasControl(scorer, 'Finish at-bat'))
-        await tapButton(scorer, 'Finish at-bat')
+      await finishIfOpen(scorer)
       await tapButton(scorer, control)
       await wait(1500)
     }
@@ -1452,10 +1528,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     let ended = false
     for (let i = 0; i < 12 && !ended; i++) {
       await wait(1500)
-      if (await hasControl(scorer, 'Finish at-bat')) {
-        await tapButton(scorer, 'Finish at-bat')
-        continue
-      }
+      if (await finishIfOpen(scorer)) continue
       await tapButton(scorer, 'Open scoring menu')
       await wait(500)
       if (await hasControl(scorer, 'End Game')) {
@@ -1469,6 +1542,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
           await tapButton(scorer, 'Called Strike')
       }
     }
+    if (!ended) await shot(scorer, 'scorer-could-not-end')
     assert.ok(ended, 'the scorer could not end the game')
     note('scorer: game ended')
     const final = await cardUntil(
@@ -1520,10 +1594,7 @@ async function liveAnnouncer(
     let ended = false
     for (let i = 0; i < 40 && !ended; i++) {
       await wait(1500)
-      if (await hasControl(scorer, 'Finish at-bat')) {
-        await tapButton(scorer, 'Finish at-bat')
-        continue
-      }
+      if (await finishIfOpen(scorer)) continue
       // The scorer's own summary says when the bottom of the 2nd is over.
       const summary = await evalJson<string>(
         scorer,
@@ -1545,6 +1616,7 @@ async function liveAnnouncer(
       if (await hasControl(scorer, 'Swing and Miss'))
         await tapButton(scorer, 'Swing and Miss')
     }
+    if (!ended) await shot(scorer, 'scorer-could-not-end')
     assert.ok(ended, 'the scorer could not end the game')
     const halves = (
       await evalJson<Array<{ t: number; text: string }>>(
@@ -1775,9 +1847,11 @@ const CENTRING = `
   const minLeft = Math.min(...cells.map(r => r.left)), maxRight = Math.max(...cells.map(r => r.right));
   const note = [...scroll.querySelectorAll('[dir="auto"]')].find(n => (n.textContent ?? '').startsWith('Stats from'));
   const noteRect = note?.getBoundingClientRect();
+  const sideways = [...scroll.querySelectorAll('*')].find(n => n.scrollWidth > n.clientWidth + 1 && ['auto', 'scroll'].includes(getComputedStyle(n).overflowX));
   return {
     left: Math.round((minLeft - left) * 10) / 10,
     right: Math.round((right - maxRight) * 10) / 10,
+    overflow: sideways ? sideways.scrollWidth - sideways.clientWidth : 0,
     note: noteRect ? { inColumn: column.contains(note), align: getComputedStyle(note).textAlign } : null
   };
 `
@@ -1785,16 +1859,29 @@ const CENTRING = `
 interface Centring {
   left: number
   right: number
+  /** How far the stats scroll sideways, when they are wider than the box. */
+  overflow: number
   note: { inColumn: boolean; align: string } | null
 }
 
 async function centred(m: Device, what: string): Promise<Centring> {
   const measured = await evalJson<Centring>(m, CENTRING)
-  console.log(`${what}: gaps ${measured.left} / ${measured.right}`)
-  assert.ok(
-    Math.abs(measured.left - measured.right) <= 1,
-    `${what}: the box score is off centre, ${measured.left} against ${measured.right}`
+  console.log(
+    `${what}: gaps ${measured.left} / ${measured.right}, sideways ${measured.overflow}`
   )
+  // Centred when it fits. Wider than the window (develop 3e0e1d4a7 added
+  // its pitch and strike columns, and a droplet's fonts set wider), it
+  // scrolls sideways from the left edge instead (7447e7314).
+  if (measured.overflow > 0)
+    assert.ok(
+      measured.left >= 0,
+      `${what}: the box score scrolls sideways but starts off the left, ${measured.left}`
+    )
+  else
+    assert.ok(
+      Math.abs(measured.left - measured.right) <= 1,
+      `${what}: the box score is off centre, ${measured.left} against ${measured.right}`
+    )
   return measured
 }
 
@@ -2046,10 +2133,9 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     await signInWeb(m, LEAGUE)
     await openReplay(m, FINAL)
     await evalJson<boolean>(m, CARD_LOG)
-    const boxAtStart = await evalJson<string>(
-      m,
-      `return document.querySelector('[data-testid="replay-box-score"]').textContent`
-    )
+    // The box score at "Play ball!", read by R4 for R13: on a droplet the
+    // first pitch can come before a look straight after the replay opens.
+    let boxAtStart = ''
     const geometry = await evalJson<Geometry>(m, GEOMETRY)
     note(
       `buttons: rewind [left, bottom, width] ${JSON.stringify(geometry.rewind)}, pause [right, bottom, width] ${JSON.stringify(geometry.pause)}`
@@ -2062,13 +2148,37 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     note(`box score at 402: left gap ${phone.left}, right gap ${phone.right}`)
 
     // R4: at "Play ball!", a tap starts the game again from its first pitch.
-    await cardUntil(
-      m,
-      'Play ball!',
-      text => text.startsWith('Play ball!'),
-      15000
-    )
-    let words = await tapRewind(m)
+    // The replay plays on by itself from "Play ball!", which it shows only for
+    // a moment: opened again and tapped at once, and the page's own log of
+    // the card says whether the tap came while it showed. A droplet can be
+    // slower than that moment, so a tap that came after it opens it again.
+    let words: Card | undefined
+    for (let attempt = 1; words == null; attempt++) {
+      assert.ok(attempt <= 4, 'R4: no tap came while the card said Play ball!')
+      // From the game page's pill, as a reader comes to it: the replay starts
+      // as it mounts, where a load of its own address spends the moment on
+      // loading the app.
+      await openGame(m, FINAL)
+      await m.tapOn({ text: 'Replay' })
+      await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+      await evalJson<boolean>(m, CARD_LOG)
+      // Pressed from the page as the card first says "Play ball!": its two
+      // seconds are shorter than a driver's tap on a droplet. What a tap at
+      // "Play ball!" does is the check; the rewinds after it are tapped.
+      const { card: now, box, at } = await firstCard(m, true)
+      note(`R4 attempt ${attempt}: opened at ${now}`)
+      if (!now.startsWith('Play ball!')) continue
+      const deadline = Date.now() + 5000
+      for (;;) {
+        words = (await cards(m)).find(
+          card => card.t >= at && card.text.startsWith('Rewind to')
+        )
+        if (words != null) break
+        assert.ok(Date.now() < deadline, 'the card never said where it went')
+        await wait(100)
+      }
+      boxAtStart = box
+    }
     note(`R4 at Play ball!: ${words.text}`)
     assert.ok(words.text.startsWith('Rewind to top of first'))
 
@@ -2216,8 +2326,7 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       note(
         `${gameId} at 1024: left gap ${measured.left}, right gap ${measured.right}, note ${JSON.stringify(measured.note)}`
       )
-      if (gameId === MIXED)
-        assert.equal(measured.note, null, 'an imported-innings note')
+      assert.equal(measured.note, null, `${gameId}: an imported-innings note`)
       const geometry = await evalJson<Geometry>(tablet, GEOMETRY)
       assert.deepEqual(geometry.rewind, geometry.pause)
     }
@@ -2616,11 +2725,9 @@ async function liveInPlay(
       scorer,
       'Tap or drag a player to where the ball was fielded'
     )
-    await fieldKey(scorer, ' ')
-    for (let i = 0; i < 20; i++) await fieldKey(scorer, 'ArrowLeft')
-    await fieldKey(scorer, 'Enter')
-    await untilControl(scorer, 'Drag up and down for ball trajectory.')
-    await fieldKey(scorer, 'Enter')
+    const field = maestroDriver(scorer)
+    await placeFielder(field, 'LF')
+    await setTrajectory(field)
     const accepted = Date.now()
     note('the scorer places the ball in left field and accepts its trajectory')
     const shown = await cardUntil(
@@ -2709,6 +2816,8 @@ async function main(): Promise<void> {
     else if (scenario === 'replay') {
       await replay((m = await attachWeb(daemon)))
       await m.detach()
+      // Detached: a failure from here is the desktop's, not a second detach.
+      m = undefined
       await desktop((m = await attachWeb(daemon, '1440x900')))
     } else if (scenario === 'announcer')
       await announcer((m = await attachWeb(daemon)))

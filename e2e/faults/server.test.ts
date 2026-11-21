@@ -39,7 +39,9 @@ describe('the fault server', function () {
       listen: { host: '127.0.0.1', port: 0 },
       target: `http://127.0.0.1:${apiPort}`,
       places: { host: '127.0.0.1', port: 0 },
-      token: TOKEN
+      token: TOKEN,
+      modelPort: 0,
+      speechPort: 0
     })
     base = started.proxy.url
   })
@@ -125,10 +127,92 @@ describe('the fault server', function () {
     expect(await hung).equals('let go')
   })
 
+  it('serves the stand-ins behind the token, the beacon to anyone, and delays and logs the API', async function () {
+    expect((await control('GET', 'speech', undefined, null)).status).equals(401)
+    expect((await control('GET', 'speech')).body).deep.include({ begun: 0 })
+    expect((await fetch(`${base}/__tess/beacon`)).status).equals(204)
+    expect((await control('GET', 'beacon')).body).deep.equals({ hits: 1 })
+    await control('PUT', 'delay', { prefix: '/api/v1/teams', ms: 300 })
+    const startedAt = Date.now()
+    expect((await fetch(`${base}/api/v1/teams/t1`)).status).equals(200)
+    expect(Date.now() - startedAt).greaterThanOrEqual(290)
+    await control('PUT', 'delay', null)
+    const logged = await control(
+      'GET',
+      `requests?since=${startedAt}&path=/api/v1/teams`
+    )
+    expect(
+      logged.body.requests.map((row: { path: string }) => row.path)
+    ).includes('/api/v1/teams/t1')
+    expect(started.standIns?.model.baseUrl).matches(
+      /^http:\/\/127\.0\.0\.1:\d+\/v1$/
+    )
+  })
+
   it('serves the Places stand-in beside it', async function () {
     expect(started.placesUrl).matches(/^http:\/\/127\.0\.0\.1:\d+$/)
     const reply = await fetch(`${started.placesUrl}/nowhere`)
     expect(reply.status).equals(404)
+  })
+
+  it('scripts the Jev stand-in on the Places listener, behind the token', async function () {
+    expect((await control('GET', 'jev', undefined, null)).status).equals(401)
+    expect((await control('GET', 'jev')).body).deep.equals({
+      passThrough: false,
+      rule: {},
+      queries: {},
+      requests: []
+    })
+    const set = await control('PUT', 'jev', {
+      rule: { nouls: { 'Hawks Gold': 0.9 } }
+    })
+    expect(set.status).equals(200)
+    expect(set.body.rule).deep.equals({ nouls: { 'Hawks Gold': 0.9 } })
+    const answered = await fetch(`${started.placesUrl}/v1/systemone`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        state: { query: 'hawk', candidates: { c1: { name: 'Hawks Gold' } } },
+        questions: { c1: { type: 'noul' } }
+      })
+    })
+    expect((await answered.json()).answers.c1.noul).equals(0.9)
+    const seen = (await control('GET', 'jev')).body.requests
+    expect(seen.map((row: { query: string }) => row.query)).deep.equals([
+      'hawk'
+    ])
+    expect(started.jev?.view().requests).length(1)
+    // A new script forgets the requests seen under the last one.
+    expect((await control('PUT', 'jev', {})).body.requests).deep.equals([])
+  })
+
+  it('refuses a Jev script it cannot follow, and a body that is not JSON', async function () {
+    const refused = await control('PUT', 'jev', { rule: { status: 'x' } })
+    expect(refused.status).equals(400)
+    expect(refused.body.error).includes('status')
+    expect((await control('PUT', 'jev', '{not json')).status).equals(400)
+    expect((await control('PUT', 'fault', 'null')).status).equals(400)
+    expect((await control('DELETE', 'jev')).status).equals(404)
+  })
+})
+
+describe('a fault server with no Places listener', function () {
+  it('has no Jev stand-in to script', async function () {
+    const started = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: 'http://127.0.0.1:1',
+      token: TOKEN
+    })
+    try {
+      expect(started.jev).equals(undefined)
+      const reply = await fetch(`${started.proxy.url}/__e2e/jev`, {
+        headers: { authorization: `Bearer ${TOKEN}` }
+      })
+      expect(reply.status).equals(404)
+      expect((await reply.json()).error).includes('no Jev stand-in')
+    } finally {
+      await started.close()
+    }
   })
 })
 

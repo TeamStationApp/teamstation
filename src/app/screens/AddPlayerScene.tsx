@@ -2,20 +2,20 @@ import { LegendList } from '@legendapp/list/react-native'
 import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   SafeAreaView as WebSafeAreaView,
-  ScrollView,
+  type StyleProp,
   Text,
   useWindowDimensions,
-  View
+  View,
+  type ViewStyle
 } from 'react-native'
 import {
   initialWindowMetrics,
   SafeAreaProvider,
-  SafeAreaView
+  SafeAreaView,
+  useSafeAreaInsets
 } from 'react-native-safe-area-context'
 
 import {
@@ -33,23 +33,71 @@ import {
 import { PLAYER_POSITIONS } from '../../common/playerSettings'
 import { Button, Card } from '../components'
 import { CandidateCard } from '../components/CandidateCard'
+import { useKeyboardControllerHeld } from '../components/keyboardControllerOwner'
+import { Modal } from '../components/Modal'
 import { PlayerForm } from '../components/PlayerForm'
-import { PlayerSearchField } from '../components/PlayerSearchField'
+import { SEARCH_FIELD_HEIGHT, SearchField } from '../components/SearchField'
 import { useRosterCandidates } from '../hooks/useRosterCandidates'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { KeyboardForm } from './KeyboardForm'
+import { dismissKeyboard } from './SearchDock'
+import {
+  SEARCH_FIELD_GAP,
+  SearchFieldClearance,
+  SearchFieldDock,
+  searchFieldOnTop
+} from './SearchFieldDock'
 
-// eslint-disable-next-line @typescript-eslint/no-deprecated -- Web implementation uses CSS env() and avoids measuring a sliding portal. Native uses safe-area-context.
-const SceneArea = Platform.OS === 'web' ? WebSafeAreaView : SafeAreaView
+/**
+ * The scene's safe area: on the web the browser's own (CSS env()), which
+ * does not measure a sliding portal; on a phone safe-area-context's, which
+ * leaves the foot of the screen to the dock (`edges`). Chosen as it draws.
+ */
+function SceneArea({
+  style,
+  children
+}: {
+  style: StyleProp<ViewStyle>
+  children: React.ReactNode
+}): React.ReactElement {
+  return Platform.OS === 'web' ? (
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the web's needs no measuring; native uses safe-area-context.
+    <WebSafeAreaView style={style}>{children}</WebSafeAreaView>
+  ) : (
+    <SafeAreaView style={style} edges={['top', 'left', 'right']}>
+      {children}
+    </SafeAreaView>
+  )
+}
 
-/** The field's height before it is measured, and the gap above it. */
-const FIELD_HEIGHT = 48
-const FIELD_GAP = 12
+/** Search's dock, clear of the modal's own home indicator, live. */
+function InsetDock(
+  props: Omit<React.ComponentProps<typeof SearchFieldDock>, 'bottom'>
+): React.ReactElement {
+  const insets = useSafeAreaInsets()
+  return (
+    <SearchFieldDock bottom={insets.bottom + SEARCH_FIELD_GAP} {...props} />
+  )
+}
+
+/** The room under the last candidate: the dock, its gap and the home indicator. */
+function InsetClearance({
+  dockHeight
+}: {
+  dockHeight: number
+}): React.ReactElement {
+  const insets = useSafeAreaInsets()
+  return <SearchFieldClearance dockHeight={dockHeight} under={insets.bottom} />
+}
 
 /**
  * Team settings' Add Player: a scene that slides up over team settings,
  * listing the players a roster manager may put on the team, nearest first,
- * searched by the field floating at the bottom. Choosing one shows Add to
+ * searched by Search's own field (`SearchField`): at the top in a browser,
+ * and on a phone or tablet docked at the bottom, riding the keyboard up and
+ * down as Search's does (`SearchFieldDock`); a drag of the list puts the
+ * keyboard away. It finds players only. Choosing one shows Add to
  * Roster in the same scene: their short name and hands greyed, the jersey
  * and positions theirs to set. There is no pool player here: that is a
  * game's. Cancel changes nothing.
@@ -74,7 +122,7 @@ export function AddPlayerScene({
   const styles = getStyles(theme)
   const window = useWindowDimensions()
   const [query, setQuery] = useState('')
-  const [fieldHeight, setFieldHeight] = useState(FIELD_HEIGHT)
+  const [dockHeight, setDockHeight] = useState(SEARCH_FIELD_HEIGHT)
   const [chosen, setChosen] = useState<RosterCandidate>()
   const [value, setValue] = useState<PlayerFormValue>(emptyPlayerForm)
   const [busy, setBusy] = useState(false)
@@ -88,11 +136,18 @@ export function AddPlayerScene({
     },
     []
   )
+  // On Android the keyboard controller must be on before the modal shows,
+  // or it never attaches to the modal's window and the dock cannot ride the
+  // keyboard: held here, for as long as the scene is up.
+  const held = useKeyboardControllerHeld()
   const list = useRosterCandidates({ client, teamId, query })
   const contentWidth = theme.rem(theme.maxContentWidthRem)
   const wide = window.width > contentWidth
 
   const choose = (candidate: RosterCandidate): void => {
+    // The list's keyboard goes away with its own animation as the form comes
+    // in, rather than standing over a form that has not asked for it.
+    dismissKeyboard()
     setChosen(candidate)
     setValue({
       ...emptyPlayerForm(),
@@ -180,7 +235,8 @@ export function AddPlayerScene({
       'No players on your teams, season or league yet. Type three letters to search all players.'
     )
   else empty = line(`No players match “${list.query}”.`)
-  const footer =
+  const top = searchFieldOnTop()
+  const more =
     list.rows.length === 0 ? null : list.updating ? (
       <ActivityIndicator
         testID="Candidates loading more"
@@ -203,7 +259,27 @@ export function AddPlayerScene({
     ) : list.capped ? (
       line(sprintf(lstrings.candidates_capped, ROSTER_CANDIDATE_MAX))
     ) : null
+  // The last row clears the floating dock, and the keyboard.
+  const footer = top ? (
+    more
+  ) : (
+    <>
+      {more}
+      <InsetClearance dockHeight={dockHeight} />
+    </>
+  )
+  const field = (
+    <SearchField
+      testID="Player search field"
+      placeholder="Search players"
+      value={query}
+      onChangeText={setQuery}
+      disabled={list.offline}
+      autoCapitalize="words"
+    />
+  )
 
+  if (!held) return <></>
   return (
     <Modal
       visible
@@ -219,19 +295,7 @@ export function AddPlayerScene({
           }
         }
       >
-        {/* iOS pads by the keyboard's height; Android does not shrink the
-            window for it, so the scene shrinks itself, as `TessChat` does. */}
-        <KeyboardAvoidingView
-          behavior={
-            Platform.OS === 'ios'
-              ? 'padding'
-              : Platform.OS === 'android'
-                ? 'height'
-                : undefined
-          }
-          // The home indicator's inset is under the keyboard while it is up:
-          // the field rides just above it.
-          keyboardVerticalOffset={-(initialWindowMetrics?.insets.bottom ?? 0)}
+        <View
           style={
             Platform.OS === 'web'
               ? { height: '100dvh', width: '100%' }
@@ -271,6 +335,7 @@ export function AddPlayerScene({
               </View>
               {chosen == null ? (
                 <View style={styles.body}>
+                  {top && <View style={styles.topField}>{field}</View>}
                   <View testID="Candidate list" style={{ flex: 1 }}>
                     <LegendList
                       data={list.offline ? [] : list.rows}
@@ -297,30 +362,29 @@ export function AddPlayerScene({
                       }}
                       ListEmptyComponent={empty}
                       ListFooterComponent={footer}
-                      contentContainerStyle={{
-                        paddingBottom: fieldHeight + FIELD_GAP
-                      }}
+                      // As Search's list: a drag puts the keyboard away
+                      // through the keyboard controller, whose dismissal the
+                      // dock follows; iOS insets the list by the keyboard.
+                      {...(top
+                        ? {}
+                        : {
+                            onScrollBeginDrag: dismissKeyboard,
+                            automaticallyAdjustKeyboardInsets: true
+                          })}
                       style={{ flex: 1 }}
                     />
                   </View>
-                  <View
-                    onLayout={event => {
-                      setFieldHeight(event.nativeEvent.layout.height)
-                    }}
-                    style={styles.field}
-                  >
-                    <PlayerSearchField
-                      value={query}
-                      onChangeText={setQuery}
-                      disabled={list.offline}
+                  {!top && (
+                    <InsetDock
+                      active
+                      side={{ left: theme.rem(1), right: theme.rem(1) }}
+                      field={field}
+                      onHeight={setDockHeight}
                     />
-                  </View>
+                  )}
                 </View>
               ) : (
-                <ScrollView
-                  keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={styles.form}
-                >
+                <KeyboardForm style={styles.form}>
                   <Card>
                     <PlayerForm
                       value={value}
@@ -353,11 +417,11 @@ export function AddPlayerScene({
                       add(chosen).catch(() => undefined)
                     }}
                   />
-                </ScrollView>
+                </KeyboardForm>
               )}
             </View>
           </SceneArea>
-        </KeyboardAvoidingView>
+        </View>
       </SafeAreaProvider>
     </Modal>
   )
@@ -404,12 +468,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   cancelText: { fontFamily: theme.semiBoldTextFont, color: theme.dangerColor },
   body: { flex: 1, paddingHorizontal: theme.rem(1) },
-  field: {
-    position: 'absolute' as const,
-    left: theme.rem(1),
-    right: theme.rem(1),
-    bottom: FIELD_GAP
-  },
+  topField: { paddingTop: theme.rem(0.25), paddingBottom: theme.rem(1) },
   form: { padding: theme.rem(1), gap: theme.rem(1) },
   line: {
     paddingVertical: 24,

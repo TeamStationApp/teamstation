@@ -5,9 +5,6 @@ import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
 import type { BallArcState } from '../field/ballArcModel'
 import { fieldingLocation, isFairLocation } from '../field/fieldingLocation'
-import { fieldKey } from '../field/fieldKeyboard'
-import { createPlayers } from '../field/fieldModel'
-import type { FieldCanvasProps } from '../field/fieldTypes'
 import { homeRunKind, homeRunLanding } from '../field/stadiumBoundary'
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
@@ -300,45 +297,4 @@ describe('outcome-specific fielding', function () {
         'Batter Interference'
       )
     })
-  it('aims landing independently from trajectory and clamps keyboard field placements', function () {
-    const props: FieldCanvasProps = {
-      players: createPlayers(),
-      selected: '',
-      onSelect: id => {
-        props.selected = id
-      },
-      view: 'home',
-      zoom: 1,
-      homeRunPlacement: true,
-      arcMode: 'aim',
-      arc: { target: { x: 0, z: -60 }, angle: 45 },
-      interaction: {
-        generation: 4,
-        selectableIds: [],
-        gestures: ['trajectory']
-      },
-      onArcChange: arc => {
-        props.arc = arc
-      }
-    }
-    let accepted = 0
-    props.onLandingAccepted = (arc, generation) => {
-      expect(generation).equals(4)
-      expect(arc.angle).equals(45)
-      accepted++
-    }
-    for (const key of [' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
-      expect(fieldKey(props, key)).equals(true)
-    expect(fieldKey(props, 'x')).equals(false)
-    fieldKey(props, 'Enter')
-    expect(accepted).equals(1)
-    props.arcMode = 'off'
-    props.interaction!.gestures = ['place']
-    props.interaction!.selectableIds = ['P']
-    props.constrainPlacement = p => fieldingLocation('Single', p)
-    fieldKey(props, ' ')
-    for (let i = 0; i < 30; i++) fieldKey(props, 'ArrowRight')
-    expect(isFairLocation(props.players[0].target)).equals(true)
-    fieldKey(props, 'Enter')
-  })
 })

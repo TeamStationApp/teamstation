@@ -18,6 +18,7 @@ import { actionFromTagSlots } from '../../common/scoring/actions'
 import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
+import { claimUpgrade } from '../socket/bindUpgrades'
 import { gameStateLogLines } from './gameStateSummary'
 import {
   type AskOption,
@@ -189,7 +190,10 @@ export function attachDictation(
     socket: Duplex,
     head: Buffer
   ): void => {
-    if (acceptUpgrade(request, socket, head)) return
+    if (acceptUpgrade(request, socket, head)) {
+      claimUpgrade(socket)
+      return
+    }
     // Another listener's path. Without the hook, a request nobody else
     // listens for would hang where express would have answered it.
     if (!claimsOnlyItsOwn && server.listenerCount('upgrade') === 1)

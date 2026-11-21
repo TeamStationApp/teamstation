@@ -9,6 +9,7 @@ import { app, fixtureSettings, testRoot } from './config.test'
 import { type Command, Processes } from './process'
 import {
   builtApp,
+  dsnProject,
   relativeSources,
   sentryBuildEnvironment,
   sentryCliEnvironment,
@@ -100,9 +101,36 @@ describe('Sentry symbol uploads', () => {
 
   it('gives the build the DSN only when the app has a sentry block', () => {
     assert.deepEqual(sentryBuildEnvironment(undefined), {})
+    assert.deepEqual(sentryBuildEnvironment(undefined, 'paul/feature'), {})
     assert.deepEqual(sentryBuildEnvironment({ ...settings() }), {
       TS_SENTRY_DSN: DSN
     })
+  })
+
+  it('keeps master’s DSN, and sends every other branch’s build to its own server', () => {
+    const api = 'https://api.example.test:8443'
+    for (const branch of [undefined, '', 'master'])
+      assert.deepEqual(sentryBuildEnvironment({ ...settings() }, branch, api), {
+        TS_SENTRY_DSN: DSN
+      })
+    for (const branch of ['develop', 'paul/feature', 'tester']) {
+      // The configured project, at the server, under the shared helper's key.
+      assert.deepEqual(sentryBuildEnvironment({ ...settings() }, branch, api), {
+        TS_SENTRY_DSN: `https://develop@api.example.test:8443/${dsnProject(DSN)}`
+      })
+      // With no server of its own, or with production's, it reports nothing.
+      assert.deepEqual(sentryBuildEnvironment({ ...settings() }, branch), {})
+      assert.deepEqual(
+        sentryBuildEnvironment(
+          { ...settings() },
+          branch,
+          'https://app.teamstation.app/'
+        ),
+        {}
+      )
+    }
+    assert.equal(dsnProject('https://abc@logs.example.test/206'), 206)
+    assert.equal(dsnProject('https://abc@logs.example.test/'), 101)
   })
 
   it('reads the token from its private file and refuses one for another server', () => {

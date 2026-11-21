@@ -4,17 +4,21 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { OnLoadData, VideoRef } from 'react-native-video'
 
 import {
   asVideoSummary,
   TeamStationClient,
   type VideoSummary
 } from '../../../common/api'
+import type { WallAnchor } from '../../../common/wallTimeline'
 import { ThemeProvider } from '../../theme/ThemeContext'
+import { NativeVideoHandle } from '../nativeVideoHandle'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
 import type { AngleVideo } from '../wallClock'
 import {
+  fromAnchors,
   fromFragments,
   MAPPING_WAIT_MS,
   type WallMapping
@@ -22,6 +26,7 @@ import {
 import { JOIN_LEAD_SEC, LIVE_OPEN_WAIT_MS, WATCHDOG_MS } from './align'
 import { tileRects } from './layout'
 import {
+  acrossHole,
   type MultiCam,
   type MultiCamOptions,
   type MultiCamProps,
@@ -43,6 +48,9 @@ class FakeTile implements TileHandle {
   ended = false
   /** Left unset, the tile does not say how much it holds, as on a phone. */
   buffered?: TileHandle['buffered']
+  seekable?: TileHandle['seekable']
+  seeking?: boolean
+  networkState?: number
   async play(): Promise<void> {
     this.paused = false
   }
@@ -1444,7 +1452,7 @@ describe('useMultiCam buffering', function () {
     await ticks(1)
     const [a, b, clock] = mc().readout
     expect(a).match(
-      /^A {8} buf 3\.0s {2}ready 4 {2}at 120\.0 {2}to 120\.0 {2}paused {2}ok {2}short \d+(\.\d)?s/
+      /^A {8} buf 3\.0s {2}ready 4 {2}at 120\.0 {2}to 120\.0 {2}end — {2}paused {2}ok {2}short \d+(\.\d)?s/
     )
     // No tile has said where it sits on the wall yet.
     expect(a).match(/ {2}map none$/)
@@ -1457,6 +1465,25 @@ describe('useMultiCam buffering', function () {
     await ticks(2)
     expect(mc().readout[2]).match(/ {2}playing {2}ahead ≤ \d+s {2}heard A$/)
     expect(tiles.A.paused).equals(false)
+  })
+
+  it('a tile’s readout line carries its seekable end, network state and seeking', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({}, { debug: true }, tiles => {
+      fill(tiles.A, [120, 123])
+      fill(tiles.B, [60, 70])
+      tiles.A.seekable = { length: 1, end: () => 760 }
+      tiles.A.networkState = 2
+      tiles.A.seeking = true
+    })
+    await ticks(1)
+    const [a, b] = mc().readout
+    expect(a).match(
+      / {2}to 120\.0 {2}end 760\.0 {2}net 2 {2}seeking {2}paused /
+    )
+    // A phone's tile says no network state, and one not seeking says nothing of it.
+    expect(b).match(/ {2}end — {2}paused /)
+    expect(b).not.match(/net |seeking/)
   })
 
   it('keeps looking once a second while the grid re-renders faster than that, as it does after a scrub', async function () {
@@ -1929,6 +1956,84 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     expect(mc().tiles.B?.parked ?? null).equals(null)
     expect(tiles.B.currentTime).greaterThan(140)
   })
+  it('puts back a phone tile whose player went quiet while it waited, once its timeline has the moment past a hole', async function () {
+    this.timeout(10_000)
+    // B's camera was away for 64 s after its first 100 s: its media goes on
+    // from 100 s at T0 + 164 s.
+    const holed = (after: number): WallMapping =>
+      fromFragments([
+        ...Array.from({ length: 25 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime: T0 + index * 4000
+        })),
+        ...Array.from({ length: after / 4 }, (unused, index) => ({
+          start: 100 + index * 4,
+          duration: 4,
+          programDateTime: T0 + 164_000 + index * 4000
+        }))
+      ])
+    const held: Record<string, WallMapping> = { A: dated(400), B: holed(0) }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 400])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 400 } })
+        // An iPhone's player: no seekable or buffered ranges, only the end
+        // it last reported, short of the hole, and nothing more while it is
+        // paused.
+        Object.assign(tiles.B, { seekableEnd: 92, seekableQuiet: true })
+        tiles.B.currentTime = 92
+      }
+    )
+    await ticks(2)
+    expect(mc().tiles.B?.parked).equals('notYet')
+    expect(tiles.A.paused).equals(false)
+
+    // The camera is back: the server's timeline goes on past the hole, while
+    // B's player, paused, still says 92 s.
+    held.B = holed(100)
+    await until(() => mc().tiles.B?.parked === null, 5000)
+    expect(mc().tiles.B?.parked ?? null).equals(null)
+    // Sent to the first picture after the hole, or just ahead of it.
+    expect(tiles.B.currentTime).within(100, 100 + JOIN_LEAD_SEC)
+    expect(mc().waiting).equals(false)
+  })
+
+  it('keeps a quiet phone tile waiting while its timeline has no newer footage either', async function () {
+    this.timeout(10_000)
+    const held: Record<string, WallMapping> = {
+      A: dated(300),
+      B: dated(100)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 300])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 300 } })
+        Object.assign(tiles.B, { seekableEnd: 92, seekableQuiet: true })
+        tiles.B.currentTime = 92
+      }
+    )
+    await ticks(3)
+    expect(mc().tiles.B?.parked).equals('notYet')
+    expect(tiles.B.currentTime, 'never sought').equals(92)
+  })
+
   it('runs a live game’s bar from its first camera to the newest footage any angle has, and lands a move past live at the live point', async function () {
     const served: Record<string, WallMapping | null> = {
       A: dated(300),
@@ -2236,6 +2341,825 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     expect(tiles.A.paused).equals(false)
     expect(tiles.A.currentTime).equals(147)
   })
+
+  describe('across a hole in a phone tile’s own recording', function () {
+    /**
+     * Four-second fragments from the take's start, `totalSec` of them in
+     * all, with the camera away for `holeSec` after `holeAtSec`: its media
+     * goes on from there `holeSec` later on the wall.
+     */
+    const holedAt = (
+      holeAtSec: number,
+      holeSec: number,
+      totalSec: number
+    ): WallMapping =>
+      fromFragments(
+        Array.from({ length: totalSec / 4 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime:
+            T0 + index * 4000 + (index * 4 >= holeAtSec ? holeSec * 1000 : 0)
+        }))
+      )
+
+    /**
+     * An iPhone tile: a `NativeVideoHandle` in front of a player that acts
+     * as react-native-video's on iOS does. Props arrive a moment after they
+     * are set; a seek lands a moment after it is sent and restores the
+     * player's paused prop; progress is reported every quarter second, and
+     * only while the picture moves. And `setRate` away from a rate other
+     * than 1 first sets the AVPlayer's rate to 1 — which plays it — and only
+     * a tenth of a second later puts the paused prop back, so a paused tile
+     * whose rate the grid puts back to 1 plays for that tenth and says so.
+     *
+     * A seek empties its buffer, and AVPlayer says it is likely to keep up
+     * again a quarter second after it is played, but paused only once it has
+     * filled at its leisure, `pausedFillMs` later: until then the handle
+     * reads it as short (`readyState` 2), and its picture does not move.
+     *
+     * `android` makes it a Pixel's instead: ExoPlayer reports progress while
+     * paused too, fills its buffer paused as it does playing, and changes its
+     * rate without playing. Either way it plays no further than the footage
+     * it can reach, a live stream's edge.
+     */
+    const phone = (
+      seekableEnd: () => number,
+      options: { android?: boolean } = {}
+    ): { handle: NativeVideoHandle; at: () => number; stop: () => void } => {
+      const android = options.android === true
+      const pausedFillMs = android ? 250 : 4000
+      let at = 0
+      let filled = true
+      let fills = 0
+      let nativePaused = true
+      let nativeRate = 1
+      let avRate = 0
+      let sentPaused = true
+      let sentRate = 1
+      const timers = new Set<ReturnType<typeof setTimeout>>()
+      const later = (ms: number, run: () => void): void => {
+        const timer = setTimeout(() => {
+          timers.delete(timer)
+          run()
+        }, ms)
+        timers.add(timer)
+      }
+      /** Fills in `ms`; played to fill, only if it is still playing then. */
+      const fillIn = (ms: number, playingToFill: boolean): void => {
+        const fill = fills
+        later(ms, () => {
+          if (filled || fill !== fills || (playingToFill && avRate === 0)) {
+            return
+          }
+          filled = true
+          handle.handleBuffer({ isBuffering: false })
+        })
+      }
+      const setAv = (rate: number): void => {
+        const was = avRate > 0
+        avRate = rate
+        if (was === rate > 0) return
+        if (rate > 0 && !filled) fillIn(250, true)
+        later(10, () => {
+          handle.handlePlaybackState({ isPlaying: rate > 0, isSeeking: false })
+        })
+      }
+      const setPaused = (paused: boolean): void => {
+        setAv(paused ? 0 : nativeRate)
+        nativePaused = paused
+      }
+      const setRate = (rate: number): void => {
+        if (nativeRate === 1 || android) {
+          nativeRate = rate
+          setPaused(nativePaused)
+          return
+        }
+        setAv(1)
+        later(100, () => {
+          nativeRate = rate
+          setPaused(nativePaused)
+        })
+      }
+      const handle: NativeVideoHandle = new NativeVideoHandle(() => {
+        later(30, () => {
+          const { paused, rate } = handle.props
+          if (paused !== sentPaused) {
+            sentPaused = paused
+            setPaused(paused)
+          }
+          if (rate !== sentRate) {
+            sentRate = rate
+            setRate(rate)
+          }
+        })
+      })
+      handle.attach({
+        seek: (to: number) => {
+          if (!nativePaused) setAv(0)
+          fills += 1
+          filled = false
+          later(10, () => {
+            handle.handleBuffer({ isBuffering: true })
+          })
+          if (avRate > 0) fillIn(250, true)
+          fillIn(pausedFillMs, false)
+          later(150, () => {
+            // No further than the footage it can reach, a live stream's edge.
+            at = Math.min(to, seekableEnd())
+            setPaused(nativePaused)
+            handle.handleSeek({ currentTime: to, seekTime: to })
+          })
+        },
+        resume: () => {
+          setPaused(false)
+        },
+        pause: () => {
+          setPaused(true)
+        },
+        setSource: () => undefined
+      } as unknown as VideoRef)
+      handle.handleLoad({
+        duration: 0,
+        currentTime: 0,
+        naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+      } as unknown as OnLoadData)
+      handle.handleReadyForDisplay()
+      const report = (): void => {
+        handle.handleProgress({
+          currentTime: at,
+          seekableDuration: seekableEnd(),
+          playableDuration: at + 10
+        })
+      }
+      report()
+      let last = Date.now()
+      let unreported = 0
+      const ticker = setInterval(() => {
+        const now = Date.now()
+        const moving = avRate > 0 && filled && at < seekableEnd()
+        if (moving) {
+          at = Math.min(at + ((now - last) / 1000) * avRate, seekableEnd())
+        }
+        if (moving || android) {
+          unreported += now - last
+          if (unreported >= 250) {
+            unreported = 0
+            report()
+          }
+        }
+        last = now
+      }, 20)
+      return {
+        handle,
+        at: () => at,
+        stop: () => {
+          clearInterval(ticker)
+          for (const timer of timers) clearTimeout(timer)
+        }
+      }
+    }
+
+    /**
+     * A plays the game; B, an iPhone tile, has an 8 s hole after its first
+     * 100 s. Runs the grid from `fromSec` into the game until A's clock is
+     * at `untilSec`, and says how far ahead of A's picture B's has been, on
+     * the wall, at any look once the clock was past the hole, and how long
+     * after the clock reached B's first picture after the hole B's picture
+     * began to move (null if it never did).
+     */
+    const across = async (options: {
+      fromSec: number
+      untilSec: number
+      /** B's footage so far, in its own seconds, until the clock passes `backAtSec`. */
+      footageSec?: number
+      backAtSec?: number
+      /** Asked for the game's own moment just as B starts, a moment before its picture. */
+      askOnStart?: boolean
+    }): Promise<{
+      aheadMs: number
+      startMs: number | null
+      /** How often B was paused again once played near its far side, before the clock was 1 s past it. */
+      pausedAgain: number
+      mc: () => MultiCam
+    }> => {
+      const { footageSec, backAtSec } = options
+      const held: Record<string, WallMapping> = {
+        A: dated(400),
+        B: holedAt(100, 8, footageSec ?? 400)
+      }
+      let footageEnd = footageSec ?? 400
+      const B = phone(() => footageEnd)
+      const A = new FakeTile()
+      let aheadMs = 0
+      let startMs: number | null = null
+      let pausedAgain = 0
+      let played = false
+      let mcOf: (() => MultiCam) | undefined
+      const play = B.handle.play.bind(B.handle)
+      B.handle.play = async () => {
+        const clock = held.A.wallAt(A.currentTime) ?? 0
+        if (!played && clock >= T0 + 107_000 && clock < T0 + 108_000) {
+          played = true
+          // A look in the moment between its start and its picture.
+          if (options.askOnStart === true) {
+            setTimeout(
+              () => mcOf?.().scrub(held.A.wallAt(A.currentTime) ?? 0),
+              0
+            )
+          }
+        }
+        await play()
+      }
+      const pause = B.handle.pause.bind(B.handle)
+      B.handle.pause = () => {
+        const clock = held.A.wallAt(A.currentTime) ?? 0
+        if (played && clock < T0 + 109_000) pausedAgain += 1
+        pause()
+      }
+      let ticker: ReturnType<typeof setInterval> | undefined
+      try {
+        const { mc } = await grid(
+          {
+            videos: [liveVideo('A', 0), liveVideo('B', 0)],
+            order: ['A', 'B'],
+            atMs: T0 + options.fromSec * 1000
+          },
+          { fallbackMapping: id => held[id] ?? null },
+          tiles => {
+            A.duration = Number.POSITIVE_INFINITY
+            fill(A, [0, 400])
+            Object.assign(A, { seekable: { length: 1, end: () => 400 } })
+            Object.assign(tiles, { A, B: B.handle })
+          }
+        )
+        mcOf = mc
+        let last = Date.now()
+        let bWas = B.at()
+        ticker = setInterval(() => {
+          const now = Date.now()
+          if (!A.paused) A.currentTime += ((now - last) / 1000) * A.playbackRate
+          last = now
+          // Moving, not sent somewhere by a seek, once the game is near the
+          // far side of the hole, at 108 s on the wall.
+          const step = B.at() - bWas
+          bWas = B.at()
+          const clock = held.A.wallAt(A.currentTime) ?? 0
+          if (
+            startMs == null &&
+            clock >= T0 + 107_000 &&
+            step > 0 &&
+            step < 0.2
+          ) {
+            startMs = clock - (T0 + 108_000)
+          }
+        }, 20)
+        for (let looks = 0; looks < 60; looks++) {
+          const clock = held.A.wallAt(A.currentTime) ?? 0
+          if (clock >= T0 + options.untilSec * 1000) break
+          if (backAtSec != null && clock > T0 + backAtSec * 1000) {
+            // The camera is back: the timeline goes on past the hole.
+            held.B = holedAt(100, 8, 400)
+            footageEnd = 400
+          }
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 500))
+          })
+          const a = held.A.wallAt(A.currentTime) ?? 0
+          const b = held.B.wallAt(B.at()) ?? 0
+          if (a > T0 + 109_000) aheadMs = Math.max(aheadMs, b - a)
+        }
+        return { aheadMs, startMs, pausedAgain, mc }
+      } finally {
+        clearInterval(ticker)
+        B.stop()
+      }
+    }
+
+    it('keeps a phone tile that played into a hole at its far side until the game gets there', async function () {
+      this.timeout(30_000)
+      // B plays up to its hole and over it, on its own, a picture 8 s on;
+      // brought back by speed and then made to wait, the rate it is given
+      // back starts its player.
+      const { aheadMs, mc } = await across({ fromSec: 96, untilSec: 113 })
+      expect(aheadMs, 'B ahead of the game, ms').lessThan(1000)
+      expect(mc().tiles.B?.parked ?? null).equals(null)
+    })
+
+    it('starts a phone tile waiting at the far side of its hole as the game gets there', async function () {
+      this.timeout(30_000)
+      // B, paused at its first picture after the hole, has filled its
+      // buffer there long before the game arrives. Sent on from there to
+      // join, an iPhone's player empties its buffer and, paused, says it is
+      // ready only seconds later: the join, waiting on that, missed the game
+      // and tried again further on, and B stood still for ten seconds.
+      const { aheadMs, startMs, mc } = await across({
+        fromSec: 96,
+        untilSec: 122
+      })
+
+      expect(startMs, 'B starts, ms after the game reaches it').not.equals(null)
+      expect(startMs ?? 0, 'B starts, ms after the game reaches it').lessThan(
+        2000
+      )
+      expect(aheadMs, 'B ahead of the game, ms').lessThan(1000)
+      expect(mc().tiles.B?.parked ?? null).equals(null)
+    })
+
+    it('leaves a phone tile started a moment before its far-side picture playing', async function () {
+      this.timeout(30_000)
+      // It starts START_LEAD_MS before the game reaches its picture; a look
+      // in that moment still found the game inside its hole and held it again.
+      const { startMs, pausedAgain } = await across({
+        fromSec: 96,
+        untilSec: 112,
+        askOnStart: true
+      })
+      expect(startMs, 'B starts').not.equals(null)
+      expect(pausedAgain, 'B paused again once started').equals(0)
+    })
+
+    it('sends a new player for a tile waiting at its far side there too', async function () {
+      const held: Record<string, WallMapping> = {
+        A: dated(400),
+        B: holedAt(100, 8, 400)
+      }
+      const { mc, tiles } = await grid(
+        {
+          videos: [liveVideo('A', 0), liveVideo('B', 0)],
+          order: ['A', 'B'],
+          atMs: T0 + 90_000
+        },
+        { fallbackMapping: id => held[id] ?? null },
+        given => {
+          given.A.duration = Number.POSITIVE_INFINITY
+          fill(given.A, [0, 400])
+          Object.assign(given.A, { seekable: { length: 1, end: () => 400 } })
+        }
+      )
+      await act(async () => {
+        mc().scrub(T0 + 103_000)
+      })
+      expect(tiles.B.currentTime, 'B at its far side').closeTo(100, 0.5)
+      // Its player is replaced, as a remount does: the new one starts at 0.
+      const fresh = new FakeTile()
+      await act(async () => {
+        mc().takeElement('B')(fresh)
+        mc().attached('B', fresh, mc().attaching('B'))
+      })
+      await act(async () => {
+        mc().scrub(T0 + 103_500)
+      })
+      expect(fresh.currentTime, 'the new player at the far side').closeTo(
+        100,
+        0.5
+      )
+    })
+
+    it('starts only the tile the game goes on from, when two wait at the far sides of their holes', async function () {
+      this.timeout(20_000)
+      // A is back 30 s after its hole begins, B 40 s after: the game goes on
+      // from A's return, and B waits for it there.
+      const held: Record<string, WallMapping> = {
+        A: holedAt(100, 30, 400),
+        B: holedAt(100, 40, 400)
+      }
+      const { mc, tiles } = await grid(
+        {
+          videos: [liveVideo('A', 0), liveVideo('B', 0)],
+          order: ['A', 'B'],
+          atMs: T0 + 90_000
+        },
+        { fallbackMapping: id => held[id] ?? null },
+        given => {
+          for (const tile of [given.A, given.B]) {
+            tile.duration = Number.POSITIVE_INFINITY
+            fill(tile, [0, 400])
+            Object.assign(tile, { seekable: { length: 1, end: () => 400 } })
+          }
+        }
+      )
+      let last = Date.now()
+      let bAhead = 0
+      const ticker = setInterval(() => {
+        const now = Date.now()
+        for (const tile of [tiles.A, tiles.B]) {
+          if (!tile.paused) {
+            tile.currentTime += ((now - last) / 1000) * tile.playbackRate
+          }
+        }
+        last = now
+        const a = held.A.wallAt(tiles.A.currentTime) ?? 0
+        const b = held.B.wallAt(tiles.B.currentTime) ?? 0
+        if (!tiles.A.paused && !tiles.B.paused) bAhead = Math.max(bAhead, b - a)
+      }, 20)
+      try {
+        await act(async () => {
+          mc().scrub(T0 + 110_000)
+        })
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 4000))
+        })
+        expect(tiles.A.paused, 'A carries the game').equals(false)
+        expect(tiles.B.paused, 'B waits for the game at its return').equals(
+          true
+        )
+        expect(bAhead, 'B ahead of A, ms').lessThan(1000)
+      } finally {
+        clearInterval(ticker)
+      }
+    })
+
+    // B's live edge before A's hole and after it: either way the game holds
+    // where the footage ends, A's own up to its hole, B's past it.
+    for (const edge of [96, 108])
+      it(`does not carry the game past a hole while another camera’s footage is still on its way (edge ${edge} s)`, async function () {
+        this.timeout(40_000)
+        // A is away from 100 s to 130 s. B is recording, its newest footage
+        // at \`edge\`: at its live edge, the moment past it is B's, only not
+        // here yet. The game was carried to A's return over it, and the
+        // healthy cameras waited at their edge for footage that did not
+        // exist yet (Chrome's stream cuts).
+        const held: Record<string, WallMapping> = {
+          A: holedAt(100, 30, 400),
+          B: dated(edge)
+        }
+        const { mc, tiles } = await grid(
+          {
+            videos: [liveVideo('A', 0), liveVideo('B', 0)],
+            order: ['A', 'B'],
+            atMs: T0 + 90_000
+          },
+          { fallbackMapping: id => held[id] ?? null },
+          given => {
+            given.A.duration = Number.POSITIVE_INFINITY
+            fill(given.A, [0, 400])
+            Object.assign(given.A, { seekable: { length: 1, end: () => 400 } })
+            given.B.duration = Number.POSITIVE_INFINITY
+            fill(given.B, [0, edge])
+            Object.assign(given.B, { seekable: { length: 1, end: () => edge } })
+          }
+        )
+        let last = Date.now()
+        const ticker = setInterval(() => {
+          const now = Date.now()
+          for (const [tile, end] of [
+            [tiles.A, 400],
+            [tiles.B, edge]
+          ] as const) {
+            if (!tile.paused) {
+              tile.currentTime = Math.min(
+                end,
+                tile.currentTime + ((now - last) / 1000) * tile.playbackRate
+              )
+            }
+          }
+          last = now
+        }, 20)
+        try {
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 20_000))
+          })
+          // It waits where the footage ends; it does not leap the hole.
+          expect(
+            (mc().wallNow() ?? 0) - T0,
+            'the game, ms into the take'
+          ).closeTo(Math.max(edge, 100) * 1000, 1500)
+          expect(tiles.A.paused, 'A waits at its far side').equals(true)
+          expect(tiles.A.currentTime).closeTo(100, 0.5)
+        } finally {
+          clearInterval(ticker)
+        }
+      })
+
+    it('does not run a quiet phone tile let go inside its hole ahead of the game', async function () {
+      this.timeout(30_000)
+      // B reaches the end of its footage at its hole and waits there, quiet;
+      // the camera comes back while the clock is inside the hole.
+      const { aheadMs, mc } = await across({
+        fromSec: 99,
+        untilSec: 114,
+        footageSec: 100,
+        backAtSec: 102
+      })
+      expect(aheadMs, 'B ahead of the game, ms').lessThan(1000)
+      expect(mc().tiles.B?.parked ?? null).equals(null)
+    })
+
+    /**
+     * The camera's stream away for 16 s of the wall from 100 s, while the
+     * viewer watches 10 s behind live: the stream is back, at the live edge,
+     * when the clock is at 106 s, inside the hole, and B's first picture
+     * after the hole, at 116 s on the wall, grows from there in real time.
+     * Runs the grid from 88 s until the clock is at 122 s, and says when B's
+     * picture began to move, once the clock was near 116 s, and how far
+     * ahead of the game it has been since.
+     */
+    const liveReturn = async (
+      kind: 'ios' | 'android' | 'web'
+    ): Promise<{ aheadMs: number; startMs: number | null }> => {
+      const fromSec = 88
+      const lagSec = 10
+      const holeAtSec = 100
+      const holeSec = 16
+      const backWallSec = holeAtSec + holeSec
+      /** B's footage, in its own seconds, at this live instant of the wall. */
+      const footageAt = (liveSec: number): number =>
+        liveSec < holeAtSec ? liveSec : Math.max(holeAtSec, liveSec - holeSec)
+      /** B's mapping, with what it has written by then. */
+      const mappingAt = (footageSec: number): WallMapping =>
+        fromFragments(
+          Array.from(
+            { length: Math.ceil(footageSec / 2) },
+            (unused, index) => ({
+              start: index * 2,
+              duration: Math.min(2, footageSec - index * 2),
+              programDateTime:
+                T0 +
+                index * 2000 +
+                (index * 2 >= holeAtSec ? holeSec * 1000 : 0)
+            })
+          )
+        )
+      const A = new FakeTile()
+      const aMapping = dated(400)
+      const clockSec = (): number =>
+        ((aMapping.wallAt(A.currentTime) ?? T0) - T0) / 1000
+      const footage = (): number => footageAt(clockSec() + lagSec)
+      const held: Record<string, WallMapping> = {
+        A: aMapping,
+        B: mappingAt(footageAt(fromSec + lagSec))
+      }
+      const web = new FakeTile()
+      const native =
+        kind === 'web' ? null : phone(footage, { android: kind === 'android' })
+      const B = native?.handle ?? web
+      const bAt = (): number => native?.at() ?? web.currentTime
+      if (kind === 'web') {
+        web.duration = Number.POSITIVE_INFINITY
+        Object.defineProperty(web, 'buffered', {
+          get: () => ({ length: 1, start: () => 0, end: () => footage() })
+        })
+        Object.assign(web, { seekable: { length: 1, end: () => footage() } })
+      }
+      let aheadMs = 0
+      let startMs: number | null = null
+      let ticker: ReturnType<typeof setInterval> | undefined
+      try {
+        await grid(
+          {
+            videos: [liveVideo('A', 0), liveVideo('B', 0)],
+            order: ['A', 'B'],
+            atMs: T0 + fromSec * 1000
+          },
+          { fallbackMapping: id => held[id] ?? null },
+          tiles => {
+            A.duration = Number.POSITIVE_INFINITY
+            fill(A, [0, 400])
+            Object.assign(A, { seekable: { length: 1, end: () => 400 } })
+            Object.assign(tiles, { A, B })
+          }
+        )
+        let last = Date.now()
+        let bWas = bAt()
+        ticker = setInterval(() => {
+          const now = Date.now()
+          const dt = (now - last) / 1000
+          last = now
+          if (!A.paused) A.currentTime += dt * A.playbackRate
+          if (kind === 'web' && !web.paused) {
+            web.currentTime = Math.min(
+              web.currentTime + dt * web.playbackRate,
+              Math.max(web.currentTime, footage())
+            )
+          }
+          held.B = mappingAt(footage())
+          const step = bAt() - bWas
+          bWas = bAt()
+          const clock = clockSec()
+          if (
+            startMs == null &&
+            clock >= backWallSec - 1 &&
+            step > 0 &&
+            step < 0.2
+          ) {
+            startMs = (clock - backWallSec) * 1000
+          }
+          const b = held.B.wallAt(bAt())
+          if (clock > backWallSec + 1 && b != null) {
+            aheadMs = Math.max(aheadMs, b - (T0 + clock * 1000))
+          }
+        }, 20)
+        for (let looks = 0; looks < 90 && clockSec() < 122; looks++) {
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 500))
+          })
+        }
+        return { aheadMs, startMs }
+      } finally {
+        clearInterval(ticker)
+        native?.stop()
+      }
+    }
+
+    for (const kind of ['ios', 'android', 'web'] as const) {
+      it(`starts a ${kind} tile whose stream came back inside the viewer's hole as the game reaches its return`, async function () {
+        this.timeout(60_000)
+        // Before, B was sent on from its far side to join: an iPhone's,
+        // paused, said it was ready there only seconds later, and the join
+        // went further on each time it found it not; the others waited out
+        // the join's own lead. Within a second now, and not early.
+        const { aheadMs, startMs } = await liveReturn(kind)
+        expect(startMs, 'B starts, ms after the game reaches it').not.equals(
+          null
+        )
+        expect(startMs ?? 0, 'B starts, ms after the game reaches it')
+          .lessThan(1000)
+          .greaterThan(-500)
+        expect(aheadMs, 'B ahead of the game, ms').lessThan(1000)
+      })
+    }
+  })
+})
+
+describe('useMultiCam with one live angle on Safari’s own player', function () {
+  /**
+   * Safari's own player on a live stream: a seek lands `offSec` from where
+   * it was sent — a segment's worth either way — a quarter second later,
+   * and says it is seeking meanwhile. It plays no further than the live
+   * edge, which grows as the clock on the wall does.
+   */
+  const safari = (
+    offSec: number,
+    edge: () => number
+  ): { tile: FakeTile; stop: () => void } => {
+    const tile = new FakeTile()
+    tile.duration = Number.POSITIVE_INFINITY
+    let at = 0
+    let seeking = false
+    let landing: ReturnType<typeof setTimeout> | undefined
+    Object.defineProperty(tile, 'currentTime', {
+      get: () => at,
+      set: (to: number) => {
+        clearTimeout(landing)
+        at = to
+        seeking = true
+        landing = setTimeout(() => {
+          at = Math.max(0, Math.min(to + offSec, edge()))
+          seeking = false
+        }, 250)
+      }
+    })
+    Object.defineProperty(tile, 'seeking', { get: () => seeking })
+    Object.assign(tile, { seekable: { length: 1, end: () => edge() } })
+    Object.defineProperty(tile, 'buffered', {
+      get: () => ({ length: 1, start: () => 0, end: () => edge() })
+    })
+    let last = Date.now()
+    const ticker = setInterval(() => {
+      const now = Date.now()
+      if (!tile.paused && !seeking) {
+        at = Math.min(at + ((now - last) / 1000) * tile.playbackRate, edge())
+      }
+      last = now
+    }, 20)
+    return {
+      tile,
+      stop: () => {
+        clearInterval(ticker)
+        clearTimeout(landing)
+      }
+    }
+  }
+
+  /**
+   * One live angle, A, at the take's start, with its newest footage
+   * `edgeSec` in and growing, placed by the server's timeline `anchors`;
+   * its player a Safari one whose seeks land `offSec` off. Opens at
+   * `fromSec` into the take and plays.
+   */
+  const alone = async (options: {
+    anchors: WallAnchor[]
+    edgeSec: number
+    fromSec: number
+    offSec: number
+  }): Promise<{
+    mc: () => MultiCam
+    tile: FakeTile
+    stop: () => void
+  }> => {
+    const began = Date.now()
+    const edge = (): number => options.edgeSec + (Date.now() - began) / 1000
+    const mapping = fromAnchors(options.anchors, edge)
+    const { tile, stop } = safari(options.offSec, edge)
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0)],
+        order: ['A'],
+        audioId: 'A',
+        atMs: T0 + options.fromSec * 1000
+      },
+      { fallbackMapping: id => (id === 'A' ? mapping : null) },
+      tiles => {
+        delete (tiles as Partial<Record<string, FakeTile>>).B
+        Object.assign(tiles, { A: tile })
+      }
+    )
+    return { mc, tile, stop }
+  }
+
+  /** Lets the grid run `ms`. */
+  const run = async (ms: number): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms))
+    })
+  }
+
+  /**
+   * Whether the lone tile plays on: not waiting, and its picture and the
+   * clock both a good way further on `ms` later.
+   */
+  const playsOn = async (
+    mc: () => MultiCam,
+    tile: FakeTile,
+    ms = 3000
+  ): Promise<void> => {
+    const at = tile.currentTime
+    const clock = mc().wallNow() ?? 0
+    await run(ms)
+    expect(mc().waiting, 'waiting for the pictures').equals(false)
+    expect(tile.paused, 'paused').equals(false)
+    expect(tile.currentTime - at, 'picture moved, s').greaterThan(
+      (ms / 1000) * 0.6
+    )
+    expect((mc().wallNow() ?? 0) - clock, 'clock moved, ms').greaterThan(
+      ms * 0.6
+    )
+  }
+
+  for (const offSec of [2, -2]) {
+    it(`keeps playing after five rapid scrubs whose seeks land ${offSec} s off, with no camera away`, async function () {
+      this.timeout(60_000)
+      // Two-second segments, every one on time but two: one point out of
+      // line — a frame's clock that jumped 2 s and came back — and, from
+      // 300 s, a segment that arrived 1.5 s late, which every one after
+      // keeps to. Neither is a camera away, and the timing of the scrubs is
+      // what found them: before, a scrub that ended inside the step paused
+      // the one tile at the far side of what was taken for a hole, to wait
+      // for a game only that tile could move, and it stood still for good.
+      const anchors: WallAnchor[] = []
+      for (let ms = 0; ms <= 600_000; ms += 2000) {
+        anchors.push([ms, T0 + ms + (ms >= 300_000 ? 1500 : 0)])
+        if (ms === 200_000) anchors.push([200_500, T0 + 202_000])
+      }
+      const { mc, tile, stop } = await alone({
+        anchors,
+        edgeSec: 600,
+        fromSec: 500,
+        offSec
+      })
+      try {
+        await until(() => !tile.paused && !mc().waiting, 8000)
+        for (const sec of [150, 240, 200.7, 474, 300.2]) {
+          await act(async () => {
+            mc().scrub(T0 + sec * 1000)
+          })
+          await run(1000)
+        }
+        await run(2000)
+        await playsOn(mc, tile)
+      } finally {
+        stop()
+      }
+    })
+  }
+
+  it('crosses a real 8 s hole in its camera’s recording, scrubbed into', async function () {
+    this.timeout(60_000)
+    // Before, it waited at the first picture after the hole for the game to
+    // get there, and the game is only ever where a playing tile is.
+    const { mc, tile, stop } = await alone({
+      anchors: [
+        [0, T0],
+        [100_000, T0 + 108_000]
+      ],
+      edgeSec: 400,
+      fromSec: 90,
+      offSec: 0
+    })
+    try {
+      await until(() => !tile.paused && !mc().waiting, 8000)
+      await act(async () => {
+        mc().scrub(T0 + 103_000)
+      })
+      await run(3000)
+      await playsOn(mc, tile)
+      // From the far side of the hole, and the clock with it.
+      expect(mc().wallNow() ?? 0).greaterThan(T0 + 108_000)
+      expect(tile.currentTime).greaterThan(100)
+    } finally {
+      stop()
+    }
+  })
 })
 
 describe("useMultiCam stopping at a highlight's end (U10)", function () {
@@ -2417,5 +3341,46 @@ describe("useMultiCam stopping at a highlight's end (U10)", function () {
     for (let round = 0; round < 25 && !mc().ended; round++) await look(200)
     await look()
     expect(ends).equals(1)
+  })
+})
+
+describe('a tile a hole away from the moment', function () {
+  const T0 = Date.parse('2026-05-01T18:00:00.000Z')
+  const on = (anchors: WallAnchor[]): AngleVideo => {
+    const mapping = fromAnchors(anchors)
+    return {
+      startAt: new Date(T0).toISOString(),
+      syncOffsetSec: 0,
+      durationSec: null,
+      clock: () => mapping
+    }
+  }
+
+  it('says a tile that played on over a hole is a hole away from the moment, and no other', function () {
+    const video = on([
+      [0, T0],
+      [100_000, T0 + 108_000]
+    ])
+    // Just before the hole, the tile a second on, past it: a second apart in
+    // media, 8 s apart on the wall.
+    expect(acrossHole(video, 100.5, T0 + 99_500, 2)).equals(true)
+    // Inside the hole, at its far side.
+    expect(acrossHole(video, 100, T0 + 103_000, 2)).equals(true)
+    // At the moment, before the hole or after it.
+    expect(acrossHole(video, 99.5, T0 + 99_500, 2)).equals(false)
+    expect(acrossHole(video, 102, T0 + 110_000, 2)).equals(false)
+    // Far from the moment in its own media: not this question at all.
+    expect(acrossHole(video, 10, T0 + 99_500, 3)).equals(false)
+    // Behind the moment, still before its hole: the probes look forward.
+    expect(acrossHole(video, 99, T0 + 108_500, 2)).equals(false)
+  })
+
+  it('finds no hole for a tile at one point out of line', function () {
+    const video = on([
+      [0, T0],
+      [200_000, T0 + 202_000],
+      [200_500, T0 + 200_500]
+    ])
+    expect(acrossHole(video, 200, T0 + 200_000, 2)).equals(false)
   })
 })

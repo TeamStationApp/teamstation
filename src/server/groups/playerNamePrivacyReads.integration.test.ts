@@ -842,6 +842,31 @@ describe('a game named in player name privacy', function () {
 
     it('writes a roster candidate in the format they play in', async function () {
       await privacy(f.teamB, 'initials')
+      // Add Existing Player finds only people in the asker's reach: as
+      // members of the Eagles' league, the scorer and the site
+      // administrator have them in it.
+      const members = [SCORER, 105].map(reader => ({
+        id: makeId('leagueMember'),
+        user_id: userIdOfGumbo(reader),
+        league_id: f.leagueB,
+        joined_at: new Date()
+      }))
+      await f.h.db.insertInto('league_members').values(members).execute()
+      try {
+        await candidateFormats()
+      } finally {
+        await f.h.db
+          .deleteFrom('league_members')
+          .where(
+            'id',
+            'in',
+            members.map(member => member.id)
+          )
+          .execute()
+      }
+    })
+
+    async function candidateFormats(): Promise<void> {
       // Initials hide both halves: typed whole, they find the row, and
       // either alone finds nothing.
       for (const q of ['Riley', 'Chen'])
@@ -860,7 +885,7 @@ describe('a game named in player name privacy', function () {
       expect(admin).include('"shortName":"Riley Chen"')
       // The parts the add-to-roster form stores are the public label's.
       expect(admin).include('"shortParts":{"first":"R","last":"C"}')
-    })
+    }
 
     it('keeps modelNames from a model', async function () {
       const said = await viaTess(`/games/${gameId}/events`, SCORER)

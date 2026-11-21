@@ -13,7 +13,6 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
-import { userIdOfGumbo } from '../../common/userId'
 import {
   asIdentityCompatibility,
   CHAT2_SCENARIOS,
@@ -21,7 +20,7 @@ import {
   type Chat2Message,
   fixtureClient,
   fixtureControl
-} from '../../test/chat2Fixture.e2e'
+} from '../../../e2e/fixtures/chat2Fixture'
 import {
   androidCaptureImeState,
   androidClosedCaptureGeometry,
@@ -46,7 +45,8 @@ import {
   queryExactVisible,
   readAndroidComposerKeyboard,
   readIosComposerKeyboard
-} from '../../test/chat2Maestro.e2e'
+} from '../../../e2e/rigs/chat2Maestro'
+import { userIdOfGumbo } from '../../common/userId'
 import { encodePng } from '../../test/rasterImage'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'
@@ -1994,6 +1994,8 @@ describe('chat native adapter compatibility', function () {
       back: async () => {},
       open: async () => {},
       id: async () => {},
+      // The ask about notifications never comes up here.
+      notNow: async () => {},
       dom: async (script: string) => {
         if (script.includes('scrollTop=0')) zeroOffset = 0
         return { top: zeroOffset }

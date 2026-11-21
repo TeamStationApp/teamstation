@@ -167,3 +167,92 @@ export function centre(rect: Rect): { x: number; y: number } {
     y: Math.round(rect.y + rect.height / 2)
   }
 }
+
+/** The web page's own player, as its controls lay out under the picture (hidden or not). */
+export interface PagePlayer {
+  /** The picture, which the page names by its position ("6 minutes 32 seconds"). */
+  area: Rect
+  /** The scrub line, between the position and the duration. */
+  line: { from: number; to: number; y: number }
+  /** Where it is, as a fraction of what the line spans, when its times read. */
+  fraction: number | null
+  jump: Rect | null
+  fullScreen: Rect | null
+  /**
+   * The way out of full screen: the full-screen player's ✕ ("Close"), the
+   * page's full-screen button opening the angles' own player, which names no
+   * `fullscreen_exit`.
+   */
+  close: Rect | null
+  /**
+   * Whether it is full screen: its full-screen button says so
+   * (`fullscreen_exit` or `fullscreen`), or, with neither, the angles'
+   * player's ✕ is up; null with none of them.
+   */
+  isFullScreen: boolean | null
+}
+
+const AREA = /\bminutes?\b|\bseconds?\b|indefinite time/
+/** The full-screen player's ✕ (`angles_close`). */
+const CLOSE_LABEL = 'Close'
+const TIME = /^\d+(?::\d\d){1,2}$/
+
+/** Seconds in a player's `m:ss` or `h:mm:ss`. */
+export function clockSeconds(text: string): number {
+  return text.split(':').reduce((sum, part) => sum * 60 + Number(part), 0)
+}
+
+/**
+ * The game page's single-camera player: its picture, the line its two times
+ * bound, and its Jump to present and full-screen buttons. The controls are
+ * in the hierarchy while they are hidden, which is where they are found:
+ * shown, they hide again before a second read.
+ */
+export function readPagePlayer(
+  root: HierarchyNode | undefined
+): PagePlayer | null {
+  const nodes = [...walk(root)].filter(node => node.bounds != null)
+  const area = nodes.find(node => AREA.test(labelOf(node)))?.bounds
+  if (area == null) return null
+  const within = nodes.filter(node => inside(node.bounds!, area))
+  const times = within
+    .filter(node => TIME.test(labelOf(node)))
+    .sort((a, b) => a.bounds!.x - b.bounds!.x)
+  if (times.length < 2) return null
+  const start = times[0]
+  const end = times[times.length - 1]
+  const left = start.bounds!
+  const right = end.bounds!
+  const duration = clockSeconds(labelOf(end))
+  const button = (label: RegExp): Rect | null =>
+    within.find(node => label.test(labelOf(node)))?.bounds ?? null
+  // Anywhere on the screen: the ✕ sits in the corner, outside the picture.
+  const close =
+    nodes.find(node => labelOf(node) === CLOSE_LABEL)?.bounds ?? null
+  return {
+    area,
+    line: {
+      from: left.x + left.width + 20,
+      to: right.x - 20,
+      y: Math.round(left.y + left.height / 2 + 6)
+    },
+    fraction:
+      duration > 0
+        ? Math.min(1, clockSeconds(labelOf(start)) / duration)
+        : null,
+    jump: button(/^Jump to present$/),
+    fullScreen: button(/^fullscreen(_exit)?$/),
+    close,
+    // The player's own full-screen button decides when it is there; a ✕
+    // ("Close") reads as the angles' player only without one, since other
+    // panels close with the same word.
+    isFullScreen:
+      button(/^fullscreen_exit$/) != null
+        ? true
+        : button(/^fullscreen$/) != null
+          ? false
+          : close != null
+            ? true
+            : null
+  }
+}

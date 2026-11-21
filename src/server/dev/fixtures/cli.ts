@@ -5,8 +5,11 @@ import { makeNonce } from './accounts'
 import { splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
+import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runSearch } from './search'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
+import { runTess } from './tess'
 
 /**
  * Builds a database from nothing:
@@ -23,7 +26,11 @@ export const WORLDS: Record<
 > = {
   'team-with-roster': runTeamWithRoster,
   streaming: runStreaming,
-  'coach-game': runCoachGame
+  'coach-game': runCoachGame,
+  'packed-league': runPackedLeague,
+  'packed-league-limit': runPackedLeagueLimit,
+  search: runSearch,
+  tess: runTess
 }
 
 export function refuseWithoutTestSettings(testSettings: boolean): void {

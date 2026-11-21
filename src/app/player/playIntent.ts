@@ -1,3 +1,4 @@
+import type { PlaybackSurface } from '../../common/observability/contract'
 import type { WallMapping } from './wallMapping'
 
 /**
@@ -51,6 +52,19 @@ export interface PlayIntent {
    * video, as it always has.
    */
   isLive?: () => boolean | Promise<boolean>
+  /**
+   * The player is loading itself afresh (true) and has pictures again
+   * (false). A pause between the two is the player's own — a reset element
+   * is paused — not the viewer's, and an owner that reads its pauses as the
+   * viewer's wish must not take that one as a wish to stop: the reload plays
+   * on only if the viewer still wants it.
+   */
+  onRecovery?: (recovering: boolean) => void
+  /**
+   * Where this player shows, for its playback telemetry. Left out, it is
+   * read from the rest: a buffered tile, a preview card, else the game page.
+   */
+  surface?: PlaybackSurface
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
   /**

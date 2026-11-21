@@ -221,8 +221,15 @@ export class TvSurface implements SoakSurfaceDriver {
     await this.options.remote(['left', `wait:${holdMs / 1000}`, 'right'])
   }
 
+  /**
+   * TeamStation TV has no Jump to present: the end of its transport bar is
+   * the live point, so a bar's length of presses to the right reaches it from
+   * anywhere on the bar.
+   */
   async jumpToPresent(): Promise<void> {
-    await this.focusAndSelect(LABELS.jump)
+    await this.options.remote(
+      Array.from({ length: this.options.stepsPerBar ?? 20 }, () => 'right')
+    )
   }
 
   async exitAndReenter(waitMs = 10000): Promise<void> {

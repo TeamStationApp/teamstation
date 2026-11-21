@@ -169,7 +169,7 @@ describe('the changed-line check', function () {
         }
       )
       expect(result, log.join('\n')).equals(0)
-      expect(log).includes('Changed executable line coverage: 4/4 (100.00%)')
+      expect(log).includes('Changed executable line coverage: 3/3 (100.00%)')
     })
 
   it('retains a missing coverage record even when the actual source contains only types', function () {

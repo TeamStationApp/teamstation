@@ -313,6 +313,7 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
         }
       ],
       blocking: null,
+      provenOptimal: true,
       edits: { option: 0, rejectedGameKeys: ['g0'], addedGames: [] },
       replacing: 0,
       publishedOption: null,

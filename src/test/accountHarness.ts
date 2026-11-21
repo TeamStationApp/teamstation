@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
-import { createServer, type Server } from 'node:http'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
+import type { Duplex } from 'node:stream'
 
 import express from 'express'
+import { rateLimit } from 'express-rate-limit'
 import type { Kysely } from 'kysely'
 import { Pool } from 'pg'
 
@@ -31,6 +33,9 @@ import { authRoutes } from '../server/routes/auth'
 import { meRoutes } from '../server/routes/me'
 import { playerRoutes } from '../server/routes/players'
 import { teamRoutes } from '../server/routes/teams'
+import { attachSearchSocket } from '../server/search/socket'
+import { serverConfig } from '../server/serverConfig'
+import { claimUpgrade, leaveUpgrade } from '../server/socket/bindUpgrades'
 import { traceHttp } from './httpTrace'
 import { insertFixtureUsers } from './insertFixtureUsers'
 
@@ -263,7 +268,13 @@ export async function accountHarness(
   )
   app.use(
     '/api/v1',
-    authRoutes(db, { space, sendCode, publicUrl: 'http://localhost' })
+    authRoutes(db, {
+      space,
+      sendCode,
+      publicUrl: 'http://localhost',
+      // Native fixture builds identify the app independently of the test API.
+      appOrigins: ['https://app.teamstation.app']
+    })
   )
   app.use('/api/v1', meRoutes(db, undefined, media))
   app.use('/api/v1', teamRoutes(db, media))
@@ -274,14 +285,52 @@ export async function accountHarness(
       res.json({ ok: true, version: 'test', dictation: false })
     })
     app.use(express.static(webRoot, { dotfiles: 'allow' }))
-    app.get('/{*path}', (_req, res) => {
-      res.sendFile(path.join(webRoot, 'index.html'), { dotfiles: 'allow' })
+    // Every other path is the web app's page, read from the disk: a limit far
+    // above what a test asks keeps a stray loop from flooding it.
+    const pages = rateLimit({ windowMs: 1000, limit: 1000 })
+    app.get('/{*path}', pages, (_req, res) => {
+      res.sendFile(path.resolve(webRoot, 'index.html'), { dotfiles: 'allow' })
     })
   }
   app.use(errorHandler)
   const server = app.listen(0, bindHost)
   await new Promise<void>(resolve => server.once('listening', resolve))
   const origin = `http://${bindHost}:${(server.address() as AddressInfo).port}`
+  // The search field's socket, as the server attaches it. A fixture's own
+  // socket (the game socket, dictation) listens beside it, so this listener
+  // takes only the search path and leaves every other upgrade to them. One
+  // that none of them takes is destroyed, as Node does with no listener.
+  const searchSocket = attachSearchSocket({
+    db,
+    deps: { space, jevBaseUrl: serverConfig.jev.baseUrl },
+    allowedOrigins: [...serverConfig.corsOrigins, origin]
+  })
+  // Every upgrade the server has heard, open or pending, so close never
+  // waits on one.
+  const upgrades = new Set<Duplex>()
+  const onSearchUpgrade = (
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): void => {
+    upgrades.add(socket)
+    socket.once('close', () => upgrades.delete(socket))
+    if (searchSocket.acceptUpgrade(req, socket, head)) {
+      claimUpgrade(socket)
+      return
+    }
+    leaveUpgrade(server, socket, () => {
+      socket.destroy()
+    })
+  }
+  server.on('upgrade', onSearchUpgrade)
+  let searchAttached = true
+  const detachSearchSocket = (): void => {
+    if (!searchAttached) return
+    searchAttached = false
+    server.off('upgrade', onSearchUpgrade)
+    searchSocket.close()
+  }
   return {
     db,
     mail,
@@ -292,6 +341,7 @@ export async function accountHarness(
     controls,
     origin,
     server,
+    detachSearchSocket,
     tokens,
     async request(
       method: string,
@@ -316,6 +366,10 @@ export async function accountHarness(
       await db.deleteFrom('rate_events').execute()
     },
     async close(): Promise<void> {
+      detachSearchSocket()
+      // A socket the server upgraded is no longer one of its connections, and
+      // a pending one may never finish: neither may hold the close open.
+      for (const socket of upgrades) socket.destroy()
       await new Promise<void>((resolve, reject) =>
         server.close(error => {
           error == null ? resolve() : reject(error)
@@ -352,6 +406,11 @@ export interface AccountHarness {
   origin: string
   /** The API's HTTP server, for a fixture that adds a socket to it. */
   server: Server
+  /**
+   * Closes the search socket the harness attached at `/api/v1/search`, for
+   * a test that attaches its own there.
+   */
+  detachSearchSocket: () => void
   tokens: Map<number, string>
   request: (
     method: string,

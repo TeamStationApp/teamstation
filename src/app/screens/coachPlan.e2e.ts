@@ -12,6 +12,11 @@ import { build } from 'esbuild'
 import { after, before, describe, it } from 'mocha'
 import type { HTTPRequest, HTTPResponse, Page } from 'puppeteer'
 
+import {
+  type BrowserSession,
+  browserSession,
+  maestro
+} from '../../../e2e/rigs/refinementsMaestro'
 import type { Lineup, LineupPerson, SaveLineupsBody } from '../../common/api'
 import type { GamePlan, PlanCell } from '../../common/gamePlan'
 import {
@@ -25,11 +30,6 @@ import { serverConfig } from '../../server/serverConfig'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { readPlanPdf } from '../../test/planPdfReader'
-import {
-  type BrowserSession,
-  browserSession,
-  maestro
-} from '../../test/refinementsMaestro.e2e'
 
 /**
  * Coach Plan end to end: the coaching screen's tabs, footer and field, and

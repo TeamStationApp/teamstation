@@ -59,5 +59,5 @@ export function seekBy(video: VideoHandle, delta: number): void {
     ? video.duration
     : video.currentTime + Math.max(0, delta)
   const next = video.currentTime + delta
-  seekTo(video, Math.min(Math.max(0, next), duration))
+  seekTo(video, Math.min(Math.max(0, next), duration), 'seek_by')
 }

@@ -9,7 +9,7 @@ import { NO_OVERRIDES } from '../../../../src/common/scoreboard'
 import {
   override as overrideOver,
   publish as publishOver
-} from '../../../../src/test/scoreboardPublish.e2e'
+} from '../../../../e2e/rigs/scoreboardPublish'
 import { attach, flatten } from '../../../test/maestroD'
 
 /**
@@ -37,7 +37,7 @@ import { attach, flatten } from '../../../test/maestroD'
  *   TS_E2E_TOKEN          a bearer token for scoreboard-e2e@teamstation.local
  *   SEAT_SQL              a command that runs its last argument as SQL on the
  *                         seat's database and prints bare rows, e.g.
- *                         "psql -d AppDb_nativeScoreboard -tAc"
+ *                         "psql -d teamstation_e2eStack -tAc"
  *   SEAT_REDIS            a command that runs redis-cli on the seat, e.g.
  *                         "redis-cli"
  *   SEAT_REDIS_PREFIX     the seat's key prefix, ts:<database>

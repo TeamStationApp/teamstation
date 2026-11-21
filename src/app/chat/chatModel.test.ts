@@ -1,14 +1,18 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import type { AttachmentRef } from '../../common/chatContent'
 import { userIdOfGumbo } from '../../common/userId'
+import { lstrings } from '../locales/strings'
 import { contentTypeOf, safeFileName } from './chatFileTypes'
 import {
   actionsFor,
   approvalsIn,
   canStartDm,
+  contentPreview,
   groupChats,
   hasUnread,
+  messagePreview,
   placeholderSize,
   readLine,
   safetyGroups,
@@ -359,6 +363,39 @@ describe('the small words of the chat screens', function () {
     expect(swipeOffset(500)).equals(90)
     expect(swipeReplies(59)).equals(false)
     expect(swipeReplies(60)).equals(true)
+  })
+
+  it('previews a post’s content as its message preview does', function () {
+    const file = (contentType: string, fileName: string): AttachmentRef => ({
+      id: 'att_fixture',
+      key: 'k'.repeat(43),
+      digest: 'd'.repeat(43),
+      size: 1,
+      contentType,
+      fileName
+    })
+    const image = file('image/png', 'lineup.png')
+    const video = file('video/mp4', 'swing.mp4')
+    const notes = file('application/pdf', 'rules.pdf')
+    const contents = [
+      { body: 'Bring water.', attachments: [image] },
+      { body: '', attachments: [image] },
+      { body: '', attachments: [video] },
+      { body: '', attachments: [notes] },
+      { body: '', attachments: [image, video, notes] },
+      { body: '', attachments: [] }
+    ]
+    expect(contents.map(contentPreview)).deep.equals([
+      'Bring water.',
+      lstrings.chat_photo_label,
+      lstrings.chat_video_label,
+      `${lstrings.chat_file}: rules.pdf`,
+      `3 ${lstrings.chat_attachments_label}`,
+      lstrings.chat_message_unavailable
+    ])
+    for (const content of contents) {
+      expect(messagePreview(message(content))).equals(contentPreview(content))
+    }
   })
 
   it('names files safely and guesses their type', function () {

@@ -4,7 +4,12 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import { asPage, asSeasonGame, TeamStationClient } from '../../common/api'
+import {
+  asPage,
+  asSeasonGame,
+  type RosterCandidate,
+  TeamStationClient
+} from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { pageOf } from '../../test/pageOf'
@@ -22,10 +27,11 @@ import {
 import {
   CANDIDATES_KEPT,
   candidatesKey,
+  candidatesQueryOf,
   candidatesTeamOf,
-  candidatesWordsOf,
   documentKeyOf,
   fallbackKeyOf,
+  foundWords,
   fullRosterKey,
   GAMES_ALL,
   GAMES_PAST,
@@ -173,9 +179,20 @@ describe('CachingClient', function () {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  const openCache = async (userId: string): Promise<DocumentStore> => {
+  const openCache = async (
+    userId: string,
+    apiBaseUrl: string
+  ): Promise<DocumentStore> => {
     opened.push(userId)
-    const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+    const executor = nodeSqliteExecutor(
+      join(
+        dir,
+        cacheFileName(
+          userId,
+          new URL(apiBaseUrl, 'https://app.example.test').href
+        )
+      )
+    )
     stores.set(userId, executor)
     return await openCacheStore(executor)
   }
@@ -227,12 +244,61 @@ describe('CachingClient', function () {
     expect(candidatesTeamOf('/users?forTeam=t%201&q=x')).equals('t 1')
     expect(candidatesTeamOf('/users?guardedBy=me')).equals(undefined)
     expect(candidatesTeamOf('/teams/t1/roster')).equals(undefined)
-    expect(candidatesWordsOf('/users?forTeam=t1&q=Jor%20%20Q')).deep.equals([
-      'jor',
-      'q'
+    expect(candidatesQueryOf('/users?forTeam=t1&q=Jor%20%20Q')).equals('Jor  Q')
+    expect(candidatesQueryOf('/users?forTeam=t1')).equals('')
+    expect(candidatesQueryOf('/teams/t1/roster')).equals('')
+    expect(foundWords('Jor  Q', ['jor', 'q'])).deep.equals(['jor', 'q'])
+    expect(foundWords('John Smith', ['smith'])).deep.equals(['smith'])
+    expect(foundWords('José smith-jones', ['jose', 'smith'])).deep.equals([
+      'josé'
     ])
-    expect(candidatesWordsOf('/users?forTeam=t1')).deep.equals([])
-    expect(candidatesWordsOf('/teams/t1/roster')).deep.equals([])
+    expect(foundWords('john', [])).deep.equals([])
+  })
+
+  it('keeps what the search socket found for a team as an answer of the route is kept, with its words', async function () {
+    const row = (name: string): RosterCandidate => ({
+      userId: `usr_${name}`,
+      gumboId: null,
+      externalIds: [],
+      shortName: `${name} B`,
+      shortParts: { first: name, last: 'B' },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      affiliations: '',
+      tier: 'mine'
+    })
+    const client = clientOf(server({}).fetch)
+    // Signed out, there is no file to keep them in.
+    const found = (
+      name: string,
+      matched?: string[]
+    ): ReturnType<typeof row> & { matched?: string[] } =>
+      matched == null ? row(name) : { ...row(name), matched }
+    await client.keepRosterCandidates('tem_hawks', [found('Mookie', ['moo'])])
+    client.openFor('usr_1')
+    await client.keepRosterCandidates('tem_hawks', [found('Mookie', ['moo'])])
+    // Each row keeps the words that found it, none for one they did not.
+    await client.keepRosterCandidates('tem_hawks', [
+      found('Aaron', ['b']),
+      found('Mookie', ['b']),
+      found('Freddie')
+    ])
+    const kept = await client.cached(
+      candidatesKey('tem_hawks'),
+      raw => raw as Array<{ userId: string; matched?: string[] }>
+    )
+    expect(kept?.map(entry => [entry.userId, entry.matched])).deep.equals([
+      ['usr_Aaron', ['b']],
+      ['usr_Mookie', ['moo', 'b']],
+      ['usr_Freddie', undefined]
+    ])
+    // The web's client keeps none.
+    await new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server({}).fetch
+    }).keepRosterCandidates('tem_hawks', [found('Mookie', ['moo'])])
   })
 
   interface Kept {
@@ -257,13 +323,14 @@ describe('CachingClient', function () {
     const nearest = Array.from({ length: 30 }, (_, i) =>
       person(`Near${i}`, 'Birch')
     )
+    // Each row says which folded words found him.
     const net = server({
       '/users?forTeam=tem_falcons&forGame=gam_1&limit=30': { body: nearest },
       '/users?forTeam=tem_falcons&forGame=gam_1&q=Quill&limit=30': {
-        body: [person('Jordan', 'Quillfeather')]
+        body: [{ ...person('Jordan', 'Quillfeather'), matched: ['quill'] }]
       },
       '/users?forTeam=tem_falcons&forGame=gam_1&q=jor+q&limit=30': {
-        body: [person('Jordan', 'Quillfeather')]
+        body: [{ ...person('Jordan', 'Quillfeather'), matched: ['jor', 'q'] }]
       }
     })
     const client = clientOf(net.fetch)
@@ -301,6 +368,53 @@ describe('CachingClient', function () {
     expect(kept?.map(row => row.userId)).includes('usr_Jordan')
   })
 
+  it('keeps with each person a typed search found only the words that found him, as the route says', async function () {
+    const person = (first: string, last: string): Record<string, unknown> => ({
+      userId: `usr_${first}`,
+      gumboId: null,
+      externalIds: [],
+      shortName: `${first} ${last.slice(0, 1)}`,
+      shortParts: { first, last: last.slice(0, 1) },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      tier: 'league'
+    })
+    // The route keeps a person any one typed word found.
+    const net = server({
+      '/users?forTeam=tem_falcons&q=john+smith&limit=30': {
+        body: [
+          { ...person('John', 'Smithson'), matched: ['john', 'smith'] },
+          { ...person('Jane', 'Smith'), matched: ['smith'] },
+          // An older server says nothing: no words are kept for him.
+          person('Jake', 'Smith')
+        ]
+      }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    const answered = await client.rosterCandidates({
+      teamId: 'tem_falcons',
+      q: 'john smith',
+      limit: 30
+    })
+    expect(answered.map(row => row.matched)).deep.equals([
+      ['john', 'smith'],
+      ['smith'],
+      undefined
+    ])
+    const kept = await client.cached(
+      candidatesKey('tem_falcons'),
+      raw => raw as Kept[]
+    )
+    expect(kept?.map(row => [row.userId, row.matched])).deep.equals([
+      ['usr_John', ['john', 'smith']],
+      ['usr_Jane', ['smith']],
+      ['usr_Jake', undefined]
+    ])
+  })
+
   it('keeps no more than the cap of found people, the newest answer’s first', async function () {
     const person = (n: number): Record<string, unknown> => ({
       userId: `usr_${n}`,
@@ -319,7 +433,10 @@ describe('CachingClient', function () {
     const pages = Math.ceil(CANDIDATES_KEPT / 100) + 1
     for (let p = 0; p < pages; p++)
       routes[`/users?forTeam=tem_falcons&q=p${p}&limit=100`] = {
-        body: Array.from({ length: 100 }, (_, i) => person(p * 100 + i))
+        body: Array.from({ length: 100 }, (_, i) => ({
+          ...person(p * 100 + i),
+          matched: [`p${p}`]
+        }))
       }
     const client = clientOf(server(routes).fetch)
     client.openFor('usr_1')
@@ -1177,10 +1294,16 @@ describe('CachingClient', function () {
     await client.signedOut()
     expect(client.cacheUser).equals(undefined)
     const { existsSync } = await import('node:fs')
-    expect(existsSync(join(dir, cacheFileName('usr_2')))).equals(false)
-    expect(existsSync(join(dir, cacheFileName('usr_1')))).equals(true)
+    expect(existsSync(join(dir, cacheFileName('usr_2', 'http://x')))).equals(
+      false
+    )
+    expect(existsSync(join(dir, cacheFileName('usr_1', 'http://x')))).equals(
+      true
+    )
     await client.discard('usr_1')
-    expect(existsSync(join(dir, cacheFileName('usr_1')))).equals(false)
+    expect(existsSync(join(dir, cacheFileName('usr_1', 'http://x')))).equals(
+      false
+    )
     client.openFor('usr_3')
     await client.discard('usr_3')
     expect(client.cacheUser).equals(undefined)
@@ -1188,11 +1311,16 @@ describe('CachingClient', function () {
 
   it('misses, and answers from the server, when the file will not open or write', async function () {
     const net = server({ '/teams': { body: [team('tem_hawks', 'Hawks')] } })
+    const deleted: string[] = []
     const broken = new CachingClient({
       baseUrl: 'http://x/api/v1',
       fetch: net.fetch,
       openCache: async () => {
         throw new Error('disk full')
+      },
+      deleteCache: async userId => {
+        deleted.push(userId)
+        throw new Error('cleanup refused')
       }
     })
     broken.openFor('usr_1')
@@ -1200,6 +1328,7 @@ describe('CachingClient', function () {
     expect(await broken.cached('home.teams', raw => raw)).equals(undefined)
     await broken.discard('usr_9')
     await broken.signedOut()
+    expect(deleted).deep.equals(['usr_9', 'usr_1'])
 
     const failing: DocumentStore = {
       read: async () => {
@@ -1221,10 +1350,14 @@ describe('CachingClient', function () {
         throw new Error('locked')
       }
     }
+    const lockedDeleted: string[] = []
     const locked = new CachingClient({
       baseUrl: 'http://x/api/v1',
       fetch: net.fetch,
-      openCache: async () => failing
+      openCache: async () => failing,
+      deleteCache: async userId => {
+        lockedDeleted.push(userId)
+      }
     })
     locked.openFor('usr_1')
     expect(await locked.teams()).length(1)
@@ -1239,6 +1372,8 @@ describe('CachingClient', function () {
     }
     expect(failure).property('code', 'offline')
     await locked.signedOut()
+    await locked.discard('usr_3')
+    expect(lockedDeleted).deep.equals(['usr_2', 'usr_3'])
   })
 
   it('throws the offline error for a stored body this version cannot read', async function () {

@@ -1,13 +1,8 @@
 import React from 'react'
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  ScrollView,
-  View
-} from 'react-native'
+import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Modal } from './Modal'
 
 /**
  * The dialog a picker opens in, over the dimmed screen: a calendar, a time or

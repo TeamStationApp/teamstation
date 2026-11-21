@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Modal, Text } from 'react-native'
+import { Text } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { CreateGroup, GroupPicture } from '../../common/groupCreation'
@@ -9,6 +9,7 @@ import { Button, Card, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { LocationRow } from '../components/LocationRow'
+import { Modal } from '../components/Modal'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { LocationScreen } from './LocationScreen'
 

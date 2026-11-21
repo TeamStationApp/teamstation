@@ -317,6 +317,59 @@ function held(list: readonly string[], digest: string): string[] {
 }
 
 /** A save refused because the lineups it was built on have moved on. */
+/**
+ * The players another device's lineup changes brought onto each side: added
+ * by `addPlayer`, or on a roster of theirs that `known` (the game as this
+ * device last read it) did not have on that side.
+ */
+function playersAddedBy(
+  theirs: readonly ScoringAction[],
+  known: GameState
+): Record<Side, Set<number>> {
+  const added: Record<Side, Set<number>> = { away: new Set(), home: new Set() }
+  for (const action of theirs) {
+    if (action.type !== 'lineup') continue
+    if (
+      action.kind === 'addPlayer' &&
+      action.side != null &&
+      action.player != null
+    )
+      added[action.side].add(action.player)
+    else if (action.kind === 'roster' && action.setup != null)
+      for (const side of ['away', 'home'] as const)
+        for (const id of action.setup.sides[side].players)
+          if (!known.liveData.boxscore.teams[side].players.includes(id))
+            added[side].add(id)
+  }
+  return added
+}
+
+/**
+ * A side of a roster saved over the game as it is now, `setup` holding that
+ * copy: a player another device brought onto the side since this one read
+ * the game (`added`), whom the saved roster never knew, stays on it, on the
+ * bench. The roster takes off only players it knew; one made since is not
+ * its to take off.
+ */
+function keepPlayersAddedSince(
+  setup: GameSetup,
+  now: GameState,
+  saved: GameSetup,
+  side: Side,
+  added: Record<Side, Set<number>>
+): void {
+  for (const id of now.liveData.boxscore.teams[side].players) {
+    if (
+      !added[side].has(id) ||
+      saved.players[id] != null ||
+      setup.sides[side].players.includes(id)
+    )
+      continue
+    setup.sides[side].players.push(id)
+    if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
+  }
+}
+
 function stale(error: unknown): boolean {
   return (
     error instanceof HttpError &&
@@ -1845,6 +1898,7 @@ export class ScoringSession {
     const kept = oursWins ? fork : agree(this.savedLog, fresh.log)
     const ours = this.log.slice(same)
     const theirs = fresh.log.slice(kept)
+    const addedByThem = playersAddedBy(theirs, this.game)
     // The latest creation time wins a lineup: each side's latest change of
     // theirs, against which each of our lineup changes is weighed.
     const ourSides = this.lineupSides.slice(same)
@@ -2006,6 +2060,7 @@ export class ScoringSession {
               setup.players[id] = copyState(action.setup.players[id])
             if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
           }
+          keepPlayersAddedSince(setup, state, action.setup, side, addedByThem)
         }
         action = {
           ...action,
@@ -2060,6 +2115,7 @@ export class ScoringSession {
               setup.players[id] = copyState(action.setup.players[id])
             if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
           }
+          keepPlayersAddedSince(setup, state, action.setup, side, addedByThem)
         }
         action = {
           ...action,

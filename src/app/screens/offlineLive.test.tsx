@@ -101,8 +101,16 @@ async function storedHomePhone(
             status: 404
           })
     },
-    openCache: async userId => {
-      const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+    openCache: async (userId, apiBaseUrl) => {
+      const executor = nodeSqliteExecutor(
+        join(
+          dir,
+          cacheFileName(
+            userId,
+            new URL(apiBaseUrl, 'https://app.example.test').href
+          )
+        )
+      )
       executors.push(executor)
       return await openCacheStore(executor)
     }
