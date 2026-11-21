@@ -159,7 +159,9 @@ async function openPost(
  * any other message, and anything but a new post, shows nothing. A DM that
  * cannot be opened here (no record for `wake.u`, a key not yet held, a
  * failed check) still says who wrote; a group message that cannot shows
- * nothing. Never throws, and never writes the record.
+ * nothing. A `generic` wake (its recipient has no age on file, so may read
+ * no chat) shows only that there is a new message, and fetches nothing.
+ * Never throws, and never writes the record.
  */
 export async function openWake(
   wake: ChatWake,
@@ -171,6 +173,9 @@ export async function openWake(
     url: wake.url,
     tag: `chat:${wake.c}`
   })
+  if (wake.generic === true) {
+    return shown(lstrings.chat_push_elsewhere, lstrings.chat_wake_generic)
+  }
   const fallback = wake.dm
     ? shown(wake.from, sprintf(lstrings.chat_push_new_message_from, wake.from))
     : null

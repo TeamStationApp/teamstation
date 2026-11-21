@@ -139,6 +139,81 @@ describe('chat routes and the DM rules (U5)', function () {
   }
 
   // Before any test below changes the Hawks' members or their links.
+  describe('the age gate', function () {
+    const gated: Array<[string, string]> = [
+      ['GET', '/chat/conversations'],
+      ['PATCH', '/chat/conversations/cnv_x/preferences'],
+      ['GET', '/chat/conversations/cnv_x/pins'],
+      ['PUT', '/chat/conversations/cnv_x/pins/msg_x'],
+      ['DELETE', '/chat/conversations/cnv_x/pins/msg_x'],
+      ['GET', '/chat/conversations/cnv_x/members'],
+      ['GET', '/chat/conversations/cnv_x/reads'],
+      ['GET', '/chat/conversations/cnv_x/log'],
+      ['GET', '/chat/dm-candidates'],
+      ['GET', '/chat/included-adults'],
+      ['POST', '/chat/dms'],
+      ['POST', '/chat/dms/cnv_x/members'],
+      ['POST', '/chat/conversations/cnv_x/messages'],
+      ['GET', '/chat/conversations/cnv_x/messages'],
+      ['PUT', '/chat/conversations/cnv_x/read'],
+      ['POST', '/chat/reports'],
+      ['GET', '/chat/conversations/cnv_x/epochs'],
+      ['POST', '/chat/conversations/cnv_x/epochs'],
+      ['GET', '/chat/grants'],
+      ['POST', '/chat/grants'],
+      ['GET', '/chat/users/usr_x/keys'],
+      ['GET', '/chat/identities/cid_x'],
+      ['POST', '/chat/attachments'],
+      ['PUT', '/chat/attachments/att_x/parts/0'],
+      ['POST', '/chat/attachments/att_x/complete'],
+      ['GET', '/chat/attachments/att_x']
+    ]
+    const open: Array<[string, string]> = [
+      ['GET', '/chat/blocks'],
+      ['PUT', '/chat/blocks/usr_x'],
+      ['DELETE', '/chat/blocks/usr_x'],
+      ['DELETE', '/chat/dms/cnv_x/members/me'],
+      ['GET', '/chat/devices'],
+      ['POST', '/chat/devices'],
+      ['GET', '/chat/me/keys'],
+      ['GET', '/chat/links'],
+      ['POST', '/chat/identity']
+    ]
+    const reasonOf = (answer: Answer): unknown =>
+      (answer.body as { details?: { reason?: unknown } } | null)?.details
+        ?.reason
+
+    it('refuses every read and post to somebody with no age, and to somebody under 13', async function () {
+      await fixture.person('ageless', { noAge: true })
+      for (const [method, path] of gated) {
+        const body = method === 'GET' ? undefined : {}
+        const ageless = await call('ageless', method, path, body)
+        expect(ageless.status, `${method} ${path}`).equals(403)
+        expect(reasonOf(ageless), `${method} ${path}`).equals('ageRequired')
+        const child = await call('R', method, path, body)
+        expect(child.status, `${method} ${path}`).equals(403)
+        expect(reasonOf(child), `${method} ${path}`).equals('underAge')
+      }
+    })
+
+    it('leaves enrolment, blocks and leaving open to somebody with no age', async function () {
+      for (const [method, path] of open) {
+        const body = method === 'GET' || method === 'DELETE' ? undefined : {}
+        const answer = await call('ageless', method, path, body)
+        expect(reasonOf(answer), `${method} ${path}`).not.equals('ageRequired')
+      }
+      // Reading opens once they give an age.
+      await db
+        .updateTable('users')
+        .set({ is_adult: true })
+        .where('id', '=', fixture.id('ageless'))
+        .execute()
+      expect(
+        (await call('ageless', 'GET', '/chat/conversations')).status
+      ).equals(200)
+    })
+  })
+
   describe('affiliation lines', function () {
     it('lines each person up with the family and teams the reader may see', async function () {
       const id = await chatId('Hc', 'Hawks Members')
@@ -248,6 +323,13 @@ describe('chat routes and the DM rules (U5)', function () {
     }
     for (const [who, chats] of Object.entries(expected)) {
       it(`${who}: ${chats.length === 0 ? 'no chats' : chats.join(', ')}`, async function () {
+        if (who === 'R' || who === 'T') {
+          // Under 13: in no chat, and refused the list itself.
+          const answer = await call(who, 'GET', '/chat/conversations')
+          expect(answer.status).equals(403)
+          expect(answer.body.details.reason).equals('underAge')
+          return
+        }
         expect(await titles(who)).deep.equals([...chats].sort())
       })
     }
@@ -539,7 +621,8 @@ describe('chat routes and the DM rules (U5)', function () {
     it('never names a player under 13 or without an account', async function () {
       refusedAs(await dm('Hc', ['R']), 'notCandidate')
       refusedAs(await dm('Hc', ['Q']), 'notCandidate')
-      refusedAs(await dm('R', ['Hc']), 'notCandidate')
+      // R, under 13, is refused chat altogether.
+      refusedAs(await dm('R', ['Hc']), 'underAge')
     })
 
     it('lets fan F be named by Hawks staff, season staff, All Staff and the league', async function () {
@@ -728,7 +811,9 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(await names('P')).deep.equals(
         ['E', 'G1', 'G2', 'Ha', 'Hc', 'Hk', 'Hs', 'K', 'L', 'S'].sort()
       )
-      expect(await names('R')).deep.equals([])
+      const under13 = await call('R', 'GET', '/chat/dm-candidates?q=')
+      expect(under13.status).equals(403)
+      expect(under13.body.details.reason).equals('underAge')
     })
   })
 

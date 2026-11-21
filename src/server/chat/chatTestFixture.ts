@@ -77,12 +77,16 @@ export interface ChatFixture {
   sessionOf: (who: string) => string
   /** The bearer token `who` calls with, for a socket. */
   tokenOf: (who: string) => string
-  /** Makes a person (an account unless `account: false`) with a session. */
+  /**
+   * Makes a person (an account unless `account: false`) with a session: an
+   * adult by `is_adult` unless given a birth month, or `noAge`.
+   */
   person: (
     key: string,
     options?: {
       account?: boolean
       birth?: { year: number; month: number }
+      noAge?: boolean
       userId?: string
     }
   ) => Promise<string>
@@ -256,7 +260,9 @@ export async function openChatFixture(
             // An account is switched on as it settles; its address follows.
             login_enabled: account,
             birth_year: personOptions.birth?.year ?? null,
-            birth_month: personOptions.birth?.month ?? null
+            birth_month: personOptions.birth?.month ?? null,
+            is_adult:
+              personOptions.birth == null && personOptions.noAge !== true
           })
           .execute()
         if (account) {

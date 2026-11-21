@@ -544,6 +544,19 @@ async function confirmChatAge(tab: Surface, label: string): Promise<void> {
     throw new Error(`${label} is still not confirmed for chat`)
 }
 
+/**
+ * Gives the tab's person an adult age, as answering the age modal does: until
+ * then the server refuses them every chat read. An age already given (409
+ * `ageSet`) is as good.
+ */
+async function giveAdultAge(tab: Surface, label: string): Promise<void> {
+  const answer = await tab.api('PUT', '/me/account/age', { adult: true })
+  const reason = (answer.body as { details?: { reason?: unknown } } | null)
+    ?.details?.reason
+  if (answer.status === 409 && reason === 'ageSet') return
+  okBody(answer, `${label} giving its age`)
+}
+
 /** Two people in a team's chat on different nodes, typing and sending. */
 async function chatBetween(
   context: Context,
@@ -554,6 +567,8 @@ async function chatBetween(
 ): Promise<string> {
   const sender = await tabOf(context, writer)
   const receiver = await tabOf(context, reader, farServer(context))
+  await giveAdultAge(sender, writer)
+  await giveAdultAge(receiver, reader)
   await confirmChatAge(sender, writer)
   await confirmChatAge(receiver, reader)
   await receiver.open('/chat')

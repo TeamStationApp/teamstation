@@ -11,7 +11,7 @@ import {
   putPart,
   readAttachment
 } from '../chat/attachments'
-import { chatCaller } from '../chat/keys'
+import { chatAgeRequired, chatCaller } from '../chat/keys'
 import { asBase64urlBytes } from '../chat/wire'
 import type { Database } from '../db/database'
 import { cleanBody } from '../jsonBody'
@@ -83,6 +83,7 @@ export function chatAttachmentRoutes(
 ): Router {
   const router = Router()
   const clock = options.clock ?? (() => new Date())
+  const ageGate = chatAgeRequired(db, clock)
   const context = {
     db,
     space: options.space,
@@ -92,6 +93,7 @@ export function chatAttachmentRoutes(
   router.post(
     '/chat/attachments',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const body = cleanBody(asNewAttachment, req.body)
@@ -104,6 +106,7 @@ export function chatAttachmentRoutes(
   router.put(
     '/chat/attachments/:attachmentId/parts/:index',
     requireActor,
+    ageGate,
     partBody,
     withAsync(async (req, res) => {
       skipAudit(res.locals)
@@ -131,6 +134,7 @@ export function chatAttachmentRoutes(
   router.post(
     '/chat/attachments/:attachmentId/complete',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.attachmentId)
@@ -143,6 +147,7 @@ export function chatAttachmentRoutes(
   router.get(
     '/chat/attachments/:attachmentId',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       res.json(

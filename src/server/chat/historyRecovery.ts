@@ -6,7 +6,7 @@ import type {
 } from '../../common/api'
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import type { Database } from '../db/database'
-import { isEligible, isUnder13 } from './audiences'
+import { eligibleAccounts, isEligible } from './audiences'
 import { lockConversation } from './epochs'
 import { approveHistoryAccess } from './historyAccess'
 import { reconcileHistoryRequests } from './historyRequests'
@@ -94,20 +94,7 @@ async function grantableRecipients(
   userIds: string[],
   now: Date
 ): Promise<Set<string>> {
-  if (userIds.length === 0) return new Set()
-  const users = await db
-    .selectFrom('users')
-    .select(['id', 'birth_year', 'birth_month'])
-    .where('id', 'in', [...new Set(userIds)])
-    .where('merged_into', 'is', null)
-    .where('login_enabled', '=', true)
-    .where('disabled_at', 'is', null)
-    .execute()
-  return new Set(
-    users
-      .filter(user => !isUnder13(user.birth_year, user.birth_month, now))
-      .map(user => user.id)
-  )
+  return await eligibleAccounts(db, userIds, now)
 }
 
 export async function historyGrantsFor(

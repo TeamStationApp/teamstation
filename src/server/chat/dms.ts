@@ -1,16 +1,16 @@
 import { type Kysely, sql } from 'kysely'
 
-import { ageOn } from '../../common/age'
+import { type AgeBand, ageOn } from '../../common/age'
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { openAddTeams } from '../access'
 import type { Database } from '../db/database'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
+import { ageBandsOf } from '../users/age'
 import {
   audienceOf,
   fullTeams,
-  isUnder13,
   leagueRoleIds,
   NAMING_KINDS,
   seasonStaffIds,
@@ -78,6 +78,7 @@ interface UserRow {
   account: boolean
   birthYear: number | null
   birthMonth: number | null
+  band: AgeBand
 }
 
 /** Why a DM's membership is not allowed. */
@@ -123,6 +124,7 @@ export class DmFacts {
       .where('id', 'in', missing)
       .execute()
     for (const id of missing) this.rows.set(id, null)
+    const bands = await ageBandsOf(this.db, missing, this.now)
     for (const row of rows) {
       this.rows.set(row.id, {
         id: row.id,
@@ -131,7 +133,8 @@ export class DmFacts {
           row.disabled_at == null &&
           row.login_enabled,
         birthYear: row.birth_year,
-        birthMonth: row.birth_month
+        birthMonth: row.birth_month,
+        band: bands.get(row.id) ?? 'unknown'
       })
     }
     const players = await this.db
@@ -149,14 +152,10 @@ export class DmFacts {
     return this.rows.get(userId) ?? null
   }
 
-  /** An account, and not under 13. */
+  /** An account whose band is not `under13`. */
   async eligible(userId: string): Promise<boolean> {
     const row = await this.row(userId)
-    return (
-      row != null &&
-      row.account &&
-      !isUnder13(row.birthYear, row.birthMonth, this.now)
-    )
+    return row != null && row.account && row.band !== 'under13'
   }
 
   /** The teams this person plays on. */
