@@ -1,15 +1,20 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MessageView } from '../../../../src/app/chat/engine/apply'
-import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
+import {
+  flattenPublicHierarchy,
+  type PublicNode
+} from '../../../../src/test/chat2Maestro.e2e'
 import {
   dismissNotificationAsk,
   dismissNotificationAskOn
 } from '../../../../src/test/notificationAsk'
+import { isHubDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
@@ -78,10 +83,65 @@ async function edit(ctx: E2eContext): Promise<void> {
             direction: 'up',
             timeout: 12000
           })
-          await m.longPressOn({ id: 'chat-bubble-' + id })
+          const bubbleId = 'chat-bubble-' + id
+          // Native accessibility can report a message behind the keyboard.
+          // Bring the bubble's center between the header and the draft field.
+          for (let attempt = 0; attempt < 8; attempt++) {
+            const nodes = flattenPublicHierarchy(await m.hierarchy())
+            const bounds = (targetId: string): PublicNode['bounds'] =>
+              nodes.find(node => node.id === targetId && node.bounds != null)
+                ?.bounds
+            const bubble = bounds(bubbleId)
+            const header = bounds('chat-conversation-identity')
+            const band = bounds('chat-composer-band')
+            assert(bubble != null && header != null && band != null)
+            const pins = bounds('chat-pinned-band')
+            const top = Math.max(
+              header.y + header.height,
+              pins == null ? 0 : pins.y + pins.height
+            )
+            const height = band.y - top
+            assert(height > 0, 'The message history must have visible space')
+            const center = bubble.y + bubble.height / 2
+            if (center > top + 8 && center < band.y - 8) {
+              await m.longPressOn({ id: bubbleId })
+              await m.assertVisible({ text: '^Reply$' })
+              return
+            }
+            const x = Math.round(header.x + header.width / 2)
+            const upper = Math.round(top + height * 0.25)
+            const lower = Math.round(top + height * 0.75)
+            await m.dragAndDrop({
+              from: { point: `${x},${center < top + 8 ? upper : lower}` },
+              to: { point: `${x},${center < top + 8 ? lower : upper}` },
+              holdDuration: 10,
+              duration: 400
+            })
+          }
+          assert.fail(
+            'The selected message must be reachable above the composer'
+          )
         }
       }
       const field = { id: 'chat-composer' }
+      const clearComposer = async (expected: string): Promise<void> => {
+        if (platform === 'android') await m.tapOn(field)
+        assert.equal(await readChatComposer(m, platform, web), expected)
+        await m.eraseText({ characters: expected.length })
+        if (platform !== 'android') return
+        // Android's accessibility Clear can leave React Native's value intact.
+        // Use actual edit keys for any text the optimized command left behind.
+        const remaining = await readChatComposer(m, platform, web)
+        if (remaining !== '' && remaining !== 'Message') {
+          assert(expected.includes(remaining))
+          let rightKeys = remaining.length
+          while (rightKeys-- > 0) await m.pressKey({ key: 'DPAD_RIGHT' })
+          let deleteKeys = remaining.length
+          while (deleteKeys-- > 0) await m.pressKey({ key: 'BACKSPACE' })
+        }
+        const cleared = await readChatComposer(m, platform, web)
+        assert(cleared === '' || cleared === 'Message')
+      }
       const editButton = { text: '^Edit$' }
       const draft = 'Please bring the equipment list.'
       await m.tapOn(field)
@@ -259,7 +319,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       assert.equal(await readChatComposer(m, platform, web), draft)
       await openMenu(original.id)
       await m.tapOn(editButton)
-      await m.eraseText({ characters: originalCaption.length })
+      await clearComposer(originalCaption)
       const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
       await m.inputText({ text: editedCaption })
       await m.assertVisible({ id: 'chat-dismiss-link-preview', timeout: 18000 })
@@ -301,7 +361,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       })
       await openMenu(original.id)
       await m.tapOn(editButton)
-      await m.eraseText({ characters: editedCaption.length })
+      await clearComposer(editedCaption)
       await m.assertNotVisible({ id: 'chat-dismiss-link-preview' })
       // Removing the preview changes the composer height. Tap its settled Send
       // button after the card and multiline caption have collapsed.
@@ -316,18 +376,42 @@ async function edit(ctx: E2eContext): Promise<void> {
       assert.equal(cleared.preview, undefined)
       if (web != null) await m.tapOn({ text: '^Remove equipment.txt$' })
       await m.tapOn(field)
-      await m.eraseText({ characters: draft.length })
+      await clearComposer(draft)
+      let keyboardReceipt = ''
       if (platform !== 'ios') {
         const emptyField = await readChatComposer(m, platform, web)
         if (web != null) await web.page.keyboard.press('ArrowUp')
         else await m.pressKey({ key: 'DPAD_UP' })
         await m.assertVisible({ text: '^Editing your message$' })
         assert.equal(await readChatComposer(m, platform, web), newest.body)
-        if (web != null) await web.page.keyboard.press('Escape')
-        else {
-          // The Android driver sends W3C special keys through key actions.
-          // U+E00C is Escape, which has no named pressKey mapping on this driver.
-          await m.inputText({ text: '\uE00C', keyPress: true })
+        if (web != null) {
+          await web.page.keyboard.press('Escape')
+          keyboardReceipt =
+            'Chromium delivered Up and Escape to the focused field.'
+        } else if (isHubDevice(ctx.device('phone'))) {
+          try {
+            await m.pressKey({ key: 'ESCAPE' })
+            keyboardReceipt = 'The Android hub delivered Up and Escape.'
+          } catch (error) {
+            if (!/unknown key: escape/i.test(String(error))) throw error
+            // Older hubs have no Escape mapping. The companion Android run
+            // exercises that key locally with the same signed app.
+            await m.tapOn({ text: '^Cancel edit$' })
+            keyboardReceipt =
+              'The Android hub delivered Up. Cancel restored the draft on this phone. This driver has no Escape mapping.'
+          }
+        } else {
+          execFileSync('adb', [
+            '-s',
+            ctx.device('phone'),
+            'shell',
+            'input',
+            'keyboard',
+            'keyevent',
+            '111'
+          ])
+          keyboardReceipt =
+            'Android delivered Up and keyboard Escape to the focused field.'
         }
         await m.assertNotVisible({ text: '^Editing your message$' })
         assert.equal(await readChatComposer(m, platform, web), emptyField)
@@ -340,8 +424,11 @@ async function edit(ctx: E2eContext): Promise<void> {
           '$ e2e run messaging/chat/edit-message#edit',
           'The peer decrypted two unchanged ordinary files after the original caption was edited and cleared.',
           'The message ID, sequence, author, file keys and digests matched. The edited caption regenerated its private preview.',
-          'The incoming message menu omitted Edit.'
-        ].join('\n') + '\n'
+          'The incoming message menu omitted Edit.',
+          keyboardReceipt
+        ]
+          .filter(Boolean)
+          .join('\n') + '\n'
       )
     } finally {
       peer.engine.stop()
