@@ -340,6 +340,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
    * back: a swap of that screen's still out is this screen's own.
    */
   const takenWrites = useRef<WebWrites | undefined>(undefined)
+  /** False once the screen has gone: a held session's owner is then none. */
+  const mounted = useRef(true)
   /** The open a swap of this screen's own made already, read from nothing. */
   const adopted = useRef<number | undefined>(undefined)
   const retryRef = useRef(retry)
@@ -517,30 +519,23 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // Taken back only now, as it is shown, so a read given up leaves it
       // to the next open; one that has since saved and closed, or been
       // refused, is not taken back.
+      // This screen owns it from here: a refusal of the swap its saves wait
+      // behind closes it and reads the game again here, while shown.
+      const refusedHere = (session: GameSession) => (message: string) => {
+        heldSessions.delete(session)
+        session.close()
+        if (!mounted.current || openedContext.current?.session !== session)
+          return
+        setSwapNotice(message)
+        setRetry(value => value + 1)
+      }
       const kept =
         letGone != null &&
         (ownReads || sameSides(letGone.session, reads.game)) &&
-        takeBack(letGone)
+        takeBack(letGone, refusedHere(letGone.session))
           ? letGone.session
           : undefined
       takenWrites.current = kept == null ? undefined : letGone?.entry.writes
-      // A swap of the screen that let it go, still out: refused, it is told
-      // here; taken, nothing more is.
-      const outSwap = letGone?.entry.writes
-      if (kept != null && outSwap?.held(props.gameId) != null) {
-        const landed = outSwap.onLanded(props.gameId, () => {
-          landed()
-          takenOver.delete(kept)
-        })
-        takenOver.set(kept, message => {
-          landed()
-          takenOver.delete(kept)
-          kept.close()
-          if (openedContext.current?.session !== kept) return
-          setSwapNotice(message)
-          setRetry(value => value + 1)
-        })
-      }
       const { game } = reads
       const value =
         kept ??
@@ -788,6 +783,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   leftWrites.current = webWrites
   useEffect(
     () => () => {
+      mounted.current = false
       const shown = openedContext.current
       const reads = shownReads.current
       if (
@@ -1191,11 +1187,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           // and is read from the server again, by the screen that shows it
           // now: this one, or one that took it back after this one went.
           const session = openedContext.current?.session
-          const taker = session == null ? undefined : takenOver.get(session)
-          if (taker != null) {
-            taker(message)
-            return
-          }
+          if (session != null && refuseHeld(session, message)) return
           session?.close()
           setSwapNotice(message)
           setRetry(value => value + 1)
@@ -1285,17 +1277,29 @@ interface LetGoKey {
   userId: ScoringScreenProps['userId']
   source: ScoringSource
 }
-interface LetGoEntry extends LetGoKey {
+/**
+ * A web session held past the screen it was opened on, and the one owner of
+ * what is still pending for it: the swap its saves wait behind, and who is
+ * told when the server refuses that swap.
+ */
+interface HeldEntry extends LetGoKey {
   /**
-   * The web writes of the screen that let it go: while a swap of that
-   * screen's is out, the server has not taken the sides the session scores
-   * on, and a screen opening the game opens on `reads`.
+   * The web writes holding the swap the session's saves wait behind: those
+   * of the screen that made it, kept through every leave and return until a
+   * screen with a swap of its own out lets the session go. While that swap
+   * is out the server has not taken the sides the session scores on, and a
+   * screen opening the game opens on `reads`.
    */
   writes: WebWrites
-  /** What the screen that let it go showed it with: its sides and rosters. */
+  /** What the screen that showed it last showed it with: sides and rosters. */
   reads: OpenedReads
-  /** Stops the wait that closes the session once it has saved. */
-  stop: () => void
+  /**
+   * Let go, with no screen (`stop` ends the wait that closes it once it has
+   * saved); or taken back by the screen that shows it now, told of a refusal.
+   */
+  owner:
+    | { gone: true; stop: () => void }
+    | { gone: false; refused: (message: string) => void }
 }
 const sameLetGo = (entry: LetGoKey, opened: LetGoKey): boolean =>
   entry.client === opened.client &&
@@ -1303,28 +1307,26 @@ const sameLetGo = (entry: LetGoKey, opened: LetGoKey): boolean =>
   entry.userId === opened.userId &&
   entry.source === opened.source
 /**
- * The web's sessions whose screens have gone with changes still unsaved: a
- * screen that opens the same game again takes its session back, rather than
- * read the server, which does not have those changes yet.
+ * The web's held sessions. One let go (its screen gone with changes still
+ * unsaved) is taken back by a screen that opens the same game, rather than
+ * read the server, which does not have those changes yet; one taken back is
+ * let go again when that screen goes. Each leave and return moves the one
+ * entry, so exactly one screen, or none, hears what is pending for it.
  */
-const letGo = new Map<GameSession, LetGoEntry>()
-/**
- * The web's sessions a screen took back from one since gone whose swap may
- * still be out, with what that screen does when the server refuses the swap:
- * the gone screen's refusal is told to the screen that shows its session.
- */
-const takenOver = new Map<GameSession, (message: string) => void>()
+const heldSessions = new Map<GameSession, HeldEntry>()
 /**
  * Lets `game` go on sending what it has not saved after its screen has
  * gone, and closes it once that is saved, or the server refused it. One
  * already closed (a swap the server refused closes the game it opened on)
- * saves nothing more, and is not let go. Until
- * then the page warns before it unloads, and a screen opening the game it
- * was opened on (`opened`) takes it back.
+ * saves nothing more, and is not let go. Until then the page warns before
+ * it unloads, and a screen opening the game it was opened on (`opened`)
+ * takes it back. `opened.writes` are the letting screen's: they hold the
+ * session's swap when that screen has one out; otherwise the session keeps
+ * the writes it was held with.
  */
 function closeOnceSaved(
   game: GameSession,
-  opened: Omit<LetGoEntry, 'stop'>
+  opened: Omit<HeldEntry, 'owner'>
 ): void {
   const done = (): boolean =>
     game.pending === 0 ||
@@ -1332,19 +1334,25 @@ function closeOnceSaved(
     game.stopped ||
     game.replaced ||
     game.isClosed
+  const before = heldSessions.get(game)
   if (done()) {
+    heldSessions.delete(game)
     game.close()
     return
   }
+  const writes =
+    before == null || opened.writes.held(opened.gameId) != null
+      ? opened.writes
+      : before.writes
   holdUnload(game, true)
   const stop = game.subscribe(() => {
     if (!done()) return
     stop()
-    letGo.delete(game)
+    heldSessions.delete(game)
     holdUnload(game, false)
     game.close()
   })
-  letGo.set(game, { ...opened, stop })
+  heldSessions.set(game, { ...opened, writes, owner: { gone: true, stop } })
   game.flush().catch(() => undefined)
 }
 /**
@@ -1354,9 +1362,10 @@ function closeOnceSaved(
  */
 function letGoFor(
   opened: LetGoKey
-): { session: GameSession; entry: LetGoEntry } | undefined {
-  for (const [session, entry] of letGo)
-    if (sameLetGo(entry, opened) && takeable(session)) return { session, entry }
+): { session: GameSession; entry: HeldEntry } | undefined {
+  for (const [session, entry] of heldSessions)
+    if (entry.owner.gone && sameLetGo(entry, opened) && takeable(session))
+      return { session, entry }
   return undefined
 }
 const takeable = (session: GameSession): boolean =>
@@ -1377,17 +1386,45 @@ function sameSides(session: GameSession, read: GameDetail): boolean {
   )
 }
 /**
- * Takes back the let-go session `found` names, for the screen opening it:
- * no longer closed once it has saved, and no longer holding the page's
- * unload warning, since a screen shows it again. False when it has since
- * saved and closed, or been refused or stopped.
+ * Takes back the let-go session `found` names, for the screen opening it,
+ * which `refused` tells of a refusal of its swap: no longer closed once it
+ * has saved, and no longer holding the page's unload warning, since a screen
+ * shows it again. False when it has since saved and closed, or been refused
+ * or stopped.
  */
-function takeBack(found: { session: GameSession; entry: LetGoEntry }): boolean {
+function takeBack(
+  found: { session: GameSession; entry: HeldEntry },
+  refused: (message: string) => void
+): boolean {
   const { session, entry } = found
-  if (letGo.get(session) !== entry || !takeable(session)) return false
-  letGo.delete(session)
-  entry.stop()
+  if (
+    heldSessions.get(session) !== entry ||
+    !entry.owner.gone ||
+    !takeable(session)
+  )
+    return false
+  entry.owner.stop()
   holdUnload(session, false)
+  heldSessions.set(session, { ...entry, owner: { gone: false, refused } })
+  return true
+}
+/**
+ * Tells the owner of held `session` that the server refused the swap its
+ * saves wait behind: the screen showing it, or, let go, the session itself,
+ * which closes. False when it is not held: the screen that made the swap
+ * still shows it.
+ */
+function refuseHeld(session: GameSession, message: string): boolean {
+  const entry = heldSessions.get(session)
+  if (entry == null) return false
+  if (!entry.owner.gone) {
+    entry.owner.refused(message)
+    return true
+  }
+  entry.owner.stop()
+  heldSessions.delete(session)
+  holdUnload(session, false)
+  session.close()
   return true
 }
 function statusOf(game: GameSession): SaveStatus {

@@ -1489,6 +1489,120 @@ describe('swapping from the scoring menu', function () {
     expect(screen.order()).includes('save')
   })
 
+  it('on the web, a gone screen’s swap refused after two leaves and returns is told to the screen showing it last, which reads the game again and saves what comes next', async function () {
+    const screen = await swappable({
+      holdSwaps: true,
+      refuse: new HttpError('conflict', 'Not now')
+    })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    await click('Ball')
+    await settle()
+    const copy = screen.session()
+    const opens = screen.opens()
+    // Left and taken back once, scored on, left and taken back again.
+    await unmount()
+    await screen.mountAgain()
+    expect(screen.session()).equals(copy)
+    await click('Ball')
+    await settle()
+    await unmount()
+    await screen.mountAgain()
+    expect(screen.opens()).equals(opens)
+    expect(screen.session()).equals(copy)
+    // The server refuses the swap: the last screen hears it.
+    screen.release()
+    await settle()
+    await settle()
+    expect(copy.isClosed).equals(true)
+    expect(document.body.textContent).includes('Not now')
+    expect(screen.opens()).equals(opens + 1)
+    const reread = screen.session()
+    expect(reread).not.equals(copy)
+    await click('Ball')
+    await settle()
+    expect(reread.pending).equals(0)
+    expect(screen.order()).includes('save')
+  })
+
+  it('on the web, offline, a gone screen’s swap refused after two leaves and returns is told to the screen showing it last, which reads the game again and saves what comes next', async function () {
+    const screen = await swappable({
+      holdSwaps: true,
+      refuse: new HttpError('conflict', 'Not now')
+    })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    await click('Ball')
+    await settle()
+    const copy = screen.session()
+    const opens = screen.opens()
+    // Left and taken back once, scored on, left and taken back again.
+    await unmount()
+    await screen.mountAgain()
+    expect(screen.session()).equals(copy)
+    await click('Ball')
+    await settle()
+    await unmount()
+    // Offline: the last screen can read nothing.
+    const game = screen.client().game.bind(screen.client())
+    screen.client().game = async () => {
+      throw new HttpError('offline', 'No connection')
+    }
+    await screen.mountAgain()
+    expect(screen.opens()).equals(opens)
+    expect(screen.session()).equals(copy)
+    // The server refuses the swap: the last screen hears it.
+    screen.release()
+    await settle()
+    await settle()
+    expect(copy.isClosed).equals(true)
+    // Read again with no connection: Retry, not the closed copy.
+    expect(
+      document.querySelector('[aria-label="Retry loading scoring"]')
+    ).not.equals(null)
+    // Back online: the game is read again on Retry.
+    screen.client().game = game
+    if (document.querySelector('[aria-label="Retry loading scoring"]') != null)
+      await click('Retry loading scoring')
+    await settle()
+    expect(screen.opens()).equals(opens + 1)
+    const reread = screen.session()
+    expect(reread).not.equals(copy)
+    await click('Ball')
+    await settle()
+    expect(reread.pending).equals(0)
+    expect(screen.order()).includes('save')
+  })
+
+  it('on the web, a swap refused while its session is let go with no screen closes it, and the next screen reads the game', async function () {
+    const screen = await swappable({
+      holdSwaps: true,
+      refuse: new HttpError('conflict', 'Not now')
+    })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    await click('Ball')
+    await settle()
+    const copy = screen.session()
+    const opens = screen.opens()
+    await unmount()
+    screen.release()
+    await settle()
+    expect(copy.isClosed).equals(true)
+    const reload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(reload)
+    expect(reload.defaultPrevented).equals(false)
+    await screen.mountAgain()
+    expect(screen.opens()).equals(opens + 1)
+    expect(screen.session()).not.equals(copy)
+  })
+
   it('on the web, opens on the swapped sides at once, takes a pitch, and sends it behind a swap request that is not answered', async function () {
     const screen = await swappable({ holdSwaps: true })
     await click(MENU)
