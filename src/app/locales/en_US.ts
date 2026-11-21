@@ -1166,6 +1166,13 @@ export const enUs = {
   manage_safesport_label: 'SafeSport Local Affiliated Organization',
   manage_safesport_detail:
     "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to someone 13 to 17 on its teams must also include their guardian, an adult family member, or an adult coach, assistant or admin of their team. A league that is only a chartered Little League is not one.",
+  manage_safesport_confirm_title: 'Turn On SafeSport?',
+  manage_safesport_confirm_body:
+    "Turning this on applies SafeSport's second-adult rule to this league's minors. Direct messages that don't meet it will close, and won't reopen if you turn it off.",
+  manage_safesport_confirm_ok: 'Turn On',
+  manage_safesport_confirm_cancel: 'Cancel',
+  manage_safesport_failed:
+    'That didn’t save. Check your connection and try again.',
 
   // Coming in through an invite
   join_header: 'Invitation',

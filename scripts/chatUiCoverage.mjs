@@ -58,6 +58,7 @@ await build({
       'src/app/screens/ChatReportsScreen.test.tsx',
       'src/app/screens/TeamScreen.test.tsx',
       'src/app/screens/PlayerSettingsTab.test.tsx',
+      'src/app/screens/GroupSettingsScreen.test.tsx',
       'src/app/screens/JoinScreen.test.tsx',
       'src/app/screens/SeasonPresentation.test.tsx',
       'src/app/screens/FollowTeamScreen.test.tsx',
