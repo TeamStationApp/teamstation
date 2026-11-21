@@ -74,6 +74,11 @@ export interface E2eContext {
   mail: (address: string, from: string) => Promise<ReceivedMail>
   /** Attaches the device in `role` through maestro-d, for the run to detach. */
   attach: (role: string, options: Record<string, unknown>) => Promise<any>
+  /**
+   * The phone browser of a `web-safari-ios` or `web-chrome-android` surface,
+   * on the device in `role`, opened at `url` (`e2e/rigs/mobileWeb.ts`).
+   */
+  mobileBrowser: (role: string, url: string) => Promise<any>
   /** Lets checkpoints look at a device a rig attached for itself. */
   watch: (device: any, info: WatchedDevice) => void
   /**

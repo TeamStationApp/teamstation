@@ -4471,6 +4471,555 @@
       "file": "e2e/tests/platform/push/phone.e2e.ts"
     },
     {
+      "id": "platform/web/main-flows#chat",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#game-page",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#offline-scoring",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#schedule",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#scoring-swap",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#season",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#sign-in",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#team-roster",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#video",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
       "id": "playback/recordings/director-take-finish#real-take",
       "title": "A real multi-gigabyte TS Director take is taken in as segments inside the apps’ 900 s",
       "kind": "e2e",
