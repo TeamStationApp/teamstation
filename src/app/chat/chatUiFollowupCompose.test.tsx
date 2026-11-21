@@ -9,7 +9,7 @@ import { AppState, Platform } from 'react-native'
 import { userIdOfGumbo } from '../../common/userId'
 import { lstrings } from '../locales/strings'
 import { activeConversation } from '../push/activeConversation'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { whileChatBrowserOpen } from './chatBrowserVisibility'
 import { ChatDropTarget } from './ChatDropTarget'
 import { ChatDropTarget as NativeDropTarget } from './ChatDropTarget.native'
@@ -1754,6 +1754,15 @@ describe('chat conversation shared file preparation and sending', function () {
       expect(received?.textContent).contains(metadata.title)
       expect(received?.querySelector('a')?.getAttribute('href')).equals(
         url + '#original'
+      )
+      const preview = document.querySelector<HTMLElement>(
+        '[data-testid="chat-composer-band"] [data-testid="chat-link-preview"]'
+      )
+      assert(preview != null)
+      const expectedSurface = document.createElement('div')
+      expectedSurface.style.backgroundColor = getTheme().cardBackgroundColor
+      expect(getComputedStyle(preview.parentElement!).backgroundColor).equals(
+        expectedSurface.style.backgroundColor
       )
       expect(
         document.querySelector('[data-testid="chat-dismiss-link-preview"]')

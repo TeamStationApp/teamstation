@@ -6,7 +6,10 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MessageView } from '../../../../src/app/chat/engine/apply'
-import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
+import {
+  flattenPublicHierarchy,
+  until
+} from '../../../../src/test/chat2Maestro.e2e'
 import {
   dismissNotificationAsk,
   dismissNotificationAskOn
@@ -110,6 +113,19 @@ async function edit(ctx: E2eContext): Promise<void> {
         ])
       }
       const editButton = { text: '^Edit$' }
+      const chooseEdit = async (expected: string): Promise<void> => {
+        await m.tapOn(editButton)
+        await m.assertVisible({ text: '^Editing your message$' })
+        // On iOS the edit banner can appear before the text field shows the caption.
+        await until(
+          async () =>
+            (await readChatComposer(m, platform, web)) === expected
+              ? true
+              : undefined,
+          'the selected caption in the edit field',
+          10000
+        )
+      }
       const draft = 'Please bring the equipment list.'
       await m.tapOn(field)
       await enterText(draft)
@@ -194,8 +210,7 @@ async function edit(ctx: E2eContext): Promise<void> {
         await web.page.mouse.wheel({ deltaY: 100000 })
       }
       await openMenu(original.id)
-      await m.tapOn(editButton)
-      await m.assertVisible({ text: '^Editing your message$' })
+      await chooseEdit(originalCaption)
       if (web != null) {
         const state = await web.page.evaluate(() => {
           const input = document.querySelector<HTMLTextAreaElement>(
@@ -254,8 +269,7 @@ async function edit(ctx: E2eContext): Promise<void> {
         await m.assertNotVisible({ text: '^Editing your message$' })
         assert.equal(await readChatComposer(m, platform, web), draft)
         await openMenu(original.id)
-        await m.tapOn(editButton)
-        assert.equal(await readChatComposer(m, platform, web), originalCaption)
+        await chooseEdit(originalCaption)
       }
       // Android's default element send-keys can replace a field. Type at the
       // live caret so the action exercises the same append as a keyboard.
@@ -329,7 +343,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       if (web != null) await m.assertVisible({ text: '^Remove equipment.txt$' })
       assert.equal(await readChatComposer(m, platform, web), draft)
       await openMenu(original.id)
-      await m.tapOn(editButton)
+      await chooseEdit(originalCaption)
       await clearChatComposer(m, platform, originalCaption, web)
       const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
       await enterText(editedCaption)
@@ -396,7 +410,7 @@ async function edit(ctx: E2eContext): Promise<void> {
         childOf: { id: row(original.id) }
       })
       await openMenu(original.id)
-      await m.tapOn(editButton)
+      await chooseEdit(editedCaption)
       await clearChatComposer(m, platform, editedCaption, web)
       await m.assertNotVisible({ id: 'chat-dismiss-link-preview' })
       // Removing the preview changes the composer height. Tap its settled Send

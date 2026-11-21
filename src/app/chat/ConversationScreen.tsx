@@ -17,6 +17,8 @@ import {
 
 import { MAX_ATTACHMENTS } from '../../common/chatContent'
 import { Button, Icon, Screen } from '../components'
+import { CardThemeScope } from '../components/ActionRow'
+import { Card } from '../components/Card'
 import { GlassView } from '../components/GlassView'
 import { useHeaderHandoff } from '../components/headerSlot'
 import { useBreakpoint } from '../components/useBreakpoint'
@@ -3460,14 +3462,18 @@ export function ConversationScreen(
           }}
         >
           {draftPreview.preview != null && (
-            <ChatLinkPreviewCard
-              preview={draftPreview.preview}
-              onDismiss={() => {
-                draftOwner.discardRetry(conversationId)
-                draftPreview.handleDismiss()
-              }}
-              loadThumbnail={engine.openPreviewThumbnail}
-            />
+            <Card flush>
+              <CardThemeScope>
+                <ChatLinkPreviewCard
+                  preview={draftPreview.preview}
+                  onDismiss={() => {
+                    draftOwner.discardRetry(conversationId)
+                    draftPreview.handleDismiss()
+                  }}
+                  loadThumbnail={engine.openPreviewThumbnail}
+                />
+              </CardThemeScope>
+            </Card>
           )}
           {typing.length > 0 && (
             <Text style={shared.small} accessibilityLiveRegion="polite">
