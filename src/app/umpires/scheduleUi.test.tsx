@@ -25,6 +25,7 @@ import {
   availabilityDiffers,
   initialUmpireGame,
   optionalPositionHeader,
+  routeDays,
   routeNamesFilter,
   umpireFilterLabel,
   UmpireScheduleScreen,
@@ -1562,6 +1563,50 @@ describe('scheduleUi.test.tsx', () => {
         if (device == null) delete process.env.TZ
         else process.env.TZ = device
       }
+    })
+    it('leaves a levels-only saved filter in the device’s zone', async () => {
+      const device = process.env.TZ
+      process.env.TZ = 'America/Los_Angeles'
+      try {
+        const f = fixture()
+        f.client.umpireAvailability = async () => ({
+          levels: ['majors'],
+          days: [],
+          from: null,
+          to: null,
+          timezone: 'America/New_York'
+        })
+        const h = await harness(f)
+        expect(h.route().levels).equals('majors')
+        expect(h.route().timezone).equals(undefined)
+        const first = new URLSearchParams(h.queries[0].split('?')[1])
+        expect(first.get('levels')).equals('majors')
+        expect(first.get('timezone')).equals('America/Los_Angeles')
+        expect(h.queries.every(q => !q.includes('New_York'))).equals(true)
+        // The zone reads no days or range, so applied equals saved.
+        expect(saveButton()).equals(null)
+      } finally {
+        if (device == null) delete process.env.TZ
+        else process.env.TZ = device
+      }
+    })
+    it('drops days a hand-edited link holds that are no weekday', async () => {
+      const f = fixture()
+      const saves: Array<UmpireAvailability | null> = []
+      f.client.umpireAvailability = async () => null
+      f.client.saveUmpireAvailability = async (_league, availability) => {
+        saves.push(availability)
+        return availability
+      }
+      const h = await harness(f, { days: 'x,1,9' })
+      expect(routeDays(h.route())).deep.equals([1])
+      expect(
+        new URLSearchParams(h.queries[0].split('?')[1]).get('days')
+      ).equals('1')
+      await press('Save this filter as your availability')
+      expect(saves).deep.equals([
+        { levels: [], days: [1], from: null, to: null, timezone: zone }
+      ])
     })
     it('compares and saves only the levels the league still has', async () => {
       const f = fixture()

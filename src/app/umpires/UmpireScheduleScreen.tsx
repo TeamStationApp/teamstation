@@ -74,11 +74,25 @@ export function umpireClock(time: string): string {
   const [hour, minute] = time.split(':').map(Number)
   return `${hour % 12 === 0 ? 12 : hour % 12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`
 }
+/**
+ * The route's weekdays, 0 is Monday … 6 is Sunday. Anything else a
+ * hand-edited link holds is dropped, so it never reaches a query or a save.
+ */
+export function routeDays(route: UmpireScheduleRoute): number[] {
+  return [
+    ...new Set(
+      (route.days ?? '')
+        .split(',')
+        .filter(day => /^[0-6]$/.test(day))
+        .map(Number)
+    )
+  ]
+}
 export function umpireFilterLabel(
   route: UmpireScheduleRoute,
   levels: UmpireSchedule['levels']
 ): string {
-  const days = (route.days ?? '').split(',').filter(Boolean).map(Number)
+  const days = routeDays(route)
   const names = levels
     .filter(l => (route.levels ?? '').split(',').includes(l.id))
     .map(l => l.name)
@@ -125,7 +139,7 @@ export function appliedAvailability(
       .filter(
         level => level !== '' && (known == null || known.includes(level))
       ),
-    days: (route.days ?? '').split(',').filter(Boolean).map(Number),
+    days: routeDays(route),
     from: route.from ?? null,
     to: route.to ?? null,
     timezone: route.timezone ?? deviceZone()
@@ -170,7 +184,12 @@ export function withAvailability(
     days: a.days.length === 0 ? undefined : a.days.join(','),
     from: a.from ?? undefined,
     to: a.to ?? undefined,
-    timezone: a.timezone
+    // The zone reads only days and a range; a levels-only filter leaves the
+    // schedule in the device's zone.
+    timezone:
+      a.days.length > 0 || a.from != null || a.to != null
+        ? a.timezone
+        : undefined
   }
 }
 /** An admin may always clear a slot. Anyone else may only before the cutoff. */
@@ -364,7 +383,15 @@ export function UmpireScheduleScreen({
     timezone: route.timezone ?? deviceZone(),
     ...Object.fromEntries(
       (['levels', 'days', 'from', 'to', 'priorSeasons'] as const).flatMap(
-        key => (route[key] == null ? [] : [[key, route[key]]])
+        key => {
+          const value =
+            key !== 'days'
+              ? route[key]
+              : routeDays(route).length === 0
+                ? undefined
+                : routeDays(route).join(',')
+          return value == null ? [] : [[key, value]]
+        }
       )
     )
   }).toString()
@@ -439,7 +466,7 @@ export function UmpireScheduleScreen({
       .finish()
       .then(saved => {
         if (!saved) return
-        setDays((route.days ?? '').split(',').filter(Boolean).map(Number))
+        setDays(routeDays(route))
         setLevels((route.levels ?? '').split(',').filter(Boolean))
         setFrom(route.from ?? '')
         setTo(route.to ?? '')
@@ -1361,10 +1388,7 @@ export function UmpireScheduleScreen({
               // A saved filter's zone stays while its days and range are as
               // they were; a changed day or time is read in the device's.
               const timeKept =
-                sameList(
-                  days,
-                  (route.days ?? '').split(',').filter(Boolean).map(Number)
-                ) &&
+                sameList(days, routeDays(route)) &&
                 nextFrom === route.from &&
                 nextTo === route.to
               change({
