@@ -15,7 +15,7 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import { useChatAge } from './ChatAgeGate'
 import { ChatLinks } from './ChatLinks'
 import type { ChatEngine, ConversationListItem } from './engine/engine'
-import { entityChats, entityPreviewLoader } from './entityChats'
+import { entityChats, entityPreviewLoader, umpireChatOf } from './entityChats'
 import { type ChatKeyRecord, newRecord } from './keyRecord'
 
 const me = userIdOfGumbo(1)
@@ -57,6 +57,7 @@ describe('entity chat scoped rows', () => {
   it('maps every accessible scoped group to its group-only label', () => {
     for (const [kind, type, label] of [
       ['leagueOrg', 'league', 'Org'],
+      ['leagueUmpires', 'league', 'Umpires'],
       ['seasonStaff', 'season', 'Staff'],
       ['seasonAllStaff', 'season', 'All Staff'],
       ['seasonAnnouncements', 'season', 'Announcements'],
@@ -69,6 +70,29 @@ describe('entity chat scoped rows', () => {
         [{ id: chat.id, title: chat.title, label, preview: undefined }]
       )
     }
+  })
+
+  it('finds the league’s umpire chat under the server’s title, and no other', () => {
+    const umpires = item({
+      kind: 'leagueUmpires',
+      title: 'QPLL Umpires',
+      scope: { type: 'league', id: 'lea_qpll' }
+    })
+    const org = item({
+      kind: 'leagueOrg',
+      title: 'QPLL Org',
+      scope: { type: 'league', id: 'lea_qpll' }
+    })
+    const elsewhere = item({
+      kind: 'leagueUmpires',
+      title: 'Harbor Umpires',
+      scope: { type: 'league', id: 'lea_harbor' }
+    })
+    expect(umpireChatOf([org, elsewhere, umpires], 'lea_qpll')).deep.equals({
+      id: umpires.id,
+      title: 'QPLL Umpires'
+    })
+    expect(umpireChatOf([org, elsewhere], 'lea_qpll')).equals(undefined)
   })
 
   it('excludes DMs, unrelated groups and another scope with the same id', () => {

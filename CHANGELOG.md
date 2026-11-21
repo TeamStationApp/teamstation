@@ -9,6 +9,8 @@
 - added: A Message button on a person's profile and a player's page, at the bottom right of the top card, for anyone you may message; on a phone it is the message icon alone
 - added: For a player who cannot use chat (no account, or under 13), Message offers their guardians, or with none their coaches, to message instead
 - added: A game's umpires open their league profile, with its Message button, for anyone in that league
+- added: Each league that manages umpires has an umpire chat for its umpires, kept up to date as the role is given and taken away; the umpire schedule opens it with an Umpire chat button beside Leaderboard
+- added: A league administrator can give themselves the umpire role in Manage Umpires
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
 - changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 - changed: App builds made with the deploy scripts from any branch but master report their logs to the server they talk to, not to production's

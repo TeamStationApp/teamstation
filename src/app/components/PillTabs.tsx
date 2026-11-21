@@ -1,5 +1,12 @@
 import React from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import {
+  Pressable,
+  ScrollView,
+  type StyleProp,
+  Text,
+  View,
+  type ViewStyle
+} from 'react-native'
 
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -48,6 +55,11 @@ export interface PillTabsProps<Id extends string = string> {
    * with `small` pills, two rows' targets meet at the midpoint between them.
    */
   stacked?: boolean
+  /**
+   * The strip's own style, after its bleed: `{ flexGrow: 0 }` keeps it to
+   * its pills' width in a row beside something else.
+   */
+  style?: StyleProp<ViewStyle>
 }
 
 /**
@@ -131,7 +143,7 @@ export function PillTabs<Id extends string = string>(
       showsHorizontalScrollIndicator={false}
       accessibilityRole="tablist"
       accessibilityLabel={props.accessibilityLabel}
-      style={reach?.strip}
+      style={[reach?.strip, props.style]}
       contentContainerStyle={[
         styles.scrollContent,
         stacked && styles.scrollStacked,
@@ -154,7 +166,8 @@ export function PillButton({
   role = 'button',
   onPress,
   disabled = false,
-  accessibilityLabel = label
+  accessibilityLabel = label,
+  testID
 }: {
   label: string
   badge?: string
@@ -166,6 +179,8 @@ export function PillButton({
   onPress?: () => void
   disabled?: boolean
   accessibilityLabel?: string
+  /** The pressable's own test id, for a pill that stands alone. */
+  testID?: string
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const compact = size === 'compact'
@@ -180,6 +195,7 @@ export function PillButton({
       accessibilityLabel={accessibilityLabel}
       disabled={disabled}
       onPress={onPress}
+      testID={testID}
       style={({ pressed }) => [
         styles.target,
         small && styles.targetSmall,
