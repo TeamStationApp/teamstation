@@ -1492,6 +1492,112 @@ describe('scheduleUi.test.tsx', () => {
       expect(saveButton()).equals(null)
       expect(h.route().levels).equals('majors')
     })
+    it('clears Save filter’s busy state when the league changes before the save answers', async () => {
+      const f = fixture()
+      const save = deferred<undefined>()
+      f.client.umpireAvailability = async () => null
+      f.client.saveUmpireAvailability = async (_league, availability) => {
+        await save.promise
+        return availability
+      }
+      const h = await harness(f, { levels: 'majors' }, [
+        { id: 'demo', name: 'Demo League', logoUrl: null },
+        { id: 'visitors', name: 'Demo Visitors', logoUrl: null }
+      ])
+      await press('Save this filter as your availability')
+      expect(saveButton()!.getAttribute('aria-busy')).equals('true')
+      await press('Demo Visitors')
+      expect(h.route()).includes({ id: 'visitors' })
+      await act(async () => {
+        save.resolve(undefined)
+      })
+      await press('Schedule filters')
+      await press('majors')
+      await press('Apply filters')
+      expect(h.route()).includes({ id: 'visitors', levels: 'majors' })
+      expect(saveButton()).not.equals(null)
+      expect(saveButton()!.getAttribute('aria-busy')).equals('false')
+    })
+    it('keeps a saved filter’s zone when Apply changes only a level, and drops it for a changed time', async () => {
+      const device = process.env.TZ
+      process.env.TZ = 'America/Los_Angeles'
+      try {
+        const f = fixture()
+        const evenings: UmpireAvailability = {
+          levels: [],
+          days: [1],
+          from: '18:00',
+          to: '21:00',
+          timezone: 'America/New_York'
+        }
+        f.client.umpireAvailability = async () => evenings
+        const h = await harness(f)
+        expect(h.route()).includes({ timezone: 'America/New_York' })
+        await press('Schedule filters')
+        await press('majors')
+        await press('Apply filters')
+        expect(h.route()).includes({
+          levels: 'majors',
+          days: '1',
+          from: '18:00',
+          to: '21:00',
+          timezone: 'America/New_York'
+        })
+        const last = new URLSearchParams(h.queries.at(-1)!.split('?')[1])
+        expect(last.get('timezone')).equals('America/New_York')
+        expect(last.get('levels')).equals('majors')
+        expect(last.get('from')).equals('18:00')
+        expect(last.get('to')).equals('21:00')
+        // Only the level differs from the saved filter, in its own zone.
+        await press('Save this filter as your availability')
+        // A changed day is read in the device's zone.
+        await press('Schedule filters')
+        await press('Saturday')
+        await press('Apply filters')
+        expect(h.route().timezone).equals(undefined)
+        expect(
+          new URLSearchParams(h.queries.at(-1)!.split('?')[1]).get('timezone')
+        ).equals('America/Los_Angeles')
+      } finally {
+        if (device == null) delete process.env.TZ
+        else process.env.TZ = device
+      }
+    })
+    it('compares and saves only the levels the league still has', async () => {
+      const f = fixture()
+      const saves: Array<UmpireAvailability | null> = []
+      f.client.umpireAvailability = async () => ({
+        levels: ['majors'],
+        days: [],
+        from: null,
+        to: null,
+        timezone: zone
+      })
+      f.client.saveUmpireAvailability = async (_league, availability) => {
+        saves.push(availability)
+        return availability
+      }
+      // A stale link: a level since deleted beside one the league has.
+      const h = await harness(f, { levels: 'majors,gone' })
+      expect(h.route().levels).equals('majors,gone')
+      expect(saveButton()).equals(null)
+      expect(
+        appliedAvailability({ ...h.route(), days: '5' }, ['majors']).levels
+      ).deep.equals(['majors'])
+      // A change saves without the stale level.
+      await press('Schedule filters')
+      await press('Saturday')
+      await press('Apply filters')
+      await press('Save this filter as your availability')
+      expect(saves).deep.equals([
+        { levels: ['majors'], days: [5], from: null, to: null, timezone: zone }
+      ])
+      // A link naming only a deleted level asks for no save.
+      const g = fixture()
+      g.client.umpireAvailability = async () => null
+      await harness(g, { levels: 'gone' })
+      expect(saveButton()).equals(null)
+    })
     it('switches league to that league’s saved filter, and back', async () => {
       const f = fixture()
       const saturday: UmpireAvailability = {

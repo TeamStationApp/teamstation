@@ -110,12 +110,21 @@ export function routeNamesFilter(route: UmpireScheduleRoute): boolean {
     key => route[key] != null
   )
 }
-/** The filter the route applies, in the zone it is read in. */
+/**
+ * The filter the route applies, in the zone it is read in. With the league's
+ * level ids, `known`, a level it no longer has is left out, as the server
+ * leaves it out of what it saves, so a stale link does not ask to be saved.
+ */
 export function appliedAvailability(
-  route: UmpireScheduleRoute
+  route: UmpireScheduleRoute,
+  known?: readonly string[]
 ): UmpireAvailability {
   return {
-    levels: (route.levels ?? '').split(',').filter(Boolean),
+    levels: (route.levels ?? '')
+      .split(',')
+      .filter(
+        level => level !== '' && (known == null || known.includes(level))
+      ),
     days: (route.days ?? '').split(',').filter(Boolean).map(Number),
     from: route.from ?? null,
     to: route.to ?? null,
@@ -456,7 +465,10 @@ export function UmpireScheduleScreen({
     ((from === '') !== (to === '')
       ? 'Choose both a start and an end time.'
       : null)
-  const applied = appliedAvailability(route)
+  const applied = appliedAvailability(
+    route,
+    schedule?.levels.map(level => level.id)
+  )
   const showSaveFilter =
     saved?.league === route.id &&
     saved.failed !== true &&
@@ -470,7 +482,9 @@ export function UmpireScheduleScreen({
         const availability = await client.saveUmpireAvailability(league, body)
         if (live()) setSaved({ league, availability })
       } finally {
-        if (live()) setSavingFilter(false)
+        // One flag for the whole screen, cleared whichever league is shown
+        // when the save answers.
+        setSavingFilter(false)
       }
     }, true)
   }
@@ -1342,12 +1356,23 @@ export function UmpireScheduleScreen({
             label="Apply filters"
             disabled={filterError != null}
             onPress={() => {
+              const nextFrom = from === '' ? undefined : from
+              const nextTo = to === '' ? undefined : to
+              // A saved filter's zone stays while its days and range are as
+              // they were; a changed day or time is read in the device's.
+              const timeKept =
+                sameList(
+                  days,
+                  (route.days ?? '').split(',').filter(Boolean).map(Number)
+                ) &&
+                nextFrom === route.from &&
+                nextTo === route.to
               change({
                 days: days.length === 0 ? undefined : days.join(','),
                 levels: levels.length === 0 ? undefined : levels.join(','),
-                from: from === '' ? undefined : from,
-                to: to === '' ? undefined : to,
-                timezone: undefined,
+                from: nextFrom,
+                to: nextTo,
+                timezone: timeKept ? route.timezone : undefined,
                 priorSeasons:
                   schedule?.isAdmin === true && priorSeasons
                     ? 'true'
