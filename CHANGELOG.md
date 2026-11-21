@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- added: One search field finds leagues, seasons, teams and people, with the closest matches first
+- changed: The Auto-Scheduler builds every schedule exactly on the web, iPhone and Android, and publishes a large preview in a bounded number of queries
+- changed: On a phone, the game screen releases its own player while the four-camera grid is open, and the live pill pulses only where it can be seen
+- added: Streaming end-to-end tests replay synthetic cameras from a publisher, and every viewer recovers when a camera drops out or the viewer scrubs
+- added: The end-to-end suite runs on develop's framework on its test stacks, including stand-ins, Tess and covered taps
 - added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
 - added: Develop, branch and seat builds of the web and phone apps report how each video plays: how long it takes to start, every stall and seek with how far behind live it was, errors and the recoveries that followed, bitrate and dropped frames, so a slow start or a stall can be measured
 - added: `?debug=1` on the game page shows what its video player is doing: its state, the page's own reading and its last events
