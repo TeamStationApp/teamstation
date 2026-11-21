@@ -292,15 +292,29 @@ export interface MatchedAt {
 }
 
 /**
- * The weekday, date and time of day of `availableAt` in each time zone the
- * saved filters use, as the match reads them, so a reader names the day the
- * filters were matched on rather than working it out.
+ * The weekday, date and time of day of `availableAt` in the time zone of each
+ * league game starting then and of each saved filter, as the match reads
+ * them, so a reader names the day rather than working it out. Empty when no
+ * game starts then and nobody has saved a filter.
  */
-export function matchedAt(
+export async function matchedAt(
+  db: Kysely<Database>,
+  leagueId: string,
   start: Date,
   saved: Iterable<UmpireAvailability | null>
-): MatchedAt[] {
-  const zones = new Set<string>()
+): Promise<MatchedAt[]> {
+  const zones = new Set<string>(
+    (
+      await db
+        .selectFrom('games')
+        .innerJoin('seasons', 'seasons.id', 'games.season_id')
+        .select('games.timezone')
+        .distinct()
+        .where('seasons.league_id', '=', leagueId)
+        .where('games.start_at', '=', start)
+        .execute()
+    ).map(game => game.timezone)
+  )
   for (const availability of saved)
     if (availability != null) zones.add(availability.timezone)
   return [...zones].sort().map(timezone => ({

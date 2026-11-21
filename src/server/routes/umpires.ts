@@ -21,8 +21,8 @@ import * as admin from '../umpires/admin'
 import { deleteSlot, leaderboard, saveSlot } from '../umpires/assignments'
 import {
   availabilityPasses,
-  matchedAt,
   commitmentWindow,
+  matchedAt,
   parseAvailabilityQuery,
   readAvailability,
   requireOwnAvailability,
@@ -318,7 +318,14 @@ export function umpireRoutes(
             availabilityPasses(person.umpireAvailability, query)
         ),
       ...(query?.at != null && 'start' in query.at
-        ? { matchedAt: matchedAt(query.at.start, saved.values()) }
+        ? {
+            matchedAt: await matchedAt(
+              trx,
+              league,
+              query.at.start,
+              saved.values()
+            )
+          }
         : {})
     }
   })

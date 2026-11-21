@@ -242,7 +242,9 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
           'schedule\u2019s filter matches a game. Somebody with no saved ' +
           'filter counts as available unless `strict` is true. With ' +
           '`availableAt` the answer also carries `matchedAt`: for each time ' +
-          'zone the saved filters use, `{ timezone, weekday, date, time }`, ' +
+          'zone of the league\u2019s games starting then and of the saved ' +
+          'filters (empty when there is neither), ' +
+          '`{ timezone, weekday, date, time }`, ' +
           'the weekday (`Monday` … `Sunday`), date (`YYYY-MM-DD`) and time ' +
           'of day (`HH:mm`) the start was matched on there.'
         : '')

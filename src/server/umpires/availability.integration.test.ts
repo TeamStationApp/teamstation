@@ -8,6 +8,7 @@ import type { GroupFixture } from '../../test/groupFixtures'
 import { umpireFixture } from '../../test/umpireFixture'
 import { USER_API_KEY_PREFIX } from '../auth/sessions'
 import { hashToken, makeToken } from '../auth/tokens'
+import { matchedAt } from './availability'
 
 /**
  * Umpire availability on `umpireFixture`: Demo League A manages umpires,
@@ -335,8 +336,9 @@ describe('umpire availability', function () {
     expect(ids(await list(f.leagueA, '?strict=false'))).deep.equals(all)
   })
 
-  it('names the weekday and time availableAt was matched on, per saved zone', async function () {
-    // Tuesday 18:30 in Los Angeles is already Wednesday in UTC.
+  it('names the weekday and time availableAt was matched on, per zone', async function () {
+    // Tuesday 18:30 in Los Angeles is already Wednesday in UTC; no game
+    // starts then, so only the saved filters' zone is read.
     const answer = await list(f.leagueA, `?availableAt=${tuesdayEvening}`)
     expect(answer.body.matchedAt).deep.equals([
       {
@@ -346,6 +348,54 @@ describe('umpire availability', function () {
         time: '18:30'
       }
     ])
+    // A league game starting then adds its own zone.
+    const game = await f.h.db
+      .selectFrom('games')
+      .innerJoin('seasons', 'seasons.id', 'games.season_id')
+      .select(['games.id', 'games.start_at', 'games.end_at', 'games.timezone'])
+      .where('seasons.league_id', '=', f.leagueA)
+      .executeTakeFirstOrThrow()
+    const move = async (values: {
+      start_at: Date
+      end_at: Date | null
+      timezone: string
+    }): Promise<unknown> =>
+      await f.h.db
+        .updateTable('games')
+        .set(values)
+        .where('id', '=', game.id)
+        .execute()
+    await move({
+      start_at: new Date('2027-04-12T03:00:00.000Z'),
+      end_at: new Date('2027-04-12T06:00:00.000Z'),
+      timezone: 'America/New_York'
+    })
+    expect(
+      (await list(f.leagueA, '?availableAt=2027-04-12T03:00:00.000Z')).body
+        .matchedAt
+    ).deep.equals([
+      {
+        timezone: 'America/Los_Angeles',
+        weekday: 'Sunday',
+        date: '2027-04-11',
+        time: '20:00'
+      },
+      {
+        timezone: 'America/New_York',
+        weekday: 'Sunday',
+        date: '2027-04-11',
+        time: '23:00'
+      }
+    ])
+    await move({
+      start_at: game.start_at,
+      end_at: game.end_at,
+      timezone: game.timezone
+    })
+    // With no game then and no saved filter there is nothing to read.
+    expect(
+      await matchedAt(f.h.db, f.leagueA, new Date(tuesdayEvening), [null])
+    ).deep.equals([])
     // A day and time need no reading, and no query matches on none.
     expect(
       (await list(f.leagueA, '?day=1&time=18:30')).body
