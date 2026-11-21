@@ -760,31 +760,44 @@ describe('the GraphQL API', function () {
   describe('umpires', function () {
     const UMPIRES = `query ($league: ID!, $day: Int, $time: String, $level: ID, $strict: Boolean, $availableAt: String, $durationMinutes: Int) {
       umpires(leagueId: $league, day: $day, time: $time, level: $level, strict: $strict, availableAt: $availableAt, durationMinutes: $durationMinutes) {
-        id name umpireAvailability { levels days from to timezone }
+        people { id name umpireAvailability { levels days from to timezone } }
+        matchedAt { timezone weekday date time }
       }
     }`
+    const restList = async (
+      query = ''
+    ): Promise<{
+      people: Array<Record<string, unknown>>
+      matchedAt?: unknown[]
+    }> =>
+      (await (
+        await f.h.request(
+          'GET',
+          `/leagues/${f.leagueA}/umpires${query}`,
+          undefined,
+          101
+        )
+      ).json()) as {
+        people: Array<Record<string, unknown>>
+        matchedAt?: unknown[]
+      }
     const rest = async (query = ''): Promise<unknown[]> =>
-      (
-        (await (
-          await f.h.request(
-            'GET',
-            `/leagues/${f.leagueA}/umpires${query}`,
-            undefined,
-            101
-          )
-        ).json()) as { people: Array<Record<string, unknown>> }
-      ).people.map(({ id, name, umpireAvailability }) => ({
-        id,
-        name,
-        umpireAvailability
-      }))
+      (await restList(query)).people.map(
+        ({ id, name, umpireAvailability }) => ({
+          id,
+          name,
+          umpireAvailability
+        })
+      )
 
     it('lists a league’s umpires as the REST list does, filtered the same way', async function () {
       const all = await ask(101, UMPIRES, { league: f.leagueA })
       expect(all.body.errors).equals(undefined)
-      expect(all.body.data.umpires).deep.equals(await rest())
+      expect(all.body.data.umpires.people).deep.equals(await rest())
+      // matchedAt comes only with availableAt.
+      expect(all.body.data.umpires.matchedAt).equals(null)
       expect(
-        all.body.data.umpires.map((one: { id: string }) => one.id).sort()
+        all.body.data.umpires.people.map((one: { id: string }) => one.id).sort()
       ).deep.equals([userIdOfGumbo(104), userIdOfGumbo(106)].sort())
       const monday = await ask(101, UMPIRES, {
         league: f.leagueA,
@@ -792,11 +805,11 @@ describe('the GraphQL API', function () {
         time: '18:00',
         strict: true
       })
-      expect(monday.body.data.umpires).deep.equals(
+      expect(monday.body.data.umpires.people).deep.equals(
         await rest('?day=0&time=18:00&strict=true')
       )
       expect(
-        monday.body.data.umpires.map((one: { id: string }) => one.id)
+        monday.body.data.umpires.people.map((one: { id: string }) => one.id)
       ).deep.equals([userIdOfGumbo(104)])
       const saturday = await ask(101, UMPIRES, {
         league: f.leagueA,
@@ -805,8 +818,36 @@ describe('the GraphQL API', function () {
         level: 'ulv_gql'
       })
       expect(
-        saturday.body.data.umpires.map((one: { id: string }) => one.id)
+        saturday.body.data.umpires.people.map((one: { id: string }) => one.id)
       ).deep.equals([userIdOfGumbo(106)])
+      // The day the start was matched on, as the REST answer gives it.
+      const matched = (
+        await restList(
+          '?availableAt=2027-04-18T01:30:00Z&durationMinutes=60&level=ulv_gql'
+        )
+      ).matchedAt
+      expect(matched).length.greaterThan(0)
+      expect(saturday.body.data.umpires.matchedAt).deep.equals(matched)
+    })
+
+    it('says day and time are read in each umpire’s zone, and availableAt is for a game', async function () {
+      const answer = await ask(
+        101,
+        '{ __type(name: "Query") { fields { name description args { name description } } } }'
+      )
+      const field = (
+        answer.body.data.__type.fields as Array<{
+          name: string
+          description: string
+          args: Array<{ name: string; description: string | null }>
+        }>
+      ).find(one => one.name === 'umpires')!
+      expect(field.description).includes('For a game, pass availableAt')
+      expect(field.description).includes('own saved zone')
+      for (const name of ['day', 'time'])
+        expect(field.args.find(arg => arg.name === name)?.description).includes(
+          'own saved zone'
+        )
     })
 
     it('reads an umpire’s commitments as the REST route does', async function () {
@@ -855,7 +896,7 @@ describe('the GraphQL API', function () {
       const answer = await ask(
         104,
         `query ($league: ID!, $user: ID!) {
-          umpires(leagueId: $league) { id }
+          umpires(leagueId: $league) { people { id } }
           umpireCommitments(leagueId: $league, userId: $user, from: "2027-04-01T00:00:00Z", to: "2027-04-02T00:00:00Z") { gameId }
         }`,
         { league: f.leagueA, user: userIdOfGumbo(104) }

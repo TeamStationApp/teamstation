@@ -308,6 +308,29 @@ describe('umpire availability', function () {
       (person: { id: string }) => person.id === userIdOfGumbo(106)
     )
     expect(listed.umpireAvailability).deep.equals(weekends)
+    // With a row under each account, the list keeps the newest of them.
+    await f.h.db
+      .insertInto('umpire_availability')
+      .values({
+        user_id: userIdOfGumbo(106),
+        league_id: f.leagueA,
+        days: [0],
+        timezone: 'America/Denver',
+        updated_at: new Date('2020-01-01T00:00:00Z')
+      })
+      .execute()
+    const listedDays = async (): Promise<unknown> =>
+      (await list(f.leagueA)).body.people.find(
+        (person: { id: string }) => person.id === userIdOfGumbo(106)
+      ).umpireAvailability.days
+    expect(await listedDays()).deep.equals([5, 6])
+    await f.h.db
+      .updateTable('umpire_availability')
+      .set({ updated_at: new Date('2030-01-01T00:00:00Z') })
+      .where('user_id', '=', userIdOfGumbo(106))
+      .where('league_id', '=', f.leagueA)
+      .execute()
+    expect(await listedDays()).deep.equals([0])
     await save(f.leagueA, { ...weekends, days: [6] }, 106)
     const rows = await f.h.db
       .selectFrom('umpire_availability')
@@ -481,6 +504,12 @@ describe('umpire availability', function () {
       '?availableAt=2027-04-13T18:30:00.000',
       `?availableAt=${encodeURIComponent('April 13 2027')}`,
       `?availableAt=${encodeURIComponent('2027-04-14 01:30:00Z')}`,
+      // Impossible dates and times, which Date.parse would roll over.
+      '?availableAt=2026-02-30T00:00Z',
+      '?availableAt=2026-13-01T00:00Z',
+      '?availableAt=2026-04-01T24:00Z',
+      '?availableAt=2026-04-01T23:60Z',
+      `?availableAt=${encodeURIComponent('2026-04-31T10:00:00+05:30')}`,
       '?durationMinutes=60',
       `?availableAt=${tuesdayEvening}&durationMinutes=0`,
       `?availableAt=${tuesdayEvening}&day=1&time=18:00`,
@@ -501,7 +530,9 @@ describe('umpire availability', function () {
       '2027-04-14T01:30Z',
       '2027-04-14T01:30:00+00:00',
       '2027-04-13T18:30:00-07:00',
-      '2027-04-14T10:30:00.000+09:00'
+      '2027-04-14T10:30:00.000+09:00',
+      // The offset can move the day: still the same instant.
+      '2027-04-13T23:30:00-02:00'
     ]) {
       const answer = await list(
         f.leagueA,
@@ -694,6 +725,8 @@ describe('umpire availability', function () {
         '?from=2027-04-01T00:00&to=2027-04-02T00:00:00Z',
         `?from=${encodeURIComponent('April 1 2027')}&to=2027-04-02T00:00:00Z`,
         '?from=2027-04-01T00:00:00Z&to=2027-04-02',
+        '?from=2027-02-29T00:00:00Z&to=2027-03-02T00:00:00Z',
+        '?from=2027-04-01T00:00:00Z&to=2027-04-01T24:00:00Z',
         '?to=2027-04-01T00:00:00Z'
       ])
         expect((await commitments(101, umpire, query)).status, query).equals(

@@ -488,6 +488,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/umpires/notes.js',
   'server/umpires/openApi.js',
   'server/umpires/presence.js',
+  'server/umpires/queryInteger.js',
   'server/umpires/savePeople.js',
   'server/umpires/schedule.js',
   'server/umpires/types.js',

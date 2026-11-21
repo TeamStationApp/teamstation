@@ -551,6 +551,12 @@ describe('the API document', function () {
       'strict'
     ])
     expect((parameters.get('day') as any).description).includes('0 is Monday')
+    // day and time are wall-clock in each umpire's zone; a game is availableAt.
+    for (const name of ['day', 'time'])
+      expect((parameters.get(name) as any).description).match(
+        /own saved zone.*use `availableAt`/
+      )
+    expect(list.description).includes('For a game, pass `availableAt`')
     expect(list.description).includes('umpireAvailability')
     expect(list.description).includes('unless `strict`')
     expect(list.description).includes('on the start')

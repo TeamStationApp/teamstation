@@ -240,7 +240,13 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
           'people whose saved filter leaves the time in: a filter matches ' +
           'on the start, read in its own time zone, as the umpire ' +
           'schedule\u2019s filter matches a game. Somebody with no saved ' +
-          'filter counts as available unless `strict` is true. With ' +
+          'filter counts as available unless `strict` is true. For a ' +
+          'game, pass `availableAt`: one instant, read in each saved ' +
+          'filter\u2019s zone. `day` and `time` are for a general weekly ' +
+          'question: they are read as the wall-clock weekday and time of ' +
+          'day in each umpire\u2019s own saved zone, so one `day` and ' +
+          '`time` is a different instant for umpires in different zones. ' +
+          'With ' +
           '`availableAt` the answer also carries `matchedAt`: for each time ' +
           'zone of the league\u2019s games starting then and of the saved ' +
           'filters (empty when there is neither), ' +
@@ -278,7 +284,9 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       schema: { type: 'integer', minimum: 0, maximum: 6 },
       description:
         'A weekday, 0 is Monday … 6 is Sunday; goes with `time`. Keeps ' +
-        'people whose saved days include it (or who saved no days).'
+        'people whose saved days include it (or who saved no days), read ' +
+        'as the weekday in each umpire\u2019s own saved zone, not as one ' +
+        'instant; for a game, use `availableAt`.'
     },
     {
       name: 'time',
@@ -286,7 +294,8 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       schema: { type: 'string', pattern: '^([01]\\d|2[0-3]):[0-5]\\d$' },
       description:
         'A time of day, `HH:mm`; goes with `day`. Keeps people whose saved ' +
-        'range holds it (or who saved none).'
+        'range holds it (or who saved none), read as wall-clock time in ' +
+        'each umpire\u2019s own saved zone; for a game, use `availableAt`.'
     },
     {
       name: 'level',

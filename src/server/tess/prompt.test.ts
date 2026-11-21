@@ -137,6 +137,8 @@ describe("Tess's system prompt", function () {
     expect(instructed).includes('/commitments')
     expect(instructed).includes('left out and why')
     expect(instructed).includes('day 0 is Monday')
+    expect(instructed).includes('For a game, always pass `availableAt`')
+    expect(instructed).includes('own saved zone')
     expect(instructed).includes('cannot see it')
     const list = index
       .split('\n')

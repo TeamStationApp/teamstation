@@ -811,6 +811,31 @@ const UmpireType = new GraphQLObjectType({
   }
 })
 
+const UmpireMatchedAtType = new GraphQLObjectType({
+  name: 'UmpireMatchedAt',
+  description:
+    'Where availableAt falls in one time zone: one of the league’s games starting then, or one saved filter.',
+  fields: {
+    timezone: from(GraphQLString),
+    weekday: from(GraphQLString, 'Monday … Sunday.'),
+    date: from(GraphQLString, 'YYYY-MM-DD.'),
+    time: from(GraphQLString, 'HH:mm.')
+  }
+})
+
+const UmpireListType = new GraphQLObjectType({
+  name: 'UmpireList',
+  description:
+    'A league’s umpires, as GET /leagues/{id}/umpires answers: the people its arguments keep, and with availableAt where that start was matched.',
+  fields: {
+    people: from(required(list(UmpireType))),
+    matchedAt: from(
+      list(UmpireMatchedAtType),
+      'With availableAt: its weekday, date and time in each time zone of the league’s games starting then and of the saved filters; name the game’s day from this. Null without availableAt.'
+    )
+  }
+})
+
 const UmpireCommitmentType = new GraphQLObjectType({
   name: 'UmpireCommitment',
   description: 'A game an umpire is held for: umpiring it or playing in it.',
@@ -888,15 +913,30 @@ const QueryType = new GraphQLObjectType({
       }
     },
     umpires: {
-      type: list(UmpireType),
+      type: UmpireListType,
       description:
-        'A league’s umpires, for its administrators, as GET /leagues/{id}/umpires lists them; the other arguments narrow them by saved availability (day: 0 is Monday; strict leaves out people with no saved filter).',
+        'A league’s umpires, for its administrators, as GET /leagues/{id}/umpires lists them; the other arguments narrow them by saved availability (strict leaves out people with no saved filter). For a game, pass availableAt: one instant, read in each saved filter’s zone. day and time are for a general weekly question: they are read as the weekday and time of day in each umpire’s own saved zone, so they name a different instant for umpires in different zones.',
       args: {
         leagueId: { type: required(GraphQLID) },
-        availableAt: { type: GraphQLString },
-        durationMinutes: { type: GraphQLInt },
-        day: { type: GraphQLInt },
-        time: { type: GraphQLString },
+        availableAt: {
+          type: GraphQLString,
+          description:
+            'A game start, an ISO 8601 date-time with Z or an offset.'
+        },
+        durationMinutes: {
+          type: GraphQLInt,
+          description: 'With availableAt: the game’s length, 1 to 1440.'
+        },
+        day: {
+          type: GraphQLInt,
+          description:
+            'With time: a weekday, 0 is Monday … 6 is Sunday, read in each umpire’s own saved zone, not one instant.'
+        },
+        time: {
+          type: GraphQLString,
+          description:
+            'With day: HH:mm, read as wall-clock time in each umpire’s own saved zone.'
+        },
         level: { type: GraphQLID },
         strict: { type: GraphQLBoolean }
       },
@@ -913,20 +953,18 @@ const QueryType = new GraphQLObjectType({
         },
         context: GraphqlContext
       ) =>
-        (
-          await read<{ people: Json[] }>(
-            context,
-            `/leagues/${id(args.leagueId)}/umpires`,
-            {
-              availableAt: args.availableAt ?? undefined,
-              durationMinutes: args.durationMinutes?.toString(),
-              day: args.day?.toString(),
-              time: args.time ?? undefined,
-              level: args.level ?? undefined,
-              strict: args.strict?.toString()
-            }
-          )
-        ).people
+        await read<{ people: Json[]; matchedAt?: Json[] }>(
+          context,
+          `/leagues/${id(args.leagueId)}/umpires`,
+          {
+            availableAt: args.availableAt ?? undefined,
+            durationMinutes: args.durationMinutes?.toString(),
+            day: args.day?.toString(),
+            time: args.time ?? undefined,
+            level: args.level ?? undefined,
+            strict: args.strict?.toString()
+          }
+        )
     },
     umpireCommitments: {
       type: list(UmpireCommitmentType),

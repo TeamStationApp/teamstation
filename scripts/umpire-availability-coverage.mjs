@@ -11,7 +11,8 @@ import { UNIT_SERVERS } from './testTiers.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 // Line coverage of umpire availability: the saved filter per person and
-// league, its match, the routes that save, read and query it, the
+// league, its match, the routes that save, read and query it (and the
+// leaderboard's paging, which shares their bounded-integer parser), the
 // commitments read, the profile and list fields, GraphQL and Tess's prompt,
 // and the schedule's Save filter and the saved filter it applies, from the
 // suites that exercise them. Each file the work adds must have 95%
@@ -28,6 +29,8 @@ const specs = [
   'src/server/umpires/availability.integration.test.ts',
   'src/server/umpires/availabilityTess.integration.test.ts',
   'src/server/umpires/admin.integration.test.ts',
+  // The shared bounded-integer parser's other caller, the leaderboard pages.
+  'src/server/umpires/leaderboardPages.integration.test.ts',
   'src/server/routes/people.integration.test.ts',
   'src/server/graphql/graphql.integration.test.ts',
   'src/server/tess/prompt.test.ts',
@@ -52,7 +55,8 @@ const slowUnderCoverage = 'Account settings screen .*(behind a slide|deleted)'
 // Added whole: 95% of every line, from the unit and integration suites together.
 const required = [
   'src/migrate/migrations/128umpireAvailability.ts',
-  'src/server/umpires/availability.ts'
+  'src/server/umpires/availability.ts',
+  'src/server/umpires/queryInteger.ts'
 ]
 // Edited: 95% of the lines the branch changes, from the suites together.
 const edited = [
@@ -61,6 +65,7 @@ const edited = [
   'src/common/api.ts',
   'src/migrate/migrations/index.ts',
   'src/server/routes/umpires.ts',
+  'src/server/umpires/admin.ts',
   'src/server/teams/personProfile.ts',
   'src/server/umpires/schedule.ts',
   'src/server/umpires/openApi.ts',

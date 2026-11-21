@@ -35,6 +35,7 @@ import {
   removeNoteType,
   saveNote
 } from '../umpires/notes'
+import { queryInteger } from '../umpires/queryInteger'
 import { savePeople } from '../umpires/savePeople'
 import {
   parseUmpireFilters,
@@ -72,14 +73,13 @@ function leaderboardQueryOf(
     value: unknown,
     least: number,
     most: number
-  ): number | undefined => {
-    if (value == null) return undefined
-    const number =
-      typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN
-    if (!Number.isSafeInteger(number) || number < least || number > most)
-      throw badRequest(`Supply one ${name} from ${least} to ${most}`)
-    return number
-  }
+  ): number | undefined =>
+    queryInteger(
+      value,
+      least,
+      most,
+      `Supply one ${name} from ${least} to ${most}`
+    )
   return {
     order: order ?? undefined,
     limit: whole('limit', limit, 1, UMPIRE_LEADERBOARD_MAX_PAGE),
@@ -293,7 +293,7 @@ export function umpireRoutes(
   // parameters keep only the people it leaves in.
   manage('get', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     const query = parseAvailabilityQuery(req.query)
-    const people = await admin.people(
+    const { people, accounts } = await admin.peopleWithAccounts(
       trx,
       league,
       undefined,
@@ -301,10 +301,12 @@ export function umpireRoutes(
       readerOf(req.actor),
       await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
     )
+    // The list already resolved each person's merged accounts.
     const saved = await readAvailability(
       trx,
       league,
-      people.map(person => person.id)
+      people.map(person => person.id),
+      accounts
     )
     return {
       people: people

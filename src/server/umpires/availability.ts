@@ -16,6 +16,7 @@ import { onePeople, type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { currentActor } from '../groups/rights'
+import { queryInteger } from './queryInteger'
 import { leagueUmpire, umpireAccess } from './schedule'
 
 /**
@@ -23,13 +24,34 @@ import { leagueUmpire, umpireAccess } from './schedule'
  * offset, so no time is read in the server's own zone.
  */
 const ISO_INSTANT =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(:\d{2}(\.\d+)?)?(Z|([+-])(\d{2}):(\d{2}))$/
 
-/** An ISO 8601 date-time with a zone, as a Date; undefined for anything else. */
-function isoInstant(value: unknown): Date | undefined {
-  if (typeof value !== 'string' || !ISO_INSTANT.test(value)) return undefined
+/**
+ * An ISO 8601 date-time with a zone, as a Date; undefined for anything else,
+ * an impossible date or time among them: `Date.parse` rolls
+ * `2026-02-30T00:00Z` over to March 2, so the instant is read back in the
+ * input's own offset and must give the date and time it was written with.
+ */
+export function isoInstant(value: unknown): Date | undefined {
+  if (typeof value !== 'string') return undefined
+  const parts = ISO_INSTANT.exec(value)
+  if (parts == null) return undefined
   const time = Date.parse(value)
-  return Number.isNaN(time) ? undefined : new Date(time)
+  if (Number.isNaN(time)) return undefined
+  const [, year, month, day, hour, minute] = parts
+  const sign = parts[9] === '-' ? -1 : 1
+  const offsetMinutes =
+    parts[8] === 'Z' ? 0 : sign * (Number(parts[10]) * 60 + Number(parts[11]))
+  const local = new Date(time + offsetMinutes * 60000)
+  if (
+    local.getUTCFullYear() !== Number(year) ||
+    local.getUTCMonth() + 1 !== Number(month) ||
+    local.getUTCDate() !== Number(day) ||
+    local.getUTCHours() !== Number(hour) ||
+    local.getUTCMinutes() !== Number(minute)
+  )
+    return undefined
+  return new Date(time)
 }
 
 /** The longest window a commitments read covers. */
@@ -76,9 +98,18 @@ export async function readAvailability(
     .execute()
   const levels =
     rows.length === 0 ? new Set<string>() : await leagueLevels(db, leagueId)
+  // Where each account's row is in the rows, newest first: one per account,
+  // as the league and the account are its key.
+  const rank = new Map(rows.map((row, at) => [row.user_id, at]))
   for (const userId of userIds) {
     const ids = people.get(userId)?.userIds ?? [userId]
-    const row = rows.find(r => ids.includes(r.user_id))
+    // The newest row of any of the person's accounts.
+    let at: number | undefined
+    for (const id of ids) {
+      const held = rank.get(id)
+      if (held != null && (at == null || held < at)) at = held
+    }
+    const row = at == null ? undefined : rows[at]
     found.set(
       userId,
       row == null
@@ -242,14 +273,13 @@ export function parseAvailabilityQuery(
     value: unknown,
     least: number,
     most: number
-  ): number | undefined => {
-    const text = one(name, value)
-    if (text == null) return undefined
-    const number = /^\d+$/.test(text) ? Number(text) : NaN
-    if (!Number.isSafeInteger(number) || number < least || number > most)
-      throw badRequest(`Supply ${name} from ${least} to ${most}`)
-    return number
-  }
+  ): number | undefined =>
+    queryInteger(
+      one(name, value),
+      least,
+      most,
+      `Supply ${name} from ${least} to ${most}`
+    )
   const strictText = one('strict', strict)
   if (strictText != null && strictText !== 'true' && strictText !== 'false')
     throw badRequest('Supply strict as true or false')
