@@ -166,7 +166,7 @@ const CASES: Case[] = [
   },
   {
     name: 'adding a game ends in confirmChange with plain details, never a write, the cache read',
-    text: `Add a game against Demo Eagles on ${saturdayAhead()} at 10am.`,
+    text: `Add a Demo Hawks game against Demo Eagles on ${saturdayAhead()} at 10am.`,
     check: turn => {
       if (turn.writes > 0) return 'something was written'
       const game = turn.changes.find(
