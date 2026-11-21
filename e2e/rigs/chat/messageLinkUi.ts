@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { flattenPublicHierarchy } from '../../../src/test/chat2Maestro.e2e'
+import {
+  flattenPublicHierarchy,
+  iosPublicRead
+} from '../../../src/test/chat2Maestro.e2e'
 import type { Emulation } from '../../core/browserCdp'
 import { signInWithPassword } from '../../core/fixtures'
 import type { MaestroDevice } from '../../core/maestro'
@@ -19,6 +22,27 @@ import {
 } from './messageLinkFixture'
 
 const composer = { id: 'chat-composer' }
+
+export async function readChatComposer(
+  m: MaestroDevice,
+  platform: string,
+  web?: WebSession
+): Promise<string> {
+  if (web != null) {
+    return await web.page.$eval(
+      '[data-testid="chat-composer"]',
+      node => (node as HTMLTextAreaElement).value
+    )
+  }
+  if (platform !== 'ios') return (await m.copyTextFrom(composer)).data
+  const { element } = iosPublicRead(
+    await m.hierarchyRaw(),
+    composer,
+    'TextView'
+  )
+  assert(element != null, 'The editable composer must be present')
+  return element.value ?? ''
+}
 
 async function waitForComposer(
   m: MaestroDevice,

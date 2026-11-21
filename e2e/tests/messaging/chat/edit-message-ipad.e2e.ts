@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 
-import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
+import { observedNativeValue } from '../../../../src/test/chat2Maestro.e2e'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
@@ -45,23 +46,28 @@ async function hardware(ctx: E2eContext): Promise<void> {
       const reply = await result.json()
       assert.equal(reply.value?.error, undefined)
     }
-    const text = 'Bring the equipment to practice'
+    const text = 'Bring the equipment to practice ' + randomUUID().slice(0, 8)
     const message = await actor.engine.sendText(f.conversationId, text)
     assert(message?.mine === true)
     await enter()
     await m.tapOn({ id: 'chat-composer' })
     await press(82)
     await m.assertVisible({ text: '^Editing your message$' })
-    assert(
-      flattenPublicHierarchy(await m.hierarchy()).some(
-        n => n.id === 'chat-composer' && n.text === text
-      )
-    )
+    const expectComposerValue = async (value: string): Promise<void> => {
+      observedNativeValue(await m.hierarchyRaw(), {
+        identifier: 'chat-composer',
+        type: 'TextView',
+        label: 'Message',
+        value
+      })
+    }
+    await expectComposerValue(text)
     await press(41)
     await m.assertNotVisible({ text: '^Editing your message$' })
     await m.inputText({ text: 'Practice draft' })
     await press(82)
     await m.assertNotVisible({ text: '^Editing your message$' })
+    await expectComposerValue('Practice draft')
     await m.eraseText({ characters: 'Practice draft'.length })
   } finally {
     actor.engine.stop()

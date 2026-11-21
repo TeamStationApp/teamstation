@@ -3,10 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import {
-  flattenPublicHierarchy,
-  iosPublicRead
-} from '../../../../src/test/chat2Maestro.e2e'
+import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
 import type { MaestroDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
 import {
@@ -14,7 +11,7 @@ import {
   fixtureFor,
   providerFor
 } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
 
 const composer = { id: 'chat-composer' }
 const exact = (s: string): string =>
@@ -212,20 +209,6 @@ async function dismissComposerKeyboard(
   else await m.hideKeyboard()
 }
 
-async function readComposer(
-  m: MaestroDevice,
-  platform: string
-): Promise<string> {
-  if (platform !== 'ios') return (await m.copyTextFrom(composer)).data
-  const { element } = iosPublicRead(
-    await m.hierarchyRaw(),
-    composer,
-    'TextView'
-  )
-  assert(element != null, 'The editable composer must be present')
-  return element.value ?? ''
-}
-
 /** The fixture starts its first line with a plain filename, beside its live links. */
 async function tapPlainFilename(
   m: MaestroDevice,
@@ -336,7 +319,7 @@ async function copyMessage(
     if (nodes.some(node => node.text === 'Allow Paste'))
       await m.tapOn({ text: '^Allow Paste$' })
     assert.equal(
-      await readComposer(m, platform),
+      await readChatComposer(m, platform),
       body,
       'Paste must put the complete message in the editable composer'
     )
@@ -669,15 +652,7 @@ async function open(ctx: E2eContext): Promise<void> {
         // Type with no intervening tap, so a lost composer focus cannot pass.
         const draft = 'Draft ' + id
         await m.inputText({ text: draft })
-        if (web == null) assert.equal(await readComposer(m, platform), draft)
-        else
-          assert.equal(
-            await web.page.$eval(
-              '[data-testid="chat-composer"]',
-              field => (field as HTMLTextAreaElement).value
-            ),
-            draft
-          )
+        assert.equal(await readChatComposer(m, platform, web), draft)
         await m.eraseText({ characters: draft.length })
         if (web == null) await dismissComposerKeyboard(m, platform)
         await copyMessage(m, web, first, body, platform)

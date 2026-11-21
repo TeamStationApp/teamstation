@@ -5,11 +5,14 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MessageView } from '../../../../src/app/chat/engine/apply'
-import { dismissNotificationAskOn } from '../../../../src/test/notificationAsk'
 import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
+import {
+  dismissNotificationAsk,
+  dismissNotificationAskOn
+} from '../../../../src/test/notificationAsk'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi } from '../../../rigs/chat/messageLinkUi'
+import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
 
 async function edit(ctx: E2eContext): Promise<void> {
   const f = fixtureFor(ctx)
@@ -52,6 +55,9 @@ async function edit(ctx: E2eContext): Promise<void> {
       )
       assert(incoming != null)
       await enter()
+      if (web != null) {
+        await dismissNotificationAsk(web.page, { userId: author.person.userId })
+      }
       const row = (id: string): string => 'chat-message-' + id
       const openMenu = async (id: string): Promise<void> => {
         if (web != null) {
@@ -102,12 +108,25 @@ async function edit(ctx: E2eContext): Promise<void> {
         })
         await m.assertVisible({ text: '^Remove equipment.txt$' })
         await m.tapOn(field)
+        const focused = async (): Promise<boolean> =>
+          await web.page.$eval(
+            '[data-testid="chat-composer"]',
+            node => document.activeElement === node
+          )
+        assert(
+          await focused(),
+          'The staged draft field must have focus before the peer update'
+        )
         const update = await peer.engine.sendText(
           room,
           'Equipment list confirmed ' + tag
         )
         assert(update != null)
         await m.assertVisible({ id: row(update.id) })
+        assert(
+          await focused(),
+          'The peer update must preserve the focused draft'
+        )
         const history = await web.page.waitForSelector(
           '[data-testid="chat-message-history"]'
         )
@@ -130,11 +149,7 @@ async function edit(ctx: E2eContext): Promise<void> {
         await history.evaluate(element => {
           const control = Array.from(
             element.querySelectorAll<HTMLElement>('button,[role="button"]')
-          ).find(
-            button =>
-              button.textContent != null &&
-              button.textContent.trim() === 'Load earlier messages'
-          )
+          ).find(button => button.innerText.trim() === 'Load earlier messages')
           if (control == null)
             throw Error('The history fixture needs an earlier page')
           control.click()
@@ -183,8 +198,8 @@ async function edit(ctx: E2eContext): Promise<void> {
       const dismissAsk = async (): Promise<void> => {
         await dismissNotificationAskOn(
           {
-            assertVisible: selector => m.assertVisible(selector),
-            tapOn: selector => m.tapOn(selector)
+            assertVisible: async selector => await m.assertVisible(selector),
+            tapOn: async selector => await m.tapOn(selector)
           },
           1500
         )
@@ -226,27 +241,15 @@ async function edit(ctx: E2eContext): Promise<void> {
       await m.tapOn({ text: '^Back$', timeout: 10000 })
       await m.tapOn({ id: listId })
       await m.assertVisible({ text: '^Editing your message$' })
-      if (web != null)
-        assert.equal(
-          await web.page.$eval(
-            '[data-testid="chat-composer"]',
-            node => (node as HTMLTextAreaElement).value
-          ),
-          originalCaption + ' updated'
-        )
+      assert.equal(
+        await readChatComposer(m, platform, web),
+        originalCaption + ' updated'
+      )
 
       await dismissAsk()
       await m.tapOn({ text: '^Cancel edit$', timeout: 10000 })
-      if (web != null) {
-        await m.assertVisible({ text: '^Remove equipment.txt$' })
-        assert.equal(
-          await web.page.$eval(
-            '[data-testid="chat-composer"]',
-            el => (el as HTMLTextAreaElement).value
-          ),
-          draft
-        )
-      }
+      if (web != null) await m.assertVisible({ text: '^Remove equipment.txt$' })
+      assert.equal(await readChatComposer(m, platform, web), draft)
       await openMenu(original.id)
       await m.tapOn(editButton)
       await m.eraseText({ characters: originalCaption.length })
@@ -295,16 +298,9 @@ async function edit(ctx: E2eContext): Promise<void> {
         if (web != null) await web.page.keyboard.press('ArrowUp')
         else await m.pressKey({ key: 'DPAD_UP' })
         await m.assertVisible({ text: '^Editing your message$' })
-        if (web != null) {
-          assert.equal(
-            await web.page.$eval(
-              '[data-testid="chat-composer"]',
-              el => (el as HTMLTextAreaElement).value
-            ),
-            newest.body
-          )
-          await web.page.keyboard.press('Escape')
-        } else await m.pressKey({ key: 'ESCAPE' })
+        assert.equal(await readChatComposer(m, platform, web), newest.body)
+        if (web != null) await web.page.keyboard.press('Escape')
+        else await m.pressKey({ key: 'ESCAPE' })
         await m.assertNotVisible({ text: '^Editing your message$' })
       }
       await openMenu(incoming.id)

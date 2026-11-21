@@ -1402,6 +1402,33 @@ describe('chat conversation shared file preparation and sending', function () {
     )
   })
 
+  it('keeps editing across a partial history read and restores the parked draft when the original disappears', async () => {
+    const engine = new FakeEngine()
+    const room = 'cnv_aurora'
+    const original = message({ mine: true, seq: 8, body: 'Afternoon practice' })
+    engine.update(room, { messages: [original] })
+    await screen(engine, {
+      draft: { text: 'Bring the bats', picked: [], scrollOffset: 0 }
+    })
+    await press('More message actions')
+    await press('Edit')
+    await type('Evening practice')
+    await act(async () => {
+      engine.update(room, { messages: [], hasEarlier: true, historyBefore: 12 })
+      await wait()
+    })
+    expect(input().value).equals('Evening practice')
+    await act(async () => {
+      engine.update(room, { messages: [], hasEarlier: true, historyBefore: 4 })
+      await wait()
+    })
+    expect(input().value).equals('Bring the bats')
+    expect(document.body.textContent).not.contains('Editing your message')
+    expect(
+      engine.calls.filter(call => Array.isArray(call) && call[0] === 'edit')
+    ).deep.equals([])
+  })
+
   it('handles physical Up only in the empty field, reads earlier history and cancels on Escape', async () => {
     const engine = new FakeEngine()
     const room = 'cnv_aurora'

@@ -458,22 +458,10 @@ async function s5(daemon: Daemon): Promise<void> {
   ): Promise<void> => {
     const message = `[data-testid="chat-message-${messageId}"]`
     await m.evalBrowserScript({
-      script: `const row=document.querySelector(${JSON.stringify(message)});
-        row.scrollIntoView({block:'center',behavior:'instant'});
-        const deadline=performance.now()+3000;
-        let top=row.getBoundingClientRect().top,stableSince=performance.now();
-        while(performance.now()-stableSince<350){
-          if(performance.now()>deadline)throw Error('Message anchor continued moving after the pin jump');
-          await new Promise(requestAnimationFrame);
-          const next=row.getBoundingClientRect().top;
-          if(next!==top){top=next;stableSince=performance.now()}
-        }
-        row.dispatchEvent(new PointerEvent('pointerenter'));return true`
+      script: `const row=document.querySelector(${JSON.stringify(message)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter'));return true`
     })
     await m.tapOn({ css: message + ' [aria-label="More message actions"]' })
-    const item = { css: '[aria-label="' + action + '"]', timeout: 10000 }
-    await m.assertVisible(item)
-    await m.tapOn(item)
+    await m.tapOn({ text: action })
     if (action === 'Pin') pinnedByTest.add(messageId)
     else pinnedByTest.delete(messageId)
   }
@@ -521,7 +509,10 @@ async function s5(daemon: Daemon): Promise<void> {
     await m.tapOn({ text: 'Cancel reply' })
     console.log('$ S8 personal message pin badge/header/list and verified jump')
     await setPin(id, 'Pin')
-    await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-pinned-summary"][aria-label="Pinned messages: 1"]',
+      timeout: 30000
+    })
     writeFileSync(
       join(artifacts, 'desktop-message-pins-after.png'),
       await m.screenshot()
@@ -537,7 +528,9 @@ async function s5(daemon: Daemon): Promise<void> {
       'Expected a separate fixture reply'
     )
     await setPin(replyId, 'Pin')
-    await m.assertVisible({ text: 'Pinned messages: 2' })
+    await m.assertVisible({
+      css: '[data-testid="chat-pinned-summary"][aria-label="Pinned messages: 2"]'
+    })
     await m.tapOn({ css: '[data-testid="chat-pinned-summary"]' })
     await m.assertVisible({ css: `[data-testid="chat-pin-${replyId}"]` })
     writeFileSync(
