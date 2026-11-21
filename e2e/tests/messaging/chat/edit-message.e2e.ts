@@ -6,10 +6,7 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MessageView } from '../../../../src/app/chat/engine/apply'
-import {
-  flattenPublicHierarchy,
-  type PublicNode
-} from '../../../../src/test/chat2Maestro.e2e'
+import { flattenPublicHierarchy } from '../../../../src/test/chat2Maestro.e2e'
 import {
   dismissNotificationAsk,
   dismissNotificationAskOn
@@ -20,7 +17,8 @@ import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import {
   chatLinkUi,
   clearChatComposer,
-  readChatComposer
+  readChatComposer,
+  revealChatTarget
 } from '../../../rigs/chat/messageLinkUi'
 
 async function edit(ctx: E2eContext): Promise<void> {
@@ -88,43 +86,9 @@ async function edit(ctx: E2eContext): Promise<void> {
             timeout: 12000
           })
           const bubbleId = 'chat-bubble-' + id
-          // Native accessibility can report a message behind the keyboard.
-          // Bring the bubble's center between the header and the draft field.
-          for (let attempt = 0; attempt < 8; attempt++) {
-            const nodes = flattenPublicHierarchy(await m.hierarchy())
-            const bounds = (targetId: string): PublicNode['bounds'] =>
-              nodes.find(node => node.id === targetId && node.bounds != null)
-                ?.bounds
-            const bubble = bounds(bubbleId)
-            const header = bounds('chat-conversation-identity')
-            const band = bounds('chat-composer-band')
-            assert(bubble != null && header != null && band != null)
-            const pins = bounds('chat-pinned-band')
-            const top = Math.max(
-              header.y + header.height,
-              pins == null ? 0 : pins.y + pins.height
-            )
-            const height = band.y - top
-            assert(height > 0, 'The message history must have visible space')
-            const center = bubble.y + bubble.height / 2
-            if (center > top + 8 && center < band.y - 8) {
-              await m.longPressOn({ id: bubbleId })
-              await m.assertVisible({ text: '^Reply$' })
-              return
-            }
-            const x = Math.round(header.x + header.width / 2)
-            const upper = Math.round(top + height * 0.25)
-            const lower = Math.round(top + height * 0.75)
-            await m.dragAndDrop({
-              from: { point: `${x},${center < top + 8 ? upper : lower}` },
-              to: { point: `${x},${center < top + 8 ? lower : upper}` },
-              holdDuration: 10,
-              duration: 400
-            })
-          }
-          assert.fail(
-            'The selected message must be reachable above the composer'
-          )
+          await revealChatTarget(m, node => node.id === bubbleId)
+          await m.longPressOn({ id: bubbleId })
+          await m.assertVisible({ text: '^Reply$' })
         }
       }
       const field = { id: 'chat-composer' }

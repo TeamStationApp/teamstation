@@ -14,7 +14,8 @@ import {
 import {
   chatLinkUi,
   clearChatComposer,
-  readChatComposer
+  readChatComposer,
+  revealChatTarget
 } from '../../../rigs/chat/messageLinkUi'
 
 const composer = { id: 'chat-composer' }
@@ -269,7 +270,10 @@ async function copyMessage(
   if (web != null) {
     await showLink(m, web, url)
     await touchLink(m, url, false)
-  } else await m.longPressOn({ text: exact(url) })
+  } else {
+    await revealChatTarget(m, node => node.text === url)
+    await m.longPressOn({ text: exact(url) })
+  }
   await m.assertVisible({ text: '^Copy$', timeout: 6000 })
   if (web != null) {
     const clone = await web.page.$(
@@ -635,9 +639,11 @@ async function open(ctx: E2eContext): Promise<void> {
           await enter()
         }
         if (web != null) await showLink(m, web, first)
+        else await revealChatTarget(m, node => node.text === first)
         await cancelHold(m, web, first)
         await m.tapOn(composer)
         if (web != null) await showLink(m, web, second)
+        else await revealChatTarget(m, node => node.text === second)
         const reading = await linkPosition(m, web, second)
         if (web != null) await touchLink(m, second, false)
         else await m.longPressOn({ text: exact(second) })

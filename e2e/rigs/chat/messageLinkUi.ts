@@ -3,7 +3,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import {
   flattenPublicHierarchy,
-  iosPublicRead
+  iosPublicRead,
+  type PublicNode
 } from '../../../src/test/chat2Maestro.e2e'
 import type { Emulation } from '../../core/browserCdp'
 import { signInWithPassword } from '../../core/fixtures'
@@ -22,6 +23,44 @@ import {
 } from './messageLinkFixture'
 
 const composer = { id: 'chat-composer' }
+
+/** Scroll until the target's center can receive a real press inside the native history. */
+export async function revealChatTarget(
+  m: MaestroDevice,
+  matches: (node: PublicNode) => boolean
+): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    const bounds = (id: string): PublicNode['bounds'] =>
+      nodes.find(node => node.id === id && node.bounds != null)?.bounds
+    const target = nodes.find(
+      node => matches(node) && node.bounds != null
+    )?.bounds
+    const header = bounds('chat-conversation-identity')
+    const composer = bounds('chat-composer-band')
+    assert(target != null && header != null && composer != null)
+    const pins = bounds('chat-pinned-band')
+    const top = Math.max(
+      header.y + header.height,
+      pins == null ? 0 : pins.y + pins.height
+    )
+    const height = composer.y - top
+    assert(height > 0, 'The message history must have visible space')
+    const center = target.y + target.height / 2
+    if (center > top + 8 && center < composer.y - 8) return
+    const x = Math.round(header.x + header.width / 2)
+    const upper = Math.round(top + height * 0.25)
+    const lower = Math.round(top + height * 0.75)
+    const above = center <= top + 8
+    await m.dragAndDrop({
+      from: { point: `${x},${above ? upper : lower}` },
+      to: { point: `${x},${above ? lower : upper}` },
+      holdDuration: 10,
+      duration: 400
+    })
+  }
+  assert.fail('The selected target must be reachable in the message history')
+}
 
 export async function readChatComposer(
   m: MaestroDevice,
