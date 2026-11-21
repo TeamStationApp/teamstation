@@ -62,6 +62,7 @@ const edited = [
   'src/migrate/migrations/index.ts',
   'src/server/routes/umpires.ts',
   'src/server/teams/personProfile.ts',
+  'src/server/umpires/schedule.ts',
   'src/server/umpires/openApi.ts',
   'src/server/openapi.ts',
   'src/server/auth/apiKeyFamilies.ts',

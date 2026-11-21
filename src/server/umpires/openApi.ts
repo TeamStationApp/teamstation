@@ -261,7 +261,8 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       description:
         'A game start: keeps people whose saved filter has its weekday and ' +
         'time of day, read in the filter\u2019s time zone, within `from`–`to` ' +
-        '(both ends inclusive).'
+        '(both ends inclusive). An ISO 8601 date-time with `Z` or an ' +
+        'explicit offset; any other value is 400.'
     },
     {
       name: 'durationMinutes',
@@ -597,8 +598,9 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       description:
         'Replaces the saved filter. Null, or a filter with no levels, days ' +
         'or range, clears it. `timezone` is required; `from` and `to` come ' +
-        'together, with `to` after `from`; every level must be one of the ' +
-        'league\u2019s. Otherwise 400. Who may save is who may read.',
+        'together, with `to` after `from`. Otherwise 400. A level that is ' +
+        'not the league\u2019s (deleted, or another league\u2019s) is ' +
+        'dropped, as a read drops it. Who may save is who may read.',
       security: [{ bearer: [] }],
       parameters,
       requestBody: {
@@ -636,10 +638,12 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
         'An umpire\u2019s games in a time window, as a league administrator',
       description:
         'The games the umpire is assigned to and the games they play in ' +
-        '(through any merged account) that start from `from` to `to`, ' +
-        'limited to leagues the caller administers, sorted by start. The ' +
-        'window is at most 31 days. A person who does not hold this ' +
-        'league\u2019s umpire role is 404.',
+        '(through any merged account) that overlap the window: they start ' +
+        'by `to` and end at or after `from` (a game with no end lasting the ' +
+        'default event length), so a game already under way at `from` ' +
+        'counts. Limited to leagues the caller administers, sorted by ' +
+        'start. The window is at most 31 days. A person who does not hold ' +
+        'this league\u2019s umpire role is 404.',
       security: [{ bearer: [] }],
       parameters: [
         ...parameters,
@@ -653,13 +657,19 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
           name: 'from',
           in: 'query',
           required: true,
-          schema: { type: 'string', format: 'date-time' }
+          schema: { type: 'string', format: 'date-time' },
+          description:
+            'An ISO 8601 date-time with `Z` or an explicit offset; any ' +
+            'other value is 400.'
         },
         {
           name: 'to',
           in: 'query',
           required: true,
-          schema: { type: 'string', format: 'date-time' }
+          schema: { type: 'string', format: 'date-time' },
+          description:
+            'An ISO 8601 date-time with `Z` or an explicit offset; any ' +
+            'other value is 400.'
         }
       ],
       responses: {

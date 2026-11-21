@@ -168,7 +168,7 @@ describe('umpire availability', function () {
       })
     })
 
-  it('refuses a bad time, zone, weekday, range or level', async function () {
+  it('refuses a bad time, zone, weekday or range', async function () {
     for (const [body, message] of [
       [{ ...weekdayEvenings, from: '5pm' }, 'Choose a valid time.'],
       [
@@ -187,13 +187,39 @@ describe('umpire availability', function () {
       [
         { ...weekdayEvenings, from: null },
         'Choose both a start and an end time.'
-      ],
-      [{ ...weekdayEvenings, levels: ['ulv_other'] }, 'Choose a valid level.']
+      ]
     ] as const) {
       const answer = await save(f.leagueA, body)
       expect(answer.status, JSON.stringify(body)).equals(400)
       expect(answer.body.message).equals(message)
     }
+  })
+
+  it('drops a level of another league, or a deleted one, on save, as a read does', async function () {
+    // A filter of stale levels alone is no filter: it clears the saved one.
+    expect(
+      await save(f.leagueA, {
+        levels: ['ulv_other'],
+        days: [],
+        from: null,
+        to: null,
+        timezone: 'America/Los_Angeles'
+      })
+    ).deep.equals({ status: 200, body: { availability: null } })
+    expect((await call('GET', mine(f.leagueA), 104)).body.availability).equals(
+      null
+    )
+    const saved = await save(f.leagueA, {
+      ...weekdayEvenings,
+      levels: ['ulv_other', 'ulv_majors', 'ulv_gone']
+    })
+    expect(saved).deep.equals({
+      status: 200,
+      body: { availability: weekdayEvenings }
+    })
+    expect(
+      (await call('GET', mine(f.leagueA), 104)).body.availability
+    ).deep.equals(weekdayEvenings)
   })
 
   it('answers 404 to a caller who may not open the league’s schedule', async function () {
@@ -450,6 +476,11 @@ describe('umpire availability', function () {
       '?day=x&time=18:00',
       '?day=0&time=25:00',
       '?availableAt=soon',
+      // No zone, which the server would read in its own, and no ISO time.
+      '?availableAt=2027-04-13T18:30',
+      '?availableAt=2027-04-13T18:30:00.000',
+      `?availableAt=${encodeURIComponent('April 13 2027')}`,
+      `?availableAt=${encodeURIComponent('2027-04-14 01:30:00Z')}`,
       '?durationMinutes=60',
       `?availableAt=${tuesdayEvening}&durationMinutes=0`,
       `?availableAt=${tuesdayEvening}&day=1&time=18:00`,
@@ -458,6 +489,26 @@ describe('umpire availability', function () {
     ]) {
       const answer = await list(f.leagueA, query)
       expect(answer.status, query).equals(400)
+    }
+  })
+
+  it('takes availableAt with Z or an explicit offset', async function () {
+    const expected = ids(
+      await list(f.leagueA, `?availableAt=${tuesdayEvening}&strict=true`)
+    )
+    expect(expected).deep.equals([umpire])
+    for (const at of [
+      '2027-04-14T01:30Z',
+      '2027-04-14T01:30:00+00:00',
+      '2027-04-13T18:30:00-07:00',
+      '2027-04-14T10:30:00.000+09:00'
+    ]) {
+      const answer = await list(
+        f.leagueA,
+        `?availableAt=${encodeURIComponent(at)}&strict=true`
+      )
+      expect(answer.status, at).equals(200)
+      expect(ids(answer), at).deep.equals(expected)
     }
   })
 
@@ -593,6 +644,41 @@ describe('umpire availability', function () {
       ])
     })
 
+    it('reads a game under way at from, and none that ended before it', async function () {
+      const window = (from: string, to: string): string =>
+        `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+      const games = async (from: string, to: string): Promise<string[]> => {
+        const answer = await commitments(101, umpire, window(from, to))
+        expect(answer.status).equals(200)
+        return [
+          ...new Set(
+            answer.body.commitments.map((one: { gameId: string }) => one.gameId)
+          )
+        ] as string[]
+      }
+      // gam_umpiring starts at 01:30 with no end, so lasts to 04:30.
+      expect(
+        await games('2027-04-14T03:00:00Z', '2027-04-14T06:00:00Z')
+      ).deep.equals(['gam_umpiring'])
+      expect(
+        await games('2027-04-14T04:30:00Z', '2027-04-14T06:00:00Z')
+      ).deep.equals(['gam_umpiring'])
+      expect(
+        await games('2027-04-14T04:31:00Z', '2027-04-14T06:00:00Z')
+      ).deep.equals([])
+      // gam_later runs 01:30 to 03:30, its own end.
+      expect(
+        await games('2027-05-20T03:00:00+00:00', '2027-05-20T04:00:00+00:00')
+      ).deep.equals(['gam_later'])
+      expect(
+        await games('2027-05-20T03:31:00Z', '2027-05-20T04:00:00Z')
+      ).deep.equals([])
+      // A window ending before the game starts reads none.
+      expect(
+        await games('2027-05-19T20:00:00Z', '2027-05-20T01:00:00Z')
+      ).deep.equals([])
+    })
+
     it('shows a site administrator every league', async function () {
       const answer = await commitments(105)
       expect(
@@ -605,6 +691,9 @@ describe('umpire availability', function () {
         '?from=2027-04-01T00:00:00Z&to=2027-05-03T00:00:00Z',
         '?from=2027-04-30T00:00:00Z&to=2027-04-01T00:00:00Z',
         '?from=soon&to=2027-04-01T00:00:00Z',
+        '?from=2027-04-01T00:00&to=2027-04-02T00:00:00Z',
+        `?from=${encodeURIComponent('April 1 2027')}&to=2027-04-02T00:00:00Z`,
+        '?from=2027-04-01T00:00:00Z&to=2027-04-02',
         '?to=2027-04-01T00:00:00Z'
       ])
         expect((await commitments(101, umpire, query)).status, query).equals(

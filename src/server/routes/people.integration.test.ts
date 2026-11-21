@@ -1136,7 +1136,14 @@ describe('people at a team, a season and a league', function () {
         .execute()
       try {
         expect((await card(SEASON_MEMBER, MEMBER)).status).equals(404)
-        expect((await card(SEASON_MEMBER, 101)).status).equals(200)
+        const admin = await card(SEASON_MEMBER, 101)
+        expect(admin.status).equals(200)
+        // No saved filter while the league does not manage umpires, for its
+        // administrator or the umpire themselves.
+        expect(admin.body).not.to.have.property('umpireAvailability')
+        const own = await card(SEASON_MEMBER, SEASON_MEMBER)
+        expect(own.status).equals(200)
+        expect(own.body).not.to.have.property('umpireAvailability')
       } finally {
         await f.h.db
           .updateTable('leagues')

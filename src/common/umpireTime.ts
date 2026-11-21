@@ -65,6 +65,8 @@ export function umpireDate(startAt: string, timezone: string): string {
   const part = (key: string): string => parts.find(p => p.type === key)!.value
   return `${part('month')} ${part('day')}, ${part('hour')}:${part('minute')} ${part('dayPeriod').toLowerCase()}`
 }
+/** A time of day, `HH:mm` on the 24-hour clock. */
+export const CLOCK_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
 export function umpireFilterError(filters: UmpireFilters): string | null {
   if (filters.timezone != null) {
     try {
@@ -76,8 +78,7 @@ export function umpireFilterError(filters: UmpireFilters): string | null {
     }
   }
   for (const time of [filters.from, filters.to])
-    if (time != null && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time))
-      return 'Choose a valid time.'
+    if (time != null && !CLOCK_PATTERN.test(time)) return 'Choose a valid time.'
   if (filters.from != null && filters.to != null && filters.to <= filters.from)
     return 'End time must be after start time.'
   if (
@@ -87,7 +88,8 @@ export function umpireFilterError(filters: UmpireFilters): string | null {
     return 'Choose a valid weekday.'
   return null
 }
-function localClock(date: Date, timezone: string): string {
+/** `date`'s time of day in `timezone`, `HH:mm` on the 24-hour clock. */
+export function localClock(date: Date, timezone: string): string {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone,
     hour: '2-digit',
@@ -95,7 +97,8 @@ function localClock(date: Date, timezone: string): string {
     hourCycle: 'h23'
   }).format(date)
 }
-function localDate(date: Date, timezone: string): string {
+/** `date`'s calendar date in `timezone`, `YYYY-MM-DD`. */
+export function localDate(date: Date, timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',

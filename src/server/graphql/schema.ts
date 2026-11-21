@@ -931,7 +931,7 @@ const QueryType = new GraphQLObjectType({
     umpireCommitments: {
       type: list(UmpireCommitmentType),
       description:
-        'An umpire’s games from from to to (at most 31 days), in the leagues the caller administers, as GET /leagues/{id}/umpires/{userId}/commitments reads them.',
+        'An umpire’s games overlapping from to to (ISO date-times with Z or an offset, at most 31 days apart), in the leagues the caller administers, as GET /leagues/{id}/umpires/{userId}/commitments reads them.',
       args: {
         leagueId: { type: required(GraphQLID) },
         userId: { type: required(GraphQLID) },

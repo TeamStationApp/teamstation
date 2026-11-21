@@ -4,13 +4,33 @@ import { badRequest, HttpError, notFound } from '../../common/errors'
 import { DEFAULT_EVENT_DURATION_MS } from '../../common/eventTime'
 import { asUmpireAvailability } from '../../common/umpireCleaners'
 import type { UmpireAvailability } from '../../common/umpires'
-import { availabilityAllows, umpireFilterError } from '../../common/umpireTime'
+import {
+  availabilityAllows,
+  CLOCK_PATTERN,
+  localClock,
+  localDate,
+  umpireFilterError
+} from '../../common/umpireTime'
 import { adminScopes } from '../access'
-import { onePeople, onePerson } from '../admin/people'
+import { onePeople, type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
-import { canAdminister, currentActor } from '../groups/rights'
-import { umpireAccess } from './schedule'
+import { currentActor } from '../groups/rights'
+import { leagueUmpire, umpireAccess } from './schedule'
+
+/**
+ * An ISO 8601 date-time with seconds optional and a `Z` or an explicit
+ * offset, so no time is read in the server's own zone.
+ */
+const ISO_INSTANT =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/
+
+/** An ISO 8601 date-time with a zone, as a Date; undefined for anything else. */
+function isoInstant(value: unknown): Date | undefined {
+  if (typeof value !== 'string' || !ISO_INSTANT.test(value)) return undefined
+  const time = Date.parse(value)
+  return Number.isNaN(time) ? undefined : new Date(time)
+}
 
 /** The longest window a commitments read covers. */
 export const COMMITMENT_WINDOW_DAYS = 31
@@ -36,11 +56,16 @@ export interface UmpireCommitment {
 export async function readAvailability(
   db: Kysely<Database>,
   leagueId: string,
-  userIds: readonly string[]
+  userIds: readonly string[],
+  /** Each of `userIds` already resolved, to skip resolving them again. */
+  resolved?: ReadonlyMap<string, OnePerson>
 ): Promise<Map<string, UmpireAvailability | null>> {
   const found = new Map<string, UmpireAvailability | null>()
   if (userIds.length === 0) return found
-  const people = await onePeople(db, userIds)
+  const people =
+    resolved != null && userIds.every(id => resolved.has(id))
+      ? resolved
+      : await onePeople(db, userIds)
   const accounts = [...new Set([...people.values()].flatMap(p => p.userIds))]
   const rows = await db
     .selectFrom('umpire_availability')
@@ -49,15 +74,8 @@ export async function readAvailability(
     .where('user_id', 'in', accounts)
     .orderBy('updated_at', 'desc')
     .execute()
-  const levels = new Set(
-    (
-      await db
-        .selectFrom('umpire_levels')
-        .select('id')
-        .where('league_id', '=', leagueId)
-        .execute()
-    ).map(row => row.id)
-  )
+  const levels =
+    rows.length === 0 ? new Set<string>() : await leagueLevels(db, leagueId)
   for (const userId of userIds) {
     const ids = people.get(userId)?.userIds ?? [userId]
     const row = rows.find(r => ids.includes(r.user_id))
@@ -77,10 +95,28 @@ export async function readAvailability(
   return found
 }
 
+/** The ids of the league's umpire levels. */
+async function leagueLevels(
+  db: Kysely<Database>,
+  leagueId: string
+): Promise<Set<string>> {
+  return new Set(
+    (
+      await db
+        .selectFrom('umpire_levels')
+        .select('id')
+        .where('league_id', '=', leagueId)
+        .execute()
+    ).map(row => row.id)
+  )
+}
+
 /**
  * Saves a person's filter for the league, under the account that survives
- * their merges, and answers it as a read would. A null filter, or one with
- * no levels, days or range, deletes the rows of every merged account.
+ * their merges, and answers it as a read would. Levels no longer in the
+ * league are dropped, as a read drops them, so a stale link still saves. A
+ * null filter, or one with no levels, days or range once they are dropped,
+ * deletes the rows of every merged account.
  */
 export async function saveAvailability(
   db: Kysely<Database>,
@@ -94,6 +130,13 @@ export async function saveAvailability(
     filter = body == null ? null : asUmpireAvailability(body)
   } catch {
     throw badRequest('Choose a valid filter.')
+  }
+  if (filter != null && filter.levels.length > 0) {
+    const known = await leagueLevels(db, leagueId)
+    filter = {
+      ...filter,
+      levels: [...new Set(filter.levels)].filter(level => known.has(level))
+    }
   }
   if (
     filter == null ||
@@ -118,17 +161,7 @@ export async function saveAvailability(
   if (error != null) throw badRequest(error)
   if ((filter.from == null) !== (filter.to == null))
     throw badRequest('Choose both a start and an end time.')
-  const levels = [...new Set(filter.levels)]
-  if (levels.length > 0) {
-    const known = await db
-      .selectFrom('umpire_levels')
-      .select('id')
-      .where('league_id', '=', leagueId)
-      .where('id', 'in', levels)
-      .execute()
-    if (known.length !== levels.length)
-      throw badRequest('Choose a valid level.')
-  }
+  const levels = filter.levels
   const days = [...new Set(filter.days)].sort((a, b) => a - b)
   await db
     .deleteFrom('umpire_availability')
@@ -149,7 +182,13 @@ export async function saveAvailability(
     .values({ user_id: person.userId, league_id: leagueId, ...values })
     .onConflict(oc => oc.columns(['user_id', 'league_id']).doUpdateSet(values))
     .execute()
-  return (await readAvailability(db, leagueId, [userId])).get(userId) ?? null
+  return {
+    levels,
+    days,
+    from: filter.from,
+    to: filter.to,
+    timezone: filter.timezone
+  }
 }
 
 /**
@@ -169,42 +208,6 @@ export async function requireOwnAvailability(
       throw notFound('No league')
     throw error
   }
-}
-
-/** Whether `userId`, through any merged account, holds the league's umpire role. */
-async function holdsUmpireRole(
-  db: Kysely<Database>,
-  leagueId: string,
-  userId: string
-): Promise<boolean> {
-  const person = await onePerson(db, userId)
-  return (
-    (await db
-      .selectFrom('league_umpires')
-      .select('user_id')
-      .where('league_id', '=', leagueId)
-      .where('user_id', 'in', person.userIds)
-      .executeTakeFirst()) != null
-  )
-}
-
-/**
- * Whether the actor may read the target's filter for the league: the target
- * is the actor (any merged account), or the actor administers the league
- * and the target holds its umpire role.
- */
-export async function mayReadAvailability(
-  db: Kysely<Database>,
-  actor: Actor,
-  leagueId: string,
-  targetUserId: string
-): Promise<boolean> {
-  if ((await onePerson(db, actor.userId)).userIds.includes(targetUserId))
-    return true
-  return (
-    (await canAdminister(db, actor, { kind: 'league', id: leagueId })) &&
-    (await holdsUmpireRole(db, leagueId, targetUserId))
-  )
 }
 
 /** What an admin's umpire list is narrowed by. */
@@ -263,18 +266,16 @@ export function parseAvailabilityQuery(
   if (minutes != null && at == null)
     throw badRequest('durationMinutes goes with availableAt')
   if (at != null) {
-    const start = Date.parse(at)
-    if (Number.isNaN(start))
-      throw badRequest('Supply availableAt as an ISO time')
+    const start = isoInstant(at)
+    if (start == null) throw badRequest('Supply availableAt as an ISO time')
     parsed.at = {
-      start: new Date(start),
+      start,
       ...(minutes == null ? {} : { durationMinutes: minutes })
     }
   } else if (weekday != null || clock != null) {
     if (weekday == null || clock == null)
       throw badRequest('Supply day and time together')
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(clock))
-      throw badRequest('Supply time as HH:mm')
+    if (!CLOCK_PATTERN.test(clock)) throw badRequest('Supply time as HH:mm')
     parsed.at = { day: weekday, time: clock }
   }
   return parsed
@@ -323,18 +324,8 @@ export async function matchedAt(
       timeZone: timezone,
       weekday: 'long'
     }).format(start),
-    date: new Intl.DateTimeFormat('en-CA', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(start),
-    time: new Intl.DateTimeFormat('en-GB', {
-      timeZone: timezone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23'
-    }).format(start)
+    date: localDate(start, timezone),
+    time: localClock(start, timezone)
   }))
 }
 
@@ -359,9 +350,9 @@ export function commitmentWindow(
   to: unknown
 ): { from: Date; to: Date } {
   const parse = (value: unknown): Date => {
-    const time = typeof value === 'string' ? Date.parse(value) : NaN
-    if (Number.isNaN(time)) throw badRequest('Supply from and to as ISO times')
-    return new Date(time)
+    const time = isoInstant(value)
+    if (time == null) throw badRequest('Supply from and to as ISO times')
+    return time
   }
   const window = { from: parse(from), to: parse(to) }
   const span = window.to.getTime() - window.from.getTime()
@@ -372,7 +363,9 @@ export function commitmentWindow(
 }
 
 /**
- * The games an umpire of the league is held for that start in the window:
+ * The games an umpire of the league is held for that overlap the window
+ * (start by `to` and end at or after `from`, a game with no end lasting the
+ * default event length), so a game already under way at `from` counts:
  * those they are assigned to umpire and those they play in, read through
  * every merged account. Only games in leagues the actor administers count;
  * a site administrator sees every league. Cancelled and withdrawn games
@@ -386,20 +379,24 @@ export async function umpireCommitments(
   from: Date,
   to: Date
 ): Promise<UmpireCommitment[]> {
-  if (!(await holdsUmpireRole(db, leagueId, userId)))
-    throw notFound('No such umpire')
+  const umpire = await leagueUmpire(db, leagueId, userId)
+  if (umpire == null) throw notFound('No such umpire')
   const fresh = await currentActor(db, actor)
   const scopes = await adminScopes(db, fresh.userId, fresh.isAdmin)
   // The route lets only the league's administrators in, so this holds it.
   const leagues = [...scopes.leagueIds, leagueId]
-  const ids = (await onePerson(db, userId)).userIds
+  const ids = umpire.userIds
   const games = db
     .selectFrom('games')
     .innerJoin('seasons', 'seasons.id', 'games.season_id')
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
     .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-    .where('games.start_at', '>=', from)
     .where('games.start_at', '<=', to)
+    .where(
+      sql<Date>`coalesce(games.end_at, games.start_at + ${`${DEFAULT_EVENT_DURATION_MS} milliseconds`}::interval)`,
+      '>=',
+      from
+    )
     .where('games.status', '!=', 'cancelled')
     .where('games.withdrawn_at', 'is', null)
     .where('seasons.league_id', 'is not', null)

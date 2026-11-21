@@ -89,15 +89,28 @@ export async function umpireAccess(
     return true
   if (view !== 'umpire' && view !== 'schedule')
     throw badRequest('Choose umpire, league or schedule view')
-  const person = await onePerson(db, actor.userId)
+  if ((await leagueUmpire(db, leagueId, actor.userId)) == null)
+    throw forbidden('Not an umpire for this league')
+  return await canAdminister(db, actor, { kind: 'league', id: leagueId })
+}
+/**
+ * The person `userId` is, through every merged account, when one of those
+ * accounts holds the league's umpire role; null when none does. The one
+ * role check `umpireAccess` and the availability reads share.
+ */
+export async function leagueUmpire(
+  db: Kysely<Database>,
+  leagueId: string,
+  userId: string
+): Promise<OnePerson | null> {
+  const person = await onePerson(db, userId)
   const role = await db
     .selectFrom('league_umpires')
     .select('user_id')
     .where('league_id', '=', leagueId)
     .where('user_id', 'in', person.userIds)
     .executeTakeFirst()
-  if (role == null) throw forbidden('Not an umpire for this league')
-  return await canAdminister(db, actor, { kind: 'league', id: leagueId })
+  return role == null ? null : person
 }
 /**
  * Whether the viewer (`family[0]`, through any of its merged accounts) is
