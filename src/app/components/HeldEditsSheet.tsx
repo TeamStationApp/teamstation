@@ -7,6 +7,7 @@ import {
   TRY_AGAIN,
   USE_SERVER_COPY
 } from '../scoring/HeldGameNotice'
+import { EDITS_PLACE } from '../sync/editsPlace'
 import type { DiscardOutcome } from '../sync/outbox'
 import {
   HELD_GAME_UNNAMED,
@@ -22,8 +23,7 @@ import { CancelAction } from './CancelAction'
 import { Sheet } from './Sheet'
 
 /** A team's discard went through, and the server's roster did not come back. */
-export const TEAM_COPY_PENDING =
-  "The players added on this phone are gone, and the server's copy of the roster has not arrived yet. Try again once the phone is back online."
+export const TEAM_COPY_PENDING = `The players added ${EDITS_PLACE.on} are gone, and the server's copy of the roster has not arrived yet. Try again once ${EDITS_PLACE.backOnline}.`
 /** A discard that found part of the queue on its way: nothing was dropped. */
 export const HELD_SENDING =
   'Part of this is being sent right now, so nothing was deleted. Try again in a moment.'

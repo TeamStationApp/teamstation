@@ -60,6 +60,7 @@ import { type PictureDirectories, pictureDirectories } from './imageCache'
 import {
   confirmedPlays,
   type DiscardOutcome,
+  GAME_NOT_STORED_MESSAGE,
   type GivenUp,
   Outbox,
   type OutboxListener,
@@ -574,10 +575,7 @@ export class CachingClient extends TeamStationClient {
       typeof sides.homeTeamId !== 'string' ||
       typeof sides.awayTeamId !== 'string'
     )
-      throw new HttpError(
-        'unavailable',
-        'This game is not on the phone yet. Try again in a moment.'
-      )
+      throw new HttpError('unavailable', GAME_NOT_STORED_MESSAGE)
     // A reset names the plays it confirmed losing: the digest and
     // generation of the server's last answer. The queue puts the ones the
     // writes ahead of it answered in their place when it sends; these go

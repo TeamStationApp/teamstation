@@ -42,7 +42,11 @@ const minimum = 90
 /** The `.test.ts` suites, run together under mocha. */
 const tsSuites = [
   // The cache's SQL and outbox, on node:sqlite (M2).
-  'src/app/sync/cacheStore.test.ts'
+  'src/app/sync/cacheStore.test.ts',
+  // What the shell says of the queue, and the network watch that wakes it (M3).
+  'src/app/sync/useOffline.test.ts',
+  'src/app/sync/reachability.test.ts',
+  'src/app/sync/editsPlace.test.ts'
 ]
 
 /**
@@ -71,7 +75,11 @@ const appSuites = [
     path: 'src/app/sync/wasmSqliteExecutor.test.ts',
     env: { TS_TEST_SQLITE: 'wasm' }
   },
-  { path: 'src/app/sync/cache.test.ts', env: { TS_TEST_SQLITE: 'wasm' } }
+  { path: 'src/app/sync/cache.test.ts', env: { TS_TEST_SQLITE: 'wasm' } },
+  // The web's App on its in-memory cache, its banners and leave warning (M3).
+  { path: 'src/app/App.webCache.test.tsx' },
+  { path: 'src/app/App.offlineBanner.test.tsx' },
+  { path: 'src/app/sync/useUnsentEditsWarning.test.tsx' }
 ]
 const only = process.env.TS_COVERAGE_GREP
 

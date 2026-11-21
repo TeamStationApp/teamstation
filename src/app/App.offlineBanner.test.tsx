@@ -415,13 +415,6 @@ describe('the phone shell offline', () => {
     }
   })
 
-  it('shows no banner on the web, which keeps no queue', async () => {
-    net.offline = true
-    showRoute({ name: 'home' }, true)
-    await mount(<App initialToken="token-one" />)
-    await settle(100)
-    expect(banner()).equals(null)
-  })
   it('keeps what was queued through a launch the server refuses, and sends it once the same person signs in', async () => {
     await earlierLaunch()
     // The session ran out while the phone was away.
@@ -496,7 +489,7 @@ describe('the phone shell offline', () => {
     const row = heldRow('team', 'tem_hawks')
     expect(row?.textContent).includes('A team')
     expect(row?.textContent).includes(
-      'A player added on this phone was not saved: Only the team’s staff'
+      'A player added in this tab was not saved: Only the team’s staff'
     )
     await press('Cancel')
     expect(heldRow('team', 'tem_hawks')).equals(null)
@@ -670,7 +663,7 @@ describe('the phone shell offline', () => {
       const startupReads = trace.slice()
       await press('Sign out')
       expect(document.body.textContent).includes(
-        '1 change on this phone has not been sent and will be lost.'
+        '1 change in this tab has not been sent and will be lost.'
       )
       await press('Cancel')
       await settle(50)

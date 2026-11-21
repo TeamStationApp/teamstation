@@ -92,7 +92,7 @@ describe("a held team's page", () => {
       />
     )
     expect(notice()?.textContent).equals(
-      'A player added on this phone was not saved: Only the team’s staff'
+      'A player added in this tab was not saved: Only the team’s staff'
     )
     expect(
       document

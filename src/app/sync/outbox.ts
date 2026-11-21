@@ -48,6 +48,7 @@ import {
   lineupsKey,
   rosterKey
 } from './documentKeys'
+import { EDITS_PLACE } from './editsPlace'
 import {
   appliedEvents,
   appliedLineups,
@@ -446,8 +447,10 @@ function backgroundOnly(call: QueuedCall): boolean {
 const createRowId = (localId: number): string => `player-${localId}`
 
 /** Why a write waits for good: a player it names was given up on. */
-export const LOST_PLAYER_MESSAGE =
-  'A player this names was not saved, and was taken off this phone.'
+export const LOST_PLAYER_MESSAGE = `A player this names was not saved, and was taken ${EDITS_PLACE.takenOff}.`
+
+/** Why a swap or tag cannot be queued: the game is not stored here yet. */
+export const GAME_NOT_STORED_MESSAGE = `This game is not ${EDITS_PLACE.stored} yet. Try again in a moment.`
 
 const localIdOfRow = (id: string): number | undefined => {
   const match = /^player-(\d+)$/.exec(id)
@@ -2047,10 +2050,7 @@ export class Outbox {
     if (answer === undefined)
       throw cause instanceof Error
         ? cause
-        : new HttpError(
-            'unavailable',
-            'This game is not on the phone yet. Try again in a moment.'
-          )
+        : new HttpError('unavailable', GAME_NOT_STORED_MESSAGE)
     this.idle = false
     this.notify()
     this.wake()

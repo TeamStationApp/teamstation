@@ -223,10 +223,13 @@ describe('the scope the visible route holds', () => {
         status: 401
       })
     }) as unknown as typeof fetch
-    // Home goes to the server, and the server refuses the session.
+    // Home goes to the server, and the server refuses the session. The
+    // web's session is its cookie, with no token: a refusal stops the scope
+    // and leaves the shell as it is. (A token's session, the phone's, ends
+    // too: `sessionRefusedOnPhone` in `App.tsx`.)
     Object.defineProperty(TeamStationClient.prototype, 'home', originals.home)
     showRoute({ name: 'home' }, true)
-    await mount(<App initialToken="token-one" />)
+    await mount(<App />)
     const socket = sockets.latest()
     await act(async () => {
       socket.open()

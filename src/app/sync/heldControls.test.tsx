@@ -5,6 +5,7 @@ import React, { act } from 'react'
 import { TeamStationClient } from '../../common/api'
 import { mount, settle, unmount } from '../../test/gameFormDom'
 import { CachingClient } from './cachingClient'
+import { EDITS_PLACE } from './editsPlace'
 import type { OutboxListener, OutboxSummary } from './outbox'
 import {
   type HeldControl,
@@ -82,7 +83,7 @@ describe("a held team's control and the holds' names", () => {
     expect(web).equals(undefined)
     expect(seen?.state).equals('dead')
     expect(seen?.text).equals(
-      'A player added on this phone was not saved: Only staff'
+      `A player added ${EDITS_PLACE.on} was not saved: Only staff`
     )
     expect(await seen!.discard()).equals(true)
     await seen!.retry!()

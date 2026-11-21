@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Pressable, Text } from 'react-native'
 
+import { EDITS_PLACE } from '../sync/editsPlace'
 import type { HeldGameControl } from '../sync/useOffline'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
@@ -9,11 +10,9 @@ import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 export const USE_SERVER_COPY = "Use Server's Copy"
 export const TRY_AGAIN = 'Try Again'
 /** What using the server's copy costs, said after a game's hold. */
-export const HELD_GAME_CONSEQUENCE =
-  "Using the server's copy deletes what this phone scored for this game and has not sent."
+export const HELD_GAME_CONSEQUENCE = `Using the server's copy deletes ${EDITS_PLACE.scored}.`
 /** The same, for a team whose new players the server refused. */
-export const HELD_TEAM_CONSEQUENCE =
-  "Using the server's copy takes the players this phone added off the team and shows its roster as the server has it."
+export const HELD_TEAM_CONSEQUENCE = `Using the server's copy takes ${EDITS_PLACE.playersAdded} off the team and shows its roster as the server has it.`
 
 /**
  * What a game's screen says of the edits the server stopped, as a button:

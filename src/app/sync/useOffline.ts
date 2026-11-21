@@ -3,22 +3,22 @@ import { useCallback, useEffect, useState } from 'react'
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { CachingClient, OFFLINE_CREATE_MESSAGE } from './cachingClient'
+import { EDITS_PLACE } from './editsPlace'
 import type { HeldChain, OutboxNotice, OutboxSummary } from './outbox'
 
 /**
- * What the shell and the screens say while the phone is offline. The web
- * keeps no documents and queues nothing, so it says none of it.
+ * What the shell and the screens say while the device is offline, on the
+ * phone and the web alike: both keep documents and queue edits.
  */
 export const OFFLINE_BANNER =
   "Offline. Edits will send when you're back online."
+
 /** A live game read from the phone's copy: its stream cannot be played. */
 export const OFFLINE_UNPLAYABLE = 'Not playable offline'
 /** A game's queue parked by a stale lineup: the server's copy moved on. */
-export const PARKED_GAME_MESSAGE =
-  "The server's copy of this game changed. The innings scored here are still on this phone and were not sent."
+export const PARKED_GAME_MESSAGE = `The server's copy of this game changed. The innings scored here are still ${EDITS_PLACE.on} and were not sent.`
 /** A discard went through, and the server's copy did not come back. */
-export const SERVER_COPY_PENDING =
-  "This phone's changes to the game are gone, and the server's copy has not arrived yet. Try again once the phone is back online."
+export const SERVER_COPY_PENDING = `${EDITS_PLACE.changes} to the game are gone, and the server's copy has not arrived yet. Try again once ${EDITS_PLACE.backOnline}.`
 /** A queued write the server refused without saying why. */
 export const DEAD_GAME_FALLBACK =
   'The server would not take a change to this game.'
@@ -28,7 +28,7 @@ export const HELD_TEAM_UNNAMED = 'A team'
 
 /** What signing out with edits still on the phone costs. */
 export function unsentLossText(count: number): string {
-  return `${count === 1 ? '1 change' : `${count} changes`} on this phone ${count === 1 ? 'has' : 'have'} not been sent and will be lost.`
+  return `${count === 1 ? '1 change' : `${count} changes`} ${EDITS_PLACE.on} ${count === 1 ? 'has' : 'have'} not been sent and will be lost.`
 }
 
 /** `1 edit`, `2 edits`. */
@@ -59,7 +59,7 @@ export function offlineBannerText(
 
 /** What the banner says of a team whose new players the server refused. */
 export function heldTeamText(held: HeldChain): string {
-  return `A player added on this phone was not saved: ${held.message ?? DEAD_GAME_FALLBACK}`
+  return `A player added ${EDITS_PLACE.on} was not saved: ${held.message ?? DEAD_GAME_FALLBACK}`
 }
 
 /** A game's or a team's queue the server stopped, as the banner lists it. */
@@ -113,9 +113,8 @@ export function heldGameText(held: HeldChain | undefined): string | undefined {
 }
 
 /**
- * Whether the phone's last request failed to leave it, kept up to date. The
- * web's client is never offline here: its screens behave as they always
- * have.
+ * Whether the device's last request failed to leave it, kept up to date.
+ * A plain client, which queues nothing, is never offline here.
  */
 export function usePhoneOffline(client: TeamStationClient): boolean {
   const phone = client instanceof CachingClient
@@ -132,8 +131,8 @@ export function usePhoneOffline(client: TeamStationClient): boolean {
 }
 
 /**
- * The phone's queue as it stands, kept up to date; nothing on the web.
- * `owner` is whose file is open: a new one reads the queue again.
+ * The queue as it stands, kept up to date; nothing for a plain client.
+ * `owner` is whose cache is open: a new one reads the queue again.
  */
 export function useOutboxSummary(
   client: TeamStationClient,
@@ -159,6 +158,30 @@ export function useOutboxSummary(
     }
   }, [client, owner])
   return summary
+}
+
+/**
+ * Asks the browser to warn before the page unloads while `summary` holds an
+ * edit: the web's queue is in memory, and leaving loses it. Nothing on the
+ * phone, which has no page to unload and keeps its queue in a file.
+ */
+export function useUnsentEditsWarning(
+  summary: OutboxSummary | undefined
+): void {
+  const waiting = (summary?.count ?? 0) > 0
+  useEffect(() => {
+    // React Native's `window` has no events.
+    if (!waiting || typeof window?.addEventListener !== 'function') return
+    const unload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault()
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', unload)
+    return () => {
+      window.removeEventListener('beforeunload', unload)
+    }
+  }, [waiting])
 }
 
 /**

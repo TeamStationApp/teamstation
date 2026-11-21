@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { CachingClient, OFFLINE_CREATE_MESSAGE } from './cachingClient'
+import { EDITS_PLACE } from './editsPlace'
 import {
   DEAD_GAME_FALLBACK,
   editCount,
@@ -112,10 +113,10 @@ describe('what the phone says offline', function () {
     const team = (message: string | null): string =>
       heldEditText({ kind: 'team', id: 't1', held: { state: 'dead', message } })
     expect(team('Only staff')).equals(
-      'A player added on this phone was not saved: Only staff'
+      `A player added ${EDITS_PLACE.on} was not saved: Only staff`
     )
     expect(team(null)).equals(
-      `A player added on this phone was not saved: ${DEAD_GAME_FALLBACK}`
+      `A player added ${EDITS_PLACE.on} was not saved: ${DEAD_GAME_FALLBACK}`
     )
   })
 

@@ -85,7 +85,7 @@ describe('the list of held edits', () => {
     )
     expect(row('team', 't1')?.textContent).includes('A team')
     expect(row('team', 't1')?.textContent).includes(
-      'A player added on this phone was not saved: Only staff'
+      'A player added in this tab was not saved: Only staff'
     )
     // What taking the server's copy costs, said before it is pressed.
     expect(row('game', 'g1')?.textContent).includes(HELD_GAME_CONSEQUENCE)
