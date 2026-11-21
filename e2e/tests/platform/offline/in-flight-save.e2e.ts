@@ -91,7 +91,10 @@ async function shownId(app: CoachApp, id: string): Promise<boolean> {
 
 async function openScoring(app: CoachApp, world: World): Promise<void> {
   await app.m.openLink({ link: `teamstation://games/${world.game}/score` })
-  await app.m.extendedWaitUntil({ visible: { text: 'Ball' }, timeout: 60000 })
+  // The control, not the Undo row's description: and settled, so a tap
+  // lands.
+  await app.m.extendedWaitUntil({ visible: { id: 'Ball' }, timeout: 60000 })
+  await sleep(1500)
 }
 
 export default defineE2e({
@@ -148,9 +151,12 @@ export default defineE2e({
         )
       }
       await openScoring(app, world)
-      await m.tapOn({ text: 'Ball' })
-      await sleep(3000)
-      const online = await callsOnServer(ctx, world)
+      await m.tapOn({ id: 'Ball' })
+      let online = await callsOnServer(ctx, world)
+      for (let i = 0; i < 15 && online.length === 0; i++) {
+        await sleep(1000)
+        online = await callsOnServer(ctx, world)
+      }
       expect(online, 'the first Ball reached the server').deep.equals(['B'])
       let cleared = false
       await setFault('api-hang')
@@ -164,7 +170,7 @@ export default defineE2e({
         const tapped = Date.now()
         await m.run(
           [
-            { tapOn: { text: 'Ball' } },
+            { tapOn: { id: 'Ball' } },
             { openLink: `teamstation://games/${world.game}` },
             {
               extendedWaitUntil: { notVisible: { text: 'Ball' }, timeout: 8000 }
@@ -176,7 +182,7 @@ export default defineE2e({
         )
         seen.push({ step: 'reopening-after-ms', ms: Date.now() - tapped })
         // Opened in the window: what the screen shows until the board is up.
-        await m.extendedWaitUntil({ visible: { text: 'Ball' }, timeout: 30000 })
+        await m.extendedWaitUntil({ visible: { id: 'Ball' }, timeout: 30000 })
         seen.push({ step: 'reopened-after-ms', ms: Date.now() - tapped })
         await note('reopened')
         // Past the request deadline, still held.
