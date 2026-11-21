@@ -142,10 +142,14 @@ async function edit(ctx: E2eContext): Promise<void> {
         const cleared = await readChatComposer(m, platform, web)
         assert(cleared === '' || cleared === 'Message')
       }
+      const enterText = async (text: string): Promise<void> => {
+        await m.inputText({ text, keyPress: platform === 'android' })
+        assert.equal(await readChatComposer(m, platform, web), text)
+      }
       const editButton = { text: '^Edit$' }
       const draft = 'Please bring the equipment list.'
       await m.tapOn(field)
-      await m.inputText({ text: draft })
+      await enterText(draft)
       if (web != null) {
         await web.page.evaluate(() => {
           const transfer = new DataTransfer()
@@ -321,7 +325,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       await m.tapOn(editButton)
       await clearComposer(originalCaption)
       const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
-      await m.inputText({ text: editedCaption })
+      await enterText(editedCaption)
       await m.assertVisible({ id: 'chat-dismiss-link-preview', timeout: 18000 })
       await m.tapOn({ text: '^Send$' })
       const readBack = async (body: string): Promise<MessageView> => {
