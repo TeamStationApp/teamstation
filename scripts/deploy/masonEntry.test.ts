@@ -33,9 +33,7 @@ import {
   GOOGLE_SERVICES,
   GOOGLE_SERVICES_SECRET,
   MAPS_KEY_CHECK,
-  PLAY_NOTES_LIMIT,
   PLAY_PUBLISHER_SECRET,
-  PLAY_RELEASE_NOTES,
   PLAY_TRACK,
   playAccessToken,
   playAssertion,
@@ -1865,20 +1863,6 @@ describe('Google Play closed-testing release', () => {
     }
   }
 
-  it('keeps the en-US release notes within Play’s limit', () => {
-    assert.equal(PLAY_NOTES_LIMIT, 500)
-    assert.ok(PLAY_RELEASE_NOTES.length <= PLAY_NOTES_LIMIT)
-    for (const section of [
-      'Coaching:',
-      'Scoring:',
-      'Replay:',
-      'Video:',
-      'Chat:'
-    ])
-      assert.ok(PLAY_RELEASE_NOTES.includes(section), section)
-    assert.equal(PLAY_TRACK, 'alpha')
-  })
-
   it('signs a service-account assertion for the Android publisher scope', () => {
     const jwt = playAssertion(key, 1_800_000_000_500)
     const [head, claims, signature] = jwt.split('.')
@@ -1935,7 +1919,6 @@ describe('Google Play closed-testing release', () => {
       token: 'token-1',
       bundle,
       track: 'alpha',
-      notes: 'Notes',
       fetcher: api.fetcher
     })
     assert.deepEqual(result, {
@@ -1966,8 +1949,7 @@ describe('Google Play closed-testing release', () => {
       releases: [
         {
           versionCodes: ['26111501'],
-          status: 'completed',
-          releaseNotes: [{ language: 'en-US', text: 'Notes' }]
+          status: 'completed'
         }
       ]
     })
@@ -1989,7 +1971,6 @@ describe('Google Play closed-testing release', () => {
         token: 'token-1',
         bundle: new Uint8Array([1]),
         track: 'alpha',
-        notes: 'Notes',
         fetcher: api.fetcher
       }),
       (error: Error) =>
@@ -2010,7 +1991,6 @@ describe('Google Play closed-testing release', () => {
         token: 't',
         bundle: new Uint8Array([1]),
         track: 'alpha',
-        notes: 'Notes',
         fetcher: noId.fetcher
       }),
       /without an id/
@@ -2025,7 +2005,6 @@ describe('Google Play closed-testing release', () => {
         token: 't',
         bundle: new Uint8Array([1]),
         track: 'alpha',
-        notes: 'Notes',
         fetcher: noCode.fetcher
       }),
       /no versionCode/
@@ -2053,7 +2032,6 @@ describe('Google Play closed-testing release', () => {
       token: 'token-1',
       bundle: new Uint8Array([1]),
       track: 'alpha',
-      notes: 'Notes',
       fetcher: api.fetcher
     })
     assert.deepEqual(result, {
@@ -2097,7 +2075,6 @@ describe('Google Play closed-testing release', () => {
         token: 'token-1',
         bundle: new Uint8Array([1]),
         track: 'alpha',
-        notes: 'Notes',
         fetcher: other.fetcher
       }),
       /Version code already used/
@@ -2167,10 +2144,10 @@ describe('Google Play closed-testing release', () => {
         'bundle-bytes'
       )
       const track = api.calls.find(call => call.url.endsWith('/tracks/alpha'))
-      assert.equal(
-        JSON.parse(String(track?.body)).releases[0].releaseNotes[0].text,
-        PLAY_RELEASE_NOTES
-      )
+      const release = JSON.parse(String(track?.body)).releases[0]
+      assert.equal(release.status, 'completed')
+      assert.equal(Object.hasOwn(release, 'releaseNotes'), false)
+      assert.equal(PLAY_TRACK, 'alpha')
 
       const empty = {
         ...ctx,
