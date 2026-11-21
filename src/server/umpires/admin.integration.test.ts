@@ -15,7 +15,7 @@ import {
 } from '../../test/umpireTypes'
 import * as access from '../access'
 import { umpireRoutes } from '../routes/umpires'
-import { people, requirements } from './admin'
+import { grant, people, requirements } from './admin'
 
 describe('umpire levels, needs and certification', function () {
   this.timeout(60000)
@@ -394,6 +394,84 @@ describe('umpire levels, needs and certification', function () {
         .deleteFrom('league_members')
         .where('id', '=', added[0])
         .execute()
+    }
+  })
+
+  it('finds whoever holds a role on the league, its seasons or its teams, but not their relatives through them', async () => {
+    const holders = [
+      [141, 'Lena Leaguer', 'league', f.leagueA, 'admin'],
+      [142, 'Sal Seasoner', 'season', f.seasonA, 'scorekeeper'],
+      [143, 'Tom Teamer', 'team', f.teamA, 'coach']
+    ] as const
+    const relative = userIdOfGumbo(144)
+    const stranger = userIdOfGumbo(145)
+    for (const [id, name] of [
+      ...holders.map(([id, name]) => [id, name] as const),
+      [144, 'Rita Relative'],
+      [145, 'Stan Stranger']
+    ] as const)
+      await insertFixtureUsers(f.h.db, {
+        id,
+        legacyId: `usr_umpire_role_${id}`,
+        display_name: name,
+        first_name: name.split(' ')[0],
+        last_name: name.split(' ')[1]
+      })
+    const roles = holders.map(() => makeId('scopeRole'))
+    const link = makeId('userLink')
+    await f.h.db
+      .insertInto('scope_roles')
+      .values(
+        holders.map(([id, , scopeType, scopeId, role], i) => ({
+          id: roles[i],
+          user_id: userIdOfGumbo(id),
+          scope_type: scopeType,
+          scope_id: scopeId,
+          role,
+          granted_by: person,
+          granted_at: new Date()
+        }))
+      )
+      .execute()
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: link,
+        user_id: userIdOfGumbo(141),
+        related_user_id: relative,
+        kind: 'family'
+      })
+      .execute()
+    try {
+      const found = async (q: string): Promise<string[]> =>
+        (await people(f.h.db, f.leagueA, q)).map(p => p.id)
+      // By the first name: the reader may not read the whole one.
+      for (const [id, name] of holders)
+        expect(await found(name.split(' ')[0]), name).deep.equals([
+          userIdOfGumbo(id)
+        ])
+      expect(await found('Rita')).deep.equals([])
+      expect(await found('Stan')).deep.equals([])
+      expect(stranger).not.equals(relative)
+      // The league administrator grants themselves.
+      await f.h.db.transaction().execute(async trx => {
+        await grant(trx, f.leagueA, userIdOfGumbo(141), userIdOfGumbo(141))
+      })
+      expect(
+        await f.h.db
+          .selectFrom('league_umpires')
+          .select('user_id')
+          .where('league_id', '=', f.leagueA)
+          .where('user_id', '=', userIdOfGumbo(141))
+          .execute()
+      ).length(1)
+    } finally {
+      await f.h.db
+        .deleteFrom('league_umpires')
+        .where('user_id', '=', userIdOfGumbo(141))
+        .execute()
+      await f.h.db.deleteFrom('user_links').where('id', '=', link).execute()
+      await f.h.db.deleteFrom('scope_roles').where('id', 'in', roles).execute()
     }
   })
 

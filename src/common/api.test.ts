@@ -8,6 +8,7 @@ import { asAccountSettings } from './accountSettings'
 import {
   asAccountAffiliations,
   asChatBlock,
+  asChatKind,
   asGameDetail,
   asHighlight,
   asLiveNow,
@@ -1889,6 +1890,32 @@ describe('api client', function () {
       }
     ])
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
+    // It names the newer chat kinds it reads, and a kind it does not know,
+    // from a newer server still, is left out rather than failing the list.
+    expect(list.calls[0].headers['x-teamstation-chat-kinds']).equals(
+      'leagueUmpires'
+    )
+    const newer = client([
+      { ...chat, id: 'cnv_new', kind: 'leagueReferees' },
+      { ...chat, id: 'cnv_umpires', kind: 'leagueUmpires' },
+      chat
+    ])
+    expect(
+      (await newer.client.chatConversations()).map(item => item.id)
+    ).deep.equals(['cnv_umpires', 'cnv_1'])
+    // A malformed row of a known kind still fails.
+    expect(
+      await client([{ ...chat, unread: 'one' }])
+        .client.chatConversations()
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+    // And so does a missing or malformed kind: a broken answer, not a newer one.
+    for (const kind of [null, undefined, 7])
+      expect(
+        await client([{ ...chat, kind }])
+          .client.chatConversations()
+          .catch((error: unknown) => error)
+      ).instanceOf(Error)
 
     // A coach reads Hank Conger in full; the public label rides beside it.
     const member = {
@@ -2550,6 +2577,17 @@ describe('api client', function () {
     }
     const listed = client([report])
     expect(await listed.client.chatReports()).deep.equals([report])
+    // A report from a chat of a kind this build does not know is left out.
+    expect(
+      await client([
+        {
+          ...report,
+          id: 'crp_new',
+          conversation: { ...report.conversation, kind: 'leagueReferees' }
+        },
+        report
+      ]).client.chatReports()
+    ).deep.equals([report])
     await listed.client.chatReports(true)
     expect(listed.calls.map(call => call.url)).deep.equals([
       'http://x/api/v1/admin/chat/reports',
@@ -5482,5 +5520,11 @@ describe('the request deadline', function () {
       await sender.send('POST', '/leagues/l1/schedule-previews', { weeks: 1 })
     ).deep.equals({ ok: true })
     expect(sender.offline).equals(false)
+  })
+
+  it('reads a league umpire chat’s kind, and refuses a kind it does not know', function () {
+    expect(asChatKind('leagueUmpires')).equals('leagueUmpires')
+    expect(asChatKind('leagueOrg')).equals('leagueOrg')
+    expect(() => asChatKind('leagueReferees')).throws()
   })
 })

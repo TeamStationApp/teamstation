@@ -357,6 +357,45 @@ export async function people(
     if (initial.has(canon(l.user_id))) population.add(canon(l.related_user_id))
     if (initial.has(canon(l.related_user_id))) population.add(canon(l.user_id))
   }
+  // Whoever holds a role on the league, one of its seasons or one of its
+  // teams, its administrators included, so one may grant themselves; their
+  // relatives come in only by their own ties.
+  const roleHolders = await db
+    .selectFrom('scope_roles')
+    .select('user_id')
+    .where(eb =>
+      eb.or([
+        eb.and([
+          eb('scope_type', '=', 'league'),
+          eb('scope_id', '=', leagueId)
+        ]),
+        eb.and([
+          eb('scope_type', '=', 'season'),
+          eb(
+            'scope_id',
+            'in',
+            db
+              .selectFrom('seasons')
+              .select('id')
+              .where('league_id', '=', leagueId)
+          )
+        ]),
+        ...(teams.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('scope_type', '=', 'team'),
+                eb(
+                  'scope_id',
+                  'in',
+                  teams.map(t => t.id)
+                )
+              ])
+            ])
+      ])
+    )
+    .execute()
+  for (const row of roleHolders) population.add(canon(row.user_id))
   const roles = new Set(
     (
       await db

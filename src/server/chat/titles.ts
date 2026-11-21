@@ -10,7 +10,7 @@ import type { ChatKind, Database } from '../db/database'
  * - season chats: `<season title> Staff`, `… All Staff`, `… Announcements`,
  *   where the season title is `<season name> - <league name>` when the season
  *   has a league, and `<season name>` otherwise;
- * - `leagueOrg`: `<league> Org`.
+ * - `leagueOrg`: `<league> Org`; `leagueUmpires`: `<league> Umpires`.
  *
  * A DM has no title (null): the app names it from its members.
  */
@@ -23,6 +23,7 @@ const SUFFIX: Record<ChatKind, string> = {
   seasonAllStaff: 'All Staff',
   seasonAnnouncements: 'Announcements',
   leagueOrg: 'Org',
+  leagueUmpires: 'Umpires',
   dm: ''
 }
 

@@ -623,6 +623,8 @@ export interface PushRegistrationsTable {
   messages: Generated<boolean>
   /** This device's "Notify for RSVPed events". */
   rsvp_events: Generated<boolean>
+  /** The newer chat kinds the registering app reads (127): their wakes come here. */
+  chat_kinds: Generated<string[]>
   created_at: Generated<Date>
   seen_at: Generated<Date>
   /**
@@ -1431,6 +1433,7 @@ export type ChatKind =
   | 'seasonAllStaff'
   | 'seasonAnnouncements'
   | 'leagueOrg'
+  | 'leagueUmpires'
   | 'dm'
 
 /** A device holding chat keys, bound to the session it signed in with. */

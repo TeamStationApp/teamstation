@@ -2,6 +2,7 @@ import { asArray, asBoolean, asObject, asOptional } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
+import { CHAT_KINDS_HEADER, unreadChatKinds } from '../../common/chatKinds'
 import { notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userId'
 import { visibleScopes } from '../access'
@@ -106,15 +107,19 @@ export function chatRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      // A build from before a kind would fail its whole list on it.
+      const unread = unreadChatKinds(req.get(CHAT_KINDS_HEADER))
       res.json(
-        await conversationsFor(
-          db,
-          media,
-          actor.userId,
-          actor.isAdmin,
-          clock(),
-          readerOf(actor)
-        )
+        (
+          await conversationsFor(
+            db,
+            media,
+            actor.userId,
+            actor.isAdmin,
+            clock(),
+            readerOf(actor)
+          )
+        ).filter(chat => !unread.has(chat.kind))
       )
     })
   )

@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express'
 
+import { CHAT_KINDS_HEADER } from '../../common/chatKinds'
 import { SCORING_FEATURE_HEADER } from '../../common/scoring/teamRecord'
 
 /**
@@ -26,7 +27,7 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
       // A queued write names itself with `idempotency-key`.
       res.setHeader(
         'access-control-allow-headers',
-        `authorization,content-type,idempotency-key,x-teamstation-app,x-teamstation-protocol,${SCORING_FEATURE_HEADER}`
+        `authorization,content-type,idempotency-key,x-teamstation-app,x-teamstation-protocol,${SCORING_FEATURE_HEADER},${CHAT_KINDS_HEADER}`
       )
       res.setHeader(
         'access-control-allow-methods',

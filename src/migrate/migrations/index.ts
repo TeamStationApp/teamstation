@@ -141,6 +141,7 @@ import { migration124PushNotifications } from './124pushNotifications'
 import { migration125SolverLimit } from './125solverLimit'
 import { migration126GroupCoordinates } from './126groupCoordinates'
 import { migration127AgeBands } from './127ageBands'
+import { migration127LeagueUmpireChat } from './127leagueUmpireChat'
 import { migration128ChatHiddenHistory } from './128chatHiddenHistory'
 import { migration129DropChatAgeConfirmations } from './129dropChatAgeConfirmations'
 import { migration130RefreshNotices } from './130refreshNotices'
@@ -289,6 +290,7 @@ export const migrations: Migration[] = [
   migration125SolverLimit,
   migration126GroupCoordinates,
   migration127AgeBands,
+  migration127LeagueUmpireChat,
   migration128ChatHiddenHistory,
   migration129DropChatAgeConfirmations,
   migration130RefreshNotices

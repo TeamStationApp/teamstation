@@ -19,7 +19,7 @@ import {
 } from './titles'
 
 /**
- * U5, the seven audiences and their titles, on the chat fixture: QPLL (L),
+ * U5, the eight audiences and their titles, on the chat fixture: QPLL (L),
  * Spring 2027 (S, K), Hawks (Ha, Hc, Hk, Hs; players P 15, R 12, T 12, Q
  * without an account; parents A, B, C, N; guardians G1, G2 of P; fan F) and
  * Eagles (Ea, Ec, Ek, Es; player E 16, who follows Hawks; parents D, D2).
@@ -348,6 +348,7 @@ describe('chat audiences (U5)', function () {
   it('names each scope kind’s scope type', function () {
     expect(scopeTypeOf('seasonAllStaff')).equals('season')
     expect(scopeTypeOf('leagueOrg')).equals('league')
+    expect(scopeTypeOf('leagueUmpires')).equals('league')
     expect(scopeTypeOf('teamFans')).equals('team')
   })
 
@@ -412,6 +413,12 @@ describe('chat audiences (U5)', function () {
         scopeType: 'league',
         scopeId: fixture.seed.leagueId
       },
+      {
+        id: 'k',
+        kind: 'leagueUmpires',
+        scopeType: 'league',
+        scopeId: fixture.seed.leagueId
+      },
       { id: 'h', kind: 'seasonStaff', scopeType: 'season', scopeId: loose },
       { id: 'i', kind: 'dm', scopeType: null, scopeId: null },
       { id: 'j', kind: 'teamStaff', scopeType: 'team', scopeId: 'tem_gone' }
@@ -428,6 +435,7 @@ describe('chat audiences (U5)', function () {
       e: 'Spring 2027 - Harbor League All Staff',
       f: 'Spring 2027 - Harbor League Announcements',
       g: 'Harbor League Org',
+      k: 'Harbor League Umpires',
       h: 'Fall Ball Staff',
       i: null,
       j: 'Chat Staff'

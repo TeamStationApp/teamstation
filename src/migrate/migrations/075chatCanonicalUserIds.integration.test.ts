@@ -50,6 +50,7 @@ const chatNames = new Set([
   '099ChatLinkDecisions',
   '113chatHistoryRecovery',
   '127ageBands',
+  '127leagueUmpireChat',
   '128chatHiddenHistory'
 ])
 

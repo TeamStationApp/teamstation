@@ -119,7 +119,7 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the refresh notices, the dropped chat age columns, the hidden chat history, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the refresh notices, the dropped chat age columns, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
     expect(await migrateDown(pool, migrations)).deep.equals([
       '130refreshNotices'
@@ -129,6 +129,9 @@ describe('migrations', function () {
     ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '128chatHiddenHistory'
+    ])
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '127leagueUmpireChat'
     ])
     expect(await migrateDown(pool, migrations)).deep.equals(['127ageBands'])
     expect(await migrateDown(pool, migrations)).deep.equals([
@@ -704,6 +707,7 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '125solverLimit',
           '126groupCoordinates',
           '127ageBands',
+          '127leagueUmpireChat',
           '128chatHiddenHistory',
           '129dropChatAgeConfirmations',
           '130refreshNotices'

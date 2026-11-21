@@ -28,6 +28,7 @@ import {
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
 import { asChatBoxCursor } from './chatHistory'
+import { CHAT_KINDS_HEADER, NEWER_CHAT_KINDS } from './chatKinds'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import {
   type ApiError,
@@ -401,9 +402,42 @@ export const asChatKind = asLiteral(
   'seasonAllStaff',
   'seasonAnnouncements',
   'leagueOrg',
+  'leagueUmpires',
   'dm'
 )
 export type ChatKindName = ReturnType<typeof asChatKind>
+
+/**
+ * A list of rows that each name a chat kind, keeping only the rows of kinds
+ * this build reads: a kind from a newer server is left out, never a failure
+ * of the whole list.
+ */
+function ofKnownKinds<T>(
+  cleaner: (raw: unknown) => T,
+  kindOf: (row: Record<string, unknown>) => unknown
+): (raw: unknown) => T[] {
+  const known = (kind: string): boolean => {
+    try {
+      asChatKind(kind)
+      return true
+    } catch {
+      return false
+    }
+  }
+  return raw =>
+    asArray(asUnknown)(raw)
+      .filter(row => {
+        const kind = kindOf(
+          typeof row === 'object' && row != null
+            ? (row as Record<string, unknown>)
+            : {}
+        )
+        // Only a kind this build has never heard of; a missing or malformed
+        // one fails in the cleaner, as a broken answer should.
+        return typeof kind !== 'string' || known(kind)
+      })
+      .map(cleaner)
+}
 
 /**
  * Somebody else who was in a DM with the caller, for its name: a current
@@ -7473,7 +7507,7 @@ export class TeamStationClient {
     return await this.request(
       'GET',
       '/chat/conversations',
-      asArray(asChatConversation)
+      ofKnownKinds(asChatConversation, row => row.kind)
     )
   }
 
@@ -7979,7 +8013,10 @@ export class TeamStationClient {
     return await this.request(
       'GET',
       `/admin/chat/reports${open ? '?open=true' : ''}`,
-      asArray(asChatReport)
+      ofKnownKinds(
+        asChatReport,
+        row => (row.conversation as { kind?: unknown } | undefined)?.kind
+      )
     )
   }
 
@@ -8693,7 +8730,8 @@ export class TeamStationClient {
     const headers: Record<string, string> = {
       ...options.headers,
       accept: 'application/json',
-      [SCORING_FEATURE_HEADER]: SCORING_FEATURES
+      [SCORING_FEATURE_HEADER]: SCORING_FEATURES,
+      [CHAT_KINDS_HEADER]: NEWER_CHAT_KINDS.join(',')
     }
     // Bytes (an attachment's part) go as they are; anything else as JSON.
     const bytes = body instanceof Uint8Array ? body : undefined

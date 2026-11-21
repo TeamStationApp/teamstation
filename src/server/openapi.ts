@@ -460,7 +460,7 @@ const pushPaths = {
       security: [{ bearer: [] }],
       summary: "Register this device's push address (signed-in sessions only)",
       description:
-        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address and switches, and is sent to again if a push service had refused it for good. The two switches are this device's own, as its Account shows them: chat wakes go only to registrations with `messages` on, and RSVP reminders only to those with `rsvpEvents` on. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted.",
+        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address and switches, and is sent to again if a push service had refused it for good. The two switches are this device's own, as its Account shows them: chat wakes go only to registrations with `messages` on, and RSVP reminders only to those with `rsvpEvents` on. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted. The newer chat kinds the request names in `x-teamstation-chat-kinds` (`leagueUmpires`) are kept with the registration: a chat of such a kind wakes only registrations that named it, as only their app lists it.",
       requestBody: {
         required: true,
         content: {
@@ -8454,7 +8454,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'The chats the caller is in',
           description:
             'Scope chats (Staff, Members and Fans of a team; Staff, All Staff ' +
-            'and Announcements of a season; a league’s Org) and DMs, each ' +
+            'and Announcements of a season; a league’s Org and, while it ' +
+            'manages umpires, its Umpires, `leagueUmpires`) and DMs, each ' +
             '`{id, kind, title, scope, scopeName, lastSeq, lastMessageAt, ' +
             'unread, canPost, canModerate, locked, noHolder, closed, ' +
             'memberCount, people}`. `title` and `scopeName` are null for a ' +
@@ -8462,7 +8463,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'with the caller as `{userId, shortName, left, avatarUrl}` (current ' +
             'members, and those who left after the caller joined), and is ' +
             'empty for a scope chat. `lastMessageAt` is null before the ' +
-            'first message. Somebody who is not an account, or is under ' +
+            'first message. A chat of a kind added since the first eight ' +
+            '(`leagueUmpires`) is listed only when the request names it in ' +
+            '`x-teamstation-chat-kinds` (comma-separated), so a client built ' +
+            'before it never meets a kind it cannot read. Somebody who is not an account, or is under ' +
             '13 by birth month, is in none. Additive `preferences` describes ' +
             'only the caller: `{pinned, muted, manualUnread, manualUnreadRevision}`. ' +
             '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
@@ -9673,7 +9677,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'unresolved with `open=true`. Each is `{id, conversation: {id, ' +
             'kind, title}, messageId, reporter: {userId, shortName}, sender: ' +
             '{userId, shortName}, kind, sentAt, plaintext, verified, ' +
-            'createdAt, resolvedAt}`.',
+            'createdAt, resolvedAt}`. A report from a chat of a newer kind ' +
+            '(`leagueUmpires`) is listed only when the request names that kind ' +
+            'in `x-teamstation-chat-kinds`.',
           security: [{ bearer: [] }],
           parameters: [
             {
