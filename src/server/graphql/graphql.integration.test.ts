@@ -864,12 +864,13 @@ describe('the GraphQL API', function () {
         umpires: null,
         umpireCommitments: null
       })
+      // The two fields resolve together, so their errors come in either order.
       expect(
         answer.body.errors?.map(error => [
           error.path?.[0],
           error.extensions?.status
         ])
-      ).deep.equals([
+      ).to.have.deep.members([
         ['umpires', 403],
         ['umpireCommitments', 403]
       ])
