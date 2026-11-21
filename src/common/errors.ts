@@ -42,7 +42,12 @@ export const asErrorCode = asLiteral(
    * An `Idempotency-Key` already sent with a different request: not a
    * refusal of the change, which may well have landed under that key.
    */
-  'idempotencyKeyReused'
+  'idempotencyKeyReused',
+  /**
+   * A read asked of the device's stored copy alone, which has none: the
+   * server is asked behind it. Like `offline`, no server sends this.
+   */
+  'notStored'
 )
 export type ErrorCode = ReturnType<typeof asErrorCode>
 
@@ -84,7 +89,8 @@ export const errorStatus: Record<ErrorCode, number> = {
   internal: 500,
   unavailable: 503,
   invalidLocation: 422,
-  idempotencyKeyReused: 409
+  idempotencyKeyReused: 409,
+  notStored: 503
 }
 
 /**

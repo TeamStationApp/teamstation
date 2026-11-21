@@ -1103,6 +1103,13 @@ export class Outbox {
    * answer to each, as a queued write's would be.
    */
   private readonly ahead = new Map<string, { answer: unknown }>()
+  /**
+   * Of those, the scoring saves written onto the documents as they were
+   * sent, before anything was queued behind them, so a stored read shows a
+   * play whose save is on its way (#358). A refusal of one is undone and
+   * thrown, as for any direct send: the session acts on it.
+   */
+  private readonly aheadAtSend = new Set<string>()
   /** The number of the phone's last queued tag (`nextLocalTagRevision`). */
   private lastTagRevision = 0
 
@@ -1732,6 +1739,20 @@ export class Outbox {
         const leaseUntil = this.options.now() + LEASE_MS
         await tx.update(row.id, { state: 'inflight', leaseUntil })
         this.direct.add(row.id)
+        // A play or a lineup on its way is on the phone's documents now, as
+        // a queued one would be, so the screen opened again shows it. One
+        // the documents cannot take is sent as before, written nothing.
+        if (call.kind === 'events' || call.kind === 'lineups') {
+          try {
+            const written = await this.optimistic(tx, callOfRow(row))
+            if (written != null) {
+              this.ahead.set(row.id, { answer: written.answer })
+              this.aheadAtSend.add(row.id)
+            }
+          } catch {
+            // Sent as before.
+          }
+        }
         let settle!: () => void
         this.directSends.set(
           chain,
@@ -1749,6 +1770,8 @@ export class Outbox {
     } catch {
       if (reserving != null) {
         this.direct.delete(reserving.rowId)
+        this.ahead.delete(reserving.rowId)
+        this.aheadAtSend.delete(reserving.rowId)
         this.directSends.delete(chain)
         reserving.settle()
       }
@@ -1845,16 +1868,38 @@ export class Outbox {
     } catch (error: unknown) {
       // Aborted at `giveUp`'s deadline: let go, however the request ended.
       if (request.signal.aborted) released = true
+      // Written onto the documents as it was sent, and refused: undone, and
+      // thrown below as any direct send's refusal is, for the session to
+      // rebase, take the game as replaced, or say why. Sent again later
+      // (no signal, too old to save), it stays the queue's, as below.
+      let undo = false
+      if (this.aheadAtSend.has(row.id)) {
+        const outcome = released
+          ? { kind: 'retry' }
+          : request.signal.aborted
+            ? { kind: 'retry' }
+            : outcomeOf(error, call)
+        if (outcome.kind !== 'retry' && !isUpdateRequired(error)) {
+          undo = true
+          this.ahead.delete(row.id)
+          this.aheadAtSend.delete(row.id)
+        }
+      }
       // A swap or a tag behind it was written after it onto the phone's
       // documents: it is the queue's now, as a queued write is.
       const ahead = this.ahead.get(row.id)
       if (ahead != null) {
+        // Written as it was sent, and let go: kept for `giveUp` as any
+        // direct send let go is.
+        if (released && sent != null && this.aheadAtSend.has(row.id))
+          this.keepReleased(key, chain, sent)
         try {
           return await this.queuedAhead(store, call, row, body, error, ahead, {
             released
           })
         } finally {
           this.ahead.delete(row.id)
+          this.aheadAtSend.delete(row.id)
           this.direct.delete(row.id)
         }
       }
@@ -1864,6 +1909,7 @@ export class Outbox {
       if (!released && !update && !isRetryable(error, call)) {
         await store
           .atomically(async tx => {
+            if (undo) await this.undoAhead(tx, call, row)
             await tx.remove(row.id)
           })
           .catch(() => undefined)
@@ -1873,20 +1919,7 @@ export class Outbox {
       }
       // Let go by the session, it is no sign of the network; its request is
       // still out, and whether the server took it is kept for `giveUp`.
-      if (released && sent != null)
-        this.released.set(key, {
-          chain,
-          // Let go with its request out: a refusal says the server did not
-          // take it; any other failure (no answer, no signal) says nothing,
-          // and the give-up counts it unsure (`undefined`).
-          kept: sent.then(
-            taken => (taken as Json | null)?.superseded !== true,
-            (failed: unknown) =>
-              failed instanceof HttpError && failed.code !== 'offline'
-                ? false
-                : undefined
-          )
-        })
+      if (released && sent != null) this.keepReleased(key, chain, sent)
       if (update) this.outdated.add(chain)
       else if (!released)
         this.failed(
@@ -1937,6 +1970,7 @@ export class Outbox {
       })
     } finally {
       this.ahead.delete(row.id)
+      this.aheadAtSend.delete(row.id)
       this.direct.delete(row.id)
     }
     // Answered and stored: a give-up waits no more for this send, only
@@ -1997,6 +2031,70 @@ export class Outbox {
   }
 
   /**
+   * A direct send the session let go with its request still out: whether
+   * the server took it, for `giveUp` to count. A refusal says it did not;
+   * any other failure (no answer, no signal) says nothing, and the give-up
+   * counts it unsure (`undefined`).
+   */
+  private keepReleased(
+    key: string,
+    chain: string,
+    sent: Promise<unknown>
+  ): void {
+    this.released.set(key, {
+      chain,
+      kept: sent.then(
+        taken => (taken as Json | null)?.superseded !== true,
+        (failed: unknown) =>
+          failed instanceof HttpError && failed.code !== 'offline'
+            ? false
+            : undefined
+      )
+    })
+  }
+
+  /**
+   * Takes back a direct send written onto the documents as it was sent and
+   * then refused: each document it wrote is the server's copy again, with
+   * what is still queued behind it written over that, or forgotten when the
+   * phone kept no server copy of it.
+   */
+  private async undoAhead(
+    tx: CacheTransaction,
+    call: QueuedCall,
+    row: OutboxRow
+  ): Promise<void> {
+    if (call.kind !== 'events' && call.kind !== 'lineups') return
+    const key = ownKey(call)
+    const held = await tx.read(key)
+    if (held == null) return
+    if (held.serverBody == null) {
+      await tx.forget(key)
+      return
+    }
+    const behind = (await tx.outbox()).filter(
+      other =>
+        other.id !== row.id &&
+        other.chain === row.chain &&
+        documentsOf(callOfRow(other)).some(doc => doc.key === key)
+    )
+    let document = parsed(held.serverBody)
+    for (const other of behind)
+      document = await this.reapplied(
+        tx,
+        callOfRow(other),
+        key,
+        document,
+        parsed(other.body)
+      )
+    await tx.write(key, {
+      ...held,
+      body: JSON.stringify(document),
+      pending: behind.length > 0
+    })
+  }
+
+  /**
    * Before a swap or a tag is queued behind a write of its game still in
    * flight (a direct send, whose row holds its place), that write goes onto
    * the phone's documents as the phone would answer it, so the swap
@@ -2010,12 +2108,12 @@ export class Outbox {
   ): Promise<void> {
     const chain = chainOf(call)
     for (const row of await tx.outbox()) {
-      if (
-        row.chain !== chain ||
-        !this.direct.has(row.id) ||
-        this.ahead.has(row.id)
-      )
+      if (row.chain !== chain || !this.direct.has(row.id)) continue
+      // Written as it was sent: the swap or the tag is built on it now.
+      if (this.ahead.has(row.id)) {
+        this.aheadAtSend.delete(row.id)
         continue
+      }
       const direct = callOfRow(row)
       if (direct.kind !== 'events' && direct.kind !== 'lineups') continue
       const written = await this.optimistic(tx, direct)

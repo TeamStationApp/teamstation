@@ -46,7 +46,10 @@ const tsSuites = [
   // What the shell says of the queue (M3).
   'src/app/sync/useOffline.test.ts',
   // The scoring source on the queue's swapped documents (M4).
-  'src/app/scoring/scoringSource.test.ts'
+  'src/app/scoring/scoringSource.test.ts',
+  // A save on its way written ahead; reads that wait on nothing (M5).
+  'src/app/sync/outbox.test.ts',
+  'src/app/sync/cachingClient.test.ts'
 ]
 
 /**
