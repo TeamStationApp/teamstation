@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import { afterEach, beforeEach, describe, it } from 'mocha'
+import { afterEach, before, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 
 import { asSessionUser, TeamStationClient } from '../common/api'
@@ -13,6 +13,11 @@ import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, find, mount, press, settle, unmount } from '../test/gameFormDom'
 import legacyChatRecord from '../test/legacyChatKeyRecord.json'
 import { nodeSqliteExecutor } from '../test/nodeSqliteExecutor'
+import {
+  onWasm,
+  testSqliteExecutor,
+  testSqliteReady
+} from '../test/testSqliteExecutor'
 import { App } from './App'
 import { ensureEnrolled, holdsStore } from './chat/engine/links'
 import { recordFromJson } from './chat/keyRecord'
@@ -124,6 +129,25 @@ const refusal = (): string | undefined =>
   undefined
 
 describe('the phone shell offline', () => {
+  before(testSqliteReady)
+  /**
+   * The phone's file between launches: an earlier launch's queue read by the
+   * next, or the file read beside the app. On SQLite WASM nothing outlives a
+   * database, so these run on node only.
+   */
+  const PHONE_FILE_CASES = new Set([
+    'says it is offline with what waits, keeps Create Team shut, and clears once the queue is sent',
+    'draws the banner after the tab bar, on the inset, with the capsule on top of it',
+    'keeps the banner on the bottom inset of a wide window, which has no capsule',
+    'keeps what was queued through a launch the server refuses, and sends it once the same person signs in',
+    'lists a player the server refused from the banner, sends him again, and takes the server’s copy',
+    'keeps the line plain offline, where nothing has been refused yet',
+    'keeps the file when the scoreboard socket refuses the session (4401), and goes to sign in',
+    'asks before Sign Out loses what is queued: Cancel keeps it, Sign Out deletes it',
+    'switches OAuth account without revoking the device or wiping its keys',
+    'sends nothing of a refused person’s queue under the next person’s token, and sends it once they are back',
+    'lists a game whose edits the server refused by name, and takes the server’s copy of it'
+  ])
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
   const originalSocket = globalThis.WebSocket
@@ -145,7 +169,7 @@ describe('the phone shell offline', () => {
     apiBaseUrl: string
   ): Promise<DocumentStore> =>
     await openCacheStore(
-      nodeSqliteExecutor(
+      testSqliteExecutor(
         join(
           dir,
           cacheFileName(
@@ -210,6 +234,10 @@ describe('the phone shell offline', () => {
         return new Response(JSON.stringify(BETTS), { status: 200 })
       return new Response('[]', { status: 200 })
     }
+  })
+  beforeEach(function () {
+    if (onWasm() && PHONE_FILE_CASES.has(this.currentTest?.title ?? ''))
+      this.skip()
   })
   afterEach(async () => {
     await unmount()

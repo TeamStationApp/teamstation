@@ -158,7 +158,10 @@ const bundle = async entry =>
       '@react-three/test-renderer',
       'jsdom',
       'mocha',
-      'chai'
+      'chai',
+      // Its Node build finds its own WebAssembly by import.meta.url, which a
+      // CommonJS bundle empties: it is required at run time instead.
+      '@sqlite.org/sqlite-wasm'
     ],
     sourcemap: true,
     define: {

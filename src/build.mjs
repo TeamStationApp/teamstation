@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { build, context } from 'esbuild'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { createRequire } from 'module'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -108,6 +109,19 @@ const wasmBytes = await readFile(buildWasm(found))
 const wasmFile = serve
   ? 'chat-crypto.wasm'
   : `chat-crypto-${createHash('sha256').update(wasmBytes).digest('hex').slice(0, 16)}.wasm`
+
+/**
+ * SQLite as WebAssembly (`@sqlite.org/sqlite-wasm`), which the web's
+ * document cache and outbox run on (`src/app/sync/wasmSqliteExecutor.ts`):
+ * the package's module, copied beside the bundle under a hashed name (plain
+ * `sqlite3.wasm` under `--serve`), and the bundle told where it is.
+ */
+const sqliteWasmBytes = await readFile(
+  createRequire(import.meta.url).resolve('@sqlite.org/sqlite-wasm/sqlite3.wasm')
+)
+const sqliteWasmFile = serve
+  ? 'sqlite3.wasm'
+  : `sqlite3-${createHash('sha256').update(sqliteWasmBytes).digest('hex').slice(0, 16)}.wasm`
 
 /**
  * Reanimated's worklets, and nothing else.
@@ -231,6 +245,7 @@ const options = {
       `/${path.basename(schedulerWorkerFile)}`
     ),
     TS_SCHEDULER_WASM_URL: JSON.stringify(`/${schedulerWasmFile}`),
+    TS_SQLITE_WASM_URL: JSON.stringify(`/${sqliteWasmFile}`),
     TS_SCHEDULER_WASM_INTEGRITY: JSON.stringify(
       integrityOf(schedulerWasmBytes)
     ),
@@ -336,6 +351,10 @@ for (const name of await readdirSafe(out))
   )
     await rm(`${out}/${name}`)
 await writeFile(`${out}/${schedulerWasmFile}`, schedulerWasmBytes)
+for (const name of await readdirSafe(out))
+  if (/^sqlite3-[0-9a-f]+\.wasm$/.test(name) && name !== sqliteWasmFile)
+    await rm(`${out}/${name}`)
+await writeFile(`${out}/${sqliteWasmFile}`, sqliteWasmBytes)
 
 if (serve) {
   // No integrity here: the watch rebuilds `app.js` after this page is
