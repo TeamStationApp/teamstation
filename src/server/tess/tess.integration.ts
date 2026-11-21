@@ -274,6 +274,10 @@ const CASES: Case[] = [
       if (!calls.some(readsCommitments)) return 'no commitments were read'
       if (turn.writes > 0 || turn.changes.length > 0)
         return 'something was proposed or written'
+      // Ids belong only in link targets, never in the words.
+      const words = turn.answer.replace(/\]\([^)]*\)/g, ']')
+      const id = /\b(?:sea|lea|gam|usr|tem)_\w+/.exec(words)
+      if (id != null) return `the answer shows the id ${id[0]}`
       if (!turn.answer.includes('Hank')) return 'Hank Aaron was not named'
       const near = (name: string, reason: RegExp): boolean =>
         turn.answer
