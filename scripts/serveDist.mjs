@@ -5,7 +5,10 @@
 //   node scripts/serveDist.mjs [port]         (8080 by default)
 //
 // A path that names a file in `dist/` is that file; any other path is
-// `index.html`, as the app's addresses are. `/api/*` goes to TS_API_PROXY
+// `index.html`, as the app's addresses are. A JS, CSS or WASM file is sent as
+// its pre-compressed copy (`<file>.br`, else `<file>.gz`, which the build
+// writes) when the request's `Accept-Encoding` takes it, with
+// `Content-Encoding`, `Vary: Accept-Encoding` and the original's type. `/api/*` goes to TS_API_PROXY
 // (`http://127.0.0.1:9100`) when it is set, so the build's relative `/api/v1`
 // reaches a local server; without it `/api/*` answers 404, for a test that
 // intercepts its requests in the browser.
@@ -38,6 +41,37 @@ const TYPES = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.txt': 'text/plain; charset=utf-8'
+}
+
+const ENCODED = new Set(['.js', '.css', '.wasm'])
+
+/** Whether `header` (an `Accept-Encoding`) takes `coding`. */
+function accepts(header, coding) {
+  return String(header ?? '')
+    .split(',')
+    .map(part => part.trim().split(';'))
+    .some(
+      ([name, ...params]) =>
+        name.trim() === coding &&
+        !params.some(param => /^\s*q\s*=\s*0(\.0*)?\s*$/.test(param))
+    )
+}
+
+/** The copy of `path` to send for `header`, and its encoding. */
+async function encodedOf(path, header) {
+  if (!ENCODED.has(extname(path))) return null
+  for (const [coding, suffix] of [
+    ['br', '.br'],
+    ['gzip', '.gz']
+  ])
+    if (accepts(header, coding))
+      try {
+        if ((await stat(path + suffix)).isFile())
+          return { path: path + suffix, coding }
+      } catch {
+        // No copy of this one: the next, or the original.
+      }
+  return null
 }
 
 /** The file in `dist/` a path names, or null when it names none. */
@@ -86,11 +120,14 @@ const server = createServer((req, res) => {
   fileOf(url.pathname)
     .then(async file => {
       const path = file ?? join(root, 'index.html')
+      const encoded = await encodedOf(path, req.headers['accept-encoding'])
       res.writeHead(200, {
         'content-type': TYPES[extname(path)] ?? 'application/octet-stream',
-        'cache-control': 'no-cache'
+        'cache-control': 'no-cache',
+        ...(ENCODED.has(extname(path)) ? { vary: 'Accept-Encoding' } : {}),
+        ...(encoded == null ? {} : { 'content-encoding': encoded.coding })
       })
-      createReadStream(path).pipe(res)
+      createReadStream(encoded?.path ?? path).pipe(res)
     })
     .catch(error => {
       res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
