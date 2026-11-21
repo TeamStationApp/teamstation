@@ -4,6 +4,8 @@ import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { createRequire } from 'module'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { promisify } from 'util'
+import { brotliCompress, constants as zlibConstants, gzip } from 'zlib'
 
 import buildInfoTools from '../scripts/build-info.cjs'
 import { buildWasm, findCargo } from '../scripts/chatCryptoBuild.mjs'
@@ -399,7 +401,43 @@ if (serve) {
       })
     )
   )
+  await writeEncodedCopies(out)
   console.log(`built ${out}/${file}`)
+}
+
+/**
+ * Pre-compressed copies of every JS, CSS and WASM file in `dir`, beside it:
+ * `<file>.br` (brotli, quality 11) and `<file>.gz` (gzip, level 9), for the
+ * server to send as the browser's `Accept-Encoding` allows
+ * (`scripts/serveDist.mjs`, and Caddy's `precompressed` on the seats). A
+ * copy whose original is gone, pruned above, goes with it. The originals
+ * are unchanged: the page's integrity hashes name them.
+ */
+async function writeEncodedCopies(dir) {
+  const names = await readdirSafe(dir)
+  const present = new Set(names)
+  for (const name of names) {
+    const copy = /^(.+\.(?:js|css|wasm))\.(?:br|gz)$/.exec(name)
+    if (copy != null && !present.has(copy[1])) await rm(`${dir}/${name}`)
+  }
+  await Promise.all(
+    names
+      .filter(name => /\.(?:js|css|wasm)$/.test(name))
+      .map(async name => {
+        const bytes = await readFile(`${dir}/${name}`)
+        const [br, gz] = await Promise.all([
+          promisify(brotliCompress)(bytes, {
+            params: {
+              [zlibConstants.BROTLI_PARAM_QUALITY]: 11,
+              [zlibConstants.BROTLI_PARAM_SIZE_HINT]: bytes.length
+            }
+          }),
+          promisify(gzip)(bytes, { level: 9 })
+        ])
+        await writeFile(`${dir}/${name}.br`, br)
+        await writeFile(`${dir}/${name}.gz`, gz)
+      })
+  )
 }
 
 /** `readdir`, treating a missing directory as empty. */
