@@ -107,13 +107,24 @@ export interface OpenOptions {
    * stored, or none at once, the server asked behind. (The plays are read
    * stored-first: with none stored, the server is read, the one wait.)
    */
-  storedOrNothing?: { gameId: string }
+  storedOrNothing?: { gameId: string; waitMs?: number }
   /**
    * The sides whose roster the device did not have: reconciled against the
    * players their records field until the roster is read.
    */
   standInSides?: Side[]
+  /** Both teams' default lineups, when the screen has just read them. */
+  defaults?: DefaultLineups
 }
+
+/**
+ * How long the scoring screen's open waits for a read the device has
+ * nothing stored for (the roles, a roster, a default lineup): on a working
+ * connection its answer comes first, and a new game starts from it; a
+ * stalled server costs no more than this, and a refusal (a team whose
+ * default this reader may not see) nothing (#358).
+ */
+export const DEFAULT_LINEUP_WAIT_MS = 1500
 
 /**
  * Both teams' default lineups. A default that fails to load is none, so the
@@ -125,8 +136,11 @@ export async function defaultsOf(
   game: GameDetail,
   storedFirst = false,
   offlineFirst = false,
-  /** The scoring screen's open: what is stored, or none at once. */
-  storedOrNothing?: { gameId: string }
+  /**
+   * The scoring screen's open: what is stored or, with nothing stored, the
+   * server's answer if it comes within a moment, else none.
+   */
+  storedOrNothing?: { gameId: string; waitMs?: number }
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> => {
     try {
@@ -134,7 +148,14 @@ export async function defaultsOf(
         await client.defaultLineup(teamId, {
           storedFirst,
           offlineFirst,
-          ...(storedOrNothing == null ? {} : { storedOrNothing })
+          ...(storedOrNothing == null
+            ? {}
+            : {
+                storedOrNothing: {
+                  waitMs: DEFAULT_LINEUP_WAIT_MS,
+                  ...storedOrNothing
+                }
+              })
         })
       ).lineup
     } catch {
@@ -338,6 +359,7 @@ export class ServerScoringSource implements ScoringSource {
     // every read it waits on is the phone's stored one, when it has one.
     const defaults =
       opening?.defaults ??
+      options?.defaults ??
       (await defaultsOf(client, game, storedFirst, offlineFirst, alone))
     // The context for the game's teams as last read, rebuilt only when they
     // change: every read gives the one its teams call for, whether or not

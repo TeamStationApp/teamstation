@@ -1427,17 +1427,15 @@ describe('the scoring open, from what the phone stored', function () {
     expect(reads).not.includes('roles')
     reads.length = 0
     // A roster or the roles that came back different are read again from
-    // the server. With nothing done on the game yet, it is opened again too,
-    // on what is now stored, so a default lineup that arrived shapes it
-    // (#358); once something is done it is read again as after a notice.
+    // the server, with the game.
     await act(async () => {
       told!('details')
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(reads).includes('roles')
     expect(reads.filter(read => read === 'roster').length).at.least(2)
-    expect(reads).includes('default:stored')
-    expect(reads).includes('events:stored')
+    expect(reads).includes('events')
+    expect(reads.filter(read => read.endsWith(':stored'))).deep.equals([])
     await unmount()
     expect(told).equals(undefined)
   })

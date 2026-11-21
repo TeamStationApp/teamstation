@@ -334,6 +334,53 @@ describe('the phone outbox', function () {
   const bodyOf = (row: Record<string, unknown>): Record<string, unknown> =>
     JSON.parse(String(row.body))
 
+  it('waits a moment for an answer it has nothing stored for, takes one that comes in time, and gives up on a stalled one (#358)', async function () {
+    let stalled = false
+    const p = phone(async sent => {
+      if (sent.path === '/teams/home/default-lineup')
+        return { body: { lineup: null, fromGameId: null, setAt: null } }
+      if (sent.path === '/teams/away/default-lineup') {
+        stalled = true
+        return await new Promise<Answer>(() => undefined)
+      }
+      if (sent.path === '/teams/gone/default-lineup')
+        return refusal(404, 'notFound', 'Not found')
+      return 'offline'
+    })
+    const waiting = { storedOrNothing: { gameId: 'g1', waitMs: 200 } }
+    // Answered within the wait: what it opens on, and nothing told later.
+    expect(await p.client.defaultLineup('home', waiting)).deep.include({
+      lineup: null
+    })
+    const told: string[] = []
+    const stop = p.client.onStoredChanged('g1', change => {
+      told.push(change)
+    })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals([])
+    stop()
+    // A refusal settles at once: nothing to wait for.
+    const refusedAt = Date.now()
+    let refused: unknown
+    try {
+      await p.client.defaultLineup('gone', waiting)
+    } catch (error) {
+      refused = error
+    }
+    expect((refused as HttpError).code).equals('notStored')
+    expect(Date.now() - refusedAt).lessThan(150)
+    // A stalled one: the wait, then nothing.
+    const started = Date.now()
+    try {
+      await p.client.defaultLineup('away', waiting)
+    } catch (error) {
+      refused = error
+    }
+    expect(stalled).equals(true)
+    expect((refused as HttpError).code).equals('notStored')
+    expect(Date.now() - started).within(180, 1000)
+  })
+
   it('answers what it stored, or nothing at once, asks the server behind, and tells the game once the answer is stored (#358)', async function () {
     let answer!: () => void
     const gate = new Promise<void>(resolve => {

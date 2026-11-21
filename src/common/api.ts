@@ -3594,9 +3594,10 @@ export interface RequestOptions {
    * its answer stored. For the scoring screen as it opens, which waits on
    * the network for nothing (#358). Once an answer is stored for a read
    * that had none, the `onStoredChanged` listeners of `gameId` are told
-   * `'details'`. A client that stores nothing reads the server.
+   * `'details'`. With `waitMs`, nothing stored waits that long for the
+   * server's answer first. A client that stores nothing reads the server.
    */
-  storedOrNothing?: { gameId: string }
+  storedOrNothing?: { gameId: string; waitMs?: number }
   /**
    * The server's answer, or the failure: never the phone's stored copy in
    * place of an answer that did not come. For the phone's read behind a
@@ -3700,7 +3701,7 @@ export type StoredChange = 'game' | 'details'
 export interface ReadOptions {
   storedFirst?: boolean
   offlineFirst?: boolean
-  storedOrNothing?: { gameId: string }
+  storedOrNothing?: { gameId: string; waitMs?: number }
 }
 
 function readOptions(options: ReadOptions | undefined): RequestOptions {

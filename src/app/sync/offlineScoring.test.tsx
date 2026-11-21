@@ -1084,6 +1084,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         nodes.item(nodes.length - 1)?.getAttribute('aria-disabled') === 'true'
       )
     }
+    /** Waits up to `ms` for the scoring board's count. */
+    const boardWithin = async (ms: number): Promise<void> => {
+      const end = Date.now() + ms
+      while (Date.now() < end && !/\d balls/.test(text())) await settle(50)
+    }
     const homeOf = (): string | undefined =>
       /Owls \d+ · Hawks \d+|Hawks \d+ · Owls \d+/.exec(text())?.[0]
 
@@ -1158,10 +1163,13 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       const release = holdAll(net)
       const started = Date.now()
       await open(client)
+      // What has nothing stored is waited for a moment at most
+      // (DEFAULT_LINEUP_WAIT_MS), never for the deadlines.
+      await boardWithin(3000)
       expect(text(), 'opened from the phone, not after the deadlines').includes(
         '1 balls'
       )
-      expect(Date.now() - started).lessThan(1000)
+      expect(Date.now() - started).lessThan(3000)
       release()
     })
 
@@ -1198,8 +1206,9 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       const release = holdAll(net)
       const started = Date.now()
       await reopen()
+      await boardWithin(3000)
       expect(text()).includes('1 balls')
-      expect(Date.now() - started).lessThan(1000)
+      expect(Date.now() - started).lessThan(3000)
       expect(awayOrder(), 'the lineup its records hold').deep.equals(order)
       release()
     })

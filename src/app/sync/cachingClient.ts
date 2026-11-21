@@ -1054,18 +1054,43 @@ export class CachingClient extends TeamStationClient {
           return value.cleaned
         }
       }
-      // Nothing stored: once the server's answer is, the screen hears of it.
-      this.request(method, path, asRaw, body, rest)
+      // Nothing stored: the server is asked, and waited for a moment at
+      // most; once its answer is stored, the screen hears of it.
+      let waited = true
+      let decide: () => void = () => undefined
+      const decided = new Promise<void>(resolve => {
+        decide = resolve
+      })
+      const asked = this.request(method, path, asRaw, body, rest)
+      asked
         .then(async () => {
-          if (this.owned !== opened) return
+          // Told only of an answer the open did not wait for and take.
+          await decided
+          if (!waited || this.owned !== opened) return
           const now = await this.readFrom(opened.store, key)
           if (now == null) return
-          // Only an answer the screen can read is news: told of one it
-          // cannot, it would open again on nothing, and ask again.
+          // Only an answer the screen can read is news.
           cleaner(JSON.parse(now.body))
           this.tellStored(alone.gameId, 'details')
         })
         .catch(() => undefined)
+      const waitMs = alone.waitMs ?? 0
+      if (waitMs > 0) {
+        const answer = await Promise.race([
+          asked.then(
+            raw => ({ raw }),
+            () => undefined
+          ),
+          new Promise<undefined>(resolve => setTimeout(resolve, waitMs))
+        ])
+        if (answer != null) {
+          // Answered in time: what it opens on, nothing to tell later.
+          waited = false
+          decide()
+          return cleaner(answer.raw)
+        }
+      }
+      decide()
       throw new HttpError('notStored', 'Not on this device yet.')
     }
     const offlineFirst = options?.offlineFirst === true && this.offline
