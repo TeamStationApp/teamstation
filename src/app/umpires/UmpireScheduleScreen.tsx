@@ -29,12 +29,13 @@ import { GroupEmblem } from '../components/GroupEmblem'
 import { PagedList } from '../components/PagedList'
 import { PagedListEnd, PagedListStart } from '../components/PagedListEnd'
 import { usePageScroll } from '../components/pageScroll'
-import { PillTabs } from '../components/PillTabs'
+import { PillButton, PillTabs } from '../components/PillTabs'
 import { useSceneShown } from '../components/sceneShown'
 import { StickySectionLayout } from '../components/StickySectionLayout'
 import { TickerText } from '../components/TickerText'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { usePagedList } from '../hooks/usePagedList'
+import { lstrings } from '../locales/strings'
 import type { UmpireScheduleRoute } from '../navigation/routes'
 import { googleDirectionsUrl } from '../platform/eventDirectionsNative'
 import { useTheme } from '../theme/ThemeContext'
@@ -128,7 +129,10 @@ export function UmpireScheduleScreen({
   onOpenTeam,
   onOpenGame,
   onOpenPerson,
-  onBeforeLeave
+  onBeforeLeave,
+  umpireChat,
+  onOpenChat,
+  onRefreshChats
 }: {
   client: TeamStationClient
   route: UmpireScheduleRoute
@@ -138,11 +142,34 @@ export function UmpireScheduleScreen({
   onOpenGame?: (id: string) => void
   onOpenPerson?: (userId: string, name: string) => void
   onBeforeLeave?: (check: () => Promise<boolean>) => () => void
+  /** The league's umpire chat, when the reader is one of its members. */
+  umpireChat?: { id: string; title: string }
+  onOpenChat?: (chat: { id: string; title: string }) => void
+  /** Reads the reader's chats again: an umpire just granted finds theirs. */
+  onRefreshChats?: () => void
 }): React.ReactElement {
   const s = useUmpireStyles()
   const theme = useTheme()
   const handoff = useTitleHandoff('Umpire')
   const { error, busy, run, live } = useUmpireWork(route.id)
+  // The reader's chats as they are now, each time a league opens here.
+  const refreshChats = useRef(onRefreshChats)
+  refreshChats.current = onRefreshChats
+  useEffect(() => {
+    // An empty id waits for the leagues, which name the one to open.
+    if (route.id !== '') refreshChats.current?.()
+  }, [route.id])
+  // Schedule and Leaderboard, then the umpire chat as the strip's next pill:
+  // the strip's end padding, the pill's own margin and this gap make the
+  // tabs' own spacing. Where all three do not fit, the pill goes whole onto a
+  // row of its own, its margin putting it under Schedule.
+  const chatRow = {
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    alignItems: 'center' as const,
+    gap: theme.rem(theme.spaceSmRem - 2 * theme.spaceXsRem)
+  }
+  const chatPill = { marginLeft: theme.rem(theme.spaceXsRem) }
   const [schedule, setSchedule] = useState<UmpireSchedulePage>()
   const [board, setBoard] = useState<UmpireLeaderboard>()
   const [revision, setRevision] = useState(0)
@@ -712,18 +739,34 @@ export function UmpireScheduleScreen({
             setSectionHeight(e.nativeEvent.layout.height)
           }}
         >
-          <PillTabs
-            bleed={false}
-            accessibilityLabel="Umpire pages"
-            tabs={[
-              { id: 'schedule', label: 'Schedule' },
-              { id: 'leaderboard', label: 'Leaderboard' }
-            ]}
-            selected={route.pill ?? 'schedule'}
-            onSelect={pill => {
-              change({ pill })
-            }}
-          />
+          <View style={chatRow}>
+            <PillTabs
+              bleed={false}
+              accessibilityLabel="Umpire pages"
+              tabs={[
+                { id: 'schedule', label: 'Schedule' },
+                { id: 'leaderboard', label: 'Leaderboard' }
+              ]}
+              selected={route.pill ?? 'schedule'}
+              onSelect={pill => {
+                change({ pill })
+              }}
+              style={umpireChat == null ? undefined : { flexGrow: 0 }}
+            />
+            {umpireChat != null && onOpenChat != null && (
+              <View style={chatPill}>
+                <PillButton
+                  testID="umpire-chat"
+                  label={lstrings.umpire_chat}
+                  accessibilityLabel={lstrings.umpire_chat_open}
+                  selected={false}
+                  onPress={() => {
+                    onOpenChat(umpireChat)
+                  }}
+                />
+              </View>
+            )}
+          </View>
           {schedule != null && route.pill !== 'leaderboard' && (
             <ScrollView
               horizontal

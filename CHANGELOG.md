@@ -12,6 +12,8 @@
 - added: A Message button on a person's profile and a player's page, at the bottom right of the top card, for anyone you may message; on a phone it is the message icon alone
 - added: For a player who cannot use chat (no account, or under 13), Message offers their guardians, or with none their coaches, to message instead
 - added: A game's umpires open their league profile, with its Message button, for anyone in that league
+- added: Each league that manages umpires has an umpire chat for its umpires, kept up to date as the role is given and taken away; the umpire schedule opens it with an Umpire chat button beside Leaderboard
+- added: A league administrator can give themselves the umpire role in Manage Umpires
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file

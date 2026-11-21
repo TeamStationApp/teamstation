@@ -11,7 +11,7 @@ import {
 import { asGroupDetail } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { ADULT_AGE } from '../test/chatAgeTesting'
-import { pageOfGames } from '../test/pageOf'
+import { pageOfGames, pageOfUmpireSchedule } from '../test/pageOf'
 import { App } from './App'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 
@@ -200,6 +200,101 @@ describe('entity chat app routing', () => {
         if (descriptor == null) Reflect.deleteProperty(window, key)
         else Object.defineProperty(window, key, descriptor)
       }
+      Object.defineProperties(proto, originals)
+      Object.defineProperties(engineProto, engineOriginals)
+      window.history.replaceState(null, '', '/')
+    }
+  }).timeout(15000)
+
+  it('gives the umpire schedule its league’s umpire chat from the chat list, and opens it', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const engineProto = ChatEngine.prototype
+    const engineOriginals = Object.getOwnPropertyDescriptors(engineProto)
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo User',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.myAge = async () => ({
+      ...ADULT_AGE
+    })
+    proto.hasNotifications = async () => false
+    proto.umpireLeagues = async () => [
+      { id: 'lea_demo', name: 'Demo League', logoUrl: null }
+    ]
+    proto.umpireSchedulePage = async (_league, _query, page) =>
+      pageOfUmpireSchedule(
+        {
+          settings: { management: true, credits: false },
+          levels: [],
+          types: [],
+          noteTypes: [],
+          viewerId: userIdOfGumbo(1),
+          isAdmin: false,
+          view: 'umpire',
+          creditTeams: [],
+          games: []
+        },
+        page
+      )
+    let refreshed = 0
+    const umpires = (id: string, league: string): ConversationListItem => ({
+      id,
+      kind: 'leagueUmpires',
+      title: `${league} Umpires`,
+      scope: { type: 'league', id: league },
+      scopeName: league,
+      lastSeq: 0,
+      lastMessageAt: null,
+      unread: 0,
+      canPost: true,
+      canModerate: false,
+      locked: false,
+      noHolder: false,
+      closed: false,
+      memberCount: 2,
+      unverified: false
+    })
+    engineProto.refresh = async () => {
+      refreshed++
+      return [
+        umpires('cnv_other', 'lea_other'),
+        umpires('cnv_umpires', 'lea_demo')
+      ]
+    }
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 40))
+      })
+    }
+    window.history.replaceState(null, '', '/umpires/lea_demo')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      const pill = document.querySelector<HTMLElement>(
+        '[data-testid="umpire-chat"]'
+      )
+      expect(pill).not.equals(null)
+      // The schedule asked for the reader's chats again as it opened.
+      expect(refreshed).greaterThan(1)
+      await act(async () => {
+        pill!.click()
+      })
+      await settle()
+      expect(window.location.pathname).equals('/chat/cnv_umpires')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
       Object.defineProperties(proto, originals)
       Object.defineProperties(engineProto, engineOriginals)
       window.history.replaceState(null, '', '/')

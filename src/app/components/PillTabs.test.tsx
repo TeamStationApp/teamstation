@@ -91,6 +91,27 @@ describe('PillTabs', function () {
     )
   })
 
+  it('takes a style of its own after its bleed, and is unchanged without one', async function () {
+    const margins = async (style?: { flexGrow: number }): Promise<string[]> => {
+      const container = await render(
+        <ContentInsetContext.Provider value={{ left: 16, right: 20 }}>
+          <PillTabs
+            tabs={TABS}
+            selected="past"
+            onSelect={() => undefined}
+            style={style}
+          />
+        </ContentInsetContext.Provider>
+      )
+      const { list } = strip(container)
+      const read = getComputedStyle(list)
+      return [read.marginLeft, read.marginRight, read.flexGrow]
+    }
+    const plain = await margins()
+    expect(plain.slice(0, 2)).deep.equals(['-16px', '-20px'])
+    expect(await margins({ flexGrow: 0 })).deep.equals(['-16px', '-20px', '0'])
+  })
+
   it('draws dense strips with smaller gaps and unchanged label clearance', async function () {
     const sides = async (dense: boolean): Promise<string[]> => {
       const container = await render(

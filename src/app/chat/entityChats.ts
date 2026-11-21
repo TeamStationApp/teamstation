@@ -43,6 +43,23 @@ export function entityChats(
     }))
 }
 
+/**
+ * The league's umpire chat in the reader's list, which holds it only while
+ * they are one of its members, under the server's title ("QPLL Umpires").
+ */
+export function umpireChatOf(
+  conversations: ConversationListItem[],
+  leagueId: string
+): { id: string; title: string } | undefined {
+  const chat = conversations.find(
+    item =>
+      item.kind === 'leagueUmpires' &&
+      item.scope?.type === 'league' &&
+      item.scope.id === leagueId
+  )
+  return chat == null ? undefined : { id: chat.id, title: chat.title }
+}
+
 /** Restore an already-linked device for previews; never enrol from a group page. */
 export function entityPreviewLoader(
   engine: Pick<ChatEngine, 'status' | 'start' | 'loadPreview'> | undefined,
