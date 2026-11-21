@@ -204,7 +204,14 @@ async function edit(ctx: E2eContext): Promise<void> {
           1500
         )
       }
-      await m.inputText({ text: ' updated' })
+      assert.equal(await readChatComposer(m, platform, web), originalCaption)
+      // Android's default element send-keys can replace a field. Type at the
+      // live caret so the action exercises the same append as a keyboard.
+      await m.inputText({ text: ' updated', keyPress: platform === 'android' })
+      assert.equal(
+        await readChatComposer(m, platform, web),
+        originalCaption + ' updated'
+      )
       await dismissAsk()
       // Use in-app Back so the two conversations retain their draft owner.
       await m.tapOn({ text: '^Back$', timeout: 10000 })
@@ -266,8 +273,16 @@ async function edit(ctx: E2eContext): Promise<void> {
           if (seen?.body === body && seen.edited) return seen
           await delay(200)
         } while (Date.now() < deadline)
-        throw Error('Peer did not receive the edit on the original')
+        throw Error(
+          body === ''
+            ? 'Peer did not receive the cleared caption on the original'
+            : 'Peer did not receive the updated caption on the original'
+        )
       }
+      await m.assertNotVisible({
+        text: '^Editing your message$',
+        timeout: 12000
+      })
       const received = await readBack(editedCaption)
       assert.equal(received.seq, original.seq)
       assert.equal(received.senderUserId, original.senderUserId)
@@ -287,7 +302,15 @@ async function edit(ctx: E2eContext): Promise<void> {
       await openMenu(original.id)
       await m.tapOn(editButton)
       await m.eraseText({ characters: editedCaption.length })
+      await m.assertNotVisible({ id: 'chat-dismiss-link-preview' })
+      // Removing the preview changes the composer height. Tap its settled Send
+      // button after the card and multiline caption have collapsed.
+      if (web == null) await m.waitForAnimationToEnd()
       await m.tapOn({ text: '^Send$' })
+      await m.assertNotVisible({
+        text: '^Editing your message$',
+        timeout: 12000
+      })
       const cleared = await readBack('')
       assert.deepEqual(cleared.attachments, original.attachments)
       assert.equal(cleared.preview, undefined)
@@ -295,13 +318,19 @@ async function edit(ctx: E2eContext): Promise<void> {
       await m.tapOn(field)
       await m.eraseText({ characters: draft.length })
       if (platform !== 'ios') {
+        const emptyField = await readChatComposer(m, platform, web)
         if (web != null) await web.page.keyboard.press('ArrowUp')
         else await m.pressKey({ key: 'DPAD_UP' })
         await m.assertVisible({ text: '^Editing your message$' })
         assert.equal(await readChatComposer(m, platform, web), newest.body)
         if (web != null) await web.page.keyboard.press('Escape')
-        else await m.pressKey({ key: 'ESCAPE' })
+        else {
+          // The Android driver sends W3C special keys through key actions.
+          // U+E00C is Escape, which has no named pressKey mapping on this driver.
+          await m.inputText({ text: '\uE00C', keyPress: true })
+        }
         await m.assertNotVisible({ text: '^Editing your message$' })
+        assert.equal(await readChatComposer(m, platform, web), emptyField)
       }
       await openMenu(incoming.id)
       await m.assertNotVisible(editButton)

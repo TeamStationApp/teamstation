@@ -471,7 +471,13 @@ async function open(ctx: E2eContext): Promise<void> {
           '. See www.example.org and example.technology.'
         const caption = 'Score sheet ' + id + ': ' + second
         await m.tapOn(composer)
-        await m.inputText({ text: body })
+        if (platform === 'android') {
+          // Android keyboards can capitalize both the filename and the URL
+          // following a newline. Paste the exact fixture that Copy must return.
+          await m.setClipboard({ text: body })
+          await m.pasteText()
+          assert.equal(await readChatComposer(m, platform), body)
+        } else await m.inputText({ text: body })
         if (web != null) await m.pressKey({ key: 'Enter' })
         else {
           await m.tapOn({ text: '^Send$', timeout: 8000 })
