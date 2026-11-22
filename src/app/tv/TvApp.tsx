@@ -143,8 +143,8 @@ export function TvApp({
               />
               <Text style={styles.title}>Your games. On the big screen.</Text>
               <Text style={styles.loginCopy}>
-                Scan the QR code with your phone's camera or open TeamStation
-                and enter the 8-digit code in your account settings.
+                Scan the QR code with your phone's camera, or open TeamStation
+                and enter the eight-letter code under Account, TeamStation TV.
               </Text>
             </View>
             <View style={styles.loginColumn}>
