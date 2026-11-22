@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import Module from 'node:module'
 
 import { expect } from 'chai'
@@ -18,10 +19,20 @@ const sizes = new Map<string, number>()
 const log: string[] = []
 let library: Record<string, unknown> = {}
 let documents: unknown = []
+let camera: Record<string, unknown> = {}
+let permission = 'granted'
 let os = 'ios'
 
 const standIns: Record<string, unknown> = {
   'react-native': {
+    PermissionsAndroid: {
+      PERMISSIONS: { CAMERA: 'camera' },
+      RESULTS: { GRANTED: 'granted' },
+      request: async (name: string) => {
+        log.push('permission ' + name)
+        return permission
+      }
+    },
     Platform: {
       get OS() {
         return os
@@ -29,6 +40,10 @@ const standIns: Record<string, unknown> = {
     }
   },
   'react-native-image-picker': {
+    launchCamera: async (options: Record<string, unknown>) => {
+      log.push('camera ' + JSON.stringify(options))
+      return camera
+    },
     launchImageLibrary: async (options: Record<string, unknown>) => {
       log.push(`library ${JSON.stringify(options)}`)
       return library
@@ -125,8 +140,89 @@ describe('attachments on a phone', function () {
     }
   })
 
-  it('offers the photo library and files', function () {
-    expect(twin.PICK_SOURCES).deep.equals(['photos', 'files'])
+  it('offers Photos, Camera and File', function () {
+    expect(twin.PICK_SOURCES).deep.equals(['photos', 'camera', 'files'])
+  })
+
+  it('reads a private still from the camera on iOS and asks Android for camera access', async function () {
+    const previous = os
+    try {
+      files.set('/tmp/snapshot.jpg', b64([3, 6, 9]))
+      camera = {
+        assets: [
+          {
+            uri: 'file:///tmp/snapshot.jpg',
+            fileName: 'snapshot.jpg',
+            type: 'image/jpeg',
+            width: 8,
+            height: 6
+          }
+        ]
+      }
+      for (const platform of ['ios', 'android']) {
+        os = platform
+        log.length = 0
+        const [photo] = await twin.pickFiles('camera')
+        expect(photo).deep.equals({
+          bytes: new Uint8Array([3, 6, 9]),
+          contentType: 'image/jpeg',
+          fileName: 'snapshot.jpg',
+          width: 8,
+          height: 6
+        })
+        expect(log.includes('permission camera')).equals(platform === 'android')
+        expect(log).includes(
+          'camera {"mediaType":"photo","saveToPhotos":false}'
+        )
+      }
+      os = 'android'
+      for (const denied of ['denied', 'never_ask_again']) {
+        permission = denied
+        log.length = 0
+        let failure: unknown
+        try {
+          await twin.pickFiles('camera')
+        } catch (error) {
+          failure = error
+        }
+        expect(String(failure)).contains('Allow camera access')
+        expect(log).deep.equals(['permission camera'])
+      }
+      permission = 'granted'
+      for (const [errorCode, reason] of [
+        ['permission', 'Allow camera access'],
+        ['camera_unavailable', 'camera is unavailable']
+      ]) {
+        camera = { errorCode }
+        let failure: unknown
+        try {
+          await twin.pickFiles('camera')
+        } catch (error) {
+          failure = error
+        }
+        expect(String(failure)).contains(reason)
+      }
+      camera = { didCancel: true }
+      expect(await twin.pickFiles('camera')).deep.equals([])
+      files.set('/tmp/empty-capture.jpg', '')
+      for (const result of [
+        {},
+        { assets: [] },
+        { assets: [{}] },
+        { assets: [{ uri: '' }] },
+        { assets: [{ uri: 'file:///tmp/empty-capture.jpg' }] }
+      ]) {
+        camera = result
+        await assert.rejects(
+          twin.pickFiles('camera'),
+          /attachment could not be opened/
+        )
+      }
+    } finally {
+      os = previous
+      permission = 'granted'
+      camera = {}
+    }
   })
 
   it('reads photos and videos from the library as bytes', async function () {
@@ -200,7 +296,7 @@ describe('attachments on a phone', function () {
       }
     ])
     expect(log).deep.equals([
-      'pick {"allowMultiSelection":true}',
+      'pick {"allowMultiSelection":false}',
       'copy content://doc/1 Roster_1_.pdf',
       'read /cache/Roster_1_.pdf base64',
       'unlink /cache/Roster_1_.pdf'

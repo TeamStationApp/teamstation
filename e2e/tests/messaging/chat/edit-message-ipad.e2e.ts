@@ -3,10 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { sep } from 'node:path'
 
-import { observedNativeValue } from '../../../rigs/chat2Maestro'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import { chatLinkUi, revealChatTarget } from '../../../rigs/chat/messageLinkUi'
+import { observedNativeValue } from '../../../rigs/chat2Maestro'
 
 function assertLeasedRunner(port: number, udid: string): void {
   const listeners = execFileSync(
@@ -98,16 +98,16 @@ async function hardware(ctx: E2eContext): Promise<void> {
     await m.assertNotVisible({ text: '^Editing your message$' })
     await expectComposerValue('Practice draft')
     await m.tapOn({ text: '^Attach$' })
-    await m.assertVisible({ text: '^Photo library$' })
+    await m.assertVisible({ text: '^Photos$' })
     await revealChatTarget(m, node => node.id === 'chat-bubble-' + message.id)
     await m.longPressOn({ id: 'chat-bubble-' + message.id })
     await m.tapOn({ text: '^Edit$' })
     await m.assertVisible({ text: '^Editing your message$' })
-    await m.assertNotVisible({ text: '^Photo library$' })
+    await m.assertNotVisible({ text: '^Photos$' })
     await expectComposerValue(text)
     await press(41)
     await m.assertNotVisible({ text: '^Editing your message$' })
-    await m.assertNotVisible({ text: '^Photo library$' })
+    await m.assertNotVisible({ text: '^Photos$' })
     await expectComposerValue('Practice draft')
     await m.eraseText({ characters: 'Practice draft'.length })
   } finally {

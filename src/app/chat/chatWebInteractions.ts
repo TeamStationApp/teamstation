@@ -42,6 +42,47 @@ export function isFinePointer(): boolean {
     matchMedia('(any-pointer: fine)').matches
   )
 }
+/** Use the textarea's intrinsic content height between the field's CSS bounds. */
+export function sizeComposerText(view: unknown): void {
+  if (!(view instanceof HTMLElement) || view.tagName !== 'TEXTAREA') return
+  if (
+    view.ownerDocument.defaultView?.CSS?.supports('field-sizing', 'content') ===
+    true
+  ) {
+    view.style.setProperty('field-sizing', 'content')
+  } else {
+    const top = view.scrollTop
+    view.style.height = 'auto'
+    view.style.height = view.scrollHeight + 'px'
+    view.scrollTop = top
+  }
+}
+
+/** Rewrap an unchanged draft when the available field width changes. */
+export function watchComposerWidth(view: unknown): (() => void) | undefined {
+  if (!(view instanceof HTMLElement) || view.tagName !== 'TEXTAREA') return
+  const win = view.ownerDocument.defaultView
+  if (win == null || win.CSS?.supports('field-sizing', 'content')) return
+  const resize = (): void => {
+    sizeComposerText(view)
+  }
+  win.addEventListener('resize', resize)
+  let width: number | undefined
+  const observer =
+    typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(([entry]) => {
+          if (entry == null || width === entry.contentRect.width) return
+          width = entry.contentRect.width
+          resize()
+        })
+  observer?.observe(view)
+  return () => {
+    win.removeEventListener('resize', resize)
+    observer?.disconnect()
+  }
+}
+
 export function bindComposerKeys(
   view: unknown,
   onSend: () => void,
@@ -525,6 +566,34 @@ export function watchMessageAnchor(
     document.removeEventListener('scroll', measure, true)
   }
 }
+
+/** Outside clicks dismiss the source menu without redirecting the click or focus. */
+export function bindAttachmentMenu(
+  view: unknown,
+  toggle: unknown,
+  returnToField: () => void,
+  dismiss: () => void
+): (() => void) | undefined {
+  if (!(view instanceof HTMLElement)) return
+  const unbindKeys = bindPopupKeys(view, returnToField)
+  let outside = false
+  const click = (event: MouseEvent): void => {
+    const path = event.composedPath()
+    if (
+      path.includes(view) ||
+      (toggle instanceof HTMLElement && path.includes(toggle))
+    )
+      return
+    outside = true
+    dismiss()
+  }
+  view.ownerDocument.addEventListener('click', click, true)
+  return () => {
+    view.ownerDocument.removeEventListener('click', click, true)
+    unbindKeys(!outside)
+  }
+}
+
 export function bindPopupKeys(
   view: unknown,
   close: () => void,
@@ -532,7 +601,7 @@ export function bindPopupKeys(
   initialField = false,
   rowSelector?: string,
   returnFocus?: unknown
-): () => void {
+): (restoreFocus?: boolean) => void {
   if (!(view instanceof HTMLElement)) return () => {}
   const previous =
     returnFocus instanceof HTMLElement ? returnFocus : document.activeElement
@@ -590,9 +659,10 @@ export function bindPopupKeys(
     if (field != null) field.focus()
     else buttons()[0]?.focus()
   }
-  return () => {
+  return (restoreFocus = true) => {
     document.removeEventListener('keydown', key, true)
     if (
+      restoreFocus &&
       trap &&
       previous instanceof HTMLElement &&
       previous.isConnected &&

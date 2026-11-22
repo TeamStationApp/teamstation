@@ -41,7 +41,8 @@ window.addEventListener('message', async event => {
       (kind === 'html'
         ? mime !== 'text/html'
         : !['image/png', 'image/jpeg', 'image/webp'].includes(mime)) ||
-      Number(response.headers.get('content-length')) > limit ||
+      (kind !== 'html' &&
+        Number(response.headers.get('content-length')) > limit) ||
       response.body == null
     )
       throw Error()
@@ -51,7 +52,13 @@ window.addEventListener('message', async event => {
     for (;;) {
       const packet = await reader.read()
       if (packet.done) break
-      if (packet.value.length > limit - size) throw Error()
+      const remaining = limit - size
+      if (kind === 'html' && packet.value.length >= remaining) {
+        buffer.set(packet.value.subarray(0, remaining), size)
+        size = limit
+        break
+      }
+      if (packet.value.length > remaining) throw Error()
       buffer.set(packet.value, size)
       size += packet.value.length
     }

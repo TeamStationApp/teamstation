@@ -12,8 +12,8 @@ import {
  * phones' twin is `chatFiles.native.ts`.
  */
 
-/** A browser has one picker; it shows photos and files alike. */
-export const PICK_SOURCES: PickSource[] = ['files']
+/** Both choices use the browser's file picker, with a media filter for Photos. */
+export const PICK_SOURCES: PickSource[] = ['photos', 'files']
 
 /** The pixel size of an image's bytes, where the browser can tell. */
 async function imageSize(
@@ -111,7 +111,7 @@ export async function readPicked(
  * queued preparation guard; the temporary input is removed either way.
  */
 export async function pickFiles(
-  _source: PickSource,
+  source: PickSource,
   docOrRemaining: Document | number = document,
   remaining = MAX_ATTACHMENTS
 ): Promise<PickedFile[]> {
@@ -119,7 +119,7 @@ export async function pickFiles(
   if (typeof docOrRemaining === 'number') remaining = docOrRemaining
   const input = doc.createElement('input')
   input.type = 'file'
-  input.multiple = true
+  if (source === 'photos') input.accept = 'image/*,video/*'
   input.style.display = 'none'
   doc.body.appendChild(input)
   try {

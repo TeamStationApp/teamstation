@@ -54,16 +54,6 @@ fn refuses_unsuitable_responses_before_display() {
     assert!(consume(response(302, "text/html", vec![], None), Kind::Page).is_none());
     assert!(consume(response(200, "text/plain", vec![], None), Kind::Page).is_none());
     assert!(consume(response(200, "text/html", vec![], None), Kind::Image).is_none());
-    assert!(consume(
-        response(200, "text/html", vec![], Some(HTML_LIMIT + 1)),
-        Kind::Page
-    )
-    .is_none());
-    assert!(consume(
-        response(200, "text/html", vec![0; HTML_LIMIT + 1], None),
-        Kind::Page
-    )
-    .is_none());
     assert!(consume(response(200, "image/jpeg", vec![1], None), Kind::Image).is_none());
     for (stop, until) in [(true, Instant::now() + DEADLINE), (false, Instant::now())] {
         assert!(read_response(
@@ -78,17 +68,32 @@ fn refuses_unsuitable_responses_before_display() {
 }
 
 #[test]
+fn retains_the_head_of_large_pages_with_or_without_a_declared_length() {
+    let head = b"<head><title>Practice schedule</title></head><body>";
+    let mut page = head.to_vec();
+    page.resize(HTML_LIMIT * 3, b'x');
+    for length in [None, Some(page.len())] {
+        let prefix = consume(response(200, "text/html", page.clone(), length), Kind::Page).unwrap();
+        assert_eq!(prefix, page[..HTML_LIMIT]);
+    }
+}
+
+#[test]
 fn decodes_declared_page_encoding_within_the_output_limit() {
     let mime = "text/html; charset=\"windows-1252\"";
     assert_eq!(
         consume(response(200, mime, b"Caf\xe9".to_vec(), None), Kind::Page),
         Some("Café".as_bytes().to_vec())
     );
-    assert!(consume(
+    let prefix = consume(
         response(200, mime, vec![0xe9; HTML_LIMIT], None),
-        Kind::Page
+        Kind::Page,
     )
-    .is_none());
+    .unwrap();
+    assert_eq!(
+        std::str::from_utf8(&prefix).unwrap(),
+        "é".repeat(HTML_LIMIT / 2)
+    );
 }
 
 #[test]

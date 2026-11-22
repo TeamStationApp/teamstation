@@ -4,9 +4,18 @@ import {
   useKeyboardScrollToEnd
 } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
-import React, { useEffect, useImperativeHandle, useRef } from 'react'
+import React, {
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { Platform, type View } from 'react-native'
-import { KeyboardProvider } from 'react-native-keyboard-controller'
+import {
+  KeyboardEvents,
+  KeyboardProvider
+} from 'react-native-keyboard-controller'
 import {
   type SharedValue,
   useDerivedValue,
@@ -31,6 +40,7 @@ interface NativeKeyboardProps {
 }
 
 interface NativeScroll {
+  getNativeScrollRef?: () => React.ComponentRef<typeof View> | null
   scrollTo: (options: { x?: number; y?: number; animated?: boolean }) => void
   scrollToEnd: (options?: { animated?: boolean }) => void
   getInnerViewRef?: () => unknown
@@ -65,13 +75,26 @@ export function ChatHistoryList<T>(
       },
       // The native list measures each container in the same layout pass.
       reportRowHeight: () => {},
-      getNativeScrollRef: () => scroll() as never,
+      getNativeScrollRef: () => {
+        const view = scroll()
+        return view?.getNativeScrollRef?.() ?? (view as never)
+      },
       getInnerViewRef: () => scroll()?.getInnerViewRef?.() as never,
       getScrollableNode: () => list.current?.getScrollableNode(),
       state: () => list.current?.getState()
     }),
     []
   )
+  // On Android the scroll view's raw content height includes the floating
+  // composer's inset. Legend knows when the last row is already at the end.
+  const [atInsetAdjustedEnd, setAtInsetAdjustedEnd] = useState(false)
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'android') return
+    const state = list.current?.getState()
+    if (state == null) return
+    setAtInsetAdjustedEnd(state.isAtEnd)
+    return state.listen('isAtEnd', setAtInsetAdjustedEnd)
+  }, [])
   const positions = useRef(props.onPositions)
   positions.current = props.onPositions
   useEffect(
@@ -111,7 +134,7 @@ export function ChatHistoryList<T>(
       ListFooterComponent={footer}
       maintainVisibleContentPosition={{ size: true, data: false }}
       recycleItems={false}
-      keyboardLiftBehavior="whenAtEnd"
+      keyboardLiftBehavior={atInsetAdjustedEnd ? 'always' : 'whenAtEnd'}
       // The list itself reads every frame; the reader's bookkeeping keeps the
       // pace the history's ScrollView had before virtualization.
       scrollEventThrottle={100}
@@ -151,8 +174,36 @@ export function useChatHistoryKeyboard(
   useEffect(() => {
     clearance.value = options.closedClearance
   }, [clearance, options.closedClearance])
+  const onKeyboardReturnSettled = options.onKeyboardReturnSettled
+  useEffect(() => {
+    if (
+      Platform.OS !== 'android' ||
+      options.attachmentHandoff !== true ||
+      onKeyboardReturnSettled == null
+    )
+      return
+    let frame: number | undefined
+    const ended = KeyboardEvents.addListener('keyboardDidShow', () => {
+      // The controller emits this notification immediately before dispatching
+      // the final keyboard frame to the list. Keep its scroll frozen for both.
+      if (frame != null) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(onKeyboardReturnSettled)
+    })
+    return () => {
+      ended.remove()
+      if (frame != null) cancelAnimationFrame(frame)
+    }
+  }, [options.attachmentHandoff, onKeyboardReturnSettled])
+  const heldInset = useSharedValue<number | null>(null)
+  const holdingInset = useRef(false)
+  useLayoutEffect(() => {
+    if (options.attachmentHandoff !== true) {
+      holdingInset.current = false
+      heldInset.value = null
+    }
+  }, [options.attachmentHandoff, heldInset])
   const endInset = useDerivedValue(
-    () => contentInsetEndAdjustment.value + clearance.value
+    () => heldInset.value ?? contentInsetEndAdjustment.value + clearance.value
   )
   const scrollTarget = useRef<ChatHistoryHandle | null>(null)
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({
@@ -169,14 +220,24 @@ export function useChatHistoryKeyboard(
       }
     }
   })
+  const freezeInset = useDerivedValue(
+    () => heldInset.value != null || freeze.value
+  )
   useKeyboardControllerOwner(options.active)
   return {
     composerRef,
-    onComposerLayout,
+    holdKeyboardInset: () => {
+      holdingInset.current = true
+      heldInset.value = contentInsetEndAdjustment.value + clearance.value
+    },
+    onComposerLayout: event => {
+      // The drawer replaces the keyboard inset already held by the scroll view.
+      if (!holdingInset.current) onComposerLayout(event)
+    },
     listProps: {
       // Read only by the scroll view's worklets.
       contentInsetEndAdjustment: endInset,
-      freeze,
+      freeze: freezeInset,
       keyboardOffset: options.keyboardOffset
     } satisfies NativeKeyboardProps,
     managesEndInset: true,

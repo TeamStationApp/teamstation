@@ -274,12 +274,13 @@ fn read_response(
     {
         return None;
     }
-    if response
-        .headers()
-        .get("content-length")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .is_some_and(|n| n > limit)
+    if !matches!(kind, Kind::Page)
+        && response
+            .headers()
+            .get("content-length")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .is_some_and(|n| n > limit)
     {
         return None;
     }
@@ -305,7 +306,18 @@ fn read_response(
         if cancel.load(Ordering::Acquire) || Instant::now() >= until {
             return None;
         }
-        let n = stream.read(&mut block).ok()?;
+        // A page needs only its leading metadata. Images and encrypted blobs
+        // must fit in their entirety before the decoder sees them.
+        let page = matches!(kind, Kind::Page);
+        let capacity = if page {
+            block.len().min(limit - bytes.len())
+        } else {
+            block.len()
+        };
+        if capacity == 0 {
+            break;
+        }
+        let n = stream.read(&mut block[..capacity]).ok()?;
         if n == 0 {
             break;
         }
@@ -317,10 +329,10 @@ fn read_response(
     let result = match kind {
         Kind::Page => {
             let (text, _, _) = encoding.decode(&bytes);
-            if text.len() > limit {
-                return None;
-            }
-            text.into_owned().into_bytes()
+            // A legacy charset or a partial final code point can expand on conversion.
+            let mut text = text.into_owned();
+            text.truncate(text.floor_char_boundary(limit.min(text.len())));
+            text.into_bytes()
         }
         Kind::Image => thumbnail(&bytes, &mime)?,
         Kind::Blob(n) if bytes.len() != n => return None,

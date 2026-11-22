@@ -3,12 +3,17 @@ import {
   keepLocalCopy,
   pick
 } from '@react-native-documents/picker'
-import { Platform } from 'react-native'
+import { PermissionsAndroid, Platform } from 'react-native'
 import ReactNativeBlobUtil from 'react-native-blob-util'
-import { launchImageLibrary } from 'react-native-image-picker'
+import {
+  type ImagePickerResponse,
+  launchCamera,
+  launchImageLibrary
+} from 'react-native-image-picker'
 import { fromByteArray, toByteArray } from 'react-native-quick-base64'
 
 import { MAX_ATTACHMENTS } from '../../common/chatContent'
+import { lstrings } from '../locales/strings'
 import { attachmentProblem } from './chatComposeModel'
 import {
   contentTypeOf,
@@ -26,7 +31,7 @@ import {
  * `chatFiles.ts`.
  */
 
-export const PICK_SOURCES: PickSource[] = ['photos', 'files']
+export const PICK_SOURCES: PickSource[] = ['photos', 'camera', 'files']
 
 const pathOf = (uri: string): string =>
   decodeURIComponent(uri.replace(/^file:\/\//, ''))
@@ -45,17 +50,14 @@ async function readBytes(uri: string, fileName: string): Promise<Uint8Array> {
   return toByteArray(base64)
 }
 
-async function fromLibrary(remaining: number): Promise<PickedFile[]> {
-  // One at a time: a tap on a photo picks it at once, and Attach again
-  // adds another.
-  const answer = await launchImageLibrary({
-    mediaType: 'mixed',
-    selectionLimit: 1
-  })
-  if (answer.didCancel === true || answer.assets == null) return []
-  if (answer.errorCode != null) {
+async function pickedMedia(
+  answer: ImagePickerResponse,
+  remaining: number
+): Promise<PickedFile[]> {
+  if (answer.didCancel === true) return []
+  if (answer.errorCode != null)
     throw new Error(answer.errorMessage ?? answer.errorCode)
-  }
+  if (answer.assets == null) return []
   const problem = attachmentProblem(
     answer.assets
       .filter(asset => asset.uri != null)
@@ -69,6 +71,8 @@ async function fromLibrary(remaining: number): Promise<PickedFile[]> {
   const picked: PickedFile[] = []
   for (const asset of answer.assets) {
     if (asset.uri == null) continue
+    if (asset.uri.trim() === '')
+      throw new Error(lstrings.chat_attachment_failed)
     const fileName = asset.fileName ?? 'photo'
     picked.push({
       bytes: await readBytes(asset.uri, fileName),
@@ -87,7 +91,7 @@ async function fromLibrary(remaining: number): Promise<PickedFile[]> {
 async function fromFiles(remaining: number): Promise<PickedFile[]> {
   let documents: DocumentPickerResponse[]
   try {
-    documents = await pick({ allowMultiSelection: true })
+    documents = await pick({ allowMultiSelection: false })
   } catch (error) {
     // Cancelling the picker is an answer of nothing, not a failure.
     if ((error as { code?: string }).code === 'OPERATION_CANCELED') return []
@@ -122,14 +126,38 @@ async function fromFiles(remaining: number): Promise<PickedFile[]> {
   return picked
 }
 
-/** Opens the photo library or the file picker; nothing on Cancel. */
+/** Opens Photos, Camera or File and returns an empty list on cancellation. */
 export async function pickFiles(
   source: PickSource,
   remaining = MAX_ATTACHMENTS
 ): Promise<PickedFile[]> {
-  return source === 'photos'
-    ? await fromLibrary(remaining)
-    : await fromFiles(remaining)
+  if (source === 'files') return await fromFiles(remaining)
+  if (source === 'photos') {
+    const result = await launchImageLibrary({
+      mediaType: 'mixed',
+      selectionLimit: 1
+    })
+    return await pickedMedia(result, remaining)
+  }
+  if (Platform.OS === 'android') {
+    const permission = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.CAMERA
+    )
+    if (permission !== PermissionsAndroid.RESULTS.GRANTED)
+      throw new Error(lstrings.chat_camera_permission)
+  }
+  const result = await launchCamera({ mediaType: 'photo', saveToPhotos: false })
+  if (result.errorCode === 'permission')
+    throw new Error(lstrings.chat_camera_permission)
+  if (result.errorCode === 'camera_unavailable')
+    throw new Error(lstrings.chat_camera_unavailable)
+  const captured = await pickedMedia(result, remaining)
+  if (
+    result.didCancel !== true &&
+    (captured.length !== 1 || captured[0].bytes.length === 0)
+  )
+    throw new Error(lstrings.chat_attachment_failed)
+  return captured
 }
 
 let written = 0

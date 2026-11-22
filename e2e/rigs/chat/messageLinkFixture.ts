@@ -41,6 +41,15 @@ interface Destination {
 }
 
 export interface ChatLinkFixture {
+  /** Public picker labels for the seeded photo, document location and system camera. */
+  composerPanel?: {
+    libraryPhoto: string
+    libraryWidth: number
+    libraryHeight: number
+    documentFolders: string[]
+    shutter: string
+    acceptPhoto: string
+  }
   /** An isolated, author-signed post at least a week old, with two ordinary files, used by the edit scenario. */
   datedCaptionId?: string
   /** The runner interface a physical phone can reach for the test page. */

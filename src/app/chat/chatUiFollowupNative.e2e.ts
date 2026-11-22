@@ -14,6 +14,10 @@ import { createRequire } from 'node:module'
 import { basename, join, resolve } from 'node:path'
 
 import {
+  recentPickerPhoto,
+  tapImportedPhoto
+} from '../../../e2e/rigs/chat2Maestro'
+import {
   type ChatConversation,
   type ChatMessage,
   type Session,
@@ -665,13 +669,18 @@ async function physicalMessageHold(
   }
 }
 
-async function tapVisibleControl(device: Device, label: string): Promise<void> {
+async function tapVisibleControl(
+  device: Device,
+  label: string | ((node: Hierarchy) => boolean)
+): Promise<void> {
   const node = await until(
     'Actual native control must be present',
     async () =>
       flatten(await device.hierarchy()).find(
         node =>
-          (node.text === label || node.label === label) &&
+          (typeof label === 'string'
+            ? node.text === label || node.label === label
+            : label(node)) &&
           node.bounds != null &&
           node.bounds.width > 0 &&
           node.bounds.height > 0
@@ -760,11 +769,11 @@ async function until<T>(
 
 /**
  * A leased iPhone's keyboard can drop or reorder fast input (an e-mail lost
- * its "@ch"): there, credentials are typed one character at a time. A
+ * its "@ch"): there, type fixture text one character at a time. A
  * physical Android 17 phone replaces the field on every input, so Android
- * always types the whole credential at once.
+ * always types the whole value at once.
  */
-async function typeCredential(m: Device, text: string): Promise<void> {
+async function typeFixtureText(m: Device, text: string): Promise<void> {
   if (process.env.CHAT_UI_NATIVE_PHYSICAL !== '1' || platform !== 'ios') {
     await m.inputText({ text })
     return
@@ -872,12 +881,12 @@ async function main(): Promise<void> {
         await m.assertVisible({ text: 'E-mail address', timeout: 60000 })
         await m.tapOn({ text: 'E-mail address' })
         await m.eraseText()
-        await typeCredential(m, fixture.actor.email)
+        await typeFixtureText(m, fixture.actor.email)
         if (platform === 'android') await m.hideKeyboard()
         else await m.tapOn({ text: 'Sign in to TeamStation' })
         await m.tapOn({ text: 'Password' })
         await m.eraseText()
-        await typeCredential(m, fixture.actor.password)
+        await typeFixtureText(m, fixture.actor.password)
         if (platform === 'android') await m.hideKeyboard()
         else {
           // Blur the secure field before tapping a button below the keyboard.
@@ -1003,10 +1012,16 @@ async function main(): Promise<void> {
     if (
       platform === 'ios' &&
       daemon.hub === true &&
-      ['hold-probe', 'messages'].includes(process.argv[2])
+      [
+        'hold-probe',
+        'messages',
+        'picker',
+        'picker-large',
+        'picker-document-large'
+      ].includes(process.argv[2])
     ) {
-      // The Chat tab can resume a conversation on a retained phone. These
-      // two scenarios start at the list before selecting their fixture row.
+      // A retained phone can resume its previous tab or conversation. Start
+      // these message and picker checks at the list to select their fixture.
       await m.assertVisible({ text: '^Chat$', timeout: 60000 })
       await m.openLink({ link: `${fixture.scheme}://chat` })
     } else {
@@ -3339,15 +3354,8 @@ async function main(): Promise<void> {
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: draft })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const photoLabel = await until(
-        'Owned small imported photo must be selectable',
-        async () =>
-          strings(flatten(await m.hierarchy())).find(label =>
-            /^Photo(?: taken|,)/.test(label)
-          )
-      )
-      await tapStableControl(m, photoLabel)
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, platform)
       const fileLabel = await until(
         'Prepared file must remain in native draft',
         async () =>
@@ -5380,44 +5388,109 @@ async function main(): Promise<void> {
       await m.inputText({ text: fixture.draft })
       await m.tapOn({ text: 'Attach' })
       await m.tapOn({ text: 'File' })
-      await m.assertVisible({ text: 'Cancel', timeout: 15000 })
+      if (platform === 'ios') {
+        await m.assertVisible({ text: 'Cancel', timeout: 15000 })
+      } else {
+        await until(
+          'Android system file picker',
+          async () => {
+            const labels = strings(flatten(await m.hierarchy()))
+            return labels.some(
+              label =>
+                label === 'Show roots' ||
+                label === fixture.oversizeDocumentName ||
+                label === fixture.oversizeDocumentFolder
+            )
+              ? true
+              : undefined
+          },
+          15000
+        )
+      }
       writeFileSync(
         join(resultDirectory, `${platform}-document-picker-initial.json`),
         JSON.stringify(await m.hierarchy(), null, 2)
       )
       await photo('document-picker-initial')
-      let fileLabels = strings(flatten(await m.hierarchy()))
-      if (
-        !fileLabels.includes(fixture.oversizeDocumentName) &&
-        !fileLabels.includes(fixture.oversizeDocumentFolder)
-      ) {
-        if (fileLabels.includes('Browse')) {
-          const browse = flatten(await m.hierarchy())
-            .filter(
-              node =>
-                (node.text === 'Browse' || node.label === 'Browse') &&
-                node.bounds != null
-            )
-            .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]
-          assert(
-            browse?.bounds != null,
-            'Native document browser must be reachable'
-          )
-          await m.tapOnPoint({
-            point: `${Math.round(browse.bounds.x + browse.bounds.width / 2)},${Math.round(browse.bounds.y + browse.bounds.height / 2)}`
-          })
+      if (platform === 'android') {
+        const name = fixture.oversizeDocumentName
+        const fileTitle = {
+          id: 'android:id/title',
+          text: '^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
         }
-        await m.assertVisible({ text: 'On My iPhone', timeout: 15000 })
-        await tapVisibleControl(m, 'On My iPhone')
+        const fileVisible = async (): Promise<boolean> =>
+          flatten(await m.hierarchy()).some(
+            node =>
+              node.id === fileTitle.id &&
+              (node.text === name || node.label === name) &&
+              node.bounds != null &&
+              node.bounds.height > 0
+          )
+        if (!(await fileVisible())) {
+          await m.tapOn({ text: '^Show roots$' })
+          await m.tapOn({ text: fixture.oversizeDocumentFolder })
+          if (!(await fileVisible())) {
+            await m.tapOn({ text: '^Search$' })
+            await m.inputText({ text: name })
+            await m.pressKey({ key: 'ENTER' })
+          }
+        }
+        // Search also exposes the exact filename as editable text.
+        // Choose the document title so the keyboard cannot receive this tap.
+        await m.assertVisible({ ...fileTitle, timeout: 15000 })
+        await m.tapOn(fileTitle)
+      } else {
+        let fileLabels = strings(flatten(await m.hierarchy()))
+        // Files can reopen its previous Browse location. Look in Recents for
+        // the supplied document before navigating to its configured folder.
+        if (
+          !fileLabels.includes(fixture.oversizeDocumentName) &&
+          fileLabels.includes('Recents')
+        ) {
+          await tapVisibleControl(m, 'Recents')
+          fileLabels = strings(flatten(await m.hierarchy()))
+        }
+        if (
+          !fileLabels.includes(fixture.oversizeDocumentName) &&
+          !fileLabels.includes(fixture.oversizeDocumentFolder)
+        ) {
+          if (fileLabels.includes('Browse')) {
+            const browse = flatten(await m.hierarchy())
+              .filter(
+                node =>
+                  (node.text === 'Browse' || node.label === 'Browse') &&
+                  node.bounds != null
+              )
+              .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]
+            assert(
+              browse?.bounds != null,
+              'Native document browser must be reachable'
+            )
+            await m.tapOnPoint({
+              point: `${Math.round(browse.bounds.x + browse.bounds.width / 2)},${Math.round(browse.bounds.y + browse.bounds.height / 2)}`
+            })
+          }
+          await m.assertVisible({ text: 'On My iPhone', timeout: 15000 })
+          await tapVisibleControl(m, 'On My iPhone')
+        }
+        fileLabels = strings(flatten(await m.hierarchy()))
+        if (!fileLabels.includes(fixture.oversizeDocumentName))
+          await tapVisibleControl(m, fixture.oversizeDocumentFolder)
+        await m.assertVisible({
+          text: fixture.oversizeDocumentName,
+          timeout: 15000
+        })
+        // Files uses the filename for renaming. Tap the thumbnail in its cell
+        // to select the document, as in the normal attachment-panel scenario.
+        const name = fixture.oversizeDocumentName
+        const cell = flatten(await m.hierarchy()).find(
+          node =>
+            node.type?.endsWith('Cell') === true &&
+            node.id?.startsWith(name + ',') === true
+        )
+        assert(cell?.id != null, 'Expected the supplied document’s Files cell')
+        await m.tapOn({ id: cell.id, point: '50%,24%' })
       }
-      fileLabels = strings(flatten(await m.hierarchy()))
-      if (!fileLabels.includes(fixture.oversizeDocumentName))
-        await tapVisibleControl(m, fixture.oversizeDocumentFolder)
-      await m.assertVisible({
-        text: fixture.oversizeDocumentName,
-        timeout: 15000
-      })
-      await tapVisibleControl(m, fixture.oversizeDocumentName)
       if (strings(flatten(await m.hierarchy())).includes('Open'))
         await tapVisibleControl(m, 'Open')
       await until(
@@ -5463,15 +5536,8 @@ async function main(): Promise<void> {
       await m.eraseText({ characters: 2048 })
       await m.inputText({ text: fixture.draft })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const largePhoto = await until(
-        'Owned over-limit photo must appear in the native picker',
-        async () =>
-          strings(flatten(await m.hierarchy())).find(label =>
-            /^Photo(?: taken|,)/.test(label)
-          )
-      )
-      await tapVisibleControl(m, largePhoto)
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, platform)
       await until(
         'Native metadata size guard must reject the over-limit photo',
         async () =>
@@ -5544,17 +5610,27 @@ async function main(): Promise<void> {
         'File picker cancellation preserves the draft'
       )
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      await until('Photo picker must expose owned media cells', async () =>
-        strings(flatten(await m.hierarchy())).some(label =>
-          /^Photo(?: taken|,)/.test(label)
+      await m.tapOn({ text: 'Photos' })
+      if (platform === 'android') {
+        await until('Photo picker must expose owned media cells', async () =>
+          recentPickerPhoto(await m.hierarchy(), platform)
         )
-          ? true
-          : undefined
-      )
-      const cancelLabels = strings(flatten(await m.hierarchy()))
-      const cancel = cancelLabels.includes('Cancel') ? 'Cancel' : 'Close'
-      await tapVisibleControl(m, cancel)
+        await m.back()
+      } else {
+        const cancel = { text: '^(Cancel|Close)$', traits: 'button' }
+        await m.assertVisible({ ...cancel, timeout: 15000 })
+        // A selector-relative center can land over the grid on a system sheet.
+        // Use the screen coordinates of its actual dismissal button.
+        await tapVisibleControl(
+          m,
+          node =>
+            node.type === 'Button' &&
+            [node.id, node.label, node.text].some(
+              name => name === 'Cancel' || name === 'Close'
+            )
+        )
+        await m.assertNotVisible({ ...cancel, timeout: 15000 })
+      }
       await m.assertVisible({ id: 'chat-composer', timeout: 15000 })
       assert.equal(
         await composerValue(m),
@@ -5562,15 +5638,8 @@ async function main(): Promise<void> {
         'Photo picker cancellation preserves the draft'
       )
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const selectedPhoto = await until(
-        'Owned imported photo must be selectable',
-        async () =>
-          strings(flatten(await m.hierarchy())).find(label =>
-            /^Photo(?: taken|,)/.test(label)
-          )
-      )
-      await tapVisibleControl(m, selectedPhoto)
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, platform)
       const removeLabel = await until(
         'Native picker must read the selected photo and expose a removable draft attachment',
         async () =>
@@ -5607,15 +5676,8 @@ async function main(): Promise<void> {
       if (fixture.oversizePhotoPath != null) {
         await m.addMedia({ files: [fixture.oversizePhotoPath] })
         await m.tapOn({ text: 'Attach' })
-        await m.tapOn({ text: 'Photo library' })
-        const largePhoto = await until(
-          'Owned over-limit photo must appear in the native picker',
-          async () =>
-            strings(flatten(await m.hierarchy())).find(label =>
-              /^Photo(?: taken|,)/.test(label)
-            )
-        )
-        await tapVisibleControl(m, largePhoto)
+        await m.tapOn({ text: 'Photos' })
+        await tapImportedPhoto(m, platform)
         await until(
           'Native metadata size guard must reject the over-limit photo',
           async () =>
@@ -5660,7 +5722,7 @@ async function main(): Promise<void> {
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: fixture.draft })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
+      await m.tapOn({ text: 'Photos' })
       await m.assertVisible({ text: 'Photos', timeout: 30000 })
       writeFileSync(
         join(resultDirectory, `${platform}-native-picker-hierarchy.json`),
@@ -6939,7 +7001,7 @@ async function main(): Promise<void> {
         await reveal(m, { text: 'New message' })
         await m.tapOn({ text: 'New message' })
         await m.tapOn({ text: 'Name' })
-        await m.inputText({ text: candidate.shortName })
+        await typeFixtureText(m, candidate.shortName)
         await m.tapOn({ text: `Pick ${candidate.shortName}` })
         await m.tapOn({ text: 'Start conversation' })
         await m.assertVisible({ id: 'chat-composer', timeout: 60000 })

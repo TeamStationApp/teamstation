@@ -21,11 +21,14 @@ describe('native virtualized chat history', function () {
   let history: typeof NativeHistory
   const saved = new Map<string, NodeJS.Module | undefined>()
   const platform = { OS: 'android' }
+  const shown = new Set<() => void>()
   const enabled: boolean[] = []
   const providers: Array<{ enabled: boolean }> = []
   let listProps: Record<string, unknown> = {}
   const calls: string[] = []
   const listeners: Array<() => void> = []
+  const endListeners = new Set<(atEnd: boolean) => void>()
+  let atEnd = false
   const nativeScroll = {
     scrollTo: (options: { y: number; animated?: boolean }) => {
       calls.push(`scrollTo ${options.y} ${String(options.animated)}`)
@@ -40,7 +43,14 @@ describe('native virtualized chat history', function () {
     },
     getState: () => ({
       positionByKey: () => 12,
-      listen: (_name: string, callback: () => void) => {
+      isAtEnd: atEnd,
+      listen: (name: string, callback: (value?: boolean) => void) => {
+        if (name === 'isAtEnd') {
+          endListeners.add(callback)
+          return () => {
+            endListeners.delete(callback)
+          }
+        }
         listeners.push(callback)
         return () => {
           listeners.splice(listeners.indexOf(callback), 1)
@@ -82,7 +92,12 @@ describe('native virtualized chat history', function () {
       }),
       // No keyboard up: a conversation that leaves lets go at once.
       KeyboardController: { isVisible: () => false },
-      KeyboardEvents: { addListener: () => ({ remove: () => undefined }) }
+      KeyboardEvents: {
+        addListener: (name: string, callback: () => void) => {
+          if (name === 'keyboardDidShow') shown.add(callback)
+          return { remove: () => shown.delete(callback) }
+        }
+      }
     })
     stand('@legendapp/list/keyboard', {
       KeyboardAwareLegendList: React.forwardRef(
@@ -133,6 +148,7 @@ describe('native virtualized chat history', function () {
     providers.length = 0
     calls.length = 0
     platform.OS = 'android'
+    atEnd = false
   })
 
   interface Harness {
@@ -140,12 +156,18 @@ describe('native virtualized chat history', function () {
     keyboard: { current: ChatHistoryKeyboard | undefined }
     positions: number[]
   }
-  type Over = Partial<ChatHistoryListProps<string>> & { active?: boolean }
+  type Over = Partial<ChatHistoryListProps<string>> & {
+    active?: boolean
+    attachmentHandoff?: boolean
+    onKeyboardReturnSettled?: () => void
+  }
   function Screen(props: { over: Over; state: Harness }): React.ReactElement {
     const { over, state } = props
     const keyboard = history.useChatHistoryKeyboard({
       closedClearance: 100,
       keyboardOffset: 92,
+      attachmentHandoff: over.attachmentHandoff,
+      onKeyboardReturnSettled: over.onKeyboardReturnSettled,
       active: over.active ?? true
     })
     state.keyboard.current = keyboard
@@ -203,6 +225,46 @@ describe('native virtualized chat history', function () {
     })
   }
 
+  it('holds the existing keyboard inset while the source panel replaces the keyboard', async function () {
+    const { element, state } = harness()
+    await mount(element)
+    const layout: Parameters<ChatHistoryKeyboard['onComposerLayout']>[0] =
+      Object.create(null)
+    state.keyboard.current!.holdKeyboardInset!()
+    await mount(harness({ attachmentHandoff: true }).element)
+    expect((listProps.freeze as { value: boolean }).value).equals(true)
+    state.keyboard.current!.onComposerLayout(layout)
+    expect(calls.includes('composer layout')).equals(false)
+    expect(
+      (listProps.contentInsetEndAdjustment as { value: number }).value
+    ).equals(156)
+    await mount(harness({ attachmentHandoff: false }).element)
+    expect((listProps.freeze as { value: boolean }).value).equals(false)
+    state.keyboard.current!.onComposerLayout(layout)
+    expect(calls.includes('composer layout')).equals(true)
+  })
+
+  it('releases an Android source-panel handoff after the controller delivers its last animation frame', async function () {
+    const end = (): void => {
+      calls.push('keyboard returned')
+    }
+    await mount(
+      harness({ attachmentHandoff: true, onKeyboardReturnSettled: end }).element
+    )
+    expect(shown.size).equals(1)
+    await act(async () => {
+      for (const notify of shown) notify()
+      expect(calls).not.to.include('keyboard returned')
+      await new Promise(resolve => setTimeout(resolve, 60))
+    })
+    expect(calls).to.include('keyboard returned')
+    await mount(
+      harness({ attachmentHandoff: false, onKeyboardReturnSettled: end })
+        .element
+    )
+    expect(shown.size).equals(0)
+  })
+
   it('pads the end for the floating composer and lifts with the keyboard only at the end', async function () {
     const { element, state } = harness({ initialScroll: 'end' })
     await mount(element)
@@ -230,6 +292,29 @@ describe('native virtualized chat history', function () {
     expect(
       (listProps.keyExtractor as (item: string) => string)('msg_1')
     ).equals('msg_1')
+  })
+
+  it('keeps the Android end row above the keyboard and leaves an earlier reader in place', async function () {
+    atEnd = true
+    await mount(harness().element)
+    expect(listProps.keyboardLiftBehavior).equals('always')
+    await act(async () => {
+      for (const update of endListeners) update(false)
+    })
+    expect(listProps.keyboardLiftBehavior).equals('whenAtEnd')
+    await act(async () => {
+      for (const update of endListeners) update(true)
+    })
+    expect(listProps.keyboardLiftBehavior).equals('always')
+    await act(async () => {
+      root!.unmount()
+    })
+    root = undefined
+    expect(endListeners.size).equals(0)
+    platform.OS = 'ios'
+    await mount(harness().element)
+    expect(listProps.keyboardLiftBehavior).equals('whenAtEnd')
+    expect(endListeners.size).equals(0)
   })
 
   it('leaves a saved reader to measured restoration and lays out newly pinned rows at once', async function () {

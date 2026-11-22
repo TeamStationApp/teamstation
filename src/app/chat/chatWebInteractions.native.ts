@@ -17,6 +17,13 @@ export function bindMessageTooltips(_view: unknown): () => void {
 export function isRestoringPopupFocus(): boolean {
   return false
 }
+export function bindAttachmentMenu(
+  _view: unknown,
+  _toggle: unknown,
+  _returnToField: () => void,
+  _dismiss: () => void
+): undefined {}
+export function watchComposerWidth(_view: unknown): undefined {}
 export function bindPopupKeys(
   _view: unknown,
   _close: () => void,
@@ -30,6 +37,8 @@ export function bindPopupKeys(
 export function isFinePointer(): boolean {
   return false
 }
+/** The native multiline input measures its own text. */
+export function sizeComposerText(_view: unknown): void {}
 export function bindComposerKeys(
   _view: unknown,
   _onSend: () => void,

@@ -3,6 +3,10 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import {
+  TestComposer as Composer,
+  type TestComposerProps as ComposerProps
+} from '../chat/composer.test.helpers'
 import { pillPadding } from '../theme/pill'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
@@ -40,6 +44,54 @@ function clearsArcs(node: Element): void {
 }
 
 describe('pill label clearance', () => {
+  for (const kind of ['edit', 'reply'] as const)
+    it(`keeps the composer controls circular and its ${kind} context in a separate pill`, async () => {
+      const context: ComposerProps['context'] =
+        kind === 'edit'
+          ? { kind }
+          : { kind, name: 'Teammate', snippet: 'Practice time' }
+      const container = await render(
+        <Composer
+          text="Practice time"
+          onText={() => {}}
+          enabled
+          sending={false}
+          context={context}
+          onCancelContext={() => {}}
+          attachments={[]}
+          onRemoveAttachment={() => {}}
+          sources={['photos', 'files']}
+          onAttach={() => {}}
+          onSend={() => {}}
+        />
+      )
+      const toggle = container.querySelector<HTMLElement>(
+        '[data-testid="chat-attachment-toggle"]'
+      )!
+      const field = container.querySelector<HTMLElement>(
+        '[data-testid="chat-composer-field"]'
+      )!
+      const send = container.querySelector<HTMLElement>('[aria-label="Send"]')!
+      const chip = container.querySelector<HTMLElement>(
+        '[aria-label^="Cancel "]'
+      )!.parentElement!
+      for (const action of [toggle, send]) {
+        const style = getComputedStyle(action)
+        const diameter = parseFloat(style.height)
+        expect(diameter).at.least(44)
+        expect(parseFloat(style.width)).equals(diameter)
+        expect(parseFloat(style.borderTopLeftRadius)).at.least(diameter / 2)
+      }
+      for (const pill of [field, chip])
+        expect(parseFloat(getComputedStyle(pill).borderTopLeftRadius)).at.least(
+          22
+        )
+      expect(field.querySelector('textarea')).not.equals(null)
+      expect(field.querySelector('[aria-label="Emoji"]')).not.equals(null)
+      const outer = field.parentElement!.parentElement!
+      expect(['', '0px']).includes(getComputedStyle(outer).borderTopWidth)
+      expect(getComputedStyle(outer).backgroundColor).equals('rgba(0, 0, 0, 0)')
+    })
   it('derives both regular and compact clearance from the shell height', () => {
     expect(pillPadding(48)).equals(24)
     expect(pillPadding(36)).equals(18)
