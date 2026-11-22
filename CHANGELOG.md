@@ -4,6 +4,7 @@
 
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
+- fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 
 ## 1.4.0 (2026-11-21)
 
