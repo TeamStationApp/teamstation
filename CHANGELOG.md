@@ -1,5 +1,9 @@
 # teamstation
 
+## Unreleased
+
+- changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
+
 ## 1.4.0 (2026-11-21)
 
 - changed: Google Play closed-testing uploads publish the bundle and do not send release notes

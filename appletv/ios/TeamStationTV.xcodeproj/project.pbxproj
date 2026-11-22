@@ -175,6 +175,7 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				5A1A5C000000000000000020 /* Strip Metro Info.plist keys */,
 			);
 			buildRules = (
 			);
@@ -332,6 +333,23 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-TeamStationTV/Pods-TeamStationTV-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		5A1A5C000000000000000020 /* Strip Metro Info.plist keys */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Strip Metro Info.plist keys";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/StripMetroInfoPlistKeys.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# A Release build loads its bundled JavaScript, never Metro on the local\n# network, so it ships neither the Metro port nor the local-network\n# exception that Debug builds use to reach it. The built Info.plist is this\n# phase's input, so it runs after Xcode writes that file.\nset -e\ntouch \"$DERIVED_FILE_DIR/StripMetroInfoPlistKeys.stamp\"\nif [ \"$CONFIGURATION\" != Release ]; then exit 0; fi\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c 'Delete :TVMetroPort' \"$plist\" 2>/dev/null || true\n/usr/libexec/PlistBuddy -c 'Delete :NSAppTransportSecurity:NSAllowsLocalNetworking' \"$plist\" 2>/dev/null || true\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
