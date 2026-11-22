@@ -129,6 +129,17 @@ describe('chat link preview isolated frame', () => {
     assert.equal(r.cache, 'no-store')
     assert.equal(r.targetAddressSpace, 'public')
   })
+  it('reads a bounded prefix of a large HTML page even with a declared length', async () => {
+    const page =
+      '<head><title>Practice schedule</title></head>' + 'x'.repeat(600000)
+    for (const declared of [true, false]) {
+      const headers = new Headers({ 'content-type': 'text/html' })
+      if (declared) headers.set('content-length', String(page.length))
+      const reply = await frame(new Response(page, { headers })).read()
+      assert.equal(reply.size, 256 * 1024)
+      assert.equal(reply.closed, true)
+    }
+  })
   it('enforces MIME, browser support and both declared and actual limits', async () => {
     for (const [kind, response] of [
       ['html', new Response(null, { status: 404 })],
@@ -145,15 +156,15 @@ describe('chat link preview isolated frame', () => {
         new Response(null, { headers: { 'content-type': 'text/html' } })
       ],
       [
-        'html',
-        new Response('page', {
-          headers: { 'content-type': 'text/html', 'content-length': '300000' }
+        'image',
+        new Response('photo', {
+          headers: { 'content-type': 'image/jpeg', 'content-length': '3000000' }
         })
       ],
       [
-        'html',
-        new Response(new Uint8Array(262145), {
-          headers: { 'content-type': 'text/html' }
+        'image',
+        new Response(new Uint8Array(2 * 1024 * 1024 + 1), {
+          headers: { 'content-type': 'image/png' }
         })
       ]
     ] as const) {

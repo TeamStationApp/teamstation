@@ -7,10 +7,6 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MessageView } from '../../../../src/app/chat/engine/apply'
 import {
-  flattenPublicHierarchy,
-  until
-} from '../../../rigs/chat2Maestro'
-import {
   dismissNotificationAsk,
   dismissNotificationAskOn
 } from '../../../../src/test/notificationAsk'
@@ -23,6 +19,7 @@ import {
   readChatComposer,
   revealChatTarget
 } from '../../../rigs/chat/messageLinkUi'
+import { flattenPublicHierarchy, until } from '../../../rigs/chat2Maestro'
 
 async function edit(ctx: E2eContext): Promise<void> {
   const f = fixtureFor(ctx)
@@ -101,12 +98,16 @@ async function edit(ctx: E2eContext): Promise<void> {
           })
         } else {
           const target = { id: row(id) }
-          await m.scrollUntilVisible({
-            element: target,
-            direction: 'up',
-            timeout: 12000
-          })
           const bubbleId = 'chat-bubble-' + id
+          const present = flattenPublicHierarchy(await m.hierarchy()).some(
+            node => node.id === bubbleId && node.bounds != null
+          )
+          if (!present)
+            await m.scrollUntilVisible({
+              element: target,
+              direction: 'up',
+              timeout: 12000
+            })
           await revealChatTarget(m, node => node.id === bubbleId)
           await m.longPressOn({ id: bubbleId })
           await m.assertVisible({ text: '^Reply$' })

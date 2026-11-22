@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import {
-  flattenPublicHierarchy,
-  iosPublicRead,
-  type PublicNode
-} from '../chat2Maestro'
 import type { Emulation } from '../../core/browserCdp'
 import { signInWithPassword } from '../../core/fixtures'
 import type { MaestroDevice } from '../../core/maestro'
@@ -17,6 +12,11 @@ import {
   setServer
 } from '../app/setServer'
 import {
+  flattenPublicHierarchy,
+  iosPublicRead,
+  type PublicNode
+} from '../chat2Maestro'
+import {
   authenticatedActor,
   type ChatLinkFixture,
   type providerFor
@@ -24,11 +24,13 @@ import {
 
 const composer = { id: 'chat-composer' }
 
-/** Scroll until the target's center can receive a real press inside the native history. */
+/** Reveal the target inside the native history. A precise tap uses settled bounds. */
 export async function revealChatTarget(
   m: MaestroDevice,
-  matches: (node: PublicNode) => boolean
-): Promise<void> {
+  matches: (node: PublicNode) => boolean,
+  offsetFromTop?: number
+): Promise<NonNullable<PublicNode['bounds']>> {
+  let previous: PublicNode['bounds']
   for (let attempt = 0; attempt < 8; attempt++) {
     const nodes = flattenPublicHierarchy(await m.hierarchy())
     const bounds = (id: string): PublicNode['bounds'] =>
@@ -46,12 +48,22 @@ export async function revealChatTarget(
     )
     const height = composer.y - top
     assert(height > 0, 'The message history must have visible space')
-    const center = target.y + target.height / 2
-    if (center > top + 8 && center < composer.y - 8) return
+    const pressY = target.y + (offsetFromTop ?? target.height / 2)
+    if (pressY > top + 8 && pressY < composer.y - 8) {
+      if (
+        offsetFromTop == null ||
+        (previous?.x === target.x && previous.y === target.y)
+      )
+        return target
+      previous = target
+      await delay(200)
+      continue
+    }
+    previous = undefined
     const x = Math.round(header.x + header.width / 2)
     const upper = Math.round(top + height * 0.25)
     const lower = Math.round(top + height * 0.75)
-    const above = center <= top + 8
+    const above = pressY <= top + 8
     await m.dragAndDrop({
       from: { point: `${x},${above ? upper : lower}` },
       to: { point: `${x},${above ? lower : upper}` },
@@ -97,7 +109,15 @@ export async function clearChatComposer(
   // Android's accessibility Clear can leave React Native's value intact.
   // Use actual edit keys for any text the optimized command left behind.
   const remaining = await readChatComposer(m, platform, web)
-  if (remaining !== '' && remaining !== 'Message') {
+  const hasSend = async (): Promise<boolean> =>
+    flattenPublicHierarchy(await m.hierarchy()).some(
+      node => node.id === 'chat-send'
+    )
+  if (
+    remaining !== '' &&
+    (remaining !== 'Message' ||
+      (expected.includes(remaining) && (await hasSend())))
+  ) {
     assert(expected.includes(remaining))
     let rightKeys = remaining.length
     while (rightKeys-- > 0) await m.pressKey({ key: 'DPAD_RIGHT' })
@@ -105,7 +125,18 @@ export async function clearChatComposer(
     while (deleteKeys-- > 0) await m.pressKey({ key: 'BACKSPACE' })
   }
   const cleared = await readChatComposer(m, platform, web)
-  assert(cleared === '' || cleared === 'Message')
+  if (cleared === '') return
+  assert.equal(cleared, 'Message')
+  if (!(await hasSend())) return
+  // A staged file or an editable caption can keep Send visible on an empty
+  // field. Insert one character to distinguish the actual value from its hint.
+  await m.pressKey({ key: 'DPAD_RIGHT' })
+  await m.inputText({ text: 'x', keyPress: true })
+  const marked = await readChatComposer(m, platform, web)
+  await m.pressKey({ key: 'BACKSPACE' })
+  assert.equal(marked, 'x', 'The Android draft must be empty before typing')
+  const restored = await readChatComposer(m, platform, web)
+  assert(restored === '' || restored === 'Message')
 }
 
 async function waitForComposer(

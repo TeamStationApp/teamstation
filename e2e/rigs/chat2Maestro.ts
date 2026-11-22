@@ -12,6 +12,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -246,6 +247,13 @@ interface IosReadNode extends PublicNode {
   value?: string
   placeholderValue?: string
   label?: string
+}
+
+function isIosSendButton(node: IosReadNode): boolean {
+  return (
+    node.id === 'chat-send' ||
+    (node.type === 'Button' && (node.label === 'Send' || node.text === 'Send'))
+  )
 }
 
 /**
@@ -1452,6 +1460,85 @@ export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
   ]
 }
 
+/** Both system pickers put newly imported photos first. iOS also labels the
+ * entire grid with its children's descriptions and exposes off-screen cells. */
+export function recentPickerPhoto(
+  tree: unknown,
+  platform: string
+): PublicNode | undefined {
+  const nodes = flattenPublicHierarchy(tree)
+  const photos = nodes.filter(
+    node => /^Photo(?: taken|,)/.test(node.text ?? '') && node.bounds != null
+  )
+  if (platform !== 'ios') return photos[0]
+  const screen = nodes.find(
+    node => node.type?.endsWith('Application') === true
+  )?.bounds
+  const bar = nodes.find(
+    node =>
+      node.type?.endsWith('NavigationBar') === true &&
+      (node.id === 'Photos' || node.text === 'Photos')
+  )?.bounds
+  if (screen == null || bar == null) return
+  return photos
+    .filter(node => {
+      const b = node.bounds!
+      return (
+        node.type?.endsWith('Image') === true &&
+        b.width > 0 &&
+        b.height > 0 &&
+        b.x >= screen.x &&
+        b.x + b.width <= screen.x + screen.width &&
+        b.y >= bar.y + bar.height &&
+        b.y + b.height <= screen.y + screen.height
+      )
+    })
+    .sort((a, b) =>
+      a.bounds!.y === b.bounds!.y
+        ? a.bounds!.x - b.bounds!.x
+        : a.bounds!.y - b.bounds!.y
+    )[0]
+}
+
+export async function tapImportedPhoto(
+  device: {
+    hierarchy: () => Promise<unknown>
+    tapOnPoint: (options: { point: string }) => Promise<unknown>
+  },
+  platform: string
+): Promise<void> {
+  let previous: PublicNode | undefined
+  const tile = await until(
+    async () => {
+      const current = recentPickerPhoto(await device.hierarchy(), platform)
+      const prior = previous
+      previous = current
+      if (
+        current?.bounds == null ||
+        prior?.bounds == null ||
+        current.text !== prior.text
+      )
+        return
+      const { x, y, width, height } = current.bounds
+      if (
+        x === prior.bounds.x &&
+        y === prior.bounds.y &&
+        width === prior.bounds.width &&
+        height === prior.bounds.height
+      )
+        return current.bounds
+    },
+    'the newly imported photo to settle in the system picker',
+    30000
+  )
+  await device.tapOnPoint({
+    point:
+      Math.round(tile.x + tile.width / 2) +
+      ',' +
+      Math.round(tile.y + tile.height / 2)
+  })
+}
+
 /** Measure one scoped Android node from fresh public ancestry without copying text. */
 export function androidScopedBounds(
   raw: unknown,
@@ -1712,7 +1799,8 @@ export interface AndroidDismissReference {
 export function androidDismissReference(
   raw: unknown,
   state: AndroidCaptureIme,
-  viewport: AndroidDismissReference['viewport']
+  viewport: AndroidDismissReference['viewport'],
+  expectedText?: string
 ): AndroidDismissReference {
   const entries = androidTree(raw)
   assert(
@@ -1747,6 +1835,13 @@ export function androidDismissReference(
       insideAndroidBox(composer, band),
     'Actual enabled editor/text and contained band/history required'
   )
+  // Android exposes the placeholder and a draft containing its literal text identically.
+  const text =
+    expectedText === '' && editor.text === ANDROID_COMPOSER_PLACEHOLDER
+      ? ''
+      : editor.text
+  if (expectedText != null)
+    assert.equal(text, expectedText, 'Actual dismissal context changed: text')
   if (state.state === 'open')
     assert(
       editor.focused === true && positiveAndroidBox(state.keyboard),
@@ -1757,7 +1852,7 @@ export function androidDismissReference(
     history: Object.freeze({ ...history }),
     band: Object.freeze({ ...band }),
     composer: Object.freeze({ ...composer }),
-    text: editor.text,
+    text,
     reply: entries.filter(
       ({ node }) => node.type === 'Button' && node.text === 'Cancel reply'
     ).length,
@@ -1777,7 +1872,8 @@ export function androidClosedCaptureGeometry(
   const current = androidDismissReference(
     raw,
     { state: 'already-closed', flags: {} },
-    before.viewport
+    before.viewport,
+    before.text
   )
   for (const key of ['history', 'text', 'reply', 'chips'] as const)
     assert(
@@ -1828,8 +1924,16 @@ export function androidClosedCaptureGeometry(
       before.keyboard == null,
       'Already-closed proof must not invent prior keyboard movement'
     )
-  for (const label of ['Attach', 'Send'])
-    androidComposerControl(raw, label, before.viewport)
+  androidComposerControl(raw, 'Attach', before.viewport)
+  if (current.text.trim() !== '' || current.chips > 0)
+    androidComposerControl(raw, 'Send', before.viewport)
+  else
+    assert(
+      !entries.some(
+        ({ node }) => node.type === 'Button' && node.text === 'Send'
+      ),
+      'An empty composer must hide the Send button'
+    )
   return {
     history: current.history,
     band: current.band,
@@ -2062,12 +2166,19 @@ export function emptyEditorPlaceholder(node: {
 
 export class Chat2UI {
   readonly native: boolean
+  /** A per-run browser never touches the profiles kept for historical captures. */
+  private freshBrowserProfile?: string
+
+  get usesFreshBrowserProfile(): boolean {
+    return this.freshBrowserProfile != null
+  }
+
   readonly steps: Args[] = []
   readonly captures: Args[] = []
   /** Ids a running search reads past the iOS simulator's snapshot cap. */
   private sought?: Set<string>
   /** The whole snapshot the latest iOS element read came from. */
-  private lastIosReadNodes?: PublicNode[]
+  private lastIosReadNodes?: IosReadNode[]
   readonly runDir: string
   readonly binding: ReturnType<typeof sourceBinding>
   readonly deadline: AbortSignal
@@ -2518,7 +2629,18 @@ export class Chat2UI {
       sha256: this.binding.binding.sha256
     })
     const metrics = this.metrics()
-    const profile = join(browser.profileRoot, this.surface)
+    if (process.argv.includes('--fresh-web-profile')) {
+      assert(
+        !this.native && ['E3', 'E4', 'E7', 'E8', 'E9'].includes(this.scenario),
+        'Fresh browser profiles are for standalone web regression cases'
+      )
+      mkdirSync(browser.profileRoot, { recursive: true, mode: 0o700 })
+      this.freshBrowserProfile = mkdtempSync(
+        join(browser.profileRoot, 'regression-')
+      )
+    }
+    const profile =
+      this.freshBrowserProfile ?? join(browser.profileRoot, this.surface)
     // The profile is kept between runs, and Chrome reopens a session's pages:
     // without this every earlier run's page comes back, more each time.
     rmSync(join(profile, 'Default', 'Sessions'), {
@@ -3187,6 +3309,7 @@ export class Chat2UI {
         'Exact temporary file-input interception must install'
       )
       await this.text('Attach')
+      await this.text('Photos')
       await this.device.uploadFile({ css: 'input[type="file"]', path })
       await this.present('chat-attachment-chip')
       completed = true
@@ -3316,12 +3439,12 @@ export class Chat2UI {
    * A locked conversation keeps its composer on screen but not editable. The
    * driver counts a read-only web field as enabled and iOS reports such a
    * field enabled too, so prove it: on web the field is read-only or disabled;
-   * on iOS and Android a tap on it raises no keyboard. Send is disabled on all.
+   * on iOS and Android a tap on it raises no keyboard. An empty draft has no Send action.
    */
   async assertComposerNotEditable(settle = 1500): Promise<Args> {
     if (!this.native) {
       const state = await this.dom(
-        "const n=document.querySelector('[data-testid=\"chat-composer\"]');const s=document.querySelector('[aria-label=\"Send\"]');return {present:n!=null,readOnly:n!=null&&n.readOnly===true,disabled:n!=null&&n.disabled===true,sendDisabled:s!=null&&(s.disabled===true||s.getAttribute('aria-disabled')==='true')}"
+        "const n=document.querySelector('[data-testid=\"chat-composer\"]');const s=document.querySelector('[aria-label=\"Send\"]');return {present:n!=null,readOnly:n!=null&&n.readOnly===true,disabled:n!=null&&n.disabled===true,sendDisabled:s==null?(n!=null&&!(n.value||'').trim()):(s.disabled===true||s.getAttribute('aria-disabled')==='true')}"
       )
       assert(
         state.present !== true ||
@@ -3346,8 +3469,8 @@ export class Chat2UI {
         'A tap on a locked composer must raise no keyboard'
       )
       assert(
-        send.length === 1 && send[0].enabled === false,
-        'Send must be positively disabled'
+        send.length === 0 || (send.length === 1 && send[0].enabled === false),
+        'A locked composer must have no active Send action'
       )
       return {
         surface: this.surface,
@@ -3371,7 +3494,10 @@ export class Chat2UI {
       keyboard == null,
       'A tap on a locked composer must raise no keyboard'
     )
-    assert(send?.enabled === false, 'Send must be positively disabled')
+    assert(
+      send == null || send.enabled === false,
+      'A locked composer must have no active Send action'
+    )
     return {
       surface: this.surface,
       tapped: true,
@@ -3394,11 +3520,32 @@ export class Chat2UI {
         'ios-empty-raw-' + Date.now() + '-' + randomUUID() + '.json'
       )
       writeFileSync(rawPath, raw, { mode: 0o600, flag: 'wx' })
-      const input = iosPublicRead(raw, { id: 'chat-composer' }, 'TextView')
+      // Physical WebDriverAgent returns XML and can include hundreds of
+      // history and keyboard nodes. Verify the field inside its composer and
+      // independently query for controls that would invalidate an empty draft.
+      const phoneXML =
+        this.physical &&
+        Buffer.from(raw).toString('utf8').trimStart().startsWith('<')
+      const input = iosPublicRead(
+        raw,
+        {
+          id: 'chat-composer',
+          ...(phoneXML ? { childOf: { id: 'chat-composer-band' } } : {})
+        },
+        'TextView'
+      )
       assert(
-        input.nodes.length < 300,
+        phoneXML || input.nodes.length < 300,
         'Empty-state tree reached the pinned native snapshot cap; completeness is unavailable'
       )
+      if (phoneXML) {
+        for (const selector of [
+          { id: '^chat-send$' },
+          { id: '^chat-attachment-chip$' },
+          { text: '^Cancel reply$' }
+        ])
+          await this.device.assertNotVisible({ ...selector, timeout: 3000 })
+      }
       const node = need(
         input.element,
         'Fresh raw iOS editable composer required for empty UI'
@@ -3412,13 +3559,9 @@ export class Chat2UI {
         node.value == null || node.value === placeholder,
         'Composer still exposes a nonempty value'
       )
-      const send = need(
-        iosPublicRead(raw, { text: exactText('Send') }, 'Button').element,
-        'Fresh actual Send Button required'
-      )
       assert(
-        send.enabled === false,
-        'Actual Send Button must be positively disabled'
+        !input.nodes.some(isIosSendButton),
+        'Empty composer must have no Send button'
       )
       assert(
         !input.nodes.some(
@@ -3441,7 +3584,7 @@ export class Chat2UI {
       return {
         composer: box,
         band,
-        send: send.bounds,
+        sendVisible: false,
         placeholder,
         placeholderSource:
           node.placeholderValue === placeholder
@@ -3458,7 +3601,7 @@ export class Chat2UI {
     }
     const image = saveCapture(await api.screenshot({ signal }), path)
     const after = await inspect()
-    for (const key of ['composer', 'band', 'send'])
+    for (const key of ['composer', 'band'])
       assert.deepEqual(
         before[key],
         after[key],
@@ -4927,7 +5070,7 @@ export class Chat2UI {
   }
 
   /** Passive state settlement precedes exactly one ordinary hide; functional hides are unchanged. */
-  async hideKeyboardForCapture(): Promise<void> {
+  async hideKeyboardForCapture(expectedText?: string): Promise<void> {
     if (this.surface !== 'android') {
       await this.hideKeyboard()
       return
@@ -4947,7 +5090,8 @@ export class Chat2UI {
     const original = androidDismissReference(
       first.raw,
       need(initial.state, 'Actual initial IME state required'),
-      initial.viewport
+      initial.viewport,
+      expectedText
     )
     let before = await this.verifyAndroidClosedCapture(original, end, true)
     if (before.initialState === 'open') {
@@ -4960,7 +5104,8 @@ export class Chat2UI {
       const measured = androidDismissReference(
         fresh.raw,
         { state: 'open', flags: {}, keyboard: positive.geometry.keyboard },
-        initial.viewport
+        initial.viewport,
+        before.text
       )
       for (const key of ['history', 'text', 'reply', 'chips'] as const)
         assert(
@@ -5034,7 +5179,12 @@ export class Chat2UI {
         }
         let open: AndroidDismissReference | undefined
         if (initial && state.state === 'open') {
-          const reference = androidDismissReference(raw, state, before.viewport)
+          const reference = androidDismissReference(
+            raw,
+            state,
+            before.viewport,
+            before.text
+          )
           for (const key of ['history', 'text', 'reply', 'chips'] as const)
             assert(
               JSON.stringify(reference[key]) === JSON.stringify(before[key]),
@@ -5111,7 +5261,12 @@ export class Chat2UI {
             proof.outcome = 'passed'
             proof.exactPairMs = current.at - previous.at
             return initial
-              ? androidDismissReference(raw, state, before.viewport)
+              ? androidDismissReference(
+                  raw,
+                  state,
+                  before.viewport,
+                  before.text
+                )
               : before
           }
           previous = current
@@ -5602,7 +5757,7 @@ export class Chat2UI {
             'Nonempty observed editor placeholder required'
           )
           let reference = before
-          if (before.index >= 0 && !rawEmpty(before)) reference = await read()
+          if (!rawEmpty(before)) reference = await read()
           // Typing the sentinel can let the keyboard fall, and the composer
           // rides it; deleting raises it again. The empty editor's own
           // geometry, read with the keyboard up, is the one to keep.
@@ -5707,22 +5862,46 @@ export class Chat2UI {
             return node
           }
           proof.after = await verify()
-          const send = await this.iosRead(
-            { text: exactText('Send') },
-            'Button',
-            signal
+          // A staged file can be sent with an empty caption. The legacy flows
+          // clear ordinary drafts and replies, with or without a staged file.
+          const nodes = need(
+            this.lastIosReadNodes,
+            'Fresh editor snapshot required'
           )
-          assert(
-            typeof send.enabled === 'boolean',
-            'Positive Send state required after clearing editor'
-          )
-          if (send.enabled)
-            proof.preservedAttachment = await this.iosRead(
-              { id: 'chat-attachment-chip' },
-              undefined,
+          const chip = nodes.find(n => n.id === 'chat-attachment-chip')
+          const hasFile =
+            chip != null ||
+            (nodes.length >= 300 &&
+              (await this.visible({ id: '^chat-attachment-chip$' }, 120)))
+          if (hasFile) {
+            proof.preservedAttachment =
+              chip ??
+              (await this.iosRead(
+                { id: 'chat-attachment-chip' },
+                undefined,
+                signal
+              ))
+            const send = await this.iosRead(
+              { text: exactText('Send') },
+              'Button',
               signal
             )
-          proof.send = send
+            assert(
+              typeof send.enabled === 'boolean',
+              'Observed attachment Send state required'
+            )
+            proof.send = send
+          } else {
+            assert(
+              !nodes.some(isIosSendButton),
+              'Empty composer must have no Send button'
+            )
+            await this.device.assertNotVisible({
+              id: '^chat-send$',
+              timeout: 3000
+            })
+          }
+          proof.sendVisible = hasFile
           const path = join(
             this.runDir,
             'ios-editor-empty-' + Date.now() + '-' + randomUUID() + '.png'
@@ -6488,6 +6667,11 @@ export class Chat2UI {
           this.cleanup.servicesError = redact(this.fixture, String(failure))
         }
       }
+      if (
+        this.freshBrowserProfile != null &&
+        this.cleanup.daemonStopped === true
+      )
+        rmSync(this.freshBrowserProfile, { recursive: true, force: true })
       if (this.reportsDir != null) lockTree(this.reportsDir)
     }
     const receipt = join(this.runDir, 'result.json')

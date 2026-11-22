@@ -34,7 +34,7 @@ import {
   settleChatMessageActions,
   view
 } from './chatViews.test.helpers'
-import { Composer } from './Composer'
+import { TestComposer as Composer } from './composer.test.helpers'
 import {
   type ConversationFiles,
   ConversationScreen
@@ -1110,16 +1110,16 @@ describe('a conversation', function () {
     await longPress('Game day')
     await press('Reply')
 
-    // Attach: two places to pick from, a chip each, one removed.
+    // Stage the photo and reject the oversized file.
     await press('Attach')
-    await press('Photo library')
+    await press('Photos')
     await until('the chip', () => text().includes('photo.jpg'))
     await press('Attach')
     await press('File')
     await until('the size rejection', () =>
       text().includes('huge.pdf is too large')
     )
-    expect(log).deep.equals(['pick photos', 'pick files'])
+    expect(log).deep.equals(['pick photos', 'uri photo.jpg', 'pick files'])
     expect(labelled('Remove huge.pdf')).equals(null)
     await press('Send')
     await until('the send', () =>
@@ -1131,6 +1131,7 @@ describe('a conversation', function () {
       () => (labelled('Message') as HTMLTextAreaElement).value === ''
     )
     expect(text()).not.contains('photo.jpg')
+    expect(log).includes('release blob:photo.jpg')
 
     // Plain words.
     await typeInto('Message', 'Again')
@@ -1550,7 +1551,7 @@ describe('a conversation', function () {
 })
 
 describe('the composer on its own', function () {
-  it('offers the one picker at once where there is only one', async function () {
+  it('opens the panel before activating even a single source', async function () {
     const picked: string[] = []
     await render(
       <Composer
@@ -1568,8 +1569,10 @@ describe('the composer on its own', function () {
       />
     )
     await press('Attach')
+    expect(picked).deep.equals([])
+    await press('File')
     expect(picked).deep.equals(['files'])
-    expect(button('Send')?.getAttribute('aria-disabled')).equals('true')
+    expect(button('Send')).equals(undefined)
   })
 
   it('asks which, and can be put away', async function () {
@@ -1589,9 +1592,9 @@ describe('the composer on its own', function () {
       />
     )
     await press('Attach')
-    expect(button('Photo library')).not.equals(undefined)
-    await press('Cancel')
-    expect(button('Photo library')).equals(undefined)
+    expect(button('Photos')).not.equals(undefined)
+    await press('Close attachments')
+    expect(button('Photos')).equals(undefined)
   })
 })
 
@@ -2423,7 +2426,8 @@ describe('attachments in a browser', function () {
   it('opens the browser’s picker, and hands back what was chosen', async function () {
     const chosen = pickFiles('files')
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')
-    expect(input?.multiple).equals(true)
+    expect(input?.multiple).equals(false)
+    expect(input?.accept).equals('')
     Object.defineProperty(input, 'files', {
       value: [
         new File([new Uint8Array([9])], 'a.pdf', { type: 'application/pdf' })
@@ -2435,6 +2439,9 @@ describe('attachments in a browser', function () {
     expect(document.querySelector('input[type="file"]')).equals(null)
 
     const cancelled = pickFiles('photos')
+    expect(
+      document.querySelector<HTMLInputElement>('input[type="file"]')?.accept
+    ).equals('image/*,video/*')
     document
       .querySelector<HTMLInputElement>('input[type="file"]')!
       .dispatchEvent(new (page().Event)('cancel'))

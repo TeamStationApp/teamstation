@@ -341,7 +341,7 @@ async function p3(m: Device, run: string, shots: string): Promise<void> {
       await m.assertVisible({ text: 'hello 🎉', timeout: 60000 })
     }
     await m.tapOn({ text: 'Attach' })
-    await m.tapOn({ text: 'Photo library' })
+    await m.tapOn({ text: 'Photos' })
     // The system's picker runs outside the app, where maestro-d sees no
     // names: its grid's first cell, the photo added for this run, by point.
     await new Promise(resolve => setTimeout(resolve, 4000))

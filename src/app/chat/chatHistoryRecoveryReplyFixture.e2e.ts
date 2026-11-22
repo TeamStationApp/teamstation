@@ -336,14 +336,19 @@ async function main(): Promise<void> {
       await m.evalBrowserScript({
         script: `window.recoveryClipClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';return}return window.recoveryClipClick.call(this)};return true`
       })
-      await m.tapOn({ text: 'Attach' })
-      await m.uploadFile({ css: 'input[type="file"]', path: file })
-      await m.assertVisible({ text: 'Remove ' + name, timeout: 30000 })
+      try {
+        await m.tapOn({ text: 'Attach' })
+        await m.tapOn({ text: 'Photos' })
+        await m.uploadFile({ css: 'input[type="file"]', path: file })
+        await m.assertVisible({ text: 'Remove ' + name, timeout: 30000 })
+      } finally {
+        await m.evalBrowserScript({
+          script:
+            'HTMLInputElement.prototype.click=window.recoveryClipClick;delete window.recoveryClipClick;return true'
+        })
+      }
       await m.tapOn({ text: 'Send' })
       await m.assertVisible({ text: 'Open ' + name, timeout: 120000 })
-      await m.evalBrowserScript({
-        script: `if(window.recoveryClipClick)HTMLInputElement.prototype.click=window.recoveryClipClick;return true`
-      })
       await close(m)
       save(join(setup.artifacts, 'clip.json'), { conversationId, name })
       console.log('Normal encrypted video sent: ' + name)

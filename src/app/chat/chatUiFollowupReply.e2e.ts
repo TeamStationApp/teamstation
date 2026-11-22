@@ -300,9 +300,26 @@ interface Envelope {
   senderUserId: string
 }
 async function envelopes(device: Device, id: string): Promise<Envelope[]> {
+  const url = JSON.stringify(API + '/chat/conversations/' + id + '/messages')
   return await evaluate(
     device,
-    `const r=await fetch(${JSON.stringify(API + '/chat/conversations/')}+${JSON.stringify(id)}+'/messages',{credentials:'include'});if(!r.ok)throw new Error('Own message metadata unavailable');return JSON.stringify((await r.json()).map(row=>({id:row.id,kind:row.kind,seq:row.seq,senderUserId:row.senderUserId})));`
+    `
+      const endpoint = new URL(${url}, location.href);
+      const rows = [];
+      let after = 0;
+      for (;;) {
+        endpoint.searchParams.set('after', String(after));
+        const response = await fetch(endpoint, {credentials: 'include'});
+        if (!response.ok) throw new Error('Own message metadata unavailable');
+        const page = await response.json();
+        if (page.length === 0) break;
+        const last = page[page.length - 1].seq;
+        if (!Number.isSafeInteger(last) || last <= after) throw new Error('Message page did not advance');
+        rows.push(...page.map(({id, kind, seq, senderUserId}) => ({id, kind, seq, senderUserId})));
+        after = last;
+      }
+      return JSON.stringify(rows);
+    `
   )
 }
 async function sent(

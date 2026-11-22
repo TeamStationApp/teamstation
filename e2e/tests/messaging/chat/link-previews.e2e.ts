@@ -6,10 +6,6 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { HTTPRequest } from 'puppeteer'
 
 import type { ChatLinkPreview } from '../../../../src/common/chatLinkPreview'
-import {
-  androidScopedBounds,
-  exactText
-} from '../../../rigs/chat2Maestro'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
@@ -17,6 +13,7 @@ import {
   checkCoveredPreview,
   receiveWithDelayedImage
 } from '../../../rigs/chat/receivedPreview'
+import { androidScopedBounds, exactText } from '../../../rigs/chat2Maestro'
 
 async function send(ctx: E2eContext): Promise<void> {
   const f = fixtureFor(ctx)
@@ -35,6 +32,15 @@ async function send(ctx: E2eContext): Promise<void> {
           : ctx.surface === 'android-app'
             ? 'android'
             : 'web'
+      const cardTitle = (preview: ChatLinkPreview): string => {
+        const title = exactText(preview.title)
+        if (platform !== 'ios') return title
+        // VoiceOver can group all three card fields into the link's label.
+        const label = [preview.siteName, preview.title, preview.description]
+          .filter(Boolean)
+          .join(', ')
+        return title + '|' + exactText(label)
+      }
       const { m, web, enter } = await chatLinkUi(ctx, f, author, platform, {
         observeNetwork: true
       })
@@ -103,6 +109,8 @@ async function send(ctx: E2eContext): Promise<void> {
         const url = address.href
         const body = 'Preview ' + mode + ' ' + probe.slice(0, 8) + ' ' + url
         await m.tapOn({ id: 'chat-composer' })
+        // Settle the keyboard before starting the time-sensitive preview.
+        if (platform === 'ios') await m.waitForAnimationToEnd()
         await m.inputText({ text: body })
         // A native hierarchy read can outlast a pending preview. Observe the
         // request immediately. The peer verifies the exact body after Send.
@@ -215,6 +223,8 @@ async function send(ctx: E2eContext): Promise<void> {
         if (mode === 'cors-denied') await delay(5500)
         if (mode !== 'pending') await beforeSend?.(url)
         if (web != null) await m.pressKey({ key: 'Enter' })
+        else if (platform === 'ios')
+          await m.tapOn({ id: 'chat-send', enabled: true })
         else await m.tapOn({ text: '^Send$' })
         const until = Date.now() + 30000
         for (;;) {
@@ -226,7 +236,10 @@ async function send(ctx: E2eContext): Promise<void> {
               assert.equal(seen.preview?.title, page.title)
               assert.equal(seen.preview.url, new URL(url).href)
               readyPreview = seen.preview
-              await m.assertVisible({ text: page.title, timeout: 10000 })
+              await m.assertVisible({
+                text: cardTitle(seen.preview),
+                timeout: 10000
+              })
             } else assert.equal(seen.preview, undefined)
             break
           }
@@ -363,7 +376,7 @@ async function send(ctx: E2eContext): Promise<void> {
           }
         } else {
           await m.assertVisible({
-            text: page.title,
+            text: cardTitle(receivedPreview),
             childOf: row,
             timeout: 12000
           })

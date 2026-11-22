@@ -23,6 +23,8 @@ const customNames = [
   'check',
   'pin',
   'shareOut',
+  'photoLibrary',
+  'camera',
   'print'
 ] as const
 /**
@@ -31,6 +33,10 @@ const customNames = [
  * printer, its paper above and its tray below.
  */
 const customPaths: Partial<Record<CustomName, string>> = {
+  photoLibrary:
+    'M7 3 H21 V17 H7 Z M3 7 V21 H17 M8 15 L12 10 L15 13 L17 11 L20 15 M16 7 H16.1',
+  camera:
+    'M3 7 H7 L9 4 H15 L17 7 H21 V20 H3 Z M16 13 A4 4 0 1 1 8 13 A4 4 0 1 1 16 13',
   pin: 'M12 2 V7 M12 17 V22 M2 12 H7 M17 12 H22 M18 12 A6 6 0 1 1 6 12 A6 6 0 1 1 18 12',
   check: 'M4 12 L9 17 L20 6',
   reply: 'M10 5 L4 11 L10 17 M4 11 H15 Q20 11 20 19',

@@ -3,7 +3,6 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { flattenPublicHierarchy } from '../../../rigs/chat2Maestro'
 import type { MaestroDevice } from '../../../core/maestro'
 import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
 import {
@@ -17,6 +16,7 @@ import {
   readChatComposer,
   revealChatTarget
 } from '../../../rigs/chat/messageLinkUi'
+import { flattenPublicHierarchy } from '../../../rigs/chat2Maestro'
 
 const composer = { id: 'chat-composer' }
 const exact = (s: string): string =>
@@ -205,6 +205,23 @@ async function waitForMenuDismissal(m: MaestroDevice): Promise<void> {
   )
 }
 
+/** Android can expose the field before its keyboard has finished moving it. */
+async function waitForAndroidPasteTarget(m: MaestroDevice): Promise<void> {
+  const deadline = Date.now() + 8000
+  let previousY: number | undefined
+  do {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    const field = nodes.find(
+      node => node.id === composer.id && node.focused === true
+    )
+    const y = field?.bounds?.y
+    if (y != null && y === previousY) return
+    previousY = y
+    await delay(200)
+  } while (Date.now() < deadline)
+  assert.fail('The Android composer must have focus and settle before pasting')
+}
+
 async function dismissComposerKeyboard(
   m: MaestroDevice,
   platform: string
@@ -243,16 +260,15 @@ async function tapPlainFilename(
       return { x, y }
     })
   } else {
-    const nodes = flattenPublicHierarchy(await m.hierarchy())
-    const body = nodes.find(
-      node => node.id === id || node.id?.endsWith(':id/' + id) === true
+    // The accessibility tree includes text behind the composer and bottom tabs.
+    // Reveal the first line before tapping the plain filename at its leading edge.
+    const offsetY = 9
+    const body = await revealChatTarget(
+      m,
+      node => node.id === id || node.id?.endsWith(':id/' + id) === true,
+      offsetY
     )
-    assert(body?.bounds != null, 'Expected the visible text bounds')
-    // Native text starts at the upper leading corner of this layout-only body.
-    point = {
-      x: Math.round(body.bounds.x + 15),
-      y: Math.round(body.bounds.y + 9)
-    }
+    point = { x: Math.round(body.x + 15), y: Math.round(body.y + offsetY) }
   }
   await m.tapOnPoint({ point: point.x + ',' + point.y })
   await m.assertVisible(composer)
@@ -479,16 +495,21 @@ async function open(ctx: E2eContext): Promise<void> {
           '. See www.example.org and example.technology.'
         const caption = 'Score sheet ' + id + ': ' + second
         await m.tapOn(composer)
+        if (platform === 'ios') await m.waitForAnimationToEnd()
         if (platform === 'android') {
           // Android keyboards can capitalize both the filename and the URL
           // following a newline. Paste the exact fixture that Copy must return.
           await m.setClipboard({ text: body })
+          await waitForAndroidPasteTarget(m)
           await m.pasteText()
           assert.equal(await readChatComposer(m, platform), body)
         } else await m.inputText({ text: body })
         if (web != null) await m.pressKey({ key: 'Enter' })
         else {
-          await m.tapOn({ text: '^Send$', timeout: 8000 })
+          if (platform === 'ios') {
+            assert.equal(await readChatComposer(m, platform), body)
+            await m.tapOn({ id: 'chat-send', enabled: true, timeout: 8000 })
+          } else await m.tapOn({ text: '^Send$', timeout: 8000 })
           await dismissComposerKeyboard(m, platform)
         }
         const deadline = Date.now() + 20000

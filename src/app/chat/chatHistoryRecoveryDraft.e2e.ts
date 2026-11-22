@@ -110,6 +110,7 @@ export async function draftRecovery(options: {
     })
     try {
       await m.tapOn({ text: 'Attach' })
+      await m.tapOn({ text: 'File' })
       await m.uploadFile({ css: 'input[type="file"]', path: file })
       await m.assertVisible({
         text: 'Remove recovery-draft.txt',
