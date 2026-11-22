@@ -24,7 +24,10 @@ import {
   type ChatWorkspaceState,
   newChatWorkspaceState
 } from './chatWorkspaceModel'
-import { Composer, type ComposerProps } from './Composer'
+import {
+  TestComposer as Composer,
+  type TestComposerProps as ComposerProps
+} from './composer.test.helpers'
 import {
   type ConversationFiles,
   ConversationScreen
@@ -378,6 +381,37 @@ describe('chat composer current send state', function () {
     onSend: () => {},
     ...over
   })
+  it('shows the selected image bytes in the draft and releases the preview when removed', async () => {
+    const file = {
+      fileName: 'practice.png',
+      contentType: 'image/png',
+      bytes: Uint8Array.of(12, 45)
+    }
+    const released: string[] = []
+    const uri = 'blob:draft-photo-test'
+    const files = {
+      bytesUri: async (bytes: Uint8Array, mime: string, name: string) => {
+        assert.equal(bytes, file.bytes)
+        assert.equal(mime, file.contentType)
+        assert.equal(name, file.fileName)
+        return uri
+      },
+      releaseUri: async (value: string) => {
+        released.push(value)
+      }
+    }
+    await render(<Composer {...props({ files, attachments: [file] })} />)
+    expect(
+      document.querySelector('[data-testid="chat-draft-photo"]')
+    ).not.equals(null)
+    expect(document.body.textContent).contains(file.fileName)
+    await render(<Composer {...props({ files, attachments: [] })} />)
+    expect(document.querySelector('[data-testid="chat-draft-photo"]')).equals(
+      null
+    )
+    assert.deepEqual(released, [uri])
+  })
+
   it('blocks Enter and Send during preparation or sending, while reading current props after rerender', async function () {
     let sends = 0
     const current = props({
@@ -389,7 +423,7 @@ describe('chat composer current send state', function () {
     await render(<Composer {...current} />)
     await act(async () => {
       key()
-      button('Send').click()
+      expect(document.querySelector('[aria-label="Send"]')).equals(null)
       await wait()
     })
     expect(sends).equals(0)
@@ -415,6 +449,66 @@ describe('chat composer current send state', function () {
     }
   })
 
+  it('draws visible circles behind Photos, Camera and File on a phone', async function () {
+    const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
+    try {
+      await render(
+        <Composer {...props({ sources: ['photos', 'camera', 'files'] })} />
+      )
+      await press('Attach')
+      const panel = document.querySelector(
+        '[data-testid="chat-attachment-panel"]'
+      )!
+      const panelFill = getComputedStyle(panel).backgroundColor
+      for (const label of ['Photos', 'Camera', 'File']) {
+        const circle = getComputedStyle(button(label).firstElementChild!)
+        expect(circle.width).equals(circle.height)
+        expect(parseFloat(circle.width)).to.be.greaterThan(0)
+        expect(parseFloat(circle.borderTopLeftRadius)).at.least(
+          parseFloat(circle.width) / 2
+        )
+        expect(circle.backgroundColor).not.equals(panelFill)
+        expect(circle.borderTopWidth).equals('1px')
+      }
+    } finally {
+      Object.defineProperty(Platform, 'OS', saved)
+    }
+  })
+
+  it('fits all attachment choices into a short phone drawer', async function () {
+    const original = Platform.OS
+    try {
+      Platform.OS = 'android'
+      let selected: string | undefined
+      await render(
+        <Composer
+          {...props({
+            attachmentPanelHeight: 68,
+            sources: ['photos', 'camera', 'files'],
+            onAttach: source => {
+              selected = source
+            }
+          })}
+        />
+      )
+      await press('Attach')
+      for (const label of ['Photos', 'Camera', 'File']) {
+        const action = button(label)
+        expect(action.textContent).contains(label)
+        expect(getComputedStyle(action).minHeight).equals('44px')
+        expect(getComputedStyle(action.firstElementChild!).height).equals(
+          '24px'
+        )
+        expect(getComputedStyle(action.parentElement!).paddingTop).equals('0px')
+      }
+      await press('File')
+      expect(selected).equals('files')
+    } finally {
+      Platform.OS = original
+    }
+  })
+
   it('returns an emptied iOS field to one line when a send clears its draft', async function () {
     // Seen on an iPhone 13 Pro: the multiline field kept its three-line
     // height after a send cleared the draft from outside.
@@ -428,9 +522,14 @@ describe('chat composer current send state', function () {
       await render(
         <Composer {...props({ text: 'First line\nSecond line\nThird line' })} />
       )
-      expect(height()).not.equals('44px')
+      expect(height()).not.equals('42px')
       await render(<Composer {...props({ text: '' })} />)
-      expect(height()).equals('44px')
+      const field = getComputedStyle(input().parentElement!)
+      expect(
+        parseFloat(height()) +
+          parseFloat(field.borderTopWidth) +
+          parseFloat(field.borderBottomWidth)
+      ).equals(44)
     } finally {
       Object.defineProperty(Platform, 'OS', saved)
     }
@@ -1361,6 +1460,85 @@ describe('chat repeated offscreen announcements', function () {
 })
 
 describe('chat conversation shared file preparation and sending', function () {
+  for (const platform of ['ios', 'android']) {
+    it(
+      'dismisses the attachment drawer on a history tap on ' + platform,
+      async () => {
+        const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+        Object.defineProperty(Platform, 'OS', {
+          configurable: true,
+          value: platform
+        })
+        try {
+          await screen(new FakeEngine(), {
+            draft: { text: 'Bring the bats', picked: [], scrollOffset: 0 }
+          })
+          await press('Attach')
+          const panel = (): Element | null =>
+            document.querySelector('[data-testid="chat-attachment-panel"]')
+          assert.ok(panel() != null)
+          const history = document.querySelector(
+            '[data-testid="chat-message-history"]'
+          )!
+          await act(async () => {
+            const touch = {
+              target: history,
+              identifier: 0,
+              pageX: 8,
+              pageY: 160
+            }
+            for (const type of ['touchstart', 'touchend']) {
+              const touches = type === 'touchstart' ? [touch] : []
+              history.dispatchEvent(
+                Object.assign(new window.Event(type, { bubbles: true }), {
+                  changedTouches: [touch],
+                  targetTouches: touches,
+                  touches
+                })
+              )
+            }
+            // jsdom doesn't synthesize the compatibility mouse events after a tap.
+            for (const type of ['mousedown', 'mouseup'])
+              history.dispatchEvent(
+                new window.MouseEvent(type, { bubbles: true })
+              )
+            await wait()
+          })
+          assert.equal(panel() != null, false)
+          assert.equal(input().value, 'Bring the bats')
+          assert.notEqual(document.activeElement, input())
+        } finally {
+          Object.defineProperty(Platform, 'OS', saved)
+        }
+      }
+    )
+  }
+
+  it('dismisses Attach on an outside click and preserves the draft and focus destination', async () => {
+    await screen(new FakeEngine())
+    await type('Bring the bats')
+    const panel = (): Element | null =>
+      document.querySelector('[data-testid="chat-attachment-panel"]')
+    await press('Attach')
+    assert.ok(panel() != null)
+    const history = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    history.tabIndex = 0
+    await act(async () => {
+      history.focus()
+      history.click()
+      await wait()
+    })
+    expect(panel()).equals(null)
+    expect(document.activeElement).equals(history)
+    expect(input().value).equals('Bring the bats')
+    await press('Attach')
+    await press(lstrings.chat_close_attachments)
+    expect(panel()).equals(null)
+    expect(document.activeElement).equals(input())
+  })
+
   it('edits an old original from the author menu and restores its separate unsent draft and file', async () => {
     const engine = new FakeEngine()
     const original = message({
@@ -2063,7 +2241,12 @@ describe('chat conversation shared file preparation and sending', function () {
     await screen(engine, {
       draft: { text: 'Caption', picked: [], scrollOffset: 0 }
     })
+    await press('Attach')
+    const panel = (): Element | null =>
+      document.querySelector('[data-testid="chat-attachment-panel"]')
+    assert.ok(panel() != null)
     await drag('drop', transfer([first, file('second.pdf')]))
+    expect(panel()).equals(null)
     expect(button('Send').getAttribute('aria-disabled')).equals('true')
     await act(async () => {
       key()
@@ -2084,6 +2267,11 @@ describe('chat conversation shared file preparation and sending', function () {
         )
       )
     ).deep.equals(['first.pdf', 'second.pdf'])
+    expect(panel()).equals(null)
+    await press('Attach')
+    expect(panel()?.contains(document.activeElement)).equals(true)
+    await press('Close attachments')
+    expect(panel()).equals(null)
     expect(engine.calls).deep.equals([])
     expect(button('Send').getAttribute('aria-disabled')).not.equals('true')
     await press('Send')
@@ -2117,6 +2305,7 @@ describe('chat conversation shared file preparation and sending', function () {
       draft: { text: 'Caption', picked, scrollOffset: 0 }
     })
     await press('Attach')
+    await press('File')
     let reads = 0
     await drag(
       'drop',
@@ -2171,6 +2360,7 @@ describe('chat conversation shared file preparation and sending', function () {
       }
     })
     await press('Attach')
+    await press('File')
     expect(document.body.textContent).contains(
       'That attachment could not be opened.'
     )
@@ -2181,6 +2371,7 @@ describe('chat conversation shared file preparation and sending', function () {
     const engine = new FakeEngine()
     await screen(engine)
     await press('Attach')
+    await press('File')
     const picker = document.querySelector('input[type="file"]')!
     await act(async () => {
       picker.dispatchEvent(new window.Event('cancel'))
@@ -2256,6 +2447,7 @@ describe('chat conversation shared file preparation and sending', function () {
       onDraftChange: onDraftChange('cnv_aurora')
     })
     await press('Attach')
+    await press('File')
     let queuedReads = 0
     await drag(
       'drop',
@@ -2372,6 +2564,7 @@ describe('chat conversation shared file preparation and sending', function () {
       files: { ...files, pickFiles: async () => await picker.promise }
     })
     await press('Attach')
+    await press('File')
     await act(async () => {
       engine.update('cnv_aurora', { composer: 'readOnly' })
       await wait()
@@ -2573,7 +2766,7 @@ describe('review3 picker activation and busy lifetime', function () {
     expect(engine.calls).deep.equals([])
   })
 
-  it('invokes a valid picker in its original Attach turn and releases preparation on cancel', async function () {
+  it('invokes a valid picker in its File activation turn and releases preparation on cancel', async function () {
     const engine = new FakeEngine()
     const picker = pending<PickedFile[]>()
     let inPress = false
@@ -2588,9 +2781,11 @@ describe('review3 picker activation and busy lifetime', function () {
       },
       draft: { text: 'Retained caption', picked: [], scrollOffset: 0 }
     })
+    await press('Attach')
+    expect(calls).deep.equals([])
     await act(async () => {
       inPress = true
-      button('Attach').click()
+      button('File').click()
       inPress = false
       await wait()
     })

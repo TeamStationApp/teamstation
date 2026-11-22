@@ -1154,10 +1154,18 @@ function compareComposerRasters(
 
 export async function observeComposerCaptureReady(
   ui: Chat2UI,
-  expected: { focused?: boolean; reply?: boolean } = {},
+  expected: { focused?: boolean; reply?: boolean; sendVisible?: boolean } = {},
   timeout = ui.native ? 90000 : 8000
 ): Promise<Json> {
   type Box = NonNullable<PublicNode['bounds']>
+  const sendVisible = expected.sendVisible !== false
+  const required = [
+    'composer',
+    'band',
+    'attach',
+    ...(sendVisible ? ['send'] : []),
+    ...(expected.reply === true ? ['reply'] : [])
+  ]
   const samples: Json[] = []
   const observation: Json = {
     name: 'Settled composer capture readiness',
@@ -1189,6 +1197,10 @@ export async function observeComposerCaptureReady(
     ) => Promise<{
       element?: { id?: string; text?: string; class?: string; bounds?: Box }
     }>
+    assertNotVisible: (
+      args: Json,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>
     evalBrowserScript: (
       args: Json,
       options: { signal: AbortSignal }
@@ -1332,6 +1344,21 @@ export async function observeComposerCaptureReady(
           ['attach', { text: ios ? 'Attach' : exactText('Attach') }],
           ['send', { text: ios ? 'Send' : exactText('Send') }]
         ] as const) {
+          if (name === 'send' && !sendVisible) {
+            await device.assertNotVisible(
+              { id: '^chat-send$', timeout: Math.min(1000, remaining()) },
+              { signal: AbortSignal.timeout(remaining()) }
+            )
+            if (
+              nodes.some(
+                n =>
+                  n.id === 'chat-send' ||
+                  (n.type === 'Button' && n.text === 'Send')
+              )
+            )
+              visible = false
+            continue
+          }
           if (geometry[name] != null) continue
           const found = await nativeProbe(
             selector,
@@ -1363,12 +1390,7 @@ export async function observeComposerCaptureReady(
           const band = geometry.band
           visible =
             band != null &&
-            [
-              'composer',
-              'attach',
-              'send',
-              ...(expected.reply === true ? ['reply'] : [])
-            ].every(name => {
+            required.every(name => {
               const child = geometry[name]
               return (
                 child != null &&
@@ -1552,7 +1574,9 @@ export async function observeComposerCaptureReady(
           const composer=document.querySelector('[data-testid="chat-composer"]');
           const band=document.querySelector('[data-testid="chat-composer-band"]');
           const geometry={},styles={};let visible=true;
-          const entries=[['composer',composer],['band',band],['attach',band&&band.querySelector('[aria-label="Attach"]')],['send',band&&band.querySelector('[aria-label="Send"]')]];
+          const entries=[['composer',composer],['band',band],['attach',band&&band.querySelector('[aria-label="Attach"]')]];
+          const send=band&&band.querySelector('[data-testid="chat-send"],[aria-label="Send"]');
+          if(${sendVisible})entries.push(['send',send]);else if(send!==null)visible=false;
           if(${expected.reply === true})entries.push(['reply',band&&band.querySelector('[aria-label="Cancel reply"]')]);
           for(const [name,node] of entries){
             if(node===null){visible=false;continue;}
@@ -1595,7 +1619,7 @@ export async function observeComposerCaptureReady(
       }
       sample.bounds = geometry
       const finite =
-        Object.keys(geometry).length >= 4 &&
+        required.every(name => geometry[name] != null) &&
         Object.values(geometry).every(
           box =>
             [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
@@ -2345,10 +2369,20 @@ export class Scenarios {
           throw new Chat2Blocked(
             'Compatibility requires its own prepared profile; account replacement is prohibited'
           )
-        requireAfterArchive(
-          this.f,
-          ui.scenario === 'capture' ? ui.surface : undefined
-        )
+        if (!ui.usesFreshBrowserProfile)
+          requireAfterArchive(
+            this.f,
+            ui.scenario === 'capture' ? ui.surface : undefined
+          )
+        if (ui.usesFreshBrowserProfile) {
+          await ui.dom(`
+            const buttons = [...document.querySelectorAll('button,[role="button"]')]
+              .filter(n => n.textContent?.trim() === 'Sign out')
+            if (buttons.length !== 1) throw Error('Expected one public Sign out button')
+            buttons[0].scrollIntoView({ block: 'center', behavior: 'instant' })
+            return { accountButtonRevealed: true }
+          `)
+        }
         await m.scrollUntilVisible({
           element: { text: exactText('Sign out') },
           direction: 'DOWN',
@@ -2393,27 +2427,35 @@ export class Scenarios {
       if (tab != null) await ui.tapObserved(tab)
       await ui.notNow()
     }
-    if (!ui.native) {
-      const readiness: Json = {
-        browserIdentityReadiness: [],
+    const lockedViewer = this.f.lockedCases?.[ui.surface]?.viewer === key
+    if (!ui.native || lockedViewer) {
+      const samples: Json[] = []
+      this.observations.push({
+        [ui.native ? 'nativeIdentityReadiness' : 'browserIdentityReadiness']:
+          samples,
         startedAt: new Date().toISOString()
-      }
-      this.observations.push(readiness)
+      })
       await until(
         async () => {
+          if (
+            lockedViewer &&
+            (await ui.visible({ id: 'chat-age-adult' }, 500))
+          ) {
+            await ui.id('chat-age-adult')
+          }
           const link = await ui.visible(
             { text: exactText('Link this device') },
             500
           )
           const list = await ui.visible({ id: 'chat-conversation-list' }, 500)
-          ;(readiness.browserIdentityReadiness as unknown[]).push({
+          samples.push({
             at: new Date().toISOString(),
             link,
             list
           })
           return link || list ? true : undefined
         },
-        'actual browser Link or conversation-list readiness',
+        'actual Link or conversation-list readiness',
         30000
       )
     }
@@ -3887,7 +3929,7 @@ export class Scenarios {
     this.observations.push(proof)
     let previous: string | undefined
     let since = 0
-    let missing: string | undefined
+    let waitingFor: string | undefined
     await until(
       async () => {
         const value = await ui.dom(
@@ -3895,9 +3937,17 @@ export class Scenarios {
         const id=${JSON.stringify(target.id)},one=id=>{const ns=document.querySelectorAll('[data-testid='+JSON.stringify(id)+']');if(ns.length!==1)throw Error('Unique actual anchor element required: '+id);return ns[0]};
         const h=one('chat-message-history'),absent=['chat-message-'+id,'chat-bubble-'+id].find(n=>document.querySelectorAll('[data-testid='+JSON.stringify(n)+']').length===0);if(absent)return {missing:absent};
         const r=one('chat-message-'+id),b=one('chat-bubble-'+id);if(!h.contains(r)||!r.contains(b))throw Error('Actual history/row/bubble ancestry required');
-        const box=n=>{const b=n.getBoundingClientRect(),v={x:b.x,y:b.y,width:b.width,height:b.height};if(!Object.values(v).every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Positive finite actual anchor geometry required');return v};
+        const box=node=>{
+          const {x,y,width,height}=node.getBoundingClientRect();
+          if(![x,y,width,height].every(Number.isFinite)||width<0||height<0)throw Error('Positive finite actual anchor geometry required');
+          return {x,y,width,height};
+        };
+        const row=box(r),bubble=box(b),history=box(h);
+        for(const [node,rect] of [[r,row],[b,bubble],[h,history]]) {
+          if(rect.width===0||rect.height===0)return {unmeasured:node.getAttribute('data-testid'),rect};
+        }
         if(![h.scrollTop,h.scrollHeight,h.clientHeight,innerWidth,innerHeight].every(Number.isFinite)||h.clientHeight<=0)throw Error('Finite positive actual history/viewport required');
-        return {observedMs:performance.now(),geometry:{row:box(r),bubble:box(b),history:{box:box(h),offset:h.scrollTop,content:h.scrollHeight,height:h.clientHeight},viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}}};
+        return {observedMs:performance.now(),geometry:{row,bubble,history:{box:history,offset:h.scrollTop,content:h.scrollHeight,height:h.clientHeight},viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}}};
       `,
           signal
         )
@@ -3905,14 +3955,21 @@ export class Scenarios {
           at: new Date().toISOString(),
           value
         })
-        // A virtualized row can be briefly unmounted while its window moves;
-        // it is read again once mounted, never assumed to stay.
-        if (typeof value.missing === 'string') {
-          missing = value.missing
+        // Virtualized rows can mount before layout supplies a positive size.
+        // Either condition interrupts the full interval of stable geometry.
+        if (
+          typeof value.missing === 'string' ||
+          typeof value.unmeasured === 'string'
+        ) {
+          waitingFor =
+            typeof value.missing === 'string'
+              ? 'Unique actual anchor element required: ' + value.missing
+              : 'Positive finite actual anchor geometry required: ' +
+                String(value.unmeasured)
           previous = undefined
           return undefined
         }
-        missing = undefined
+        waitingFor = undefined
         const viewport = (
           value.geometry as { viewport: { width: number; height: number } }
         ).viewport
@@ -3937,8 +3994,7 @@ export class Scenarios {
       'stable actual row/history geometry for 200ms',
       budget
     ).catch((error: unknown) => {
-      if (missing != null)
-        throw Error('Unique actual anchor element required: ' + missing)
+      if (waitingFor != null) throw Error(waitingFor)
       throw error
     })
   }
@@ -4314,11 +4370,11 @@ export class Scenarios {
       await ui.text('Attach')
       // Attach toggles its sources; a retried tap that landed before they
       // rendered closes them again.
-      if (!(await ui.visible({ text: exactText('Photo library') }, 3000))) {
+      if (!(await ui.visible({ text: exactText('Photos') }, 3000))) {
         this.observations.push({ attachRetapped: true })
         await ui.text('Attach')
       }
-      await ui.text('Photo library')
+      await ui.text('Photos')
       for (const selector of need(
         files.nativePicker?.[ui.surface],
         'Observed public native photo-picker selectors required'
@@ -4639,19 +4695,23 @@ export class Scenarios {
       [width, height].every(value => Number.isFinite(value) && value > 0),
       'Actual finite member-framing viewport required'
     )
-    const inViewport = (box: NonNullable<PublicNode['bounds']>): boolean =>
+    const inViewport = (
+      box: NonNullable<PublicNode['bounds']>,
+      minimumY = 0
+    ): boolean =>
       [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
       box.width > 0 &&
       box.height > 0 &&
       box.x >= 0 &&
-      box.y >= 0 &&
+      box.y >= minimumY &&
       box.x + box.width <= width &&
       box.y + box.height <= height
     const nodes = await ui.nodes()
     const header = nodes.filter(
       n =>
         n.bounds != null &&
-        inViewport(n.bounds) &&
+        // The desktop header centers its 48px Back button on a 47px row.
+        inViewport(n.bounds, ui.native ? 0 : -0.5) &&
         n.bounds.y + n.bounds.height <= height / 3 &&
         (ui.surface !== 'ios' || n.type === 'Button') &&
         (n.text === 'Back' || n.text?.startsWith('Account, ') === true)
@@ -7501,6 +7561,20 @@ export class Scenarios {
     )
   }
 
+  async assertSelectedMention(userId: string): Promise<void> {
+    const members = await (await this.client()).chatMembers(this.group)
+    const selected = members.find(member => member.userId === userId)
+    assert(
+      selected != null,
+      'The selected mention must still be a current member'
+    )
+    const name = selected.compactName ?? selected.shortName
+    assert(
+      name.length > 0 && (await this.ui.draft()).includes('@' + name),
+      'The draft must contain the current mention label for the selected member'
+    )
+  }
+
   async E7(): Promise<void> {
     const ui = this.ui
     await this.check(
@@ -7650,7 +7724,7 @@ export class Scenarios {
         )
         await ui.selectMention(first)
         await ui.assertKeyboard()
-        assert((await ui.draft()).includes('@' + first.name))
+        await this.assertSelectedMention(first.userId)
         await ui.shot(
           'mention-composer',
           'Actual readable selected mention token and focused composer'
@@ -9100,7 +9174,9 @@ export class Scenarios {
         const editor=n instanceof HTMLInputElement||n instanceof HTMLTextAreaElement;
         const enabled=n.disabled!==true&&n.readOnly!==true&&n.getAttribute('aria-disabled')!=='true';
         const intersection={width:Math.max(0,Math.min(b.right,viewport.x+viewport.width)-Math.max(b.left,viewport.x)),height:Math.max(0,Math.min(b.bottom,viewport.y+viewport.height)-Math.max(b.top,viewport.y))};
-        const framed=editor?intersection.width>=44&&intersection.height>=44:b.left>=viewport.x-1&&b.top>=viewport.y-1&&b.right<=viewport.x+viewport.width+1&&b.bottom<=viewport.y+viewport.height+1;
+        // The one-line composer has a 42px editor inside its 44px bordered pill.
+        const fullShortComposer=n.matches('[data-testid="chat-composer-field"] [data-testid="chat-composer"]')&&b.height>=42&&intersection.height===b.height;
+        const framed=editor?intersection.width>=44&&(intersection.height>=44||fullShortComposer):b.left>=viewport.x-1&&b.top>=viewport.y-1&&b.right<=viewport.x+viewport.width+1&&b.bottom<=viewport.y+viewport.height+1;
         return {name:spec.name,box,intersection,editor,focused:document.activeElement===n,enabled,visible,ready:visible&&enabled&&framed&&(!editor||spec.requireFocus===false||document.activeElement===n)};
       });return {viewport,controls};`,
         signal
@@ -9175,6 +9251,8 @@ export class Scenarios {
     const ui = this.ui
     await this.signIn()
     await this.openGroup()
+    await ui.replaceDraft('')
+    if (ui.native) await ui.hideKeyboardForCapture('')
     await this.anchor()
     for (const variant of [
       'light',
@@ -9253,7 +9331,9 @@ export class Scenarios {
                     : ' desktop More menu and accessible controls; touch spotlight not applicable')
               )
               await this.dismiss()
-              this.observations.push(await observeComposerCaptureReady(ui))
+              this.observations.push(
+                await observeComposerCaptureReady(ui, { sendVisible: false })
+              )
             }
             if (recording == null) await transition()
             else {
@@ -9349,11 +9429,12 @@ export class Scenarios {
             this.observations.push(
               await observeComposerCaptureReady(ui, {
                 focused: true,
-                reply: false
+                reply: false,
+                sendVisible: true
               })
             )
             await this.nativeKeyboardGeometry()
-            assert((await ui.draft()).includes('@' + member.name))
+            await this.assertSelectedMention(member.userId)
             await ui.shot(
               variant + '-mention-composer',
               'Actual ' + variant + ' selected token and composer line-box'
@@ -9419,7 +9500,7 @@ export class Scenarios {
       await ui.shot('composer', 'Actual320pixel touch composer clipping check')
       return
     }
-    if (ui.native) await ui.hideKeyboardForCapture()
+    if (ui.native) await ui.hideKeyboardForCapture('')
     await ui.shot('conversation', 'Same synthetic short anchor as baseline')
     await ui.shot(
       'floating-pins',
@@ -9443,13 +9524,17 @@ export class Scenarios {
     }
     await ui.assertKeyboard()
     this.observations.push(
-      await observeComposerCaptureReady(ui, { focused: true, reply: true })
+      await observeComposerCaptureReady(ui, {
+        focused: true,
+        reply: true,
+        sendVisible: false
+      })
     )
     await ui.shot(
       'reply-keyboard',
       'Explicit Reply focus/keyboard checked before typing'
     )
-    if (ui.native) await ui.hideKeyboardForCapture()
+    if (ui.native) await ui.hideKeyboardForCapture('')
     await this.cancelReply()
     await this.openInfo()
     this.observations.push(await observeInfoCaptureReady(ui))
@@ -9471,7 +9556,11 @@ export class Scenarios {
     )
     await ui.selectMention(member)
     this.observations.push(
-      await observeComposerCaptureReady(ui, { focused: true, reply: false })
+      await observeComposerCaptureReady(ui, {
+        focused: true,
+        reply: false,
+        sendVisible: true
+      })
     )
     await ui.shot(
       'mention-composer',
@@ -9485,7 +9574,11 @@ export class Scenarios {
     if (ui.native) {
       await ui.id('chat-composer')
       this.observations.push(
-        await observeComposerCaptureReady(ui, { focused: true, reply: false })
+        await observeComposerCaptureReady(ui, {
+          focused: true,
+          reply: false,
+          sendVisible: true
+        })
       )
       await ui.shot('keyboard-pins', 'Actual keyboard/pin/composer layout')
     }
@@ -9799,7 +9892,7 @@ async function main(): Promise<void> {
       await scenarios.run(command as 'I1' | 'I2' | 'I3')
       completed.push(command)
     } else {
-      requireAfterArchive(fixture)
+      if (!ui.usesFreshBrowserProfile) requireAfterArchive(fixture)
       await scenarios.signIn()
       for (const scenario of command === 'surface'
         ? CHAT2_SCENARIOS

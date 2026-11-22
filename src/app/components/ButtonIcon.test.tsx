@@ -292,6 +292,8 @@ describe('button icon placement', function () {
       'check',
       'pin',
       'shareOut',
+      'camera',
+      'photoLibrary',
       'print'
     ] as const) {
       const node = await render(

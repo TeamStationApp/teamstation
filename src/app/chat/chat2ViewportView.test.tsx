@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act, useEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Keyboard, Platform } from 'react-native'
+import { Dimensions, Keyboard, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { AppHeader } from '../components/AppHeader'
@@ -14,7 +14,10 @@ import { ChatConversationIdentity } from './ChatConversationIdentity'
 import { ChatListScreen } from './ChatListScreen'
 import { ChatViewport, useChatViewport } from './ChatViewport'
 import { chat, message, view } from './chatViews.test.helpers'
-import { Composer, type ComposerProps } from './Composer'
+import {
+  TestComposer as Composer,
+  type TestComposerProps as ComposerProps
+} from './composer.test.helpers'
 import { ConversationScreen } from './ConversationScreen'
 import type { ChatEngineEvent, ChatEngineListener } from './engine/store'
 import type { ChatScreenEngine } from './screenEngine'
@@ -341,6 +344,227 @@ describe('chat measured chrome and explicit focus', function () {
     }
   })
 
+  for (const os of ['ios', 'android'] as const)
+    it(`fills only the vacated keyboard area with the ${os} attachment panel`, async function () {
+      const originalOS = Platform.OS
+      const originalListener = Keyboard.addListener.bind(Keyboard)
+      const originalGet = Dimensions.get.bind(Dimensions)
+      const handlers = new Map<
+        string,
+        (event: {
+          endCoordinates: { screenY: number; width: number; height: number }
+        }) => void
+      >()
+      const size = { width: 390, height: 844, scale: 1, fontScale: 1 }
+      const normalBand = { composer: 0, measuredDrawer: 0, paneHeader: 0 }
+      let measureBand: (band: typeof normalBand) => void
+      let frameHeight = 844
+      let refresh: () => void = () => {}
+      let nativeKeyboardEnded: (() => void) | undefined
+      function Probe(): React.ReactElement {
+        const [handoffWidth, setHandoffWidth] = useState<number>()
+        const [band, setBand] = useState(normalBand)
+        measureBand = setBand
+        const viewport = useChatViewport({
+          ...band,
+          attachmentPanel: true,
+          handoffWidth
+        })
+        nativeKeyboardEnded = viewport.keyboardReturnSettled
+        const handleReturnToKeyboard = viewport.returnToKeyboard
+        useEffect(() => {
+          Object.defineProperty(viewport.frame.current!, 'measureInWindow', {
+            configurable: true,
+            value: (
+              read: (
+                x: number,
+                y: number,
+                width: number,
+                height: number
+              ) => void
+            ) => {
+              read(0, 0, size.width, frameHeight)
+            }
+          })
+          refresh = viewport.measure
+          refresh()
+        }, [viewport.measure, viewport.frame])
+        return (
+          <ChatViewport viewport={viewport}>
+            <button onClick={handleReturnToKeyboard}>Return to keyboard</button>
+            <button
+              onClick={() => {
+                setHandoffWidth(viewport.dockedKeyboardWidth)
+              }}
+            >
+              Use keyboard dock
+            </button>
+            <span data-testid="dock-bottom">{viewport.composerBottom}</span>
+            <span data-testid="returning">
+              {String(viewport.returningToKeyboard)}
+            </span>
+            <span data-testid="drawer">{viewport.attachmentPanelHeight}</span>
+          </ChatViewport>
+        )
+      }
+      try {
+        Platform.OS = os
+        Dimensions.get = () => size
+        Keyboard.addListener = (name, handler) => {
+          handlers.set(
+            name,
+            handler as (event: {
+              endCoordinates: { screenY: number; width: number; height: number }
+            }) => void
+          )
+          return {
+            remove: () => {
+              handlers.delete(name)
+            }
+          }
+        }
+        const node = await render(<Probe />)
+        const height = (): number =>
+          Number(node.querySelector('[data-testid="drawer"]')!.textContent)
+        expect(height()).equals(260)
+        // The app can start in a short split-screen frame on a full-size display.
+        await act(async () => {
+          frameHeight = 400
+          refresh()
+        })
+        expect(height()).equals(260)
+        await act(async () => {
+          frameHeight = 844
+          refresh()
+        })
+        const event = (
+          y: number,
+          w: number,
+          h: number
+        ): {
+          endCoordinates: { screenY: number; width: number; height: number }
+        } => ({
+          endCoordinates: { screenY: y, width: w, height: h }
+        })
+        const show = [...handlers].find(([key]) => key.endsWith('Show'))![1]
+        const hide = [...handlers].find(([key]) => key.endsWith('Hide'))![1]
+        await act(async () => {
+          show(event(530, 390, 314))
+        })
+        expect(height()).equals(0)
+        await act(async () => {
+          frameHeight = 660
+          refresh()
+          hide(event(844, 390, 0))
+        })
+        expect(height()).equals(130)
+        // Resizing the app after dismissal keeps the keyboard's height, but
+        // moves the dock to the new bottom even when the width is unchanged.
+        // In the shorter frame the header and conversation keep 112 points.
+        for (const [appHeight, panelHeight] of [
+          [400, 288],
+          [650, 314]
+        ]) {
+          await act(async () => {
+            size.height = appHeight
+            frameHeight = appHeight
+            refresh()
+          })
+          expect(height()).equals(panelHeight)
+        }
+        await act(async () => {
+          size.height = frameHeight = 320
+          measureBand({ composer: 136, measuredDrawer: 0, paneHeader: 56 })
+          refresh()
+        })
+        // The shell and pane headers consume 104 points. The tall draft,
+        // composer inset and panel gap must fit above the attachment choices.
+        expect(height()).equals(68)
+        await act(async () => {
+          measureBand({ composer: 208, measuredDrawer: 72, paneHeader: 56 })
+        })
+        expect(height()).equals(68)
+        await act(async () => {
+          measureBand(normalBand)
+          size.height = 844
+          frameHeight = 844
+          refresh()
+        })
+        expect(height()).equals(314)
+        await act(async () => {
+          show(event(280, 190, 120))
+        })
+        expect(height()).equals(314)
+        await act(async () => {
+          node.querySelector('button')!.click()
+        })
+        const returning = (): string | null =>
+          node.querySelector('[data-testid="returning"]')!.textContent
+        expect(returning()).equals('true')
+        // A hardware keyboard can keep focus without a software show event.
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 550))
+        })
+        expect(returning()).equals('false')
+        // Starting from a docked system keyboard holds the field at its previous
+        // height even when hide and show notifications arrive on different frames.
+        await act(async () => {
+          show(event(530, 390, 314))
+        })
+        const dockBottom = (): number =>
+          Number(node.querySelector('[data-testid="dock-bottom"]')!.textContent)
+        const initial = dockBottom()
+        await act(async () => {
+          node.querySelectorAll('button')[1].click()
+        })
+        const panel = height()
+        expect(panel).to.be.greaterThan(300)
+        expect(dockBottom() + panel + 4).equals(initial)
+        await act(async () => {
+          hide(event(844, 390, 0))
+        })
+        expect(height()).equals(panel)
+        expect(dockBottom() + height() + 4).equals(initial)
+        await act(async () => {
+          node.querySelector('button')!.click()
+        })
+        await act(async () => {
+          show(event(530, 390, 314))
+        })
+        expect(
+          returning(),
+          'the dock stays occupied until the keyboard animation ends'
+        ).equals('true')
+        await act(async () => {
+          if (os === 'ios')
+            handlers.get('keyboardDidShow')!(event(530, 390, 314))
+          else nativeKeyboardEnded!()
+        })
+        expect(returning()).equals('false')
+        if (os === 'android') {
+          // Some phones deliver the controller end before RN measures the IME.
+          await act(async () => {
+            hide(event(844, 390, 0))
+          })
+          await act(async () => {
+            node.querySelector('button')!.click()
+          })
+          await act(async () => {
+            nativeKeyboardEnded!()
+            await new Promise(resolve => setTimeout(resolve, 550))
+          })
+          expect(returning(), 'wait for the new keyboard bounds').equals('true')
+          await act(async () => {
+            show(event(530, 390, 314))
+          })
+          expect(returning()).equals('false')
+        }
+      } finally {
+        Platform.OS = originalOS
+        Dimensions.get = originalGet
+        Keyboard.addListener = originalListener
+      }
+    })
   it('shows one accessible two-line identity for groups and DMs and opens information through the full hit area', async function () {
     let opened = 0
     const group = chat({ scopeName: 'Harbor', memberCount: 99 })
@@ -380,6 +604,60 @@ describe('chat measured chrome and explicit focus', function () {
     ).not.equals(null)
   })
 
+  it('gives the open Android attachment panel the scene back action and restores the input', async function () {
+    const original = Platform.OS
+    try {
+      Platform.OS = 'android'
+      let back: (() => void) | null = null
+      let resumed = 0
+      const node = await render(
+        <HeaderSlotProvider
+          headerHeight={48}
+          onHandoff={() => {}}
+          onBackOverride={handler => {
+            back = handler
+          }}
+        >
+          <Composer
+            text="Practice"
+            onText={() => {}}
+            enabled
+            sending={false}
+            context={undefined}
+            onCancelContext={() => {}}
+            attachments={[]}
+            onRemoveAttachment={() => {}}
+            sources={['photos', 'camera', 'files']}
+            onAttach={() => {}}
+            onSend={() => {}}
+            returnToKeyboard={() => {
+              resumed++
+            }}
+          />
+        </HeaderSlotProvider>
+      )
+      const input = node.querySelector<HTMLTextAreaElement>('textarea')!
+      await act(async () => {
+        node.querySelector<HTMLElement>('[aria-label="Attach"]')!.click()
+      })
+      expect(
+        node.querySelector('[data-testid="chat-attachment-panel"]')
+      ).not.equals(null)
+      expect(back).to.be.a('function')
+      await act(async () => {
+        back?.()
+      })
+      expect(back).equals(null)
+      expect(resumed).equals(1)
+      expect(document.activeElement).equals(input)
+      expect(input.value).equals('Practice')
+      expect(
+        node.querySelector('[data-testid="chat-attachment-panel"]')
+      ).equals(null)
+    } finally {
+      Platform.OS = original
+    }
+  })
   it('registers a synchronous reusable focus action and never focuses a disabled or merely updated draft', async function () {
     let focus: (() => void) | undefined
     const register = (next: () => void) => {

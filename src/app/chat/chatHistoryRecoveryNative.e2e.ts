@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { executablePath } from 'puppeteer'
 
+import { tapImportedPhoto } from '../../../e2e/rigs/chat2Maestro'
 import type { TeamStationClient } from '../../common/api'
 import {
   maestroClient,
@@ -14,6 +15,7 @@ import {
   controlRecovery,
   type RecoveryControl
 } from '../../test/chatRecoveryControl'
+import { encodePng } from '../../test/rasterImage'
 
 interface Node {
   id?: string
@@ -28,6 +30,7 @@ interface NativeDevice {
   hierarchyRaw: () => Promise<Uint8Array>
   screenshot: () => Promise<Uint8Array>
   tapOn: (options: object) => Promise<unknown>
+  tapOnPoint: (options: { point: string }) => Promise<unknown>
   inputText: (options: { text: string }) => Promise<unknown>
   assertVisible: (options: object) => Promise<unknown>
   addMedia: (options: { files: string[] }) => Promise<unknown>
@@ -224,24 +227,18 @@ export async function nativeHistoryRecovery(options: {
         '60000'
       ])
       const file = join(options.results, 'recovery-photo.png')
-      writeFileSync(
-        file,
-        Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGD4DwABCAEBfBRbtQAAAABJRU5ErkJggg==',
-          'base64'
-        )
+      // Physical photo pickers need an ordinary thumbnail-sized image.
+      const side = 128
+      const pixels = Buffer.alloc(
+        side * side * 4,
+        Buffer.from([38, 125, 72, 255])
       )
+      pixels.fill(255, side * 63 * 4, side * 65 * 4)
+      writeFileSync(file, encodePng(side, side, pixels))
       await m.addMedia({ files: [file] })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const photo = await until(
-        'Synthetic imported image must be selectable',
-        async () =>
-          flatten(await m.hierarchy())
-            .flatMap(node => [node.text, node.label])
-            .find(text => text != null && /^Photo(?: taken|,)/.test(text))
-      )
-      await m.tapOn({ text: photo })
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, input.platform)
       const attachment = await until(
         'Prepared attachment must be visible',
         async () =>

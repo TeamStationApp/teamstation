@@ -9,6 +9,7 @@ import { conversationPill, conversationTitle } from './chatModel'
 import type { ConversationListItem } from './engine/engine'
 
 export function ChatConversationIdentity(props: {
+  identityRef?: React.Ref<React.ComponentRef<typeof View>>
   conversation: ConversationListItem
   onPress: () => void
 }): React.ReactElement {
@@ -18,6 +19,7 @@ export function ChatConversationIdentity(props: {
     conversationPill(props.conversation) ?? lstrings.chat_direct_conversation
   return (
     <Pressable
+      ref={props.identityRef}
       testID="chat-conversation-identity"
       accessibilityRole="button"
       accessibilityLabel={`${title}, ${subtitle}`}
