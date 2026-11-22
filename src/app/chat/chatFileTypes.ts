@@ -9,7 +9,7 @@ import type { OutgoingFile } from './engine/send'
  */
 
 /** Where the composer's Attach offers to pick from. */
-export type PickSource = 'photos' | 'files'
+export type PickSource = 'photos' | 'camera' | 'files'
 
 /** A picked file, its bytes read, ready for `engine.attach`. */
 export type PickedFile = OutgoingFile

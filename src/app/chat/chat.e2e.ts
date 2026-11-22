@@ -1462,15 +1462,18 @@ describe('chat scenarios in the browser', function () {
       process.env.TS_CHAT_FIXTURES ?? join(ARTIFACTS, '..', 'fixtures')
     const parentB = await signedIn('B')
     await openChat(parentB, 'Hawks Members')
-    const [chooser] = await Promise.all([
-      parentB.waitForFileChooser(),
-      press(parentB, 'Attach')
-    ])
-    await chooser.accept([
-      join(fixtures, 'photo.jpg'),
-      join(fixtures, 'clip.mp4')
-    ])
-    await waitForText(parentB, 'clip.mp4')
+    for (const [source, file] of [
+      ['Photos', 'photo.jpg'],
+      ['File', 'clip.mp4']
+    ]) {
+      await press(parentB, 'Attach')
+      const [chooser] = await Promise.all([
+        parentB.waitForFileChooser(),
+        press(parentB, source)
+      ])
+      await chooser.accept([join(fixtures, file)])
+      await waitForText(parentB, file)
+    }
     await send(parentB, 'Photos from practice')
     await shot(parentB, 'e11-1-b-sent')
 

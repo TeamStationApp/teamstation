@@ -58,6 +58,7 @@ export interface ChatHistoryListProps<T> {
   style: StyleProp<ViewStyle>
   contentContainerStyle: StyleProp<ViewStyle>
   keyboardShouldPersistTaps: 'handled'
+  onTouchEnd?: () => void
   onScroll: ScrollHandler
   onScrollBeginDrag: ScrollHandler
   onScrollEndDrag: ScrollHandler
@@ -74,6 +75,8 @@ export interface ChatHistoryListProps<T> {
 export interface ChatHistoryKeyboardOptions {
   /** Clearance below the last row with the keyboard closed, less the composer. */
   closedClearance: number
+  attachmentHandoff?: boolean
+  onKeyboardReturnSettled?: () => void
   /** How much of the keyboard's height the closed clearance already covers. */
   keyboardOffset: number
   /** Whether this conversation owns the keyboard (shown, no overlay scene). */
@@ -81,6 +84,7 @@ export interface ChatHistoryKeyboardOptions {
 }
 
 export interface ChatHistoryKeyboard {
+  holdKeyboardInset?: () => void
   composerRef: React.RefObject<React.ComponentRef<typeof View> | null>
   onComposerLayout: (event: LayoutChangeEvent) => void
   /** Spread into the list as its `keyboard` prop. */

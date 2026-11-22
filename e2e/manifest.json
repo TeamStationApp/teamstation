@@ -3837,6 +3837,64 @@
       "file": "e2e/tests/assistant/chat/weekly-usage.e2e.ts"
     },
     {
+      "id": "messaging/chat/composer-panel#attach",
+      "title": "Open the attachment panel and send a photo or file from each available source",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/Composer.tsx",
+        "src/app/chat/ChatViewport.tsx",
+        "src/app/chat/ChatHistoryList.native.tsx",
+        "src/app/chat/chatWebInteractions.ts",
+        "src/app/chat/chatFiles*",
+        "src/app/chat/ConversationScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/composer-panel",
+      "file": "e2e/tests/messaging/chat/composer-panel.e2e.ts"
+    },
+    {
       "id": "messaging/chat/edit-message#edit",
       "title": "Authors edit their original chat message or caption",
       "kind": "e2e",

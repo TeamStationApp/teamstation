@@ -13,6 +13,8 @@ import {
   bindComposerKeys,
   bindUserScroll,
   readDocumentActive,
+  sizeComposerText,
+  watchComposerWidth,
   watchReadDocumentActive
 } from './chatWebInteractions'
 import {
@@ -56,6 +58,100 @@ function file(
 
 describe('chat document visibility read adapter', function () {
   afterEach(restoreWindow)
+  it('uses intrinsic textarea sizing when supported and preserves the scroll position on older browsers', function () {
+    const input = document.createElement('textarea')
+    const original = Object.getOwnPropertyDescriptor(window, 'CSS')
+    const properties: string[][] = []
+    const set = input.style.setProperty.bind(input.style)
+    input.style.setProperty = (name, value, priority) => {
+      properties.push([name, value ?? ''])
+      set(name, value, priority)
+    }
+    try {
+      Object.defineProperty(window, 'CSS', {
+        configurable: true,
+        value: {
+          supports: (name: string, value: string) =>
+            name === 'field-sizing' && value === 'content'
+        }
+      })
+      sizeComposerText(input)
+      expect(properties).to.deep.include(['field-sizing', 'content'])
+      Object.defineProperty(window, 'CSS', {
+        configurable: true,
+        value: undefined
+      })
+      Object.defineProperty(input, 'scrollHeight', { value: 96 })
+      input.scrollTop = 12
+      sizeComposerText(input)
+      expect(input.style.height).equals('96px')
+      expect(input.scrollTop).equals(12)
+    } finally {
+      if (original == null) Reflect.deleteProperty(window, 'CSS')
+      else Object.defineProperty(window, 'CSS', original)
+    }
+  })
+
+  it('remeasures an unchanged draft when it wraps on resize and stops after unmount', function () {
+    const input = document.createElement('textarea')
+    let contentHeight = 42
+    Object.defineProperty(input, 'scrollHeight', { get: () => contentHeight })
+    sizeComposerText(input)
+    expect(input.style.height).equals('42px')
+    const unbind = watchComposerWidth(input)
+    try {
+      contentHeight = 82
+      window.dispatchEvent(new window.Event('resize'))
+      expect(input.style.height).equals('82px')
+      contentHeight = 42
+      window.dispatchEvent(new window.Event('resize'))
+      expect(input.style.height).equals('42px')
+    } finally {
+      unbind?.()
+    }
+    contentHeight = 82
+    window.dispatchEvent(new window.Event('resize'))
+    expect(input.style.height).equals('42px')
+  })
+
+  it('resizes for a narrower chat pane within the same window', function () {
+    const globals = globalThis as { ResizeObserver?: unknown }
+    const original = globals.ResizeObserver
+    const input = document.createElement('textarea')
+    let report: (entries: Array<{ contentRect: { width: number } }>) => void
+    let disconnected = false
+    let contentHeight = 42
+    Object.defineProperty(input, 'scrollHeight', { get: () => contentHeight })
+    globals.ResizeObserver = class {
+      constructor(callback: typeof report) {
+        report = callback
+      }
+
+      observe(target: HTMLElement): void {
+        expect(target).equals(input)
+      }
+
+      disconnect(): void {
+        disconnected = true
+      }
+    }
+    let unbind: (() => void) | undefined
+    try {
+      unbind = watchComposerWidth(input)
+      report!([{ contentRect: { width: 400 } }])
+      expect(input.style.height).equals('42px')
+      contentHeight = 82
+      report!([{ contentRect: { width: 400 } }])
+      expect(input.style.height).equals('42px')
+      report!([{ contentRect: { width: 200 } }])
+      expect(input.style.height).equals('82px')
+    } finally {
+      unbind?.()
+      globals.ResizeObserver = original
+    }
+    expect(disconnected).equals(true)
+  })
+
   it('reports current visibility changes and stops reporting after cleanup', function () {
     const original = Object.getOwnPropertyDescriptor(
       document,

@@ -655,7 +655,7 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
       '$ S9 file drag across nested composer children, exact overlay, prepare without sending'
     )
     await m.evalBrowserScript({
-      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const initialMessages=await (await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();window.chatUiDropPosts=initialMessages.filter(row=>row.kind==='post').length;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
+      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
     })
     await m.assertVisible({ text: 'Attaching file to chat' })
     if (!keyboard)
@@ -694,7 +694,20 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
       })
       console.log(
         await m.evalBrowserScript({
-          script: `${listed}const messages=await (await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();if(messages.filter(row=>row.kind==='post').length!==window.chatUiDropPosts+1)throw new Error('Enter did not send exactly one post: '+JSON.stringify({before:window.chatUiDropPosts,after:messages.filter(row=>row.kind==='post').length,hasBaseline:typeof window.chatUiDropPosts==='number'}));if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Successful send did not clear draft');const markerRows=[...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].filter(row=>row.getAttribute('data-testid')!=='chat-message-pane' && row.innerText.includes(${JSON.stringify(marker)}));if(markerRows.length!==1)throw new Error('Unique marker did not appear in exactly one post bubble');return JSON.stringify({enterSentExactlyOnce:true,uniqueMarkerBubbleCount:markerRows.length,draftCleared:true});`
+          script: `
+            if (!Number.isSafeInteger(window.chatUiDropSeq)) throw new Error('Missing sequence before desktop Enter');
+            const url = new URL(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')}, location.href);
+            url.searchParams.set('after', String(window.chatUiDropSeq));
+            const response = await fetch(url, {credentials: 'include'});
+            if (!response.ok) throw new Error('Cannot verify posts after desktop Enter');
+            const posts = (await response.json()).filter(row => row.kind === 'post');
+            if (posts.length !== 1) throw new Error('Enter created ' + posts.length + ' posts');
+            if (document.querySelector('[data-testid="chat-composer"]').value !== '') throw new Error('Successful send did not clear draft');
+            const markerRows = [...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].filter(row => row.innerText.includes(${JSON.stringify(marker)}));
+            if (markerRows.length !== 1 || markerRows[0].getAttribute('data-testid') !== 'chat-message-' + posts[0].id)
+              throw new Error('The unique keyboard marker must appear in the posted message exactly once');
+            return JSON.stringify({enterSentExactlyOnce: true, uniqueMarkerBubbleCount: markerRows.length, draftCleared: true});
+          `
         })
       )
     }
@@ -2266,6 +2279,9 @@ async function composeFull(daemon: Daemon): Promise<void> {
       script: `${drop}drop([new File(['Practice notes'],'bad.txt',{type:'text/plain'})]);return true`
     })
     await m.assertVisible({ text: 'That attachment could not be opened.' })
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: marker })
+    await m.assertVisible({ text: 'Send' })
     await m.evalBrowserScript({
       script: `${drop}drop([new File(['Practice notes'],'slow.txt',{type:'text/plain'})]);await new Promise(r=>setTimeout(r,100));const send=document.querySelector('[aria-label="Send"]');if(send.getAttribute('aria-disabled')!=='true'&&!send.disabled)throw new Error('Send allowed during preparation');document.querySelector('[data-testid="chat-composer"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));send.click();${posts}if(count!==window.chatUiComposePosts)throw new Error('Preparation sent a post');await window.chatUiReleaseRead();return true`
     })
@@ -2276,8 +2292,6 @@ async function composeFull(daemon: Daemon): Promise<void> {
     })
     await m.assertVisible({ text: 'Remove notes.txt' })
     await m.assertVisible({ text: 'Remove lineup.txt' })
-    await m.tapOn({ css: '[data-testid="chat-composer"]' })
-    await m.inputText({ text: marker })
     await m.tapOn({ text: 'Send' })
     await m.assertVisible({ text: marker, timeout: 60000 })
     await m.assertVisible({
@@ -2373,12 +2387,13 @@ async function picker(daemon: Daemon): Promise<void> {
     })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
     console.log(
-      '$ S9 actual Attach button creates picker input; browser file chooser is intercepted for maestro uploadFile; prepared chip without send'
+      '$ S9 actual Attach panel and File action create picker input; browser file chooser is intercepted for maestro uploadFile; prepared chip without send'
     )
     await m.evalBrowserScript({
       script: `window.chatUiInputClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';this.style.width='200px';this.style.height='30px';return}return window.chatUiInputClick.call(this)};return true`
     })
     await m.tapOn({ text: 'Attach' })
+    await m.tapOn({ text: 'File' })
     await m.uploadFile({
       css: 'input[type="file"]',
       path: required('CHAT_UI_PICK_FILE')
@@ -2389,6 +2404,7 @@ async function picker(daemon: Daemon): Promise<void> {
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.inputText({ text: marker })
     await m.tapOn({ text: 'Attach' })
+    await m.tapOn({ text: 'File' })
     console.log(
       await m.evalBrowserScript({
         script: `const picker=document.querySelector('input[type="file"]');if(!picker)throw new Error('Pending picker input absent');const send=document.querySelector('[aria-label="Send"]');if(send.getAttribute('aria-disabled')!=='true'&&!send.disabled)throw new Error('Send allowed while picker pending');picker.dispatchEvent(new Event('cancel'));for(let n=0;n<50;n++){await new Promise(r=>setTimeout(r,50));if(!document.querySelector('input[type="file"]')&&send.getAttribute('aria-disabled')!=='true'&&!send.disabled){if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(marker)})throw new Error('Cancel lost draft');return JSON.stringify({modernBrowserCancelReleasedPreparation:true,draftPreserved:true})}}throw new Error('Picker cancel left preparation blocked')`
@@ -3206,6 +3222,7 @@ async function videoFixture(daemon: Daemon): Promise<void> {
       script: `window.chatUiVideoInputClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';return}return window.chatUiVideoInputClick.call(this)};return true`
     })
     await m.tapOn({ text: 'Attach' })
+    await m.tapOn({ text: 'File' })
     await m.uploadFile({
       css: 'input[type="file"]',
       path: required('CHAT_UI_VIDEO_FILE')

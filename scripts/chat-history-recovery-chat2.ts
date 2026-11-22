@@ -124,8 +124,10 @@ export async function prepareChat2Scene(
       is_admin: false,
       onboarding_step: 'complete' as const,
       onboarding_completed_at: new Date(),
-      birth_year: null,
-      birth_month: null
+      // These generated chat participants are adults. The Locked cohort
+      // intentionally encounters the age question on first opening chat.
+      birth_year: key.startsWith('Locked') ? null : 1980,
+      birth_month: key.startsWith('Locked') ? null : 1
     }
     let userId: string
     if (legacy != null) {

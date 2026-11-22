@@ -4,7 +4,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { Dimensions, Keyboard, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -1553,13 +1553,15 @@ interface ScrollEvent {
   }
 }
 
-function renderedScrollHandler(
-  node: HTMLElement
-): (event: ScrollEvent) => void {
+interface HistoryCallbacks {
+  onScrollEndDrag: (event: ScrollEvent) => void
+  onScroll: (event: ScrollEvent) => void
+  onScrollBeginDrag: (event: ScrollEvent) => void
+}
+function renderedHistoryCallbacks(node: HTMLElement): HistoryCallbacks {
   interface RenderedFiber {
-    memoizedProps?: {
+    memoizedProps?: HistoryCallbacks & {
       onContentSizeChange?: unknown
-      onScroll?: (event: ScrollEvent) => void
     }
     return?: RenderedFiber
   }
@@ -1569,10 +1571,10 @@ function renderedScrollHandler(
   let fiber = (node as unknown as Record<string, RenderedFiber | undefined>)[
     fiberKey
   ]
-  let handler: ((event: ScrollEvent) => void) | undefined
+  let handler: HistoryCallbacks | undefined
   while (fiber != null) {
     if (typeof fiber.memoizedProps?.onContentSizeChange === 'function') {
-      handler = fiber.memoizedProps.onScroll
+      handler = fiber.memoizedProps
       break
     }
     fiber = fiber.return
@@ -1587,6 +1589,249 @@ describe('chat follow-up conversation message integration', function () {
   afterEach(async function () {
     await resetTimeouts()
   })
+
+  for (const surface of ['web', 'android'] as const) {
+    it(`follows consecutive ${surface === 'web' ? 'browser' : 'Android'} layout changes until the reader scrolls into history`, async function () {
+      const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+      try {
+        Object.defineProperty(Platform, 'OS', { ...os, value: surface })
+        const engine = new FakeEngine()
+        const message = safeMessage({ id: 'msg_newest' })
+        engine.current.messages = [message]
+        await screen(engine)
+        const visible = readingGeometry(message.id, 12, 400, 400)
+        const { scroller, geometry, body } = visible
+        Object.defineProperty(scroller, 'clientHeight', {
+          value: 400,
+          configurable: true
+        })
+        const moves: number[] = []
+        // The card can finish laying out before the prior scroll event arrives.
+        scroller.scroll = options => {
+          scroller.scrollTop = Math.max(
+            0,
+            Math.min(
+              geometry.height - 400,
+              (options as ScrollToOptions).top ?? 0
+            )
+          )
+          moves.push(scroller.scrollTop)
+        }
+        await visible.layout()
+        moves.length = 0
+        geometry.height += 84
+        await measured(body, 640, geometry.height)
+        geometry.height += 230
+        await measured(body, 640, geometry.height)
+        expect(moves).to.include(314)
+        await act(async () => {
+          if (surface === 'android') {
+            const history = renderedHistoryCallbacks(scroller)
+            const position = (y: number): ScrollEvent => ({
+              nativeEvent: {
+                contentOffset: { x: 0, y },
+                contentSize: { width: 640, height: geometry.height },
+                layoutMeasurement: { width: 640, height: 400 }
+              }
+            })
+            history.onScrollBeginDrag(position(scroller.scrollTop))
+            scroller.scrollTop = 114
+            history.onScroll(position(114))
+          } else {
+            scroller.dispatchEvent(
+              new window.WheelEvent('wheel', { bubbles: true, deltaY: -200 })
+            )
+            scroller.scrollTop = 114
+            scroller.dispatchEvent(
+              new window.Event('scroll', { bubbles: true })
+            )
+          }
+          await wait(120)
+        })
+        moves.length = 0
+        geometry.height += 230
+        await measured(body, 640, geometry.height)
+        expect(moves).lengthOf(0)
+        expect(scroller.scrollTop).equals(114)
+      } finally {
+        Object.defineProperty(Platform, 'OS', os)
+      }
+    })
+  }
+
+  it('fits the first typed iOS line within the height of the composer controls', async function () {
+    const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    try {
+      Object.defineProperty(Platform, 'OS', { ...os, value: 'ios' })
+      await screen(new FakeEngine(), {
+        text: 'Practice starts at four.',
+        picked: [],
+        scrollOffset: 0
+      })
+      // The signed iPhone measures the first typed UITextView line at 24pt.
+      const inputStyle = getComputedStyle(labelled('Message'))
+      const buttonHeight = parseFloat(getComputedStyle(button('Attach')).height)
+      const fieldStyle = getComputedStyle(
+        document.querySelector('[data-testid="chat-composer-field"]')!
+      )
+      const firstLineHeight =
+        24 +
+        parseFloat(inputStyle.paddingTop) +
+        parseFloat(inputStyle.paddingBottom) +
+        parseFloat(fieldStyle.borderTopWidth) +
+        parseFloat(fieldStyle.borderBottomWidth)
+      expect(firstLineHeight).to.be.at.most(buttonHeight)
+      expect(getComputedStyle(button('Send')).height).equals(
+        getComputedStyle(button('Attach')).height
+      )
+    } finally {
+      Object.defineProperty(Platform, 'OS', os)
+    }
+  })
+
+  it('reopens the attachment panel during the return to the phone keyboard', async function () {
+    const listeners = new Map<
+      string,
+      (event: {
+        endCoordinates: { screenY: number; width: number; height: number }
+      }) => void
+    >()
+    const size = { width: 390, height: 844, scale: 1, fontScale: 1 }
+    const dimensions = mock.method(Dimensions, 'get', () => size)
+    const listen = mock.method(
+      Keyboard,
+      'addListener',
+      (
+        name: string,
+        handler: (event: {
+          endCoordinates: { screenY: number; width: number; height: number }
+        }) => void
+      ) => {
+        listeners.set(name, handler)
+        return { remove: () => listeners.delete(name) }
+      }
+    )
+    const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    try {
+      Object.defineProperty(Platform, 'OS', { ...os, value: 'ios' })
+      await screen(new FakeEngine(), {
+        text: 'Unsent note',
+        picked: [],
+        scrollOffset: 0
+      })
+      const frame = {
+        endCoordinates: { screenY: 530, width: 390, height: 314 }
+      }
+      await act(async () => {
+        listeners.get('keyboardWillShow')!(frame)
+      })
+      await press('Attach')
+      const panel = (): HTMLElement | null =>
+        document.querySelector('[data-testid="chat-attachment-panel"]')
+      expect(panel()).not.equals(null)
+      const initialHeight = panel()!.style.height
+      expect(parseFloat(initialHeight)).to.be.greaterThan(300)
+      await act(async () => {
+        listeners.get('keyboardWillHide')!({
+          endCoordinates: { screenY: 844, width: 390, height: 0 }
+        })
+      })
+      await press('Close attachments')
+      expect(panel()).equals(null)
+      await press('Attach')
+      expect(panel()!.style.height).equals(initialHeight)
+      expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+        'Unsent note'
+      )
+      await press('Close attachments')
+      await act(async () => {
+        listeners.get('keyboardWillShow')!(frame)
+        listeners.get('keyboardDidShow')!(frame)
+      })
+      expect(panel()).equals(null)
+      expect(document.activeElement).equals(labelled('Message'))
+    } finally {
+      Object.defineProperty(Platform, 'OS', os)
+      listen.mock.restore()
+      dimensions.mock.restore()
+    }
+  })
+
+  for (const platform of ['ios', 'android'] as const)
+    it(`dismisses a visible ${platform} keyboard only on an older-directed user drag`, async function () {
+      const shown = new Map<
+        string,
+        (e: {
+          endCoordinates: { screenY: number; width: number; height: number }
+        }) => void
+      >()
+      const listen = mock.method(
+        Keyboard,
+        'addListener',
+        (
+          name: string,
+          handler: (e: {
+            endCoordinates: { screenY: number; width: number; height: number }
+          }) => void
+        ) => {
+          shown.set(name, handler)
+          return { remove: () => shown.delete(name) }
+        }
+      )
+      const dismiss = mock.method(Keyboard, 'dismiss', () => {})
+      const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+      try {
+        Object.defineProperty(Platform, 'OS', { ...os, value: platform })
+        await screen(new FakeEngine())
+        await act(async () => {
+          shown.get(
+            platform === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow'
+          )!({
+            endCoordinates: { screenY: 500, width: 0, height: 300 }
+          })
+        })
+        const history = document.querySelector<HTMLElement>(
+          '[data-testid="chat-message-history"]'
+        )!
+        const callbacks = renderedHistoryCallbacks(history)
+        const event = (y: number): ScrollEvent => ({
+          nativeEvent: {
+            contentOffset: { x: 0, y },
+            contentSize: { width: 640, height: 1200 },
+            layoutMeasurement: { width: 640, height: 400 }
+          }
+        })
+        await act(async () => {
+          callbacks.onScroll(event(280))
+          callbacks.onScrollBeginDrag(event(280))
+          callbacks.onScroll(event(294))
+        })
+        expect(dismiss.mock.callCount()).equals(0)
+        await act(async () => {
+          callbacks.onScroll(event(260))
+          callbacks.onScroll(event(230))
+        })
+        expect(dismiss.mock.callCount()).equals(1)
+        await act(async () => {
+          callbacks.onScrollEndDrag(event(220))
+          callbacks.onScrollBeginDrag(event(280))
+          callbacks.onScrollEndDrag(event(290))
+          callbacks.onScroll(event(240))
+        })
+        expect(dismiss.mock.callCount()).equals(1)
+        // A quick drag can finish before Android emits an intermediate onScroll.
+        await act(async () => {
+          callbacks.onScrollBeginDrag(event(280))
+          callbacks.onScrollEndDrag(event(260))
+          callbacks.onScroll(event(250))
+        })
+        expect(dismiss.mock.callCount()).equals(2)
+      } finally {
+        Object.defineProperty(Platform, 'OS', os)
+        listen.mock.restore()
+        dismiss.mock.restore()
+      }
+    })
 
   for (const status of ['locked', 'lost'] as const) {
     it(`preserves the reader through ${status} history recovery before resized content catches up`, async function () {
@@ -1636,52 +1881,186 @@ describe('chat follow-up conversation message integration', function () {
     })
   }
 
-  it('keeps the first wholly readable row when the row under the header unlocks and grows', async function () {
-    const engine = new FakeEngine()
-    const covered = safeMessage({
-      id: 'msg_under_header',
-      status: 'locked',
-      body: ''
-    })
-    const reading = safeMessage({
-      id: 'msg_whole_reader',
-      status: 'locked',
-      body: ''
-    })
-    engine.current.messages = [covered, reading]
-    await screen(engine, {
-      text: 'Keep the current draft',
-      picked: [],
-      scrollOffset: 400,
-      hasScrollPosition: true,
-      followNewest: false
-    })
-    // The upper row starts 20 px into the viewport, under the 48 px header.
-    const upper = readingGeometry(covered.id, 420, 1300)
-    const visible = readingGeometry(reading.id, 700, 1300)
-    Object.defineProperty(visible.scroller, 'clientHeight', {
-      value: 400,
-      configurable: true
-    })
-    await upper.layout()
-    await visible.layout()
-    await visible.userScroll(400)
-    expect(visible.row.getBoundingClientRect().top).equals(300)
-    await act(async () => {
-      engine.update({
-        ...engine.current,
-        messages: [
-          { ...covered, status: 'ok', body: 'Recovered note under the header' },
-          { ...reading, status: 'ok', body: 'Recovered note being read' }
-        ]
+  for (const surface of ['web', 'ios', 'android'] as const) {
+    it(`keeps the first wholly readable ${surface} row when the row under the header unlocks and grows`, async function () {
+      const engine = new FakeEngine()
+      const covered = safeMessage({
+        id: 'msg_under_header',
+        status: 'locked',
+        body: ''
       })
+      const reading = safeMessage({
+        id: 'msg_whole_reader',
+        status: 'locked',
+        body: ''
+      })
+      const offscreen = safeMessage({ id: 'msg_unmeasured' })
+      engine.current.messages = [offscreen, covered, reading]
+      await screen(engine, {
+        text: 'Keep the current draft',
+        picked: [],
+        scrollOffset: 400,
+        hasScrollPosition: true,
+        followNewest: false
+      })
+      // The upper row starts 20 px into the viewport, under the 48 px header.
+      const upper = readingGeometry(covered.id, 420, 1300)
+      const visible = readingGeometry(reading.id, 700, 1300)
+      Object.defineProperty(visible.scroller, 'clientHeight', {
+        value: 400,
+        configurable: true
+      })
+      await upper.layout()
+      await visible.layout()
+      await visible.userScroll(400)
+      expect(visible.row.getBoundingClientRect().top).equals(300)
+      const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+      const expected = surface === 'web' ? 300 : 332
+      if (surface !== 'web') {
+        // The mounted row has shifted since its last layout notification.
+        // The native list supplies its offset even when the DOM scroll reader
+        // has no usable viewport. The frame and mounted row still measure.
+        visible.scroller.getBoundingClientRect = () => new window.DOMRect()
+        visible.geometry.y += 32
+        document.querySelector<HTMLElement>(
+          '[data-testid="chat-viewport"]'
+        )!.getBoundingClientRect = () => new window.DOMRect(0, 0, 640, 400)
+      }
+      try {
+        Object.defineProperty(Platform, 'OS', { ...os, value: surface })
+        await act(async () => {
+          engine.update({
+            ...engine.current,
+            messages: [
+              offscreen,
+              {
+                ...covered,
+                status: 'ok',
+                body: 'Recovered note under the header'
+              },
+              { ...reading, status: 'ok', body: 'Recovered note being read' }
+            ]
+          })
+        })
+        if (surface === 'android') {
+          // The old asynchronous measure callback can arrive a frame later.
+          // Only Fabric's current host geometry describes this commit.
+          const row = visible.row as HTMLElement & {
+            measureInWindow: (
+              read: (
+                x: number,
+                y: number,
+                width: number,
+                height: number
+              ) => void
+            ) => void
+          }
+          const positionBeforeResize = row.getBoundingClientRect()
+          row.measureInWindow = read => {
+            read(0, positionBeforeResize.y, 640, 800)
+          }
+        }
+        upper.geometry.height = 1800
+        visible.geometry.y = 1200
+        visible.geometry.height = 1800
+        await upper.layout()
+        await visible.layout()
+        expect(visible.row.getBoundingClientRect().top).equals(expected)
+        if (surface === 'android') {
+          // The list's own compensation has reached the host while its JS
+          // scroll event still describes the preceding layout.
+          visible.scroller.scrollTop += 35
+          expect(visible.row.getBoundingClientRect().top).equals(expected - 35)
+          // A row-size notification arrives before the new scroll offset.
+          await measured(visible.body, 640, visible.geometry.height)
+
+          expect(visible.row.getBoundingClientRect().top).equals(expected)
+        }
+      } finally {
+        Object.defineProperty(Platform, 'OS', os)
+      }
     })
-    upper.geometry.height = 1800
-    visible.geometry.y = 1200
-    visible.geometry.height = 1800
-    await upper.layout()
-    await visible.layout()
-    expect(visible.row.getBoundingClientRect().top).equals(300)
+  }
+
+  it('holds the Android row just below the identity as the recovery notice and locked rows resize in separate commits', async function () {
+    const engine = new FakeEngine()
+    const first = safeMessage({
+      id: 'msg_near_header',
+      status: 'locked',
+      body: ''
+    })
+    const next = safeMessage({
+      id: 'msg_next_reader',
+      status: 'locked',
+      body: ''
+    })
+    Object.assign(engine.current, {
+      historyLocked: true,
+      historyRecovery: 'waitingForHolder',
+      messages: [first, next]
+    })
+    await render(
+      <ChatOverlayHost>
+        <ConversationScreen
+          engine={engine}
+          conversationId="cnv_fixture"
+          userId={userIdOfGumbo(1)}
+          onMembers={() => {}}
+          files={files}
+          swipe={false}
+          embedded
+          paneHeader
+          draft={{
+            text: 'Practice',
+            picked: [],
+            scrollOffset: 400,
+            hasScrollPosition: true,
+            followNewest: false
+          }}
+        />
+      </ChatOverlayHost>
+    )
+    const near = readingGeometry(first.id, 492, 2000)
+    const lower = readingGeometry(next.id, 576, 2000)
+    await lower.layout()
+    await near.layout()
+    await near.userScroll(400)
+    const element = (id: string): HTMLElement =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
+    element('chat-viewport').getBoundingClientRect = () =>
+      new window.DOMRect(0, 0, 640, 400)
+    element('chat-conversation-identity').getBoundingClientRect = () =>
+      new window.DOMRect(0, 47, 640, 44)
+    const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    try {
+      Object.defineProperty(Platform, 'OS', { ...os, value: 'android' })
+      await act(async () => {
+        engine.update({ ...engine.current, historyRecovery: 'recovering' })
+      })
+      near.geometry.y -= 34
+      lower.geometry.y -= 34
+      await near.layout()
+      expect(near.row.getBoundingClientRect().top).equals(92)
+      await act(async () => {
+        engine.update({
+          ...engine.current,
+          historyLocked: false,
+          historyRecovery: 'none',
+          messages: [first, next].map(message => ({
+            ...message,
+            status: 'ok',
+            body: 'Recovered practice notes'
+          }))
+        })
+      })
+      near.geometry.y += 200
+      lower.geometry.y += 320
+      await lower.layout()
+      await near.layout()
+      expect(near.row.getBoundingClientRect().top).equals(92)
+    } finally {
+      Object.defineProperty(Platform, 'OS', os)
+    }
   })
 
   it('puts the recovered reader back when the list moves it after the restoration landed', async function () {
@@ -1834,7 +2213,7 @@ describe('chat follow-up conversation message integration', function () {
         new window.WheelEvent('wheel', { bubbles: true, deltaY: 795 })
       )
       visible.scroller.scrollTop = 6795
-      renderedScrollHandler(visible.scroller)({
+      renderedHistoryCallbacks(visible.scroller).onScroll({
         nativeEvent: {
           contentOffset: { x: 0, y: 6795 },
           contentSize: { width: 640, height: 786 },
@@ -1955,7 +2334,7 @@ describe('chat follow-up conversation message integration', function () {
     const visible = readingGeometry(original.id)
     await visible.layout()
     await visible.userScroll(647)
-    const olderScroll = renderedScrollHandler(visible.scroller)
+    const olderScroll = renderedHistoryCallbacks(visible.scroller).onScroll
     // Hold the real RNW end timer deterministically while composing; wall-clock
     // load must not let it fire before the assertion checkpoint is captured.
     mock.timers.enable({ apis: ['setTimeout'] })
@@ -1978,6 +2357,9 @@ describe('chat follow-up conversation message integration', function () {
       input.dispatchEvent(new window.Event('input', { bubbles: true }))
       button('Reply').click()
       button('Attach').click()
+    })
+    await act(async () => {
+      button('File').click()
     })
     expect(saved.text).equals('Latest draft body')
     expect(saved.replyTo?.id).equals(original.id)
@@ -3166,7 +3548,10 @@ describe('chat follow-up conversation message integration', function () {
       const native = (action: () => void): void => {
         const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
         try {
-          Object.defineProperty(Platform, 'OS', { ...descriptor, value: 'ios' })
+          Object.defineProperty(Platform, 'OS', {
+            ...descriptor,
+            value: 'ios'
+          })
           action()
         } finally {
           Object.defineProperty(Platform, 'OS', descriptor)

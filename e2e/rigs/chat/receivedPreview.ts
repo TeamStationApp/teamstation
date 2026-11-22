@@ -5,12 +5,9 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { HTTPRequest } from 'puppeteer'
 
 import type { MessageView } from '../../../src/app/chat/engine/apply'
-import {
-  androidScopedBounds,
-  flattenPublicHierarchy
-} from '../chat2Maestro'
 import type { MaestroDevice } from '../../core/maestro'
 import type { WebSession } from '../../core/spec'
+import { androidScopedBounds, flattenPublicHierarchy } from '../chat2Maestro'
 import {
   authenticatedActor,
   type ChatLinkFixture,

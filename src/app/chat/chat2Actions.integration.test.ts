@@ -44,7 +44,8 @@ import {
   queryExactTap,
   queryExactVisible,
   readAndroidComposerKeyboard,
-  readIosComposerKeyboard
+  readIosComposerKeyboard,
+  recentPickerPhoto
 } from '../../../e2e/rigs/chat2Maestro'
 import { userIdOfGumbo } from '../../common/userId'
 import { encodePng } from '../../test/rasterImage'
@@ -202,6 +203,42 @@ function nativeAttention(platform: 'ios' | 'android'): {
     throw new Error('Actual native attention glass surface required')
   return { surface, rendered: GlassView(surface.props) }
 }
+
+describe('native attachment picker', function () {
+  it('locates the first on-screen photo when the iOS grid repeats its labels', function () {
+    const app = {
+      type: 'Application',
+      bounds: { x: 0, y: 0, width: 400, height: 800 }
+    }
+    const header = {
+      type: 'NavigationBar',
+      id: 'Photos',
+      bounds: { x: 0, y: 75, width: 400, height: 60 }
+    }
+    const cell = (x: number, y: number): PublicNode => ({
+      type: 'Image',
+      text: 'Photo, Today',
+      bounds: { x, y, width: 100, height: 100 }
+    })
+    const grid = {
+      type: 'Other',
+      text: 'Photo, Today, Photo, Today',
+      bounds: { x: 0, y: 135, width: 400, height: 55000 }
+    }
+    const first = cell(0, 135)
+    const nodes = [
+      app,
+      header,
+      grid,
+      cell(0, 10),
+      cell(0, 710),
+      cell(100, 135),
+      first
+    ]
+    expect(recentPickerPhoto(nodes, 'ios')?.bounds).to.deep.equal(first.bounds)
+    expect(recentPickerPhoto([app, header, grid], 'ios')).to.equal(undefined)
+  })
+})
 
 describe('chat attention native circular material', function () {
   it('passes the circular radius to the iOS material behind the48-point hit target', function () {
@@ -1196,6 +1233,11 @@ describe('chat native capture readiness transport', function () {
             nodes.push({ id: 'chat-message-spotlight', bounds: band })
           return { nodes }
         },
+        assertNotVisible: async (args: Record<string, unknown>) => {
+          expect(args.id).equals('^chat-send$')
+          if (mode !== 'empty') throw new Error('Send is visible')
+          calls.push('absent:chat-send')
+        },
         assertVisible: async (
           args: Record<string, unknown>,
           { signal }: { signal: AbortSignal }
@@ -1327,6 +1369,20 @@ describe('chat native capture readiness transport', function () {
       expect(JSON.stringify(ui.steps))
         .not.contains('base64')
         .and.not.contains('data:image')
+    })
+  })
+  it('captures a focused empty iOS reply only when Send is absent', async () => {
+    await withSlowMetadata(async () => {
+      const expected = { focused: true, reply: true, sendVisible: false }
+      const empty = composer('empty')
+      expect(
+        (await observeComposerCaptureReady(empty.ui, expected))
+          .composerCaptureReady
+      ).equals(true)
+      expect(empty.calls.filter(call => call === 'absent:chat-send')).length(2)
+      await captureFailure(
+        observeComposerCaptureReady(composer('stable').ui, expected)
+      )
     })
   })
   it('retains unmodified blinking-caret frame pairs after two fresh positive probes', async function () {
@@ -1527,6 +1583,58 @@ describe('chat native adapter compatibility', function () {
     })
     return { actual, page }
   }
+  it('checks Send against the actual DOM in empty and populated web captures', async () => {
+    const { actual, page } = browserModel()
+    const { document } = page.window
+    document.head.innerHTML = '<style>* { opacity: 1 }</style>'
+    document.body.innerHTML =
+      '<section data-testid="chat-composer-band"><textarea data-testid="chat-composer"></textarea><button aria-label="Attach"></button><button aria-label="Cancel reply"></button></section>'
+    const editor = document.querySelector('textarea')!
+    const band = editor.parentElement!
+    const box = new page.window.DOMRect(4, 4, 20, 20)
+    page.window.HTMLElement.prototype.getBoundingClientRect = () => box
+    editor.focus()
+    const expected = { focused: true, reply: true, sendVisible: false }
+    expect(
+      (await observeComposerCaptureReady(actual, expected, 2000))
+        .composerCaptureReady
+    ).equals(true)
+    await captureFailure(
+      observeComposerCaptureReady(
+        actual,
+        { ...expected, sendVisible: true },
+        650
+      )
+    )
+    const send = document.createElement('button')
+    send.setAttribute('aria-label', 'Send')
+    band.append(send)
+    send.disabled = true
+    await captureFailure(observeComposerCaptureReady(actual, expected, 650))
+    editor.value = 'Draft'
+    send.disabled = false
+    expect(
+      (
+        await observeComposerCaptureReady(
+          actual,
+          { ...expected, sendVisible: true },
+          2000
+        )
+      ).composerCaptureReady
+    ).equals(true)
+    send.remove()
+    editor.value = ''
+    band.querySelector('[aria-label="Cancel reply"]')!.remove()
+    expect(
+      (
+        await observeComposerCaptureReady(
+          actual,
+          { focused: true, reply: false, sendVisible: false },
+          2000
+        )
+      ).composerCaptureReady
+    ).equals(true)
+  })
   async function infoSafetyReturn(fault = ''): Promise<{
     calls: string[]
     error: unknown
@@ -3007,6 +3115,9 @@ describe('chat native adapter compatibility', function () {
       enabled: mode !== 'disabled-editor',
       bounds: {
         ...box,
+        ...(mode === 'send-width' && value === ''
+          ? { width: box.width + 42 }
+          : {}),
         // A moved editor moves between its two empty reads, after the
         // sentinel; the composer riding the keyboard while text is in it is
         // not a move.
@@ -3130,6 +3241,16 @@ describe('chat native adapter compatibility', function () {
             })
           )
       }
+      if (attached && mode === 'raw')
+        nodes.push(node(7, 'Other', { identifier: 'chat-attachment-chip' }))
+      if (attached && mode === 'raw')
+        nodes.push(
+          node(8, 'Button', {
+            identifier: 'chat-send',
+            label: 'Send',
+            enabled: true
+          })
+        )
       if (mode !== 'raw')
         for (let i = nodes.length; nodes.length < 300; i++)
           nodes.push(node(10 + i, 'Other'))
@@ -3148,6 +3269,13 @@ describe('chat native adapter compatibility', function () {
         )
           throw new Error('Actual picker header missing')
         return { element: { id: args.id, bounds: box } }
+      }
+      if (args.id === '^chat-attachment-chip$') {
+        if (attached)
+          return { element: { id: 'chat-attachment-chip', bounds: box } }
+        throw Object.assign(new Error('No attachment'), {
+          code: 'COMMAND_FAILED'
+        })
       }
       if (args.text === 'Send')
         return {
@@ -3172,6 +3300,17 @@ describe('chat native adapter compatibility', function () {
           }
         }
       throw new Error('Positive actual control missing')
+    }
+    actual.device.assertNotVisible = async args => {
+      expect(args.id).equals('^chat-send$')
+      if (mode === 'missing-transport') throw new Error('Disconnected')
+      expect(
+        !attached &&
+          value.trim() === '' &&
+          !['enabled-send', 'disabled-send', 'unknown-send'].includes(mode),
+        'Send still visible'
+      ).equals(true)
+      calls.push('absent:chat-send')
     }
     actual.device.tapOn = async args => {
       if (choosing && args.text === '^Cancel$') {
@@ -3306,7 +3445,7 @@ describe('chat native adapter compatibility', function () {
     expect(proof.revalidated).deep.equals(proof.after)
     expect(proof.allowedEmptyLabels).deep.equals(['Message', 'Message Message'])
     expect((proof.actionReads as unknown[]).length).greaterThan(0)
-    expect(proof.send).deep.includes({ enabled: false })
+    expect(proof.sendVisible).equals(false)
     expect(proof.outcome).equals('passed')
     expect(model.value()).equals('')
     expect(model.calls.filter(call => call === 'type:7777')).has.length(1)
@@ -3528,6 +3667,8 @@ describe('chat native adapter compatibility', function () {
     ['disabled-editor', 'B'],
     ['wrong-id', 'B'],
     ['unknown-send', 'B'],
+    ['disabled-send', 'B'],
+    ['missing-transport', 'B'],
     ['moved-editor', 'B']
   ])
     it('rejects unproved native editor replacement: ' + mode, async () => {
@@ -3583,6 +3724,12 @@ describe('chat native adapter compatibility', function () {
       String(await captureFailure(model.actual.replaceDraft('')))
     ).contains('Shown iOS Keyboard required for replacement')
     expect(model.value()).equals('7777')
+  })
+  it('compares two empty widths when clearing a populated deep-query editor removes Send', async () => {
+    const model = editable('send-width', 'Draft')
+    await model.actual.replaceDraft('')
+    expect(model.value()).equals('')
+    expect(model.calls).includes('absent:chat-send')
   })
   it('keeps the bottom edge of an editor that grew upward with its text', async () => {
     const model = editable('multiline-before', 'Two lines of text')
@@ -3905,7 +4052,12 @@ describe('chat native adapter compatibility', function () {
     const originalClick: unknown = Reflect.get(prototype, 'click')
     actual.text = async label => {
       calls.push(label)
-      opened = label === 'Attach'
+      if (label === 'Attach') {
+        opened = true
+        return
+      }
+      expect(opened).equals(true)
+      expect(label).equals('Photos')
       const input = page.window.document.createElement('input')
       input.type = 'file'
       page.window.document.body.append(input)
@@ -3931,6 +4083,7 @@ describe('chat native adapter compatibility', function () {
     await scenario.attachPhoto()
     expect(calls).deep.equals([
       'Attach',
+      'Photos',
       { css: 'input[type="file"]', path: '/tmp/synthetic-photo.png' },
       'chat-attachment-chip'
     ])
@@ -3965,7 +4118,7 @@ describe('chat native adapter compatibility', function () {
       observations: []
     }) as Scenarios
     await scenario.attachPhoto()
-    expect(calls.slice(0, 3)).deep.equals(['Attach', 'Attach', 'Photo library'])
+    expect(calls.slice(0, 3)).deep.equals(['Attach', 'Attach', 'Photos'])
     expect(scenario.observations).deep.includes({ attachRetapped: true })
   })
   it('preserves native attachment order and does not upload after a failed web Attach action', async () => {
@@ -3997,7 +4150,7 @@ describe('chat native adapter compatibility', function () {
     expect(calls).deep.equals([
       ['media', { files: ['/tmp/synthetic-photo.png'] }],
       'Attach',
-      'Photo library',
+      'Photos',
       { text: 'Observed synthetic photo' },
       'chat-attachment-chip'
     ])
@@ -4027,7 +4180,9 @@ describe('chat native adapter compatibility', function () {
       const before = Object.getOwnPropertyDescriptor(prototype, 'click')
       let uploads = 0
       if (existing) page.window.document.body.innerHTML = '<input type="file">'
-      actual.text = async () => {
+      actual.text = async label => {
+        if (label === 'Attach') return
+        expect(label).equals('Photos')
         const input = page.window.document.createElement('input')
         input.type = 'file'
         page.window.document.body.append(input)
@@ -4286,7 +4441,10 @@ describe('chat native adapter compatibility', function () {
     expect(composer.value).equals('')
     expect(document.activeElement).equals(composer)
   })
-  function windowedAnchor(mountAfter: number | undefined): Scenarios {
+  function windowedAnchor(
+    mountAfter: number | undefined,
+    measuredAfter = 0
+  ): Scenarios {
     const { actual, page } = browserModel()
     const document = page.window.document
     document.body.innerHTML = '<div data-testid="chat-message-history"></div>'
@@ -4297,8 +4455,12 @@ describe('chat native adapter compatibility', function () {
       clientHeight: { value: 600 },
       scrollHeight: { value: 4000 }
     })
+    const measuredAt = Date.now() + measuredAfter
     page.window.Element.prototype.getBoundingClientRect = function () {
-      return new page.window.DOMRect(0, 100, 300, 60)
+      const layingOut =
+        this.getAttribute('data-testid') === 'chat-bubble-windowed' &&
+        Date.now() < measuredAt
+      return new page.window.DOMRect(0, 100, layingOut ? 0 : 300, 60)
     }
     if (mountAfter != null)
       setTimeout(() => {
@@ -4311,6 +4473,17 @@ describe('chat native adapter compatibility', function () {
       observations: []
     }) as Scenarios
   }
+  it('waits for a mounted bubble to have a positive size after reflow', async () => {
+    const scenario = windowedAnchor(0, 600)
+    await scenario.webAnchorReady()
+    const samples = scenario.observations[0].samples as Array<{
+      value: { unmeasured?: string; geometry?: { bubble: { width: number } } }
+    }>
+    expect(
+      samples.some(sample => sample.value.unmeasured === 'chat-bubble-windowed')
+    ).equals(true)
+    expect(samples.at(-1)?.value.geometry?.bubble.width).equals(300)
+  })
   it('reads a virtualized anchor row again once its window mounts it, past the old two-second budget', async () => {
     const scenario = windowedAnchor(2300)
     await scenario.webAnchorReady()
@@ -4325,6 +4498,13 @@ describe('chat native adapter compatibility', function () {
     const scenario = windowedAnchor(undefined)
     expect(String(await captureFailure(scenario.webAnchorReady()))).includes(
       'Unique actual anchor element required: chat-message-windowed'
+    )
+  })
+  it('rejects a mounted bubble that never acquires a positive width', async function () {
+    this.timeout(15000)
+    const scenario = windowedAnchor(0, Infinity)
+    expect(String(await captureFailure(scenario.webAnchorReady()))).includes(
+      'Positive finite actual anchor geometry required: chat-bubble-windowed'
     )
   })
   it('mounts an attention target below the reader in short script steps that stop before it can be seen', async () => {
@@ -5502,7 +5682,7 @@ describe('chat native adapter compatibility', function () {
       expect(String(error)).contains('Exact returned')
     }
   })
-  it('proves empty UI from actual placeholder, disabled Send and unchanged frame', async () => {
+  it('proves empty UI from actual placeholder, absent Send and unchanged frame', async () => {
     const nodes = [
       node(0, 'TextView', {
         identifier: 'chat-composer',
@@ -5512,8 +5692,7 @@ describe('chat native adapter compatibility', function () {
       node(1, 'Other', {
         identifier: 'chat-composer-band',
         rect: { x: 0, y: 0, width: 300, height: 100 }
-      }),
-      node(2, 'Button', { label: 'Send', enabled: false })
+      })
     ]
     const actual = ui(nodes)
     actual.device.screenshot = async () => captureImages[0]
@@ -5545,8 +5724,7 @@ describe('chat native adapter compatibility', function () {
       node(1, 'Other', {
         identifier: 'chat-composer-band',
         rect: { x: 0, y: 0, width: 300, height: 100 }
-      }),
-      node(2, 'Button', { label: 'Send', enabled: false })
+      })
     ]
     const actual = ui(nodes)
     actual.device.screenshot = async () => captureImages[0]
@@ -5571,7 +5749,39 @@ describe('chat native adapter compatibility', function () {
       }
     }
   })
-  it('rejects enabled Send, retained reply and capped empty-state snapshots', async () => {
+  it('checks the actual composer subtree and control absence on a large physical iPhone XML hierarchy', async () => {
+    const actual = ui([])
+    Object.assign(actual, { fixture: { devices: { ios: { physical: true } } } })
+    const xml = Buffer.from(
+      '<XCUIElementTypeApplication type="Application">' +
+        '<Other label="history" x="0" y="0" width="300" height="400"/>'.repeat(
+          320
+        ) +
+        '<Other name="chat-composer-band" x="0" y="420" width="300" height="48"><TextView name="chat-composer" enabled="true" label="Message Message" x="48" y="424" width="244" height="40"/></Other></XCUIElementTypeApplication>'
+    )
+    Object.assign(actual.device, { hierarchyRaw: async () => xml })
+    const absent: string[] = []
+    actual.device.assertNotVisible = async args => {
+      absent.push(String(args.id ?? args.text))
+    }
+    actual.device.screenshot = async () => captureImages[0]
+    await actual.assertEmptyDraft()
+    expect(absent).deep.equals([
+      '^chat-send$',
+      '^chat-attachment-chip$',
+      '^Cancel reply$',
+      '^chat-send$',
+      '^chat-attachment-chip$',
+      '^Cancel reply$'
+    ])
+    actual.device.assertNotVisible = async () => {
+      throw new Error('Disconnected')
+    }
+    expect(String(await captureFailure(actual.assertEmptyDraft()))).contains(
+      'Disconnected'
+    )
+  })
+  it('rejects mounted Send, retained reply or file, and capped empty-state snapshots', async () => {
     const base = [
       node(0, 'TextView', {
         identifier: 'chat-composer',
@@ -5580,15 +5790,17 @@ describe('chat native adapter compatibility', function () {
       node(1, 'Other', {
         identifier: 'chat-composer-band',
         rect: { x: 0, y: 0, width: 300, height: 100 }
-      }),
-      node(2, 'Button', { label: 'Send', enabled: false })
+      })
     ]
     for (const nodes of [
-      [...base.slice(0, 2), { ...base[2], enabled: true }],
+      [...base, node(2, 'Button', { label: 'Send', enabled: true })],
+      [...base, node(2, 'Button', { label: 'Send', enabled: false })],
+      [...base, node(2, 'Other', { identifier: 'chat-attachment-chip' })],
       [...base, node(3, 'Button', { label: 'Cancel reply' })],
-      [...base, ...Array.from({ length: 297 }, (_, i) => node(i + 3, 'Other'))]
+      [...base, ...Array.from({ length: 298 }, (_, i) => node(i + 3, 'Other'))]
     ]) {
       const actual = ui(nodes)
+      actual.device.screenshot = async () => captureImages[0]
       try {
         await actual.assertEmptyDraft()
         throw Error('Unexpected success')
@@ -5668,6 +5880,12 @@ describe('chat native adapter compatibility', function () {
   })
   it('proves a locked web composer is read-only with Send disabled', async () => {
     for (const [field, send, ok] of [
+      ['<textarea data-testid="chat-composer" readonly></textarea>', '', true],
+      [
+        '<textarea data-testid="chat-composer" readonly>parked</textarea>',
+        '',
+        false
+      ],
       [
         '<textarea data-testid="chat-composer" readonly></textarea>',
         '<button aria-label="Send" disabled></button>',
@@ -5921,6 +6139,13 @@ describe('chat native adapter compatibility', function () {
           native,
           surface,
           runDir: '/tmp/synthetic-variant',
+          replaceDraft: async (value: string) => {
+            expect(value).equals('')
+          },
+          hideKeyboardForCapture: async (value: string) => {
+            expect(native).equals(true)
+            expect(value).equals('')
+          },
           present: async () => {},
           // The chat stays open between variants: no Android reopening.
           visible: async () => true,
@@ -6161,6 +6386,38 @@ describe('chat native adapter compatibility', function () {
     expect(value).equals('')
     expect(clipboard).equals('Disposablesentinel')
   })
+  it('verifies mentions against the selected current member’s compact or short name', async () => {
+    const selected = userIdOfGumbo(3)
+    const other = userIdOfGumbo(4)
+    let draft = '@Casey L '
+    let compactName: string | undefined = 'Casey L'
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: { draft: async () => draft },
+      group: 'group-practice',
+      client: async () => ({
+        chatMembers: async () => [
+          { userId: other, compactName: 'Chris S', shortName: 'Chris' },
+          { userId: selected, compactName, shortName: 'Casey' }
+        ]
+      })
+    }) as Scenarios
+    await scenario.assertSelectedMention(selected)
+    compactName = undefined
+    draft = '@Casey '
+    await scenario.assertSelectedMention(selected)
+    for (const [id, expected] of [
+      [other, 'current mention label'],
+      [userIdOfGumbo(5), 'still be a current member']
+    ]) {
+      let failure: unknown
+      try {
+        await scenario.assertSelectedMention(id)
+      } catch (error) {
+        failure = error
+      }
+      expect(String(failure)).includes(expected)
+    }
+  })
   async function zoomedInfoMember(fault = ''): Promise<{
     calls: string[]
     error: unknown
@@ -6209,7 +6466,12 @@ describe('chat native adapter compatibility', function () {
       {
         type: 'Button',
         text: 'Back',
-        bounds: { x: 10, y: 20, width: 44, height: 44 }
+        bounds: {
+          x: 20,
+          y: fault === 'clipped-header' ? -1 : -0.5,
+          width: 48,
+          height: 48
+        }
       }
     ]
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
@@ -6237,6 +6499,12 @@ describe('chat native adapter compatibility', function () {
       'public-dom-reveal',
       'driver-full-visibility'
     ])
+  })
+  it('rejects a desktop header clipped past its half-pixel alignment', async () => {
+    const result = await zoomedInfoMember('clipped-header')
+    expect(String(result.error)).includes(
+      'Observed public header bounds required for member framing'
+    )
   })
   it('still rejects a revealed web member that cannot fit the physical reading viewport', async () => {
     const result = await zoomedInfoMember('too-wide')
@@ -7262,6 +7530,34 @@ describe('positive Android IME observations', function () {
     scene.children![1].children!.push({ ...cancel })
     expect(() => androidMentionHeaderGeometry(scene)).throws('Unique scoped')
   })
+  it('distinguishes an empty Android capture from a draft containing the literal placeholder', () => {
+    const tree = captureTree()
+    const controls = tree.children![1].children!
+    const editor = controls[0]
+    const send = controls.pop()!
+    editor.text = 'Message'
+    const closed = androidCaptureImeState(hiddenCaptureIme, viewport)
+    const empty = androidDismissReference(tree, closed, viewport, '')
+    expect(androidClosedCaptureGeometry(tree, empty).text).equals('')
+    controls.push(send)
+    expect(() => androidClosedCaptureGeometry(tree, empty)).throws(
+      'An empty composer must hide the Send button'
+    )
+    const typed = androidDismissReference(tree, closed, viewport, 'Message')
+    expect(androidClosedCaptureGeometry(tree, typed).text).equals('Message')
+    controls.pop()
+    expect(() => androidClosedCaptureGeometry(tree, typed)).throws(
+      'Unique actual composer Button'
+    )
+
+    controls.push({ id: 'chat-attachment-chip', type: 'ViewGroup' })
+    const attached = androidDismissReference(tree, closed, viewport, '')
+    expect(() => androidClosedCaptureGeometry(tree, attached)).throws(
+      'Unique actual composer Button'
+    )
+    controls.push(send)
+    expect(androidClosedCaptureGeometry(tree, attached).chips).equals(1)
+  })
   it('requires explicit current closed OS state and preserves open-to-closed movement separately', () => {
     const closed = androidCaptureImeState(hiddenCaptureIme, viewport)
     expect(closed.state).equals('already-closed')
@@ -7356,6 +7652,7 @@ describe('positive Android IME observations', function () {
   for (const mode of [
     'already-closed',
     'already-open',
+    'empty-open',
     'pending-open',
     'unknown',
     'unstable'
@@ -7366,7 +7663,8 @@ describe('positive Android IME observations', function () {
         ' before one ordinary capture hide and revalidates the closed shot',
       async () => {
         const actual = model().ui
-        let open = mode === 'already-open'
+        const empty = mode === 'empty-open'
+        let open = mode === 'already-open' || empty
         let reads = 0
         let shots = 0
         let hides = 0
@@ -7396,7 +7694,15 @@ describe('positive Android IME observations', function () {
           captures: [],
           deadline: AbortSignal.timeout(mode === 'unstable' ? 600 : 10000)
         })
-        actual.device.hierarchy = async () => captureTree(open)
+        actual.device.hierarchy = async () => {
+          const tree = captureTree(open)
+          if (empty) {
+            const controls = tree.children![1].children!
+            controls[0].text = 'Message'
+            controls.pop()
+          }
+          return tree
+        }
         actual.device.screenshot = async () =>
           captureImages[mode === 'unstable' ? ++shots % 2 : 0]
         actual.device.assertVisible = async args => {
@@ -7424,7 +7730,7 @@ describe('positive Android IME observations', function () {
           await captureFailure(actual.hideKeyboardForCapture())
           expect(hides).equals(0)
         } else {
-          await actual.hideKeyboardForCapture()
+          await actual.hideKeyboardForCapture(empty ? '' : undefined)
           expect(hides).equals(1)
           expect(focused).equals(mode === 'already-closed' ? 0 : 1)
           if (focused > 0)
@@ -7501,6 +7807,7 @@ describe('positive Android IME observations', function () {
           bounds: { x: 344, y: 410, width: 24, height: 24 }
         }
       ]
+      if (mode === 'empty-send') nodes.splice(3, 1)
       if (mode === 'duplicate-editor') nodes.push({ ...editor })
       if (mode === 'missing-band') nodes.shift()
       if (mode === 'missing-editor') nodes.splice(1, 1)
@@ -7588,6 +7895,11 @@ describe('positive Android IME observations', function () {
         hierarchy: async () => {
           calls.push('hierarchy')
           return tree()
+        },
+        assertNotVisible: async (args: Record<string, unknown>) => {
+          expect(args.id).equals('^chat-send$')
+          expect(mode).equals('empty-send')
+          calls.push('absent:chat-send')
         },
         assertVisible: async (args: Record<string, unknown>) => {
           calls.push(args)
@@ -7830,6 +8142,18 @@ describe('positive Android IME observations', function () {
         )
       ).equals(false)
     })
+  it('captures a focused empty Android reply only when Send is absent', async () => {
+    const expected = { focused: true, reply: true, sendVisible: false }
+    const empty = model('empty-send')
+    expect(
+      (await observeComposerCaptureReady(empty.ui, expected))
+        .composerCaptureReady
+    ).equals(true)
+    expect(
+      empty.calls.filter(call => call === 'absent:chat-send')
+    ).length.at.least(2)
+    await captureFailure(observeComposerCaptureReady(model().ui, expected, 500))
+  })
   it('requires two fresh IME/focus/control observations with actual stable raw frames and disabled Send visible', async () => {
     const actual = model()
     const proof = await observeComposerCaptureReady(
@@ -12686,6 +13010,48 @@ describe('E5 exact touch quick-reaction toggle', () => {
   })
 })
 
+describe('E8 first sign-in with locked history', () => {
+  for (const surface of ['web-wide', 'web-narrow', 'ios', 'android']) {
+    it('answers the locked viewer’s age question on ' + surface, async () => {
+      let answered = false
+      const atList = Error('Reached the conversation list')
+      const ui = {
+        scenario: surface === 'web-wide' ? 'surface' : 'E8',
+        surface,
+        native: surface === 'ios' || surface === 'android',
+        usesFreshBrowserProfile: false,
+        steps: [],
+        open: async () => {},
+        nodes: async () => [],
+        notNow: async () => {},
+        visible: async (selector: { id?: string }) => {
+          if (selector.id === 'chat-age-adult') return !answered
+          return selector.id === 'chat-conversation-list' && answered
+        },
+        id: async (id: string) => {
+          expect(id).equals('chat-age-adult')
+          answered = true
+        },
+        present: async (id: string) => {
+          expect(id).equals('chat-conversation-list')
+          expect(answered).equals(true)
+          throw atList
+        }
+      }
+      const scenario = Object.assign(Object.create(Scenarios.prototype), {
+        ui,
+        observations: [],
+        accountVisible: async () => {},
+        f: {
+          actors: { Locked: { accountLabel: 'Locked viewer' } },
+          lockedCases: { [surface]: { viewer: 'Locked' } }
+        }
+      }) as Scenarios
+      expect(await captureFailure(scenario.signIn('Locked'))).equals(atList)
+    })
+  }
+})
+
 describe('I2 descriptor-bound retained target session', () => {
   it('preserves valid descriptor modes and rejects malformed modes without changing non-I2 optional metadata', () => {
     const ordinary = { legacy: {}, fullWidthActors: [] }
@@ -13045,6 +13411,7 @@ describe('web large-text zoomed control captures', function () {
   }
   function model(
     options: {
+      composer?: Box
       pannedCancel?: Box
       scaleAfterReveal?: number
       hidden?: boolean
@@ -13060,7 +13427,8 @@ describe('web large-text zoomed control captures', function () {
     const page = new JSDOM(
       '<div data-testid="chat-picker-header"><span>Mention a member</span>' +
         '<button>Cancel</button></div><div data-testid="chat-picker-content">' +
-        '<input aria-label="Search members"></div>',
+        '<input aria-label="Search members"></div>' +
+        '<div data-testid="chat-composer-field"><textarea data-testid="chat-composer"></textarea></div>',
       { runScripts: 'outside-only', pretendToBeVisual: true }
     )
     const window = page.window
@@ -13080,6 +13448,8 @@ describe('web large-text zoomed control captures', function () {
     const heading = document.querySelector('span')!
     const cancel = document.querySelector('button')!
     const search = document.querySelector('input')!
+    if (options.composer != null)
+      boxes.set(document.querySelector('textarea')!, options.composer)
     boxes.set(heading, { x: 24, y: 16, width: 220, height: 30 })
     boxes.set(cancel, { x: 1320, y: 12, width: 96, height: 40 })
     boxes.set(search, { x: 24, y: 70, width: 1377, height: 48 })
@@ -13204,6 +13574,30 @@ describe('web large-text zoomed control captures', function () {
     })
     expect(actual.shots).deep.equals([])
     expect(actual.observations[0]).includes({ outcome: 'passed' })
+  })
+
+  it('requires the complete one-line composer to fit when its editable area is under 44px tall', async () => {
+    const target = {
+      name: 'composer',
+      css: '[data-testid="chat-composer"]',
+      requireFocus: false
+    }
+    const box = { x: 100, y: 100, width: 720, height: 42 }
+    await model({ composer: box }).scenario.revealZoomedWebControl(
+      'composer',
+      target
+    )
+    for (const invalid of [
+      { ...box, y: -1 },
+      { ...box, height: 41 }
+    ]) {
+      const actual = model({ composer: invalid, deadline: 400 })
+      const failure = await captureFailure(
+        actual.scenario.revealZoomedWebControl('composer', target)
+      )
+      expect(String(failure)).matches(/abort|timeout/i)
+      expect(actual.shots).deep.equals([])
+    }
   })
 
   it('does not accept a Search editor without its actual focus', async () => {
@@ -14900,7 +15294,7 @@ describe('photo attachment on a phone without a media API', function () {
       expect(calls).deep.equals([
         'addMedia',
         'text Attach',
-        'text Photo library',
+        'text Photos',
         'picker',
         'present chat-attachment-chip'
       ])
