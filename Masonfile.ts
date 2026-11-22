@@ -270,6 +270,17 @@ export function setup(m: Setup): void {
         cache: [{ key: 'npm', paths: ['~/.npm'] }],
         run: buildTv
       })
+      // Like the phone app's release: a master production build re-signs
+      // the stashed IPA with the App Store profile and uploads it to
+      // TestFlight, without compiling again.
+      w.stage('release', {
+        on: APPLE,
+        timeout: '2h',
+        checkout: { depth: 1 },
+        when: { branch: ['master'], params: { seat: 'production' } },
+        apple: { distribution: 'appStore', app: TV_APP, platform: 'tvos' },
+        run: releaseTv
+      })
     }
   )
   // Request-only, so a push of master or develop does not start these.
@@ -601,7 +612,10 @@ async function install(ctx: Stage, cwd?: string): Promise<void> {
   await ctx.sh('npm ci', { cwd })
 }
 
-/** A standalone Apple TV download; never automatically submitted to TestFlight. */
+/**
+ * A standalone Apple TV download. The release stage uploads a master
+ * production build to TestFlight from the stashed IPA.
+ */
 export async function buildTv(ctx: Stage): Promise<void> {
   const environment = seatEnvironment(ctx)
   const api = environment.TS_API_BASE_URL
@@ -629,6 +643,7 @@ export async function buildTv(ctx: Stage): Promise<void> {
     ]
   })
   if (archived.ipa == null) throw new Error('No tvOS IPA was exported')
+  await ctx.stash('tvos-adhoc', relativeIpa(ctx, archived.ipa))
   await ctx.artifacts.save('tvos-ipa', archived.ipa)
   await ctx.artifacts.save('tvos-dsym', archived.dsyms)
   await ctx.publish({ app: TV_APP, platform: 'tvos', path: archived.ipa })
@@ -686,6 +701,7 @@ function relativeIpa(ctx: Stage, file: string): string {
 async function uploadAppStore(
   ctx: Stage,
   ipaPath: string,
+  { artifact, name }: { artifact: string; name: string },
   buildNumber?: string
 ): Promise<void> {
   const { ipa } = await ctx.apple.resign({
@@ -693,7 +709,7 @@ async function uploadAppStore(
     version: appVersion(ctx),
     ...(buildNumber == null ? {} : { buildNumber })
   })
-  await ctx.artifacts.save('ios-appstore', ipa)
+  await ctx.artifacts.save(artifact, ipa)
   // No beta groups. Mason 1.1.0 submits a build for Beta App Review when one
   // of its groups is external (finish() in Mason's src/apple/testflight.ts),
   // and Apple refuses that while another build of the version is in review,
@@ -701,7 +717,8 @@ async function uploadAppStore(
   // are done by hand in App Store Connect.
   const build = await ctx.apple.testflight({
     path: ipa,
-    whatToTest: 'TeamStation production build.',
+    whatToTest: `${name} production build.`,
+    // HTTPS through the system's TLS is all either app encrypts with.
     usesNonExemptEncryption: false
   })
   ctx.log.info(
@@ -717,7 +734,21 @@ export async function releaseIos(ctx: Stage): Promise<void> {
   const packed = await ctx.fs.glob('**/*.ipa')
   const input = packed[0]
   if (input == null) throw new Error('No ad hoc IPA was stashed')
-  await uploadAppStore(ctx, input)
+  await uploadAppStore(ctx, input, {
+    artifact: 'ios-appstore',
+    name: 'TeamStation'
+  })
+}
+
+export async function releaseTv(ctx: Stage): Promise<void> {
+  await ctx.unstash('tvos-adhoc')
+  const packed = await ctx.fs.glob('**/*.ipa')
+  const input = packed[0]
+  if (input == null) throw new Error('No ad hoc tvOS IPA was stashed')
+  await uploadAppStore(ctx, input, {
+    artifact: 'tvos-appstore',
+    name: 'TeamStation TV'
+  })
 }
 
 const APK_GLOB = 'android/app/build/outputs/apk/release/*.apk'
