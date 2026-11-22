@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- changed: Google Play closed-testing uploads publish the bundle and do not send release notes
 - added: One search field finds leagues, seasons, teams and people, with the closest matches first
 - changed: The Auto-Scheduler builds every schedule exactly on the web, iPhone and Android, and publishes a large preview in a bounded number of queries
 - changed: On a phone, the game screen releases its own player while the four-camera grid is open, and the live pill pulses only where it can be seen
