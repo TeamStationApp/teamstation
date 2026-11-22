@@ -128,6 +128,32 @@ describe("Tess's system prompt", function () {
     expect(line?.length).lessThan(900)
   })
 
+  it('tells her how to find an available umpire: the league, availability, commitments, and who was left out', function () {
+    const [instructed, index] = instructions().split('## API index')
+    expect(instructed).includes('## Umpires')
+    expect(instructed).includes('ask which league')
+    expect(instructed).includes('availableAt')
+    expect(instructed).includes('umpireAvailability')
+    expect(instructed).includes('/commitments')
+    expect(instructed).includes('left out and why')
+    expect(instructed).includes('day 0 is Monday')
+    expect(instructed).includes('For a game, always pass `availableAt`')
+    expect(instructed).includes('own saved zone')
+    expect(instructed).includes('cannot see it')
+    const list = index
+      .split('\n')
+      .find(each => each.startsWith('GET /leagues/{leagueId}/umpires:'))
+    expect(list).match(
+      /Query: availableAt, durationMinutes, day, time, level, strict$/
+    )
+    expect(index).includes(
+      'GET /leagues/{leagueId}/umpires/{userId}/commitments:'
+    )
+    expect(index).match(
+      /PUT \/leagues\/\{leagueId\}\/me\/umpire-availability: .*Body: \{availability\*: \{levels\*/
+    )
+  })
+
   it('reads GraphQL with its own tool: named in the instructions, left out of the index, and not refused', function () {
     const [instructed, index] = instructions().split('## API index')
     expect(instructed).includes('## Reading with GraphQL')

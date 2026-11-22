@@ -1151,6 +1151,18 @@ export interface LeagueUmpiresTable {
   granted_by: string
   granted_at: Generated<Date>
 }
+/** A person's saved umpire availability filter for a league (128). */
+export interface UmpireAvailabilityTable {
+  user_id: string
+  league_id: string
+  levels: Generated<string[]>
+  /** 0 is Monday … 6 is Sunday. */
+  days: Generated<number[]>
+  from_time: string | null
+  to_time: string | null
+  timezone: string
+  updated_at: Generated<Date>
+}
 export interface UmpireLevelsTable {
   id: string
   league_id: string
@@ -1715,6 +1727,7 @@ export interface Database {
   season_umpire_requirements: SeasonUmpireRequirementsTable
   umpire_certifications: UmpireCertificationsTable
   umpire_assignments: UmpireAssignmentsTable
+  umpire_availability: UmpireAvailabilityTable
   game_guest_details: {
     game_id: string
     user_id: string

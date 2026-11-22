@@ -243,7 +243,25 @@ and asks first otherwise. The chat routes do not read it.
 
 ## Umpire schedule timezones
 
-`GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query parameter. Clients send their local IANA timezone for row and conflict dates and weekday/time filtering. Invalid zones return400. When omitted, each game's stored timezone is used. Stored ISO instants and conflict intervals are unchanged.
+`GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query
+parameter. Clients send their local IANA timezone; row dates and conflict lines
+are always written in it. An optional `filterTimezone` names the zone the
+`days`, `from` and `to` filter is matched in, such as a saved filter's own, so
+"weeknights after 5 in Chicago" stays that on a phone in another zone while the
+rows stay in the phone's zone. Without `filterTimezone` the filter is matched in
+`timezone`, and without either, each game's stored timezone is used for both.
+Invalid zones return 400. Stored ISO instants and conflict intervals are
+unchanged.
+
+## Umpire commitments
+
+`GET /leagues/:leagueId/umpires/:userId/commitments?from=…&to=…` is a new path,
+not a filter, because no collection holds what it answers: one person's
+umpiring assignments and the games they play in (as a rostered player or a
+guest, not where they are unrostered), across every league the caller
+administers, merged into one list of commitments within a window. Neither
+`/events` nor the umpire schedule is that list; both answer games, not one
+umpire's holds on their time, and the schedule is a single league's.
 
 ## Pending video publication
 

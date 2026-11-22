@@ -14,6 +14,7 @@
 - added: A game's umpires open their league profile, with its Message button, for anyone in that league
 - added: Each league that manages umpires has an umpire chat for its umpires, kept up to date as the role is given and taken away; the umpire schedule opens it with an Umpire chat button beside Leaderboard
 - added: A league administrator can give themselves the umpire role in Manage Umpires
+- added: League admins can find umpires by availability and read an umpire's commitments through the API, GraphQL and Tess
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file

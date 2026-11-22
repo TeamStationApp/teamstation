@@ -35,7 +35,7 @@ import { MAX_QUERY_LENGTH } from './routes/graphql'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 import { schedulingSetupPaths } from './scheduler/schedulingSetupOpenApi'
 import { tessPaths } from './tess/openApi'
-import { umpirePaths } from './umpires/openApi'
+import { umpireAvailabilitySchema, umpirePaths } from './umpires/openApi'
 import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 import { venuePaths } from './venues/venuesOpenApi'
 
@@ -3468,6 +3468,15 @@ export function openApiDocument(version: string): OpenApiDocument {
                     'into theirs.'
                 }
               }
+            },
+            umpireAvailability: {
+              ...umpireAvailabilitySchema,
+              description:
+                'On a league profile only: the person\u2019s saved umpire ' +
+                'availability filter for the league, null when none is ' +
+                'saved. Present for the person themselves and for the ' +
+                'league\u2019s administrators while the person holds its ' +
+                'umpire role; absent for everyone else.'
             }
           }
         },
@@ -10711,7 +10720,10 @@ export function openApiDocument(version: string): OpenApiDocument {
                     '`sections` empty, `viewer.manages` false), to message ' +
                     'them from a game, by anybody else accepted into the ' +
                     'league, its coaches and assistants included. A token ' +
-                    'or Tess opens no card.'
+                    'or Tess opens no card. `umpireAvailability`, the ' +
+                    'person\u2019s saved umpire filter for the league, is ' +
+                    'answered to the person and, while they hold the ' +
+                    'league\u2019s umpire role, to its administrators.'
                   : ''),
               security: [{ bearer: [] }],
               parameters: [idParam, userIdParam],

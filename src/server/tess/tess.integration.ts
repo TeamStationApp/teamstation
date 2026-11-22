@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { accountHarness } from '../../test/accountHarness'
@@ -13,17 +13,21 @@ import type { StoredBlock } from './conversation'
 import type { ToolUseBlock } from './messagesApi'
 
 /**
- * Tess against the real model, eight cases: an off-topic request is declined
+ * Tess against the real model, ten cases: an off-topic request is declined
  * with no tool call; "where are my team's settings" is answered with a path
  * link; adding a game ends in a proposed change, never a write, its details
  * in plain words with no ids, and the turn's second request reading the
  * cached prefix; a stats
  * question reads the API; a chart request draws one; recording a pitch is
  * refused; a fewest-first umpire question pages the leaderboard; a source
- * question uses the cached source map and reads the relevant implementation. Each case is
+ * question uses the cached source map and reads the relevant implementation;
+ * finding an umpire for a game reads availability and commitments and says
+ * who was left out; and an umpire question naming no league, from an admin
+ * of two, asks which league first. Each case is
  * one message to a fresh conversation, through the real routes, the real API
  * and a scratch database. Not part of `npm test`, and it costs money: about
- * fifteen requests.
+ * fifteen requests for the first eight, and up to twelve for each of the two
+ * umpire cases.
  *
  *   TS_TESS_CONFIG=<config.json> node -r sucrase/register src/server/tess/tess.integration.ts \
  *     [--case <n>] [--max-requests <n>]
@@ -31,6 +35,9 @@ import type { ToolUseBlock } from './messagesApi'
  * `--case <n>` runs only the nth case (from 1), for a few requests instead,
  * and `--max-requests <n>` refuses any Messages request past the nth, so a
  * case that keeps calling tools fails rather than spends.
+ *
+ * With `TS_TESS_TRANSCRIPT=<file>`, each case run writes its question, each
+ * tool call's name, path and query, and Tess's whole answer to that file.
  *
  * The key is `tess.apiKey`, or dictation's Anthropic key, in that file
  * (serverConfig.json by default, which is not in git). It is never printed.
@@ -77,6 +84,49 @@ function detailsProblem(details: unknown): string | null {
 const toolsUsed = (turn: Turn): string[] =>
   turn.blocks.flatMap(block => (block.type === 'tool_use' ? [block.name] : []))
 
+/** The turn's tool calls, in order. */
+const toolCalls = (turn: Turn): ToolUseBlock[] =>
+  turn.blocks.filter(
+    (block): block is ToolUseBlock => block.type === 'tool_use'
+  )
+
+/** One tool call written for the transcript: its name, path and query. */
+function callText(call: ToolUseBlock): string {
+  const input = (call.input ?? {}) as {
+    path?: string
+    query?: unknown
+  }
+  if (call.name === 'api_get')
+    return `${call.name} ${input.path ?? ''}${input.query == null ? '' : ` ${JSON.stringify(input.query)}`}`
+  return `${call.name} ${JSON.stringify(call.input)}`
+}
+
+/** Whether a call reads a league's umpire list, by REST or by GraphQL. */
+function readsUmpireList(call: ToolUseBlock): boolean {
+  const input = (call.input ?? {}) as { path?: string; query?: unknown }
+  if (call.name === 'api_get')
+    return /^\/leagues\/[^/]+\/umpires(\?|$)/.test(input.path ?? '')
+  return (
+    call.name === 'graphql_query' && /\bumpires\s*\(/.test(String(input.query))
+  )
+}
+
+/** Whether a call asks the umpire list for a time: availableAt, or day and time. */
+function asksAvailability(call: ToolUseBlock): boolean {
+  if (!readsUmpireList(call)) return false
+  const text = JSON.stringify(call.input)
+  return /availableAt|\bday\b/.test(text)
+}
+
+/** Whether a call reads an umpire's commitments, by REST or by GraphQL. */
+function readsCommitments(call: ToolUseBlock): boolean {
+  const input = (call.input ?? {}) as { path?: string; query?: unknown }
+  return call.name === 'api_get'
+    ? /\/umpires\/[^/]+\/commitments/.test(input.path ?? '')
+    : call.name === 'graphql_query' &&
+        String(input.query).includes('umpireCommitments')
+}
+
 /**
  * A Saturday two to three weeks ahead, written out ("Saturday, November 7,
  * 2026"), so the game asked for is never on a day that has already gone.
@@ -116,7 +166,7 @@ const CASES: Case[] = [
   },
   {
     name: 'adding a game ends in confirmChange with plain details, never a write, the cache read',
-    text: `Add a game against Demo Eagles on ${saturdayAhead()} at 10am.`,
+    text: `Add a Demo Hawks game against Demo Eagles on ${saturdayAhead()} at 10am.`,
     check: turn => {
       if (turn.writes > 0) return 'something was written'
       const game = turn.changes.find(
@@ -141,7 +191,7 @@ const CASES: Case[] = [
   },
   {
     name: 'a chart request draws a chart or a table',
-    text: 'Chart our runs per game.',
+    text: 'Chart the runs per game of Demo Hawks.',
     check: turn =>
       /<svg|<table/i.test(turn.answer) ? null : 'no <svg> or <table>'
   },
@@ -213,6 +263,51 @@ const CASES: Case[] = [
         ? null
         : 'source question proposed or performed a write'
     }
+  },
+  {
+    name: 'finding an umpire for a game reads availability and commitments and says who was left out',
+    text: 'Find me an umpire for the Demo Rockets v Demo Comets game.',
+    check: turn => {
+      const calls = toolCalls(turn)
+      if (!calls.some(asksAvailability))
+        return 'the umpire list was not asked for the game’s time'
+      if (!calls.some(readsCommitments)) return 'no commitments were read'
+      if (turn.writes > 0 || turn.changes.length > 0)
+        return 'something was proposed or written'
+      // Ids belong only in link targets, never in the words.
+      const words = turn.answer.replace(/\]\([^)]*\)/g, ']')
+      const id = /\b(?:sea|lea|gam|usr|tem)_\w+/.exec(words)
+      if (id != null) return `the answer shows the id ${id[0]}`
+      if (!turn.answer.includes('Hank')) return 'Hank Aaron was not named'
+      // The game is on Tuesday, April 13; no other weekday may go with it.
+      if (
+        /\b(?:Mon|Wed|Thu|Fri|Sat|Sun)[a-z]*,? (?:April|Apr) 13\b/.test(words)
+      )
+        return 'the answer gives the game the wrong weekday'
+      const near = (name: string, reason: RegExp): boolean =>
+        turn.answer
+          .split(/\n+/)
+          .some(line => line.includes(name) && reason.test(line))
+      if (!near('Willie', /umpir|assign|busy|conflict|already/i))
+        return 'Willie Mays was not said to be umpiring then'
+      if (!near('Jackie', /filter|availab|weekend|Saturday|Sunday/i))
+        return 'Jackie Robinson was not said to be filtered out'
+      return null
+    }
+  },
+  {
+    name: 'an umpire question naming no league asks which league first',
+    text: 'Which umpires haven’t filtered out Tuesdays at 3 pm?',
+    check: turn => {
+      const read = toolCalls(turn).filter(readsUmpireList)
+      if (read.length > 0)
+        return `read an umpire list before asking (${read.map(callText).join('; ')})`
+      if (!/league/i.test(turn.answer) || !turn.answer.includes('?'))
+        return 'did not ask which league'
+      return turn.writes === 0 && turn.changes.length === 0
+        ? null
+        : 'something was proposed or written'
+    }
   }
 ]
 
@@ -236,6 +331,8 @@ async function main(): Promise<number> {
   const only = option(argv, '--case', 1, CASES.length)
   const chosen = only == null ? CASES.map((_, at) => at) : [only - 1]
   const budget = option(argv, '--max-requests', 1, 1000) ?? Infinity
+  const transcript = process.env.TS_TESS_TRANSCRIPT
+  if (transcript != null) writeFileSync(transcript, '')
   const configPath = process.env.TS_TESS_CONFIG ?? 'serverConfig.json'
   const raw = JSON.parse(readFileSync(configPath, 'utf8')) as Pick<
     ServerConfig,
@@ -331,6 +428,24 @@ async function main(): Promise<number> {
       console.log(
         `  Tess: ${turn.answer.replace(/\s+/g, ' ').slice(0, 300)}${turn.answer.length > 300 ? '…' : ''}`
       )
+      if (transcript != null)
+        appendFileSync(
+          transcript,
+          [
+            `# Case ${at + 1}: ${each.name}`,
+            `# ${problem == null ? 'PASS' : `FAIL: ${problem}`}`,
+            '',
+            `Question: ${each.text}`,
+            '',
+            'Tool calls:',
+            ...toolCalls(turn).map(call => `- ${callText(call)}`),
+            '',
+            'Answer:',
+            turn.answer,
+            '',
+            ''
+          ].join('\n')
+        )
     }
     const usage = await h.db
       .selectFrom('tess_usage_weeks')
@@ -401,7 +516,10 @@ async function writes(db: Db): Promise<number> {
 
 /**
  * User 101 runs Demo Umpire League, whose three umpires have worked three,
- * one and no games.
+ * one and no games; its Umpire Spring season has the Demo Rockets v Demo
+ * Comets game, while Willie Mays umpires another, and Willie and Jackie have
+ * saved their availability. 101 also runs Demo Umpire League B, where Hank
+ * Aaron umpires too.
  */
 async function seedUmpires(
   h: Awaited<ReturnType<typeof accountHarness>>
@@ -463,6 +581,82 @@ async function seedUmpires(
     { id: 302, first: 'Willie', last: 'Mays', worked: 1 },
     { id: 303, first: 'Jackie', last: 'Robinson', worked: 0 }
   ]
+  // Umpire Spring: Demo Rockets v Demo Comets on Tuesday 2027-04-13 at
+  // 18:30 in Los Angeles, and at the same time a game Willie Mays umpires.
+  await db
+    .insertInto('seasons')
+    .values({
+      id: 'sea_umpire_spring',
+      league_id: league,
+      name: 'Umpire Spring',
+      year: 2027,
+      starts_on: '2027-03-01',
+      ends_on: '2027-06-30',
+      timezone: 'America/Los_Angeles'
+    })
+    .execute()
+  await db
+    .insertInto('teams')
+    .values([
+      { id: 'tem_umpires_rockets', name: 'Demo Rockets' },
+      { id: 'tem_umpires_comets', name: 'Demo Comets' }
+    ])
+    .execute()
+  await db
+    .insertInto('season_teams')
+    .values(
+      [
+        'tem_umpires_rockets',
+        'tem_umpires_comets',
+        'tem_umpires_a',
+        'tem_umpires_b'
+      ].map(team => ({ season_id: 'sea_umpire_spring', team_id: team }))
+    )
+    .execute()
+  const springEvening = new Date('2027-04-14T01:30:00Z')
+  await db
+    .insertInto('games')
+    .values([
+      {
+        id: 'gam_umpires_rockets',
+        home_team_id: 'tem_umpires_rockets',
+        away_team_id: 'tem_umpires_comets',
+        season_id: 'sea_umpire_spring',
+        start_at: springEvening,
+        timezone: 'America/Los_Angeles',
+        venue: 'Demo Field 1'
+      },
+      {
+        id: 'gam_umpires_busy',
+        home_team_id: 'tem_umpires_a',
+        away_team_id: 'tem_umpires_b',
+        season_id: 'sea_umpire_spring',
+        start_at: springEvening,
+        timezone: 'America/Los_Angeles',
+        venue: 'Demo Field 2'
+      }
+    ])
+    .execute()
+  // A second league 101 runs, where Hank Aaron umpires too.
+  await db
+    .insertInto('leagues')
+    .values({
+      id: 'lea_umpires_b',
+      name: 'Demo Umpire League B',
+      umpire_management: true
+    })
+    .execute()
+  await db
+    .insertInto('scope_roles')
+    .values({
+      id: 'srl_umpires_b',
+      user_id: owner,
+      scope_type: 'league',
+      scope_id: 'lea_umpires_b',
+      role: 'admin',
+      granted_by: null
+    })
+    .execute()
   for (const { id, first, last, worked } of umpires) {
     await insertFixtureUsers(db, {
       id,
@@ -487,6 +681,44 @@ async function seedUmpires(
         })
         .execute()
   }
+  await db
+    .insertInto('league_umpires')
+    .values({
+      league_id: 'lea_umpires_b',
+      user_id: userIdOfGumbo(301),
+      granted_by: owner
+    })
+    .execute()
+  await db
+    .insertInto('umpire_assignments')
+    .values({
+      game_id: 'gam_umpires_busy',
+      slot: 'uty_plate:1',
+      user_id: userIdOfGumbo(302),
+      assigned_by: owner
+    })
+    .execute()
+  // Willie Mays saved weekday evenings, Jackie Robinson weekends only, and
+  // Hank Aaron nothing.
+  await db
+    .insertInto('umpire_availability')
+    .values([
+      {
+        user_id: userIdOfGumbo(302),
+        league_id: league,
+        days: [0, 1, 2, 3, 4],
+        from_time: '17:00',
+        to_time: '23:00',
+        timezone: 'America/Los_Angeles'
+      },
+      {
+        user_id: userIdOfGumbo(303),
+        league_id: league,
+        days: [5, 6],
+        timezone: 'America/Los_Angeles'
+      }
+    ])
+    .execute()
 }
 
 /**

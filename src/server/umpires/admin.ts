@@ -13,7 +13,7 @@ import {
   type UmpireTypeCount
 } from '../../common/umpires'
 import type { VisibleScopes } from '../access'
-import { onePerson } from '../admin/people'
+import { type OnePerson, onePerson } from '../admin/people'
 import type { Database, UmpireLevelsTable } from '../db/database'
 import { publicNames, type PublicPerson } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
@@ -275,7 +275,24 @@ export async function people(
   /** What the reader may see, for the affiliation lines; none leaves them empty. */
   scopes?: VisibleScopes
 ): Promise<UmpirePerson[]> {
-  if (query?.trim() === '') return []
+  return (await peopleWithAccounts(db, leagueId, query, media, reader, scopes))
+    .people
+}
+
+/**
+ * `people`, with each person's accounts as the walk here resolved them (their
+ * open row and every row merged into it), for a caller that reads by person
+ * and would otherwise resolve them all again.
+ */
+export async function peopleWithAccounts(
+  db: Kysely<Database>,
+  leagueId: string,
+  query?: string,
+  media?: MediaContext,
+  reader?: Reader,
+  scopes?: VisibleScopes
+): Promise<{ people: UmpirePerson[]; accounts: Map<string, OnePerson> }> {
+  if (query?.trim() === '') return { people: [], accounts: new Map() }
   const users = await db
     .selectFrom('users')
     .select([
@@ -474,7 +491,12 @@ export async function people(
     .select(['c.user_id', 'c.level_id', 'c.type_id', 'c.enabled'])
     .where('l.league_id', '=', leagueId)
     .execute()
-  return rows
+  const accounts = new Map<string, OnePerson>(
+    rows.map(u => [u.id, { userId: u.id, userIds: [u.id] }])
+  )
+  for (const [account, survivor] of canonical)
+    if (account !== survivor) accounts.get(survivor)?.userIds.push(account)
+  const listed = rows
     .map(u => {
       const certs = new Map<string, UmpireCertification>()
       for (const c of certifications.filter(c => canon(c.user_id) === u.id)) {
@@ -498,6 +520,7 @@ export async function people(
       const order = a.name.localeCompare(b.name)
       return order === 0 ? a.id.localeCompare(b.id) : order
     })
+  return { people: listed, accounts }
 }
 export async function grant(
   db: Transaction<Database>,

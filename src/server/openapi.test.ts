@@ -517,6 +517,72 @@ describe('the API document', function () {
     ])
   })
 
+  it('documents umpire availability: saving your own, querying the list by it, and an umpire’s commitments', function () {
+    const document = openApiDocument('0.0.0') as any
+    const paths = document.paths as Record<string, any>
+    const mine = paths['/leagues/{leagueId}/me/umpire-availability']
+    expect(Object.keys(mine).sort()).deep.equals(['get', 'put'])
+    const availability =
+      mine.put.requestBody.content['application/json'].schema.properties
+        .availability
+    expect(availability.type).deep.equals(['object', 'null'])
+    expect(availability.required).deep.equals([
+      'levels',
+      'days',
+      'from',
+      'to',
+      'timezone'
+    ])
+    expect(availability.description).includes('0 is Monday')
+    const list = paths['/leagues/{leagueId}/umpires'].get
+    const parameters = new Map(
+      list.parameters.map((parameter: { name: string }) => [
+        parameter.name,
+        parameter
+      ])
+    )
+    expect([...parameters.keys()]).deep.equals([
+      'leagueId',
+      'availableAt',
+      'durationMinutes',
+      'day',
+      'time',
+      'level',
+      'strict'
+    ])
+    expect((parameters.get('day') as any).description).includes('0 is Monday')
+    // day and time are wall-clock in each umpire's zone; a game is availableAt.
+    for (const name of ['day', 'time'])
+      expect((parameters.get(name) as any).description).match(
+        /own saved zone.*use `availableAt`/
+      )
+    expect(list.description).includes('For a game, pass `availableAt`')
+    expect(list.description).includes('umpireAvailability')
+    expect(list.description).includes('unless `strict`')
+    expect(list.description).includes('on the start')
+    // PUT answers the list in GET's shape.
+    expect(
+      paths['/leagues/{leagueId}/umpires'].put.responses[200].description
+    ).includes('umpireAvailability')
+    const commitments =
+      paths['/leagues/{leagueId}/umpires/{userId}/commitments'].get
+    expect(
+      commitments.parameters.map(
+        (parameter: { name: string }) => parameter.name
+      )
+    ).deep.equals(['leagueId', 'userId', 'from', 'to'])
+    expect(commitments.description).includes('31 days')
+    const profile = document.components.schemas.PersonProfile
+    expect(profile.properties.umpireAvailability.type).deep.equals([
+      'object',
+      'null'
+    ])
+    expect(profile.required).not.includes('umpireAvailability')
+    expect(paths['/leagues/{id}/people/{userId}'].get.description).includes(
+      'umpireAvailability'
+    )
+  })
+
   it('lists every role flag, the assistant included, wherever roles are named', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })

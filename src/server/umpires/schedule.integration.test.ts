@@ -41,6 +41,15 @@ describe('umpire time and conflict rules', () => {
     )
     expect(umpireFilterError({ timezone: 'America/Los_Angeles' })).equals(null)
     expect(() => parseUmpireFilters({ timezone: ['UTC', 'UTC'] })).throws()
+    expect(umpireFilterError({ filterTimezone: 'Not/AZone' })).equals(
+      'Choose a valid timezone.'
+    )
+    expect(() =>
+      parseUmpireFilters({ filterTimezone: ['UTC', 'UTC'] })
+    ).throws()
+    expect(
+      parseUmpireFilters({ timezone: 'UTC', filterTimezone: 'Asia/Tokyo' })
+    ).includes({ timezone: 'UTC', filterTimezone: 'Asia/Tokyo' })
     expect(umpireDate('2027-03-14T09:30:00Z', 'America/Los_Angeles')).equals(
       'Mar 14, 1:30 am'
     )
@@ -225,6 +234,26 @@ describe('umpire schedule involvement and availability', function () {
         'Apr 3, 12:00 am'
       )
       expect((await get('timezone=Invalid')).status).equals(400)
+      // A saved filter's days and range are matched in its own zone, New
+      // York, while the rows and conflicts stay dated in Los Angeles.
+      const saved = await get(
+        'timezone=America%2FLos_Angeles&filterTimezone=America%2FNew_York&days=4&from=20:00&to=21:00'
+      )
+      expect(saved.status).equals(200)
+      const savedBody = await saved.json()
+      expect(savedBody.games).length(1)
+      expect(savedBody.games[0].date).equals('Apr 2, 5:00 pm')
+      expect(savedBody.games[0].conflicts[0].time).equals('Apr 2, 5:00 pm')
+      expect(
+        (
+          await (
+            await get(
+              'timezone=America%2FLos_Angeles&filterTimezone=America%2FNew_York&days=4&from=17:00&to=18:00'
+            )
+          ).json()
+        ).games
+      ).length(0)
+      expect((await get('filterTimezone=Invalid')).status).equals(400)
     } finally {
       await f.h.db
         .updateTable('games')

@@ -590,6 +590,58 @@ describe('deleting an account', function () {
     }
   })
 
+  it('removes the umpire availability saved under the person and every account merged into it, and nobody else’s (6.harness-review.2)', async () => {
+    const proof = 'ba'.repeat(32)
+    const leaving = await person(
+      'Dave Winfield',
+      'winfield@example.test',
+      proof
+    )
+    const merged = await person('Dave Winfield', 'dw@example.test', proof)
+    await closeInto(h.db, merged.id, leaving.id)
+    const staying = await person('Paul Molitor', 'molitor@example.test', proof)
+    await h.db
+      .insertInto('leagues')
+      .values([
+        { id: 'lea_deleteUmpA', name: 'Umpire League A' },
+        { id: 'lea_deleteUmpB', name: 'Umpire League B' }
+      ])
+      .execute()
+    await h.db
+      .insertInto('umpire_availability')
+      .values(
+        [
+          [leaving.id, 'lea_deleteUmpA'],
+          [merged.id, 'lea_deleteUmpB'],
+          [staying.id, 'lea_deleteUmpA']
+        ].map(([userId, leagueId]) => ({
+          user_id: userId,
+          league_id: leagueId,
+          days: [1, 3],
+          from_time: '17:00',
+          to_time: '21:00',
+          timezone: 'America/Los_Angeles'
+        }))
+      )
+      .execute()
+    const saved = async (userId: string): Promise<number> =>
+      (
+        await h.db
+          .selectFrom('umpire_availability')
+          .select('league_id')
+          .where('user_id', '=', userId)
+          .execute()
+      ).length
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+
+    expect(await saved(leaving.id)).equals(0)
+    expect(await saved(merged.id)).equals(0)
+    expect(await saved(staying.id)).equals(1)
+  })
+
   it('keeps nothing Tess writes after it, from a turn still running or one begun later', async () => {
     const leaving = await person(
       'Willie Stargell',

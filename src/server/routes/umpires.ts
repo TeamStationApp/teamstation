@@ -2,6 +2,7 @@ import { type Request, Router } from 'express'
 import type { Kysely, Transaction } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
+import type { UmpirePerson } from '../../common/umpires'
 import {
   UMPIRE_LEADERBOARD_MAX_PAGE,
   type UmpireLeaderboardQuery
@@ -20,11 +21,24 @@ import { noteScopeChange } from '../socket/syncRevision'
 import * as admin from '../umpires/admin'
 import { deleteSlot, leaderboard, saveSlot } from '../umpires/assignments'
 import {
+  availabilityPasses,
+  type AvailabilityQuery,
+  commitmentWindow,
+  type MatchedAt,
+  matchedAt,
+  parseAvailabilityQuery,
+  readAvailability,
+  requireOwnAvailability,
+  saveAvailability,
+  umpireCommitments
+} from '../umpires/availability'
+import {
   addNoteType,
   noteTypes,
   removeNoteType,
   saveNote
 } from '../umpires/notes'
+import { queryInteger } from '../umpires/queryInteger'
 import { savePeople } from '../umpires/savePeople'
 import {
   parseUmpireFilters,
@@ -62,14 +76,13 @@ function leaderboardQueryOf(
     value: unknown,
     least: number,
     most: number
-  ): number | undefined => {
-    if (value == null) return undefined
-    const number =
-      typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN
-    if (!Number.isSafeInteger(number) || number < least || number > most)
-      throw badRequest(`Supply one ${name} from ${least} to ${most}`)
-    return number
-  }
+  ): number | undefined =>
+    queryInteger(
+      value,
+      least,
+      most,
+      `Supply one ${name} from ${least} to ${most}`
+    )
   return {
     order: order ?? undefined,
     limit: whole('limit', limit, 1, UMPIRE_LEADERBOARD_MAX_PAGE),
@@ -279,8 +292,16 @@ export function umpireRoutes(
       }
     }
   )
-  manage('get', '/leagues/:leagueId/umpires', async (trx, league, req) => ({
-    people: await admin.people(
+  // The league's umpires, each carrying their saved filter for the league;
+  // the availability parameters, when given, keep only the people it leaves
+  // in. GET and PUT answer through it, so both answer one shape.
+  const umpireList = async (
+    trx: Kysely<Database>,
+    league: string,
+    req: Request,
+    query: AvailabilityQuery | undefined
+  ): Promise<{ people: UmpirePerson[]; matchedAt?: MatchedAt[] }> => {
+    const { people, accounts } = await admin.peopleWithAccounts(
       trx,
       league,
       undefined,
@@ -288,19 +309,62 @@ export function umpireRoutes(
       readerOf(req.actor),
       await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
     )
-  }))
+    // The list already resolved each person's merged accounts.
+    const saved = await readAvailability(
+      trx,
+      league,
+      people.map(person => person.id),
+      accounts
+    )
+    return {
+      people: people
+        .map(person => ({
+          ...person,
+          umpireAvailability: saved.get(person.id) ?? null
+        }))
+        .filter(
+          person =>
+            query == null ||
+            availabilityPasses(person.umpireAvailability, query)
+        ),
+      ...(query?.at != null && 'start' in query.at
+        ? {
+            matchedAt: await matchedAt(
+              trx,
+              league,
+              query.at.start,
+              saved.values()
+            )
+          }
+        : {})
+    }
+  }
+  manage(
+    'get',
+    '/leagues/:leagueId/umpires',
+    async (trx, league, req) =>
+      await umpireList(trx, league, req, parseAvailabilityQuery(req.query))
+  )
+  manage(
+    'get',
+    '/leagues/:leagueId/umpires/:userId/commitments',
+    async (trx, league, req) => {
+      const window = commitmentWindow(req.query.from, req.query.to)
+      return {
+        commitments: await umpireCommitments(
+          trx,
+          req.actor!,
+          league,
+          String(req.params.userId),
+          window.from,
+          window.to
+        )
+      }
+    }
+  )
   manage('put', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     await savePeople(trx, league, req.actor!.userId, req.body)
-    return {
-      people: await admin.people(
-        trx,
-        league,
-        undefined,
-        media,
-        readerOf(req.actor),
-        await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
-      )
-    }
+    return await umpireList(trx, league, req, undefined)
   })
   manage('post', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     if (typeof req.body?.userId !== 'string')
@@ -322,6 +386,52 @@ export function umpireRoutes(
     }
   )
 
+  // The signed-in person's own saved filter for a league, for whoever may
+  // open its umpire schedule; anybody else is answered 404.
+  router.get(
+    '/leagues/:leagueId/me/umpire-availability',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      await requireOwnAvailability(db, actor, leagueId)
+      const saved = await readAvailability(db, leagueId, [actor.userId])
+      res.json({ availability: saved.get(actor.userId) ?? null })
+    })
+  )
+  router.put(
+    '/leagues/:leagueId/me/umpire-availability',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      const body = req.body
+      if (
+        body == null ||
+        typeof body !== 'object' ||
+        Array.isArray(body) ||
+        !('availability' in body)
+      )
+        throw badRequest('Choose a valid filter.')
+      const availability = await atomic(db, async trx => {
+        await lockKeys(trx, [
+          'creation:parent-graph',
+          `umpires:${leagueId}`,
+          'users.closeInto'
+        ])
+        await requireOwnAvailability(trx, actor, leagueId)
+        return await saveAvailability(
+          trx,
+          leagueId,
+          actor.userId,
+          body.availability
+        )
+      })
+      res.json({ availability })
+    })
+  )
   router.get(
     '/me/umpire-leagues',
     requireActor,

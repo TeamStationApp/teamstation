@@ -782,6 +782,75 @@ const SeasonType: GraphQLObjectType = new GraphQLObjectType({
 
 // --- The query ----------------------------------------------------------
 
+// --- Umpires --------------------------------------------------------------
+
+const UmpireAvailabilityType = new GraphQLObjectType({
+  name: 'UmpireAvailability',
+  description:
+    'A person’s saved umpire filter for one league, read in its own time zone. No levels or days means every one; no range means any time.',
+  fields: {
+    levels: from(list(GraphQLID), 'Umpire level ids.'),
+    days: from(list(GraphQLInt), '0 is Monday … 6 is Sunday.'),
+    from: from(GraphQLString, 'HH:mm, inclusive.'),
+    to: from(GraphQLString, 'HH:mm, inclusive.'),
+    timezone: from(GraphQLString)
+  }
+})
+
+const UmpireType = new GraphQLObjectType({
+  name: 'Umpire',
+  description:
+    'One of a league’s umpires, as GET /leagues/{id}/umpires lists them.',
+  fields: {
+    id: from(required(GraphQLID)),
+    name: from(GraphQLString),
+    umpireAvailability: from(
+      UmpireAvailabilityType,
+      'Their saved filter for the league; null when none is saved.'
+    )
+  }
+})
+
+const UmpireMatchedAtType = new GraphQLObjectType({
+  name: 'UmpireMatchedAt',
+  description:
+    'Where availableAt falls in one time zone: one of the league’s games starting then, or one saved filter.',
+  fields: {
+    timezone: from(GraphQLString),
+    weekday: from(GraphQLString, 'Monday … Sunday.'),
+    date: from(GraphQLString, 'YYYY-MM-DD.'),
+    time: from(GraphQLString, 'HH:mm.')
+  }
+})
+
+const UmpireListType = new GraphQLObjectType({
+  name: 'UmpireList',
+  description:
+    'A league’s umpires, as GET /leagues/{id}/umpires answers: the people its arguments keep, and with availableAt where that start was matched.',
+  fields: {
+    people: from(required(list(UmpireType))),
+    matchedAt: from(
+      list(UmpireMatchedAtType),
+      'With availableAt: its weekday, date and time in each time zone of the league’s games starting then and of the saved filters; name the game’s day from this. Null without availableAt.'
+    )
+  }
+})
+
+const UmpireCommitmentType = new GraphQLObjectType({
+  name: 'UmpireCommitment',
+  description: 'A game an umpire is held for: umpiring it or playing in it.',
+  fields: {
+    gameId: from(required(GraphQLID)),
+    leagueId: from(GraphQLID),
+    startAt: from(GraphQLString),
+    endAt: from(GraphQLString),
+    home: from(GraphQLString),
+    away: from(GraphQLString),
+    role: from(GraphQLString, 'umpire or player.'),
+    slot: from(GraphQLString, 'The umpire position, for umpire.')
+  }
+})
+
 const QueryType = new GraphQLObjectType({
   name: 'Query',
   fields: {
@@ -842,6 +911,83 @@ const QueryType = new GraphQLObjectType({
         await seasonDetail({ id: args.id }, context)
         return { id: args.id }
       }
+    },
+    umpires: {
+      type: UmpireListType,
+      description:
+        'A league’s umpires, for its administrators, as GET /leagues/{id}/umpires lists them; the other arguments narrow them by saved availability (strict leaves out people with no saved filter). For a game, pass availableAt: one instant, read in each saved filter’s zone. day and time are for a general weekly question: they are read as the weekday and time of day in each umpire’s own saved zone, so they name a different instant for umpires in different zones.',
+      args: {
+        leagueId: { type: required(GraphQLID) },
+        availableAt: {
+          type: GraphQLString,
+          description:
+            'A game start, an ISO 8601 date-time with Z or an offset.'
+        },
+        durationMinutes: {
+          type: GraphQLInt,
+          description: 'With availableAt: the game’s length, 1 to 1440.'
+        },
+        day: {
+          type: GraphQLInt,
+          description:
+            'With time: a weekday, 0 is Monday … 6 is Sunday, read in each umpire’s own saved zone, not one instant.'
+        },
+        time: {
+          type: GraphQLString,
+          description:
+            'With day: HH:mm, read as wall-clock time in each umpire’s own saved zone.'
+        },
+        level: { type: GraphQLID },
+        strict: { type: GraphQLBoolean }
+      },
+      resolve: async (
+        _root,
+        args: {
+          leagueId: string
+          availableAt?: string
+          durationMinutes?: number
+          day?: number
+          time?: string
+          level?: string
+          strict?: boolean
+        },
+        context: GraphqlContext
+      ) =>
+        await read<{ people: Json[]; matchedAt?: Json[] }>(
+          context,
+          `/leagues/${id(args.leagueId)}/umpires`,
+          {
+            availableAt: args.availableAt ?? undefined,
+            durationMinutes: args.durationMinutes?.toString(),
+            day: args.day?.toString(),
+            time: args.time ?? undefined,
+            level: args.level ?? undefined,
+            strict: args.strict?.toString()
+          }
+        )
+    },
+    umpireCommitments: {
+      type: list(UmpireCommitmentType),
+      description:
+        'An umpire’s games overlapping from to to (ISO date-times with Z or an offset, at most 31 days apart), in the leagues the caller administers, as GET /leagues/{id}/umpires/{userId}/commitments reads them.',
+      args: {
+        leagueId: { type: required(GraphQLID) },
+        userId: { type: required(GraphQLID) },
+        from: { type: required(GraphQLString) },
+        to: { type: required(GraphQLString) }
+      },
+      resolve: async (
+        _root,
+        args: { leagueId: string; userId: string; from: string; to: string },
+        context: GraphqlContext
+      ) =>
+        (
+          await read<{ commitments: Json[] }>(
+            context,
+            `/leagues/${id(args.leagueId)}/umpires/${id(args.userId)}/commitments`,
+            { from: args.from, to: args.to }
+          )
+        ).commitments
     },
     player: {
       type: PlayerType,

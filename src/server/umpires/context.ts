@@ -104,8 +104,11 @@ export async function readerUmpireNames(
   )
 }
 export function umpireIsPlaying(
-  person: UmpireIdentity,
-  game: UmpireGame
+  person: Pick<UmpireIdentity, 'gumboIds' | 'teamIds'>,
+  game: Pick<
+    UmpireGame,
+    'guests' | 'unrostered' | 'home_team_id' | 'away_team_id'
+  >
 ): boolean {
   const guests = storedGuests(game.guests, teamsOfRow(game))
   const excluded = storedUnrostered(game.unrostered, teamsOfRow(game))
