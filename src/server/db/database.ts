@@ -99,6 +99,8 @@ export interface LeaguesTable {
   player_name_privacy: Generated<string | null>
   umpire_management: Generated<boolean>
   umpire_credits: Generated<boolean>
+  /** The umpire schedule's default sort keys; null for the built-in one (129). */
+  umpire_sort: string[] | null
   id: string
   locality: Json | null
   /**
@@ -1173,6 +1175,11 @@ export interface SeasonUmpireRequirementsTable {
   season_id: string
   level_id: string
 }
+/** A season's position in its league's season order, 1 first (129). */
+export interface SeasonUmpirePrioritiesTable {
+  season_id: string
+  position: number
+}
 export interface UmpireCertificationsTable {
   user_id: string
   level_id: string
@@ -1725,6 +1732,7 @@ export interface Database {
   }
   umpire_levels: UmpireLevelsTable
   season_umpire_requirements: SeasonUmpireRequirementsTable
+  season_umpire_priorities: SeasonUmpirePrioritiesTable
   umpire_certifications: UmpireCertificationsTable
   umpire_assignments: UmpireAssignmentsTable
   umpire_availability: UmpireAvailabilityTable

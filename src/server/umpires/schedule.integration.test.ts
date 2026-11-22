@@ -11,7 +11,13 @@ import {
   type UmpireGameRow
 } from '../../common/umpireSchedule'
 import {
+  UMPIRE_SORT_KEYS,
+  umpireRowOrder,
+  type UmpireSortKey
+} from '../../common/umpireSort'
+import {
   hardUmpireConflict,
+  localDate,
   softUmpireConflict,
   umpireCloseness,
   umpireDate,
@@ -32,7 +38,12 @@ import { seedUmpireCounts } from '../../test/umpireTypes'
 import { now } from '../clock'
 import { readerOf } from '../users/readerNames'
 import { umpireIdentity, umpireIsPlaying } from './context'
-import { parseUmpireFilters, schedule, umpireSchedulePage } from './schedule'
+import {
+  parseUmpireFilters,
+  parseUmpireSortQuery,
+  schedule,
+  umpireSchedulePage
+} from './schedule'
 
 describe('umpire time and conflict rules', () => {
   it('validates viewer zones and respects DST transitions', () => {
@@ -692,12 +703,12 @@ describe('umpire schedule pages (U9)', function () {
   })
 
   it('walks to the rows of the unpaged schedule, with no others', async () => {
-    const whole: { games: UmpireGameRow[] } = await read()
+    const whole: { games: UmpireGameRow[]; sort: string[] } = await read()
     expect(whole.games.length).greaterThan(15)
+    // Date 1→9, then Season A→Z, with no league default saved.
+    expect(whole.sort).deep.equals(['date', 'season'])
     const pages = await walk('&paged=1&limit=4')
-    expect(pages.flatMap(page => ids(page.items))).deep.equals(
-      ids(inOrder(whole.games))
-    )
+    expect(pages.flatMap(page => ids(page.items))).deep.equals(ids(whole.games))
     for (const page of pages) expect(page.items.length).most(4)
     expect(pages[0].prevCursor).equals(null)
     // A row of a page is the row the whole schedule has.
@@ -766,8 +777,9 @@ describe('umpire schedule pages (U9)', function () {
 
   it('opens on the rule, with rows before it, and meets every row', async () => {
     const whole: { games: UmpireGameRow[] } = await read()
-    const list = inOrder(whole.games)
-    const rule = initialUmpireGame(list, NOW)
+    // The rule reads the rows in time order; the page is cut from the sort.
+    const list = whole.games
+    const rule = initialUmpireGame(inOrder(whole.games), NOW)
     const page: UmpirePage = await read('&paged=1&limit=4&around=next')
     expect(page.anchorId).equals(rule?.id)
     const at = list.findIndex(row => row.id === rule?.id)
@@ -830,6 +842,7 @@ describe('umpire schedule pages (U9)', function () {
         'levels',
         'noteTypes',
         'settings',
+        'sort',
         'types',
         'view',
         'viewerId'
@@ -1261,5 +1274,327 @@ describe('umpire schedule acceptance', function () {
       await remove()
       expect(await games(id)).length(0)
     }
+  })
+})
+
+describe('umpire schedule sort (#348)', function () {
+  this.timeout(120000)
+  const fall = 'sea_umpire_sort_fall'
+  let f: GroupFixture
+  let old: string | undefined
+  const base = (): string =>
+    `/leagues/${f.leagueA}/umpire-schedule?view=schedule`
+  const read = async (query = '', status = 200, as = 101): Promise<any> => {
+    const response = await f.h.request(
+      'GET',
+      `${base()}${query}`,
+      undefined,
+      as
+    )
+    expect(response.status, query).equals(status)
+    return await response.json()
+  }
+  const ids = (rows: Array<{ id: string }>): string[] => rows.map(row => row.id)
+  const withCursor = (cursor: string): string =>
+    `&cursor=${encodeURIComponent(cursor)}`
+  const sorts = [
+    ...UMPIRE_SORT_KEYS.map(key => key as string),
+    'season,certification',
+    '-date,seasonPriority'
+  ]
+  // The rows the server answers, in the order the common comparator gives
+  // their keys, read from each row, its season's priority and its day.
+  const expected = (
+    rows: UmpireGameRow[],
+    sort: UmpireSortKey[],
+    priorities: Record<string, number | null>,
+    zone?: string
+  ): string[] =>
+    rows
+      .map(row => ({
+        id: row.id,
+        start: Date.parse(row.startAt),
+        day: localDate(Date.parse(row.startAt), zone ?? row.timezone),
+        seasonId: row.seasonId,
+        seasonName: row.seasonName,
+        seasonPriority: priorities[row.seasonId] ?? null,
+        levelName: row.levelName
+      }))
+      .sort(umpireRowOrder(sort))
+      .map(row => row.id)
+  const walk = async (query: string): Promise<string[]> => {
+    const pages = [await read(query)]
+    while (pages.at(-1).nextCursor != null) {
+      pages.push(await read(query + withCursor(pages.at(-1).nextCursor)))
+      expect(pages.length, 'a walk ends').lessThan(100)
+    }
+    // And back from the last page to the first.
+    const back = [pages.at(-1)]
+    while (back[0].prevCursor != null) {
+      back.unshift(await read(query + withCursor(back[0].prevCursor)))
+      expect(back.length, 'a walk back ends').lessThan(100)
+    }
+    const forward = pages.flatMap(page => ids(page.items))
+    expect(
+      back.flatMap(page => ids(page.items)),
+      `${query} back`
+    ).deep.equals(forward)
+    return forward
+  }
+  const putSettings = async (body: unknown, as = 101): Promise<Response> =>
+    await f.h.request('PUT', `/leagues/${f.leagueA}/umpire-settings`, body, as)
+
+  before(async () => {
+    old = process.env.TS_UMPIRE_NOW
+    process.env.TS_UMPIRE_NOW = UMPIRE_TEST_NOW
+    f = await umpireFixture()
+    const db = f.h.db
+    await db
+      .insertInto('seasons')
+      .values({
+        id: fall,
+        league_id: f.leagueA,
+        name: 'Fall Minors',
+        year: 2027,
+        starts_on: '2027-03-01',
+        ends_on: '2027-05-31',
+        timezone: 'UTC'
+      })
+      .execute()
+    await db
+      .insertInto('umpire_levels')
+      .values({
+        id: 'ulv_sort_minors',
+        league_id: f.leagueA,
+        name: 'minors',
+        position: 1
+      })
+      .execute()
+    await db
+      .insertInto('season_umpire_requirements')
+      .values({ season_id: fall, level_id: 'ulv_sort_minors' })
+      .execute()
+    await seedUmpireCounts(db, fall)
+    // A game of each season on each of four days in Los Angeles, Fall
+    // Minors' first, and a Fall Minors game at 23:30 there, which is the
+    // next day in New York.
+    const game = (
+      id: string,
+      season: string,
+      startAt: string
+    ): Record<string, unknown> => ({
+      id,
+      home_team_id: f.teamA,
+      away_team_id: f.teamB,
+      season_id: season,
+      start_at: new Date(startAt),
+      timezone: 'America/Los_Angeles',
+      status: 'scheduled'
+    })
+    await db
+      .insertInto('games')
+      .values([
+        ...[4, 5, 6, 7].flatMap(day => [
+          game(`gam_sort_fall_${day}`, fall, `2027-04-0${day}T16:00:00Z`),
+          game(`gam_sort_reg_${day}`, f.seasonA, `2027-04-0${day}T18:00:00Z`)
+        ]),
+        game('gam_sort_late', fall, '2027-04-06T06:30:00Z')
+      ] as any)
+      .execute()
+  })
+  after(async () => {
+    if (old == null) delete process.env.TS_UMPIRE_NOW
+    else process.env.TS_UMPIRE_NOW = old
+    await f?.h.close()
+  })
+
+  it('defaults to Date 1→9 then Season A→Z, with no league default saved', async () => {
+    const whole = await read()
+    expect(whole.settings.sort).equals(null)
+    expect(whole.sort).deep.equals(['date', 'season'])
+    expect(ids(whole.games)).deep.equals(
+      expected(whole.games, ['date', 'season'], {})
+    )
+    // On one day, Demo Regular before Fall Minors although it starts later.
+    const days = ids(whole.games).filter(id => id.endsWith('_5'))
+    expect(days).deep.equals(['gam_sort_reg_5', 'gam_sort_fall_5'])
+    expect(ids(whole.games)).includes('gam_umpire')
+  })
+
+  it('answers each sort, paged and unpaged alike, and names it', async () => {
+    for (const text of sorts) {
+      const sort = text.split(',') as UmpireSortKey[]
+      const whole = await read(`&sort=${text}`)
+      expect(whole.sort, text).deep.equals(sort)
+      expect(ids(whole.games), text).deep.equals(
+        expected(whole.games, sort, {})
+      )
+      const page = await read(`&sort=${text}&paged=1&limit=500`)
+      expect(page.sort, text).deep.equals(sort)
+      expect(ids(page.items), text).deep.equals(ids(whole.games))
+    }
+    // Certification A→Z: majors (Demo Regular) before minors (Fall Minors).
+    const level = await read('&sort=certification')
+    expect(level.games[0].levelName).equals('majors')
+    expect(level.games.at(-1).levelName).equals('minors')
+  })
+
+  it('reads the day in the zone the schedule is shown in', async () => {
+    const zone = async (timezone: string): Promise<string[]> =>
+      ids((await read(`&sort=date,-season&timezone=${timezone}`)).games).filter(
+        id => ['gam_sort_late', 'gam_sort_reg_5'].includes(id)
+      )
+    // The same day in Los Angeles, so Fall Minors first; in New York the
+    // late game is the next day.
+    expect(await zone('America/Los_Angeles')).deep.equals([
+      'gam_sort_late',
+      'gam_sort_reg_5'
+    ])
+    expect(await zone('America/New_York')).deep.equals([
+      'gam_sort_reg_5',
+      'gam_sort_late'
+    ])
+  })
+
+  it('orders sort=none by date, time and id', async () => {
+    const none = await read('&sort=none')
+    expect(none.sort).deep.equals([])
+    expect(ids(none.games)).deep.equals(expected(none.games, [], {}))
+    // Fall Minors' game first on the last day, as it starts first.
+    expect(ids(none.games).slice(-2)).deep.equals([
+      'gam_sort_fall_7',
+      'gam_sort_reg_7'
+    ])
+  })
+
+  it('pages every game exactly once in each sort, forward and back', async () => {
+    for (const text of sorts) {
+      const whole = await read(`&sort=${text}`)
+      for (const limit of [1, 4])
+        expect(
+          await walk(`&sort=${text}&paged=1&limit=${limit}`),
+          `${text} ${limit}`
+        ).deep.equals(ids(whole.games))
+    }
+  })
+
+  it('opens on the game the table opens on, at its place in the sort', async () => {
+    const whole = await read('&sort=-certification')
+    const page = await read('&sort=-certification&paged=1&limit=4&around=next')
+    const rule = initialUmpireGame<UmpireGameRow>(
+      whole.games.toSorted((a: UmpireGameRow, b: UmpireGameRow) =>
+        a.startAt === b.startAt
+          ? a.id < b.id
+            ? -1
+            : 1
+          : Date.parse(a.startAt) - Date.parse(b.startAt)
+      ),
+      Date.parse(UMPIRE_TEST_NOW)
+    )
+    expect(page.anchorId).equals(rule?.id)
+    const at = ids(whole.games).indexOf(page.anchorId)
+    expect(ids(page.items)).deep.equals(
+      ids(whole.games).slice(Math.max(0, at - 2), at + 4)
+    )
+  })
+
+  it('follows the league season order under Season 1→9 and 9→1', async () => {
+    const saved = await f.h.request(
+      'PUT',
+      `/leagues/${f.leagueA}/umpire-season-priority`,
+      { seasonIds: [fall, f.seasonA] },
+      101
+    )
+    expect(saved.status).equals(200)
+    try {
+      const priorities = { [fall]: 1, [f.seasonA]: 2 }
+      const first = await read('&sort=seasonPriority')
+      expect(first.games[0].seasonName).equals('Fall Minors')
+      expect(ids(first.games)).deep.equals(
+        expected(first.games, ['seasonPriority'], priorities)
+      )
+      const last = await read('&sort=-seasonPriority')
+      expect(last.games[0].seasonName).equals('Demo Regular')
+      expect(await walk('&sort=-seasonPriority&paged=1&limit=4')).deep.equals(
+        ids(last.games)
+      )
+    } finally {
+      await f.h.db.deleteFrom('season_umpire_priorities').execute()
+    }
+  })
+
+  it('applies the league default, and a cursor keeps its own sort after it changes', async () => {
+    expect(
+      (await putSettings({ sort: ['-certification', 'seasonPriority'] })).status
+    ).equals(200)
+    try {
+      const whole = await read()
+      expect(whole.settings.sort).deep.equals([
+        '-certification',
+        'seasonPriority'
+      ])
+      expect(whole.sort).deep.equals(['-certification', 'seasonPriority'])
+      expect(ids(whole.games)).deep.equals(
+        expected(whole.games, ['-certification', 'seasonPriority'], {})
+      )
+      const first = await read('&paged=1&limit=3')
+      expect(first.sort).deep.equals(['-certification', 'seasonPriority'])
+      // The default changes in the middle of the walk.
+      expect((await putSettings({ sort: ['date'] })).status).equals(200)
+      const next = await read(`&paged=1&limit=3${withCursor(first.nextCursor)}`)
+      expect(next.sort).deep.equals(['-certification', 'seasonPriority'])
+      expect(ids(next.items)).deep.equals(ids(whole.games).slice(3, 6))
+      // The same sort, spelled out, reads on; another is refused.
+      const spelled = await read(
+        `&paged=1&limit=3&sort=-certification,seasonPriority${withCursor(first.nextCursor)}`
+      )
+      expect(ids(spelled.items)).deep.equals(ids(next.items))
+      expect(
+        (
+          await read(
+            `&paged=1&limit=3&sort=date${withCursor(first.nextCursor)}`,
+            400
+          )
+        ).message
+      ).equals('sort must be -certification,seasonPriority with this cursor')
+      // A fresh read takes the new default.
+      expect((await read('&paged=1&limit=3')).sort).deep.equals(['date'])
+    } finally {
+      expect((await putSettings({ sort: null })).status).equals(200)
+    }
+  })
+
+  it('refuses a sort it cannot read', async () => {
+    for (const bad of [
+      '&sort=bogus',
+      '&sort=date,season,certification',
+      '&sort=season,seasonPriority',
+      '&sort=date&sort=season',
+      '&sort=none,date'
+    ])
+      expect((await read(bad, 400)).message, bad).equals(
+        'Choose up to two sorts of different fields: date, season, seasonPriority or certification, each with an optional leading -, or none'
+      )
+    // An empty sort is no sort.
+    expect((await read('&sort=')).sort).deep.equals(['date', 'season'])
+  })
+
+  it('sorts through the functions as the route does', async () => {
+    const whole = await schedule(
+      f.h.db,
+      actor(101),
+      f.leagueA,
+      'schedule',
+      {},
+      undefined,
+      ['-season']
+    )
+    expect(whole.sort).deep.equals(['-season'])
+    expect(whole.games[0].seasonName).equals('Fall Minors')
+    expect(parseUmpireSortQuery({})).equals(undefined)
+    expect(parseUmpireSortQuery({ sort: 'none' })).deep.equals([])
+    expect(() => parseUmpireSortQuery({ sort: ['date'] })).throws(
+      'Choose up to two sorts'
+    )
   })
 })

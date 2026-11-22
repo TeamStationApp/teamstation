@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
 import { encodeScheduleCursor } from '../schedule/scheduleCursor'
+import { encodeUmpireCursor } from '../umpires/scheduleOrder'
 import {
   eventWindow,
   parseEventListQuery,
@@ -277,6 +278,56 @@ describe('GET /events query', function () {
     expect(() => parseUmpirePageQuery({ paged: '1', limit: '501' })).throws(
       'limit must be at most 500 with paged'
     )
+  })
+
+  it('reads the umpire schedule’s own cursor, which carries its sort', function () {
+    const row = {
+      id: 'gam_1',
+      start: Date.parse('2027-04-03T15:00:00.000Z'),
+      day: '2027-04-03',
+      seasonId: 'sea_1',
+      seasonName: 'Demo Regular',
+      seasonPriority: 1,
+      levelName: 'majors'
+    }
+    const cursor = encodeUmpireCursor({
+      sort: ['seasonPriority', '-date'],
+      row,
+      direction: 'prev'
+    })
+    expect(parseUmpirePageQuery({ paged: '1', cursor }).cursor).deep.equals({
+      sort: ['seasonPriority', '-date'],
+      row,
+      direction: 'prev'
+    })
+    const says = (query: Record<string, unknown>): string => {
+      try {
+        parseUmpirePageQuery(query)
+      } catch (error) {
+        if (error instanceof HttpError) return error.message
+        throw error
+      }
+      throw new Error('expected a 400')
+    }
+    expect(says({ cursor })).equals('cursor needs paged')
+    expect(says({ paged: '1', around: 'next', cursor })).equals(
+      'around does not apply with cursor'
+    )
+    expect(says({ paged: '1', cursor: '' })).equals(
+      'cursor must be a non-empty string'
+    )
+    // A cursor of the other schedules is not this list's.
+    expect(
+      says({
+        paged: '1',
+        cursor: encodeScheduleCursor({
+          startAt: new Date(row.start).toISOString(),
+          id: row.id,
+          direction: 'next',
+          order: 'asc'
+        })
+      })
+    ).equals('cursor is not a cursor this list gave')
   })
 
   it("takes only a team's own parameters on a team's games", function () {

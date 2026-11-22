@@ -517,6 +517,47 @@ describe('the API document', function () {
     ])
   })
 
+  it('documents the umpire schedule’s sort, the league default and the season order', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const scheduleRead = paths['/leagues/{leagueId}/umpire-schedule'].get
+    const sort = scheduleRead.parameters.find(
+      (parameter: { name: string }) => parameter.name === 'sort'
+    )
+    expect(sort.in).equals('query')
+    for (const words of [
+      'seasonPriority',
+      'certification',
+      '`none`',
+      'date,season'
+    ])
+      expect(sort.description).includes(words)
+    expect(
+      scheduleRead.parameters.find(
+        (parameter: { name: string }) => parameter.name === 'cursor'
+      ).description
+    ).includes('carries the sort')
+    expect(scheduleRead.responses[200].description).includes('settings.sort')
+    const settings = paths['/leagues/{leagueId}/umpire-settings']
+    const saved =
+      settings.put.requestBody.content['application/json'].schema.properties
+        .sort
+    expect(saved.type).deep.equals(['array', 'null'])
+    expect(saved.maxItems).equals(2)
+    expect(saved.items.enum).includes.members(['-date', 'seasonPriority'])
+    expect(saved.description).includes('`[]` is the empty sort')
+    expect(settings.get.summary).includes('default sort')
+    const priority = paths['/leagues/{leagueId}/umpire-season-priority']
+    expect(Object.keys(priority)).deep.equals(['put'])
+    expect(
+      priority.put.requestBody.content['application/json'].schema
+    ).deep.include({ required: ['seasonIds'] })
+    expect(priority.put.security).deep.equals([{ bearer: [] }])
+    expect(priority.put.description).includes('positions 1…N')
+    expect(
+      paths['/leagues/{leagueId}/umpire-requirements'].get.description
+    ).includes('`priority`')
+  })
+
   it('documents umpire availability: saving your own, querying the list by it, and an umpire’s commitments', function () {
     const document = openApiDocument('0.0.0') as any
     const paths = document.paths as Record<string, any>

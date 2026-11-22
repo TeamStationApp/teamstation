@@ -12,6 +12,7 @@ import {
   type UmpireSeason,
   type UmpireTypeCount
 } from '../../common/umpires'
+import { localDate } from '../../common/umpireTime'
 import type { VisibleScopes } from '../access'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Database, UmpireLevelsTable } from '../db/database'
@@ -109,6 +110,33 @@ export async function removeLevel(
     .execute()
   await db.deleteFrom('umpire_levels').where('id', '=', id).execute()
 }
+/** Whether a season is current or upcoming: it ends today or later, its time. */
+function seasonCurrent(
+  season: { ends_on: unknown; timezone: string },
+  now: number
+): boolean {
+  return calendarDateText(season.ends_on)! >= localDate(now, season.timezone)
+}
+/**
+ * The league's season ids: those `requirements` lists, current and upcoming,
+ * and those that have ended.
+ */
+export async function leagueSeasons(
+  db: Kysely<Database>,
+  leagueId: string,
+  now: number
+): Promise<{ current: Set<string>; ended: Set<string> }> {
+  const rows = await db
+    .selectFrom('seasons')
+    .select(['id', 'ends_on', 'timezone'])
+    .where('league_id', '=', leagueId)
+    .execute()
+  const current = new Set<string>()
+  const ended = new Set<string>()
+  for (const row of rows)
+    (seasonCurrent(row, now) ? current : ended).add(row.id)
+  return { current, ended }
+}
 export async function requirements(
   db: Kysely<Database>,
   leagueId: string,
@@ -119,6 +147,7 @@ export async function requirements(
     .selectFrom('seasons')
     .leftJoin('season_umpire_requirements as r', 'r.season_id', 'seasons.id')
     .leftJoin('umpire_levels as l', 'l.id', 'r.level_id')
+    .leftJoin('season_umpire_priorities as p', 'p.season_id', 'seasons.id')
     .innerJoin('leagues', 'leagues.id', 'seasons.league_id')
     .select([
       'seasons.id',
@@ -128,9 +157,12 @@ export async function requirements(
       'seasons.ends_on',
       'seasons.timezone',
       'r.level_id',
-      'l.name as level_name'
+      'l.name as level_name',
+      'p.position as priority'
     ])
     .where('seasons.league_id', '=', leagueId)
+    // The league's season order first; seasons with none after, as before.
+    .orderBy('p.position', ob => ob.asc().nullsLast())
     .orderBy('seasons.starts_on')
     .orderBy('seasons.name')
     .execute()
@@ -148,16 +180,7 @@ export async function requirements(
     .orderBy('t.id')
     .execute()
   return rows
-    .filter(
-      row =>
-        calendarDateText(row.ends_on)! >=
-        new Intl.DateTimeFormat('en-CA', {
-          timeZone: row.timezone,
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit'
-        }).format(now)
-    )
+    .filter(row => seasonCurrent(row, now))
     .map(row => ({
       id: row.id,
       name: row.name,
@@ -165,6 +188,7 @@ export async function requirements(
       leagueId,
       leaguePictureUrl:
         media == null ? null : imageUrl(media.space, row.league_logo_path),
+      priority: row.priority,
       requirement:
         row.level_id == null
           ? null
@@ -180,6 +204,28 @@ export async function requirements(
                 }))
             }
     }))
+}
+/**
+ * Writes the league's season order, positions 1…N for `seasonIds`, and
+ * clears the position of the league's other seasons.
+ */
+export async function savePriority(
+  db: Transaction<Database>,
+  leagueId: string,
+  seasonIds: string[]
+): Promise<void> {
+  await db
+    .deleteFrom('season_umpire_priorities')
+    .where(
+      'season_id',
+      'in',
+      db.selectFrom('seasons').select('id').where('league_id', '=', leagueId)
+    )
+    .execute()
+  await db
+    .insertInto('season_umpire_priorities')
+    .values(seasonIds.map((id, i) => ({ season_id: id, position: i + 1 })))
+    .execute()
 }
 export async function applyRequirements(
   db: Transaction<Database>,

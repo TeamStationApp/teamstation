@@ -1,3 +1,5 @@
+import type { UmpireSortKey } from './umpireSort'
+
 export interface UmpireLevel {
   id: string
   name: string
@@ -25,6 +27,11 @@ export interface UmpirePosition {
 export interface UmpireSettings {
   management: boolean
   credits: boolean
+  /**
+   * The umpire schedule's league default sort; null when none is saved (Date
+   * 1→9, then Season A→Z); absent from a server that predates it.
+   */
+  sort?: UmpireSortKey[] | null
 }
 export interface UmpireRequirement {
   levelId: string
@@ -40,6 +47,8 @@ export interface UmpireSeason {
   /** The league's signed picture, drawn when the season has none. */
   leaguePictureUrl: string | null
   requirement: UmpireRequirement | null
+  /** Its position in the league's season order, 1 first; null for none. */
+  priority?: number | null
 }
 /**
  * A person's saved umpire availability filter for one league: the levels,

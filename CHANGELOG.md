@@ -16,6 +16,7 @@
 - added: A league administrator can give themselves the umpire role in Manage Umpires
 - added: League admins can find umpires by availability and read an umpire's commitments through the API, GraphQL and Tess
 - added: Umpires can save their schedule filter as their availability for each league with Save filter, and it applies when they open that league's schedule
+- added: League admins can set the umpire schedule's default sort and the league's season order through the API, and the schedule comes back in the sort asked for, a page at a time
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file
@@ -28,6 +29,7 @@
 - fixed: Scoring opens at once from what the phone or tab holds, with a pitch still on its way to the server, instead of waiting on a slow server
 - changed: Screens read again only when the server's socket says something they show changed, once on opening, and once for each time the socket drops; nothing reads on a timer or on coming back to the app, and the bell's slow answer no longer puts the app offline
 - changed: A phone keeps the nearest three games its person is a scorekeeper of, in the next four days, ready to open and score with no signal, even one never opened; nobody else's phone downloads games ahead
+- changed: With no sort asked for and none saved, the umpire schedule runs by day, then season, where it ran by start time
 - fixed: A tab or phone left open on a busy schedule no longer reads every game again and again
 - fixed: Closing the scoring screen with no connection no longer keeps asking the server for the time
 

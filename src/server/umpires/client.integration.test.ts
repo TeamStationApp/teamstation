@@ -18,6 +18,33 @@ it('cleans every umpire client response and persists each management action', as
     expect(
       (await client.setUmpireSettings(f.leagueA, { credits: false })).credits
     ).equals(false)
+    expect((await client.umpireSettings(f.leagueA)).sort).equals(null)
+    expect(
+      await client.setUmpireSettings(f.leagueA, {
+        sort: ['seasonPriority', '-date']
+      })
+    ).deep.equals({
+      management: true,
+      credits: false,
+      sort: ['seasonPriority', '-date']
+    })
+    expect(
+      (await client.umpireSchedule(f.leagueA, 'view=schedule')).sort
+    ).deep.equals(['seasonPriority', '-date'])
+    expect(
+      (await client.umpireSchedule(f.leagueA, 'view=schedule&sort=none')).sort
+    ).deep.equals([])
+    expect(
+      (await client.setUmpireSettings(f.leagueA, { sort: null })).sort
+    ).equals(null)
+    const ordered = await client.setUmpireSeasonPriority(f.leagueA, [
+      f.seasonA,
+      f.playoffs
+    ])
+    expect(ordered.map(s => [s.id, s.priority])).deep.equals([
+      [f.seasonA, 1],
+      [f.playoffs, 2]
+    ])
     const level = await client.addUmpireLevel(f.leagueA, 'minors')
     expect((await client.umpireLevels(f.leagueA)).length).equals(2)
     const seasons = await client.umpireRequirements(f.leagueA)

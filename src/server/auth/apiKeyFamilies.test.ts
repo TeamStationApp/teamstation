@@ -167,6 +167,10 @@ describe('what an API key may call', function () {
     expect(keyNeeds('GET', '/leagues/lea_1/umpires/usr_1/commitments')).equals(
       'umpire:read'
     )
+    // So is the league's season order.
+    expect(keyNeeds('PUT', '/leagues/lea_1/umpire-season-priority')).equals(
+      'umpire:write'
+    )
   })
 
   it('matches as Express does: any case, one trailing slash, one segment a parameter', function () {

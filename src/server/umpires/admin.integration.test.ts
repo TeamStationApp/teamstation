@@ -538,4 +538,132 @@ describe('umpire levels, needs and certification', function () {
         .execute()
     }
   })
+  it('orders the seasons by the league’s priority, which administrators save', async () => {
+    const ended = 'sea_admin_priority_ended'
+    const later = 'sea_admin_priority_later'
+    const listed = async (): Promise<Array<[string, number | null]>> =>
+      (
+        (await (await request('GET', 'umpire-requirements')).json()) as {
+          seasons: Array<{ id: string; priority: number | null }>
+        }
+      ).seasons.map(s => [s.id, s.priority])
+    const save = async (seasonIds: unknown, as = 101): Promise<Response> =>
+      await f.h.request(
+        'PUT',
+        `/leagues/${f.leagueA}/umpire-season-priority`,
+        { seasonIds },
+        as
+      )
+    // An ended season of the league, which holds a priority from before.
+    await f.h.db
+      .insertInto('seasons')
+      .values({
+        id: ended,
+        league_id: f.leagueA,
+        name: 'Demo Ended',
+        year: 2025,
+        starts_on: '2025-03-01',
+        ends_on: '2025-05-31',
+        timezone: 'UTC'
+      })
+      .execute()
+    await f.h.db
+      .insertInto('season_umpire_priorities')
+      .values({ season_id: ended, position: 1 })
+      .execute()
+    try {
+      // None saved: by start date, then name.
+      expect(await listed()).deep.equals([
+        [f.playoffs, null],
+        [f.seasonA, null]
+      ])
+      const saved = await save([f.seasonA, f.playoffs])
+      expect(saved.status).equals(200)
+      const answer = (await saved.json()) as {
+        seasons: Array<{ id: string; priority: number | null }>
+      }
+      expect(answer.seasons.map(s => [s.id, s.priority])).deep.equals([
+        [f.seasonA, 1],
+        [f.playoffs, 2]
+      ])
+      expect(await listed()).deep.equals([
+        [f.seasonA, 1],
+        [f.playoffs, 2]
+      ])
+      // The ended season's old position is gone.
+      expect(
+        await f.h.db
+          .selectFrom('season_umpire_priorities')
+          .select('season_id')
+          .where('season_id', '=', ended)
+          .execute()
+      ).length(0)
+      // Someone who does not administer the league cannot.
+      expect((await save([f.playoffs, f.seasonA], 102)).status).equals(403)
+      for (const seasonIds of [
+        [],
+        [f.seasonA, f.seasonA],
+        [f.seasonB],
+        [ended],
+        ['missing'],
+        [7],
+        f.seasonA
+      ]) {
+        const refused = await save(seasonIds)
+        expect(refused.status, JSON.stringify(seasonIds)).equals(400)
+        expect(((await refused.json()) as { message: string }).message).equals(
+          'Choose this league’s current and upcoming seasons'
+        )
+      }
+      expect(await listed()).deep.equals([
+        [f.seasonA, 1],
+        [f.playoffs, 2]
+      ])
+      // A season of the list that ended since it was read is left out, and
+      // the rest saves.
+      const stale = await save([f.playoffs, ended, f.seasonA])
+      expect(stale.status).equals(200)
+      expect(
+        (
+          (await stale.json()) as { seasons: Array<{ id: string }> }
+        ).seasons.map(s => s.id)
+      ).deep.equals([f.playoffs, f.seasonA])
+      expect(await listed()).deep.equals([
+        [f.playoffs, 1],
+        [f.seasonA, 2]
+      ])
+      expect((await save([f.seasonA, f.playoffs])).status).equals(200)
+      // A season created after the save has none, and lists last.
+      await f.h.db
+        .insertInto('seasons')
+        .values({
+          id: later,
+          league_id: f.leagueA,
+          name: 'Demo Added',
+          year: 2027,
+          starts_on: '2027-01-01',
+          ends_on: '2027-05-31',
+          timezone: 'UTC'
+        })
+        .execute()
+      expect(await listed()).deep.equals([
+        [f.seasonA, 1],
+        [f.playoffs, 2],
+        [later, null]
+      ])
+      // A save of part of the list clears the rest.
+      expect((await save([later])).status).equals(200)
+      expect(await listed()).deep.equals([
+        [later, 1],
+        [f.playoffs, null],
+        [f.seasonA, null]
+      ])
+    } finally {
+      await f.h.db.deleteFrom('season_umpire_priorities').execute()
+      await f.h.db
+        .deleteFrom('seasons')
+        .where('id', 'in', [ended, later])
+        .execute()
+    }
+  })
 })

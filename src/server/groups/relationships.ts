@@ -367,6 +367,12 @@ export async function applyParents(
             .deleteFrom('season_umpire_requirements')
             .where('season_id', '=', effect.child.id)
             .execute()
+          // Its place in the old league's season order goes too, so it
+          // comes last in the new league's.
+          await trx
+            .deleteFrom('season_umpire_priorities')
+            .where('season_id', '=', effect.child.id)
+            .execute()
           const games = await trx
             .selectFrom('games')
             .select('id')

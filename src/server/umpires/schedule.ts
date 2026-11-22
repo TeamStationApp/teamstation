@@ -12,7 +12,19 @@ import {
   type UmpireSchedule
 } from '../../common/umpireSchedule'
 import {
+  DEFAULT_UMPIRE_SORT,
+  parseUmpireSort,
+  sameUmpireSort,
+  storedUmpireSort,
+  umpireRowOrder,
+  umpireSortError,
+  type UmpireSortKey,
+  type UmpireSortRow,
+  umpireSortText
+} from '../../common/umpireSort'
+import {
   hardUmpireConflict,
+  localDate,
   softUmpireConflict,
   umpireCloseness,
   umpireDate,
@@ -25,11 +37,11 @@ import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { now } from '../clock'
 import type { Database } from '../db/database'
-import type { ParsedEventList } from '../events/eventListQuery'
+import type { UmpirePageQuery } from '../events/eventListQuery'
 import { canAdminister, requireGroupAdmin } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { inListOrder, pageAround, pageOfHeld } from '../schedule/scheduleCursor'
+import { inListOrder } from '../schedule/scheduleCursor'
 import type { Reader } from '../users/readerNames'
 import { levels } from './admin'
 import { umpireAffiliations } from './affiliations'
@@ -42,6 +54,7 @@ import {
   umpireIsPlaying
 } from './context'
 import { noteTypes } from './notes'
+import { umpirePageAround, umpirePageOfHeld } from './scheduleOrder'
 import { types } from './types'
 
 export async function umpireLeagues(
@@ -207,8 +220,10 @@ export async function umpireAcceptance(
   return accepted === true
 }
 /**
- * The league's umpire schedule as `actor` sees it. The people it names are
- * short, except those a `reader` (passed by a read alone) may read in full.
+ * The league's umpire schedule as `actor` sees it, its rows in `sort`, else
+ * the league's default sort, else Date 1→9 then Season A→Z. The people it
+ * names are short, except those a `reader` (passed by a read alone) may read
+ * in full.
  */
 export async function schedule(
   db: Kysely<Database>,
@@ -216,8 +231,23 @@ export async function schedule(
   leagueId: string,
   view: 'umpire' | 'league' | 'schedule',
   filters: UmpireFilters,
-  reader?: Reader
+  reader?: Reader,
+  sort?: UmpireSortKey[]
 ): Promise<UmpireSchedule> {
+  return (
+    await sortedSchedule(db, actor, leagueId, view, filters, reader, sort)
+  ).schedule
+}
+/** `schedule`, with each row's sort keys, which its pages are cut by. */
+async function sortedSchedule(
+  db: Kysely<Database>,
+  actor: Actor,
+  leagueId: string,
+  view: 'umpire' | 'league' | 'schedule',
+  filters: UmpireFilters,
+  reader: Reader | undefined,
+  sort: UmpireSortKey[] | undefined
+): Promise<{ schedule: UmpireSchedule; keys: Map<string, UmpireSortRow> }> {
   const isAdmin = await umpireAccess(db, actor, leagueId, view)
   if (filters.priorSeasons != null && view !== 'schedule')
     throw badRequest('priorSeasons requires schedule view')
@@ -248,6 +278,7 @@ export async function schedule(
     .selectFrom('seasons')
     .innerJoin('season_umpire_requirements as r', 'r.season_id', 'seasons.id')
     .innerJoin('umpire_levels as l', 'l.id', 'r.level_id')
+    .leftJoin('season_umpire_priorities as p', 'p.season_id', 'seasons.id')
     .select([
       'seasons.id',
       'seasons.name',
@@ -255,15 +286,18 @@ export async function schedule(
       'seasons.ends_on',
       'seasons.timezone',
       'r.level_id',
-      'l.name as level_name'
+      'l.name as level_name',
+      'p.position as priority'
     ])
     .where('seasons.league_id', '=', leagueId)
     .execute()
   const league = await db
     .selectFrom('leagues')
-    .select(['umpire_management', 'umpire_credits'])
+    .select(['umpire_management', 'umpire_credits', 'umpire_sort'])
     .where('id', '=', leagueId)
     .executeTakeFirstOrThrow()
+  const leagueSort = storedUmpireSort(league.umpire_sort)
+  const applied = sort ?? leagueSort ?? DEFAULT_UMPIRE_SORT
   const games = seesNone
     ? []
     : await db
@@ -371,6 +405,7 @@ export async function schedule(
   }
   const affiliations = await umpireAffiliations(db, leagueId)
   const rows: UmpireGameRow[] = []
+  const keys = new Map<string, UmpireSortRow>()
   const instant = now()
   const current = await db
     .selectFrom('seasons')
@@ -554,7 +589,18 @@ export async function schedule(
         return { userId: p.userId, name: p.name, reason }
       })
     rows.push(row)
+    keys.set(row.id, {
+      id: row.id,
+      start,
+      day: localDate(start, filters.timezone ?? game.timezone),
+      seasonId: season.id,
+      seasonName: season.name,
+      seasonPriority: season.priority,
+      levelName: season.level_name
+    })
   }
+  const order = umpireRowOrder(applied)
+  rows.sort((a, b) => order(keys.get(a.id)!, keys.get(b.id)!))
   const names = await readerUmpireNames(
     db,
     reader,
@@ -573,27 +619,34 @@ export async function schedule(
         row.choices[slot] = choices.map(named)
     }
   return {
-    settings: {
-      management: league.umpire_management,
-      credits: league.umpire_credits
+    schedule: {
+      settings: {
+        management: league.umpire_management,
+        credits: league.umpire_credits,
+        sort: leagueSort
+      },
+      levels: await levels(db, leagueId),
+      types: catalog,
+      noteTypes: notesCatalog,
+      games: rows,
+      creditTeams,
+      viewerId: family[0].userId,
+      isAdmin,
+      view,
+      sort: applied
     },
-    levels: await levels(db, leagueId),
-    types: catalog,
-    noteTypes: notesCatalog,
-    games: rows,
-    creditTeams,
-    viewerId: family[0].userId,
-    isAdmin,
-    view
+    keys
   }
 }
 /**
- * `schedule` a page at a time, soonest first.
+ * `schedule` a page at a time, in its sort.
  *
  * A row's conflicts and choices weigh every game against every other, and
  * `positions` are the whole filtered list's, so each page reads the schedule
  * whole and cuts its rows from it, whose decoding and drawing is what a page
- * saves. `around` opens on the row the table opens on.
+ * saves. A cursor carries the sort it was read in, which an explicit `sort`
+ * must match. `around` opens on the row the table opens on, the first under
+ * way or still to start in time order, at its place in the sorted list.
  */
 export async function umpireSchedulePage(
   db: Kysely<Database>,
@@ -601,30 +654,57 @@ export async function umpireSchedulePage(
   leagueId: string,
   view: 'umpire' | 'schedule',
   filters: UmpireFilters,
-  ask: Pick<ParsedEventList, 'cursor' | 'around' | 'limit'>,
-  reader?: Reader
+  ask: Pick<UmpirePageQuery, 'cursor' | 'around' | 'limit'>,
+  reader?: Reader,
+  sort?: UmpireSortKey[]
 ): Promise<UmpireSchedulePage> {
-  const { games, ...head } = await schedule(
+  const cursor = ask.cursor
+  if (cursor != null && sort != null && !sameUmpireSort(sort, cursor.sort))
+    throw badRequest(
+      `sort must be ${umpireSortText(cursor.sort)} with this cursor`
+    )
+  const { schedule: whole, keys } = await sortedSchedule(
     db,
     actor,
     leagueId,
     view,
     filters,
-    reader
+    reader,
+    cursor?.sort ?? sort
   )
-  const rows = inListOrder(games, 'asc')
+  const { games: rows, ...head } = whole
+  const applied = head.sort!
+  const key = (row: UmpireGameRow): UmpireSortRow => keys.get(row.id)!
   // `paged` always has one.
   const limit = ask.limit!
-  const opening = ask.around ? initialUmpireGame(rows, now()) : undefined
+  const opening = ask.around
+    ? initialUmpireGame(inListOrder(rows, 'asc'), now())
+    : undefined
   return {
     ...head,
     ...(ask.around
-      ? pageAround(rows, Math.max(0, rows.indexOf(opening!)), limit)
-      : pageOfHeld(rows, 'asc', limit, ask.cursor)),
+      ? umpirePageAround(
+          rows,
+          Math.max(0, rows.indexOf(opening!)),
+          limit,
+          applied,
+          key
+        )
+      : umpirePageOfHeld(rows, limit, applied, key, cursor)),
     anchorId: opening?.id ?? null,
     counts: null,
-    positions: umpireColumns(head.types, games)
+    positions: umpireColumns(head.types, rows)
   }
+}
+/** The `sort` a schedule read asks for; undefined when it asks for none. */
+export function parseUmpireSortQuery(
+  query: Record<string, unknown>
+): UmpireSortKey[] | undefined {
+  const value = query.sort
+  if (value === undefined || value === '') return undefined
+  const sort = typeof value === 'string' ? parseUmpireSort(value) : null
+  if (sort == null) throw badRequest(umpireSortError('query'))
+  return sort
 }
 export function parseUmpireFilters(
   query: Record<string, unknown>

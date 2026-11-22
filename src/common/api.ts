@@ -242,6 +242,7 @@ import type {
   UmpireLeague,
   UmpireSchedule
 } from './umpireSchedule'
+import type { UmpireSortKey } from './umpireSort'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
 import {
@@ -4398,9 +4399,14 @@ export class TeamStationClient {
     )
   }
 
+  /** `sort` null goes back to the built-in default; `[]` is the empty sort. */
   async setUmpireSettings(
     league: string,
-    settings: { management?: boolean; credits?: boolean }
+    settings: {
+      management?: boolean
+      credits?: boolean
+      sort?: UmpireSortKey[] | null
+    }
   ): Promise<UmpireSettings> {
     return await this.request(
       'PUT',
@@ -4511,6 +4517,24 @@ export class TeamStationClient {
         'GET',
         `/leagues/${encodeURIComponent(league)}/umpire-requirements`,
         asUmpireSeasons
+      )
+    ).seasons
+  }
+
+  /**
+   * Saves the league's season order: `seasonIds`, current and upcoming
+   * seasons first to last. The league's other seasons lose their position.
+   */
+  async setUmpireSeasonPriority(
+    league: string,
+    seasonIds: string[]
+  ): Promise<UmpireSeason[]> {
+    return (
+      await this.request(
+        'PUT',
+        `/leagues/${encodeURIComponent(league)}/umpire-season-priority`,
+        asUmpireSeasons,
+        { seasonIds }
       )
     ).seasons
   }

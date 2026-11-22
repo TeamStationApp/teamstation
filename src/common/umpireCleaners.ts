@@ -11,9 +11,26 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
+import { answeredUmpireSort, type UmpireSortKey } from './umpireSort'
+/**
+ * An umpire schedule sort a server answers: its keys, first first. Read
+ * leniently, so a key a newer server added (a league may save it as its
+ * default) drops out rather than failing the schedule or the settings, and a
+ * sort of only such keys reads as absent, the default.
+ */
+export const asUmpireSort = (raw: unknown): UmpireSortKey[] | undefined => {
+  if (!Array.isArray(raw)) throw new TypeError('Expected an umpire sort')
+  return answeredUmpireSort(raw)
+}
+/** A saved default sort: absent stays absent, null stays null (none saved). */
+const asOptionalUmpireSort = (
+  raw: unknown
+): UmpireSortKey[] | null | undefined =>
+  raw === undefined ? undefined : raw === null ? null : asUmpireSort(raw)
 export const asUmpireSettings = asObject({
   management: asBoolean,
-  credits: asBoolean
+  credits: asBoolean,
+  sort: asOptionalUmpireSort
 })
 export const asUmpireLevel = asObject({
   id: asString,
@@ -50,7 +67,8 @@ export const asUmpireSeasons = asObject({
           types: asArray(asUmpireTypeCount)
         }),
         asLiteral(null)
-      )
+      ),
+      priority: asOptional(asEither(asNumber, asLiteral(null)), null)
     })
   )
 })
@@ -142,7 +160,8 @@ export const asUmpireScheduleHead = {
     asLiteral('league'),
     asLiteral('schedule')
   ),
-  creditTeams: asArray(asObject({ id: asString, name: asString }))
+  creditTeams: asArray(asObject({ id: asString, name: asString })),
+  sort: asOptional(asUmpireSort)
 }
 export const asUmpireGameRow = asObject({
   id: asString,

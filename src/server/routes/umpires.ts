@@ -7,6 +7,11 @@ import {
   UMPIRE_LEADERBOARD_MAX_PAGE,
   type UmpireLeaderboardQuery
 } from '../../common/umpireSchedule'
+import {
+  parseUmpireSortArray,
+  storedUmpireSort,
+  umpireSortError
+} from '../../common/umpireSort'
 import { visibleScopes } from '../access'
 import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
@@ -42,6 +47,7 @@ import { queryInteger } from '../umpires/queryInteger'
 import { savePeople } from '../umpires/savePeople'
 import {
   parseUmpireFilters,
+  parseUmpireSortQuery,
   schedule,
   umpireLeagues,
   umpireSchedulePage
@@ -106,11 +112,12 @@ export function umpireRoutes(
         .selectFrom('leagues')
         .select([
           'umpire_management as management',
-          'umpire_credits as credits'
+          'umpire_credits as credits',
+          'umpire_sort as sort'
         ])
         .where('id', '=', leagueId)
         .executeTakeFirstOrThrow()
-      res.json(row)
+      res.json({ ...row, sort: storedUmpireSort(row.sort) })
     })
   )
   router.put(
@@ -124,7 +131,11 @@ export function umpireRoutes(
       if (body == null || typeof body !== 'object' || Array.isArray(body))
         throw badRequest('Supply umpire settings')
       for (const key of Object.keys(body)) {
-        if (
+        if (key === 'sort') {
+          // null is the built-in default; [] the empty sort.
+          if (body.sort !== null && parseUmpireSortArray(body.sort) == null)
+            throw badRequest(umpireSortError('body'))
+        } else if (
           !['management', 'credits'].includes(key) ||
           typeof body[key] !== 'boolean'
         )
@@ -141,14 +152,25 @@ export function umpireRoutes(
           .executeTakeFirstOrThrow()
         const management = body.management ?? row.umpire_management
         const credits = body.credits ?? row.umpire_credits
+        // A save without `sort` leaves the stored one as it is, even one this
+        // build cannot wholly read (a newer build's key after a rollback), and
+        // answers it as this build reads it.
+        const sort =
+          body.sort === undefined
+            ? storedUmpireSort(row.umpire_sort)
+            : parseUmpireSortArray(body.sort)
         await trx
           .updateTable('leagues')
-          .set({ umpire_management: management, umpire_credits: credits })
+          .set({
+            umpire_management: management,
+            umpire_credits: credits,
+            ...(body.sort === undefined ? {} : { umpire_sort: sort })
+          })
           .where('id', '=', leagueId)
           .execute()
         if (management !== row.umpire_management)
           await noteLeagueGames(trx, leagueId)
-        return { management, credits }
+        return { management, credits, sort }
       })
       res.json(settings)
     })
@@ -272,6 +294,33 @@ export function umpireRoutes(
     '/leagues/:leagueId/umpire-requirements',
     async (trx, league, req) => {
       await admin.applyRequirements(trx, league, req.body, now())
+    }
+  )
+  // The league's season order, written whole: the requirements screen's
+  // seasons first to last. The league's other seasons lose their position,
+  // so a season of the list that ended since it was read is left out of it.
+  manage(
+    'put',
+    '/leagues/:leagueId/umpire-season-priority',
+    async (trx, league, req) => {
+      const refused = badRequest(
+        'Choose this league’s current and upcoming seasons'
+      )
+      const ids: unknown = req.body?.seasonIds
+      if (
+        !Array.isArray(ids) ||
+        ids.length > 500 ||
+        new Set(ids).size !== ids.length ||
+        ids.some(id => typeof id !== 'string')
+      )
+        throw refused
+      const { current, ended } = await admin.leagueSeasons(trx, league, now())
+      if ((ids as string[]).some(id => !current.has(id) && !ended.has(id)))
+        throw refused
+      const kept = (ids as string[]).filter(id => current.has(id))
+      if (kept.length === 0) throw refused
+      await admin.savePriority(trx, league, kept)
+      return { seasons: await admin.requirements(trx, league, now(), media) }
     }
   )
   manage(
@@ -450,6 +499,7 @@ export function umpireRoutes(
         throw badRequest('Choose umpire, league or schedule view')
       const leagueId = String(req.params.leagueId)
       const filters = parseUmpireFilters(req.query)
+      const sort = parseUmpireSortQuery(req.query)
       const page = parseUmpirePageQuery(req.query)
       if (page.paged) {
         if (view === 'league')
@@ -462,7 +512,8 @@ export function umpireRoutes(
             view,
             filters,
             page,
-            readerOf(req.actor)
+            readerOf(req.actor),
+            sort
           )
         )
         return
@@ -474,7 +525,8 @@ export function umpireRoutes(
           leagueId,
           view,
           filters,
-          readerOf(req.actor)
+          readerOf(req.actor),
+          sort
         )
       )
     })

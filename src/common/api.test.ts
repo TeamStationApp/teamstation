@@ -3037,6 +3037,85 @@ describe('api client', function () {
     ])
   })
 
+  it('saves the schedule’s default sort and the league’s season order', async function () {
+    const calls: Call[] = []
+    const settings = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        { management: true, credits: false, sort: ['-certification'] },
+        calls
+      ).fetch
+    })
+    expect(
+      await settings.setUmpireSettings('l/1', { sort: ['-certification'] })
+    ).deep.equals({
+      management: true,
+      credits: false,
+      sort: ['-certification']
+    })
+    await settings.setUmpireSettings('l/1', { sort: null })
+    const season = {
+      id: 'sea_1',
+      name: 'Demo Spring',
+      logoUrl: null,
+      leagueId: 'l/1',
+      leaguePictureUrl: null,
+      requirement: null
+    }
+    const priority = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        {
+          seasons: [
+            { ...season, priority: 1 },
+            { ...season, id: 'sea_2', priority: null }
+          ]
+        },
+        calls
+      ).fetch
+    })
+    const ordered = await priority.setUmpireSeasonPriority('l/1', [
+      'sea_1',
+      'sea_2'
+    ])
+    expect(ordered.map(one => [one.id, one.priority])).deep.equals([
+      ['sea_1', 1],
+      ['sea_2', null]
+    ])
+    expect(
+      calls.map(call => [
+        call.method,
+        call.url.replace('http://x/api/v1', ''),
+        call.body
+      ])
+    ).deep.equals([
+      [
+        'PUT',
+        '/leagues/l%2F1/umpire-settings',
+        JSON.stringify({ sort: ['-certification'] })
+      ],
+      ['PUT', '/leagues/l%2F1/umpire-settings', JSON.stringify({ sort: null })],
+      [
+        'PUT',
+        '/leagues/l%2F1/umpire-season-priority',
+        JSON.stringify({ seasonIds: ['sea_1', 'sea_2'] })
+      ]
+    ])
+    const refused = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { seasons: [{ ...season, priority: 'one' }] }).fetch
+    })
+    let failure: unknown
+    await refused
+      .setUmpireSeasonPriority('l/1', ['sea_1'])
+      .catch((error: unknown) => {
+        failure = error
+      })
+    expect(failure).not.equals(undefined)
+  })
+
   it('reads, saves and queries umpire availability, and reads commitments', async function () {
     const availability = {
       levels: ['ulv_1'],

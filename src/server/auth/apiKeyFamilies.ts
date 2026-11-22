@@ -127,6 +127,7 @@ export const API_KEY_FAMILIES: Record<ApiKeyArea, readonly string[]> = {
     'DELETE /leagues/{leagueId}/umpire-levels/{levelId}',
     'GET /leagues/{leagueId}/umpire-requirements',
     'PUT /leagues/{leagueId}/umpire-requirements',
+    'PUT /leagues/{leagueId}/umpire-season-priority',
     'GET /leagues/{leagueId}/umpire-candidates',
     'GET /leagues/{leagueId}/umpires',
     'PUT /leagues/{leagueId}/umpires',

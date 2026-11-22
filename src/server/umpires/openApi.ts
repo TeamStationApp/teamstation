@@ -1,4 +1,13 @@
 import { UMPIRE_LEADERBOARD_MAX_PAGE } from '../../common/umpireSchedule'
+import { UMPIRE_SORT_KEYS } from '../../common/umpireSort'
+
+const sortKeys =
+  '`date` (the calendar day in the zone the schedule is shown in), ' +
+  '`season` (the season name), `seasonPriority` (the league season order, ' +
+  'seasons with none after, by name) or `certification` (the season’s ' +
+  'required umpire level), each with an optional leading `-` for the other ' +
+  'direction; `season` and `seasonPriority` are one field. Date, start time ' +
+  'and game id break every tie, newest first under `-date`'
 
 /** A saved umpire availability filter, or null when none is saved. */
 export const umpireAvailabilitySchema = {
@@ -27,7 +36,19 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
     type: 'object',
     properties: {
       management: { type: 'boolean' },
-      credits: { type: 'boolean' }
+      credits: { type: 'boolean' },
+      sort: {
+        type: ['array', 'null'],
+        maxItems: 2,
+        items: { type: 'string', enum: [...UMPIRE_SORT_KEYS] },
+        description:
+          'The umpire schedule’s league default sort: up to two keys of ' +
+          'different fields, ' +
+          sortKeys +
+          '. `[]` is the empty sort (date, start time and id alone); null ' +
+          'is none saved, which sorts by `date` then `season`. Saving it ' +
+          'never changes the other settings.'
+      }
     }
   }
   const parameters = [
@@ -46,13 +67,15 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   const paths: Record<string, unknown> = {
     '/leagues/{leagueId}/umpire-settings': {
       get: {
-        summary: 'Read league umpire settings as an administrator',
+        summary:
+          'Read league umpire settings as an administrator, with the schedule’s default sort',
         security: [{ bearer: [] }],
         parameters,
         responses
       },
       put: {
-        summary: 'Update umpire settings, preserving roles and assignments',
+        summary:
+          'Update umpire settings or the schedule’s default sort, preserving roles and assignments',
         security: [{ bearer: [] }],
         parameters,
         requestBody: {
@@ -367,8 +390,53 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   ] as Record<string, Record<string, unknown>>
   requirementsPath.get.description =
     'Each of `seasons` is `{ id, name, logoUrl, leagueId, leaguePictureUrl, ' +
-    'requirement }`. `leaguePictureUrl` is the league\u2019s signed picture, ' +
-    'or null, which a season with no `logoUrl` is drawn with.'
+    'requirement, priority }`. `leaguePictureUrl` is the league\u2019s signed picture, ' +
+    'or null, which a season with no `logoUrl` is drawn with. `priority` is ' +
+    'the season\u2019s position in the league season order, 1 first, or null ' +
+    'for none; seasons run in that order, those with none after by start ' +
+    'date and name.'
+  paths['/leagues/{leagueId}/umpire-season-priority'] = {
+    put: {
+      summary:
+        'Save the league season order the umpire schedule’s seasonPriority sort follows',
+      description:
+        'Writes the order whole, as an administrator: `seasonIds` are ' +
+        'current and upcoming seasons of the league, as ' +
+        '`GET /leagues/{leagueId}/umpire-requirements` lists them, first to ' +
+        'last, and take positions 1…N. The league\u2019s other seasons lose ' +
+        'their position, and a season created later has none, so it sorts ' +
+        'last. Answers `seasons` as the requirements read does.',
+      security: [{ bearer: [] }],
+      parameters,
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['seasonIds'],
+              properties: {
+                seasonIds: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 500,
+                  uniqueItems: true,
+                  items: { type: 'string' }
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        ...responses,
+        200: {
+          description:
+            'The league\u2019s current and upcoming seasons in their new order'
+        }
+      }
+    }
+  }
   requirementsPath.put.requestBody = {
     required: true,
     content: {
@@ -433,14 +501,25 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
           in: 'query',
           schema: { type: 'string', enum: ['1', 'true'] },
           description:
-            'Answer the schedule with `{items, nextCursor, prevCursor, anchorId, counts, positions}` in place of `games`, soonest first. `counts` is null. Not with view=league'
+            'Answer the schedule with `{items, nextCursor, prevCursor, anchorId, counts, positions}` in place of `games`, in its sort. `counts` is null. Not with view=league'
+        },
+        {
+          name: 'sort',
+          in: 'query',
+          schema: { type: 'string' },
+          description:
+            'Up to two comma-separated keys of different fields, ' +
+            sortKeys +
+            '; `none` sorts by date, start time and id alone. Omitted takes ' +
+            'the league default (`settings.sort`), else `date,season`. The ' +
+            'answer names the sort it applied as `sort`. Anything else is a 400'
         },
         {
           name: 'cursor',
           in: 'query',
           schema: { type: 'string' },
           description:
-            'A `nextCursor` or `prevCursor`, with the filters of the query that gave it. Needs `paged`. A malformed one is a 400'
+            'A `nextCursor` or `prevCursor`, with the filters of the query that gave it. It carries the sort its list was read in, which the page keeps whatever the league default became; a different explicit `sort` is a 400. Needs `paged`. A malformed one is a 400'
         },
         {
           name: 'around',
@@ -499,7 +578,7 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
         ...responses,
         200: {
           description:
-            'Visible games, slot choices and credit teams. With `paged`, one page of those games, and `positions`: the position columns of the whole filtered list, each with its `optionalHeader`, `Optional`, `Optional in some games` or null'
+            'Visible games, slot choices and credit teams, in `sort`, the sort applied; `settings.sort` is the league default (null when none is saved). With `paged`, one page of those games, and `positions`: the position columns of the whole filtered list, each with its `optionalHeader`, `Optional`, `Optional in some games` or null'
         }
       }
     }

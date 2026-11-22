@@ -4,6 +4,7 @@ import type {
   UmpireSettings,
   UmpireType
 } from './umpires'
+import type { UmpireSortKey } from './umpireSort'
 
 export interface UmpireAssignment {
   userId: string
@@ -69,6 +70,8 @@ export interface UmpireSchedule {
   viewerId: string
   isAdmin: boolean
   view: 'umpire' | 'league' | 'schedule'
+  /** The sort the rows are in; absent from a server that predates it. */
+  sort?: UmpireSortKey[]
 }
 /** A column of the table, and the note under its heading. */
 export interface UmpireColumn extends UmpirePosition {

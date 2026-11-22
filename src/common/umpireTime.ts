@@ -102,14 +102,62 @@ export function localClock(date: Date, timezone: string): string {
     hourCycle: 'h23'
   }).format(date)
 }
-/** `date`'s calendar date in `timezone`, `YYYY-MM-DD`. */
-export function localDate(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(date)
+/** The most zones whose date formatter `localDate` keeps. */
+export const DATE_FORMAT_LIMIT = 64
+/** The most spellings of zones `localDate` remembers the canonical name of. */
+export const ZONE_SPELLING_LIMIT = DATE_FORMAT_LIMIT * 4
+/**
+ * `localDate`'s formatters, keyed on each zone's canonical name so every
+ * spelling of a zone shares one, least recently used first. A request names
+ * its own zone, so the map is bounded rather than left to grow.
+ */
+const dateFormats = new Map<string, Intl.DateTimeFormat>()
+/** Each spelling `localDate` was given, to its zone's canonical name. */
+const zoneSpellings = new Map<string, string>()
+let dateFormatsBuilt = 0
+/** How many zones `localDate` holds a formatter for. For tests. */
+export function dateFormatCount(): number {
+  return dateFormats.size
+}
+/** How many formatters `localDate` has built. For tests. */
+export function dateFormatBuilds(): number {
+  return dateFormatsBuilt
+}
+/** Puts `key` last in `map`, dropping the least recently used past `limit`. */
+function keep<V>(
+  map: Map<string, V>,
+  key: string,
+  value: V,
+  limit: number
+): void {
+  map.delete(key)
+  map.set(key, value)
+  if (map.size > limit) {
+    const oldest = map.keys().next().value
+    if (oldest != null) map.delete(oldest)
+  }
+}
+/**
+ * `date`'s calendar date in `timezone`, `YYYY-MM-DD`. A zone's formatter is
+ * kept, since a schedule read asks for every game's day.
+ */
+export function localDate(date: Date | number, timezone: string): string {
+  let zone = zoneSpellings.get(timezone)
+  let format = zone == null ? undefined : dateFormats.get(zone)
+  if (zone == null || format == null) {
+    format = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    })
+    ++dateFormatsBuilt
+    zone = format.resolvedOptions().timeZone
+    format = dateFormats.get(zone) ?? format
+  }
+  keep(zoneSpellings, timezone, zone, ZONE_SPELLING_LIMIT)
+  keep(dateFormats, zone, format, DATE_FORMAT_LIMIT)
+  return format.format(date)
 }
 /**
  * A filter as it is saved and compared: each level once, and each day once

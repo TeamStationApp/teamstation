@@ -5,6 +5,7 @@ import {
   decodeScheduleCursor,
   type ScheduleCursor
 } from '../schedule/scheduleCursor'
+import { decodeUmpireCursor, type UmpireCursor } from '../umpires/scheduleOrder'
 
 /**
  * `GET /api/v1/events`.
@@ -261,24 +262,30 @@ export function parsePublicGamesQuery(
   return parseTeamGamesQuery(query)
 }
 
+/** The page parameters of an umpire schedule read, its cursor carrying its sort. */
+export type UmpirePageQuery = Omit<ParsedEventList, 'cursor'> & {
+  cursor?: UmpireCursor
+}
+
 /**
  * `GET /leagues/:leagueId/umpire-schedule`: the page parameters of the list
  * above. Like a team's, `limit` waits for `paged`. It may be as large as
- * `UMPIRE_PAGE_MOST`, since every page computes the whole schedule.
+ * `UMPIRE_PAGE_MOST`, since every page computes the whole schedule. Its
+ * cursor is the umpire schedule's own, which carries the sort it was read in.
  */
 export function parseUmpirePageQuery(
   query: Record<string, unknown>
-): ParsedEventList {
+): UmpirePageQuery {
   const { paged, cursor, around, limit } = query
-  return parseEventListQuery(
-    {
-      paged,
-      cursor,
-      around,
-      limit: paged == null ? undefined : limit
-    },
+  const cursorRaw = scalar(cursor, 'cursor')
+  const parsed = parseEventListQuery(
+    { paged, around, limit: paged == null ? undefined : limit },
     UMPIRE_PAGE_MOST
   )
+  if (cursorRaw == null) return { ...parsed, cursor: undefined }
+  if (!parsed.paged) throw badRequest('cursor needs paged')
+  if (parsed.around) throw badRequest('around does not apply with cursor')
+  return { ...parsed, cursor: decodeUmpireCursor(cursorRaw) }
 }
 
 /** How a `paged` read cuts the list, for `schedulePage`. */

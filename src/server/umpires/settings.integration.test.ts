@@ -38,7 +38,7 @@ describe('umpire settings and independent role', function () {
     ).equals(404)
     expect(
       await (await f.h.request('GET', path, undefined, 101)).json()
-    ).deep.equals({ management: false, credits: false })
+    ).deep.equals({ management: false, credits: false, sort: null })
     expect(ROLE_FLAGS).not.includes('umpire')
     expect(
       await f.h.db.selectFrom('league_umpires').selectAll().execute()
@@ -62,15 +62,170 @@ describe('umpire settings and independent role', function () {
         101
       )
       expect(response.status).equals(200)
-      expect(await response.json()).deep.equals({ management, credits: true })
+      expect(await response.json()).deep.equals({
+        management,
+        credits: true,
+        sort: null
+      })
       expect(
         await f.h.db.selectFrom('league_umpires').selectAll().execute()
       ).length(1)
     }
     expect(await (await f.h.request('PUT', path, {}, 101)).json()).deep.equals({
       management: true,
-      credits: true
+      credits: true,
+      sort: null
     })
+  })
+  it('saves the umpire schedule’s default sort for administrators only', async () => {
+    const path = `/leagues/${f.leagueA}/umpire-settings`
+    const put = async (body: unknown, as = 101): Promise<Response> =>
+      await f.h.request('PUT', path, body, as)
+    const read = async (): Promise<unknown> =>
+      await (await f.h.request('GET', path, undefined, 101)).json()
+    const scheduleSettings = async (): Promise<unknown> =>
+      (
+        (await (
+          await f.h.request(
+            'GET',
+            `/leagues/${f.leagueA}/umpire-schedule?view=schedule`,
+            undefined,
+            101
+          )
+        ).json()) as { settings: unknown }
+      ).settings
+    await put({ management: true, credits: true })
+    const saved = await put({ sort: ['-certification', 'seasonPriority'] })
+    expect(saved.status).equals(200)
+    const answer = {
+      management: true,
+      credits: true,
+      sort: ['-certification', 'seasonPriority']
+    }
+    expect(await saved.json()).deep.equals(answer)
+    expect(await read()).deep.equals(answer)
+    expect(await scheduleSettings()).deep.equals(answer)
+    // Saving the other settings keeps the sort.
+    expect(await (await put({ credits: false })).json()).deep.equals({
+      ...answer,
+      credits: false
+    })
+    expect(await (await put({ credits: true })).json()).deep.equals(answer)
+    // Someone who does not administer the league cannot.
+    expect((await put({ sort: ['date'] }, 102)).status).equals(403)
+    expect(await read()).deep.include({
+      sort: answer.sort
+    })
+    for (const sort of [
+      'none',
+      ['none'],
+      ['bogus'],
+      ['date', 'season', 'certification'],
+      ['season', '-seasonPriority'],
+      [7],
+      {}
+    ]) {
+      const refused = await put({ sort })
+      expect(refused.status, JSON.stringify(sort)).equals(400)
+      expect(((await refused.json()) as { message: string }).message).contains(
+        'Choose up to two sorts of different fields'
+      )
+    }
+    // The empty sort saves as itself, and null goes back to none saved.
+    expect(await (await put({ sort: [] })).json()).deep.include({ sort: [] })
+    expect(await read()).deep.include({ sort: [] })
+    expect(
+      (
+        await f.h.db
+          .selectFrom('leagues')
+          .select('umpire_sort')
+          .where('id', '=', f.leagueA)
+          .executeTakeFirstOrThrow()
+      ).umpire_sort
+    ).deep.equals([])
+    expect(await (await put({ sort: null })).json()).deep.include({
+      sort: null
+    })
+    expect(await scheduleSettings()).deep.include({ sort: null })
+  })
+  it('reads a stored sort with a key this build lacks as the app does, and leaves it alone on a save without sort', async () => {
+    const path = `/leagues/${f.leagueA}/umpire-settings`
+    const stored = async (): Promise<string[] | null> =>
+      (
+        await f.h.db
+          .selectFrom('leagues')
+          .select('umpire_sort')
+          .where('id', '=', f.leagueA)
+          .executeTakeFirstOrThrow()
+      ).umpire_sort
+    // A key a newer build wrote, read here after a rollback.
+    await f.h.db
+      .updateTable('leagues')
+      .set({ umpire_sort: ['venue', 'date'] })
+      .where('id', '=', f.leagueA)
+      .execute()
+    try {
+      const saved = await f.h.request(
+        'PUT',
+        path,
+        { management: true, credits: false },
+        101
+      )
+      expect(saved.status).equals(200)
+      // It answers the stored sort as this build reads it, the unknown key
+      // dropped and the known one kept, and keeps what is stored.
+      expect(await saved.json()).deep.equals({
+        management: true,
+        credits: false,
+        sort: ['date']
+      })
+      expect(await stored()).deep.equals(['venue', 'date'])
+      // The settings and the schedule read it the same way, and the
+      // schedule, asked for no sort, runs by it.
+      expect(
+        await (await f.h.request('GET', path, undefined, 101)).json()
+      ).deep.include({ sort: ['date'] })
+      const schedule = (await (
+        await f.h.request(
+          'GET',
+          `/leagues/${f.leagueA}/umpire-schedule?view=schedule`,
+          undefined,
+          101
+        )
+      ).json()) as { settings: { sort: unknown }; sort: unknown }
+      expect(schedule.settings.sort).deep.equals(['date'])
+      expect(schedule.sort).deep.equals(['date'])
+      // With no key it knows, it is no default at all.
+      await f.h.db
+        .updateTable('leagues')
+        .set({ umpire_sort: ['venue'] })
+        .where('id', '=', f.leagueA)
+        .execute()
+      expect(
+        await (await f.h.request('GET', path, undefined, 101)).json()
+      ).deep.include({ sort: null })
+      expect(
+        (
+          (await (
+            await f.h.request(
+              'GET',
+              `/leagues/${f.leagueA}/umpire-schedule?view=schedule`,
+              undefined,
+              101
+            )
+          ).json()) as { sort: unknown }
+        ).sort
+      ).deep.equals(['date', 'season'])
+      // A save with sort still replaces it.
+      await f.h.request('PUT', path, { sort: ['-date'] }, 101)
+      expect(await stored()).deep.equals(['-date'])
+    } finally {
+      await f.h.db
+        .updateTable('leagues')
+        .set({ umpire_sort: null })
+        .where('id', '=', f.leagueA)
+        .execute()
+    }
   })
   it('clears cancelled and withdrawn assignments through the game trigger and does not restore them', async () => {
     for (const action of ['cancelled', 'withdrawn'] as const) {

@@ -45,7 +45,9 @@ phone keeps to find them again offline.
 - **Repeat a parameter for several values:** `?season=a&season=b`.
 - **Leaving a parameter out keeps the collection's existing answer.** Adding
   a parameter never changes what a caller that does not send it gets. A new
-  field in each item is allowed; a changed or missing one is not.
+  field in each item is allowed; a changed or missing one is not. The umpire
+  schedule's default order is the one deliberate exception (see **Umpire
+  schedule sort**).
 - **Declare every parameter, with its default, in the route's OpenAPI
   entry.** A parameter that needs another, or a value it does not take,
   answers 400 with a message that says which.
@@ -54,7 +56,8 @@ phone keeps to find them again offline.
 
 A long list answers a page at a time when the caller asks with `paged=1`.
 Leaving `paged` out keeps the bare array, in the order it always had, so the
-Director and scoreboard clients decode what they did.
+Director and scoreboard clients decode what they did (the umpire schedule's
+order is the exception **Umpire schedule sort** gives).
 
 `GET /events`, `GET /teams/:teamId/games` and
 `GET /leagues/:leagueId/umpire-schedule` take these, and all share one shape,
@@ -252,6 +255,59 @@ rows stay in the phone's zone. Without `filterTimezone` the filter is matched in
 `timezone`, and without either, each game's stored timezone is used for both.
 Invalid zones return 400. Stored ISO instants and conflict intervals are
 unchanged.
+
+## Umpire schedule sort
+
+`GET /leagues/:leagueId/umpire-schedule` takes `sort`: up to two keys of
+different fields joined by a comma, first first. The keys are `date` (the
+calendar day in the zone the schedule is shown in), `season` (the season's
+name), `seasonPriority` (the league's season order, with seasons that have none
+after those that have one, by name, both ways) and `certification` (the season's
+required umpire level), each with an optional leading `-` for the other
+direction. `season` and `seasonPriority` are one field. Names compare naturally
+and without case ("U8" before "U10"). The date, start time and game id break
+every tie, newest first under `-date` and oldest first otherwise. `sort=none` is
+the empty sort, those tie-breakers alone. Anything else is a 400.
+
+Without `sort` the league's default applies, which an administrator saves as
+`sort` on `PUT /leagues/:leagueId/umpire-settings` (a JSON array: `[]` for the
+empty sort, `null` to go back to none saved); with none saved, `date,season`.
+A save that leaves `sort` out keeps the stored default as it is.
+
+Every answer names the sort its rows are in as `sort`, and the league default as
+`settings.sort` (null when none is saved). The unpaged answer and `view=league`
+are sorted too.
+
+This changes what a caller that sends no `sort` gets, paged or not: the rows
+used to run by start time across the league, and with no default saved they
+now run by calendar day, then season name, then start time. It is the one
+place the rule that leaving a parameter out keeps a collection's answer yields,
+on purpose: the schedule is a table read a day at a time, and its default
+(issue #348) groups each day's games by division unless the league saves
+another, for every reader, the app included. A caller that needs the old
+order sends `sort=none`, which is start-time order when the games share a zone.
+
+A page's cursor carries the sort it was read in and the boundary row's keys, so
+a walk stays in its sort when the league default changes meanwhile, and still
+places the next page if the boundary row is gone. An explicit `sort` that
+disagrees with the cursor's is a 400, as `order` is on the other lists.
+Cursors given before the schedule was sorted (the start-time cursor the other
+schedules still use) are refused with 400 `cursor is not a cursor this list
+gave`, so a client reading across that deploy starts again from the first page.
+`around=next` still opens on the first game under way or still to start in time
+order, and cuts the page around that game's place in the sort. Season priorities
+are read live, so a priority saved between two reads can repeat or skip a row at
+a page boundary, as on the leaderboard.
+
+The season order itself is `PUT /leagues/:leagueId/umpire-season-priority` with
+`{ seasonIds }`, the league's current and upcoming seasons first to last
+(a season of the league that has ended since the list was read is left out,
+since its position is cleared anyway; another league's season is a 400), and it
+answers the seasons as `GET …/umpire-requirements` does, each with its
+`priority`. It is a path of its own rather than a parameter, because it is not a
+filter or a search of an existing collection: it writes a league setting whole,
+one position per season, and clears the position of the league's other seasons.
+A season created later has none, so it sorts last.
 
 ## Umpire commitments
 

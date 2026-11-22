@@ -5,8 +5,13 @@ import type { UmpireAvailability } from './umpires'
 import {
   availabilityAllows,
   availabilityIsEmpty,
+  DATE_FORMAT_LIMIT,
+  dateFormatBuilds,
+  dateFormatCount,
+  localDate,
   normalAvailability,
-  shortZoneName
+  shortZoneName,
+  ZONE_SPELLING_LIMIT
 } from './umpireTime'
 
 /** Sundays from 17:00 to 20:00 in New York. */
@@ -167,5 +172,72 @@ describe('availabilityAllows', function () {
       shortZoneName('America/Chicago', new Date('2026-07-01T12:00:00Z'))
     ).equals('CDT')
     expect(shortZoneName('Not/AZone')).equals('Not/AZone')
+  })
+})
+
+describe('localDate', function () {
+  const instant = Date.parse('2026-03-01T03:30:00Z')
+  it('gives the calendar date in the zone', function () {
+    expect(localDate(instant, 'America/New_York')).to.equal('2026-02-28')
+    expect(localDate(instant, 'UTC')).to.equal('2026-03-01')
+  })
+  it('keeps one formatter for every spelling of a zone', function () {
+    localDate(instant, 'America/Chicago')
+    const count = dateFormatCount()
+    expect(localDate(instant, 'aMeRiCa/cHiCaGo')).to.equal('2026-02-28')
+    expect(localDate(instant, 'AMERICA/CHICAGO')).to.equal('2026-02-28')
+    expect(localDate(instant, 'america/chicago')).to.equal('2026-02-28')
+    expect(dateFormatCount()).to.equal(count)
+  })
+  it('builds no formatter for a spelling it has seen', function () {
+    for (const spelling of ['US/Pacific', 'Etc/UTC', 'america/new_york']) {
+      localDate(instant, spelling)
+      const built = dateFormatBuilds()
+      const count = dateFormatCount()
+      localDate(instant, spelling)
+      expect(dateFormatBuilds()).to.equal(built)
+      expect(dateFormatCount()).to.equal(count)
+    }
+    expect(localDate(instant, 'US/Pacific')).to.equal('2026-02-28')
+    expect(localDate(instant, 'Etc/UTC')).to.equal('2026-03-01')
+  })
+  it('resolves a new spelling of a known zone once', function () {
+    localDate(instant, 'America/Denver')
+    const built = dateFormatBuilds()
+    const count = dateFormatCount()
+    localDate(instant, 'america/denver')
+    localDate(instant, 'america/denver')
+    expect(dateFormatBuilds()).to.equal(built + 1)
+    expect(dateFormatCount()).to.equal(count)
+  })
+  it('holds no more than its limit of zones', function () {
+    for (let minutes = 1; minutes <= DATE_FORMAT_LIMIT * 3; minutes++) {
+      const hours = String(Math.floor(minutes / 60)).padStart(2, '0')
+      const rest = String(minutes % 60).padStart(2, '0')
+      expect(localDate(instant, `+${hours}:${rest}`)).to.match(
+        /^\d{4}-\d{2}-\d{2}$/
+      )
+    }
+    expect(dateFormatCount()).to.equal(DATE_FORMAT_LIMIT)
+    expect(localDate(instant, 'America/New_York')).to.equal('2026-02-28')
+    expect(dateFormatCount()).to.equal(DATE_FORMAT_LIMIT)
+  })
+  it('remembers no more than its limit of spellings', function () {
+    for (let index = 0; index <= ZONE_SPELLING_LIMIT; index++) {
+      // Each index sets the case of the first nine letters its own way.
+      let letter = 0
+      const spelling = Array.from('america/new_york')
+        .map(char =>
+          /[a-z]/.test(char) && (index >> letter++) % 2 === 1
+            ? char.toUpperCase()
+            : char
+        )
+        .join('')
+      expect(localDate(instant, spelling)).to.equal('2026-02-28')
+    }
+    // The first spelling was dropped, so it is resolved again.
+    const built = dateFormatBuilds()
+    localDate(instant, 'america/new_york')
+    expect(dateFormatBuilds()).to.equal(built + 1)
   })
 })

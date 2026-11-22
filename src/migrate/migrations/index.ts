@@ -145,6 +145,7 @@ import { migration127LeagueUmpireChat } from './127leagueUmpireChat'
 import { migration128ChatHiddenHistory } from './128chatHiddenHistory'
 import { migration128UmpireAvailability } from './128umpireAvailability'
 import { migration129DropChatAgeConfirmations } from './129dropChatAgeConfirmations'
+import { migration129UmpireSort } from './129umpireSort'
 import { migration130RefreshNotices } from './130refreshNotices'
 
 /** Every migration, in the order they were written. */
@@ -292,8 +293,11 @@ export const migrations: Migration[] = [
   migration126GroupCoordinates,
   migration127AgeBands,
   migration127LeagueUmpireChat,
+  migration127AgeBands,
+  migration127LeagueUmpireChat,
   migration128ChatHiddenHistory,
   migration128UmpireAvailability,
   migration129DropChatAgeConfirmations,
+  migration129UmpireSort,
   migration130RefreshNotices
 ]

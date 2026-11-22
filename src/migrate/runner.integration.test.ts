@@ -119,11 +119,12 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the refresh notices, the dropped chat age columns, the umpire availability, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the refresh notices, the umpire sort, the dropped chat age columns, the umpire availability, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
     expect(await migrateDown(pool, migrations)).deep.equals([
       '130refreshNotices'
     ])
+    expect(await migrateDown(pool, migrations)).deep.equals(['129umpireSort'])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '129dropChatAgeConfirmations'
     ])
@@ -306,9 +307,15 @@ describe('migrations', function () {
       ).rows.map(row => row.column_name)
     // Every migration run: the age bands replaced them.
     expect(await chatAgeColumns()).deep.equals([])
-    // The refresh notices, after it, go first.
-    expect(await migrateDown(pool, migrations, 2)).deep.equals([
-      '130refreshNotices',
+    // The runner rolls back by name: those named after 129 go down first,
+    // newest name first, then 129 itself.
+    const newer = migrations
+      .map(item => item.name)
+      .filter(name => name > '129dropChatAgeConfirmations')
+      .sort()
+      .reverse()
+    expect(await migrateDown(pool, migrations, newer.length + 1)).deep.equals([
+      ...newer,
       '129dropChatAgeConfirmations'
     ])
     expect(await chatAgeColumns()).deep.equals([
@@ -332,14 +339,13 @@ describe('migrations', function () {
         })
     expect(refused).equals(3)
     await pool.query('delete from users where id = $1', [userIdOfGumbo(703)])
-    expect(
-      await migrateDown(pool, migrations, afterCoach.length - 2)
-    ).deep.equals(
-      afterCoach
-        .map(item => item.name)
-        .reverse()
-        .slice(2)
-    )
+    // 129 and every migration named after it are down already.
+    const left = afterCoach
+      .map(item => item.name)
+      .filter(name => name < '129dropChatAgeConfirmations')
+      .sort()
+      .reverse()
+    expect(await migrateDown(pool, migrations, left.length)).deep.equals(left)
     expect(await schemaSnapshot(pool)).deep.equals(before)
     await migrateUp(pool, migrations)
   })
@@ -714,6 +720,7 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '128chatHiddenHistory',
           '128umpireAvailability',
           '129dropChatAgeConfirmations',
+          '129umpireSort',
           '130refreshNotices'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
