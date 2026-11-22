@@ -17,6 +17,54 @@ const roundTrip = (route: Route): Route => {
 }
 
 describe('addresses', function () {
+  it('carries a saved filter’s time zone through the umpire schedule’s address', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      priorSeasons: 'true',
+      days: '0,1,2,3,4',
+      from: '17:00',
+      to: '23:59',
+      timezone: 'America/Los_Angeles'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=umpire&priorSeasons=true&days=0%2C1%2C2%2C3%2C4&from=17%3A00&to=23%3A59&timezone=America%2FLos_Angeles'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(
+      parseRoute('/umpires/lea_demo', 'timezone=America%2FChicago')
+    ).deep.equals({
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      timezone: 'America/Chicago'
+    })
+    expect(
+      routePath({ name: 'umpireSchedule', id: 'lea_demo', days: '5' })
+    ).equals('/umpires/lea_demo?days=5')
+  })
+  it('carries the umpire schedule’s chosen no-filter through its address, and nothing else for filter (6.harness-review.3)', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      filter: 'none'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=umpire&filter=none'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(parseRoute('/umpires/lea_demo', 'filter=all')).deep.equals({
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire'
+    })
+  })
   it('writes and reads User Management, its tabs and another person’s account', () => {
     expect(routePath({ name: 'userManagement' })).equals('/node/users')
     expect(routePath({ name: 'userManagement', tab: 'logins' })).equals(

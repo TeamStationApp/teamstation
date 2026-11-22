@@ -225,6 +225,8 @@ describe('entity chat app routing', () => {
     proto.umpireLeagues = async () => [
       { id: 'lea_demo', name: 'Demo League', logoUrl: null }
     ]
+    // No saved schedule filter: the schedule loads as it was opened.
+    proto.umpireAvailability = async () => null
     proto.umpireSchedulePage = async (_league, _query, page) =>
       pageOfUmpireSchedule(
         {
@@ -290,6 +292,83 @@ describe('entity chat app routing', () => {
       })
       await settle()
       expect(window.location.pathname).equals('/chat/cnv_umpires')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+      Object.defineProperties(proto, originals)
+      Object.defineProperties(engineProto, engineOriginals)
+      window.history.replaceState(null, '', '/')
+    }
+  }).timeout(15000)
+  it('applies the saved filter to a schedule opened with no league, reading it once', async () => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    const engineProto = ChatEngine.prototype
+    const engineOriginals = Object.getOwnPropertyDescriptors(engineProto)
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo User',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.myAge = async () => ({
+      ...ADULT_AGE
+    })
+    proto.hasNotifications = async () => false
+    proto.umpireLeagues = async () => [
+      { id: 'lea_demo', name: 'Demo League', logoUrl: null }
+    ]
+    const reads: string[] = []
+    proto.umpireAvailability = async league => {
+      reads.push(league)
+      return {
+        levels: [],
+        days: [1],
+        from: '18:00',
+        to: '21:00',
+        timezone: 'America/Chicago'
+      }
+    }
+    proto.umpireSchedulePage = async (_league, _query, page) =>
+      pageOfUmpireSchedule(
+        {
+          settings: { management: true, credits: false },
+          levels: [],
+          types: [],
+          noteTypes: [],
+          viewerId: userIdOfGumbo(1),
+          isAdmin: false,
+          view: 'umpire',
+          creditTeams: [],
+          games: []
+        },
+        page
+      )
+    engineProto.refresh = async () => []
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 40))
+      })
+    }
+    window.history.replaceState(null, '', '/umpires/')
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      await settle()
+      // The saved filter is applied to the route as it was opened, with no
+      // league named, so the screen is not remounted to read it again.
+      expect(window.location.pathname).equals('/umpires/')
+      expect(window.location.search).contains('days=1')
+      expect(window.location.search).contains('timezone=America%2FChicago')
+      expect(reads).deep.equals(['lea_demo'])
     } finally {
       await act(async () => {
         root.unmount()

@@ -36,6 +36,13 @@ export interface UmpireScheduleRoute {
   days?: string
   from?: string
   to?: string
+  /** The zone a saved filter's days and times are read in; else the device's. */
+  timezone?: string
+  /**
+   * The person chose no filter here, so their saved filter is not put back
+   * over it when the schedule is drawn again from this route.
+   */
+  filter?: 'none'
 }
 export const USER_MANAGEMENT_TABS = ['logins', 'sessions', 'users'] as const
 export type UserManagementTab = (typeof USER_MANAGEMENT_TABS)[number]
@@ -400,8 +407,9 @@ export function parseRoute(path: string, search = ''): Route {
       ...(query.get('priorSeasons') === 'true'
         ? { priorSeasons: 'true' as const }
         : {}),
+      ...(query.get('filter') === 'none' ? { filter: 'none' as const } : {}),
       ...Object.fromEntries(
-        ['levels', 'days', 'from', 'to'].flatMap(key =>
+        ['levels', 'days', 'from', 'to', 'timezone'].flatMap(key =>
           query.has(key) ? [[key, query.get(key)!]] : []
         )
       )
@@ -808,7 +816,9 @@ export function routePath(route: Route): string {
         'levels',
         'days',
         'from',
-        'to'
+        'to',
+        'timezone',
+        'filter'
       ] as const)
         if (route[key] != null) query.set(key, route[key])
       return `/umpires/${encodeURIComponent(route.id)}${query.size === 0 ? '' : '?' + query.toString()}`

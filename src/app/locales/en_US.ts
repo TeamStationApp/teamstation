@@ -1007,6 +1007,8 @@ export const enUs = {
   chat_proxy_choose_coach: 'Choose a coach to message',
   umpire_chat: 'Umpire chat',
   umpire_chat_open: 'Open the umpire chat',
+  umpire_save_filter: 'Save filter',
+  umpire_save_filter_named: 'Save this filter as your availability',
   chat_proxy_choose_person: 'Message %s',
   chat_include_title: 'Include another adult',
   chat_include_detail:

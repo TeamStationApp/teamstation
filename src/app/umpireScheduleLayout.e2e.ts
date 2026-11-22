@@ -83,6 +83,20 @@ async function main(): Promise<void> {
         .insertInto('umpire_note_types')
         .values({ id, name, position, league_id: f.leagueA })
         .execute()
+    // 103 umpires League B too, which manages umpires as well.
+    await f.h.db
+      .updateTable('leagues')
+      .set({ umpire_management: true })
+      .where('id', '=', f.leagueB)
+      .execute()
+    await f.h.db
+      .insertInto('league_umpires')
+      .values({
+        league_id: f.leagueB,
+        user_id: userIdOfGumbo(103),
+        granted_by: userIdOfGumbo(102)
+      })
+      .execute()
     await f.h.db
       .updateTable('users')
       .set({ first_name: 'Ken Griffey Junior', last_name: 'Trout' })
@@ -127,6 +141,16 @@ async function main(): Promise<void> {
       await contains(page, baseline ? 'Umpire schedule' : 'Umpire')
       await page.evaluate(async () => await document.fonts.ready)
     }
+    // A proving artifact, under its own name in TS_UMPIRE_PROOF when set.
+    const proofDir = process.env.TS_UMPIRE_PROOF ?? artifacts
+    const proof = async (name: string): Promise<void> => {
+      await m.waitForAnimationToEnd()
+      await mkdir(proofDir, { recursive: true })
+      await writeFile(
+        join(proofDir, `${name}.png`),
+        await page.screenshot({ fullPage: false })
+      )
+    }
     const shot = async (name: string): Promise<void> => {
       await m.waitForAnimationToEnd()
       await writeFile(
@@ -159,6 +183,227 @@ async function main(): Promise<void> {
               .querySelector('[data-testid="sticky-season-sections"]')!
               .getBoundingClientRect().top <= 50
         )
+    }
+    const saveFilter = '[data-testid="umpire-save-filter"]'
+    const savedFilter = async (): Promise<unknown> =>
+      await (
+        await f.h.request(
+          'GET',
+          `/leagues/${f.leagueA}/me/umpire-availability`,
+          undefined,
+          103
+        )
+      ).json()
+    const filterLabel = async (): Promise<string> =>
+      await page.$eval(
+        '[aria-label="Schedule filters"]',
+        n => (n as HTMLElement).innerText
+      )
+    // Save filter, the saved filter on entry, its zone, league switching,
+    // no one else's filter on show, the admin's availability reads, and
+    // clearing it again.
+    const savedFilterSteps = async (): Promise<void> => {
+      // 1. A filter applied with none saved: Save filter beside the filter.
+      await open('?days=0,1,2,3,4&from=17:00&to=23:59')
+      await page.waitForSelector(saveFilter)
+      const placed = await page.evaluate(selector => {
+        const box = (n: Element): DOMRect => n.getBoundingClientRect()
+        const save = document.querySelector(selector)!
+        const filter = document.querySelector(
+          '[aria-label="Schedule filters"]'
+        )!
+        const row = document.querySelector('[data-testid="umpire-filter-row"]')!
+        return {
+          save: box(save).toJSON() as DOMRect,
+          filter: box(filter).toJSON() as DOMRect,
+          row: box(row).toJSON() as DOMRect
+        }
+      }, saveFilter)
+      expect(placed.save.left).greaterThan(placed.filter.right)
+      expect(placed.save.top).closeTo(placed.filter.top, 1)
+      expect(placed.save.height).closeTo(placed.filter.height, 1)
+      expect(placed.save.height).at.most(placed.row.height)
+      log.push('Save filter placed ' + JSON.stringify(placed))
+      await proof('schedule-save-filter')
+      await tap(m, 'Save this filter as your availability')
+      await page.waitForSelector(saveFilter, { hidden: true })
+      expect(await savedFilter()).deep.equals({
+        availability: {
+          levels: [],
+          days: [0, 1, 2, 3, 4],
+          from: '17:00',
+          to: '23:59',
+          timezone: 'America/Los_Angeles'
+        }
+      })
+      // 2. Opened with no filter in the address: the saved one applies.
+      await open()
+      await page.waitForFunction(
+        () =>
+          new URL(location.href).searchParams.get('timezone') ===
+          'America/Los_Angeles'
+      )
+      const address = new URL(page.url()).searchParams
+      expect(address.get('days')).equals('0,1,2,3,4')
+      expect(address.get('from')).equals('17:00')
+      expect(address.get('to')).equals('23:59')
+      await page.waitForSelector('[data-testid="umpire-game-gam_layout_2"]')
+      expect(await filterLabel()).contains('MTWTF · 5:00 PM–11:59 PM')
+      expect(await page.$(saveFilter)).equals(null)
+      await proof('schedule-saved-filter-applied')
+      // 3. On a phone set to Chicago, the saved filter is still matched in
+      // Los Angeles while rows are dated in Chicago, and nothing is asked for
+      // before the saved filter answers.
+      await page.emulateTimezone('America/Chicago')
+      const traffic: string[] = []
+      const onRequest = (request: HTTPRequest): void => {
+        if (request.url().includes('/umpire-schedule?'))
+          traffic.push(`schedule ${request.url()}`)
+      }
+      const onResponse = (response: { url: () => string }): void => {
+        if (response.url().includes('/me/umpire-availability'))
+          traffic.push(`saved ${response.url()}`)
+      }
+      page.on('request', onRequest)
+      page.on('response', onResponse)
+      await open()
+      await page.waitForSelector('[data-testid="umpire-game-gam_layout_2"]')
+      page.off('request', onRequest)
+      page.off('response', onResponse)
+      // The label names the zone its times are read in, not the device's.
+      expect(await filterLabel()).matches(/5:00 PM–11:59 PM P[SD]T/)
+      const firstSaved = traffic.findIndex(t => t.startsWith('saved '))
+      const firstSchedule = traffic.findIndex(t => t.startsWith('schedule '))
+      expect(firstSaved, traffic.join('\n')).at.least(0)
+      expect(firstSchedule, traffic.join('\n')).greaterThan(firstSaved)
+      const sent = new URL(traffic[firstSchedule].slice('schedule '.length))
+        .searchParams
+      // The client sends each day as a parameter of its own.
+      expect(sent.getAll('days')).deep.equals(['0', '1', '2', '3', '4'])
+      expect(sent.get('from')).equals('17:00')
+      expect(sent.get('to')).equals('23:59')
+      expect(sent.get('filterTimezone')).equals('America/Los_Angeles')
+      expect(sent.get('timezone')).equals('America/Chicago')
+      // No request asks for the saved filter matched in the device's zone.
+      expect(
+        traffic
+          .filter(t => t.startsWith('schedule '))
+          .every(t => {
+            const params = new URL(t.slice('schedule '.length)).searchParams
+            return (
+              !params.has('days') ||
+              params.get('filterTimezone') === 'America/Los_Angeles'
+            )
+          }),
+        traffic.join('\n')
+      ).equals(true)
+      log.push('Saved filter zone carried:\n' + traffic.join('\n'))
+      await page.emulateTimezone('America/Los_Angeles')
+      // 4. Another league starts from its own saved filter: none, then
+      // Saturday; back in League A, the weekday filter again.
+      await tap(m, 'Demo Visitors')
+      await page.waitForFunction(
+        league => location.pathname === `/umpires/${league}`,
+        {},
+        f.leagueB
+      )
+      await page.waitForFunction(() => {
+        const n = document.querySelector<HTMLElement>(
+          '[aria-label="Schedule filters"]'
+        )
+        return n != null && !n.innerText.includes('·')
+      })
+      expect(new URL(page.url()).searchParams.has('days')).equals(false)
+      expect(await page.$(saveFilter)).equals(null)
+      await tap(m, 'Schedule filters')
+      await tap(m, 'Saturday')
+      await tap(m, 'Apply filters')
+      await page.waitForSelector(saveFilter)
+      await tap(m, 'Save this filter as your availability')
+      await page.waitForSelector(saveFilter, { hidden: true })
+      expect(await filterLabel()).contains('Filter · S')
+      await proof('schedule-other-league')
+      await tap(m, 'Demo League')
+      await page.waitForFunction(
+        () => new URL(location.href).searchParams.get('days') === '0,1,2,3,4'
+      )
+      // 5. No one else's filter on show, to the league's admin.
+      await login(101)
+      const hidden = ['MTWTF', '5:00 PM', '17:00', '11:59', 'America/']
+      for (const [address, ready] of [
+        [`/leagues/${f.leagueA}/people/${userIdOfGumbo(103)}`, 'Trout'],
+        [`/groups/league/${f.leagueA}/umpires`, 'Trout']
+      ] as const) {
+        await m.openBrowser({ url: f.h.origin + address })
+        await contains(page, ready)
+        await m.waitForAnimationToEnd()
+        const text = await page.evaluate(() => document.body.innerText)
+        for (const words of hidden)
+          expect(text, `${address}: ${words}`).not.contains(words)
+      }
+      log.push('No filter text on 103’s league profile or Manage Umpires.')
+      // 6. The admin's availability reads, and a non-admin's refused.
+      const api: string[] = []
+      const read = async (
+        address: string,
+        as: number
+      ): Promise<{ status: number; body: any }> => {
+        const response = await f.h.request('GET', address, undefined, as)
+        const body = await response.json()
+        api.push(
+          `$ GET /api/v1${address} (as ${as})`,
+          `HTTP ${response.status}`,
+          JSON.stringify(body, null, 2),
+          ''
+        )
+        return { status: response.status, body }
+      }
+      const umpires = `/leagues/${f.leagueA}/umpires`
+      const ids = (body: any): string[] =>
+        (body.people as Array<{ id: string }>).map(p => p.id)
+      const monday = await read(`${umpires}?day=0&time=18:00`, 101)
+      expect(monday.status).equals(200)
+      expect(ids(monday.body)).contains(userIdOfGumbo(103))
+      const saturday = await read(`${umpires}?day=5&time=18:00`, 101)
+      expect(ids(saturday.body)).not.contains(userIdOfGumbo(103))
+      expect(ids(saturday.body)).contains(userIdOfGumbo(101))
+      // Monday 2027-04-05, 6 pm in Los Angeles.
+      const strict = await read(
+        `${umpires}?availableAt=${encodeURIComponent('2027-04-06T01:00:00.000Z')}&strict=true`,
+        101
+      )
+      expect(ids(strict.body)).deep.equals([userIdOfGumbo(103)])
+      const commitments = await read(
+        `${umpires}/${userIdOfGumbo(103)}/commitments?from=${encodeURIComponent('2027-04-01T00:00:00.000Z')}&to=${encodeURIComponent('2027-04-30T00:00:00.000Z')}`,
+        101
+      )
+      expect(commitments.status).equals(200)
+      expect(
+        (commitments.body.commitments as Array<{ gameId: string }>).map(
+          c => c.gameId
+        )
+      ).contains('gam_umpire_g1')
+      const refused = await read(`${umpires}?day=0&time=18:00`, 104)
+      expect(refused.status).within(403, 404)
+      await mkdir(proofDir, { recursive: true })
+      await writeFile(join(proofDir, 'availability-api.log'), api.join('\n'))
+      // 7. Clear filters, then Apply: Save filter clears the saved one.
+      await login(103)
+      await open()
+      await page.waitForFunction(
+        () => new URL(location.href).searchParams.get('days') === '0,1,2,3,4'
+      )
+      await page.waitForSelector('[data-testid="umpire-game-gam_layout_2"]')
+      await tap(m, 'Schedule filters')
+      await tap(m, 'Clear filters')
+      await tap(m, 'Apply filters')
+      await page.waitForSelector(saveFilter)
+      await tap(m, 'Save this filter as your availability')
+      await page.waitForSelector(saveFilter, { hidden: true })
+      expect(await savedFilter()).deep.equals({ availability: null })
+      log.push(
+        'Save filter saved, applied on entry with its zone, per league, hidden from the admin, queried by the admin, and cleared.'
+      )
     }
     await login(101)
     await open(baseline ? '?view=league' : '')
@@ -473,6 +718,7 @@ async function main(): Promise<void> {
       )
       expect(response.status).equals(403)
       await tap(m, 'Cancel')
+      await savedFilterSteps()
       await mkdir(join(artifacts, 'support'), { recursive: true })
       await recordBrowserCoverage(
         [page],

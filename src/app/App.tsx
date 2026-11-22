@@ -3203,9 +3203,16 @@ function Shell(props: AppProps): React.ReactElement {
               }
         }
         onRoute={route => {
+          // A route opened with no league keeps none while it shows the one
+          // it opened on: its id names the screen's scene, and a changed id
+          // would remount the screen and read its saved filter again.
+          const kept =
+            top.id === '' && route.id === umpireLeagueOf(top.id)
+              ? { ...route, id: top.id }
+              : route
           writeTop(current => ({
             ...current,
-            [tab]: [...current[tab].slice(0, -1), route]
+            [tab]: [...current[tab].slice(0, -1), kept]
           }))
         }}
       />
