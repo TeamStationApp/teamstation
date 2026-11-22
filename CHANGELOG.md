@@ -1,6 +1,6 @@
 # teamstation
 
-## Unreleased
+## 1.4.0 (2026-11-21)
 
 - changed: Google Play closed-testing uploads publish the bundle and do not send release notes
 - added: One search field finds leagues, seasons, teams and people, with the closest matches first
@@ -22,6 +22,8 @@
 - fixed: Chrome end-to-end observations no longer retain a second copy of downloaded responses, keeping long streaming memory measurements representative of playback
 - fixed: In iPhone Safari, a live game's video plays again after a camera is away longer than the 45 s cushion, instead of staying stopped for good
 - fixed: In iPhone Safari, the video no longer freezes for good after quick scrubs or coming back from full screen
+
+## Unreleased
 
 ## 1.3.0 (2026-11-18)
 
