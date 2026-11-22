@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 
 ## 1.4.0 (2026-11-21)

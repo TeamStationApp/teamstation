@@ -43,6 +43,7 @@ import {
   releaseIos,
   releasePlayTesting,
   releaseToPlayTrack,
+  releaseTv,
   SEAT_PARAM,
   seatEnvironment,
   serverLogDsn,
@@ -1635,11 +1636,29 @@ describe('request-only Apple TV workflow', () => {
           assert.equal(name, 'tvos')
           assert.deepEqual(options.triggers, [{ request: true }])
           assert.equal(options.params?.seat.default, 'production')
+          const stages: string[] = []
           declare({
             parallel() {
               assert.fail('unexpected parallel stage')
             },
             stage(name, stage) {
+              stages.push(name)
+              if (name === 'release') {
+                assert.deepEqual(stage.apple, {
+                  distribution: 'appStore',
+                  app: TV_APP,
+                  platform: 'tvos'
+                })
+                assert.equal(stage.on.type, 'macos-arm64')
+                assert.deepEqual(stage.checkout, { depth: 1 })
+                assert.deepEqual(stage.when, {
+                  branch: ['master'],
+                  params: { seat: 'production' }
+                })
+                assert.equal(stage.publishes, undefined)
+                assert.equal(stage.run, releaseTv)
+                return
+              }
               assert.equal(name, 'archive')
               assert.deepEqual(stage.apple, {
                 distribution: 'adHoc',
@@ -1651,6 +1670,8 @@ describe('request-only Apple TV workflow', () => {
               assert.equal(stage.run, buildTv)
             }
           })
+          // The release follows the archive whose IPA it stashes.
+          assert.deepEqual(stages, ['archive', 'release'])
         }
       })
     })
@@ -1666,6 +1687,7 @@ describe('request-only Apple TV workflow', () => {
     it(`archives a standalone TV app for ${branch}/${seat}`, async () => {
       const commands: Array<[string, string | undefined]> = []
       const saved: string[] = []
+      const stashed: Array<[string, string]> = []
       let published = false
       const workspace = mkdtempSync(path.join(tmpdir(), 'tv-app-'))
       const plist = path.join(workspace, 'appletv/ios/TeamStationTV/Info.plist')
@@ -1689,8 +1711,8 @@ describe('request-only Apple TV workflow', () => {
           assert.equal(app, TV_APP)
           return '26110601'
         },
-        async stash() {
-          assert.fail('no release stash')
+        async stash(name, paths) {
+          stashed.push([name, String(paths)])
         },
         async unstash() {},
         fs: {
@@ -1726,7 +1748,14 @@ describe('request-only Apple TV workflow', () => {
               `TV_API_BASE_URL=https://${host}.teamstation.app/api/v1`,
               `TV_APP_ORIGIN=https://${host === 'app' ? 'app' : 'develop'}.teamstation.app`
             ])
-            return { archive: 'tv.xcarchive', ipa: 'tv.ipa', dsyms: 'tv.dSYM' }
+            return {
+              archive: 'tv.xcarchive',
+              ipa: path.join(
+                workspace,
+                'build/mason-archive/TeamStationTV.ipa'
+              ),
+              dsyms: 'tv.dSYM'
+            }
           },
           async resign() {
             assert.fail('no re-signing')
@@ -1739,7 +1768,7 @@ describe('request-only Apple TV workflow', () => {
           assert.deepEqual(options, {
             app: TV_APP,
             platform: 'tvos',
-            path: 'tv.ipa'
+            path: path.join(workspace, 'build/mason-archive/TeamStationTV.ipa')
           })
           published = true
         }
@@ -1753,6 +1782,10 @@ describe('request-only Apple TV workflow', () => {
       )
       assert.deepEqual(commands.at(-1), ['pod install', 'appletv/ios'])
       assert.deepEqual(saved, ['tvos-ipa', 'tvos-dsym'])
+      // Relative to the workspace, as the release stage unstashes it.
+      assert.deepEqual(stashed, [
+        ['tvos-adhoc', 'build/mason-archive/TeamStationTV.ipa']
+      ])
       assert.ok(published)
       // A develop TV build alone claims the scheme its server link uses.
       const claimed = readFileSync(plist, 'utf8').includes(
@@ -1761,6 +1794,98 @@ describe('request-only Apple TV workflow', () => {
       assert.equal(claimed, host !== 'app')
     })
   }
+
+  it('re-signs the stashed tvOS IPA for the App Store and uploads it', async () => {
+    const commands: string[] = []
+    await releaseTv({
+      async unstash(name: string) {
+        commands.push(`unstash:${name}`)
+      },
+      fs: {
+        async glob() {
+          return ['build/mason-archive/TeamStationTV.ipa']
+        }
+      },
+      artifacts: {
+        async save(name: string, paths: string) {
+          commands.push(`save:${name}:${paths}`)
+        }
+      },
+      describe(text: string) {
+        commands.push(`describe:${text}`)
+      },
+      log: {
+        info(message: string) {
+          commands.push(`info:${message}`)
+        },
+        warn(message: string) {
+          commands.push(`warn:${message}`)
+        }
+      },
+      apple: {
+        async resign(options: {
+          path: string
+          version?: string
+          buildNumber?: string
+        }) {
+          commands.push(
+            `resign:${options.path}:${options.version ?? ''}:${options.buildNumber ?? ''}`
+          )
+          return { ipa: 'build/mason-archive/TeamStationTV-appStore.ipa' }
+        },
+        async testflight(options: {
+          path: string
+          groups?: string[]
+          usesNonExemptEncryption?: boolean
+          whatToTest?: string
+        }) {
+          commands.push(
+            `testflight:${options.path}:${JSON.stringify(options.groups)}:${String(options.usesNonExemptEncryption)}:${options.whatToTest ?? ''}`
+          )
+          return {
+            buildId: '2',
+            version: '1.4.0',
+            buildNumber: '26112201',
+            state: 'VALID'
+          }
+        }
+      }
+    })
+    const log = commands.join('\n')
+    const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+    assert.match(log, /unstash:tvos-adhoc/)
+    assert.match(
+      log,
+      new RegExp(
+        `resign:build/mason-archive/TeamStationTV\\.ipa:${regexEscape(version)}:\\n`
+      )
+    )
+    assert.match(
+      log,
+      /save:tvos-appstore:build\/mason-archive\/TeamStationTV-appStore\.ipa/
+    )
+    assert.match(
+      log,
+      /testflight:build\/mason-archive\/TeamStationTV-appStore\.ipa:undefined:false:TeamStation TV production build\./
+    )
+    assert.match(
+      log,
+      /describe:TestFlight 1\.4\.0 \(26112201\) needs beta review in App Store Connect/
+    )
+  })
+
+  it('stops when the stashed tvOS build has no IPA', async () => {
+    await assert.rejects(async () => {
+      await releaseTv({
+        async unstash() {},
+        fs: {
+          async glob() {
+            return []
+          }
+        }
+      })
+    }, /No ad hoc tvOS IPA was stashed/)
+  })
 
   it('rejects missing TV provenance before installing dependencies', async () => {
     for (const run of [
