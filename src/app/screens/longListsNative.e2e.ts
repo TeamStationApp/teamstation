@@ -3,6 +3,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { turnWheel, wheelAt, type WheelNode } from '../../../e2e/rigs/iosWheel'
 import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   LONG_LISTS_SHAPE,
@@ -99,7 +100,16 @@ const MOST_BELOW_PILLS = 110
 /** The screen's width, and where a row is clear of the tab bar. */
 const PHONE_WIDTH = 402
 const LOWEST_ROW = 700
-const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12'
+const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13'
+/** The umpire schedule's second sort wheel under Date: Season and Certification. */
+const THEN_BY = [
+  'Season · A to Z',
+  'Season · Z to A',
+  'Season · league order',
+  'Season · league reversed',
+  'Certification · A to Z',
+  'Certification · Z to A'
+]
 
 function required(name: string): string {
   const value = process.env[name]
@@ -217,6 +227,12 @@ async function main(): Promise<void> {
   }
   const shot = async (name: string): Promise<void> => {
     await writeFile(join(artifacts, name), await m.screenshot())
+  }
+  /** A proving artifact, under its own name in TS_UMPIRE_PROOF when set. */
+  const proof = async (name: string): Promise<void> => {
+    const dir = process.env.TS_UMPIRE_PROOF ?? artifacts
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, name), await m.screenshot())
   }
   const signIn = async (): Promise<void> => {
     await m.launchApp({ appId: APP_ID, stopApp: true })
@@ -1343,6 +1359,173 @@ async function main(): Promise<void> {
         'E12: Sign Up is back'
       )
       await note('E12: removed')
+    },
+    E13: async () => {
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const middle = (node: ViewNode): number =>
+        node.bounds!.y + node.bounds!.height / 2
+      /**
+       * Up to the filter row above the table, which opens on its next game
+       * far down: a tap on the status bar scrolls the page to its top, and a
+       * drag down after it if the rows read above moved it.
+       */
+      const toRow = async (): Promise<ViewNode[]> => {
+        for (let turn = 0; turn < 12; turn++) {
+          const nodes = await settled()
+          const row = byId(nodes, 'umpire-sort-1')
+          if (row != null && row.bounds!.y >= 0 && row.bounds!.y < LOWEST_ROW)
+            return nodes
+          if (turn % 3 === 0) await m.tapOnPoint({ point: '50%, 1%' })
+          else
+            await m.swipe({ start: '50%, 30%', end: '50%, 85%', duration: 200 })
+          await pause(1200)
+        }
+        throw new Error('E13: never reached the filter row')
+      }
+      /** Taps a node of the tree by its test id, at its middle. */
+      const tapId = async (id: string): Promise<void> => {
+        if (/^umpire-sort-(1|2|add)$/.test(id)) await toRow()
+        let found: ViewNode | undefined
+        for (let read = 0; read < 10 && found == null; read++) {
+          found = byId(await all(), id)
+          if (found == null) await pause(500)
+        }
+        assert.ok(found?.bounds != null, `E13: no ${id}`)
+        const { x, y, width, height } = found.bounds
+        await m.tapOnPoint({
+          point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+        })
+        await pause(900)
+      }
+      const scheduleReads = async (): Promise<string[]> =>
+        (await phoneNetwork())
+          .filter(path => path.includes('/umpire-schedule?'))
+          .map(path => decodeURIComponent(path))
+
+      // 1. Filters, then the Date and Season sorts, on one line; Division
+      //    after Date in the sticky header.
+      await m.openLink({
+        link: `teamstation://umpires/${manifest.leagueId}`
+      })
+      await visible('Umpire')
+      await pause(1500)
+      const opened = await toRow()
+      const first = byId(opened, 'umpire-sort-1')
+      const second = byId(opened, 'umpire-sort-2')
+      assert.ok(first != null && second != null, 'E13: both sort pills')
+      assert.equal(byId(opened, 'umpire-sort-add'), undefined)
+      // A labelled control reads as its label in the tree.
+      const filter = opened.find(
+        node =>
+          (node.text === 'Schedule filters' ||
+            node.text?.startsWith('Filter') === true) &&
+          node.bounds != null
+      )
+      assert.ok(filter != null, 'E13: the filter button')
+      for (const pill of [first, second])
+        assert.ok(
+          Math.abs(middle(pill) - middle(filter)) <= PINNED_SLACK,
+          `E13: ${pill.id} at ${middle(pill)}, the filter at ${middle(filter)}`
+        )
+      assert.ok(first.bounds!.x > filter.bounds!.x, 'E13: sorts after Filters')
+      assert.ok(second.bounds!.x > first.bounds!.x, 'E13: Season after Date')
+      const division = opened.find(
+        node => node.text === 'Division' && node.bounds != null
+      )
+      assert.ok(division != null, 'E13: a Division heading')
+      // The heading, not the Date sort pill: the Date nearest Division's line.
+      const dates = opened.filter(
+        node => node.text === 'Date' && node.bounds != null
+      )
+      const date = dates.sort(
+        (a, b) =>
+          Math.abs(middle(a) - middle(division)) -
+          Math.abs(middle(b) - middle(division))
+      )[0]
+      assert.ok(date != null, 'E13: a Date heading')
+      assert.ok(
+        division.bounds!.x > date.bounds!.x &&
+          Math.abs(middle(division) - middle(date)) <= PINNED_SLACK,
+        `E13: Division follows Date in the header: ${JSON.stringify([...dates.map(d => d.bounds), division.bounds])}`
+      )
+      await shot(`${platform}-umpire-sort-row.png`)
+      await note(
+        'E13: Filters, Date and Season on one line; Division after Date'
+      )
+
+      // 2. The second pill slides up "Then by", a wheel, Done, Remove sort
+      //    and Cancel.
+      await tapId('umpire-sort-2')
+      await visible('Then by')
+      const sheet = await settled()
+      for (const id of [
+        'umpire-sort-done',
+        'umpire-sort-remove',
+        'umpire-sort-cancel'
+      ])
+        assert.ok(byId(sheet, id) != null, `E13: ${id} on the sheet`)
+      const wheel = await wheelAt(m as unknown as Parameters<typeof wheelAt>[0])
+      assert.ok(
+        (wheel.text ?? '').startsWith(THEN_BY[0]),
+        `E13: the wheel reads ${wheel.text}`
+      )
+      await proof('schedule-sort-sheet-ios.png')
+      await note(
+        'E13: the sort sheet: Then by, the wheel, Done, Remove sort, Cancel'
+      )
+
+      // 3. Turned a row at a time to Certification A→Z, and Done.
+      const before = (await scheduleReads()).length
+      await turnWheel(
+        m as unknown as Parameters<typeof turnWheel>[0],
+        async (): Promise<WheelNode> =>
+          await wheelAt(m as unknown as Parameters<typeof wheelAt>[0]),
+        'Certification · A to Z',
+        THEN_BY
+      )
+      await tapId('umpire-sort-done')
+      const chosen = await settled()
+      assert.equal(byId(chosen, 'umpire-sort-done'), undefined, 'E13: closed')
+      const readsCertification = (nodes: ViewNode[]): boolean =>
+        nodes.some(
+          node =>
+            (node.text === 'Certification' ||
+              node.text === 'Then by Certification, A to Z') &&
+            node.bounds != null
+        )
+      assert.ok(
+        readsCertification(chosen),
+        'E13: the second pill reads Certification'
+      )
+      let reads: string[] = []
+      for (let wait = 0; wait < 20; wait++) {
+        reads = (await scheduleReads()).slice(before)
+        if (reads.some(path => path.includes('sort=date,certification'))) break
+        await pause(500)
+      }
+      assert.ok(
+        reads.some(path => path.includes('sort=date,certification')),
+        `E13: a read with sort=date,certification, not ${reads.join(' ')}`
+      )
+      await shot(`${platform}-umpire-sort-chosen.png`)
+      await note(`E13: Certification A→Z chosen; read ${reads.at(-1)}`)
+
+      // 4. Cancel changes nothing; Remove sort brings back + Sort.
+      await tapId('umpire-sort-2')
+      await visible('Then by')
+      await tapId('umpire-sort-cancel')
+      const kept = await settled()
+      assert.equal(byId(kept, 'umpire-sort-cancel'), undefined)
+      assert.ok(readsCertification(kept), 'E13: Cancel keeps Certification')
+      await tapId('umpire-sort-2')
+      await visible('Then by')
+      await tapId('umpire-sort-remove')
+      const removed = await settled()
+      assert.ok(byId(removed, 'umpire-sort-add') != null, 'E13: + Sort is back')
+      assert.equal(byId(removed, 'umpire-sort-2'), undefined)
+      await shot(`${platform}-umpire-sort-removed.png`)
+      await note('E13: Cancel kept the sort; Remove sort brought back + Sort')
     }
   }
 

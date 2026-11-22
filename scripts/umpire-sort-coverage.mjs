@@ -14,7 +14,8 @@ import { webSettings } from './web-build-settings.mjs'
 // order, the schedule's sorted rows and sort-carrying cursor, the league
 // default sort on the umpire settings, the league season order and the
 // requirements that answer it, a moved season losing its place, the client,
-// OpenAPI and the API-key family, from the suites that exercise them. Each
+// OpenAPI and the API-key family, and the schedule screen's Division column,
+// sort buttons, pickers and Save sort, from the suites that exercise them. Each
 // file the work adds must have 95% of its lines covered and each file it
 // edits 95% of the lines it changes, read from `TS_COVERAGE_BASE`
 // (origin/develop unless given) to HEAD, the repository's combined bar.
@@ -37,10 +38,27 @@ const specs = [
   'src/server/groups/relationships.integration.test.ts',
   'src/server/openapi.test.ts',
   'src/server/auth/apiKeyFamilies.test.ts',
-  'src/migrate/runner.integration.test.ts'
+  'src/migrate/runner.integration.test.ts',
+  // The schedule's sort in its address.
+  'src/app/navigation/routes.test.ts',
+  'src/app/locales/strings.test.ts',
+  // Every icon in a pill or a menu row is placed through ButtonIcon.
+  'src/app/components/buttonIconAudit.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
-const screens = [].filter(
+const screens = [
+  'src/app/umpires/sortControls.test.tsx',
+  'src/app/umpires/scheduleUi.test.tsx',
+  'src/app/umpires/schedulePages.test.tsx',
+  'src/app/components/SortIcon.test.tsx',
+  'src/app/components/HeaderMenu.test.tsx',
+  'src/app/components/PillTabs.test.tsx',
+  'src/app/components/pillGeometry.test.tsx',
+  'src/app/components/TextWidthButton.test.tsx',
+  // The schedule as App mounts it.
+  'src/app/umpires/appMask.test.tsx',
+  'src/app/App.entityChats.test.tsx'
+].filter(
   file =>
     existsSync(file) &&
     (process.env.TS_UMPIRE_SORT_SCREENS == null ||
@@ -55,7 +73,9 @@ const slowUnderCoverage = 'Account settings screen .*(behind a slide|deleted)'
 const required = [
   'src/migrate/migrations/129umpireSort.ts',
   'src/common/umpireSort.ts',
-  'src/server/umpires/scheduleOrder.ts'
+  'src/server/umpires/scheduleOrder.ts',
+  'src/app/umpires/UmpireSortControls.tsx',
+  'src/app/components/SortIcon.tsx'
 ]
 // Edited: 95% of the lines the branch changes, from the suites together.
 const edited = [
@@ -69,7 +89,12 @@ const edited = [
   'src/server/umpires/schedule.ts',
   'src/server/groups/relationships.ts',
   'src/server/umpires/openApi.ts',
-  'src/server/auth/apiKeyFamilies.ts'
+  'src/server/auth/apiKeyFamilies.ts',
+  'src/app/navigation/routes.ts',
+  'src/app/components/PillTabs.tsx',
+  'src/app/components/HeaderMenu.tsx',
+  'src/app/umpires/UmpireScheduleScreen.tsx',
+  'src/app/locales/en_US.ts'
 ]
 
 if (!screensOnly) {

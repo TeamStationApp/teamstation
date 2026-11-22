@@ -1,6 +1,11 @@
 /** One column of a pop-up spinner (`Wheel`): its choices and the one chosen. */
 export interface WheelProps {
   label: string
+  /**
+   * Read the label to assistive technology only, for a wheel under a title
+   * that already says it, so the title does not show twice.
+   */
+  labelHidden?: boolean
   options: number[]
   value: number
   onChange: (value: number) => void

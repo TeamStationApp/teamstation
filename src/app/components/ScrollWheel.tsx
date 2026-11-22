@@ -14,6 +14,7 @@ const ROW = 44
  */
 export function ScrollWheel({
   label,
+  labelHidden = false,
   options,
   value,
   onChange,
@@ -50,7 +51,7 @@ export function ScrollWheel({
   }
   return (
     <View style={styles.wheelColumn}>
-      <Text style={styles.label}>{label}</Text>
+      {!labelHidden && <Text style={styles.label}>{label}</Text>}
       <View
         style={[styles.wheelViewport, { width }]}
         // A modal must focus the wheel, not its first row: focusing row one

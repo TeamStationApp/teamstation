@@ -245,8 +245,10 @@ describe('umpire schedule pages', () => {
     })
     const columns = umpireColumns(f.schedule.types, f.schedule.games)
     expect(columns.length).greaterThan(2)
-    const custom = Math.max(160, 1200 / (7 + columns.length + 1))
-    const expected = 6 * 136 + columns.length * 107 + custom + 93
+    // Seven fixed columns: Date, Division, Home and Away team, Venue, Field
+    // and Notes.
+    const custom = Math.max(160, 1200 / (8 + columns.length + 1))
+    const expected = 7 * 136 + columns.length * 107 + custom + 93
     expect(listProps().width).equals(expected)
     const header = document.querySelector(
       '[data-testid="umpire-table-header-scroll"]'
@@ -257,7 +259,7 @@ describe('umpire schedule pages', () => {
     expect(
       document.querySelector(`[data-testid="umpire-game-${cells}"]`)!
         .childElementCount
-    ).equals(6 + columns.length + 1 + 1)
+    ).equals(7 + columns.length + 1 + 1)
     await act(async () => {
       reachEnd()
     })
@@ -270,7 +272,7 @@ describe('umpire schedule pages', () => {
     expect(
       document.querySelector('[data-testid="umpire-game-game-100"]')!
         .childElementCount
-    ).equals(6 + columns.length + 1 + 1)
+    ).equals(7 + columns.length + 1 + 1)
   })
 
   it('measures its date column on a sample, not on the rows it holds', async () => {

@@ -46,6 +46,40 @@ describe('addresses', function () {
       routePath({ name: 'umpireSchedule', id: 'lea_demo', days: '5' })
     ).equals('/umpires/lea_demo?days=5')
   })
+  it('carries the umpire schedule’s sort for the visit through its address, none included', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'league',
+      sort: 'date,-season'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=league&sort=date%2C-season'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    const none = { ...route, sort: 'none' } as const
+    expect(routePath(none)).equals(
+      '/umpires/lea_demo?pill=schedule&view=league&sort=none'
+    )
+    expect(roundTrip(none)).deep.equals(none)
+    // What a hand-edited link holds is carried as it is; the screen reads it.
+    expect(parseRoute('/umpires/lea_demo', 'sort=bogus,season')).deep.equals({
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      sort: 'bogus,season'
+    })
+    expect(
+      routePath({
+        name: 'umpireSchedule',
+        id: 'lea_demo',
+        filter: 'none',
+        sort: 'certification'
+      })
+    ).equals('/umpires/lea_demo?filter=none&sort=certification')
+  })
   it('carries the umpire schedule’s chosen no-filter through its address, and nothing else for filter (6.harness-review.3)', () => {
     const route = {
       name: 'umpireSchedule',

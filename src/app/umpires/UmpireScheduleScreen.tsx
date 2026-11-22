@@ -6,6 +6,7 @@ import {
   ScrollView,
   Switch,
   Text,
+  useWindowDimensions,
   View
 } from 'react-native'
 import Animated from 'react-native-reanimated'
@@ -24,6 +25,13 @@ import {
   type UmpireLeague,
   type UmpireSchedule
 } from '../../common/umpireSchedule'
+import {
+  DEFAULT_UMPIRE_SORT,
+  routeUmpireSort,
+  sameUmpireSort,
+  type UmpireSortKey,
+  umpireSortText
+} from '../../common/umpireSort'
 import {
   availabilityIsEmpty,
   normalAvailability,
@@ -57,6 +65,7 @@ import {
 import { UmpireDialog } from './UmpireDialog'
 import { UmpireLeaderboardView } from './UmpireLeaderboardView'
 import { UmpireSignup } from './UmpireSignup'
+import { UmpireSortControls } from './UmpireSortControls'
 import { useUmpireNoteEditor } from './useUmpireNoteEditor'
 /** A row of Sign Up buttons, which is most of them, before it is measured. */
 const ROW_HEIGHT = 49
@@ -408,12 +417,25 @@ export function UmpireScheduleScreen({
     readerMoved.current = true
   }, [])
   const sequence = useRef(0)
+  // Counts the sort defaults saved here. A page read begun before a save
+  // answers with the default as it was, which must not undo the save.
+  const sortSaves = useRef(0)
+  /**
+   * The filter row's own width, which the filter pill stays within: the
+   * window's until the row has measured itself, so the first frame fits too.
+   */
+  const [filterRowWidth, setFilterRowWidth] = useState<number>()
+  const windowWidth = useWindowDimensions().width
+  // The sort chosen for this visit, as much of the route's as is valid; else
+  // the league default, which the server applies when none is sent.
+  const routeSort = routeUmpireSort(route.sort)
   // Rows and conflict lines are dated in the device's zone; a saved filter's
   // days and range are matched in the zone it was saved in.
   const query = new URLSearchParams({
     view: 'schedule',
     timezone: deviceZone(),
     ...(route.timezone == null ? {} : { filterTimezone: route.timezone }),
+    ...(routeSort == null ? {} : { sort: umpireSortText(routeSort) }),
     ...Object.fromEntries(
       (['levels', 'days', 'from', 'to', 'priorSeasons'] as const).flatMap(
         key => {
@@ -437,6 +459,7 @@ export function UmpireScheduleScreen({
     largestPage: UMPIRE_PAGE_MOST,
     read: async (cursor, count) => {
       const seq = sequence.current
+      const saves = sortSaves.current
       // A first page keeps its usual size, which sets the rows before the
       // game it opens on as well as those after it.
       const page = await client.umpireSchedulePage(
@@ -446,7 +469,15 @@ export function UmpireScheduleScreen({
           ? { around: 'next' }
           : { cursor, ...(count == null ? {} : { limit: count }) }
       )
-      if (live() && seq === sequence.current) setSchedule(page)
+      if (live() && seq === sequence.current)
+        setSchedule(held =>
+          held == null || saves === sortSaves.current
+            ? page
+            : {
+                ...page,
+                settings: { ...page.settings, sort: held.settings.sort }
+              }
+        )
       return page
     }
   })
@@ -563,6 +594,40 @@ export function UmpireScheduleScreen({
       }
     }, true)
   }
+  // Save sort: a league admin's sort, when it is not the league default.
+  const [savingSort, setSavingSort] = useState(false)
+  const shownSort: readonly UmpireSortKey[] =
+    routeSort ?? schedule?.sort ?? DEFAULT_UMPIRE_SORT
+  const showSaveSort =
+    schedule?.isAdmin === true &&
+    routeSort != null &&
+    !sameUmpireSort(routeSort, schedule.settings.sort ?? DEFAULT_UMPIRE_SORT)
+  const saveSort = (): void => {
+    if (routeSort == null) return
+    const league = route.id
+    setSavingSort(true)
+    run(async () => {
+      try {
+        const settings = await client.setUmpireSettings(league, {
+          sort: routeSort
+        })
+        // The rows are already in this sort: only the default changes, and
+        // a page read already under way keeps the one saved here.
+        if (!live()) return
+        ++sortSaves.current
+        setSchedule(held =>
+          held == null
+            ? held
+            : {
+                ...held,
+                settings: { ...held.settings, sort: settings.sort ?? null }
+              }
+        )
+      } finally {
+        setSavingSort(false)
+      }
+    }, true)
+  }
   const [noteErrorHeight, setNoteErrorHeight] = useState(0)
   const games = list.rows
   const noteEditor = useUmpireNoteEditor({
@@ -613,10 +678,10 @@ export function UmpireScheduleScreen({
   )
   const customWidth = Math.max(
     160,
-    tableWidth / (7 + positions.length + noteTypes.length)
+    tableWidth / (8 + positions.length + noteTypes.length)
   )
   const rowWidth =
-    6 * columnWidth +
+    7 * columnWidth +
     positions.length * roleWidth +
     noteTypes.length * customWidth +
     conflictsWidth
@@ -712,6 +777,11 @@ export function UmpireScheduleScreen({
                     onOpenGame(game.id)
                   }
             )}
+          </UmpireCell>
+          <UmpireCell divided compact width={columnWidth}>
+            <Text numberOfLines={2} style={s.tableText}>
+              {game.seasonName}
+            </Text>
           </UmpireCell>
           <UmpireCell divided compact width={columnWidth}>
             {link(
@@ -907,8 +977,9 @@ export function UmpireScheduleScreen({
                         timezone: undefined,
                         priorSeasons: undefined,
                         // Another league is a fresh entry: its saved
-                        // filter applies.
-                        filter: undefined
+                        // filter and its default sort apply.
+                        filter: undefined,
+                        sort: undefined
                       })
                   }}
                 >
@@ -946,13 +1017,25 @@ export function UmpireScheduleScreen({
             </View>
           </View>
           {schedule != null && route.pill !== 'leaderboard' && (
-            <View
+            // One line, which scrolls sideways when it does not fit: never
+            // a second line under the first. The scroller clips what it
+            // holds, so its line is padded for the buttons' shadows and
+            // pulled back by as much, which keeps the row where it was and no
+            // taller than its buttons.
+            <ScrollView
+              horizontal
               testID="umpire-filter-row"
-              style={{
+              showsHorizontalScrollIndicator={false}
+              onLayout={event => {
+                setFilterRowWidth(event.nativeEvent.layout.width)
+              }}
+              style={{ flexGrow: 0, margin: -theme.rem(0.75) }}
+              contentContainerStyle={{
                 flexDirection: 'row',
-                flexWrap: 'wrap',
+                flexWrap: 'nowrap',
                 alignItems: 'center',
-                gap: theme.rem(1)
+                gap: theme.rem(1),
+                padding: theme.rem(0.75)
               }}
             >
               <Button
@@ -961,7 +1044,15 @@ export function UmpireScheduleScreen({
                 accessibilityLabel="Schedule filters"
                 compact
                 kind="secondary"
-                style={{ alignSelf: 'flex-start', maxWidth: '100%' }}
+                // A long summary is cut short with an ellipsis, so the pill
+                // stays on screen and the sorts beside it stay in reach; the
+                // scroller is pulled out by its padding on each side.
+                style={{
+                  alignSelf: 'flex-start',
+                  maxWidth:
+                    Math.min(filterRowWidth ?? windowWidth, windowWidth) -
+                    theme.rem(1.5)
+                }}
                 labelStyle={{ flexShrink: 1 }}
                 onPress={openFilters}
               />
@@ -977,7 +1068,23 @@ export function UmpireScheduleScreen({
                   onPress={saveFilter}
                 />
               )}
-            </View>
+              <UmpireSortControls
+                sort={shownSort}
+                onChange={next => {
+                  change({ sort: umpireSortText(next) })
+                }}
+              />
+              {showSaveSort && (
+                <PillButton
+                  label={lstrings.umpire_save_sort}
+                  accessibilityLabel={lstrings.umpire_save_sort_named}
+                  testID="umpire-save-sort"
+                  hitSlop={6}
+                  disabled={savingSort}
+                  onPress={saveSort}
+                />
+              )}
+            </ScrollView>
           )}
         </View>
       }
@@ -1033,6 +1140,7 @@ export function UmpireScheduleScreen({
               <View testID="umpire-table-header" style={s.tableRow}>
                 {[
                   'Date',
+                  lstrings.umpire_division,
                   'Home team',
                   'Away team',
                   'Venue',

@@ -27,6 +27,26 @@ describe('locales', function () {
     expect(enUs).not.to.have.any.keys('chat_follow_team', 'chat_members_title')
   })
 
+  it('names the umpire schedule’s Division column, sorts and Save sort', function () {
+    expect(enUs.umpire_division).equals('Division')
+    expect(
+      sprintf(enUs.umpire_sort_by_named, 'Date', enUs.umpire_sort_oldest)
+    ).equals('Sort by Date, oldest to newest')
+    expect(
+      sprintf(enUs.umpire_sort_then_named, 'Season', enUs.umpire_sort_a_z)
+    ).equals('Then by Season, A to Z')
+    expect(enUs.umpire_sort_add_named).equals('Add a second sort')
+    expect(enUs.umpire_sort_remove).equals('Remove sort')
+    expect([
+      enUs.umpire_sort_title_first,
+      enUs.umpire_sort_title_second
+    ]).deep.equals(['Sort by', 'Then by'])
+    expect(enUs.umpire_save_sort).equals('Save sort')
+    expect(enUs.umpire_save_sort_named).equals(
+      'Save this sort as the league default'
+    )
+  })
+
   it('merges a translation over the master', function () {
     selectLocale({ login_title: 'Iniciar sesión' })
     expect(lstrings.login_title).equals('Iniciar sesión')

@@ -43,6 +43,11 @@ export interface UmpireScheduleRoute {
    * over it when the schedule is drawn again from this route.
    */
   filter?: 'none'
+  /**
+   * The schedule's sort for this visit, its keys joined by commas (`none` for
+   * the empty sort); else the league default. Read leniently by the screen.
+   */
+  sort?: string
 }
 export const USER_MANAGEMENT_TABS = ['logins', 'sessions', 'users'] as const
 export type UserManagementTab = (typeof USER_MANAGEMENT_TABS)[number]
@@ -409,7 +414,7 @@ export function parseRoute(path: string, search = ''): Route {
         : {}),
       ...(query.get('filter') === 'none' ? { filter: 'none' as const } : {}),
       ...Object.fromEntries(
-        ['levels', 'days', 'from', 'to', 'timezone'].flatMap(key =>
+        ['levels', 'days', 'from', 'to', 'timezone', 'sort'].flatMap(key =>
           query.has(key) ? [[key, query.get(key)!]] : []
         )
       )
@@ -818,7 +823,8 @@ export function routePath(route: Route): string {
         'from',
         'to',
         'timezone',
-        'filter'
+        'filter',
+        'sort'
       ] as const)
         if (route[key] != null) query.set(key, route[key])
       return `/umpires/${encodeURIComponent(route.id)}${query.size === 0 ? '' : '?' + query.toString()}`

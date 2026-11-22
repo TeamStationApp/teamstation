@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
-import type { HTTPRequest } from 'puppeteer'
+import type { HTTPRequest, HTTPResponse } from 'puppeteer'
 
 import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
@@ -13,12 +13,91 @@ import {
   tap
 } from '../../e2e/rigs/refinementsMaestro'
 import { userIdOfGumbo } from '../common/userId'
+import type { GroupFixture } from '../test/groupFixtures'
 import {
   readyUmpireBrowser,
   UMPIRE_BROWSER_NOW,
   umpireBrowserFixture
 } from '../test/umpireBrowserFixture'
 import { seedUmpireCounts } from '../test/umpireTypes'
+
+/** League A's second current season, with its own level and same-day games. */
+const FALL = 'sea_layout_fall_minors'
+
+/**
+ * "Fall Minors": a second current season of League A with a different
+ * required level and a game three hours before each Demo Regular copy, the
+ * same day in Los Angeles. The before capture builds the same.
+ */
+async function addFallMinors(f: GroupFixture, games: number): Promise<void> {
+  const db = f.h.db
+  await db
+    .insertInto('seasons')
+    .values({
+      id: FALL,
+      league_id: f.leagueA,
+      name: 'Fall Minors',
+      year: 2027,
+      starts_on: '2027-03-02',
+      ends_on: '2027-06-30',
+      timezone: 'America/Los_Angeles'
+    })
+    .execute()
+  await db
+    .insertInto('umpire_levels')
+    .values({
+      id: 'ulv_browser_minors',
+      league_id: f.leagueA,
+      name: 'minors',
+      position: 1
+    })
+    .execute()
+  await db
+    .insertInto('season_umpire_requirements')
+    .values({ season_id: FALL, level_id: 'ulv_browser_minors' })
+    .execute()
+  await seedUmpireCounts(db, FALL)
+  await db
+    .insertInto('season_teams')
+    .values(
+      [f.teamA, f.teamB].map(teamId => ({
+        season_id: FALL,
+        team_id: teamId,
+        active: true
+      }))
+    )
+    .onConflict(oc => oc.doNothing())
+    .execute()
+  const game = await db
+    .selectFrom('games')
+    .selectAll()
+    .where('id', '=', 'gam_umpire_g1')
+    .executeTakeFirstOrThrow()
+  for (let i = 0; i < games; i++)
+    await db
+      .insertInto('games')
+      .values({
+        ...game,
+        id: `gam_minors_${i}`,
+        season_id: FALL,
+        notes: null,
+        start_at: new Date(
+          new Date(game.start_at).getTime() + i * 86400000 - 3 * 3600000
+        ),
+        end_at: new Date(
+          new Date(game.end_at!).getTime() + i * 86400000 - 3 * 3600000
+        )
+      })
+      .execute()
+}
+
+/** Whether `shown` runs in the order of `all`, each once. */
+function inOrderOf(shown: string[], all: string[]): boolean {
+  const places = shown.map(id => all.indexOf(id))
+  return places.every(
+    (place, i) => place >= 0 && (i === 0 || place > places[i - 1])
+  )
+}
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_UMPIRE_ARTIFACTS
@@ -111,6 +190,8 @@ async function main(): Promise<void> {
         assigned_by: userIdOfGumbo(101)
       })
       .execute()
+    // A second current season on the same days, and no league default sort.
+    if (!baseline) await addFallMinors(f, 30)
     b = await browserSession(
       daemon,
       'umpire-schedule-layout',
@@ -405,6 +486,689 @@ async function main(): Promise<void> {
         'Save filter saved, applied on entry with its zone, per league, hidden from the admin, queried by the admin, and cleared.'
       )
     }
+    // The Division column, the one-line row, the sort buttons and their
+    // dropdowns, Save sort, the sort for the visit, links, the narrow row,
+    // paging and the API, the plan's sort steps 1–9.
+    const sortSteps = async (): Promise<void> => {
+      const api = `/leagues/${f.leagueA}`
+      const zone = 'America/Los_Angeles'
+      /** The schedule's rows as the API sorts them, for `as`. */
+      const sorted = async (
+        as: number,
+        view: string,
+        sort?: string
+      ): Promise<
+        Array<{ id: string; seasonName: string; startAt: string }>
+      > => {
+        const query = new URLSearchParams({
+          view,
+          timezone: zone,
+          paged: '1',
+          limit: '500',
+          ...(sort == null ? {} : { sort })
+        })
+        const answer = await f.h.request(
+          'GET',
+          `${api}/umpire-schedule?${query.toString()}`,
+          undefined,
+          as
+        )
+        const body = (await answer.json()) as { items: any[] }
+        expect(answer.status, JSON.stringify(body)).equals(200)
+        return body.items
+      }
+      /** The rows on the page, top to bottom: their ids and Division cells. */
+      const shownRows = async (): Promise<
+        Array<{ id: string; division: string }>
+      > =>
+        await page.evaluate(() =>
+          Array.from(
+            document.querySelectorAll<HTMLElement>(
+              '[data-testid^="umpire-game-"]'
+            )
+          )
+            .filter(row => row.getBoundingClientRect().height > 0)
+            .sort(
+              (a, b) =>
+                a.getBoundingClientRect().top - b.getBoundingClientRect().top
+            )
+            .map(row => ({
+              id: row.dataset.testid!.slice('umpire-game-'.length),
+              division: (row.children[1] as HTMLElement).innerText
+            }))
+        )
+      /** What stands on the filter row, by test id, in order. */
+      // No `??` or `?.` in code the page runs: sucrase would call a helper
+      // the page lacks.
+      const rowButtons = async (): Promise<string[]> =>
+        (
+          await page.$eval('[data-testid="umpire-filter-row"]', row =>
+            Array.from(row.firstElementChild!.children).map(node =>
+              node.getAttribute('data-testid')
+            )
+          )
+        ).map(id => id ?? '')
+      const sortLabels = async (): Promise<string[]> =>
+        await page.evaluate(() =>
+          ['umpire-sort-1', 'umpire-sort-2', 'umpire-sort-add']
+            .map(id => document.querySelector(`[data-testid="${id}"]`))
+            .filter(node => node != null)
+            .map(node => node.getAttribute('aria-label')!)
+        )
+      const address = (): string | null =>
+        new URL(page.url()).searchParams.get('sort')
+      const waitForSort = async (sort: string | null): Promise<void> => {
+        await page.waitForFunction(
+          sort => new URL(location.href).searchParams.get('sort') === sort,
+          {},
+          sort
+        )
+      }
+      /** The open dropdown's rows: label and whether marked. */
+      const menuRows = async (): Promise<
+        Array<{ label: string; selected: string | null; icon: boolean }>
+      > => {
+        await page.waitForSelector('[data-testid="header-menu-panel"]')
+        await m.waitForAnimationToEnd()
+        return await page.$$eval(
+          '[data-testid="header-menu-panel"] :is([role="button"], [role="radio"])',
+          rows =>
+            rows.map(row => ({
+              label: row.getAttribute('aria-label')!,
+              selected: row.getAttribute('aria-checked'),
+              icon: row.querySelector('[data-testid="sort-icon"]') != null
+            }))
+        )
+      }
+      const openSort = async (id: string): Promise<void> => {
+        await toTop()
+        await m.tapOn({ css: `[data-testid="${id}"]` })
+      }
+      /** A sort is a radio row; Remove sort is a button. */
+      const choose = async (option: string): Promise<void> => {
+        await tap(m, option, option === 'Remove sort' ? 'button' : 'radio')
+        await page.waitForSelector('[data-testid="header-menu-panel"]', {
+          hidden: true
+        })
+      }
+      /**
+       * Every button of the row the height of the filter button, on its line,
+       * and the row no taller than they are.
+       */
+      const sameLine = async (): Promise<unknown> => {
+        const boxes = await page.evaluate(() => {
+          const box = (n: Element): DOMRect =>
+            n.getBoundingClientRect().toJSON() as DOMRect
+          const row = document.querySelector(
+            '[data-testid="umpire-filter-row"]'
+          )!
+          const line = getComputedStyle(row.firstElementChild!)
+          return {
+            row: box(row),
+            // The room the line keeps for its buttons' shadows.
+            padding:
+              parseFloat(line.paddingTop) + parseFloat(line.paddingBottom),
+            scrollWidth: row.scrollWidth,
+            clientWidth: row.clientWidth,
+            buttons: Array.from(row.firstElementChild!.children).map(n => {
+              const { top, height, left, right } = box(n)
+              return {
+                id: n.getAttribute('data-testid'),
+                top,
+                height,
+                left,
+                right
+              }
+            })
+          }
+        })
+        const [filter, ...rest] = boxes.buttons
+        expect(filter.id).equals('settings-pill-button')
+        for (const button of rest) {
+          expect(button.top, String(button.id)).closeTo(filter.top, 1)
+          expect(button.height, String(button.id)).closeTo(filter.height, 1)
+        }
+        expect(boxes.row.height - boxes.padding).closeTo(filter.height, 1)
+        return boxes
+      }
+      /**
+       * The page at its top, where the filter row is: the table opens on its
+       * next game, which can be a few rows down.
+       */
+      const toTop = async (): Promise<void> => {
+        for (let turn = 0; turn < 10; turn++) {
+          await m.evalBrowserScript({
+            script: `(() => {
+          let node = document.querySelector('[data-testid="umpire-table"]');
+          while (node && getComputedStyle(node).overflowY !== 'auto' && getComputedStyle(node).overflowY !== 'scroll') node = node.parentElement;
+          (node ?? document.scrollingElement).scrollTop = 0;
+        })()`
+          })
+          await new Promise(resolve => setTimeout(resolve, 300))
+          const top = await page.$eval(
+            '[data-testid="umpire-filter-row"]',
+            row => row.getBoundingClientRect().top
+          )
+          if (top >= 0) return
+        }
+        throw new Error('The filter row stays above the window')
+      }
+      const DATE_ASC = 'Sort by Date, oldest to newest'
+      const SEASON_ASC_2 = 'Then by Season, A to Z'
+
+      // 1. The admin's league view: Division after Date, aligned with its
+      //    heading; Filters and the default sort, Date 1→9 then Season A→Z.
+      await login(101)
+      await open('?view=league')
+      await page.waitForSelector('[data-testid="umpire-game-gam_umpire_g1"]')
+      const columns = await page.evaluate(() => {
+        const header = document.querySelector(
+          '[data-testid="umpire-table-header"]'
+        )!
+        const row = document.querySelector(
+          '[data-testid="umpire-game-gam_umpire_g1"]'
+        )!
+        const place = (n: Element): { left: number; width: number } => {
+          const { left, width } = n.getBoundingClientRect()
+          return { left, width }
+        }
+        return {
+          headings: Array.from(header.children)
+            .slice(0, 7)
+            .map(n => (n as HTMLElement).innerText),
+          heads: Array.from(header.children).slice(0, 7).map(place),
+          cells: Array.from(row.children).slice(0, 7).map(place),
+          division: (row.children[1] as HTMLElement).innerText
+        }
+      })
+      expect(columns.headings).deep.equals([
+        'Date',
+        'Division',
+        'Home team',
+        'Away team',
+        'Venue',
+        'Field',
+        'Notes'
+      ])
+      columns.cells.forEach((cell, i) => {
+        expect(cell.left, columns.headings[i]).closeTo(columns.heads[i].left, 1)
+        expect(cell.width, columns.headings[i]).closeTo(
+          columns.heads[i].width,
+          1
+        )
+      })
+      expect(columns.division).equals('Demo Regular')
+      expect(await rowButtons()).deep.equals([
+        'settings-pill-button',
+        'umpire-sort-1',
+        'umpire-sort-2'
+      ])
+      expect(await sortLabels()).deep.equals([DATE_ASC, SEASON_ASC_2])
+      expect(
+        await page.$eval(
+          '[data-testid="umpire-sort-1"] [data-testid="sort-icon"]',
+          n => (n as HTMLElement).innerText.replace(/\s/g, '')
+        )
+      ).equals('19')
+      log.push(
+        'Division and the default sort ' + JSON.stringify(await sameLine())
+      )
+      expect(
+        inOrderOf(
+          (await shownRows()).map(row => row.id),
+          (await sorted(101, 'schedule')).map(row => row.id)
+        )
+      ).equals(true)
+      await toTop()
+      await proof('schedule-sort-after')
+
+      // 2. Slot 2's dropdown: Season and Certification, no Date, Season A→Z
+      //    marked, Remove sort last. Remove sort: + Sort, sort=date, Save sort.
+      await openSort('umpire-sort-2')
+      const second = await menuRows()
+      expect(second.map(row => row.label)).deep.equals([
+        'Season, A to Z',
+        'Season, Z to A',
+        'Season, league order, first to last',
+        'Season, league order, last to first',
+        'Certification, A to Z',
+        'Certification, Z to A',
+        'Remove sort'
+      ])
+      expect(second.map(row => row.selected)).deep.equals([
+        'true',
+        'false',
+        'false',
+        'false',
+        'false',
+        'false',
+        null
+      ])
+      expect(second.slice(0, 6).every(row => row.icon)).equals(true)
+      await proof('schedule-sort-picker')
+      await choose('Remove sort')
+      await waitForSort('date')
+      await page.waitForSelector('[data-testid="umpire-sort-add"]')
+      await page.waitForSelector('[data-testid="umpire-save-sort"]')
+      expect(await rowButtons()).deep.equals([
+        'settings-pill-button',
+        'umpire-sort-1',
+        'umpire-sort-add',
+        'umpire-save-sort'
+      ])
+
+      // 3. Slot 1 lists all eight; Season 1→9 groups by season (by name, as
+      //    no priority is saved). + Sort offers no Season.
+      await openSort('umpire-sort-1')
+      const first = await menuRows()
+      expect(first.map(row => row.label)).length(9)
+      expect(first[0]).deep.include({
+        label: 'Date, oldest to newest',
+        selected: 'true'
+      })
+      await choose('Season, league order, first to last')
+      await waitForSort('seasonPriority')
+      await page.waitForSelector('[data-testid="umpire-sort-add"]')
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid^="umpire-game-gam_minors_"]') !=
+          null
+      )
+      const grouped = await shownRows()
+      const priorityOrder = await sorted(101, 'schedule', 'seasonPriority')
+      expect(
+        inOrderOf(
+          grouped.map(row => row.id),
+          priorityOrder.map(row => row.id)
+        )
+      ).equals(true)
+      // Every Demo Regular row before every Fall Minors row.
+      const divisions = priorityOrder.map(row => row.seasonName)
+      expect(divisions.lastIndexOf('Demo Regular')).lessThan(
+        divisions.indexOf('Fall Minors')
+      )
+      await openSort('umpire-sort-add')
+      expect((await menuRows()).map(row => row.label)).deep.equals([
+        'Date, oldest to newest',
+        'Date, newest to oldest',
+        'Certification, A to Z',
+        'Certification, Z to A'
+      ])
+      await choose('Certification, Z to A')
+      await waitForSort('seasonPriority,-certification')
+      await openSort('umpire-sort-1')
+      await menuRows()
+      await choose('Remove sort')
+      await waitForSort('-certification')
+      await page.waitForSelector('[data-testid="umpire-sort-add"]')
+      expect(await sortLabels()).deep.equals([
+        'Sort by Certification, Z to A',
+        'Add a second sort'
+      ])
+      await openSort('umpire-sort-add')
+      await menuRows()
+      await choose('Season, league order, first to last')
+      await waitForSort('-certification,seasonPriority')
+      await page.waitForSelector('[data-testid="umpire-sort-2"]')
+      expect(await rowButtons()).deep.equals([
+        'settings-pill-button',
+        'umpire-sort-1',
+        'umpire-sort-2',
+        'umpire-save-sort'
+      ])
+      await sameLine()
+      await toTop()
+      await proof('schedule-sort-two-save')
+      await tap(m, 'Save this sort as the league default')
+      await page.waitForSelector('[data-testid="umpire-save-sort"]', {
+        hidden: true
+      })
+      const settings = await (
+        await f.h.request('GET', `${api}/umpire-settings`, undefined, 101)
+      ).json()
+      expect(settings.sort).deep.equals(['-certification', 'seasonPriority'])
+      log.push('Saved the default sort ' + JSON.stringify(settings))
+
+      // 4. A non-admin afresh: the saved default, no Save sort. A sort for
+      //    the visit survives a remount, not a fresh entry.
+      await login(103)
+      await open()
+      await page.waitForSelector('[data-testid^="umpire-game-"]')
+      await page.waitForSelector('[data-testid="umpire-sort-2"]')
+      expect(address()).equals(null)
+      const DEFAULT_LABELS = [
+        'Sort by Certification, Z to A',
+        'Then by Season, league order, first to last'
+      ]
+      expect(await sortLabels()).deep.equals(DEFAULT_LABELS)
+      expect(await page.$('[data-testid="umpire-save-sort"]')).equals(null)
+      expect(
+        inOrderOf(
+          (await shownRows()).map(row => row.id),
+          (await sorted(103, 'schedule')).map(row => row.id)
+        )
+      ).equals(true)
+      await toTop()
+      await proof('schedule-sort-default-nonadmin')
+      await openSort('umpire-sort-1')
+      const offered = await menuRows()
+      expect(offered.map(row => row.label)).includes('Date, newest to oldest')
+      expect(offered.map(row => row.label)).not.includes('Season, A to Z')
+      await choose('Date, newest to oldest')
+      await waitForSort('-date,seasonPriority')
+      const VISIT_LABELS = [
+        'Sort by Date, newest to oldest',
+        'Then by Season, league order, first to last'
+      ]
+      await page.waitForFunction(
+        label => {
+          const button = document.querySelector('[data-testid="umpire-sort-1"]')
+          return (
+            (button === null ? null : button.getAttribute('aria-label')) ===
+            label
+          )
+        },
+        {},
+        VISIT_LABELS[0]
+      )
+      await m.tapOn({ css: '[aria-label^="Open game "]' })
+      await page.waitForFunction(() => location.pathname.startsWith('/games/'))
+      await m.tapOn({ css: '[aria-label="Back"]' })
+      await page.waitForFunction(() =>
+        location.pathname.startsWith('/umpires/')
+      )
+      await page.waitForSelector('[data-testid="umpire-sort-2"]')
+      expect(address()).equals('-date,seasonPriority')
+      expect(await sortLabels()).deep.equals(VISIT_LABELS)
+      // Afresh from Home's Umpire Schedule row: the league default.
+      await m.openBrowser({ url: f.h.origin + '/' })
+      await tap(m, 'Umpire Schedule')
+      await page.waitForFunction(
+        league => location.pathname === `/umpires/${league}`,
+        {},
+        f.leagueA
+      )
+      await page.waitForSelector('[data-testid="umpire-sort-2"]')
+      expect(address()).equals(null)
+      expect(await sortLabels()).deep.equals(DEFAULT_LABELS)
+      log.push(
+        'A visit’s sort survives Back, and a fresh entry has the default.'
+      )
+
+      // 5. Links with invalid values: only the valid ones, cleaned in the
+      //    request; nothing valid is the default; none is the empty sort.
+      const links: string[] = []
+      const asked: string[] = []
+      const onAsk = (request: HTTPRequest): void => {
+        const url = new URL(request.url())
+        if (url.pathname.endsWith('/umpire-schedule'))
+          asked.push(url.pathname + url.search)
+      }
+      page.on('request', onAsk)
+      const openLink = async (
+        sort: string,
+        labels: string[]
+      ): Promise<URLSearchParams> => {
+        asked.length = 0
+        await open(`?sort=${sort}`)
+        await page.waitForSelector('[data-testid^="umpire-game-"]')
+        await page.waitForFunction(
+          labels =>
+            JSON.stringify(
+              ['umpire-sort-1', 'umpire-sort-2', 'umpire-sort-add']
+                .map(id => document.querySelector(`[data-testid="${id}"]`))
+                .filter(node => node != null)
+                .map(node => node.getAttribute('aria-label'))
+            ) === JSON.stringify(labels),
+          {},
+          labels
+        )
+        expect(asked.length, `${sort}: ${asked.join(' ')}`).greaterThan(0)
+        links.push(
+          `$ open /umpires/<A>?sort=${sort}`,
+          `schedule request: ${asked[0].replace(f.leagueA, '<A>')}`,
+          `sort pills: ${(await sortLabels()).join(' | ')}`,
+          ''
+        )
+        expect(address()).equals(sort)
+        return new URL(asked[0], f.h.origin).searchParams
+      }
+      const cleaned = await openLink('bogus,season,-season,certification', [
+        'Sort by Season, A to Z',
+        'Then by Certification, A to Z'
+      ])
+      expect(cleaned.get('sort')).equals('season,certification')
+      await toTop()
+      await proof('schedule-sort-link')
+      const bogus = await openLink('bogus', DEFAULT_LABELS)
+      expect(bogus.has('sort')).equals(false)
+      const none = await openLink('none', ['Sort'])
+      expect(none.get('sort')).equals('none')
+      page.off('request', onAsk)
+      expect(await rowButtons()).deep.equals([
+        'settings-pill-button',
+        'umpire-sort-1'
+      ])
+      const byTime = await sorted(103, 'schedule', 'none')
+      expect(
+        byTime.every(
+          (row, i) =>
+            i === 0 ||
+            Date.parse(row.startAt) >= Date.parse(byTime[i - 1].startAt)
+        )
+      ).equals(true)
+      expect(
+        inOrderOf(
+          (await shownRows()).map(row => row.id),
+          byTime.map(row => row.id)
+        )
+      ).equals(true)
+      await toTop()
+      await proof('schedule-sort-none')
+      await mkdir(proofDir, { recursive: true })
+      await writeFile(
+        join(proofDir, 'schedule-sort-link.log'),
+        links.join('\n')
+      )
+
+      // 6. Narrow, with a filter other than the saved one: Filters, Save
+      //    filter and both sorts on one line, which scrolls to its last.
+      //    The league default saved in step 3 is set aside meanwhile, so the
+      //    rows and sorts are the before capture's (Date 1→9 then Season
+      //    A→Z), and put back after.
+      const leagueSort = async (sort: string[] | null): Promise<void> => {
+        const answer = await f.h.request(
+          'PUT',
+          `${api}/umpire-settings`,
+          { sort },
+          101
+        )
+        expect(answer.status).equals(200)
+      }
+      await leagueSort(null)
+      await login(103)
+      await page.setViewport({ width: 390, height: 844 })
+      await open('?days=5')
+      await page.waitForSelector(saveFilter)
+      await page.waitForSelector('[data-testid="umpire-sort-2"]')
+      await m.waitForAnimationToEnd()
+      await toTop()
+      expect(await sortLabels()).deep.equals([DATE_ASC, SEASON_ASC_2])
+      const narrow = (await sameLine()) as {
+        scrollWidth: number
+        clientWidth: number
+        buttons: Array<{ id: string | null }>
+      }
+      expect(narrow.buttons.map(button => button.id)).deep.equals([
+        'settings-pill-button',
+        'umpire-save-filter',
+        'umpire-sort-1',
+        'umpire-sort-2'
+      ])
+      expect(narrow.scrollWidth).greaterThan(narrow.clientWidth)
+      await toTop()
+      await proof('schedule-row-narrow-after')
+      await m.evalBrowserScript({
+        script: `(() => { const row = document.querySelector('[data-testid="umpire-filter-row"]'); row.scrollLeft = row.scrollWidth })()`
+      })
+      // Scrolled to its end, both sorts whole on the screen.
+      await page.waitForFunction(() =>
+        ['umpire-sort-1', 'umpire-sort-2'].every(id => {
+          const box = document
+            .querySelector(`[data-testid="${id}"]`)!
+            .getBoundingClientRect()
+          return box.right <= innerWidth && box.left >= 0
+        })
+      )
+      await proof('schedule-row-narrow-scrolled')
+      await leagueSort(['-certification', 'seasonPriority'])
+      log.push('Narrow row ' + JSON.stringify(narrow))
+      await page.setViewport({ width: 1440, height: 900 })
+
+      // 7. Paging under Season A→Z then Certification A→Z: every game once.
+      await login(101)
+      const pages: string[][] = []
+      const onPage = (response: HTTPResponse): void => {
+        const url = new URL(response.url())
+        if (
+          url.pathname.endsWith('/umpire-schedule') &&
+          url.searchParams.get('sort') === 'season,certification'
+        )
+          response
+            .json()
+            .then((body: { items: Array<{ id: string }> }) => {
+              pages.push(body.items.map(item => item.id))
+            })
+            .catch(() => undefined)
+      }
+      page.on('response', onPage)
+      await open('?view=league&sort=season,certification')
+      await page.waitForSelector('[data-testid^="umpire-game-"]')
+      const everyGame = await sorted(101, 'schedule', 'season,certification')
+      // A wheel at a time, as a reader scrolls, down to the end and back up
+      // to the start, until every game is read or nothing more comes.
+      await page.mouse.move(860, 600)
+      for (const deltaY of [500, -500]) {
+        let quiet = 0
+        for (
+          let wheel = 0;
+          wheel < 400 &&
+          quiet < 40 &&
+          new Set(pages.flat()).size < everyGame.length;
+          wheel++
+        ) {
+          const before = pages.length
+          await page.mouse.wheel({ deltaY })
+          await new Promise(resolve => setTimeout(resolve, 60))
+          quiet = pages.length === before ? quiet + 1 : 0
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const read = pages.flat()
+      expect(new Set(read).size, JSON.stringify(pages)).equals(read.length)
+      expect([...read].sort()).deep.equals(everyGame.map(row => row.id).sort())
+      page.off('response', onPage)
+      log.push(
+        `Paged under season,certification: ${pages.length} reads, ${read.length} games, none twice.`
+      )
+
+      // 8. The API: sorted reads, a paged walk, the admin's save, refusals.
+      const lines: string[] = []
+      const call = async (
+        method: 'GET' | 'PUT',
+        path: string,
+        as: number,
+        body?: unknown
+      ): Promise<{ status: number; body: any }> => {
+        const answer = await f.h.request(method, path, body, as)
+        const json = await answer.json().catch(() => null)
+        lines.push(
+          `$ ${method} /api/v1${path.replace(f.leagueA, '<A>')}${body == null ? '' : ' ' + JSON.stringify(body)} (as ${as})`,
+          `HTTP ${answer.status}`
+        )
+        return { status: answer.status, body: json }
+      }
+      const listRows = (body: {
+        items: Array<{ id: string; seasonName: string; startAt: string }>
+      }): void => {
+        for (const row of body.items)
+          lines.push(`  ${row.id}  ${row.seasonName}  ${row.startAt}`)
+        lines.push('')
+      }
+      const full = `${api}/umpire-schedule?view=schedule&paged=1&limit=500`
+      const bySeasonDown = await call('GET', `${full}&sort=-season`, 101)
+      expect(bySeasonDown.status).equals(200)
+      listRows(bySeasonDown.body)
+      const seasonsDown = (
+        bySeasonDown.body.items as Array<{ seasonName: string }>
+      ).map(row => row.seasonName)
+      expect(seasonsDown.lastIndexOf('Fall Minors')).lessThan(
+        seasonsDown.indexOf('Demo Regular')
+      )
+      const byPriority = await call('GET', `${full}&sort=seasonPriority`, 101)
+      listRows(byPriority.body)
+      const byNone = await call('GET', `${full}&sort=none`, 101)
+      listRows(byNone.body)
+      const noneRows = byNone.body.items as Array<{ startAt: string }>
+      expect(
+        noneRows.every(
+          (row, i) =>
+            i === 0 ||
+            Date.parse(row.startAt) >= Date.parse(noneRows[i - 1].startAt)
+        )
+      ).equals(true)
+      const walked: string[] = []
+      let cursor: string | null = null
+      for (let turn = 0; turn < 200; turn++) {
+        const step: { status: number; body: any } = await call(
+          'GET',
+          `${api}/umpire-schedule?view=schedule&paged=1&limit=2${cursor == null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`,
+          101
+        )
+        expect(step.status).equals(200)
+        const ids = (step.body.items as Array<{ id: string }>).map(
+          row => row.id
+        )
+        lines.push(`  page ${turn + 1}: ${ids.join(' ')}`)
+        walked.push(...ids)
+        cursor = step.body.nextCursor
+        if (cursor == null) break
+      }
+      lines.push('')
+      expect(new Set(walked).size).equals(walked.length)
+      expect(walked).deep.equals(
+        (await sorted(101, 'schedule'))
+          .map(row => row.id)
+          .filter(id => walked.includes(id))
+      )
+      const saved = await call('PUT', `${api}/umpire-settings`, 101, {
+        sort: ['season', '-certification']
+      })
+      expect(saved.status).equals(200)
+      lines.push(JSON.stringify(saved.body), '')
+      const refused = await call('PUT', `${api}/umpire-settings`, 104, {
+        sort: ['season', '-certification']
+      })
+      expect(refused.status).equals(403)
+      lines.push('')
+      const priority = await call('PUT', `${api}/umpire-season-priority`, 104, {
+        seasonIds: [FALL, f.seasonA]
+      })
+      expect(priority.status).equals(403)
+      lines.push('')
+      const bad = await call('GET', `${full}&sort=bogus`, 101)
+      expect(bad.status).equals(400)
+      lines.push(JSON.stringify(bad.body), '')
+
+      // 9. Back to no league default.
+      const reset = await call('PUT', `${api}/umpire-settings`, 101, {
+        sort: null
+      })
+      expect(reset.status).equals(200)
+      expect(reset.body.sort).equals(null)
+      await writeFile(join(proofDir, 'schedule-sort-api.log'), lines.join('\n'))
+      log.push('Sort steps 1–9 passed.')
+    }
     await login(101)
     await open(baseline ? '?view=league' : '')
     await page.waitForSelector('[data-testid="umpire-game-gam_umpire_g1"]')
@@ -435,14 +1199,16 @@ async function main(): Promise<void> {
         }
       })
       expect(geometry.bodyHeight).equals(geometry.viewport)
+      // Seven fixed columns: Date, Division, Home and Away team, Venue,
+      // Field and Notes.
       expect(
-        geometry.widths.slice(0, 6).every(w => w === geometry.widths[0])
+        geometry.widths.slice(0, 7).every(w => w === geometry.widths[0])
       ).equals(true)
       expect(geometry.widths[0]).closeTo(
         Math.ceil(Math.max(98, geometry.dates) + 16),
         1
       )
-      expect(geometry.widths[6]).closeTo(Math.ceil(geometry.pill + 32), 1)
+      expect(geometry.widths[7]).closeTo(Math.ceil(geometry.pill + 32), 1)
       expect(geometry.widths.at(-1)).closeTo(
         Math.ceil(geometry.conflict + 13),
         1
@@ -719,6 +1485,7 @@ async function main(): Promise<void> {
       expect(response.status).equals(403)
       await tap(m, 'Cancel')
       await savedFilterSteps()
+      await sortSteps()
       await mkdir(join(artifacts, 'support'), { recursive: true })
       await recordBrowserCoverage(
         [page],
@@ -735,6 +1502,8 @@ async function main(): Promise<void> {
       log.join('\n') + '\n'
     )
     if (b != null) {
+      // Before the step that makes it, a failure still leaves its state here.
+      await mkdir(join(artifacts, 'support'), { recursive: true })
       await writeFile(
         join(artifacts, 'support/last-browser-state.txt'),
         await b.page.evaluate(() => document.body.innerText)

@@ -17,6 +17,7 @@ import { lstrings } from '../locales/strings'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GlassView } from './GlassView'
+import { RadioMark } from './RadioMark'
 
 export interface HeaderMenuItem {
   label: string
@@ -25,6 +26,10 @@ export interface HeaderMenuItem {
   hint?: string
   icon: React.ReactNode
   onPress: () => void
+  /** The one chosen now: a radio mark at the row's end. */
+  selected?: boolean
+  /** Takes something away: the label in the danger colour. */
+  destructive?: boolean
 }
 
 export interface HeaderMenuProps {
@@ -40,6 +45,8 @@ export interface HeaderMenuProps {
   style?: PressableProps['style']
   /** The button's own face. */
   children: React.ReactNode
+  /** The button's test id. */
+  testID?: string
 }
 
 interface Anchor {
@@ -128,6 +135,7 @@ export function HeaderMenu(props: HeaderMenuProps): React.ReactElement {
           else openMenu()
         }}
         style={props.style}
+        testID={props.testID}
       >
         {props.children}
       </Pressable>
@@ -247,16 +255,24 @@ function HeaderMenuRow(props: {
   onClose: () => void
 }): React.ReactElement {
   const { item, divided, onClose } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   // `accessibilityHint` is native only, and on the web a label replaces the
   // row's text, so there the detail or hint is tied on by its id.
   const describedBy = useId()
   const described = item.detail ?? item.hint
+  // A row that can be the chosen one is a radio, which says whether it is
+  // checked; `aria-selected` means nothing on a button. react-native-web does
+  // not render `aria-checked` from `accessibilityState`, so the web says it
+  // directly.
+  const choice = item.selected != null
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole={choice ? 'radio' : 'button'}
       accessibilityLabel={item.label}
       accessibilityHint={described}
+      accessibilityState={choice ? { checked: item.selected } : undefined}
+      aria-checked={item.selected}
       aria-describedby={described == null ? undefined : describedBy}
       onPress={() => {
         onClose()
@@ -270,7 +286,13 @@ function HeaderMenuRow(props: {
     >
       <View style={styles.icon}>{item.icon}</View>
       <View style={styles.words}>
-        <Text style={styles.label} numberOfLines={1}>
+        <Text
+          style={[
+            styles.label,
+            item.destructive === true && { color: theme.dangerColor }
+          ]}
+          numberOfLines={1}
+        >
           {item.label}
         </Text>
         {item.detail != null && (
@@ -284,6 +306,11 @@ function HeaderMenuRow(props: {
           </Text>
         )}
       </View>
+      {item.selected != null && (
+        <View style={styles.mark}>
+          <RadioMark on={item.selected} />
+        </View>
+      )}
     </Pressable>
   )
 }
@@ -349,6 +376,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   words: {
     flexShrink: 1
+  },
+  // At the row's end, past the words however wide the menu is.
+  mark: {
+    marginLeft: 'auto'
   },
   label: {
     fontFamily: theme.boldTextFont,

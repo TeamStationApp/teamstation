@@ -419,6 +419,16 @@ async function main(): Promise<void> {
       await page.setViewport(null)
       await page.setViewport({ width, height: 844 })
       await page.waitForFunction(expected => innerWidth === expected, {}, width)
+      // The pill is laid out again after the resize: wait for it to fit.
+      await page
+        .waitForFunction(
+          () =>
+            document
+              .querySelector('[aria-label="Schedule filters"]')!
+              .getBoundingClientRect().right <= innerWidth,
+          { timeout: 5000 }
+        )
+        .catch(() => undefined)
       const bounds = await page.$eval(
         '[aria-label="Schedule filters"]',
         node => {

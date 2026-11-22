@@ -17,6 +17,7 @@
 - added: League admins can find umpires by availability and read an umpire's commitments through the API, GraphQL and Tess
 - added: Umpires can save their schedule filter as their availability for each league with Save filter, and it applies when they open that league's schedule
 - added: League admins can set the umpire schedule's default sort and the league's season order through the API, and the schedule comes back in the sort asked for, a page at a time
+- added: The umpire schedule shows each game's division and sorts by up to two of date, season and certification, and league admins can save the sort as the league default with Save sort
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file

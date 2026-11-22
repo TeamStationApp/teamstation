@@ -12,6 +12,7 @@ import type { WheelProps } from './wheelProps'
  */
 export function IosWheel({
   label,
+  labelHidden = false,
   options,
   value,
   onChange,
@@ -22,7 +23,7 @@ export function IosWheel({
   const styles = getStyles(theme)
   return (
     <View style={styles.column}>
-      <Text style={styles.label}>{label}</Text>
+      {!labelHidden && <Text style={styles.label}>{label}</Text>}
       <Picker
         testID={testID}
         accessibilityLabel={label}
