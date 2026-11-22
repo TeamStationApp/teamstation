@@ -950,19 +950,6 @@ const PLAY_BUNDLE_STASH = 'play-bundle'
 const PLAY_API = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${STABLE_APP}`
 const PLAY_UPLOAD = `https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${STABLE_APP}`
 const PLAY_SCOPE = 'https://www.googleapis.com/auth/androidpublisher'
-/** Play refuses release notes longer than this, per language. */
-export const PLAY_NOTES_LIMIT = 500
-/**
- * The en-US release notes: the 1.2.0 App Store "What's New", shortened to
- * fit Play's limit.
- */
-export const PLAY_RELEASE_NOTES = [
-  'Coaching: a game plan sets the defense for every inning, and playing-time rules warn when a player would fall short.',
-  "Scoring: fields the game plan's defense each inning, lets several people score one game, adds pitch counts to box scores and works offline.",
-  'Replay: a new layout, with crowd noise on big plays.',
-  'Video: tap to focus on previews.',
-  'Chat: a one-time age confirmation, and you can block a person.'
-].join('\n')
 
 export interface PlayServiceAccount {
   client_email: string
@@ -1054,7 +1041,6 @@ export async function releaseToPlayTrack(options: {
   token: string
   bundle: Uint8Array
   track: string
-  notes: string
   fetcher: Fetch
 }): Promise<{
   editId: string
@@ -1075,7 +1061,6 @@ async function releaseInPlayEdit(
     token: string
     bundle: Uint8Array
     track: string
-    notes: string
     fetcher: Fetch
   },
   status: PlayReleaseStatus
@@ -1120,8 +1105,7 @@ async function releaseInPlayEdit(
         releases: [
           {
             versionCodes: [String(versionCode)],
-            status,
-            releaseNotes: [{ language: 'en-US', text: options.notes }]
+            status
           }
         ]
       })
@@ -1143,10 +1127,6 @@ async function releaseInPlayEdit(
 
 /** Releases the signed Play bundle to the closed-testing track. */
 export async function releasePlayTesting(ctx: Stage): Promise<void> {
-  if (PLAY_RELEASE_NOTES.length > PLAY_NOTES_LIMIT)
-    throw new Error(
-      `The Play release notes are ${PLAY_RELEASE_NOTES.length} characters; Play allows ${PLAY_NOTES_LIMIT}`
-    )
   await ctx.unstash(PLAY_BUNDLE_STASH)
   const bundles = await ctx.fs.glob(AAB_GLOB)
   const bundle = bundles[0]
@@ -1160,7 +1140,6 @@ export async function releasePlayTesting(ctx: Stage): Promise<void> {
     token,
     bundle: readFileSync(workspacePath(ctx, bundle)),
     track: PLAY_TRACK,
-    notes: PLAY_RELEASE_NOTES,
     fetcher
   })
   if (status === 'draft') {
