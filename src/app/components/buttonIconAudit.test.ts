@@ -150,11 +150,12 @@ describe('button icon placement source audit', function () {
     scan('')
     expect(failures).deep.equals([])
   })
-  it('places the umpire sort buttons’ + and Remove sort icons through ButtonIcon', function () {
+  it('places the umpire sort buttons’ + and Remove sort icons, and the requirements screen’s, through ButtonIcon', function () {
     for (const file of [
       'umpires/UmpireSortControls.tsx',
       'components/PillTabs.tsx',
-      'components/HeaderMenu.tsx'
+      'components/HeaderMenu.tsx',
+      'umpires/UmpireRequirementsScreen.tsx'
     ]) {
       const text = readFileSync(join('src/app', file), 'utf8')
       expect(unplaced(file, text), file).deep.equals([])

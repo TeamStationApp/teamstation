@@ -15,7 +15,8 @@ import { webSettings } from './web-build-settings.mjs'
 // default sort on the umpire settings, the league season order and the
 // requirements that answer it, a moved season losing its place, the client,
 // OpenAPI and the API-key family, and the schedule screen's Division column,
-// sort buttons, pickers and Save sort, from the suites that exercise them. Each
+// sort buttons, pickers and Save sort, and the requirements screen's season
+// reorder, from the suites that exercise them. Each
 // file the work adds must have 95% of its lines covered and each file it
 // edits 95% of the lines it changes, read from `TS_COVERAGE_BASE`
 // (origin/develop unless given) to HEAD, the repository's combined bar.
@@ -55,6 +56,8 @@ const screens = [
   'src/app/components/PillTabs.test.tsx',
   'src/app/components/pillGeometry.test.tsx',
   'src/app/components/TextWidthButton.test.tsx',
+  // The requirements screen's Sort, drag and keyboard reorder, Save and Cancel.
+  'src/app/umpires/management.test.tsx',
   // The schedule as App mounts it.
   'src/app/umpires/appMask.test.tsx',
   'src/app/App.entityChats.test.tsx'
@@ -93,7 +96,9 @@ const edited = [
   'src/app/navigation/routes.ts',
   'src/app/components/PillTabs.tsx',
   'src/app/components/HeaderMenu.tsx',
+  'src/app/scoring/RosterDrag.tsx',
   'src/app/umpires/UmpireScheduleScreen.tsx',
+  'src/app/umpires/UmpireRequirementsScreen.tsx',
   'src/app/locales/en_US.ts'
 ]
 

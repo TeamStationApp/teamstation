@@ -299,7 +299,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       {(hover === 'before' || hover === 'after') && (
         <View
           pointerEvents="none"
-          accessibilityLabel="Lineup insertion point"
+          accessibilityLabel={props.insertionLabel ?? 'Lineup insertion point'}
           style={{
             position: 'absolute',
             left: 0,

@@ -592,4 +592,44 @@ describe('native roster responder', function () {
     expect(engine.sources.size).equals(0)
     expect(engine.targets.size).equals(0)
   })
+  it('names the insertion line as its list asks, for a list that is not a lineup', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterContext.Provider value={engine}>
+            <RosterDrag
+              playerId={1}
+              label="Reorder Spring"
+              targetId="season-0"
+              insertion="row"
+              insertionLabel="Season insertion point"
+              onDropPlayer={() => undefined}
+              onReorder={() => undefined}
+            >
+              <span>Spring</span>
+            </RosterDrag>
+          </RosterContext.Provider>
+        </ThemeProvider>
+      )
+    })
+    engine.preview = {
+      x: 0,
+      y: 0,
+      label: 'Spring',
+      target: 'season-0',
+      edge: 'before'
+    }
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 60))
+    })
+    expect(
+      [...host.querySelectorAll('[aria-label$="insertion point"]')].map(n =>
+        n.getAttribute('aria-label')
+      )
+    ).deep.equals(['Season insertion point'])
+  })
 })

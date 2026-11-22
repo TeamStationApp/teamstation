@@ -47,6 +47,27 @@ describe('locales', function () {
     )
   })
 
+  it('names the requirements screen’s season order controls', function () {
+    expect([
+      enUs.umpire_season_priority_sort,
+      enUs.umpire_season_priority_cancel,
+      enUs.umpire_season_priority_save
+    ]).deep.equals(['Sort', 'Cancel', 'Save'])
+    expect(enUs.umpire_season_priority_sort_named).equals('Sort seasons')
+    expect(enUs.umpire_season_priority_cancel_named).equals(
+      'Cancel sorting seasons'
+    )
+    expect(enUs.umpire_season_priority_save_named).equals(
+      'Save the season order'
+    )
+    expect(
+      sprintf(enUs.umpire_season_priority_drag_named, 'Fall Minors')
+    ).equals('Drag Fall Minors')
+    expect(
+      sprintf(enUs.umpire_season_priority_move_named, 'Fall Minors')
+    ).equals('Reorder Fall Minors')
+  })
+
   it('merges a translation over the master', function () {
     selectLocale({ login_title: 'Iniciar sesión' })
     expect(lstrings.login_title).equals('Iniciar sesión')

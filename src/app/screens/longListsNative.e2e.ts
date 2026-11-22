@@ -40,6 +40,12 @@ interface Device {
   inputText: (options: { text: string }) => Promise<unknown>
   setOrientation: (options: { orientation: string }) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
+  dragAndDrop: (options: {
+    from: { point: string }
+    to: { point: string }
+    holdDuration: number
+    duration: number
+  }) => Promise<unknown>
   detach: () => Promise<unknown>
 }
 
@@ -100,7 +106,7 @@ const MOST_BELOW_PILLS = 110
 /** The screen's width, and where a row is clear of the tab bar. */
 const PHONE_WIDTH = 402
 const LOWEST_ROW = 700
-const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13'
+const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13,E14'
 /** The umpire schedule's second sort wheel under Date: Season and Certification. */
 const THEN_BY = [
   'Season · A to Z',
@@ -1526,6 +1532,222 @@ async function main(): Promise<void> {
       assert.equal(byId(removed, 'umpire-sort-2'), undefined)
       await shot(`${platform}-umpire-sort-removed.png`)
       await note('E13: Cancel kept the sort; Remove sort brought back + Sort')
+    },
+    E14: async () => {
+      const league = manifest.leagueId
+      const requirementsLink = `teamstation://groups/league/${league}/umpire-requirements`
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const named = (nodes: ViewNode[], text: string): ViewNode | undefined =>
+        nodes
+          .filter(node => node.text === text && node.bounds != null)
+          .sort((a, b) => a.bounds!.y - b.bounds!.y)[0]
+      const centre = (node: ViewNode): string =>
+        `${Math.round(node.bounds!.x + node.bounds!.width / 2)},${Math.round(node.bounds!.y + node.bounds!.height / 2)}`
+      /** The two seasons, top to bottom, as the screen shows them. */
+      const order = async (): Promise<string[]> => {
+        const nodes = await settled()
+        const regular = named(nodes, 'Demo Regular')
+        const playoffs = named(nodes, 'Demo Playoffs')
+        assert.ok(regular != null && playoffs != null, 'E14: both seasons')
+        return regular.bounds!.y < playoffs.bounds!.y
+          ? ['Demo Regular', 'Demo Playoffs']
+          : ['Demo Playoffs', 'Demo Regular']
+      }
+      const tapId = async (id: string): Promise<void> => {
+        let found: ViewNode | undefined
+        for (let read = 0; read < 10 && found == null; read++) {
+          found = byId(await all(), id)
+          if (found == null) await pause(500)
+        }
+        assert.ok(found != null, `E14: no ${id}`)
+        await m.tapOnPoint({ point: centre(found) })
+        await pause(900)
+      }
+      /** The grips' labels: a text node can show twice in the tree. */
+      const grips = (nodes: ViewNode[]): string[] => [
+        ...new Set(
+          nodes
+            .filter(
+              node =>
+                node.text?.startsWith('Drag Demo ') === true &&
+                node.bounds != null
+            )
+            .map(node => node.text!)
+        )
+      ]
+      /** Into reorder mode: Sort, then a grip by each season. */
+      const reorder = async (): Promise<ViewNode[]> => {
+        await tapId('season-priority-sort')
+        for (let read = 0; read < 10; read++) {
+          const nodes = await settled()
+          if (grips(nodes).length === 2) return nodes
+          await pause(500)
+        }
+        throw new Error('E14: no grips after Sort')
+      }
+      /** Demo Regular, by its grip, onto the top edge of the first row. */
+      const dragRegularUp = async (): Promise<void> => {
+        const nodes = await settled()
+        const grip = nodes.find(
+          node => node.text === 'Drag Demo Regular' && node.bounds != null
+        )
+        const rows = nodes
+          .filter(
+            node =>
+              node.id?.startsWith('season-priority-row-') === true &&
+              node.bounds != null
+          )
+          .sort((a, b) => a.bounds!.y - b.bounds!.y)
+        assert.ok(grip != null && rows.length === 2, 'E14: a grip and rows')
+        const top = rows[0].bounds!
+        await m.dragAndDrop({
+          from: { point: centre(grip) },
+          to: {
+            point: `${Math.round(top.x + top.width / 2)},${Math.round(top.y + 4)}`
+          },
+          holdDuration: 1000,
+          duration: 1500
+        })
+        await pause(1200)
+      }
+      /** 101's own session for the API, from a second e-mailed link. */
+      const apiSession = async (): Promise<string> => {
+        const asked = await fetch(`${manifest.apiBaseUrl}/auth/email-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: manifest.email })
+        })
+        assert.equal(asked.status, 202)
+        const answer = await fetch(
+          `${manifest.origin}${manifest.signInLinkRoute}?email=${encodeURIComponent(manifest.email)}`
+        )
+        assert.ok(answer.ok, 'E14: no sign-in mail')
+        const { link } = (await answer.json()) as { link?: string }
+        const token = link?.split('/signin/')[1]
+        assert.ok(token != null && token !== '', `E14: no link in ${link}`)
+        const verified = await fetch(
+          `${manifest.apiBaseUrl}/auth/link/verify`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
+          }
+        )
+        assert.equal(verified.status, 200, 'E14: the link signs in')
+        return ((await verified.json()) as { token: string }).token
+      }
+      const session = await apiSession()
+      const apiLog: string[] = []
+      /** The season of the schedule's top row under Season 1→9. */
+      const topSeason = async (): Promise<string> => {
+        const path = `/leagues/${league}/umpire-schedule?sort=seasonPriority&paged=1&limit=1`
+        const answer = await fetch(`${manifest.apiBaseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${session}` }
+        })
+        const text = await answer.text()
+        apiLog.push(`$ GET /api/v1${path}`, `${answer.status}`, text, '')
+        assert.equal(answer.status, 200, text)
+        // A paged answer holds its rows in `items`.
+        const body = JSON.parse(text) as {
+          items: Array<{ id: string; seasonName: string }>
+        }
+        assert.ok(body.items.length > 0, 'E14: a top row')
+        return body.items[0].seasonName
+      }
+      const writeApiLog = async (): Promise<void> => {
+        await writeFile(
+          join(artifacts, 'requirements-priority-ios.log'),
+          apiLog.join('\n')
+        )
+      }
+
+      // 1. Sort at the list's upper right; reorder mode shows grips, a red
+      //    Cancel and Save, and no checkbox. The list reads by name.
+      await m.openLink({ link: requirementsLink })
+      await visible('Set Umpire Requirements')
+      await visible('Demo Regular')
+      const read = await order()
+      assert.deepEqual(read, ['Demo Playoffs', 'Demo Regular'])
+      const before = await topSeason()
+      assert.equal(before, 'Demo Playoffs', 'E14: Season 1→9 reads by name')
+      const opened = await settled()
+      const sort = byId(opened, 'season-priority-sort')
+      const list = byId(opened, 'season-priority-list')
+      assert.ok(sort != null && list != null, 'E14: Sort and the list')
+      assert.ok(
+        sort.bounds!.y + sort.bounds!.height <= list.bounds!.y + 1,
+        'E14: Sort above the list'
+      )
+      assert.ok(
+        Math.abs(
+          sort.bounds!.x +
+            sort.bounds!.width -
+            (list.bounds!.x + list.bounds!.width)
+        ) <= 4,
+        'E14: Sort at the right'
+      )
+      const reordering = await reorder()
+      assert.equal(
+        byId(reordering, 'season-priority-sort')?.text,
+        'Cancel sorting seasons',
+        'E14: Sort reads Cancel'
+      )
+      assert.ok(byId(reordering, 'season-priority-save') != null, 'E14: Save')
+      assert.equal(
+        reordering.some(node => node.text?.startsWith('Select Demo') === true),
+        false,
+        'E14: no checkbox in reorder mode'
+      )
+      await proof('requirements-reorder-ios.png')
+      await note('E14: Sort shows the grips, Cancel and Save')
+
+      // 2. A touch drag of Demo Regular above Demo Playoffs, then Cancel.
+      await dragRegularUp()
+      assert.deepEqual(
+        await order(),
+        ['Demo Regular', 'Demo Playoffs'],
+        'E14: the drag moved Demo Regular up'
+      )
+      await tapId('season-priority-sort')
+      assert.equal(grips(await settled()).length, 0, 'E14: Cancel left')
+      assert.deepEqual(await order(), read, 'E14: Cancel restored the order')
+      await proof('requirements-cancel-ios.png')
+      await note('E14: a drag and Cancel restored the order read')
+
+      // 3. The drag again, and Save.
+      await reorder()
+      await dragRegularUp()
+      assert.deepEqual(await order(), ['Demo Regular', 'Demo Playoffs'])
+      await tapId('season-priority-save')
+      for (let wait = 0; wait < 20; wait++) {
+        if (grips(await all()).length === 0) break
+        await pause(500)
+      }
+      const saved = await order()
+      assert.deepEqual(saved, ['Demo Regular', 'Demo Playoffs'])
+      assert.notDeepEqual(saved, read, 'E14: the saved order is not the read')
+      await proof('requirements-reordered-ios.png')
+      await m.openLink({ link: requirementsLink })
+      await visible('Demo Regular')
+      await pause(1500)
+      assert.deepEqual(
+        await order(),
+        ['Demo Regular', 'Demo Playoffs'],
+        'E14: the server keeps the order'
+      )
+      await note('E14: a drag and Save stored Demo Regular first')
+
+      // 4. Season 1→9 follows it.
+      const after = await topSeason()
+      await writeApiLog()
+      assert.equal(after, 'Demo Regular', 'E14: Season 1→9 follows the order')
+      assert.notEqual(after, before)
+      await m.openLink({
+        link: `teamstation://umpires/${league}?sort=seasonPriority`
+      })
+      await visible('Division', 30000)
+      await note(`E14: the schedule's top row went from ${before} to ${after}`)
     }
   }
 

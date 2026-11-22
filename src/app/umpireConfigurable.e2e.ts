@@ -17,10 +17,15 @@ import { exerciseUmpireNotes } from '../../e2e/rigs/umpireNotesBrowser'
 import { TeamStationClient } from '../common/api'
 import { userIdOfGumbo } from '../common/userId'
 import {
+  addFallMinors,
+  FALL,
   readyUmpireBrowser,
   UMPIRE_BROWSER_NOW,
   umpireBrowserFixture
 } from '../test/umpireBrowserFixture'
+
+/** League A's third current season, with no requirement and no games. */
+const SPRING = 'sea_layout_spring_majors'
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_UMPIRE_ARTIFACTS
@@ -54,6 +59,16 @@ async function main(): Promise<void> {
       artifacts
     )
     const { page, m, browser } = b
+    // A proving artifact, under its own name in TS_UMPIRE_PROOF when set.
+    const proofDir = process.env.TS_UMPIRE_PROOF ?? artifacts
+    const proof = async (name: string): Promise<void> => {
+      await m.waitForAnimationToEnd()
+      await mkdir(proofDir, { recursive: true })
+      await writeFile(
+        join(proofDir, `${name}.png`),
+        await page.screenshot({ fullPage: false })
+      )
+    }
     const login = async (id: number): Promise<void> => {
       await browser.setCookie({
         name: 'ts_session',
@@ -308,6 +323,265 @@ async function main(): Promise<void> {
       )
     ).equals(false)
     await capture(m, artifacts, 'game-umpire-profile-after.png')
+    // ---- The league's season order (#348): Sort, drag, Cancel and Save on
+    // the requirements screen, and Season 1→9 following the saved order.
+    // League A holds three current seasons: Demo Regular, Fall Minors (a
+    // requirement and two games) and Spring Majors (no games).
+    await addFallMinors(f, 2)
+    await f.h.db
+      .insertInto('seasons')
+      .values({
+        id: SPRING,
+        league_id: f.leagueA,
+        name: 'Spring Majors',
+        year: 2027,
+        starts_on: '2027-03-02',
+        ends_on: '2027-06-30',
+        timezone: 'America/Los_Angeles'
+      })
+      .execute()
+    await login(101)
+    await page.setViewport({ width: 1440, height: 900 })
+    const requirementsPage = base + '/umpire-requirements'
+    /** The season list's names, top to bottom. */
+    const seasonNames = async (): Promise<string[]> =>
+      await page.evaluate(() =>
+        Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[data-testid^="season-requirements-"]'
+          )
+        )
+          .sort(
+            (a, b) =>
+              a.getBoundingClientRect().top - b.getBoundingClientRect().top
+          )
+          .map(
+            n => (n.parentElement!.firstElementChild as HTMLElement).innerText
+          )
+      )
+    const priorities = async (): Promise<Array<[string, number | null]>> =>
+      (await client.umpireRequirements(f.leagueA))
+        .filter(s => [f.seasonA, FALL, SPRING].includes(s.id))
+        .map(s => [s.name, s.priority ?? null])
+    const readOrder = ['Demo Regular', 'Fall Minors', 'Spring Majors']
+    await open(requirementsPage, 'Spring Majors')
+    expect(await seasonNames()).deep.equals(readOrder)
+    expect(await priorities()).deep.equals(readOrder.map(n => [n, null]))
+    // 1. Sort at the upper right of the season list.
+    const sortPlace = await page.evaluate(() => {
+      const sort = document
+        .querySelector('[data-testid="season-priority-sort"]')!
+        .getBoundingClientRect()
+      const list = document
+        .querySelector('[data-testid="season-priority-list"]')!
+        .getBoundingClientRect()
+      const first = document
+        .querySelector('[data-testid^="season-requirements-"]')!
+        .getBoundingClientRect()
+      return {
+        sortRight: sort.right,
+        sortBottom: sort.bottom,
+        listRight: list.right,
+        listTop: list.top,
+        firstTop: first.top,
+        label: document.querySelector<HTMLElement>(
+          '[data-testid="season-priority-sort"]'
+        )!.innerText
+      }
+    })
+    expect(sortPlace.label).equals('Sort')
+    expect(sortPlace.sortBottom).at.most(sortPlace.listTop)
+    expect(sortPlace.listTop).at.most(sortPlace.firstTop)
+    expect(Math.abs(sortPlace.sortRight - sortPlace.listRight)).at.most(2)
+    await proof('requirements-after')
+    // 2. Reorder mode: grips, a red Cancel, Save, no checkbox.
+    const sortTap = async (): Promise<void> => {
+      await m.tapOn({ css: '[data-testid="season-priority-sort"]' })
+    }
+    const reorderMode = async (): Promise<void> => {
+      await sortTap()
+      await page.waitForFunction(
+        () => document.querySelectorAll('[data-roster-grip]').length === 3,
+        { polling: 100 }
+      )
+    }
+    await reorderMode()
+    const mode = await page.evaluate(() => {
+      const sort = document.querySelector<HTMLElement>(
+        '[data-testid="season-priority-sort"]'
+      )!
+      const label = Array.from(sort.querySelectorAll<HTMLElement>('div')).find(
+        n => n.children.length === 0 && n.innerText === 'Cancel'
+      )
+      const save = document.querySelector<HTMLElement>(
+        '[data-testid="season-priority-save"]'
+      )
+      return {
+        sort: sort.innerText,
+        color: label == null ? '' : getComputedStyle(label).color,
+        save: save == null ? '' : save.innerText,
+        saveColor: save == null ? '' : getComputedStyle(save).backgroundColor,
+        saveLeft: save == null ? 0 : save.getBoundingClientRect().left,
+        listLeft: document
+          .querySelector('[data-roster-target="season-0"]')!
+          .getBoundingClientRect().left,
+        checkboxes: document.querySelectorAll('[aria-label^="Select "]').length
+      }
+    })
+    expect(mode.sort).equals('Cancel')
+    expect(mode.color).equals('rgb(186, 26, 26)')
+    expect(mode.save).equals('Save')
+    expect(mode.saveColor).not.equals('rgba(0, 0, 0, 0)')
+    expect(Math.abs(mode.saveLeft - mode.listLeft)).at.most(2)
+    expect(mode.checkboxes).equals(0)
+    await proof('requirements-reorder')
+    /** Fall Minors, by its grip, onto the top edge of the first row. */
+    const dragFallToTop = async (): Promise<void> => {
+      const points = await page.evaluate(() => {
+        const grip = document
+          .querySelector('[aria-label="Drag Fall Minors"]')!
+          .closest('[data-roster-grip]')!
+          .getBoundingClientRect()
+        const first = document
+          .querySelector('[data-roster-target="season-0"]')!
+          .getBoundingClientRect()
+        return {
+          from: [grip.x + grip.width / 2, grip.y + grip.height / 2],
+          to: [first.x + first.width / 2, first.y + 3]
+        }
+      })
+      await m.command('dragAndDrop', {
+        from: { point: points.from.map(Math.round).join(',') },
+        to: { point: points.to.map(Math.round).join(',') },
+        holdDuration: 200,
+        duration: 1000
+      })
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="Roster dragged card"]') == null,
+        { polling: 100 }
+      )
+    }
+    const moved = ['Fall Minors', 'Demo Regular', 'Spring Majors']
+    // 3. A drag, then Cancel: the order read is back, nothing saved.
+    await dragFallToTop()
+    expect(await seasonNames()).deep.equals(moved)
+    await proof('requirements-dragged')
+    await sortTap()
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-roster-grip]').length === 0,
+      { polling: 100 }
+    )
+    expect(await seasonNames()).deep.equals(readOrder)
+    await proof('requirements-cancel')
+    expect(await priorities()).deep.equals(readOrder.map(n => [n, null]))
+    // 4. A drag, then Save: the new order, stored as 1, 2, 3.
+    await reorderMode()
+    await dragFallToTop()
+    expect(await seasonNames()).deep.equals(moved)
+    const priority = page.waitForResponse(
+      r =>
+        r.request().method() === 'PUT' &&
+        r.url().endsWith('/umpire-season-priority')
+    )
+    await m.tapOn({ css: '[data-testid="season-priority-save"]' })
+    expect((await priority).status()).equals(200)
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-roster-grip]').length === 0,
+      { polling: 100 }
+    )
+    expect(await seasonNames()).deep.equals(moved)
+    expect(await seasonNames()).not.deep.equals(readOrder)
+    expect(await priorities()).deep.equals(moved.map((n, i) => [n, i + 1]))
+    await capture(m, artifacts, 'support/requirements-saved.png')
+    // 5. Season 1→9 follows the saved order: Fall Minors' games first, the
+    //    reverse of the name order it gave before the save; 9→1 the reverse.
+    const seasonOf = new Map(
+      (await client.umpireSchedule(f.leagueA, 'view=league')).games.map(g => [
+        g.id,
+        g.seasonName
+      ])
+    )
+    /** The divisions of the rows on the screen, top to bottom. */
+    const shownDivisions = async (): Promise<string[]> =>
+      (
+        await page.evaluate(() =>
+          Array.from(
+            document.querySelectorAll<HTMLElement>(
+              '[data-testid^="umpire-game-"]'
+            )
+          )
+            .filter(row => row.getBoundingClientRect().height > 0)
+            .sort(
+              (a, b) =>
+                a.getBoundingClientRect().top - b.getBoundingClientRect().top
+            )
+            .map(row => row.dataset.testid!.slice('umpire-game-'.length))
+        )
+      )
+        .map(id => seasonOf.get(id))
+        .filter((name): name is string => name != null)
+    const schedule = async (sort: string): Promise<string[]> => {
+      await m.openBrowser({
+        url: `${f.h.origin}/umpires/${f.leagueA}?view=league&sort=${sort}`
+      })
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid^="umpire-game-gam_minors_"]') !=
+          null,
+        { polling: 100 }
+      )
+      await page.evaluate(async () => await document.fonts.ready)
+      return await shownDivisions()
+    }
+    const firstUp = await schedule('seasonPriority')
+    expect(firstUp.lastIndexOf('Fall Minors')).lessThan(
+      firstUp.indexOf('Demo Regular')
+    )
+    await proof('schedule-season-priority')
+    const lastUp = await schedule('-seasonPriority')
+    expect(lastUp.lastIndexOf('Demo Regular')).lessThan(
+      lastUp.indexOf('Fall Minors')
+    )
+    const apiOrder = (
+      await client.umpireSchedule(f.leagueA, 'view=league&sort=seasonPriority')
+    ).games.map(g => g.seasonName)
+    expect(apiOrder.lastIndexOf('Fall Minors')).lessThan(
+      apiOrder.indexOf('Demo Regular')
+    )
+    // 6. The keyboard: Spring Majors grabbed with Space, moved up, dropped
+    //    with Enter, and saved.
+    await open(requirementsPage, 'Spring Majors')
+    expect(await seasonNames()).deep.equals(moved)
+    await reorderMode()
+    await page.focus('[data-roster-target="season-2"]')
+    await m.pressKey({ key: 'space' })
+    await m.pressKey({ key: 'up' })
+    await m.pressKey({ key: 'enter' })
+    const keyed = ['Fall Minors', 'Spring Majors', 'Demo Regular']
+    await page.waitForFunction(
+      first =>
+        Array.from(
+          document.querySelectorAll('[data-testid^="season-requirements-"]')
+        ).map(n => n.parentElement!.firstElementChild!.textContent)[1] ===
+        first,
+      { polling: 100 },
+      keyed[1]
+    )
+    expect(await seasonNames()).deep.equals(keyed)
+    const keyedSave = page.waitForResponse(
+      r =>
+        r.request().method() === 'PUT' &&
+        r.url().endsWith('/umpire-season-priority')
+    )
+    await m.tapOn({ css: '[data-testid="season-priority-save"]' })
+    expect((await keyedSave).status()).equals(200)
+    await page.waitForFunction(
+      () => document.querySelectorAll('[data-roster-grip]').length === 0,
+      { polling: 100 }
+    )
+    expect(await priorities()).deep.equals(keyed.map((n, i) => [n, i + 1]))
+    await capture(m, artifacts, 'support/requirements-keyboard-saved.png')
     await recordBrowserCoverage(
       [page],
       f.h.origin,
@@ -315,7 +589,7 @@ async function main(): Promise<void> {
       web
     )
     console.log(
-      'B1–B4 configurable types, counts, certification, signup, game detail and spreadsheet notes, and a season coach umpiring another season, passed'
+      'B1–B4 configurable types, counts, certification, signup, game detail and spreadsheet notes, a season coach umpiring another season, and the league’s season order, passed'
     )
   } finally {
     if (b != null) {

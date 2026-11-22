@@ -13,83 +13,14 @@ import {
   tap
 } from '../../e2e/rigs/refinementsMaestro'
 import { userIdOfGumbo } from '../common/userId'
-import type { GroupFixture } from '../test/groupFixtures'
 import {
+  addFallMinors,
+  FALL,
   readyUmpireBrowser,
   UMPIRE_BROWSER_NOW,
   umpireBrowserFixture
 } from '../test/umpireBrowserFixture'
 import { seedUmpireCounts } from '../test/umpireTypes'
-
-/** League A's second current season, with its own level and same-day games. */
-const FALL = 'sea_layout_fall_minors'
-
-/**
- * "Fall Minors": a second current season of League A with a different
- * required level and a game three hours before each Demo Regular copy, the
- * same day in Los Angeles. The before capture builds the same.
- */
-async function addFallMinors(f: GroupFixture, games: number): Promise<void> {
-  const db = f.h.db
-  await db
-    .insertInto('seasons')
-    .values({
-      id: FALL,
-      league_id: f.leagueA,
-      name: 'Fall Minors',
-      year: 2027,
-      starts_on: '2027-03-02',
-      ends_on: '2027-06-30',
-      timezone: 'America/Los_Angeles'
-    })
-    .execute()
-  await db
-    .insertInto('umpire_levels')
-    .values({
-      id: 'ulv_browser_minors',
-      league_id: f.leagueA,
-      name: 'minors',
-      position: 1
-    })
-    .execute()
-  await db
-    .insertInto('season_umpire_requirements')
-    .values({ season_id: FALL, level_id: 'ulv_browser_minors' })
-    .execute()
-  await seedUmpireCounts(db, FALL)
-  await db
-    .insertInto('season_teams')
-    .values(
-      [f.teamA, f.teamB].map(teamId => ({
-        season_id: FALL,
-        team_id: teamId,
-        active: true
-      }))
-    )
-    .onConflict(oc => oc.doNothing())
-    .execute()
-  const game = await db
-    .selectFrom('games')
-    .selectAll()
-    .where('id', '=', 'gam_umpire_g1')
-    .executeTakeFirstOrThrow()
-  for (let i = 0; i < games; i++)
-    await db
-      .insertInto('games')
-      .values({
-        ...game,
-        id: `gam_minors_${i}`,
-        season_id: FALL,
-        notes: null,
-        start_at: new Date(
-          new Date(game.start_at).getTime() + i * 86400000 - 3 * 3600000
-        ),
-        end_at: new Date(
-          new Date(game.end_at!).getTime() + i * 86400000 - 3 * 3600000
-        )
-      })
-      .execute()
-}
 
 /** Whether `shown` runs in the order of `all`, each once. */
 function inOrderOf(shown: string[], all: string[]): boolean {

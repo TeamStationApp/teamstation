@@ -2083,6 +2083,10 @@ describe('the coach’s game plan', function () {
     rows.forEach((row, at) => {
       row.getBoundingClientRect = () => box(100 + at * 44, 43)
     })
+    // A lineup keeps its own words for a screen reader.
+    expect(rows[0].getAttribute('aria-roledescription')).equals(
+      'draggable lineup row'
+    )
     document.querySelector<HTMLElement>(
       '[data-testid="Plan sheet area"]'
     )!.getBoundingClientRect = () => box(0, 600)
