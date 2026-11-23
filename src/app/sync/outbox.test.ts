@@ -5534,6 +5534,12 @@ describe('the phone outbox', function () {
       const committed = new Map<string, Answer>()
       const writing = new Map<string, Promise<void>>()
       let digest = 'D0'
+      // The write commits when the test says so, well past the phone's
+      // deadline however slowly the machine runs.
+      let commit!: () => void
+      const commitAllowed = new Promise<void>(resolve => {
+        commit = resolve
+      })
       const p = phone(
         async sent => {
           if (sent.method === 'GET') return { body: lineupsDoc(digest) }
@@ -5549,8 +5555,7 @@ describe('the phone outbox', function () {
               done = resolve
             })
           )
-          // Committing well past the phone's deadline.
-          await new Promise(resolve => setTimeout(resolve, 80))
+          await commitAllowed
           digest = 'D1'
           committed.set(key, { body: lineupsDoc('D1') })
           done()
@@ -5569,7 +5574,8 @@ describe('the phone outbox', function () {
       p.client.wakeOutbox(true)
       await p.client.drainOutbox()
       expect(p.rows().map(row => row.state)).deep.equals(['pending'])
-      await new Promise(resolve => setTimeout(resolve, 100))
+      commit()
+      await Promise.all(writing.values())
       p.client.wakeOutbox(true)
       await p.client.drainOutbox()
       expect(p.rows()).deep.equals([])
