@@ -560,6 +560,17 @@ async function streamPutFile(options: {
   return await streamPut({ ...options, source, length })
 }
 
+/** The Space said no to a request, with this HTTP status. */
+export class SpaceRefusal extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message)
+    this.name = 'SpaceRefusal'
+  }
+}
+
 /** Streams `length` bytes of `source` as one sized PUT, and returns its ETag. */
 async function streamPut(options: {
   space: SpaceSettings
@@ -666,10 +677,11 @@ async function streamPut(options: {
     // No sense pushing the rest of a three-hour game at something that has
     // already said no.
     request.destroy()
-    throw new Error(
+    throw new SpaceRefusal(
       withoutSecrets(
         `Upload of ${key} answered ${result.status} ${result.detail.slice(0, 200)}`
-      )
+      ),
+      result.status
     )
   }
 
