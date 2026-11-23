@@ -1,4 +1,7 @@
-import { UMPIRE_LEADERBOARD_MAX_PAGE } from '../../common/umpireSchedule'
+import {
+  UMPIRE_AROUND_GAME,
+  UMPIRE_LEADERBOARD_MAX_PAGE
+} from '../../common/umpireSchedule'
 import { UMPIRE_SORT_KEYS } from '../../common/umpireSort'
 
 const sortKeys =
@@ -84,6 +87,69 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
         },
         responses
       }
+    }
+  }
+  const notificationSettings = {
+    type: 'object',
+    properties: {
+      missingSlots: {
+        type: 'boolean',
+        description:
+          'A daily digest, at 10:00 in the league city’s time zone (10:00 Pacific when the league has none), of the league’s games within `daysBefore` days that have not started, are not final or cancelled, and still have an empty required umpire position. Nothing is sent on a day none qualifies. It waits in Pending until dismissed or replaced by the next day’s'
+      },
+      daysBefore: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 30,
+        description:
+          'The digest’s window in calendar days, counted in each game’s own zone (`games.timezone`), as the umpire schedule dates it'
+      },
+      signUps: {
+        type: 'boolean',
+        description:
+          'A notice when an umpire (or their guardian) signs up for a slot, unless you signed up'
+      },
+      withdrawals: {
+        type: 'boolean',
+        description:
+          'A notice when an umpire (or whoever signed them up) withdraws from a slot, unless you did. An admin removing someone else’s assignment sends none'
+      }
+    }
+  }
+  const notificationAnswer = {
+    description:
+      'Your own settings for the league; never changed, they are off with a 7-day window',
+    content: {
+      'application/json': {
+        schema: {
+          ...notificationSettings,
+          required: ['missingSlots', 'daysBefore', 'signUps', 'withdrawals']
+        }
+      }
+    }
+  }
+  paths['/leagues/{leagueId}/umpire-notifications'] = {
+    get: {
+      summary:
+        'Read your own Umpire Management Notifications for a league you administer',
+      description:
+        'Each notice is listed in your notifications and pushed to your devices with League management on (`leagueManagement` on the push registration), and opens the league’s umpire schedule on its game. Settings are read and saved whatever the league’s umpire management, by whoever administers the league (or is a site administrator); notices are recorded only while the league manages umpires. A former admin is refused, and their settings are kept for when they are an admin again.',
+      security: [{ bearer: [] }],
+      parameters,
+      responses: { ...responses, 200: notificationAnswer }
+    },
+    put: {
+      summary:
+        'Change your own Umpire Management Notifications for a league you administer',
+      description:
+        'Any of the four settings; one left out keeps its value. `daysBefore` that is not a whole number from 1 to 30 is a 400.',
+      security: [{ bearer: [] }],
+      parameters,
+      requestBody: {
+        required: true,
+        content: { 'application/json': { schema: notificationSettings } }
+      },
+      responses: { ...responses, 200: notificationAnswer }
     }
   }
   paths['/games/{gameId}/umpire-notes/{typeId}'] = {
@@ -524,9 +590,12 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
         {
           name: 'around',
           in: 'query',
-          schema: { type: 'string', enum: ['next'] },
+          schema: {
+            type: 'string',
+            pattern: `^(next|${UMPIRE_AROUND_GAME.slice(1, -1)})$`
+          },
           description:
-            '`next` opens a first page on the game the table opens on, the first under way or still to start, with rows before it. Needs `paged`, and does not take `cursor`'
+            '`next` opens a first page on the game the table opens on, the first under way or still to start, with rows before it. A game id opens it on that game where it is listed (an umpire notice opens the schedule on its game), and as `next` does when the game is not listed (filtered out, or gone). Anything else is a 400. Needs `paged`, and does not take `cursor`'
         },
         {
           name: 'limit',

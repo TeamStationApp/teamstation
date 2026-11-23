@@ -119,6 +119,8 @@ export const API_KEY_FAMILIES: Record<ApiKeyArea, readonly string[]> = {
   umpire: [
     'GET /leagues/{leagueId}/umpire-settings',
     'PUT /leagues/{leagueId}/umpire-settings',
+    'GET /leagues/{leagueId}/umpire-notifications',
+    'PUT /leagues/{leagueId}/umpire-notifications',
     'GET /leagues/{leagueId}/umpire-types',
     'POST /leagues/{leagueId}/umpire-types',
     'DELETE /leagues/{leagueId}/umpire-types/{typeId}',

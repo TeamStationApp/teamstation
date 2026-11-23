@@ -645,8 +645,9 @@ async function sortedSchedule(
  * `positions` are the whole filtered list's, so each page reads the schedule
  * whole and cuts its rows from it, whose decoding and drawing is what a page
  * saves. A cursor carries the sort it was read in, which an explicit `sort`
- * must match. `around` opens on the row the table opens on, the first under
- * way or still to start in time order, at its place in the sorted list.
+ * must match. `around` opens on the row the table opens on, at its place in
+ * the sorted list: the game it names when that game is listed, else the
+ * first under way or still to start in time order.
  */
 export async function umpireSchedulePage(
   db: Kysely<Database>,
@@ -677,12 +678,19 @@ export async function umpireSchedulePage(
   const key = (row: UmpireGameRow): UmpireSortRow => keys.get(row.id)!
   // `paged` always has one.
   const limit = ask.limit!
-  const opening = ask.around
-    ? initialUmpireGame(inListOrder(rows, 'asc'), now())
-    : undefined
+  // A notice's game opens the page where it is listed; a game not listed
+  // (filtered out, or gone) opens it as `next` does.
+  const asked =
+    ask.around?.game == null
+      ? undefined
+      : rows.find(row => row.id === ask.around!.game)
+  const opening =
+    ask.around == null
+      ? undefined
+      : (asked ?? initialUmpireGame(inListOrder(rows, 'asc'), now()))
   return {
     ...head,
-    ...(ask.around
+    ...(ask.around != null
       ? umpirePageAround(
           rows,
           Math.max(0, rows.indexOf(opening!)),

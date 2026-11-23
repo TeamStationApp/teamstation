@@ -499,6 +499,82 @@ describe('push registrations', function () {
       expect((await register(body)).status, JSON.stringify(body)).equals(400)
   })
 
+  it('has League management on unless the device turns it off, and changes it alone', async function () {
+    const league = async (id: string): Promise<boolean> =>
+      (
+        await db
+          .selectFrom('push_registrations')
+          .select('league_management')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).league_management
+    // An app from before League management never sends it: it is on.
+    const older = await registered({
+      platform: 'android',
+      address: 'fcm-token:older',
+      messages: true
+    })
+    expect(await league(older)).equals(true)
+    const off = await registered({
+      platform: 'ios',
+      address: '00ef'.repeat(16),
+      leagueManagement: false
+    })
+    expect(await league(off)).equals(false)
+    // Posted again, it takes what is posted, and on when left out.
+    expect(
+      await registered({ platform: 'ios', address: '00ef'.repeat(16) })
+    ).equals(off)
+    expect(await league(off)).equals(true)
+    expect(
+      (
+        await register({
+          platform: 'ios',
+          address: '00ef'.repeat(16),
+          leagueManagement: 'no'
+        })
+      ).status
+    ).equals(400)
+    // A PATCH of it alone changes it alone, and answers all three.
+    const patched = await h.request(
+      'PATCH',
+      `${ROUTE}/${older}`,
+      { leagueManagement: false },
+      101
+    )
+    expect(await patched.json()).deep.equals({
+      id: older,
+      messages: true,
+      rsvpEvents: false,
+      leagueManagement: false
+    })
+    expect(await league(older)).equals(false)
+    expect(
+      (
+        await h.request(
+          'PATCH',
+          `${ROUTE}/${older}`,
+          { leagueManagement: 1 },
+          101
+        )
+      ).status
+    ).equals(400)
+    const kept = await h.request(
+      'PATCH',
+      `${ROUTE}/${older}`,
+      { rsvpEvents: true },
+      101
+    )
+    expect(await kept.json()).deep.include({
+      rsvpEvents: true,
+      leagueManagement: false
+    })
+    // League management notices go only where it is on.
+    expect(
+      (await liveRegistrations(db, [P1], 'league_management')).map(to => to.id)
+    ).deep.equals([off])
+  })
+
   it('changes the switches of this session’s own registration only', async function () {
     const mine = await registered({
       platform: 'android',
@@ -516,18 +592,21 @@ describe('push registrations', function () {
     expect(await answer.json()).deep.equals({
       id: mine,
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
     // A switch left out keeps its value; nothing to change answers as is.
     expect(await (await patch(mine, { messages: false })).json()).deep.equals({
       id: mine,
       messages: false,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
     expect(await (await patch(mine, {})).json()).deep.equals({
       id: mine,
       messages: false,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
     for (const body of [{ messages: 'on' }, { rsvpEvents: 1 }, 'on'])
       expect((await patch(mine, body)).status, JSON.stringify(body)).equals(400)

@@ -37,6 +37,29 @@ it('cleans every umpire client response and persists each management action', as
     expect(
       (await client.setUmpireSettings(f.leagueA, { sort: null })).sort
     ).equals(null)
+    // The admin's own Umpire Management Notifications.
+    expect(await client.umpireNotifications(f.leagueA)).deep.equals({
+      missingSlots: false,
+      daysBefore: 7,
+      signUps: false,
+      withdrawals: false
+    })
+    expect(
+      await client.setUmpireNotifications(f.leagueA, {
+        missingSlots: true,
+        daysBefore: 12
+      })
+    ).deep.equals({
+      missingSlots: true,
+      daysBefore: 12,
+      signUps: false,
+      withdrawals: false
+    })
+    expect((await client.umpireNotifications(f.leagueA)).daysBefore).equals(12)
+    const refused = await client
+      .setUmpireNotifications(f.leagueA, { daysBefore: 31 })
+      .catch((error: unknown) => error)
+    expect(refused).property('status', 400)
     const ordered = await client.setUmpireSeasonPriority(f.leagueA, [
       f.seasonA,
       f.playoffs

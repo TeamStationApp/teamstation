@@ -35,7 +35,7 @@ const client: PushClient = {
   },
   updatePush: async (id, change) => {
     patched.push([id, change])
-    return { ...OFF, ...change }
+    return { ...OFF, leagueManagement: true, ...change }
   }
 }
 
@@ -431,7 +431,7 @@ describe('notifications on a phone', function () {
       },
       updatePush: async (id, change) => {
         order.push(`patch ${id} ${String(change.messages)}`)
-        return { ...OFF, ...change }
+        return { ...OFF, leagueManagement: true, ...change }
       }
     }
     const device = loadWith(module('granted', 'granted', 'fcm-old'))

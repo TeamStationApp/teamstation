@@ -9,6 +9,7 @@ import {
   PITCH_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
+import { idPrefixes, makeId } from '../common/ids'
 import { ROLE_FLAGS, ROLES } from '../common/roles'
 import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
 import { routesOf } from '../test/routeTable'
@@ -556,6 +557,69 @@ describe('the API document', function () {
     expect(
       paths['/leagues/{leagueId}/umpire-requirements'].get.description
     ).includes('`priority`')
+  })
+
+  it('documents an admin’s own Umpire Management Notifications, a notice’s game as `around`, and League management', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const notices = paths['/leagues/{leagueId}/umpire-notifications']
+    expect(Object.keys(notices).sort()).deep.equals(['get', 'put'])
+    const answer = notices.get.responses[200].content['application/json'].schema
+    expect(answer.required).deep.equals([
+      'missingSlots',
+      'daysBefore',
+      'signUps',
+      'withdrawals'
+    ])
+    expect(answer.properties.daysBefore).deep.include({
+      type: 'integer',
+      minimum: 1,
+      maximum: 30
+    })
+    expect(answer.properties.missingSlots.description).includes('10:00')
+    // The window is counted as `digestGames` counts it, and docs/api.md says.
+    expect(answer.properties.daysBefore.description).includes(
+      'counted in each game’s own zone (`games.timezone`), as the umpire schedule dates it'
+    )
+    expect(answer.properties.daysBefore.description).not.includes('season')
+    expect(notices.get.description).includes('`leagueManagement`')
+    expect(notices.put.security).deep.equals([{ bearer: [] }])
+    expect(
+      notices.put.requestBody.content['application/json'].schema.required
+    ).equals(undefined)
+    const around = paths[
+      '/leagues/{leagueId}/umpire-schedule'
+    ].get.parameters.find(
+      (parameter: { name: string }) => parameter.name === 'around'
+    )
+    expect(around.description).includes('A game id opens it on that game')
+    expect(new RegExp(around.schema.pattern).test('gam_one')).equals(true)
+    expect(new RegExp(around.schema.pattern).test('next')).equals(true)
+    expect(new RegExp(around.schema.pattern).test('bogus')).equals(false)
+    // The game prefix comes from `idPrefixes`, as the server checks it.
+    expect(around.schema.pattern).equals(
+      `^(next|${idPrefixes.game}_[A-Za-z0-9_-]{1,64})$`
+    )
+    expect(new RegExp(around.schema.pattern).test(makeId('game'))).equals(true)
+    expect(new RegExp(around.schema.pattern).test(makeId('league'))).equals(
+      false
+    )
+    const registration = paths['/me/push-registrations'].post
+    expect(
+      registration.requestBody.content['application/json'].schema.properties
+        .leagueManagement
+    ).deep.include({ type: 'boolean', default: true })
+    expect(registration.description).includes('League management notices')
+    const patched = paths['/me/push-registrations/{id}'].patch
+    expect(
+      patched.responses[200].content['application/json'].schema.required
+    ).includes('leagueManagement')
+    const inbox = paths['/me/notifications'].get.description
+    for (const words of [
+      'umpireMissingSlots',
+      'umpireSignUp',
+      'umpireWithdraw'
+    ])
+      expect(inbox).includes(words)
   })
 
   it('documents umpire availability: saving your own, querying the list by it, and an umpire’s commitments', function () {

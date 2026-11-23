@@ -494,6 +494,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/umpires/context.js',
   'server/umpires/leaderboardPages.e2e.js',
   'server/umpires/notes.js',
+  'server/umpires/notices.js',
   'server/umpires/openApi.js',
   'server/umpires/presence.js',
   'server/umpires/queryInteger.js',

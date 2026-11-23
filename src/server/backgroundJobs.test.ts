@@ -37,6 +37,10 @@ function recordingJobs(
       ran.push('startRsvpReminders')
       return child('rsvpReminders', ran)
     },
+    startUmpireDigests: () => {
+      ran.push('startUmpireDigests')
+      return child('umpireDigests', ran)
+    },
     startChatAttachmentPurge: job('startChatAttachmentPurge'),
     startChatReconciler: job('startChatReconciler'),
     startRosterBumpPrune: job('startRosterBumpPrune'),
@@ -52,7 +56,7 @@ function recordingJobs(
 }
 
 describe('startBackgroundJobs', function () {
-  it('runs each job of the forking path, and stops the reminder sweep and both children at once', async function () {
+  it('runs each job of the forking path, and stops the reminder and umpire digest sweeps and both children at once', async function () {
     const ran: string[] = []
     const said: string[] = []
     const children = startBackgroundJobs(
@@ -69,6 +73,7 @@ describe('startBackgroundJobs', function () {
       'startKeySweep',
       'startLocalCopyWarnings',
       'startRsvpReminders',
+      'startUmpireDigests',
       'startChatAttachmentPurge',
       'startChatReconciler',
       'startRosterBumpPrune',
@@ -80,6 +85,7 @@ describe('startBackgroundJobs', function () {
     await children.stop('SIGTERM')
     expect(ran).deep.equals([
       'stop rsvpReminders SIGTERM',
+      'stop umpireDigests SIGTERM',
       'stop pushSender SIGTERM',
       'stop statsBuilder SIGTERM'
     ])
@@ -94,6 +100,7 @@ describe('startBackgroundJobs', function () {
       'startDiscardSweep',
       'startLocalCopyWarnings',
       'startRsvpReminders',
+      'startUmpireDigests',
       'startChatAttachmentPurge',
       'startChatReconciler',
       'startRosterBumpPrune',
@@ -102,7 +109,7 @@ describe('startBackgroundJobs', function () {
     ])
   })
 
-  it('starts the RSVP reminder sweep when on, and not when off', function () {
+  it('starts the RSVP reminder and umpire digest sweeps when on, and not when off', function () {
     for (const enabled of [true, false]) {
       const ran: string[] = []
       startBackgroundJobs(
@@ -112,6 +119,12 @@ describe('startBackgroundJobs', function () {
         () => undefined
       )
       expect(ran.includes('startRsvpReminders')).equals(enabled)
+      expect(ran.includes('startUmpireDigests')).equals(enabled)
+      // Right after the reminders it shares the push queue with.
+      if (enabled)
+        expect(ran.indexOf('startUmpireDigests')).equals(
+          ran.indexOf('startRsvpReminders') + 1
+        )
     }
   })
 

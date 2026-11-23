@@ -22,6 +22,7 @@ import { requireGroupAdmin } from '../groups/rights'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import type { PushEnqueuer } from '../push/queue'
 import { noteScopeChange } from '../socket/syncRevision'
 import * as admin from '../umpires/admin'
 import { deleteSlot, leaderboard, saveSlot } from '../umpires/assignments'
@@ -43,6 +44,14 @@ import {
   removeNoteType,
   saveNote
 } from '../umpires/notes'
+import {
+  type LeagueNoticePush,
+  noticeSettings,
+  noticeSettingsChange,
+  recordSignUp,
+  recordWithdrawal,
+  saveNoticeSettings
+} from '../umpires/notices'
 import { queryInteger } from '../umpires/queryInteger'
 import { savePeople } from '../umpires/savePeople'
 import {
@@ -96,9 +105,19 @@ function leaderboardQueryOf(
   }
 }
 
+/**
+ * `umpireRoutes`' options: `push` queues a League management notice's push
+ * once the write that recorded it commits. Without it notices are recorded
+ * and nothing is pushed.
+ */
+export interface UmpireRouteOptions {
+  push?: Pick<PushEnqueuer, 'add'>
+}
+
 export function umpireRoutes(
   db: Kysely<Database>,
-  media?: MediaContext
+  media?: MediaContext,
+  options: UmpireRouteOptions = {}
 ): Router {
   const router = Router()
   router.get(
@@ -173,6 +192,31 @@ export function umpireRoutes(
         return { management, credits, sort }
       })
       res.json(settings)
+    })
+  )
+
+  router.get(
+    '/leagues/:leagueId/umpire-notifications',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json(await noticeSettings(db, req.actor, String(req.params.leagueId)))
+    })
+  )
+  router.put(
+    '/leagues/:leagueId/umpire-notifications',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      const change = noticeSettingsChange(req.body)
+      res.json(
+        await atomic(db, async trx => {
+          await lockKeys(trx, ['creation:parent-graph', `umpires:${leagueId}`])
+          return await saveNoticeSettings(trx, actor, leagueId, change)
+        })
+      )
     })
   )
 
@@ -539,19 +583,31 @@ export function umpireRoutes(
       withAsync(async (req, res) => {
         const actor = req.actor
         if (actor == null) throw unauthorized()
-        await atomic(db, async trx => {
+        const pushed = await atomic(db, async trx => {
           await lockKeys(trx, ['creation:parent-graph', 'users.closeInto'])
+          let notice: LeagueNoticePush[] = []
           if (method === 'post')
-            await saveSlot(trx, actor, String(req.params.gameId), req.body)
-          else
-            await deleteSlot(
+            notice = await recordSignUp(
+              trx,
+              await saveSlot(trx, actor, String(req.params.gameId), req.body)
+            )
+          else {
+            const removed = await deleteSlot(
               trx,
               actor,
               String(req.params.gameId),
               req.body?.slot
             )
+            if (removed.withdrawal)
+              notice = await recordWithdrawal(trx, removed)
+          }
           noteScopeChange(trx, { gameId: String(req.params.gameId) })
+          return notice
         })
+        // Only once the notice is written, and not waited on: `add` never
+        // throws, so a queue outage drops the push and keeps the answer.
+        for (const request of pushed)
+          options.push?.add(request).catch(() => undefined)
         res.json({ ok: true })
       })
     )

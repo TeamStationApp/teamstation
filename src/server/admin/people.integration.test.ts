@@ -235,6 +235,81 @@ describe('one person, however many rows', function () {
     ])
   })
 
+  it('takes the closed row’s umpire notices, keeping the survivor’s own for a league both chose for', async function () {
+    if (db == null) this.skip()
+    const keeper = mintUser()
+    const closing = mintUser()
+    for (const made of [keeper, closing])
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made),
+        legacyId: legacyId(made),
+        display_name: 'Rollie Fingers'
+      })
+    await db
+      .insertInto('leagues')
+      .values([
+        { id: 'lea_merge_notice_both', name: 'Both' },
+        { id: 'lea_merge_notice_closed', name: 'Closed only' }
+      ])
+      .onConflict(oc => oc.doNothing())
+      .execute()
+    await db
+      .insertInto('league_umpire_notifications')
+      .values([
+        {
+          league_id: 'lea_merge_notice_both',
+          user_id: userIdOfGumbo(keeper),
+          missing_slots: false,
+          days_before: 5
+        },
+        {
+          league_id: 'lea_merge_notice_both',
+          user_id: userIdOfGumbo(closing),
+          missing_slots: true,
+          days_before: 20
+        },
+        {
+          league_id: 'lea_merge_notice_closed',
+          user_id: userIdOfGumbo(closing),
+          sign_ups: true,
+          days_before: 2
+        }
+      ])
+      .execute()
+
+    await closeInto(db, userIdOfGumbo(closing), userIdOfGumbo(keeper))
+
+    expect(
+      await db
+        .selectFrom('league_umpire_notifications')
+        .select([
+          'league_id',
+          'user_id',
+          'missing_slots',
+          'days_before',
+          'sign_ups'
+        ])
+        .where('user_id', 'in', [keeper, closing].map(userIdOfGumbo))
+        .orderBy('league_id')
+        .execute()
+    ).deep.equals([
+      {
+        league_id: 'lea_merge_notice_both',
+        user_id: userIdOfGumbo(keeper),
+        missing_slots: false,
+        days_before: 5,
+        sign_ups: false
+      },
+      {
+        league_id: 'lea_merge_notice_closed',
+        user_id: userIdOfGumbo(keeper),
+        missing_slots: false,
+        days_before: 2,
+        sign_ups: true
+      }
+    ])
+  })
+
   it('keeps the jersey the other row had', async function () {
     if (db == null) this.skip()
     const team = makeId('team')

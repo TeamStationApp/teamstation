@@ -1,10 +1,17 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import {
+  DummyDriver,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler
+} from 'kysely'
 import { describe, it } from 'mocha'
 
 import type { Database } from '../db/database'
 import {
   limited,
+  liveRegistration,
   type PushAddress,
   type PushMessage,
   type PushResult,
@@ -31,6 +38,33 @@ const wake: PushMessage = {
   data: { payload: '{}' }
 }
 const noDatabase = null as unknown as Kysely<Database>
+
+describe('a live registration', function () {
+  /** Compiles SQL without a database. */
+  const compiler = new Kysely<Database>({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => new DummyDriver(),
+      createIntrospector: db => new PostgresIntrospector(db),
+      createQueryCompiler: () => new PostgresQueryCompiler()
+    }
+  })
+  const text = (wants: Parameters<typeof liveRegistration>[0]): string =>
+    liveRegistration(wants).compile(compiler).sql
+
+  it('needs the switch the push is for on, League management among them', function () {
+    expect(text('league_management')).contains(
+      '"push_registrations"."league_management"'
+    )
+    expect(text('league_management')).not.contains('"messages"')
+    expect(text('league_management')).not.contains('"rsvp_events"')
+    expect(text('rsvp_events')).contains('"push_registrations"."rsvp_events"')
+    expect(text('rsvp_events')).not.contains('league_management')
+    expect(text('messages')).not.contains('league_management')
+    // A read's clear asks for none of them.
+    expect(text(null)).not.contains('league_management')
+  })
+})
 
 describe('sending to devices', function () {
   it('counts unsent whoever no device was sent to, a device skipped as much as one failed', async function () {

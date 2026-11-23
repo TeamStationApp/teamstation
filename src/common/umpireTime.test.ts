@@ -8,6 +8,7 @@ import {
   DATE_FORMAT_LIMIT,
   dateFormatBuilds,
   dateFormatCount,
+  daysBetween,
   localDate,
   normalAvailability,
   shortZoneName,
@@ -239,5 +240,30 @@ describe('localDate', function () {
     const built = dateFormatBuilds()
     localDate(instant, 'america/new_york')
     expect(dateFormatBuilds()).to.equal(built + 1)
+  })
+})
+
+describe('daysBetween', () => {
+  it('counts calendar days across month and year ends, either way', () => {
+    expect(daysBetween('2027-01-31', '2027-02-01')).to.equal(1)
+    expect(daysBetween('2027-02-28', '2027-03-01')).to.equal(1)
+    expect(daysBetween('2028-02-28', '2028-03-01')).to.equal(2)
+    expect(daysBetween('2026-12-31', '2027-01-01')).to.equal(1)
+    expect(daysBetween('2027-04-30', '2027-04-30')).to.equal(0)
+    expect(daysBetween('2027-05-03', '2027-04-30')).to.equal(-3)
+  })
+
+  it('counts a day as a day across both daylight-saving changes', () => {
+    // New York springs forward on 14 March 2027 and falls back on 7 November.
+    const zone = 'America/New_York'
+    const before = localDate(Date.parse('2027-03-13T15:00:00Z'), zone)
+    const after = localDate(Date.parse('2027-03-15T03:30:00Z'), zone)
+    expect(daysBetween(before, after)).to.equal(1)
+    expect(
+      daysBetween(
+        localDate(Date.parse('2027-11-06T23:00:00Z'), zone),
+        localDate(Date.parse('2027-11-08T04:30:00Z'), zone)
+      )
+    ).to.equal(1)
   })
 })

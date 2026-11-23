@@ -809,7 +809,7 @@ describe('umpire schedule pages (U9)', function () {
       f.leagueA,
       'schedule',
       { days: [5] },
-      { around: true, limit: 2 }
+      { around: {}, limit: 2 }
     )
     expect(answer.anchorId).not.equals(null)
     const held = process.env.TS_UMPIRE_NOW
@@ -913,7 +913,9 @@ describe('umpire schedule pages (U9)', function () {
     expect(await says('&paged=1&limit=501')).equals(
       'limit must be at most 500 with paged'
     )
-    expect(await says('&paged=1&around=soon')).equals('around must be next')
+    expect(await says('&paged=1&around=soon')).equals(
+      'around must be next or a game id'
+    )
     const first: UmpirePage = await read('&paged=1&limit=1')
     expect(
       await says(`&paged=1&around=next${withCursor(first.nextCursor ?? '')}`)
@@ -1495,6 +1497,39 @@ describe('umpire schedule sort (#348)', function () {
     const at = ids(whole.games).indexOf(page.anchorId)
     expect(ids(page.items)).deep.equals(
       ids(whole.games).slice(Math.max(0, at - 2), at + 4)
+    )
+  })
+
+  it('opens on a notice’s game, at its place in each sort, or on the next game when it is not listed', async () => {
+    for (const text of ['date,season', '-certification']) {
+      const whole = await read(`&sort=${text}`)
+      const page = await read(
+        `&sort=${text}&paged=1&limit=4&around=gam_sort_fall_6`
+      )
+      expect(page.anchorId, text).equals('gam_sort_fall_6')
+      const at = ids(whole.games).indexOf('gam_sort_fall_6')
+      expect(ids(page.items), text).deep.equals(
+        ids(whole.games).slice(Math.max(0, at - 2), at + 4)
+      )
+    }
+    // Filtered out (another level), or no such game: as around=next does.
+    const next = await read('&sort=date&paged=1&limit=4&around=next')
+    for (const query of [
+      '&sort=date&paged=1&limit=4&around=gam_sort_fall_6&levels=ulv_majors',
+      '&sort=date&paged=1&limit=4&around=gam_missing'
+    ]) {
+      const page = await read(query)
+      const filtered = query.includes('levels')
+        ? await read('&sort=date&paged=1&limit=4&around=next&levels=ulv_majors')
+        : next
+      expect(page.anchorId, query).equals(filtered.anchorId)
+      expect(ids(page.items), query).deep.equals(ids(filtered.items))
+    }
+    expect((await read('&paged=1&around=bogus', 400)).message).equals(
+      'around must be next or a game id'
+    )
+    expect((await read('&around=gam_sort_fall_6', 400)).message).equals(
+      'around needs paged'
     )
   })
 

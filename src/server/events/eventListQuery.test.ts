@@ -262,7 +262,7 @@ describe('GET /events query', function () {
   it('takes only the page parameters on an umpire schedule', function () {
     expect(parseUmpirePageQuery({ view: 'schedule' })).deep.include({
       paged: false,
-      around: false,
+      around: undefined,
       limit: undefined,
       cursor: undefined
     })
@@ -270,7 +270,7 @@ describe('GET /events query', function () {
     expect(parseUmpirePageQuery({ limit: 'many' }).limit).equals(undefined)
     expect(
       parseUmpirePageQuery({ paged: '1', around: 'next', limit: '9' })
-    ).deep.include({ paged: true, around: true, limit: 9 })
+    ).deep.include({ paged: true, around: {}, limit: 9 })
     expect(parseUmpirePageQuery({ paged: '1' }).limit).equals(50)
     // Every page computes the whole schedule, so a table reads what it holds
     // again in one read.
@@ -340,6 +340,56 @@ describe('GET /events query', function () {
     expect(parseTeamGamesQuery({ paged: '1' }).limit).equals(50)
     expect(() => parseTeamGamesQuery({ around: 'next' })).throws(
       'around needs paged'
+    )
+  })
+
+  it('opens an umpire schedule around next or a game id, and nothing else', function () {
+    expect(
+      parseUmpirePageQuery({ paged: '1', around: 'gam_x-Y_9' })
+    ).deep.include({ paged: true, around: { game: 'gam_x-Y_9' } })
+    expect(
+      parseUmpirePageQuery({ paged: '1', around: 'next' }).around
+    ).deep.equals({})
+    const says = (query: Record<string, unknown>): string => {
+      try {
+        parseUmpirePageQuery(query)
+      } catch (error) {
+        if (error instanceof HttpError) return error.message
+        throw error
+      }
+      throw new Error('expected a 400')
+    }
+    for (const around of [
+      'bogus',
+      'gam_',
+      'lea_one',
+      'gam_one two',
+      `gam_${'x'.repeat(65)}`,
+      'NEXT'
+    ])
+      expect(says({ paged: '1', around })).equals(
+        'around must be next or a game id'
+      )
+    expect(says({ paged: '1', around: ['next', 'next'] })).equals(
+      'around must be a non-empty string'
+    )
+    expect(says({ around: 'gam_one' })).equals('around needs paged')
+    expect(says({ around: 'next' })).equals('around needs paged')
+    const cursor = encodeUmpireCursor({
+      sort: ['date'],
+      row: {
+        id: 'gam_1',
+        start: Date.parse('2027-04-03T15:00:00.000Z'),
+        day: '2027-04-03',
+        seasonId: 'sea_1',
+        seasonName: 'Demo Regular',
+        seasonPriority: 1,
+        levelName: 'majors'
+      },
+      direction: 'next'
+    })
+    expect(says({ paged: '1', around: 'gam_one', cursor })).equals(
+      'around does not apply with cursor'
     )
   })
 })

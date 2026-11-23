@@ -569,24 +569,57 @@ describe('api client', function () {
         JSON.stringify(registration)
       ]
     ])
+    // League management goes with the others when the device says it.
+    const third = stubFetch(200, { id: 'psh_2' })
+    await client(third).registerPush({
+      ...registration,
+      leagueManagement: false
+    })
+    expect(JSON.parse(String(third.calls[0].body))).deep.include({
+      leagueManagement: false
+    })
     // A switch changed on the device changes the registration, by its id.
     const patched = stubFetch(200, {
       id: 'psh/1',
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: false
     })
     expect(
-      await client(patched).updatePush('psh/1', { rsvpEvents: true })
-    ).deep.equals({ messages: true, rsvpEvents: true })
+      await client(patched).updatePush('psh/1', {
+        rsvpEvents: true,
+        leagueManagement: false
+      })
+    ).deep.equals({ messages: true, rsvpEvents: true, leagueManagement: false })
     expect(
       patched.calls.map(call => [call.method, call.url, call.body])
     ).deep.equals([
       [
         'PATCH',
         'http://example.com/api/v1/me/push-registrations/psh%2F1',
-        JSON.stringify({ rsvpEvents: true })
+        JSON.stringify({ rsvpEvents: true, leagueManagement: false })
       ]
     ])
+    // A server from before League management answers two: it is on there.
+    expect(
+      await client(
+        stubFetch(200, { id: 'psh/1', messages: false, rsvpEvents: true })
+      ).updatePush('psh/1', { messages: false })
+    ).deep.equals({ messages: false, rsvpEvents: true, leagueManagement: true })
+    let unclean: unknown
+    await client(
+      stubFetch(200, {
+        id: 'psh/1',
+        messages: false,
+        rsvpEvents: true,
+        leagueManagement: 'yes'
+      })
+    )
+      .updatePush('psh/1', { messages: false })
+      .catch((error: unknown) => {
+        unclean = error
+      })
+    expect(unclean).not.equals(undefined)
     // Sign-out deletes it again, by its id.
     const deleted = stubFetch(200, {})
     await client(deleted).unregisterPush('psh/1')
@@ -675,7 +708,8 @@ describe('api client', function () {
     expect(await client.registerPush(registration)).equals('psh_1')
     expect(await client.updatePush('psh_1', { rsvpEvents: true })).deep.equals({
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
     await client.unregisterPush('psh_1')
     expect(client.offline).equals(true)
@@ -3028,13 +3062,60 @@ describe('api client', function () {
     expect(answer.positions[0].optionalHeader).equals('Optional')
     await client.umpireSchedulePage('l/1', 'view=schedule', { cursor: 'a+b' })
     await client.umpireSchedulePage('l/1')
+    // A notice opens the schedule on its game.
+    await client.umpireSchedulePage('l/1', 'view=schedule', {
+      around: 'gam_one'
+    })
     expect(
       calls.map(call => call.url.replace('http://x/api/v1', ''))
     ).deep.equals([
       '/leagues/l%2F1/umpire-schedule?view=schedule&days=0&days=4&paged=1&around=next&limit=9',
       '/leagues/l%2F1/umpire-schedule?view=schedule&paged=1&cursor=a%2Bb',
-      '/leagues/l%2F1/umpire-schedule?paged=1'
+      '/leagues/l%2F1/umpire-schedule?paged=1',
+      '/leagues/l%2F1/umpire-schedule?view=schedule&paged=1&around=gam_one'
     ])
+  })
+
+  it('reads and changes the caller’s own Umpire Management Notifications', async function () {
+    const calls: Call[] = []
+    const answer = {
+      missingSlots: true,
+      daysBefore: 3,
+      signUps: false,
+      withdrawals: true
+    }
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, answer, calls).fetch
+    })
+    expect(await client.umpireNotifications('l/1')).deep.equals(answer)
+    expect(
+      await client.setUmpireNotifications('l/1', { daysBefore: 3 })
+    ).deep.equals(answer)
+    expect(
+      calls.map(call => [
+        call.method,
+        call.url.replace('http://x/api/v1', ''),
+        call.body
+      ])
+    ).deep.equals([
+      ['GET', '/leagues/l%2F1/umpire-notifications', undefined],
+      [
+        'PUT',
+        '/leagues/l%2F1/umpire-notifications',
+        JSON.stringify({ daysBefore: 3 })
+      ]
+    ])
+    let refused: unknown
+    await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { ...answer, daysBefore: '3' }).fetch
+    })
+      .umpireNotifications('l/1')
+      .catch((error: unknown) => {
+        refused = error
+      })
+    expect(refused).not.equals(undefined)
   })
 
   it('saves the schedule’s default sort and the league’s season order', async function () {

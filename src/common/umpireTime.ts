@@ -160,6 +160,17 @@ export function localDate(date: Date | number, timezone: string): string {
   return format.format(date)
 }
 /**
+ * How many calendar days `toDay` is after `fromDay`, both `YYYY-MM-DD`;
+ * negative when it is before. Dates, not instants, so a daylight-saving
+ * change between them counts as nothing.
+ */
+export function daysBetween(fromDay: string, toDay: string): number {
+  return Math.round(
+    (Date.parse(`${toDay}T00:00:00Z`) - Date.parse(`${fromDay}T00:00:00Z`)) /
+      86_400_000
+  )
+}
+/**
  * A filter as it is saved and compared: each level once, and each day once
  * in order, Monday first.
  */

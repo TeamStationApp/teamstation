@@ -295,7 +295,13 @@ Cursors given before the schedule was sorted (the start-time cursor the other
 schedules still use) are refused with 400 `cursor is not a cursor this list
 gave`, so a client reading across that deploy starts again from the first page.
 `around=next` still opens on the first game under way or still to start in time
-order, and cuts the page around that game's place in the sort. Season priorities
+order, and cuts the page around that game's place in the sort. The umpire
+schedule's `around` also takes a game id (`around=gam_…`): the page opens on
+that game's place in the sort, and names it in `anchorId`, when the game is
+listed, and as `around=next` does when it is not (filtered out, or gone). That
+is how an umpire notice opens the schedule on its game. Anything else is a 400
+`around must be next or a game id`; it still needs `paged` and does not take
+`cursor`. The other lists' `around` stays `next` alone. Season priorities
 are read live, so a priority saved between two reads can repeat or skip a row at
 a page boundary, as on the leaderboard.
 
@@ -308,6 +314,66 @@ answers the seasons as `GET …/umpire-requirements` does, each with its
 filter or a search of an existing collection: it writes a league setting whole,
 one position per season, and clears the position of the league's other seasons.
 A season created later has none, so it sorts last.
+
+## Umpire Management Notifications
+
+`GET` and `PUT /leagues/:leagueId/umpire-notifications` read and change the
+caller's own settings for a league they administer (`canAdminister`: a league
+or site administrator), never anyone else's:
+
+```ts
+interface UmpireNotificationSettings {
+  missingSlots: boolean // the daily digest, off by default
+  daysBefore: number // its window, 1 to 30 calendar days, 7 by default
+  signUps: boolean // umpire sign-ups, off by default
+  withdrawals: boolean // umpire withdrawals, off by default
+}
+```
+
+They are a path of their own, not fields of `umpire-settings`, because they are
+each admin's for themselves, where `umpire-settings` is the league's one
+setting every admin shares. Settings never changed read as the defaults. `PUT`
+takes any of the four and keeps the rest; `daysBefore` that is not a whole
+number from 1 to 30, or a toggle that is not a boolean, is a 400. Someone who is
+no longer an admin is refused with 403, and their settings are kept for when
+they are one again. Settings are read and saved whatever the league's umpire
+management; notices are recorded only while it is on. Both are in the `umpire`
+API-key family.
+
+- **The digest** (`umpireMissingSlots`) is recorded once a day for each admin
+  with `missingSlots` on, at 10:00 in the league's zone: its locality's
+  `timezone` (the city chosen for the league), or `America/Los_Angeles` when it
+  has none or the zone is not one `Intl` knows. It lists every game of the
+  league within `daysBefore` calendar days (counted in the game's own zone,
+  `games.timezone`, as the umpire schedule dates it, today included) that has
+  not started, is not withdrawn, final or cancelled, and still has an empty
+  required position; optional positions never count. Each game is dated in
+  that zone too. A day with none sends nothing. It is one notice for each
+  admin, league and day, however many nodes sweep (every 10 minutes, so a node
+  that was down at 10:00 records the day's on its next sweep), and it repeats
+  daily until the games are filled or start. It is in the notifications'
+  default list (`hasPending`) until dismissed; the next day's dismisses it, and
+  so does the first sweep that finds none of its games still missing an
+  umpire, that day's included. Turning `missingSlots` off dismisses it; turned
+  back on the same day, it takes effect from the next day's digest.
+- **Sign-ups** (`umpireSignUp`) and **withdrawals** (`umpireWithdraw`) are
+  recorded when an umpire, or their guardian, signs up for a slot or removes
+  their own assignment, for the admins with `signUps` or `withdrawals` on, less
+  whoever acted. An admin removing someone else's assignment notifies nobody.
+  They date the game in its own zone, as the digest does. They are History
+  from the start.
+
+Nothing is recorded while the league does not manage umpires, nor for anyone
+who is no longer its admin. Each notice carries `leagueId` and `gameId` (the
+digest's first game), and opens the league's umpire schedule on that game.
+
+Each notice is also pushed to the admin's devices whose third switch,
+`leagueManagement` on `POST /me/push-registrations` and
+`PATCH /me/push-registrations/:id`, is on. It is on unless a device turns it
+off: a registration that leaves it out (an app from before it) has it on, and
+every registration that existed before it has it on. The push is the event
+payload an RSVP reminder sends (`t: 'event'`), tagged `event:league:<id>`,
+whose `url` is `teamstation://umpires/<leagueId>?view=league&game=<gameId>`.
 
 ## Umpire commitments
 

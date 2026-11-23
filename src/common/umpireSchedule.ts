@@ -1,3 +1,4 @@
+import { idPrefixes } from './idPrefixes'
 import type {
   UmpireLevel,
   UmpirePosition,
@@ -60,6 +61,16 @@ export interface UmpireGameRow {
  * after a sign-up, not a page at a time.
  */
 export const UMPIRE_PAGE_MOST = 500
+/**
+ * The pattern of a game id the schedule's `around` may name, as
+ * `makeId('game')` makes them, its prefix from `idPrefixes`.
+ */
+export const UMPIRE_AROUND_GAME = `^${idPrefixes.game}_[A-Za-z0-9_-]{1,64}$`
+const aroundGame = new RegExp(UMPIRE_AROUND_GAME)
+/** Whether `around` may name this game: one of the ids `makeId('game')` makes. */
+export function isAroundGame(value: string): boolean {
+  return aroundGame.test(value)
+}
 export interface UmpireSchedule {
   settings: UmpireSettings
   levels: UmpireLevel[]

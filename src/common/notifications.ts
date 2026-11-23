@@ -177,6 +177,27 @@ export function isSchedulingNews(type: string): type is SchedulingNews {
   return (SCHEDULING_NEWS as readonly string[]).includes(type)
 }
 
+/**
+ * Umpire Management notices, to the league admins who chose them for
+ * themselves: the daily digest of games still missing umpires, which waits in
+ * Pending until dismissed (the next day's replaces it), and an umpire signing
+ * up or withdrawing, which are History from the start. Each names its league
+ * and a game (the digest's first), and opens the league's umpire schedule on
+ * that game.
+ */
+export const UMPIRE_MISSING_SLOTS = 'umpireMissingSlots'
+export const UMPIRE_SIGN_UP = 'umpireSignUp'
+export const UMPIRE_WITHDRAW = 'umpireWithdraw'
+export const UMPIRE_NOTICES = [
+  UMPIRE_MISSING_SLOTS,
+  UMPIRE_SIGN_UP,
+  UMPIRE_WITHDRAW
+] as const
+export type UmpireNotice = (typeof UMPIRE_NOTICES)[number]
+export function isUmpireNotice(type: string): type is UmpireNotice {
+  return (UMPIRE_NOTICES as readonly string[]).includes(type)
+}
+
 const cleanNotification = asObject({
   id: asString,
   requestId: asString,
@@ -220,10 +241,13 @@ const cleanNotification = asObject({
     ),
     null
   ),
-  /** On a `recordingUpload` reminder: the game and the angle's stream. */
+  /**
+   * On a `recordingUpload` reminder: the game and the angle's stream. On an
+   * umpire notice: the game it opens on, with `leagueId`.
+   */
   gameId: asOptional(asString),
   liveStreamId: asOptional(asString),
-  /** On a scheduling notice: what it opens. */
+  /** On a scheduling notice: what it opens. On an umpire notice, its league. */
   venueId: asOptional(asString),
   leagueId: asOptional(asString),
   seasonId: asOptional(asString),

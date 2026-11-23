@@ -119,8 +119,11 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the refresh notices, the umpire sort, the dropped chat age columns, the umpire availability, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the umpire notifications, the refresh notices, the umpire sort, the dropped chat age columns, the umpire availability, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '130umpireNotifications'
+    ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '130refreshNotices'
     ])
@@ -721,7 +724,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '128umpireAvailability',
           '129dropChatAgeConfirmations',
           '129umpireSort',
-          '130refreshNotices'
+          '130refreshNotices',
+          '130umpireNotifications'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

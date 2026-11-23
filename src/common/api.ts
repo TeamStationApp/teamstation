@@ -215,6 +215,7 @@ import {
   asUmpireLeagues,
   asUmpireLevel,
   asUmpireLevels,
+  asUmpireNotificationSettings,
   asUmpirePeople,
   asUmpireSchedule,
   asUmpireScheduleHead,
@@ -228,6 +229,7 @@ import type {
   UmpireAvailability,
   UmpireCertification,
   UmpireLevel,
+  UmpireNotificationSettings,
   UmpirePerson,
   UmpireSeason,
   UmpireSettings,
@@ -2312,6 +2314,17 @@ export interface GamesPageQuery {
   limit?: number
 }
 
+/**
+ * How a page of the umpire schedule opens: on the next game (`next`) or on
+ * one game by its id (the next game when that game is not listed), or from
+ * a cursor of the same read.
+ */
+export interface UmpirePageAsk {
+  around?: 'next' | string
+  cursor?: string
+  limit?: number
+}
+
 /** The read of a league's, season's or team's page. */
 export function groupPath(ref: GroupRef): string {
   const collection =
@@ -3892,14 +3905,22 @@ class TimedOut extends DeadlinePassed {
   }
 }
 
-/** A device's own two notification switches, as its Account shows them. */
+/** A device's own three notification switches, as its Account shows them. */
 export interface PushSwitches {
   messages: boolean
   rsvpEvents: boolean
+  /** "Notify for league management": League management notices. */
+  leagueManagement: boolean
 }
 
-/** `POST /me/push-registrations`: one device's push address and switches. */
-export interface PushRegistration extends PushSwitches {
+/**
+ * `POST /me/push-registrations`: one device's push address and switches.
+ * `leagueManagement` left out is on.
+ */
+export interface PushRegistration
+  extends
+    Omit<PushSwitches, 'leagueManagement'>,
+    Partial<Pick<PushSwitches, 'leagueManagement'>> {
   platform: 'ios' | 'android' | 'web'
   /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
   address: string
@@ -4399,6 +4420,33 @@ export class TeamStationClient {
     )
   }
 
+  /** The caller's own Umpire Management Notifications for a league they administer. */
+  async umpireNotifications(
+    league: string
+  ): Promise<UmpireNotificationSettings> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-notifications`,
+      asUmpireNotificationSettings
+    )
+  }
+
+  /**
+   * Changes the caller's own Umpire Management Notifications for a league
+   * they administer; a field left out keeps its value. Answers them all.
+   */
+  async setUmpireNotifications(
+    league: string,
+    change: Partial<UmpireNotificationSettings>
+  ): Promise<UmpireNotificationSettings> {
+    return await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(league)}/umpire-notifications`,
+      asUmpireNotificationSettings,
+      change
+    )
+  }
+
   /** `sort` null goes back to the built-in default; `[]` is the empty sort. */
   async setUmpireSettings(
     league: string,
@@ -4686,7 +4734,7 @@ export class TeamStationClient {
   async umpireSchedulePage(
     league: string,
     query = '',
-    page: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+    page: UmpirePageAsk = {}
   ): Promise<UmpireSchedulePage> {
     const params = umpireScheduleParams(query)
     params.set('paged', '1')
@@ -5013,14 +5061,19 @@ export class TeamStationClient {
     id: string,
     change: Partial<PushSwitches>
   ): Promise<PushSwitches> {
-    const { messages, rsvpEvents } = await this.request(
+    const { messages, rsvpEvents, leagueManagement } = await this.request(
       'PATCH',
       `/me/push-registrations/${encodeURIComponent(id)}`,
-      asObject({ messages: asBoolean, rsvpEvents: asBoolean }),
+      asObject({
+        messages: asBoolean,
+        rsvpEvents: asBoolean,
+        // A server from before League management has it on for every device.
+        leagueManagement: asOptional(asBoolean, true)
+      }),
       change,
       { deadline: true, keepsOffline: true }
     )
-    return { messages, rsvpEvents }
+    return { messages, rsvpEvents, leagueManagement }
   }
 
   /**

@@ -38,6 +38,11 @@ import { proposeChange } from '../tess/changes'
 import { appendMessages, saveContextTokens } from '../tess/conversation'
 import { ACCOUNT_DELETED } from '../tess/liveUser'
 import { stopTurn, withTurn } from '../tess/turns'
+import {
+  recordSignUp,
+  recordUmpireDigests,
+  recordWithdrawal
+} from '../umpires/notices'
 import { deleteAccount, DELETED_NAME } from './deleteAccount'
 
 const ROOT = '/me/account'
@@ -640,6 +645,234 @@ describe('deleting an account', function () {
     expect(await saved(leaving.id)).equals(0)
     expect(await saved(merged.id)).equals(0)
     expect(await saved(staying.id)).equals(1)
+  })
+
+  it('removes the umpire notices chosen by the person and every account merged into it, and nobody else’s', async () => {
+    const proof = 'bb'.repeat(32)
+    const leaving = await person('Robin Yount', 'yount@example.test', proof)
+    const merged = await person('Robin Yount', 'ry@example.test', proof)
+    await closeInto(h.db, merged.id, leaving.id)
+    const staying = await person('Cecil Cooper', 'cooper@example.test', proof)
+    await h.db
+      .insertInto('leagues')
+      .values([
+        { id: 'lea_deleteNoticeA', name: 'Notice League A' },
+        { id: 'lea_deleteNoticeB', name: 'Notice League B' }
+      ])
+      .execute()
+    await h.db
+      .insertInto('league_umpire_notifications')
+      .values(
+        [
+          [leaving.id, 'lea_deleteNoticeA'],
+          [merged.id, 'lea_deleteNoticeB'],
+          [staying.id, 'lea_deleteNoticeA']
+        ].map(([userId, leagueId]) => ({
+          user_id: userId,
+          league_id: leagueId,
+          missing_slots: true,
+          sign_ups: true
+        }))
+      )
+      .execute()
+    const chosen = async (userId: string): Promise<number> =>
+      (
+        await h.db
+          .selectFrom('league_umpire_notifications')
+          .select('league_id')
+          .where('user_id', '=', userId)
+          .execute()
+      ).length
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+
+    expect(await chosen(leaving.id)).equals(0)
+    expect(await chosen(merged.id)).equals(0)
+    expect(await chosen(staying.id)).equals(1)
+  })
+
+  it('writes no notification receipts back for a deleted account’s open umpire digests at the next sweep', async () => {
+    const proof = 'cc'.repeat(32)
+    const leaving = await person('Ted Simmons', 'simmons@example.test', proof)
+    const merged = await person('Ted Simmons', 'ts@example.test', proof)
+    await closeInto(h.db, merged.id, leaving.id)
+    // An admin who has since turned missing slots off: their open digest is
+    // settled.
+    const staying = await person('Jim Gantner', 'gantner@example.test', proof)
+    const league = 'lea_deleteDigest'
+    await h.db
+      .insertInto('leagues')
+      .values({ id: league, name: 'Digest League', umpire_management: true })
+      .execute()
+    await h.db
+      .insertInto('scope_roles')
+      .values(
+        [leaving.id, staying.id].map(userId => ({
+          id: `srl_deleteDigest_${userId}`,
+          user_id: userId,
+          scope_type: 'league',
+          scope_id: league,
+          role: 'admin',
+          granted_by: leaving.id
+        }))
+      )
+      .execute()
+    await h.db
+      .insertInto('league_umpire_notifications')
+      .values(
+        [leaving.id, staying.id].map(userId => ({
+          user_id: userId,
+          league_id: league,
+          missing_slots: userId === leaving.id
+        }))
+      )
+      .execute()
+    // Each with the day before's digest still open.
+    await h.db
+      .insertInto('notification_events')
+      .values(
+        [leaving.id, merged.id, staying.id].map(userId => ({
+          id: makeId('audit'),
+          source_type: 'umpireMissingSlots',
+          source_id: `${league}:${userId}`,
+          revision: 20300101,
+          actor_id: null,
+          metadata: {
+            title: '1 game still needs umpires',
+            description: '',
+            leagueId: league,
+            gameId: 'gam_deleteDigest'
+          },
+          recorded_recipients: [userId],
+          created_at: new Date('2030-01-01T18:00:00Z')
+        }))
+      )
+      .execute()
+    const receipts = async (userId: string): Promise<number> =>
+      (
+        await h.db
+          .selectFrom('notification_receipts')
+          .select('event_id')
+          .where('user_id', '=', userId)
+          .execute()
+      ).length
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, leaving.session)).status
+    ).equals(204)
+    // 11:00 Pacific, after the league's 10:00 digest time.
+    expect(
+      await recordUmpireDigests(h.db, new Date('2030-01-02T19:00:00Z'))
+    ).deep.equals([])
+
+    expect(await receipts(leaving.id)).equals(0)
+    expect(await receipts(merged.id)).equals(0)
+    expect(await receipts(staying.id)).equals(1)
+  })
+
+  it('names a deleted umpire "Deleted user" in the admins’ sign-up and withdraw notices, which keep no name (3.harness-review.2)', async () => {
+    const proof = 'c3'.repeat(32)
+    const umpire = await person(
+      'Kirby Puckett',
+      'kirby.slot@example.test',
+      proof
+    )
+    const admin = await person('Tony Gwynn', 'gwynn.slot@example.test', proof)
+    const league = 'lea_deleteSlotNotice'
+    await h.db
+      .insertInto('leagues')
+      .values({ id: league, name: 'Slot League', umpire_management: true })
+      .execute()
+    await h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'srl_deleteSlotNotice',
+        user_id: admin.id,
+        scope_type: 'league',
+        scope_id: league,
+        role: 'admin'
+      })
+      .execute()
+    await h.db
+      .insertInto('league_umpire_notifications')
+      .values({
+        user_id: admin.id,
+        league_id: league,
+        sign_ups: true,
+        withdrawals: true
+      })
+      .execute()
+    await h.db
+      .insertInto('teams')
+      .values([
+        { id: 'tem_slotHome', name: 'Demo Cubs' },
+        { id: 'tem_slotAway', name: 'Demo Mets' }
+      ])
+      .execute()
+    await h.db
+      .insertInto('games')
+      .values({
+        id: 'gam_deleteSlotNotice',
+        home_team_id: 'tem_slotHome',
+        away_team_id: 'tem_slotAway',
+        season_id: null,
+        start_at: new Date('2030-03-03T00:00:00Z'),
+        end_at: new Date('2030-03-03T02:00:00Z'),
+        timezone: 'America/Los_Angeles'
+      })
+      .execute()
+    const notice = {
+      leagueId: league,
+      gameId: 'gam_deleteSlotNotice',
+      slot: 'uty_plate:1',
+      umpireId: umpire.id,
+      actorIds: [umpire.id]
+    }
+    const pushes = [
+      ...(await recordSignUp(h.db, notice)),
+      ...(await recordWithdrawal(h.db, notice))
+    ]
+    // Each push, gone once sent, names the umpire as its admin reads them.
+    expect(pushes.map(push => push.u)).deep.equals([[admin.id], [admin.id]])
+    expect(pushes[0].body).match(/^Kirby (Puckett|P) signed up as /)
+    const adminActor = { userId: admin.id, isAdmin: false, scopes: [] }
+    const read = async (): Promise<string[]> =>
+      (await inbox(h.db, adminActor, { history: true })).items
+        .filter(
+          item => item.type === 'umpireSignUp' || item.type === 'umpireWithdraw'
+        )
+        .map(item => item.title)
+        .sort()
+    const before = await read()
+    expect(before).length(2)
+    expect(before[0]).match(
+      /^Kirby (Puckett|P) signed up as .* for Demo Cubs vs Demo Mets, Mar 2 4:00 pm$/
+    )
+    expect(before[1]).match(/^Kirby (Puckett|P) withdrew from /)
+    // What is stored names nobody: the umpire is kept by id.
+    const stored = (
+      await h.db
+        .selectFrom('notification_events')
+        .select(['metadata', 'recorded_recipients'])
+        .where('source_type', 'in', ['umpireSignUp', 'umpireWithdraw'])
+        .execute()
+    ).filter(row => row.recorded_recipients.includes(admin.id))
+    expect(stored).length(2)
+    for (const row of stored) {
+      expect(JSON.stringify(row.metadata)).not.match(/Kirby|Puckett/)
+      expect(row.metadata).deep.include({ umpireId: umpire.id })
+    }
+
+    expect(
+      (await h.request('DELETE', ROOT, undefined, umpire.session)).status
+    ).equals(204)
+    const after = await read()
+    expect(after.join('\n')).not.match(/Kirby|Puckett/)
+    expect(after).deep.equals(
+      before.map(title => title.replace(/^Kirby (Puckett|P)/, DELETED_NAME))
+    )
   })
 
   it('keeps nothing Tess writes after it, from a turn still running or one begun later', async () => {

@@ -152,6 +152,9 @@ describe("Tess's deny list", function () {
     expect(refused('POST', '/teams/tem_1/players')).equals(false)
     expect(refused('PUT', '/teams/tem_1/players/usr_1/settings')).equals(false)
     expect(refused('PUT', '/leagues/lea_1/umpire-settings')).equals(false)
+    // An admin's own umpire notices: read, and changed with their confirmation.
+    expect(refused('GET', '/leagues/lea_1/umpire-notifications')).equals(false)
+    expect(refused('PUT', '/leagues/lea_1/umpire-notifications')).equals(false)
     expect(refused('PUT', '/games/gam_1/field')).equals(false)
   })
 

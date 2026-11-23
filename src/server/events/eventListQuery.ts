@@ -1,5 +1,5 @@
 import { badRequest } from '../../common/errors'
-import { UMPIRE_PAGE_MOST } from '../../common/umpireSchedule'
+import { isAroundGame, UMPIRE_PAGE_MOST } from '../../common/umpireSchedule'
 import { externalIdsAsked } from '../routes/seasons'
 import {
   decodeScheduleCursor,
@@ -262,9 +262,14 @@ export function parsePublicGamesQuery(
   return parseTeamGamesQuery(query)
 }
 
-/** The page parameters of an umpire schedule read, its cursor carrying its sort. */
-export type UmpirePageQuery = Omit<ParsedEventList, 'cursor'> & {
+/**
+ * The page parameters of an umpire schedule read, its cursor carrying its
+ * sort. `around` is present when the page opens around a game: on `game`
+ * when it names one, else (`around=next`) on the next game.
+ */
+export type UmpirePageQuery = Omit<ParsedEventList, 'cursor' | 'around'> & {
   cursor?: UmpireCursor
+  around?: { game?: string }
 }
 
 /**
@@ -272,20 +277,38 @@ export type UmpirePageQuery = Omit<ParsedEventList, 'cursor'> & {
  * above. Like a team's, `limit` waits for `paged`. It may be as large as
  * `UMPIRE_PAGE_MOST`, since every page computes the whole schedule. Its
  * cursor is the umpire schedule's own, which carries the sort it was read in.
+ * Its `around` is `next` or a game's id (a notice opens the schedule on its
+ * game), and otherwise needs what the list's does.
  */
 export function parseUmpirePageQuery(
   query: Record<string, unknown>
 ): UmpirePageQuery {
   const { paged, cursor, around, limit } = query
   const cursorRaw = scalar(cursor, 'cursor')
-  const parsed = parseEventListQuery(
-    { paged, around, limit: paged == null ? undefined : limit },
+  const aroundRaw = scalar(around, 'around')
+  if (aroundRaw != null && aroundRaw !== 'next' && !isAroundGame(aroundRaw))
+    throw badRequest('around must be next or a game id')
+  const { around: opens, ...parsed } = parseEventListQuery(
+    {
+      paged,
+      around: aroundRaw == null ? undefined : 'next',
+      limit: paged == null ? undefined : limit
+    },
     UMPIRE_PAGE_MOST
   )
-  if (cursorRaw == null) return { ...parsed, cursor: undefined }
+  if (cursorRaw == null)
+    return {
+      ...parsed,
+      around: !opens
+        ? undefined
+        : aroundRaw === 'next'
+          ? {}
+          : { game: aroundRaw ?? undefined },
+      cursor: undefined
+    }
   if (!parsed.paged) throw badRequest('cursor needs paged')
-  if (parsed.around) throw badRequest('around does not apply with cursor')
-  return { ...parsed, cursor: decodeUmpireCursor(cursorRaw) }
+  if (opens) throw badRequest('around does not apply with cursor')
+  return { ...parsed, around: undefined, cursor: decodeUmpireCursor(cursorRaw) }
 }
 
 /** How a `paged` read cuts the list, for `schedulePage`. */

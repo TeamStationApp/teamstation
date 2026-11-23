@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  asUmpireNotificationSettings,
   asUmpirePeople,
   asUmpireSchedule,
   asUmpireSeasons,
@@ -142,5 +143,25 @@ describe('umpire sort', () => {
       undefined
     ])
     expect(() => asUmpireSchedule({ ...head, sort: 'date' })).throws()
+  })
+})
+
+describe('umpire notification settings', () => {
+  const settings = {
+    missingSlots: true,
+    daysBefore: 7,
+    signUps: false,
+    withdrawals: true
+  }
+  it('keeps the four settings', () => {
+    expect(asUmpireNotificationSettings(settings)).to.deep.equal(settings)
+  })
+  it('refuses one that is missing or of the wrong kind', () => {
+    for (const bad of [
+      { ...settings, daysBefore: '7' },
+      { ...settings, signUps: 'yes' },
+      { missingSlots: true, daysBefore: 7, signUps: false }
+    ])
+      expect(() => asUmpireNotificationSettings(bad)).throws()
   })
 })

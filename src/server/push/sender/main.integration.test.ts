@@ -208,8 +208,32 @@ describe('the push sender process', function () {
       .execute()
     for (const request of await dueReminders(fixture.db, new Date()))
       await pushQueue.add(request)
+    // A League management notice for Hc and B; B's device has it off.
+    await fixture.db
+      .insertInto('push_registrations')
+      .values({
+        id: makeId('pushRegistration'),
+        user_id: fixture.id('B'),
+        session_id: fixture.sessionOf('B'),
+        platform: 'android',
+        address_key: `android-B-${'0'.repeat(32)}`,
+        address: `android-B-${'0'.repeat(32)}`,
+        environment: 'production',
+        messages: true,
+        rsvp_events: true,
+        league_management: false
+      })
+      .execute()
+    await pushQueue.add({
+      t: 'league',
+      u: [hc, fixture.id('B')],
+      title: 'Hawks League',
+      body: '1 game still needs umpires',
+      url: 'teamstation://umpires/lea_one?view=league&game=gam_one',
+      tag: 'event:league:aud_one'
+    })
     expect(await pushQueue.client.xLen(pushQueue.queue.keys.requests)).at.least(
-      2
+      3
     )
 
     const sender: ChildProcess = spawn(
@@ -246,7 +270,7 @@ describe('the push sender process', function () {
     }
     try {
       const deadline = Date.now() + 30000
-      while (records().length < 2) {
+      while (records().length < 3) {
         if (Date.now() > deadline)
           throw new Error(`the sender sent ${records().length}: ${said}`)
         await new Promise(resolve => setTimeout(resolve, 100))
@@ -262,12 +286,28 @@ describe('the push sender process', function () {
       expect(wake).include({ u: hc, c: chat.id, dm: false })
       // Sent once its hold was over, and Hc marked woken for it.
       expect(await pushQueue.queue.wokenAt(hc, chat.id)).equals(posted.seq)
-      const reminder = payloads.find(payload => payload.t === 'event')!
+      const reminder = payloads.find(
+        payload => payload.t === 'event' && payload.tag === `event:${eventId}`
+      )!
       expect(reminder).include({
         u: hc,
         title: 'Batting cage',
         tag: `event:${eventId}`
       })
+      // The notice is an event payload, to Hc's device alone.
+      const notice = payloads.find(
+        payload =>
+          payload.t === 'event' && payload.tag === 'event:league:aud_one'
+      )
+      expect(notice).deep.equals({
+        t: 'event',
+        u: hc,
+        title: 'Hawks League',
+        body: '1 game still needs umpires',
+        url: 'teamstation://umpires/lea_one?view=league&game=gam_one',
+        tag: 'event:league:aud_one'
+      })
+      expect(records()).length(3)
       // Both settled: nothing left in the stream or pending.
       const settled = Date.now() + 10000
       while ((await pushQueue.client.xLen(pushQueue.queue.keys.requests)) > 0) {
@@ -287,6 +327,9 @@ describe('the push sender process', function () {
     expect(Date.now() - stoppedBy).lessThan(7000)
     expect(said).match(/push sender: started/)
     expect(said).match(/push sender: sent 1 RSVP reminder\(s\) for teamEvent /)
+    expect(said).match(
+      /push sender: sent a League management notice event:league:aud_one to 1 device\(s\)/
+    )
     expect(said).match(/push sender: stopped on SIGTERM/)
   })
 

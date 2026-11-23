@@ -16,6 +16,12 @@ export interface BackgroundJobs<Child extends Stoppable> {
    * how to stop the sweep and close its queue client.
    */
   startRsvpReminders: () => Stoppable
+  /**
+   * Records each league admin's daily missing-umpires digest once it is due
+   * and queues its push; answers how to stop the sweep and close its queue
+   * client.
+   */
+  startUmpireDigests: () => Stoppable
   startChatAttachmentPurge: () => void
   startChatReconciler: () => void
   startRosterBumpPrune: () => void
@@ -27,7 +33,7 @@ export interface BackgroundJobs<Child extends Stoppable> {
 /**
  * Starts this path's jobs where `backgroundJobs` is on, and none of them where
  * it is off. Answers what to stop on the way down, the reminder sweep, the
- * push sender and the stats builder at once, or `off` in its place. Each job drains on start, so
+ * umpire digest sweep, the push sender and the stats builder at once, or `off` in its place. Each job drains on start, so
  * whatever a node missed while it was away waits for it to return.
  */
 export function startBackgroundJobs<Child extends Stoppable>(
@@ -46,10 +52,16 @@ export function startBackgroundJobs<Child extends Stoppable>(
   jobs.startKeySweep?.()
   jobs.startLocalCopyWarnings()
   const reminders = jobs.startRsvpReminders()
+  const digests = jobs.startUmpireDigests()
   jobs.startChatAttachmentPurge()
   jobs.startChatReconciler()
   jobs.startRosterBumpPrune()
-  const children = [reminders, jobs.startPushSender(), jobs.startStatsBuilder()]
+  const children = [
+    reminders,
+    digests,
+    jobs.startPushSender(),
+    jobs.startStatsBuilder()
+  ]
   return {
     stop: async signal => {
       await Promise.all(

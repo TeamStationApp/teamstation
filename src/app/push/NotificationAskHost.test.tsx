@@ -54,7 +54,11 @@ const HINT =
 const client: PushClient = {
   webPushKey: async () => null,
   registerPush: async () => 'reg',
-  updatePush: async () => ({ messages: false, rsvpEvents: false })
+  updatePush: async () => ({
+    messages: false,
+    rsvpEvents: false,
+    leagueManagement: true
+  })
 }
 
 function memory(): UserSettingStorage {

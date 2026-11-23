@@ -183,7 +183,7 @@ function client(key: string | null = KEY): PushClient &
     },
     updatePush: async (id: string, change: Partial<PushSwitches>) => {
       api.patched.push([id, change])
-      return { ...OFF, ...change }
+      return { ...OFF, leagueManagement: true, ...change }
     },
     unregisterPush: async (id: string) => {
       api.deleted.push(id)
@@ -541,7 +541,7 @@ describe('notifications in a browser', function () {
       )
       await answer()
       held.server = { ...held.server!, ...change }
-      return held.server
+      return { leagueManagement: true, ...held.server }
     }
     return held
   }
@@ -714,7 +714,7 @@ describe('notifications in a browser', function () {
       }
       api.updatePush = async (id, change) => {
         server.switches = { ...server.switches, ...change }
-        return server.switches
+        return { leagueManagement: true, ...server.switches }
       }
       return api
     }

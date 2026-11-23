@@ -154,6 +154,20 @@ describe("Tess's system prompt", function () {
     )
   })
 
+  it('indexes the asking admin’s own Umpire Management Notifications, read and changed', function () {
+    const index = instructions().split('## API index')[1]
+    const line = (start: string): string | undefined =>
+      index.split('\n').find(each => each.startsWith(start))
+    expect(line('GET /leagues/{leagueId}/umpire-notifications:')).includes(
+      'your own Umpire Management Notifications'
+    )
+    const change = line('PUT /leagues/{leagueId}/umpire-notifications:')
+    expect(change).match(
+      /Body: \{missingSlots: boolean, daysBefore: integer, signUps: boolean, withdrawals: boolean\}$/
+    )
+    expect(change?.length).lessThan(900)
+  })
+
   it('reads GraphQL with its own tool: named in the instructions, left out of the index, and not refused', function () {
     const [instructed, index] = instructions().split('## API index')
     expect(instructed).includes('## Reading with GraphQL')

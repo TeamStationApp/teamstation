@@ -59,7 +59,7 @@ function device(
     },
     updatePush: async (id, change) => {
       patched.push([id, change])
-      return { ...SWITCHES_OFF, ...change }
+      return { ...SWITCHES_OFF, leagueManagement: true, ...change }
     }
   }
   // Every part a platform gives, whichever of them this engine reads.

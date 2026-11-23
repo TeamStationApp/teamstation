@@ -419,7 +419,7 @@ const pushSessionOnly = {
   401: { description: 'Not signed in' },
   403: { description: 'An API key, a machine token or Tess: a session only' }
 }
-/** A device's own two switches, as its Account shows them. */
+/** A device's own three switches, as its Account shows them. */
 const pushSwitchProperties = {
   messages: {
     type: 'boolean',
@@ -430,6 +430,12 @@ const pushSwitchProperties = {
     type: 'boolean',
     default: false,
     description: 'Remind this device before the events you said yes to'
+  },
+  leagueManagement: {
+    type: 'boolean',
+    default: true,
+    description:
+      'Push League management notices (umpire notices for league admins) to this device'
   }
 }
 const pushPaths = {
@@ -460,7 +466,7 @@ const pushPaths = {
       security: [{ bearer: [] }],
       summary: "Register this device's push address (signed-in sessions only)",
       description:
-        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address and switches, and is sent to again if a push service had refused it for good. The two switches are this device's own, as its Account shows them: chat wakes go only to registrations with `messages` on, and RSVP reminders only to those with `rsvpEvents` on. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted. The newer chat kinds the request names in `x-teamstation-chat-kinds` (`leagueUmpires`) are kept with the registration: a chat of such a kind wakes only registrations that named it, as only their app lists it.",
+        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address and switches, and is sent to again if a push service had refused it for good. The three switches are this device's own, as its Account shows them: chat wakes go only to registrations with `messages` on, RSVP reminders only to those with `rsvpEvents` on, and League management notices (Umpire Management Notifications) only to those with `leagueManagement` on. `messages` and `rsvpEvents` left out are off; `leagueManagement` left out is on. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted. The newer chat kinds the request names in `x-teamstation-chat-kinds` (`leagueUmpires`) are kept with the registration: a chat of such a kind wakes only registrations that named it, as only their app lists it.",
       requestBody: {
         required: true,
         content: {
@@ -529,7 +535,7 @@ const pushPaths = {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['id', 'messages', 'rsvpEvents'],
+                required: ['id', 'messages', 'rsvpEvents', 'leagueManagement'],
                 properties: {
                   id: { type: 'string' },
                   ...pushSwitchProperties

@@ -33,6 +33,27 @@ export interface UmpireSettings {
    */
   sort?: UmpireSortKey[] | null
 }
+/**
+ * One league admin's own Umpire Management Notifications for a league: the
+ * daily digest of games within `daysBefore` days still missing a required
+ * umpire, and notices of umpires signing up and withdrawing.
+ */
+export interface UmpireNotificationSettings {
+  missingSlots: boolean
+  /** The digest's window in calendar days, `UMPIRE_NOTICE_DAYS`. */
+  daysBefore: number
+  signUps: boolean
+  withdrawals: boolean
+}
+/** What an admin who never chose has: everything off, a 7-day window. */
+export const DEFAULT_UMPIRE_NOTIFICATIONS: UmpireNotificationSettings = {
+  missingSlots: false,
+  daysBefore: 7,
+  signUps: false,
+  withdrawals: false
+}
+/** The digest's window, in calendar days. */
+export const UMPIRE_NOTICE_DAYS = { min: 1, max: 30 } as const
 export interface UmpireRequirement {
   levelId: string
   levelName: string

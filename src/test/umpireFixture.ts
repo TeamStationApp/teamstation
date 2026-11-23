@@ -1,12 +1,15 @@
 import { userIdOfGumbo } from '../common/userId'
-import { umpireRoutes } from '../server/routes/umpires'
+import { type UmpireRouteOptions, umpireRoutes } from '../server/routes/umpires'
 import { type GroupFixture, groupFixture } from './groupFixtures'
 import { seedUmpireCounts, seedUmpireTypes } from './umpireTypes'
 
 export const UMPIRE_TEST_NOW = '2027-04-01T12:00:00Z'
-export async function umpireFixture(): Promise<GroupFixture> {
+/** `options` are the umpire routes': `push` queues a notice's push. */
+export async function umpireFixture(
+  options: UmpireRouteOptions = {}
+): Promise<GroupFixture> {
   const f = await groupFixture(undefined, undefined, (app, { db, media }) => {
-    app.use('/api/v1', umpireRoutes(db, media))
+    app.use('/api/v1', umpireRoutes(db, media, options))
   })
   await seedUmpireTypes(f.h.db, f.leagueA)
   const user = userIdOfGumbo(101)

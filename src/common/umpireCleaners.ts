@@ -32,6 +32,13 @@ export const asUmpireSettings = asObject({
   credits: asBoolean,
   sort: asOptionalUmpireSort
 })
+/** `GET`/`PUT /leagues/:leagueId/umpire-notifications`' answer. */
+export const asUmpireNotificationSettings = asObject({
+  missingSlots: asBoolean,
+  daysBefore: asNumber,
+  signUps: asBoolean,
+  withdrawals: asBoolean
+})
 export const asUmpireLevel = asObject({
   id: asString,
   name: asString,

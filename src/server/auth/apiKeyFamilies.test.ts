@@ -171,6 +171,13 @@ describe('what an API key may call', function () {
     expect(keyNeeds('PUT', '/leagues/lea_1/umpire-season-priority')).equals(
       'umpire:write'
     )
+    // And an admin's own Umpire Management Notifications.
+    expect(keyNeeds('GET', '/leagues/lea_1/umpire-notifications')).equals(
+      'umpire:read'
+    )
+    expect(keyNeeds('PUT', '/leagues/lea_1/umpire-notifications')).equals(
+      'umpire:write'
+    )
   })
 
   it('matches as Express does: any case, one trailing slash, one segment a parameter', function () {

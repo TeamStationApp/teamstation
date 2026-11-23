@@ -11,11 +11,12 @@ export type PushEnvironment = PushRegistrationsTable['environment']
 
 /**
  * The device's own switch a push is for: chat wakes go only to
- * registrations with `messages` on, and reminders only to those with
- * `rsvp_events` on. A read's clear asks for neither (`null`): it takes down
- * only what a wake already showed, whatever the switch is now.
+ * registrations with `messages` on, reminders only to those with
+ * `rsvp_events` on, and League management notices only to those with
+ * `league_management` on. A read's clear asks for none (`null`): it takes
+ * down only what a wake already showed, whatever the switch is now.
  */
-export type PushSwitch = 'messages' | 'rsvp_events'
+export type PushSwitch = 'messages' | 'rsvp_events' | 'league_management'
 
 /** A registered device a message goes to. */
 export interface PushAddress {

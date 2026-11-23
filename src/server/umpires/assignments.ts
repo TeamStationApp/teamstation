@@ -50,12 +50,25 @@ export async function gameLeague(
   if (game?.league_id == null) throw notFound('No league game')
   return game.league_id
 }
+/**
+ * What a slot's sign-up or removal was, for its notices
+ * (`recordSignUp`, `recordWithdrawal`).
+ */
+export interface SlotChange {
+  leagueId: string
+  gameId: string
+  slot: string
+  /** Whose assignment it is. */
+  umpireId: string
+  /** Who acted, each of their ids. */
+  actorIds: string[]
+}
 export async function saveSlot(
   db: Transaction<Database>,
   actor: Actor,
   gameId: string,
   body: { slot?: unknown; userId?: unknown; creditTeamId?: unknown }
-): Promise<void> {
+): Promise<SlotChange> {
   if (
     typeof body?.slot !== 'string' ||
     typeof body.userId !== 'string' ||
@@ -96,13 +109,25 @@ export async function saveSlot(
       credit_team_id: credit
     })
     .execute()
+  return {
+    leagueId: league,
+    gameId,
+    slot: body.slot,
+    umpireId: person.userId,
+    actorIds: [...new Set([state.viewerId, actor.userId])]
+  }
 }
+/**
+ * Removes a slot's assignment. A withdrawal is its umpire, or whoever signed
+ * them up (a guardian), taking it back: an administrator removing someone
+ * else's is not one, and tells nobody.
+ */
 export async function deleteSlot(
   db: Transaction<Database>,
   actor: Actor,
   gameId: string,
   slot: unknown
-): Promise<void> {
+): Promise<SlotChange & { withdrawal: boolean }> {
   if (typeof slot !== 'string') throw badRequest('Choose a slot')
   const league = await gameLeague(db, gameId)
   const admin = await canAdminister(db, actor, { kind: 'league', id: league })
@@ -114,19 +139,29 @@ export async function deleteSlot(
     .where('slot', '=', slot)
     .executeTakeFirst()
   if (assignment == null) throw notFound('No assignment in this slot')
-  if (!admin) {
+  // The ids as stored settle most removals; merges are walked only when
+  // they differ, to find the same person under another row.
+  let personId = actor.userId
+  let holderId = assignment.user_id
+  let withdrawal =
+    actor.userId === assignment.user_id ||
+    actor.userId === assignment.assigned_by
+  if (!withdrawal) {
     const person = await onePerson(db, actor.userId)
     const holder = await onePerson(db, assignment.user_id)
     const author = await onePerson(db, assignment.assigned_by)
+    personId = person.userId
+    holderId = holder.userId
+    withdrawal =
+      person.userId === holder.userId || person.userId === author.userId
+  }
+  if (!admin) {
     const game = await db
       .selectFrom('games')
       .select('start_at')
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    if (
-      (person.userId !== holder.userId && person.userId !== author.userId) ||
-      now() >= new Date(game.start_at).getTime() - 15 * 60000
-    )
+    if (!withdrawal || now() >= new Date(game.start_at).getTime() - 15 * 60000)
       throw forbidden('Only an administrator can remove this assignment now')
   }
   await db
@@ -134,6 +169,14 @@ export async function deleteSlot(
     .where('game_id', '=', gameId)
     .where('slot', '=', slot)
     .execute()
+  return {
+    leagueId: league,
+    gameId,
+    slot,
+    umpireId: holderId,
+    actorIds: [...new Set([personId, actor.userId])],
+    withdrawal
+  }
 }
 export async function recheckUmpireAssignments(
   db: Transaction<Database>,
