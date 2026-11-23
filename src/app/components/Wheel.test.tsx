@@ -201,6 +201,48 @@ describe('the wheel', function () {
     expect(chosen).deep.equals([5, 15])
   })
 
+  it('brings a release that ends between rows to rest on its row', async function () {
+    const chosen = await render(0)
+    // React Native Web scrolls a column with its node's `scroll`.
+    const scroll = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'scroll'
+    )
+    const scrolled: number[] = []
+    HTMLElement.prototype.scroll = function (
+      this: HTMLElement,
+      ...args: unknown[]
+    ): void {
+      const [to] = args as [ScrollToOptions | number | undefined]
+      scrolled.push(typeof to === 'object' ? (to?.top ?? 0) : (to ?? 0))
+    }
+    try {
+      // Android ends every release, a slow drag's too, with the momentum's
+      // end: a row and a half down chooses row 2 and rests the column on it.
+      const momentumEnd = async (y: number): Promise<void> => {
+        await act(async () => {
+          handler(
+            wheel(),
+            'onMomentumScrollEnd'
+          )({ nativeEvent: { contentOffset: { y } } })
+          await delay()
+        })
+      }
+      await momentumEnd(1.6 * ROW)
+      expect(chosen).deep.equals([5])
+      expect(scrolled).deep.equals([2 * ROW])
+      // Already on a row: nothing to move.
+      scrolled.length = 0
+      await momentumEnd(4 * ROW)
+      expect(scrolled).deep.equals([])
+      expect(chosen).deep.equals([5, 15])
+    } finally {
+      if (scroll != null)
+        Object.defineProperty(HTMLElement.prototype, 'scroll', scroll)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scroll')
+    }
+  })
+
   it('moves by one for an assistive increment or decrement, kept to the ends', async function () {
     const chosen = await render(15)
     const act11y = handler(wheel(), 'onAccessibilityAction')

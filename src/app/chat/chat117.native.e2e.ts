@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   if (platform === 'ios') {
     await d.launchApp({
       appId: 'app.teamstation.app',
-      environment: { TS_DECLARED_AGE_LOWER: '13' }
+      environment: { TS_DECLARED_AGE_LOWER: '18' }
     })
   }
   await d.hideKeyboard()

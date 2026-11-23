@@ -95,13 +95,20 @@ object PushHandler {
   /**
    * Opens a wake in JavaScript, which posts what it shows through `TSPush.show`.
    * A DM the task did not finish in time still says who wrote, when it is for
-   * the person signed in.
+   * the person signed in. A generic wake opens nothing, so it is posted here,
+   * for the person signed in, without starting JavaScript.
    */
   fun runChatWake(context: Context, wake: PushPayload.ChatWake) {
-    val finished = runTask(context, "ChatWake", Bundle().apply { putString(PushPayload.FIELD, wake.json) })
-    if (finished) return
+    if (!wake.generic) {
+      val finished = runTask(context, "ChatWake", Bundle().apply { putString(PushPayload.FIELD, wake.json) })
+      if (finished) return
+    }
     PushNotifications.fallback(
-            wake, context.getString(R.string.push_new_message_from), signedIn(context))
+            wake,
+            context.getString(R.string.push_new_message_from),
+            signedIn(context),
+            context.getString(R.string.app_name),
+            context.getString(R.string.push_generic_wake))
         ?.let { show(context, it) }
   }
 

@@ -86,15 +86,22 @@ object PushNotifications {
 
   /**
    * What a DM shows when JavaScript did not open it in time: who wrote,
-   * through `template` ("New message from %s"). A group wake shows nothing,
-   * and so does a DM for anybody but [signedIn], the person signed in.
+   * through `template` ("New message from %s"), or for a generic wake only
+   * [generic], under the app's name [app]. A group wake shows nothing, and
+   * so does a DM for anybody but [signedIn], the person signed in.
    */
-  fun fallback(wake: PushPayload.ChatWake, template: String, signedIn: String?): PushNotice? =
+  fun fallback(
+      wake: PushPayload.ChatWake,
+      template: String,
+      signedIn: String?,
+      app: String,
+      generic: String,
+  ): PushNotice? =
       if (!wake.dm || wake.user != signedIn) null
       else
           notice(
-              wake.from,
-              template.replace("%s", wake.from),
+              if (wake.generic) app else wake.from,
+              if (wake.generic) generic else template.replace("%s", wake.from),
               wake.url,
               chatTag(wake.conversation),
               PushChannel.MESSAGES.id,

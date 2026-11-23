@@ -1,27 +1,12 @@
 import React, { useState } from 'react'
 import { Platform, Text, TextInput, View } from 'react-native'
 
-import { EARLIEST_BIRTH_YEAR } from '../../common/age'
 import { Button } from '../components/Button'
 import { CancelAction } from '../components/CancelAction'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { birthOf } from './birthMonth'
 import { type AppleAge, withinAppleRange } from './declaredAge'
-
-/** A year and a month of birth, or undefined while they are not both valid. */
-export function birthOf(
-  year: string,
-  month: string,
-  today: Date
-): { year: number; month: number } | undefined {
-  if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(month)) return undefined
-  const y = Number(year)
-  const m = Number(month)
-  if (m < 1 || m > 12 || y < EARLIEST_BIRTH_YEAR) return undefined
-  const now = today.getUTCFullYear() * 12 + today.getUTCMonth()
-  if (y * 12 + m - 1 > now) return undefined
-  return { year: y, month: m }
-}
 
 /** Puts `pattern` on a web field, so a phone's browser shows digits only. */
 function digitsPattern(node: unknown): void {

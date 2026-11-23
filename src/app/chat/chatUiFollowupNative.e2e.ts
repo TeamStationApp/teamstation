@@ -740,7 +740,7 @@ async function main(): Promise<void> {
       appId: fixture.appId,
       permissions: { all: 'unset' },
       ...(platform === 'ios'
-        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
         : {})
     })
     const m = device
@@ -1439,7 +1439,7 @@ async function main(): Promise<void> {
       await m.launchApp({
         appId: fixture.appId,
         ...(platform === 'ios'
-          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
           : {})
       })
       await m.assertVisible({ text: 'Chat', timeout: 60000 })
@@ -1493,7 +1493,7 @@ async function main(): Promise<void> {
           await m.launchApp({
             appId: fixture.appId,
             ...(platform === 'ios'
-              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
               : {})
           })
           await m.assertVisible({ text: 'Chat', timeout: 60000 })
@@ -1534,7 +1534,7 @@ async function main(): Promise<void> {
           await m.launchApp({
             appId: fixture.appId,
             ...(platform === 'ios'
-              ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+              ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
               : {})
           })
           await m.assertVisible({ text: 'Chat', timeout: 60000 })
@@ -7048,7 +7048,7 @@ async function main(): Promise<void> {
         appId: fixture.appId,
         permissions: { all: 'unset' },
         ...(platform === 'ios'
-          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
           : {})
       })
       await list()
@@ -7224,7 +7224,7 @@ async function main(): Promise<void> {
       appId: fixture.appId,
       permissions: { all: 'unset' },
       ...(platform === 'ios'
-        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
         : {})
     })
     await list()

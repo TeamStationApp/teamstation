@@ -170,7 +170,11 @@ async function typeIn(
   text: string,
   pieces: 'whole' | 'words' | 'letters'
 ): Promise<void> {
-  await m.tapOn({ text: label })
+  // On iOS by the field's own name: a text match also takes the label above
+  // it, or "Use a password instead" for "Password".
+  await m.tapOn(
+    process.env.CHAT_PLATFORM === 'android' ? { text: label } : { id: label }
+  )
   const parts =
     pieces === 'whole'
       ? [text]
@@ -228,10 +232,21 @@ async function signIn(
       appId: APP,
       clearState: true,
       ...(process.env.CHAT_PLATFORM === 'ios'
-        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
         : {})
     })
     await m.tapOn({ text: 'Use a password instead', timeout: 30000 })
+    // A tap in the first second after a cleared launch can be lost (the
+    // first screen draws again when the API answers): again until the form
+    // is the password one.
+    for (let again = 0; again < 4; again++) {
+      try {
+        await m.assertVisible({ text: 'Use a sign-in code', timeout: 3000 })
+        break
+      } catch {
+        await m.tapOn({ text: 'Use a password instead', timeout: 5000 })
+      }
+    }
     await typeIn(m, 'E-mail address', who.email, pieces)
     await typeIn(m, 'Password', who.password, pieces)
     // Putting the keyboard away can press its return key, which signs in

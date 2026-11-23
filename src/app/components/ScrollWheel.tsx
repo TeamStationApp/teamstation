@@ -39,12 +39,14 @@ export function ScrollWheel({
     },
     []
   )
-  const selectOffset = (offset: number): void => {
+  /** Chooses the row nearest `offset`, and says which it is. */
+  const selectOffset = (offset: number): number => {
     const index = Math.min(
       options.length - 1,
       Math.max(0, Math.round(offset / ROW))
     )
     onChange(options[index])
+    return index
   }
   return (
     <View style={styles.wheelColumn}>
@@ -101,7 +103,15 @@ export function ScrollWheel({
           decelerationRate="fast"
           showsVerticalScrollIndicator={false}
           onMomentumScrollEnd={event => {
-            selectOffset(event.nativeEvent.contentOffset.y)
+            // Android ends every release with this, a slow drag's as well as
+            // a fling's, but snaps only a fling to `snapToInterval`: a column
+            // let go slowly between two rows is brought to rest on the one
+            // chosen, or the band sits over both.
+            const offset = event.nativeEvent.contentOffset.y
+            const index = selectOffset(offset)
+            if (Math.abs(offset - index * ROW) >= 1) {
+              scroll.current?.scrollTo({ y: index * ROW, animated: true })
+            }
           }}
           onScrollEndDrag={event => {
             selectOffset(event.nativeEvent.contentOffset.y)

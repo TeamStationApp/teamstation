@@ -28,6 +28,7 @@
 - changed: Chat is closed to anyone under 13: they leave every chat, and a direct message left with one person closes. Someone who first gives their age in a direct message the rules don't allow it in doesn't see what was said there before
 - changed: A guardian must be an adult, and coaches no longer see or set players' birth months
 - changed: The 13+ consent sheet is gone, along with the account setting behind it
+- changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
 - fixed: Offline documents and unsent edits stay with the server and account that created them.
 - fixed: A web build can send its logs to the log collector it was built for; the page's content policy refused them before
 - fixed: Phone builds from Mason, other than master's production build, report their logs and crashes to the server they talk to; they reported nothing before
