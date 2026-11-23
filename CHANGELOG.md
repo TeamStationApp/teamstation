@@ -4,10 +4,16 @@
 
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with a dry run first and `--delete-old` for the old copies afterwards
+- added: Tapping "N edits not sent" opens a sheet of each refused edit, naming its game or team with the server's message, with Try Again and Use Server's Copy; the Game and Team screens show the same held notice
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file
+- changed: The web keeps the phone's copy of what its screens read and queues edits as the phone does, in the tab: it scores without waiting on the server, keeps every play across browser Back and while offline, shows the offline banner and the "edits not sent" banner and sheet, and warns before the tab is left while edits wait
+- changed: On the web, Coach Game keeps a refused lineup or rostered change and holds it in "edits not sent", as the phone does
+- changed: The web build writes brotli and gzip copies of its scripts, styles and WebAssembly for the server to send, about a quarter of the bytes on a first visit
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
+- fixed: A ball scored on the web just before browser Back is no longer lost
+- fixed: Scoring opens at once from what the phone or tab holds, with a pitch still on its way to the server, instead of waiting on a slow server
 
 ## 1.4.0 (2026-11-21)
 
