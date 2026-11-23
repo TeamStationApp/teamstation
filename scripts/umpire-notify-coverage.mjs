@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 
 import { build } from 'esbuild'
@@ -129,8 +129,13 @@ if (!screensOnly) {
 }
 const report = resolve('coverage/umpireNotify')
 const temp = resolve(report, 'tmp')
-// The run's own directory, named in full: deletes never take a computed path.
-rmSync('coverage/umpireNotify', { recursive: true, force: true })
+// Left by an earlier run: removed by the caller, by its path, never here.
+if (existsSync(report)) {
+  console.error(
+    'Remove coverage/umpireNotify first (rm -rf coverage/umpireNotify)'
+  )
+  process.exit(1)
+}
 mkdirSync(temp, { recursive: true })
 
 const bundle = 'lib/umpire-notify-tests.cjs'

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 
 import { build } from 'esbuild'
@@ -97,7 +97,13 @@ if (!screensOnly) {
 }
 const report = resolve('coverage/umpireAvailability')
 const temp = resolve(report, 'tmp')
-rmSync(report, { recursive: true, force: true })
+// Left by an earlier run: removed by the caller, by its path, never here.
+if (existsSync(report)) {
+  console.error(
+    'Remove coverage/umpireAvailability first (rm -rf coverage/umpireAvailability)'
+  )
+  process.exit(1)
+}
 mkdirSync(temp, { recursive: true })
 
 const bundle = 'lib/umpire-availability-tests.cjs'
