@@ -490,7 +490,8 @@ describe('following a team (U1)', function () {
           'B',
           'C',
           'E',
-          'F'
+          'F',
+          'M'
         ].map(userId)
       )
       expect(
@@ -510,7 +511,7 @@ describe('following a team (U1)', function () {
       )
       expect(
         followers.map((entry: { userId: string }) => entry.userId)
-      ).deep.equals([userId('E'), userId('F')])
+      ).deep.equals([userId('E'), userId('F'), userId('M')])
       const pat = coach.body.find(
         (entry: { userId: string }) => entry.userId === userId('P')
       )

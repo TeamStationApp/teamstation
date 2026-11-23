@@ -474,15 +474,14 @@ async function apiCall(
 }
 
 /**
- * Confirms the page's newly made account for chat, as agreeing to the age
- * sheet does: the seed confirms its own people, and this one it never saw.
+ * Gives the page's newly made account an adult age, as answering the age
+ * modal does: the seed gives its own people an age, and this one it never
+ * saw. Until then the server refuses it every chat read.
  */
 async function confirmChatAge(page: Page): Promise<void> {
-  const answer = await apiCall(page, 'PUT', '/me/account/chat-age', {
-    source: 'self'
-  })
-  expect(answer.status).equals(200)
-  expect(answer.body?.confirmed).equals(true)
+  const age = await apiCall(page, 'PUT', '/me/account/age', { adult: true })
+  expect(age.status).equals(200)
+  expect(age.body?.band).equals('adult')
 }
 
 /** The id of the chat called `title` in the page's person's list. */
@@ -1685,14 +1684,14 @@ describe('chat scenarios in the browser', function () {
   })
 
   /**
-   * E14: the SafeSport switch. K's DM with P, made while it is off, closes
-   * when L turns it on; K's next DM with P needs another adult and K picks
-   * Hc; G2's DM with P needs nobody, and closes when Hc unlinks P's
-   * remaining guardians; Hc's leave closes K's DM; L turns it off again.
+   * E14: the SafeSport switch. Hawks admin Ha's DM with P, made while it is
+   * off, closes when L turns it on; Ha's next DM with P needs another adult
+   * and Ha picks Hc; G2's DM with P needs nobody, and closes when Hc unlinks
+   * P's remaining guardians; Hc's leave closes Ha's DM; L turns it off again.
    */
   it('E14: SafeSport includes another adult, and closes what breaks it', async function () {
-    const keeper = await signedIn('K')
-    await signIn(keeper, seed, 'K')
+    const keeper = await signedIn('Ha')
+    await signIn(keeper, seed, 'Ha')
     const newDm = async (
       page: Page,
       query: string,
@@ -1704,18 +1703,18 @@ describe('chat scenarios in the browser', function () {
       await press(page, `Pick ${pick}`)
       await pressText(page, 'Start conversation')
     }
-    // The season's scorekeeper may read its players, Pat among them, in full.
+    // P's team admin may read P in full, and is P's staff.
     await newDm(keeper, 'Pat', 'Pat Player')
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
     )
     await notNow(keeper)
     const first = await dmWith(keeper, [
-      seed.people.K.userId,
+      seed.people.Ha.userId,
       seed.people.P.userId
     ])
-    await send(keeper, 'K to P: bring your glove')
-    await shot(keeper, 'e14-1-k-p')
+    await send(keeper, 'Ha to P: bring your glove')
+    await shot(keeper, 'e14-1-ha-p')
 
     const league = await signedIn('L')
     await signIn(league, seed, 'L')
@@ -1742,7 +1741,7 @@ describe('chat scenarios in the browser', function () {
     // Off again however the scenario ends: E19 needs QPLL an ordinary league.
     try {
       await shot(league, 'e14-2-l-switch-on')
-      await until('K’s first DM to close', async () => {
+      await until('Ha’s first DM to close', async () => {
         const list = (await apiGet(keeper, '/chat/conversations'))
           .body as Array<{
           id: string
@@ -1755,27 +1754,26 @@ describe('chat scenarios in the browser', function () {
 
       await newDm(keeper, 'Pat', 'Pat Player')
       await waitForText(keeper, 'Include another adult')
-      for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
+      for (const name of ['Glen G', 'Ava A', 'Blair B', 'Hank C']) {
         await waitForText(keeper, name)
       }
-      expect(await bodyText(keeper)).not.contains('Kim K')
-      await shot(keeper, 'e14-3-k-suggestions')
+      await shot(keeper, 'e14-3-ha-suggestions')
       await typeInto(keeper, 'Search for an adult', 'Eddie')
       await waitForText(keeper, 'Nobody matches that name.')
-      await shot(keeper, 'e14-4-k-no-ec')
+      await shot(keeper, 'e14-4-ha-no-ec')
       await typeInto(keeper, 'Search for an adult', 'Hank')
-      await press(keeper, 'Include Hank C')
+      await press(keeper, 'Include Hank Coach')
       await pressText(keeper, 'Start with them')
       await until('the DM with Hc', () =>
         /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
       )
       await notNow(keeper)
       const second = await dmWith(keeper, [
-        seed.people.K.userId,
+        seed.people.Ha.userId,
         seed.people.P.userId,
         seed.people.Hc.userId
       ])
-      await shot(keeper, 'e14-5-k-p-hc')
+      await shot(keeper, 'e14-5-ha-p-hc')
 
       const guardian = await signedIn('G2')
       await signIn(guardian, seed, 'G2')
@@ -1823,7 +1821,7 @@ describe('chat scenarios in the browser', function () {
         waitUntil: 'networkidle2'
       })
       await pressText(coach, 'Leave this conversation')
-      await until('K’s DM to close', async () => {
+      await until('Ha’s DM to close', async () => {
         const list = (await apiGet(keeper, '/chat/conversations'))
           .body as Array<{
           id: string
@@ -1835,7 +1833,7 @@ describe('chat scenarios in the browser', function () {
       })
       await goto(keeper, `${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
       await waitForText(keeper, 'This chat is closed')
-      await shot(keeper, 'e14-8-k-closed')
+      await shot(keeper, 'e14-8-ha-closed')
     } finally {
       await toggle(false)
     }
@@ -2108,8 +2106,9 @@ describe('chat scenarios in the browser', function () {
 
     const rookie = await signedIn('R')
     await signIn(rookie, seed, 'R')
-    await openChatTab(rookie)
-    await waitForText(rookie, 'You are in no chats yet.')
-    await shot(rookie, 'e19-4-r-no-chats')
+    // R is 12: chat is closed to them, the notice in place of any list.
+    await rookie.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+    await waitForText(rookie, 'Chat Is for Ages 13 and Up')
+    await shot(rookie, 'e19-4-r-under13')
   })
 })

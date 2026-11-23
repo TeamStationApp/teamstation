@@ -23,6 +23,11 @@ import { asLiteral } from './asLiteral'
  * server could read of the message: the device opens `env` (or fetches it)
  * with its own keys, and shows a notification only for a DM or a mention of
  * `u`.
+ *
+ * A recipient with no age on file reads no chat, so their DM wake is
+ * `generic`: it has no `env`, says `Someone` and no title, and the device
+ * shows only that there is a new message, fetching nothing. They get no
+ * group wakes at all.
  */
 const cleanChatWake = asObject({
   t: asLiteral('chat'),
@@ -42,16 +47,29 @@ const cleanChatWake = asObject({
    * within `MAX_INLINE_WAKE`; otherwise the device fetches
    * `GET /chat/conversations/:c/messages?after=<seq - 1>&limit=1`.
    */
-  env: asOptional(asChatMessage)
+  env: asOptional(asChatMessage),
+  /** Set for a recipient with no age on file; see above. */
+  generic: asOptional(asLiteral(true))
 })
-export type ChatWake = Omit<ReturnType<typeof cleanChatWake>, 'env'> & {
+export type ChatWake = Omit<
+  ReturnType<typeof cleanChatWake>,
+  'env' | 'generic'
+> & {
   env?: ChatMessage
+  generic?: true
 }
-/** A wake, with an absent envelope left out rather than undefined. */
+/** A wake, with an absent envelope or flag left out rather than undefined. */
 export const asChatWake: Cleaner<ChatWake> = raw => {
-  const { env, ...wake } = cleanChatWake(raw)
-  return env == null ? wake : { ...wake, env }
+  const { env, generic, ...wake } = cleanChatWake(raw)
+  return {
+    ...wake,
+    ...(env == null ? {} : { env }),
+    ...(generic == null ? {} : { generic })
+  }
 }
+
+/** What a generic wake's notification says, on every platform. */
+export const GENERIC_WAKE_BODY = 'You have a new message'
 
 /** What an event's reminder tells one person's devices. */
 export const asEventReminder = asObject({

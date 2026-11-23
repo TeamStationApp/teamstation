@@ -1,11 +1,12 @@
 import type { Kysely } from 'kysely'
 
+import type { AgeBand } from '../../common/age'
 import { badRequest, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
-import { canCoach, openAddTeams, roleScopes } from '../access'
 import { onePerson, survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { rowsOfPeople } from '../teams/teamStaff'
+import { ageBandOfUser } from '../users/age'
 
 /**
  * Guardians and adult family members of a player.
@@ -39,12 +40,32 @@ export interface Linked {
 }
 
 /**
+ * Refuses a guardian who is known not to be an adult (band 13 to 17, or
+ * under 13): 400 `guardianNotAdult`. Somebody with no age yet is let through,
+ * since invitations and added parents link accounts made a moment ago; their
+ * link counts as a guardian only once they are an adult (`DmFacts`).
+ */
+export async function assertGuardianAge(
+  trx: Kysely<Database>,
+  guardianId: string,
+  now: Date = new Date()
+): Promise<void> {
+  const band = await ageBandOfUser(trx, guardianId, now)
+  if (band === 'minor' || band === 'under13') {
+    throw badRequest('A guardian must be an adult', {
+      reason: 'guardianNotAdult'
+    })
+  }
+}
+
+/**
  * Makes `guardianId` a guardian (or adult family member) of `playerId`, who
  * must be a player on `teamId`.
  *
  * Refuses a guardian who is not an account (`badRequest`, reason
- * `guardianNeedsAccount`), a link of a player to themselves, and a player
- * who has no `is_player` membership on the team (404). Idempotent. A
+ * `guardianNeedsAccount`), a guardian known not to be an adult
+ * (`assertGuardianAge`), a link of a player to themselves, and a player who
+ * has no `is_player` membership on the team (404). Idempotent. A
  * guardian who has no membership on the team gets one, granted by the link;
  * one they already had is left as it was. `actor` is whoever asked, kept
  * for the chat's membership log; nothing here reads it.
@@ -74,6 +95,7 @@ export async function linkGuardian(
       reason: 'guardianNeedsAccount'
     })
   }
+  if (kind === 'guardian') await assertGuardianAge(trx, guardianId)
   const place = await trx
     .selectFrom('memberships')
     .select(['id'])
@@ -292,35 +314,42 @@ export async function isGuardianOf(
 }
 
 /**
- * Whether `actor` may set and see `playerId`'s birth month: a site
- * administrator, an administrator or coach of a team the player plays on
- * (inherited roles count, as everywhere a coach is asked about), or one of
- * the player's guardians. Not the player, and not an adult family member.
+ * Whether `actor` may see and change `userId`'s age: a site administrator, or
+ * one of the person's guardians who is an adult (a link to anybody else
+ * counts for nothing until they are). Not the person (they give it once,
+ * through `/me/account/age`), not a coach, and not an adult family member.
  */
-export async function mayKeepBirthMonth(
+export async function maySeeAge(
   db: Kysely<Database>,
   actor: { userId: string; isAdmin: boolean },
-  playerId: string
+  userId: string
 ): Promise<boolean> {
   if (actor.isAdmin) return true
-  const person = await onePerson(db, playerId)
-  const teams = await db
-    .selectFrom('memberships')
-    .select(['team_id'])
-    .where('user_id', 'in', person.userIds)
-    .where('is_player', '=', true)
-    .execute()
-  if (teams.length > 0) {
-    const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-    // Not a team holding them only by an open add: a rejection could not
-    // undo it.
-    const held = await openAddTeams(db, person.userIds)
-    if (
-      teams.some(
-        team => !held.includes(team.team_id) && canCoach(scopes, team.team_id)
-      )
-    )
-      return true
-  }
-  return await isGuardianOf(db, actor.userId, playerId)
+  return (
+    (await isGuardianOf(db, actor.userId, userId)) &&
+    (await ageBandOfUser(db, actor.userId, new Date())) === 'adult'
+  )
+}
+
+/** What `mayChangeAge` answers. */
+export type AgeChange =
+  'allowed' | 'adultToMinor' | 'notYet' | 'clearNotAllowed'
+
+/**
+ * Whether an actor `maySeeAge` allows may move a person from band `current`
+ * to `next` (null to clear). A site administrator may make any change. A
+ * guardian may change a known age, an under-13 answer included, but never
+ * make an adult a minor or under 13, never clear it, and never give the
+ * first age of somebody whose age is unknown: only they do that.
+ */
+export function mayChangeAge(
+  actor: { isAdmin: boolean },
+  current: AgeBand,
+  next: AgeBand | null
+): AgeChange {
+  if (actor.isAdmin) return 'allowed'
+  if (next == null) return 'clearNotAllowed'
+  if (current === 'unknown') return 'notYet'
+  if (current === 'adult' && next !== 'adult') return 'adultToMinor'
+  return 'allowed'
 }

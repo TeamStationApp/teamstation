@@ -30,7 +30,6 @@ import {
   TeamStationClient,
   type TimedRequest
 } from './api'
-import { asChatAge, asChatAgeBody } from './chatAge'
 import { HttpError, isUpdateRequired } from './errors'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import { asGumboPlay } from './gumboPlay'
@@ -323,65 +322,32 @@ describe('api client', function () {
       '/api/v1/users?view=administration&query=&nodeAdmin=true'
     ])
   })
-  it('reads and confirms the account\u2019s chat age, and cleans both answers', async function () {
-    const calls: Array<{ url: string; method?: string; body?: unknown }> = []
-    const answer = {
-      confirmed: true,
-      source: 'self',
-      confirmedAt: '2027-04-12T12:00:00.000Z'
-    }
+  it('tells the app a chat call refused for want of an age', async function () {
+    let told = 0
     const client = new TeamStationClient({
       baseUrl: 'https://api.example.test/api/v1',
       token: 'tok',
-      fetch: async (url: unknown, init?: RequestInit) => {
-        calls.push({
-          url: String(url),
-          method: init?.method,
-          body:
-            typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
-        })
-        return Response.json(
-          init?.method === 'PUT'
-            ? answer
-            : { confirmed: false, source: null, confirmedAt: null }
+      fetch: async () =>
+        Response.json(
+          {
+            code: 'forbidden',
+            message: 'Give your age to use chat',
+            details: { reason: 'ageRequired' }
+          },
+          { status: 403 }
         )
-      }
     })
-    expect(await client.chatAge()).deep.equals({
-      confirmed: false,
-      source: null,
-      confirmedAt: null
-    })
-    expect(await client.confirmChatAge('self')).deep.equals(answer)
-    expect(calls).deep.equals([
-      {
-        url: 'https://api.example.test/api/v1/me/account/chat-age',
-        method: 'GET',
-        body: undefined
-      },
-      {
-        url: 'https://api.example.test/api/v1/me/account/chat-age',
-        method: 'PUT',
-        body: { source: 'self' }
-      }
-    ])
-    expect(() => asChatAge([])).throws(TypeError)
-    expect(() =>
-      asChatAge({ confirmed: true, source: 'adult', confirmedAt: null })
-    ).throws(TypeError)
-    expect(() =>
-      asChatAge({ confirmed: true, source: 'self', confirmedAt: 5 })
-    ).throws(TypeError)
-    expect(asChatAgeBody({ source: 'apple' })).deep.equals({ source: 'apple' })
-    for (const body of [
-      null,
-      [],
-      'self',
-      {},
-      { source: 'x' },
-      { source: 'self', age: 1 }
-    ])
-      expect(() => asChatAgeBody(body), JSON.stringify(body)).throws(TypeError)
+    client.onAgeRequired = () => {
+      told += 1
+    }
+    let failure: unknown
+    try {
+      await client.chatConversations()
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'forbidden')
+    expect(told).equals(1)
   })
   it('fetches a replay step\u2019s narration with the client\u2019s session, and says where it is', async function () {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = []
@@ -1777,28 +1743,57 @@ describe('api client', function () {
       url: `http://x/api/v1/teams/tem_1/players/${userIdOfGumbo(42)}/guardians/${userIdOfGumbo(7)}`
     })
 
-    const born = client({ userId: userIdOfGumbo(42), birthMonth: '2012-03' })
+    const minor = {
+      userId: userIdOfGumbo(42),
+      band: 'minor',
+      birthMonth: '2012-03',
+      isAdult: false
+    }
+    const born = client(minor)
     expect(
-      await born.client.setBirthMonth(userIdOfGumbo(42), {
-        year: 2012,
-        month: 3
-      })
-    ).equals('2012-03')
+      await born.client.setAge(userIdOfGumbo(42), { year: 2012, month: 3 })
+    ).deep.equals(minor)
     expect(born.calls[0]).deep.include({
       method: 'PUT',
-      url: `http://x/api/v1/players/${userIdOfGumbo(42)}/birth-month`
+      url: `http://x/api/v1/people/${userIdOfGumbo(42)}/age`
     })
     expect(JSON.parse(born.calls[0].body ?? '')).deep.equals({
       year: 2012,
       month: 3
     })
-    const cleared = client({ userId: userIdOfGumbo(42), birthMonth: null })
-    expect(await cleared.client.setBirthMonth(userIdOfGumbo(42), null)).equals(
-      null
-    )
+    const cleared = client({ ...minor, band: 'unknown', birthMonth: null })
+    expect(
+      (await cleared.client.setAge(userIdOfGumbo(42), null)).birthMonth
+    ).equals(null)
     expect(JSON.parse(cleared.calls[0].body ?? '')).deep.equals({
       year: null,
       month: null
+    })
+
+    const view = {
+      band: 'adult',
+      birthYear: null,
+      birthMonth: null,
+      isAdult: true,
+      ageSource: 'apple',
+      ageSetAt: '2026-11-20T12:00:00.000Z'
+    }
+    const mine = client(view)
+    expect(await mine.client.myAge()).deep.equals(view)
+    expect(mine.calls[0]).deep.include({
+      method: 'GET',
+      url: 'http://x/api/v1/me/account/age'
+    })
+    const given = client(view)
+    expect(
+      await given.client.setMyAge({ apple: { lowerBound: 18 } })
+    ).deep.equals(view)
+    expect(given.calls[0]).deep.include({
+      method: 'PUT',
+      url: 'http://x/api/v1/me/account/age'
+    })
+    expect(JSON.parse(given.calls[0].body ?? '')).deep.equals({
+      apple: { lowerBound: 18 }
     })
 
     const lao = client({ leagueId: 'lea 1', safesportLao: true })

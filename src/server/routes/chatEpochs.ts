@@ -23,7 +23,7 @@ import {
   boxDeliveryQuery,
   historyQuery
 } from '../chat/historyValidation'
-import { chatCaller } from '../chat/keys'
+import { chatAgeRequired, chatCaller } from '../chat/keys'
 import { memberNow } from '../chat/reconciler'
 import { asBase64urlBytes } from '../chat/wire'
 import type { Database } from '../db/database'
@@ -119,6 +119,7 @@ export function chatEpochRoutes(
   options: { freshEpochsEnabled?: () => boolean } = {}
 ): Router {
   const router = Router()
+  const ageGate = chatAgeRequired(db, clock)
 
   const mustBeMember = async (
     conversationId: string,
@@ -132,6 +133,7 @@ export function chatEpochRoutes(
   router.get(
     '/chat/conversations/:conversationId/epochs',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.conversationId)
@@ -165,6 +167,7 @@ export function chatEpochRoutes(
   router.post(
     '/chat/conversations/:conversationId/epochs',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.conversationId)
@@ -194,6 +197,7 @@ export function chatEpochRoutes(
   router.get(
     '/chat/grants',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const query = cleanBody(() => historyQuery(req.query), req.query)
@@ -214,6 +218,7 @@ export function chatEpochRoutes(
   router.post(
     '/chat/grants',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const query = cleanBody(() => historyQuery(req.query), req.query)

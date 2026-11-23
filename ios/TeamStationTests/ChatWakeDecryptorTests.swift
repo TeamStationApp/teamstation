@@ -520,6 +520,59 @@ final class ChatWakeDecryptorTests: XCTestCase {
     XCTAssertEqual(posted.count, 1)
   }
 
+  /// The DM wake of a recipient with no age on file, as `chatWakes.ts` sends it.
+  private func generic(_ item: [String: Any]) -> [String: Any] {
+    var wake = item["wake"] as! [String: Any]
+    wake["env"] = nil
+    wake["from"] = "Someone"
+    wake["title"] = NSNull()
+    wake["generic"] = true
+    return wake
+  }
+
+  /// A generic wake says only that there is a new message, and opens nothing to say it.
+  func testAGenericWakeShowsTheServersTextAndFetchesNothing() throws {
+    let dm = try named("dm")
+    let wake = generic(dm)
+    let (shown, calls) = open(dm, payload: wake)
+    XCTAssertEqual(shown, [
+      "title": "TeamStation",
+      "body": "You have a new message",
+      "url": wake["url"] as! String,
+      "tag": "chat:\(wake["c"] as! String)",
+    ])
+    XCTAssertEqual(calls, [])
+    // Without the flag, a wake with no envelope (one too big to carry) is still fetched.
+    let oversized = try named("fetched")
+    XCTAssertNil((oversized["wake"] as! [String: Any])["env"])
+    let fetched = open(oversized)
+    XCTAssertEqual(fetched.shown, oversized["expected"] as? [String: String])
+    XCTAssertTrue(fetched.calls.contains { $0.contains("/messages?after=") })
+  }
+
+  /// The extension leaves a generic wake's alert as the server sent it, for the person signed in only.
+  func testTheExtensionPassesAGenericWakeAsItCame() throws {
+    let wake = generic(try named("dm"))
+    WakeAPI.tokens = []
+    signIn(wake["u"] as! String)
+    XCTAssertEqual(openStored(wake), ["outcome": "notWake"])
+    let shown = serve(wake)
+    XCTAssertEqual(shown.body, "New message")
+    XCTAssertEqual(shown.title, "")
+    XCTAssertEqual(WakeAPI.tokens, [])
+    setUser("usr_somebodyElse")
+    XCTAssertEqual(openStored(wake), ["outcome": "hide"])
+    // Signed in with no session kept (a refused request drops it): it opens
+    // nothing, so it is still shown, as Android shows it.
+    SecItemDelete(item(session) as CFDictionary)
+    setUser(wake["u"] as? String)
+    XCTAssertEqual(openStored(wake), ["outcome": "notWake"])
+    // Signed out: hidden.
+    setUser(nil)
+    XCTAssertEqual(openStored(wake), ["outcome": "hide"])
+    XCTAssertEqual(WakeAPI.tokens, [])
+  }
+
   /// Signed out, a DM tells whoever holds the phone nothing, not even who wrote.
   func testASignedOutPhoneShowsNoDm() throws {
     let dm = try named("dm")

@@ -9,7 +9,12 @@ import {
   asAccountPasswordBody,
   asAccountPrimaryBody
 } from '../../common/accountSettings'
-import { asChatAgeBody, type ChatAge } from '../../common/chatAge'
+import {
+  ageBandOf,
+  type AgeView,
+  asMyAgeBody,
+  outsideAppleRange
+} from '../../common/age'
 import {
   badRequest,
   conflict,
@@ -38,6 +43,7 @@ import {
 } from '../auth/passwords'
 import { checkLimits, type LimitRule, recordAttempts } from '../auth/rateLimit'
 import { isMachine } from '../auth/sessions'
+import { recheckDmsOf } from '../chat/dms'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
@@ -138,20 +144,37 @@ async function lockAccount(
   return user.password_hash
 }
 
-/** Whether, how and when this account unlocked chat. */
-async function readChatAge(
+/** A person's age as they hold it (`GET /me/account/age`). */
+async function readAge(
   db: Kysely<Database>,
-  userId: string
-): Promise<ChatAge> {
+  userId: string,
+  now: Date
+): Promise<AgeView> {
   const row = await db
     .selectFrom('users')
-    .select(['chat_age_confirmed_at', 'chat_age_source'])
+    .select([
+      'birth_year',
+      'birth_month',
+      'is_adult',
+      'age_source',
+      'age_set_at'
+    ])
     .where('id', '=', userId)
     .executeTakeFirstOrThrow()
   return {
-    confirmed: row.chat_age_confirmed_at != null,
-    source: row.chat_age_source,
-    confirmedAt: row.chat_age_confirmed_at?.toISOString() ?? null
+    band: ageBandOf(
+      {
+        birthYear: row.birth_year,
+        birthMonth: row.birth_month,
+        isAdult: row.is_adult
+      },
+      now
+    ),
+    birthYear: row.birth_year,
+    birthMonth: row.birth_month,
+    isAdult: row.is_adult,
+    ageSource: row.age_source,
+    ageSetAt: row.age_set_at?.toISOString() ?? null
   }
 }
 
@@ -393,30 +416,68 @@ export function accountRoutes(
     )
   }
   router.get(
-    '/me/account/chat-age',
+    '/me/account/age',
     withAsync(async (req, res) => {
-      res.json(await readChatAge(db, accountId(req)))
+      res.json(await readAge(db, accountId(req), new Date()))
     })
   )
+  /**
+   * The person's first answer, and only that: once the account has an age of
+   * any kind (a birth month, whoever set it, 18 or older, or an earlier
+   * answer), it is 409 `ageSet`, and only a guardian or a site administrator
+   * changes it (`PUT /people/:userId/age`). An answer under 13 stands.
+   */
   router.put(
-    '/me/account/chat-age',
+    '/me/account/age',
     withAsync(async (req, res) => {
       const userId = accountId(req)
-      const { source } = cleanBody(asChatAgeBody, req.body)
-      // The first confirmation stands: a later one keeps its source and time.
       const now = new Date()
-      await db
-        .updateTable('users')
-        .set({
-          chat_age_confirmed_at: now,
-          chat_age_source: source,
-          updated_at: now
+      const body = cleanBody(raw => asMyAgeBody(raw, now), req.body)
+      if (outsideAppleRange(body, now)) {
+        throw badRequest('That age is outside the range Apple shared', {
+          reason: 'outsideAppleRange'
         })
-        .where('id', '=', userId)
-        .where('chat_age_confirmed_at', 'is', null)
-        .execute()
-      setAudit(res.locals, { entityType: 'user', entityId: userId })
-      res.json(await readChatAge(db, userId))
+      }
+      await db.transaction().execute(async tx => {
+        const user = await tx
+          .selectFrom('users')
+          .select(['birth_year', 'birth_month', 'is_adult', 'age_set_at'])
+          .where('id', '=', userId)
+          .forUpdate()
+          .executeTakeFirstOrThrow()
+        if (
+          user.birth_year != null ||
+          user.birth_month != null ||
+          user.is_adult ||
+          user.age_set_at != null
+        ) {
+          throw conflict('Your age is already set', { reason: 'ageSet' })
+        }
+        await tx
+          .updateTable('users')
+          .set({
+            ...(body.kind === 'month'
+              ? { birth_year: body.year, birth_month: body.month }
+              : { is_adult: true }),
+            age_source: body.apple == null ? 'self' : 'apple',
+            age_set_at: now,
+            updated_at: now
+          })
+          .where('id', '=', userId)
+          .execute()
+        // In the same transaction, so the age and its effect land together:
+        // a DM this age breaks closes, and what was said in it before is
+        // hidden from the minor, before any session can read with the age.
+        await recheckDmsOf(tx, userId, now)
+      })
+      const age = await readAge(db, userId, now)
+      setAudit(res.locals, {
+        entityType: 'age',
+        entityId: userId,
+        before: { band: 'unknown' },
+        after: { band: age.band }
+      })
+      res.json(age)
     })
   )
   router.put(

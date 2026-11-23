@@ -60,12 +60,14 @@ export interface UsersTable {
   birth_year: number | null
   birth_month: number | null
   /**
-   * When and how chat was unlocked for this account, both or neither
-   * (105chatAgeConfirmations): `apple` from a shared Declared Age Range of 13
-   * or more, `self` from the app's age sheet.
+   * 18 or older without a birth month (127ageBands); a birth month always
+   * wins over it. `ageBandOf` in `common/age.ts` reads the band from these.
    */
-  chat_age_confirmed_at: Timestamp | null
-  chat_age_source: 'apple' | 'self' | null
+  is_adult: Generated<boolean>
+  /** Who set the age most recently. */
+  age_source: 'self' | 'apple' | 'guardian' | 'admin' | null
+  /** When the person first gave their age themselves; kept after later changes. */
+  age_set_at: Timestamp | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -1525,6 +1527,11 @@ export interface ChatMembersTable {
   joined_at: Generated<Date>
   left_at: Timestamp | null
   created_at: Generated<Date>
+  /**
+   * Messages before this are not served to this member: set when they gave
+   * an age of 13 to 17 after joining and the DM closed (128chatHiddenHistory).
+   */
+  hidden_before: Timestamp | null
 }
 
 /** The hash-chained record of a chat's membership. */

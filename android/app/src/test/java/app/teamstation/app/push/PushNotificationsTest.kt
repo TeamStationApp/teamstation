@@ -9,6 +9,12 @@ import org.junit.Test
 
 /** What a push posts: its channel, its fields, and what a tap opens. */
 class PushNotificationsTest {
+  private companion object {
+    /** `R.string.app_name` and `R.string.push_generic_wake`, as the handler passes them. */
+    const val APP = "TeamStation"
+    const val GENERIC = "You have a new message"
+  }
+
   @Test
   fun choosesTheChannel() {
     assertEquals(PushChannel.MESSAGES, PushChannel.of("messages", "event:g1"))
@@ -87,11 +93,23 @@ class PushNotificationsTest {
     assertEquals(
         PushNotice(
             PushChannel.MESSAGES, "Erin", "New message from Erin", "teamstation://chat/c1", "chat:c1", 7L),
-        PushNotifications.fallback(dm, "New message from %s", signedIn = "u2"))
-    assertNull(PushNotifications.fallback(dm.copy(dm = false), "New message from %s", signedIn = "u2"))
+        PushNotifications.fallback(dm, "New message from %s", signedIn = "u2", app = APP, generic = GENERIC))
+    assertNull(
+        PushNotifications.fallback(
+            dm.copy(dm = false), "New message from %s", signedIn = "u2", app = APP, generic = GENERIC))
     // Signed out, or signed in as somebody else, nor who writes to the person.
-    assertNull(PushNotifications.fallback(dm, "New message from %s", signedIn = null))
-    assertNull(PushNotifications.fallback(dm, "New message from %s", signedIn = "u1"))
+    assertNull(PushNotifications.fallback(dm, "New message from %s", signedIn = null, app = APP, generic = GENERIC))
+    assertNull(PushNotifications.fallback(dm, "New message from %s", signedIn = "u1", app = APP, generic = GENERIC))
+  }
+
+  @Test
+  fun aGenericDmNotOpenedInTimeNamesNobody() {
+    val dm = PushPayload.ChatWake("u2", "c1", 7L, true, "Someone", "teamstation://chat/c1", "{}", generic = true)
+    assertEquals(
+        PushNotice(
+            PushChannel.MESSAGES, APP, GENERIC, "teamstation://chat/c1", "chat:c1", 7L),
+        PushNotifications.fallback(dm, "New message from %s", signedIn = "u2", app = APP, generic = GENERIC))
+    assertNull(PushNotifications.fallback(dm, "New message from %s", signedIn = null, app = APP, generic = GENERIC))
   }
 
   @Test

@@ -9,9 +9,9 @@ import { CHAT_USER, FakeKeys, MemoryStore } from '../../test/chatKeysFake'
 import {
   type ChatAccess,
   ChatAgeContext,
-  ChatAgeSheet,
   type ChatAgeState
-} from '../chat/ChatAgeGate'
+} from '../chat/AgeGate'
+import { AgeSheet } from '../chat/AgeSheet'
 import { ChatCoreGate } from '../chat/ChatCoreGate'
 import { ChatGate } from '../chat/ChatGate'
 import {
@@ -140,7 +140,8 @@ function waitingLink(): DeviceApprovals {
 function chatAge(access: ChatAccess): ChatAgeState {
   return {
     access,
-    confirm: async () => undefined,
+    answer: async () => 'adult',
+    apple: 'none',
     retry: () => undefined,
     failed: false,
     ask: () => () => undefined,
@@ -262,9 +263,10 @@ function Harness(
               )}
               {props.prompt === true && <DeviceApprovalPrompt />}
               {props.ageSheet === true && (
-                <ChatAgeSheet
-                  mode="consent"
-                  onAgree={() => undefined}
+                <AgeSheet
+                  mode="ask"
+                  apple="none"
+                  onAnswer={() => undefined}
                   onDecline={() => undefined}
                 />
               )}

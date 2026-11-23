@@ -58,7 +58,7 @@ import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { mayKeepBirthMonth } from '../people/guardians'
+import { maySeeAge } from '../people/guardians'
 import { gumboIdsOfUsers } from '../scoring/gumboIds'
 import { highlightSettings } from '../settings'
 import { notifyLiveGamesRenamed } from '../socket/gameChanges'
@@ -69,6 +69,7 @@ import {
 } from '../teams/addExistingPlayer'
 import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
+import { ageBandOfUser } from '../users/age'
 import { refuseDeleted } from '../users/deleted'
 import { gumboIdOf } from '../users/insertUser'
 import { gameNames } from '../users/nameBook'
@@ -184,14 +185,17 @@ export function playerRoutes(
         { isAdmin: actor.isAdmin },
         { player: person }
       )
-      // The birth month only for those who may set it: the team's
-      // administrators and coaches, and the player's guardians.
-      const birthMonth = (await mayKeepBirthMonth(db, actor, userId))
+      // The birth month only for those who may change it: site
+      // administrators and the player's guardians. Only an administrator
+      // may clear it.
+      const birthMonth = (await maySeeAge(db, actor, userId))
         ? {
             birthMonth:
               user.birthYear == null || user.birthMonth == null
                 ? null
-                : birthMonthText(user.birthYear, user.birthMonth)
+                : birthMonthText(user.birthYear, user.birthMonth),
+            ageBand: (await ageBandOfUser(db, userId, new Date())) ?? 'unknown',
+            mayClearAge: actor.isAdmin
           }
         : {}
 

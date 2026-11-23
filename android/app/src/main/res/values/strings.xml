@@ -4,4 +4,6 @@
     <string name="push_channel_messages">Messages</string>
     <string name="push_channel_events">Events</string>
     <string name="push_new_message_from">New message from %s</string>
+    <!-- What a DM to somebody with no age on file says: no sender, no text. -->
+    <string name="push_generic_wake">You have a new message</string>
 </resources>

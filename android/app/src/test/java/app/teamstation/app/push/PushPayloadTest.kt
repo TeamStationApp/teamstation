@@ -32,6 +32,10 @@ class PushPayloadTest {
     assertEquals(false, (PushPayload.parse(group) as PushPayload.ChatWake).dm)
     // A wake names the message it is for.
     assertNull(PushPayload.parse(wake.replace("\"seq\":7,", "")))
+    // A generic wake, for a recipient with no age on file, says so.
+    val generic = wake.replace("\"seq\":7,", "\"seq\":7,\"generic\":true,")
+    assertEquals(true, (PushPayload.parse(generic) as PushPayload.ChatWake).generic)
+    assertEquals(false, (read as PushPayload.ChatWake).generic)
   }
 
   @Test

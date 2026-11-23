@@ -378,12 +378,15 @@ async function open(
     } else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
     else if (url.pathname === '/api/v1/me/notifications/summary')
       body = { hasPending: false }
-    // Confirmed for chat, as the Shell reads on sign-in.
-    else if (url.pathname === '/api/v1/me/account/chat-age')
+    // An adult's age, as the Shell reads on sign-in.
+    else if (url.pathname === '/api/v1/me/account/age')
       body = {
-        confirmed: true,
-        source: 'self',
-        confirmedAt: '2027-04-10T12:00:00.000Z'
+        band: 'adult',
+        birthYear: null,
+        birthMonth: null,
+        isAdult: true,
+        ageSource: 'self',
+        ageSetAt: '2027-04-10T12:00:00.000Z'
       }
     // No coach has planned this game: each inning's column is empty.
     else if (

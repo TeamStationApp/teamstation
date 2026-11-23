@@ -503,6 +503,67 @@ describe('chat wakes (M3)', function () {
     expect(to('Hc', 'web').message).to.include({ urgency: 'high' })
   })
 
+  it('sends somebody with no age a generic DM wake, and no group wake at all', async function () {
+    const setAdult = async (isAdult: boolean): Promise<void> => {
+      await fixture.db
+        .updateTable('users')
+        .set({ is_adult: isAdult })
+        .where('id', '=', fixture.id('C'))
+        .execute()
+    }
+    await register('C', 'ios')
+    await register('C', 'android')
+    await register('Hc', 'android')
+    const dm = ok(
+      await fixture.call('B', 'POST', '/chat/dms', {
+        userIds: [fixture.id('C'), fixture.id('Hc')]
+      }),
+      201
+    ).id as string
+    const dmKey = await makeEpoch('B', dm)
+    await setAdult(false)
+    try {
+      const made = await post(
+        'B',
+        dm,
+        seal('B', dm, dmKey, 'post', text('practice moved'))
+      )
+      expect(reached().sort()).deep.equals(['C:android', 'C:ios', 'Hc:android'])
+      expect(wakeOf(to('C', 'android'))).deep.equals({
+        t: 'chat',
+        u: fixture.id('C'),
+        c: dm,
+        seq: made.seq,
+        dm: true,
+        from: 'Someone',
+        title: null,
+        url: `teamstation://chat/${dm}`,
+        generic: true
+      })
+      const ios = to('C', 'ios').message as ApnsMessage
+      expect(ios.payload.aps).to.deep.include({
+        alert: { body: 'You have a new message' }
+      })
+      expect(ios.payload).not.to.have.property('env')
+      // Somebody who gave an age is woken as ever.
+      expect(wakeOf(to('Hc', 'android'))).to.include({
+        from: await memberName('Hc', dm, 'B')
+      })
+      expect(wakeOf(to('Hc', 'android'))).to.have.property('env')
+
+      sent.length = 0
+      await register('B', 'android')
+      await post(
+        'P',
+        members,
+        seal('P', members, membersKey, 'post', text('game day'))
+      )
+      expect(reached().sort()).deep.equals(['B:android', 'Hc:android'])
+    } finally {
+      await setAdult(true)
+    }
+  })
+
   it('names the sender as each reader reads them, with the chat title', async function () {
     await register('Hc', 'android')
     await register('B', 'android')

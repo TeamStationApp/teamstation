@@ -1,21 +1,14 @@
 import { type Kysely, sql } from 'kysely'
 
-import { ageOn } from '../../common/age'
+import type { AgeBand } from '../../common/age'
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { openAddTeams } from '../access'
 import type { Database } from '../db/database'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
-import {
-  audienceOf,
-  fullTeams,
-  isUnder13,
-  leagueRoleIds,
-  NAMING_KINDS,
-  seasonStaffIds,
-  teamStaffIds
-} from './audiences'
+import { AGE_COLUMNS, bandOfRow } from '../users/age'
+import { audienceOf, fullTeams, NAMING_KINDS, teamStaffIds } from './audiences'
 import { assertDmAllowed, lockBlockPolicy } from './blocks'
 import {
   closeConversation,
@@ -29,42 +22,52 @@ import {
 /**
  * Direct messages: who may name whom, the pair rule, and the MAAPP rule.
  *
+ * Every rule protects **minors**: members whose age band (`ageBandOf`) is
+ * 13 to 17, whether or not they play. Nobody under 13 is in a DM: they are
+ * not eligible. Somebody with no age on file is treated as no minor.
+ *
+ * - **A minor's staff:** direct `admin`, `coach` or `assistant` roles on a
+ *   team the minor plays on, and that team's `owner` and `manager`
+ *   memberships. Not scorekeepers, songkeepers, season or league roles, and
+ *   not a team that holds the minor only by an add their side may reject.
+ * - **A minor's peers:** players who share a team or a season with them and
+ *   are minors themselves, or adults born no more than 48 months before the
+ *   minor, both birth months known. An adult with only `is_adult` is no
+ *   peer.
+ * - **A minor's relatives:** their guardians and family members whose band
+ *   is adult. A guardian or family member who is not an adult does not
+ *   count.
+ *
  * **Naming.** The server checks the creator against each person they name,
  * and an adder against each person added; anything else is `notCandidate`.
  *
- * - A **player with an account** P (an `is_player` membership, an account,
- *   and not under 13) may be named only by P's guardians, P's staff (team
- *   staff of P's teams, season staff of their seasons, role holders on
- *   those seasons' leagues), and another player with an account who shares
- *   a season (or a team) with P.
+ * - A **minor** M may be named only by M's staff, peers and relatives.
+ * - A minor may name their staff, peers and relatives, and anybody else the
+ *   rules below allow, provided the pair rule holds.
  * - A **fan of T** who shares no Staff, Members, Season Staff, All Staff or
  *   Org chat with the creator may be named by T's team staff, the All Staff
  *   of a season T plays in (season staff included), and role holders on its
  *   league.
- * - A **guardian of P**, and **P's staff**, may always be named by P: naming
- *   between a player and their staff goes both ways.
  * - **Anyone else** may be named by someone they share one of those five
  *   chats with.
- * - **Included adults** for a player in the DM may be named by anyone who
- *   may name that player, for that DM.
+ * - **Included adults** for a minor in the DM may be named by anyone who may
+ *   name that minor, for that DM.
  *
- * Nobody who is not eligible (an account, not under 13) names or is named.
- * So a person whose only tie is a follow names nobody: they share none of
- * those chats, and are nobody's staff.
+ * Nobody who is not eligible (an account whose band is not under 13) names
+ * or is named.
  *
- * **The pair rule.** For every player with an account P in a DM, every other
- * member is P's staff, a player with an account sharing a season with P, or
- * P's guardian or adult family member. A refusal is `notCandidate`.
+ * **The pair rule.** For every minor M in a DM, every other member is M's
+ * staff, peer or relative. A minor who plays on no team and has no guardian
+ * so can be in no DM. A refusal is `notCandidate`.
  *
- * **The MAAPP rule.** For a covered player P (under 18 by the age rule, or
- * with no birth month, on a team in a season of a league with
- * `safesport_lao`) and every adult A in the DM who is not P's guardian or
- * adult family member, the DM also holds an included adult for P other than
- * A. An adult is anyone who is not a player, or a player 18 or older whose
- * birth month is more than 48 months before P's (any 18-or-older player when
- * P has no birth month); a player with no birth month never is. Included
- * adults are P's guardians, P's adult family members, and the adults among
- * P's staff. A refusal is `conflict` with `adultRequired` and `playerIds`.
+ * **The MAAPP rule.** For a covered minor M (on a team in a season of a
+ * league with `safesport_lao`) and every adult A beside M in the DM who is
+ * not M's relative, the DM also holds an included adult for M other than A.
+ * An adult beside M is anyone whose band is adult, except an adult player
+ * born no more than 48 months before M with both birth months known (the
+ * close-in-age exception). Included adults are M's relatives and M's staff
+ * who are adults beside M. A refusal is `conflict` with `adultRequired` and
+ * `playerIds`.
  */
 
 /** A DM is created with 2 to 20 members and never grows past 20. */
@@ -73,11 +76,15 @@ export const DM_MAX_MEMBERS = 20
 /** The close-in-age exception: no more than 4 years older. */
 const CLOSE_IN_AGE_MONTHS = 48
 
+/** Direct team roles that make somebody a minor's staff. */
+const MINOR_STAFF_ROLES = ['admin', 'coach', 'assistant'] as const
+
 interface UserRow {
   id: string
   account: boolean
   birthYear: number | null
   birthMonth: number | null
+  band: AgeBand
 }
 
 /** Why a DM's membership is not allowed. */
@@ -106,7 +113,7 @@ export class DmFacts {
     readonly now: Date
   ) {}
 
-  /** Reads these users' rows at once, for the checks that follow. */
+  /** Reads these users' rows and bands at once, for the checks that follow. */
   async load(userIds: string[]): Promise<void> {
     const missing = [...new Set(userIds)].filter(id => !this.rows.has(id))
     if (missing.length === 0) return
@@ -117,8 +124,7 @@ export class DmFacts {
         'merged_into',
         'login_enabled',
         'disabled_at',
-        'birth_year',
-        'birth_month'
+        ...AGE_COLUMNS
       ])
       .where('id', 'in', missing)
       .execute()
@@ -131,7 +137,8 @@ export class DmFacts {
           row.disabled_at == null &&
           row.login_enabled,
         birthYear: row.birth_year,
-        birthMonth: row.birth_month
+        birthMonth: row.birth_month,
+        band: bandOfRow(row, this.now)
       })
     }
     const players = await this.db
@@ -149,14 +156,30 @@ export class DmFacts {
     return this.rows.get(userId) ?? null
   }
 
-  /** An account, and not under 13. */
+  /** An account whose band is not `under13`. */
   async eligible(userId: string): Promise<boolean> {
     const row = await this.row(userId)
+    return row != null && row.account && row.band !== 'under13'
+  }
+
+  /** The person's age band; `unknown` for nobody. */
+  async band(userId: string): Promise<AgeBand> {
+    return (await this.row(userId))?.band ?? 'unknown'
+  }
+
+  /** An eligible person aged 13 to 17. */
+  async isMinor(userId: string): Promise<boolean> {
     return (
-      row != null &&
-      row.account &&
-      !isUnder13(row.birthYear, row.birthMonth, this.now)
+      (await this.eligible(userId)) && (await this.band(userId)) === 'minor'
     )
+  }
+
+  /** The minors among these people. */
+  async minorsAmong(userIds: string[]): Promise<string[]> {
+    await this.load(userIds)
+    const minors: string[] = []
+    for (const id of userIds) if (await this.isMinor(id)) minors.push(id)
+    return minors
   }
 
   /** The teams this person plays on. */
@@ -181,15 +204,6 @@ export class DmFacts {
     return settled
   }
 
-  async isPlayer(userId: string): Promise<boolean> {
-    return (await this.playerTeams(userId)).length > 0
-  }
-
-  /** A player who is an account and not under 13. */
-  async playerWithAccount(userId: string): Promise<boolean> {
-    return (await this.isPlayer(userId)) && (await this.eligible(userId))
-  }
-
   /** The seasons these teams play in. */
   async seasonsOf(teamIds: string[]): Promise<string[]> {
     const missing = teamIds.filter(id => !this.seasons.has(id))
@@ -206,84 +220,76 @@ export class DmFacts {
   }
 
   /**
-   * P's staff: team staff of every team P plays on, the season staff of
-   * every season those teams are in, and role holders on those seasons'
-   * leagues (part of season staff). Survivors, eligible or not.
+   * A minor's staff: direct `admin`, `coach` or `assistant` on a team they
+   * play on, and that team's owners and managers. Survivors, eligible or
+   * not.
    */
-  async staffOf(playerId: string): Promise<Set<string>> {
-    const held = this.staff.get(playerId)
+  async staffOf(minorId: string): Promise<Set<string>> {
+    const held = this.staff.get(minorId)
     if (held != null) return held
-    const teams = await this.settledTeams(playerId)
-    const seasons = await this.seasonsOf(teams)
-    const raw = [
-      ...(await teamStaffIds(this.db, teams)),
-      ...(await seasonStaffIds(this.db, seasons))
-    ]
-    const staff = new Set((await survivors(this.db, raw)).values())
-    this.staff.set(playerId, staff)
+    const teams = await this.settledTeams(minorId)
+    let staff = new Set<string>()
+    if (teams.length > 0) {
+      const roles = await this.db
+        .selectFrom('scope_roles')
+        .select(['user_id'])
+        .where('scope_type', '=', 'team')
+        .where('scope_id', 'in', teams)
+        .where('role', 'in', [...MINOR_STAFF_ROLES])
+        .execute()
+      const owners = await this.db
+        .selectFrom('memberships')
+        .select(['user_id'])
+        .where('team_id', 'in', teams)
+        .where('role', 'in', ['owner', 'manager'])
+        .execute()
+      const survivorOf = await survivors(
+        this.db,
+        [...roles, ...owners].map(row => row.user_id)
+      )
+      staff = new Set(survivorOf.values())
+    }
+    staff.delete(minorId)
+    this.staff.set(minorId, staff)
     return staff
   }
 
-  /**
-   * P's immediate coaches: direct `admin` or `coach` on a team P plays on,
-   * owners and managers included. Survivors.
-   */
-  async coachesOf(playerId: string): Promise<Set<string>> {
-    const teams = await this.settledTeams(playerId)
-    if (teams.length === 0) return new Set()
-    const roles = await this.db
-      .selectFrom('scope_roles')
-      .select(['user_id'])
-      .where('scope_type', '=', 'team')
-      .where('scope_id', 'in', teams)
-      .where('role', 'in', ['admin', 'coach'])
-      .execute()
-    const owners = await this.db
-      .selectFrom('memberships')
-      .select(['user_id'])
-      .where('team_id', 'in', teams)
-      .where('role', 'in', ['owner', 'manager'])
-      .execute()
-    const survivorOf = await survivors(
-      this.db,
-      [...roles, ...owners].map(row => row.user_id)
-    )
-    return new Set(survivorOf.values())
-  }
-
-  /** P's guardians and adult family members who are eligible. */
+  /** A minor's guardians and family members who are eligible adults. */
   async relativesOf(
-    playerId: string
+    minorId: string
   ): Promise<{ guardians: Set<string>; family: Set<string> }> {
-    const held = this.kin.get(playerId)
+    const held = this.kin.get(minorId)
     if (held != null) return held
-    // Every row that is the player: a link names the row they had when it
+    // Every row that is the minor: a link names the row they had when it
     // was made.
     const rows = await this.db
       .selectFrom('user_links')
       .select(['user_id', 'kind'])
-      .where('related_user_id', 'in', await rowsOfPeople(this.db, [playerId]))
+      .where('related_user_id', 'in', await rowsOfPeople(this.db, [minorId]))
       .where('kind', 'in', ['guardian', 'family'])
       .execute()
     const survivorOf = await survivors(
       this.db,
       rows.map(row => row.user_id)
     )
+    await this.load([...survivorOf.values()])
     const guardians = new Set<string>()
     const family = new Set<string>()
     for (const row of rows) {
       const id = survivorOf.get(row.user_id)
-      if (id == null || id === playerId || !(await this.eligible(id))) continue
+      if (id == null || id === minorId) continue
+      if (!(await this.eligible(id)) || (await this.band(id)) !== 'adult')
+        continue
       if (row.kind === 'guardian') guardians.add(id)
       else family.add(id)
     }
     for (const id of guardians) family.delete(id)
     const kin = { guardians, family }
-    this.kin.set(playerId, kin)
+    this.kin.set(minorId, kin)
     return kin
   }
 
-  /** Whether two players share a team or a season. */
+  /** Whether two people share a team or a season they play in. */
   async sharesSeason(a: string, b: string): Promise<boolean> {
     const teamsA = await this.settledTeams(a)
     const teamsB = await this.settledTeams(b)
@@ -293,37 +299,64 @@ export class DmFacts {
     return seasonsA.some(season => seasonsB.includes(season))
   }
 
-  /** Whether A counts as an adult beside player P, for the MAAPP rule. */
-  async isAdultFor(adultId: string, playerId: string): Promise<boolean> {
-    if (!(await this.isPlayer(adultId))) return true
-    const adult = await this.row(adultId)
-    if (adult?.birthYear == null || adult.birthMonth == null) return false
-    if (ageOn(adult.birthYear, adult.birthMonth, this.now) < 18) return false
-    const player = await this.row(playerId)
-    if (player?.birthYear == null || player.birthMonth == null) return true
+  /**
+   * Whether `olderId` was born no more than 48 months before `minorId`, both
+   * birth months known.
+   */
+  private async closeInAge(olderId: string, minorId: string): Promise<boolean> {
+    const older = await this.row(olderId)
+    const minor = await this.row(minorId)
+    if (
+      older?.birthYear == null ||
+      older.birthMonth == null ||
+      minor?.birthYear == null ||
+      minor.birthMonth == null
+    )
+      return false
     const months = (year: number, month: number): number => year * 12 + month
     return (
-      months(player.birthYear, player.birthMonth) -
-        months(adult.birthYear, adult.birthMonth) >
+      months(minor.birthYear, minor.birthMonth) -
+        months(older.birthYear, older.birthMonth) <=
       CLOSE_IN_AGE_MONTHS
     )
   }
 
   /**
-   * A player with an account who is under 18 (or has no birth month), on a
-   * team in a season of a league that is a SafeSport LAO.
+   * Whether `otherId` is a minor's peer: a player sharing a team or a season
+   * with them who is a minor, or an adult born no more than 48 months before
+   * them with both birth months known.
    */
-  async covered(playerId: string): Promise<boolean> {
-    if (!(await this.playerWithAccount(playerId))) return false
-    const row = await this.row(playerId)
-    if (
-      row?.birthYear != null &&
-      row.birthMonth != null &&
-      ageOn(row.birthYear, row.birthMonth, this.now) >= 18
-    ) {
-      return false
-    }
-    const seasons = await this.seasonsOf(await this.playerTeams(playerId))
+  async isPeer(minorId: string, otherId: string): Promise<boolean> {
+    if (otherId === minorId || !(await this.eligible(otherId))) return false
+    if (!(await this.sharesSeason(minorId, otherId))) return false
+    const band = await this.band(otherId)
+    if (band === 'minor') return true
+    return band === 'adult' && (await this.closeInAge(otherId, minorId))
+  }
+
+  /** Whether `otherId` is a minor's staff, peer or relative. */
+  async standsBy(minorId: string, otherId: string): Promise<boolean> {
+    if ((await this.staffOf(minorId)).has(otherId)) return true
+    const { guardians, family } = await this.relativesOf(minorId)
+    if (guardians.has(otherId) || family.has(otherId)) return true
+    return await this.isPeer(minorId, otherId)
+  }
+
+  /**
+   * Whether A counts as an adult beside minor M, for the MAAPP rule: an adult
+   * by band, but not an adult player born no more than 48 months before M,
+   * both birth months known.
+   */
+  async isAdultFor(adultId: string, minorId: string): Promise<boolean> {
+    if ((await this.band(adultId)) !== 'adult') return false
+    if ((await this.playerTeams(adultId)).length === 0) return true
+    return !(await this.closeInAge(adultId, minorId))
+  }
+
+  /** A minor on a team in a season of a league that is a SafeSport LAO. */
+  async covered(minorId: string): Promise<boolean> {
+    if (!(await this.isMinor(minorId))) return false
+    const seasons = await this.seasonsOf(await this.playerTeams(minorId))
     if (seasons.length === 0) return false
     const lao = await this.db
       .selectFrom('seasons')
@@ -335,14 +368,13 @@ export class DmFacts {
     return lao != null
   }
 
-  /** P's guardians, adult family members, and the adults among P's staff. */
-  async includedAdults(playerId: string): Promise<Set<string>> {
-    const { guardians, family } = await this.relativesOf(playerId)
+  /** A minor's relatives, and their staff who are eligible adults beside them. */
+  async includedAdults(minorId: string): Promise<Set<string>> {
+    const { guardians, family } = await this.relativesOf(minorId)
     const adults = new Set([...guardians, ...family])
-    for (const id of await this.staffOf(playerId)) {
-      if (id === playerId) continue
+    for (const id of await this.staffOf(minorId)) {
       if (!(await this.eligible(id))) continue
-      if (await this.isAdultFor(id, playerId)) adults.add(id)
+      if (await this.isAdultFor(id, minorId)) adults.add(id)
     }
     return adults
   }
@@ -401,99 +433,77 @@ export class DmFacts {
     return false
   }
 
-  /** Whether C may name player P. */
-  async mayNamePlayer(creatorId: string, playerId: string): Promise<boolean> {
-    if (creatorId === playerId) return true
-    const { guardians } = await this.relativesOf(playerId)
-    if (guardians.has(creatorId)) return true
-    if ((await this.staffOf(playerId)).has(creatorId)) return true
-    return (
-      (await this.playerWithAccount(creatorId)) &&
-      (await this.sharesSeason(creatorId, playerId))
-    )
-  }
-
   /**
-   * Whether C may name X in a DM whose players with accounts are
-   * `dmPlayers` (for the included-adult rule).
+   * Whether C may name X in a DM whose minors are `dmMinors` (for the
+   * included-adult rule).
    */
   async mayName(
     creatorId: string,
     targetId: string,
-    dmPlayers: string[] = []
+    dmMinors: string[] = []
   ): Promise<boolean> {
     if (creatorId === targetId) return false
     if (!(await this.eligible(creatorId))) return false
     if (!(await this.eligible(targetId))) return false
-    if (await this.playerWithAccount(targetId)) {
-      return await this.mayNamePlayer(creatorId, targetId)
+    if (await this.isMinor(targetId)) {
+      return await this.standsBy(targetId, creatorId)
     }
-    for (const playerId of dmPlayers) {
-      if (playerId === targetId) continue
-      if (!(await this.mayNamePlayer(creatorId, playerId))) continue
-      if ((await this.includedAdults(playerId)).has(targetId)) return true
+    for (const minorId of dmMinors) {
+      if (minorId === targetId) continue
+      if (!(await this.standsBy(minorId, creatorId))) continue
+      if ((await this.includedAdults(minorId)).has(targetId)) return true
     }
-    if (await this.playerWithAccount(creatorId)) {
-      const { guardians } = await this.relativesOf(creatorId)
-      if (guardians.has(targetId)) return true
-      // Naming is two-way between a player and their staff: whoever may
-      // start a DM with player P, P may start one with them.
-      if ((await this.staffOf(creatorId)).has(targetId)) return true
-    }
+    // Naming is two-way between a minor and their staff, peers and
+    // relatives: whoever may start a DM with minor M, M may start one with.
+    if (
+      (await this.isMinor(creatorId)) &&
+      (await this.standsBy(creatorId, targetId))
+    )
+      return true
     if (await this.shareNamingChat(creatorId, targetId)) return true
     return await this.mayNameFan(creatorId, targetId)
   }
 
-  /** The players with accounts among these people. */
-  async playersAmong(userIds: string[]): Promise<string[]> {
-    await this.load(userIds)
-    const players: string[] = []
-    for (const id of userIds) {
-      if (await this.playerWithAccount(id)) players.push(id)
-    }
-    return players
-  }
-
-  /** The players whose pair rule this membership breaks. */
-  async pairRuleBreaks(members: string[]): Promise<string[]> {
+  /**
+   * The minors whose pair rule this membership breaks. A member `underWay`
+   * (already in the DM) who has no age breaks nothing yet: they read and
+   * write nothing until they answer, and their answer re-checks the DM.
+   * Anybody joining is judged in full.
+   */
+  async pairRuleBreaks(
+    members: string[],
+    underWay: ReadonlySet<string> = new Set()
+  ): Promise<string[]> {
     const broken: string[] = []
-    for (const playerId of await this.playersAmong(members)) {
-      const staff = await this.staffOf(playerId)
-      const { guardians, family } = await this.relativesOf(playerId)
+    for (const minorId of await this.minorsAmong(members)) {
       for (const other of members) {
-        if (other === playerId) continue
-        if (staff.has(other) || guardians.has(other) || family.has(other)) {
+        if (other === minorId) continue
+        if (underWay.has(other) && (await this.band(other)) === 'unknown')
           continue
-        }
-        if (
-          (await this.playerWithAccount(other)) &&
-          (await this.sharesSeason(playerId, other))
-        ) {
-          continue
-        }
-        broken.push(playerId)
+        if (await this.standsBy(minorId, other)) continue
+        broken.push(minorId)
         break
       }
     }
     return broken
   }
 
-  /** The covered players whose MAAPP rule this membership breaks. */
+  /** The covered minors whose MAAPP rule this membership breaks. */
   async maappBreaks(members: string[]): Promise<string[]> {
     const broken: string[] = []
-    for (const playerId of await this.playersAmong(members)) {
-      if (!(await this.covered(playerId))) continue
-      const { guardians, family } = await this.relativesOf(playerId)
-      const included = await this.includedAdults(playerId)
+    for (const minorId of await this.minorsAmong(members)) {
+      if (!(await this.covered(minorId))) continue
+      const { guardians, family } = await this.relativesOf(minorId)
+      const included = await this.includedAdults(minorId)
       for (const adult of members) {
-        if (adult === playerId) continue
+        if (adult === minorId) continue
         if (guardians.has(adult) || family.has(adult)) continue
-        if (!(await this.isAdultFor(adult, playerId))) continue
+        if (!(await this.isAdultFor(adult, minorId))) continue
         const another = members.some(
-          other => other !== adult && other !== playerId && included.has(other)
+          other => other !== adult && other !== minorId && included.has(other)
         )
         if (!another) {
-          broken.push(playerId)
+          broken.push(minorId)
           break
         }
       }
@@ -501,13 +511,29 @@ export class DmFacts {
     return broken
   }
 
-  /** The first rule this membership breaks, pair rule first. */
-  async ruleBreak(members: string[]): Promise<RuleBreak | undefined> {
-    const pair = await this.pairRuleBreaks(members)
+  /**
+   * The first rule this membership breaks, pair rule first; `underWay` are
+   * the members already in the DM (`pairRuleBreaks`).
+   */
+  async ruleBreak(
+    members: string[],
+    underWay: ReadonlySet<string> = new Set()
+  ): Promise<RuleBreak | undefined> {
+    const pair = await this.pairRuleBreaks(members, underWay)
     if (pair.length > 0) return { rule: 'pairRule', playerIds: pair }
     const maapp = await this.maappBreaks(members)
     if (maapp.length > 0) return { rule: 'adultRequired', playerIds: maapp }
     return undefined
+  }
+
+  /** Every minor either rule refuses among these members, all under way. */
+  async refusedMinors(members: string[]): Promise<string[]> {
+    return [
+      ...new Set([
+        ...(await this.pairRuleBreaks(members, new Set(members))),
+        ...(await this.maappBreaks(members))
+      ])
+    ]
   }
 }
 
@@ -535,10 +561,10 @@ async function mustName(
   if (!(await facts.eligible(actor))) {
     throw forbidden('Not found', { reason: 'notCandidate', userIds: named })
   }
-  const players = await facts.playersAmong(members)
+  const minors = await facts.minorsAmong(members)
   const refused: string[] = []
   for (const id of named) {
-    if (!(await facts.mayName(actor, id, players))) refused.push(id)
+    if (!(await facts.mayName(actor, id, minors))) refused.push(id)
   }
   if (refused.length > 0) {
     throw forbidden('Not found', { reason: 'notCandidate', userIds: refused })
@@ -671,7 +697,7 @@ export async function addDmMembers(
     await assertDmAllowed(trx, members)
     await facts.load(members)
     await mustName(facts, adderId, added, members)
-    const broken = await facts.ruleBreak(members)
+    const broken = await facts.ruleBreak(members, new Set(current))
     if (broken != null) refuse(broken)
     await joinMembers(trx, conversationId, added, adderId, 'added', now)
     await notifyChat(trx, conversationId, 'members')
@@ -698,7 +724,7 @@ export async function leaveDm(
     if (!closed) {
       const facts = new DmFacts(trx, now)
       const remaining = current.filter(id => id !== userId)
-      const broken = await facts.ruleBreak(remaining)
+      const broken = await facts.ruleBreak(remaining, new Set(remaining))
       if (broken != null) {
         await closeForBreak(trx, conversationId, broken, userId, now)
         closed = true
@@ -730,8 +756,10 @@ async function closeForBreak(
 
 /**
  * The reconciler's check of one DM: it removes every member who is no
- * longer eligible (`notEligible`), then closes the DM when those left break
- * the pair rule or the MAAPP rule. It never adds anybody.
+ * longer eligible (`notEligible`), then closes the DM when fewer than two
+ * are left, or those left break the pair rule or the MAAPP rule. A member
+ * with no age breaks no pair rule here (`pairRuleBreaks`). It never adds
+ * anybody, and hides nothing: only a first answer does (`recheckDmsOf`).
  */
 export async function recheckDm(
   db: Kysely<Database>,
@@ -749,9 +777,22 @@ export async function recheckDm(
     }
     await leaveMembers(trx, conversationId, removed, null, 'notEligible', now)
     let closed = false
-    if (!dm.closed) {
-      const remaining = current.filter(id => !removed.includes(id))
-      const broken = await facts.ruleBreak(remaining)
+    const remaining = current.filter(id => !removed.includes(id))
+    if (!dm.closed && removed.length > 0 && remaining.length < 2) {
+      // Nobody is left to write to: a DM is between two people at least.
+      await closeConversation(
+        trx,
+        conversationId,
+        {
+          userId: [...removed].sort(compareUserIds)[0],
+          actorUserId: null,
+          reason: 'notEligible'
+        },
+        now
+      )
+      closed = true
+    } else if (!dm.closed) {
+      const broken = await facts.ruleBreak(remaining, new Set(remaining))
       if (broken != null) {
         await closeForBreak(trx, conversationId, broken, null, now)
         closed = true
@@ -762,6 +803,74 @@ export async function recheckDm(
     }
     return { removed, closed }
   })
+}
+
+/**
+ * A first answer's check of every DM `userId` is in now, run with the
+ * answer, before the person can read anything: `recheckDm`, then, judged
+ * beside everybody who has been in the DM, open or closed, the person's
+ * history from before they answered (`hidden_before`) is hidden from them
+ * when the rules refuse them as a minor there, or when, as anybody else,
+ * they are why the rules refuse a minor there. Only a first answer hides:
+ * a break that comes later leaves what was read where it was.
+ */
+export async function recheckDmsOf(
+  db: Kysely<Database>,
+  userId: string,
+  now: Date = new Date()
+): Promise<void> {
+  const dms = await db
+    .selectFrom('chat_members as m')
+    .innerJoin('chat_conversations as c', 'c.id', 'm.conversation_id')
+    .select('c.id')
+    .where('m.user_id', '=', userId)
+    .where('m.left_at', 'is', null)
+    .where('c.kind', '=', 'dm')
+    .orderBy('c.id')
+    .execute()
+  for (const dm of dms) {
+    await recheckDm(db, dm.id, now)
+    const everyone = (
+      await db
+        .selectFrom('chat_members')
+        .select('user_id')
+        .distinct()
+        .where('conversation_id', '=', dm.id)
+        .execute()
+    ).map(row => row.user_id)
+    const facts = new DmFacts(db, now)
+    const refused = await facts.refusedMinors(everyone)
+    const without = new Set(
+      await facts.refusedMinors(everyone.filter(id => id !== userId))
+    )
+    if (
+      refused.includes(userId) ||
+      refused.some(minorId => !without.has(minorId))
+    )
+      await hideHistoryBeforeAnswers(db, dm.id, [userId])
+  }
+}
+
+/**
+ * Sets `hidden_before` to the time each of these people gave their first
+ * age, for those who gave it after they joined the conversation.
+ */
+async function hideHistoryBeforeAnswers(
+  trx: Kysely<Database>,
+  conversationId: string,
+  userIds: string[]
+): Promise<void> {
+  if (userIds.length === 0) return
+  await sql`
+    update chat_members m
+    set hidden_before = u.age_set_at
+    from users u
+    where m.conversation_id = ${conversationId}
+      and m.user_id = u.id
+      and m.user_id in (${sql.join(userIds)})
+      and u.age_set_at is not null
+      and u.age_set_at > m.joined_at
+  `.execute(trx)
 }
 
 /**
@@ -928,9 +1037,10 @@ export async function dmCandidateIds(
     .where('kind', '=', 'guardian')
     .execute()
   add(wards.map(row => row.related_user_id))
-  if (await facts.isPlayer(callerId)) {
-    const { guardians } = await facts.relativesOf(callerId)
+  if (await facts.isMinor(callerId)) {
+    const { guardians, family } = await facts.relativesOf(callerId)
     add(guardians)
+    add(family)
     add(await facts.staffOf(callerId))
   }
 
@@ -941,7 +1051,7 @@ export async function dmCandidateIds(
   for (const id of ids) {
     if (!(await facts.mayName(callerId, id))) continue
     // Somebody the pair rule keeps out of every DM with the caller (a
-    // player and a parent who is not theirs) is no candidate either.
+    // minor and a parent who is not theirs) is no candidate either.
     if ((await facts.pairRuleBreaks([callerId, id])).length > 0) continue
     named.push(id)
   }
@@ -949,16 +1059,15 @@ export async function dmCandidateIds(
 }
 
 /**
- * The adults `callerId` may include beside these players, with how each
- * stands to them. Without a search: the players' guardians, adult family
- * members and immediate coaches. With one (`all`): every included adult.
- * Never the caller. The caller must be allowed to name every player.
+ * The adults `callerId` may include beside these minors, with how each
+ * stands to them: their guardians, adult family members and adult staff (a
+ * minor's staff is their own teams' coaches and admins). Never the caller.
+ * The caller must be allowed to name every minor.
  */
 export async function includedAdultIds(
   db: Kysely<Database>,
   callerId: string,
   playerIds: string[],
-  all: boolean,
   now: Date = new Date()
 ): Promise<Candidate[]> {
   const facts = new DmFacts(db, now)
@@ -966,7 +1075,7 @@ export async function includedAdultIds(
   const refused: string[] = []
   for (const playerId of playerIds) {
     if (
-      !(await facts.playerWithAccount(playerId)) ||
+      !(await facts.isMinor(playerId)) ||
       !(await facts.mayName(callerId, playerId))
     ) {
       refused.push(playerId)
@@ -986,13 +1095,10 @@ export async function includedAdultIds(
     for (const id of guardians) offer(id, 'Guardian')
     for (const id of family) offer(id, 'Family')
     const included = await facts.includedAdults(playerId)
-    const coaches = await facts.coachesOf(playerId)
     const staffLabels = await staffLabelsFor(db, facts, playerId)
-    for (const id of coaches) {
+    for (const id of await facts.staffOf(playerId)) {
       if (included.has(id)) offer(id, staffLabels.get(id) ?? 'Coach')
     }
-    if (!all) continue
-    for (const id of included) offer(id, staffLabels.get(id) ?? 'Staff')
   }
   return [...labels].map(([userId, label]) => ({ userId, label }))
 }
@@ -1002,22 +1108,19 @@ const ROLE_WORDS: Record<string, string> = {
   owner: 'Admin',
   manager: 'Admin',
   coach: 'Coach',
-  scorekeeper: 'Scorekeeper',
-  songkeeper: 'Songkeeper',
-  videographer: 'Videographer'
+  assistant: 'Assistant'
 }
 
 /**
- * How each of a player's staff stands to them: `Coach · Hawks` for a team
- * role, `Season staff`, or `League`. The strongest first.
+ * How each of a minor's staff stands to them: `Coach · Hawks`, the strongest
+ * role first.
  */
 async function staffLabelsFor(
   db: Kysely<Database>,
   facts: DmFacts,
-  playerId: string
+  minorId: string
 ): Promise<Map<string, string>> {
-  const teams = await facts.settledTeams(playerId)
-  const seasons = await facts.seasonsOf(teams)
+  const teams = await facts.settledTeams(minorId)
   const labels = new Map<string, string>()
   const set = async (userId: string, label: string): Promise<void> => {
     const id = (await survivors(db, [userId])).get(userId)
@@ -1044,8 +1147,9 @@ async function staffLabelsFor(
       .select(['user_id', 'scope_id as team_id', 'role'])
       .where('scope_type', 'in', ['team'])
       .where('scope_id', 'in', teams)
+      .where('role', 'in', [...MINOR_STAFF_ROLES])
       .execute()
-    const order = ['owner', 'manager', 'admin', 'coach', 'scorekeeper']
+    const order = ['owner', 'manager', 'admin', 'coach', 'assistant']
     const rank = (role: string): number => {
       const at = order.indexOf(role)
       return at < 0 ? order.length : at
@@ -1058,26 +1162,6 @@ async function staffLabelsFor(
         row.user_id,
         `${ROLE_WORDS[row.role] ?? 'Staff'} · ${names.get(row.team_id) ?? ''}`
       )
-    }
-  }
-  if (seasons.length > 0) {
-    const seasonRoles = await db
-      .selectFrom('scope_roles')
-      .select(['user_id'])
-      .where('scope_type', '=', 'season')
-      .where('scope_id', 'in', seasons)
-      .execute()
-    for (const row of seasonRoles) await set(row.user_id, 'Season staff')
-    const leagues = await db
-      .selectFrom('seasons')
-      .select(['league_id'])
-      .where('id', 'in', seasons)
-      .execute()
-    const leagueIds = leagues.flatMap(row =>
-      row.league_id == null ? [] : [row.league_id]
-    )
-    for (const userId of await leagueRoleIds(db, leagueIds)) {
-      await set(userId, 'League')
     }
   }
   return labels

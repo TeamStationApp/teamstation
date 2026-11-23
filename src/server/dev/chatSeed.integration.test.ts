@@ -22,8 +22,8 @@ import {
   type ChatSeed,
   chatSeed,
   describeSeed,
-  SEED_PEOPLE,
-  unconfirmedKeys
+  noAgeKeys,
+  SEED_PEOPLE
 } from './chatSeed'
 
 /** U1: the chat fixture, built twice into one scratch database. */
@@ -118,7 +118,7 @@ describe('the chat seed', function () {
       season_teams: 3,
       games: 3,
       videos: 1,
-      team_follows: 2,
+      team_follows: 3,
       user_links: 2
     })
     expect(second.teams).deep.equals(first.teams)
@@ -242,10 +242,10 @@ describe('the chat seed', function () {
     expect(links).to.have.deep.members(expected)
   })
 
-  it('gives P, E, R and T birth months that make them 15, 16, 12 and 12', async function () {
+  it('gives P, E, M, R and T birth months that make them 15, 16, 14, 12 and 12, and everybody else 18 or older', async function () {
     const now = new Date('2027-04-12T12:00:00Z')
     const ages: Record<string, number | null> = {}
-    for (const key of ['P', 'E', 'R', 'T', 'Hc']) {
+    for (const key of ['P', 'E', 'M', 'R', 'T', 'Hc']) {
       const row = await database()
         .selectFrom('users')
         .select(['birth_year', 'birth_month'])
@@ -256,7 +256,18 @@ describe('the chat seed', function () {
           ? null
           : ageOn(row.birth_year, row.birth_month, now)
     }
-    expect(ages).deep.equals({ P: 15, E: 16, R: 12, T: 12, Hc: null })
+    expect(ages).deep.equals({ P: 15, E: 16, M: 14, R: 12, T: 12, Hc: null })
+    const flags = await database()
+      .selectFrom('users')
+      .select(['id', 'is_adult', 'birth_month'])
+      .where(
+        'id',
+        'in',
+        SEED_PEOPLE.map(person => second.people[person.key].userId)
+      )
+      .execute()
+    for (const row of flags)
+      expect(row.is_adult).equals(row.birth_month == null)
     // T turns 13 on the first of next month.
     const t = birthMonthOf(now, { years: 13, months: 0 })
     expect(t).deep.equals({ year: 2014, month: 4 })
@@ -267,21 +278,26 @@ describe('the chat seed', function () {
     ).deep.equals({ year: 2011, month: 12 })
   })
 
-  it('confirms everybody for chat, afresh each run, but the keys it is told to leave', async function () {
+  it('gives everybody an age, afresh each run, but the keys it is told to leave', async function () {
     const now = new Date('2027-04-12T12:00:00Z')
     const confirmations = async (): Promise<Record<string, string | null>> => {
       const rows = await database()
         .selectFrom('users')
-        .select(['id', 'chat_age_source', 'chat_age_confirmed_at'])
+        .select(['id', 'is_adult', 'birth_month', 'age_source', 'age_set_at'])
         .execute()
       const byId = new Map(rows.map(row => [String(row.id), row]))
       const out: Record<string, string | null> = {}
       for (const person of SEED_PEOPLE) {
         const row = byId.get(String(second.people[person.key]?.userId))
-        expect(row?.chat_age_confirmed_at == null, person.key).equals(
-          row?.chat_age_source == null
+        expect(row?.age_set_at == null, person.key).equals(
+          row?.age_source == null
         )
-        out[person.key] = row?.chat_age_source ?? null
+        // Somebody left with no age has neither a flag nor a month.
+        if (row?.age_source == null) {
+          expect(row?.is_adult, person.key).equals(false)
+          expect(row?.birth_month, person.key).equals(null)
+        }
+        out[person.key] = row?.age_source ?? null
       }
       return out
     }
@@ -292,20 +308,20 @@ describe('the chat seed', function () {
     await chatSeed(database(), {
       password: 'same for all',
       now,
-      unconfirmed: ['C', 'F']
+      noAge: ['C', 'F']
     })
     expect(await confirmations()).deep.equals({
       ...everybody,
       C: null,
       F: null
     })
-    // Without the keys it confirms them again; with them it clears them again.
+    // Without the keys it gives them an age again; with them it clears it again.
     await chatSeed(database(), { password: 'same for all', now })
     expect(await confirmations()).deep.equals(everybody)
     await chatSeed(database(), {
       password: 'same for all',
       now,
-      unconfirmed: ['C']
+      noAge: ['C']
     })
     expect(await confirmations()).deep.equals({ ...everybody, C: null })
     // Run again without the keys, as the other cases found it.
@@ -314,11 +330,11 @@ describe('the chat seed', function () {
     expect(await counts()).deep.equals(countsAfterFirst)
   })
 
-  it('reads the keys to leave unconfirmed from a comma-separated list', function () {
-    expect(unconfirmedKeys(undefined)).deep.equals([])
-    expect(unconfirmedKeys('')).deep.equals([])
-    expect(unconfirmedKeys('C')).deep.equals(['C'])
-    expect(unconfirmedKeys(' C, ,F ,')).deep.equals(['C', 'F'])
+  it('reads the keys to leave with no age from a comma-separated list', function () {
+    expect(noAgeKeys(undefined)).deep.equals([])
+    expect(noAgeKeys('')).deep.equals([])
+    expect(noAgeKeys('C')).deep.equals(['C'])
+    expect(noAgeKeys(' C, ,F ,')).deep.equals(['C', 'F'])
   })
 
   it('prints every password beside its person', function () {

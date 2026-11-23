@@ -18,9 +18,17 @@
 - added: Develop, branch and seat builds of the web and phone apps report how each video plays: how long it takes to start, every stall and seek with how far behind live it was, errors and the recoveries that followed, bitrate and dropped frames, so a slow start or a stall can be measured
 - added: `?debug=1` on the game page shows what its video player is doing: its state, the page's own reading and its last events
 - added: Streaming end-to-end scenarios for iPhone Safari: twenty rapid scrubs, and a camera cut for 64 s again and again
+- added: Chat asks once for your age, in a modal: a birth year and month, or 18 or older. Until you give it you can be added to chats and sent messages but read none, and notifications say only that you have a new message
+- added: A league's settings have a SafeSport switch for leagues that are SafeSport Local Affiliated Organizations: a message between an adult and someone 13 to 17 must then include their guardian, an adult family member, or an adult coach, assistant or admin of their team
+- added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can make an adult a minor or clear an age
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
 - changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 - changed: App builds made with the deploy scripts from any branch but master report their logs to the server they talk to, not to production's
+- changed: Who may message someone 13 to 17 follows their age, not whether anyone plays: their team's admins, coaches and assistants, players within 4 years of them in their season, and their adult guardians and family. Adults message each other as before, so an adult who also plays can message league staff
+- changed: Chat is closed to anyone under 13: they leave every chat, and a direct message left with one person closes. Someone who first gives their age in a direct message the rules don't allow it in doesn't see what was said there before
+- changed: A guardian must be an adult, and coaches no longer see or set players' birth months
+- changed: The 13+ consent sheet is gone, along with the account setting behind it
+- changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
 - fixed: Offline documents and unsent edits stay with the server and account that created them.
 - fixed: A web build can send its logs to the log collector it was built for; the page's content policy refused them before
 - fixed: Phone builds from Mason, other than master's production build, report their logs and crashes to the server they talk to; they reported nothing before

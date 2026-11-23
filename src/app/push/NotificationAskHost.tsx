@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Text } from 'react-native'
 
-import { useChatAge } from '../chat/ChatAgeGate'
+import { useChatAge } from '../chat/AgeGate'
 import { useDeviceApprovals } from '../chat/DeviceApprovalPrompt'
 import { Button } from '../components/Button'
 import { CancelAction } from '../components/CancelAction'

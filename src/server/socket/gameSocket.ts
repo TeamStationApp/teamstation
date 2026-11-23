@@ -33,6 +33,7 @@ import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
 import { type Database, isConnectionUnavailable } from '../db/database'
+import { ageBandOfUser } from '../users/age'
 import { claimUpgrade, leaveUpgrade } from './bindUpgrades'
 import {
   ChatFanout,
@@ -975,7 +976,12 @@ export function attachGameSocket(
     reply(connection, { type: 'typed', conversationId, id })
   }
 
-  const connected = (ws: WebSocket, actor: Actor, token: string): void => {
+  const connected = (
+    ws: WebSocket,
+    actor: Actor,
+    token: string,
+    readsChat: boolean
+  ): void => {
     const connection: Connection = {
       token,
       ws,
@@ -1039,7 +1045,10 @@ export function attachGameSocket(
       chat: undefined,
       typedAt: Number.NEGATIVE_INFINITY
     }
-    if (actor.sessionId != null) {
+    // Chat frames only for a session whose person may read chat (an age
+    // band of 13 to 17 or adult, read at the upgrade). The app reconnects
+    // once the person gives their age.
+    if (actor.sessionId != null && readsChat) {
       connection.chat = {
         userId: actor.userId,
         send: frame => {
@@ -1086,8 +1095,8 @@ export function attachGameSocket(
       refuseUpgrade(socket, 401, 'Unauthorized')
       return true
     }
-    actorForToken(db, token).then(
-      actor => {
+    actorForToken(db, token)
+      .then(async actor => {
         if (actor == null) {
           refuseUpgrade(socket, 401, 'Unauthorized')
           return
@@ -1097,11 +1106,15 @@ export function attachGameSocket(
           refuseUpgrade(socket, 403, 'Forbidden')
           return
         }
+        const band =
+          actor.sessionId == null
+            ? undefined
+            : await ageBandOfUser(db, actor.userId, new Date(clock()))
         wss.handleUpgrade(req, socket, head, ws => {
-          connected(ws, actor, token)
+          connected(ws, actor, token, band === 'minor' || band === 'adult')
         })
-      },
-      (error: unknown) => {
+      })
+      .catch((error: unknown) => {
         console.error(`game socket: signing in an upgrade: ${String(error)}`)
         // Out of connections for the moment, so it is told to come back, as a
         // starved request is.
@@ -1113,8 +1126,7 @@ export function attachGameSocket(
             'Retry-After: 1\r\n'
           )
         else refuseUpgrade(socket, 500, 'Internal Server Error')
-      }
-    )
+      })
     return true
   }
   const upgrade = (

@@ -559,17 +559,24 @@ describe('a player’s settings form', function () {
         name: 'Jordan P',
         bats: 'right',
         throws: null,
-        birthMonth: '2014-03'
+        birthMonth: '2014-03',
+        mayClearAge: true
       }),
-      setBirthMonth: async (
-        _userId: string,
+      setAge: async (
+        userId: string,
         birth: { year: number; month: number } | null
       ) => {
         sent.push(birth)
         if (refuse != null) throw refuse
-        return birth == null
-          ? null
-          : `${birth.year}-${String(birth.month).padStart(2, '0')}`
+        return {
+          userId,
+          band: birth == null ? 'unknown' : 'minor',
+          isAdult: false,
+          birthMonth:
+            birth == null
+              ? null
+              : `${birth.year}-${String(birth.month).padStart(2, '0')}`
+        }
       }
     }) as unknown as TeamStationClient
     await render(
@@ -613,6 +620,116 @@ describe('a player’s settings form', function () {
     expect(text()).includes('Birth month cleared.')
     expect(text()).includes('Not set')
   })
+
+  it('lets a site administrator clear an age held only as 18 or older', async function () {
+    const sent: unknown[] = []
+    const client = Object.assign(settingsClient([jordan], []), {
+      player: async () => ({
+        userId: userIdOfGumbo(7),
+        name: 'Jordan P',
+        bats: 'right',
+        throws: null,
+        birthMonth: null,
+        ageBand: 'adult',
+        mayClearAge: true
+      }),
+      setAge: async (userId: string, birth: unknown) => {
+        sent.push(birth)
+        return { userId, band: 'unknown', isAdult: false, birthMonth: null }
+      }
+    }) as unknown as TeamStationClient
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await act(async () => {
+      await delay(10)
+    })
+    expect(text()).includes('18 or older')
+    expect(
+      labelled('Clear birth month').getAttribute('aria-disabled')
+    ).not.equals('true')
+    await press('Clear birth month')
+    expect(sent).deep.equals([null])
+    expect(text()).includes('Not set')
+    expect(labelled('Clear birth month').getAttribute('aria-disabled')).equals(
+      'true'
+    )
+  })
+
+  it('offers a guardian no clear, which only a site administrator may do', async function () {
+    const client = Object.assign(settingsClient([jordan], []), {
+      player: async () => ({
+        userId: userIdOfGumbo(7),
+        name: 'Jordan P',
+        bats: 'right',
+        throws: null,
+        birthMonth: '2014-03',
+        ageBand: 'minor',
+        mayClearAge: false
+      })
+    }) as unknown as TeamStationClient
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
+    await act(async () => {
+      await delay(10)
+    })
+    expect(text()).includes('Born March 2014')
+    expect(
+      document.querySelector('[aria-label="Save birth month"]')
+    ).not.equals(null)
+    expect(document.querySelector('[aria-label="Clear birth month"]')).equals(
+      null
+    )
+  })
+
+  for (const [band, birthMonth, shown, line] of [
+    ['unknown', null, 'Not set', 'They give their age themselves'],
+    ['adult', null, '18 or older', 'Only a site administrator can change'],
+    [
+      'adult',
+      '1990-05',
+      'Born May 1990',
+      'Only a site administrator can change'
+    ]
+  ] as const) {
+    it(`offers a guardian no form for ${band} (${birthMonth ?? 'no month'})`, async function () {
+      const client = Object.assign(settingsClient([jordan], []), {
+        player: async () => ({
+          userId: userIdOfGumbo(7),
+          name: 'Jordan P',
+          bats: 'right',
+          throws: null,
+          birthMonth,
+          ageBand: band,
+          mayClearAge: false
+        })
+      }) as unknown as TeamStationClient
+      await render(
+        <PlayerSettingsTab
+          client={client}
+          teamId="t1"
+          userId={userIdOfGumbo(7)}
+        />
+      )
+      await act(async () => {
+        await delay(10)
+      })
+      expect(text()).includes(shown)
+      expect(text()).includes(line)
+      expect(document.querySelector('[aria-label="Save birth month"]')).equals(
+        null
+      )
+    })
+  }
 
   it('draws no guardians for a player held only by an open add', async function () {
     let asked = 0

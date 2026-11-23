@@ -268,7 +268,7 @@ async function main(): Promise<void> {
       await browser.stopApp({ appId: 'app.teamstation.app' })
       await browser.launchApp({
         appId: 'app.teamstation.app',
-        environment: { TS_DECLARED_AGE_LOWER: '13' }
+        environment: { TS_DECLARED_AGE_LOWER: '18' }
       })
       await browser.assertVisible({ text: 'Account, .*', timeout: 60000 })
     }

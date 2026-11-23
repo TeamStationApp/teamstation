@@ -407,6 +407,11 @@ export const enUs = {
   player_birth_year_earlier: 'One year earlier',
   player_birth_year_later: 'One year later',
   player_birth_none: 'Not set',
+  player_birth_adult: '18 or older',
+  player_birth_unknown:
+    'They give their age themselves the first time they open chat. You can change it after that.',
+  player_birth_adult_fixed:
+    'Only a site administrator can change the age of somebody 18 or older.',
   player_birth_shown: 'Born %s %s \u00b7 %s today',
   player_birth_save: 'Save birth month',
   player_birth_clear: 'Clear birth month',
@@ -777,6 +782,7 @@ export const enUs = {
   chat_push_mention_title: '%1$s in %2$s',
   chat_push_new_message_from: 'New message from %s',
   chat_push_elsewhere: 'TeamStation',
+  chat_wake_generic: 'You have a new message',
   chat_loading: 'Opening chat…',
   chat_cannot_load: 'Chat could not be opened.',
   chat_keys_unreadable:
@@ -883,16 +889,26 @@ export const enUs = {
   chat_quote_show: 'Tap to show it',
   chat_pin_earlier: 'Earlier message. Tap to show it.',
   chat_delete_for_everyone: 'Delete for everyone',
-  chat_age_title: 'Before You Chat',
+  chat_age_title: 'Your Age',
   chat_age_body:
-    'Chat on TeamStation is for people 13 and older. Players under 13 can still follow their teams, schedules, stats and videos.',
+    'Chat features depend on your age. Enter your birth year and month, or confirm that you’re 18 or older.',
+  chat_age_body_minor:
+    'Chat features depend on your age. Enter your birth year and month.',
   chat_age_rules:
     'By continuing, you confirm that you are at least 13 years old and agree to keep chat respectful: no bullying, harassment, hate speech, threats, or sexual or violent content. You can mute any chat and report any message to TeamStation’s site administrators, who review what is reported.',
-  chat_age_agree: 'I’m 13 or Older',
-  chat_age_decline: 'Not Now',
+  chat_age_enter: 'Enter Birth Year and Month',
+  chat_age_adult: 'I’m 18 or Older',
+  chat_age_close: 'Close',
+  chat_age_year: 'Birth year',
+  chat_age_month: 'Birth month',
+  chat_age_save: 'Save',
+  chat_age_back: 'Back',
+  chat_age_invalid:
+    'Enter a four-digit year and a month from 1 to 12 that isn’t in the future.',
+  chat_age_not_candidate: 'You can’t message this person.',
   chat_age_under13_title: 'Chat Is for Ages 13 and Up',
   chat_age_under13_body:
-    'The age range this device shares says you’re under 13, so chat isn’t available here. You can still follow your teams, schedules, stats and videos.',
+    'Chat isn’t available for people under 13. You can still follow your teams, schedules, stats and videos.',
   chat_age_under13_ok: 'OK',
   chat_age_failed: 'That didn’t save. Check your connection and try again.',
   chat_block: 'Block',
@@ -979,7 +995,7 @@ export const enUs = {
   chat_new_too_many: 'A conversation holds at most 20 people.',
   chat_include_title: 'Include another adult',
   chat_include_detail:
-    'This league is a SafeSport Local Affiliated Organization. Messages between an adult and a player under 18 must also include the player’s parent or guardian, an adult family member, or another adult of the team, season or league. Pick at least one.',
+    'This league is a SafeSport Local Affiliated Organization. Messages between an adult and someone 13 to 17 must also include their guardian, an adult family member, or an adult coach, assistant or admin of their team. Pick at least one.',
   chat_include_search: 'Search for an adult',
   chat_include_suggestions: 'Suggested',
   chat_include_results: 'Matches',
@@ -1159,7 +1175,14 @@ export const enUs = {
   manage_safesport_title: 'SafeSport',
   manage_safesport_label: 'SafeSport Local Affiliated Organization',
   manage_safesport_detail:
-    "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to a player under 18 must also include the player's parent or guardian, an adult family member, or another adult of the league. A league that is only a chartered Little League is not one.",
+    "This league is directly affiliated with USA Baseball or one of its state or regional affiliates, which makes it a SafeSport Local Affiliated Organization. The MAAPP then binds it: an adult's one-on-one messages to someone 13 to 17 on its teams must also include their guardian, an adult family member, or an adult coach, assistant or admin of their team. A league that is only a chartered Little League is not one.",
+  manage_safesport_confirm_title: 'Turn On SafeSport?',
+  manage_safesport_confirm_body:
+    "Turning this on applies SafeSport's second-adult rule to this league's minors. Direct messages that don't meet it will close, and won't reopen if you turn it off.",
+  manage_safesport_confirm_ok: 'Turn On',
+  manage_safesport_confirm_cancel: 'Cancel',
+  manage_safesport_failed:
+    'That didn’t save. Check your connection and try again.',
 
   // Coming in through an invite
   join_header: 'Invitation',

@@ -280,15 +280,15 @@ async function main(): Promise<void> {
       const body = document.body.textContent
       return (
         body !== null &&
-        (body.includes('13 or Older') || body.includes('Start conversation'))
+        (body.includes('18 or Older') || body.includes('Start conversation'))
       )
     })
     if (
       await page.evaluate(() =>
-        String(document.body.textContent).includes('13 or Older')
+        String(document.body.textContent).includes('18 or Older')
       )
     )
-      await tap(m, 'I’m 13 or Older')
+      await tap(m, 'I’m 18 or Older')
     await contains(page, 'Start conversation')
     await fill(m, 'Name', 'Ripken')
     await contains(page, before ? 'Cal R' : 'Cal Ripken')

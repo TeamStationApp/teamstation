@@ -6,7 +6,7 @@ import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
-import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
+import { type TabCorrection, useChatsTabGate } from '../chat/AgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Card,

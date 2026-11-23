@@ -48,7 +48,7 @@ import {
   playerRemovedWords,
   type PlayerRemover
 } from '../notifications/requestInformation'
-import { mayKeepBirthMonth } from '../people/guardians'
+import { maySeeAge } from '../people/guardians'
 import { chatRoutes } from '../routes/chat'
 import { groupRoutes } from '../routes/groups'
 import { guardianRoutes } from '../routes/guardians'
@@ -135,15 +135,25 @@ describe('adds made with a notice', function () {
 
   async function person(
     name: string,
-    options: { teamId?: string; login?: boolean; admin?: boolean } = {}
+    options: {
+      teamId?: string
+      login?: boolean
+      admin?: boolean
+      /** Fourteen, by a birth month; an adult by `is_adult` otherwise. */
+      minor?: boolean
+    } = {}
   ): Promise<string> {
     const [first, ...rest] = name.split(' ')
+    const now = new Date()
     const userId = await insertUser(db!, {
       display_name: name,
       first_name: first,
       last_name: rest.join(' '),
       login_enabled: options.login ?? false,
-      is_admin: options.admin ?? false
+      is_admin: options.admin ?? false,
+      ...(options.minor === true
+        ? { birth_year: now.getUTCFullYear() - 15, birth_month: 1 }
+        : { is_adult: true })
     })
     gumbo[name] = await ensureGumboId(db!, userId)
     if (options.teamId != null)
@@ -1941,7 +1951,7 @@ describe('adds made with a notice', function () {
     expect(
       await mayManagePlayer(db!, coach, ids['Open Add'], TEAM.falcons)
     ).equals(true)
-    expect(await mayKeepBirthMonth(db!, coach, ids['Open Add'])).equals(false)
+    expect(await maySeeAge(db!, coach, ids['Open Add'])).equals(false)
     expect(await mayEditName(db!, ids.coach, ids['Open Add'], coach)).equals(
       false
     )
@@ -1970,7 +1980,7 @@ describe('adds made with a notice', function () {
   })
 
   it('keeps the player’s side from a team holding them only by an open add', async function () {
-    await person('Held Child')
+    await person('Held Child', { minor: true })
     await person('Held Parent', { login: true })
     await db!
       .insertInto('user_links')
@@ -2006,12 +2016,7 @@ describe('adds made with a notice', function () {
     expect([...(await facts.staffOf(ids['Held Child']))]).not.includes(
       ids.coach
     )
-    expect([...(await facts.coachesOf(ids['Held Child']))]).not.includes(
-      ids.coach
-    )
-    expect(await facts.mayNamePlayer(ids.coach, ids['Held Child'])).equals(
-      false
-    )
+    expect(await facts.mayName(ids.coach, ids['Held Child'])).equals(false)
     expect(await teamGuardianRows(db!, [TEAM.falcons])).not.includes(
       ids['Held Parent']
     )
@@ -2084,7 +2089,7 @@ describe('adds made with a notice', function () {
     parent: string,
     token: string
   ): Promise<{ requestId: string; settle: () => Promise<void> }> {
-    await person(child, { login: true })
+    await person(child, { login: true, minor: true })
     await person(parent, { login: true })
     await db!
       .insertInto('user_links')

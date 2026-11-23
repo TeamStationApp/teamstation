@@ -1,6 +1,11 @@
 import type { Kysely } from 'kysely'
 
-import { chatTag, type ChatWake, showsEveryPush } from '../../common/push'
+import {
+  chatTag,
+  type ChatWake,
+  GENERIC_WAKE_BODY,
+  showsEveryPush
+} from '../../common/push'
 import { blockedSenderIds, blockingRecipientIds } from '../chat/blocks'
 import { type ChatMessageView, messagesOf } from '../chat/messages'
 import {
@@ -12,6 +17,7 @@ import {
 import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { formatForReader, readerNaming } from '../groups/playerNamePrivacy'
+import { ageBandsOf } from '../users/age'
 import { outsideSpoken, readersInFull } from '../users/readerNames'
 import type { ChatPushRequest } from './requests'
 import {
@@ -218,12 +224,17 @@ async function conversationOf(
     .executeTakeFirstOrThrow()
 }
 
-/** Each recipient's wake, with the sender named as that recipient reads them. */
+/**
+ * Each recipient's wake, with the sender named as that recipient reads them;
+ * `generic` for those in `ageless`, who have no age on file and so read no
+ * chat: no envelope, no name, no title.
+ */
 async function wakesFor(
   db: Kysely<Database>,
   message: ChatMessageView,
   conversation: Titled,
-  recipients: string[]
+  recipients: string[],
+  ageless: ReadonlySet<string>
 ): Promise<Map<string, ChatWake>> {
   const title =
     titlesOf(
@@ -253,6 +264,20 @@ async function wakesFor(
         )
   const wakes = new Map<string, ChatWake>()
   for (const userId of recipients) {
+    if (ageless.has(userId)) {
+      wakes.set(userId, {
+        t: 'chat',
+        u: userId,
+        c: message.conversationId,
+        seq: message.seq,
+        dm: conversation.kind === 'dm',
+        from: 'Someone',
+        title: null,
+        url: `teamstation://chat/${message.conversationId}`,
+        generic: true
+      })
+      continue
+    }
     const wake: ChatWake = {
       t: 'chat',
       u: userId,
@@ -340,9 +365,11 @@ export function wakeMessage(
           payload: { aps: { 'content-available': 1 }, ...wake }
         }
       const body =
-        wake.title == null
-          ? `New message from ${wake.from}`
-          : `New message in ${wake.title}`
+        wake.generic === true
+          ? GENERIC_WAKE_BODY
+          : wake.title == null
+            ? `New message from ${wake.from}`
+            : `New message in ${wake.title}`
       return {
         platform: 'ios',
         pushType: 'alert',
@@ -422,8 +449,20 @@ export async function chatWakes(
     ])
     if (conversation == null || live.length === 0) return emptyReport()
     const dm = conversation.kind === 'dm'
+    // Somebody with no age on file reads no chat: a generic wake for a DM,
+    // and none for a group message, which could not tell a mention.
+    const bands = await ageBandsOf(
+      db,
+      live.map(to => to.userId),
+      options.now ?? new Date()
+    )
+    const ageless = new Set(
+      [...bands].flatMap(([id, band]) => (band === 'unknown' ? [id] : []))
+    )
+    const reachable = dm ? live : live.filter(to => !ageless.has(to.userId))
+    if (reachable.length === 0) return emptyReport()
     const marked = [
-      ...new Set(live.filter(to => wakes(to, dm)).map(to => to.userId))
+      ...new Set(reachable.filter(to => wakes(to, dm)).map(to => to.userId))
     ].sort()
     const fresh =
       marked.length === 0 || options.woke == null
@@ -435,19 +474,19 @@ export async function chatWakes(
               return []
             })
     const seen = await seenBy(db, conversationId, seq, [
-      ...new Set(live.map(to => to.userId))
+      ...new Set(reachable.map(to => to.userId))
     ])
     const unwoken = fresh.filter(id => seen.has(id))
     if (unwoken.length > 0 && options.unwoke != null)
       await options
         .unwoke(unwoken, conversationId, seq)
         .catch(said('unmarking'))
-    const devices = live.filter(to => !seen.has(to.userId))
+    const devices = reachable.filter(to => !seen.has(to.userId))
     const recipients = [...new Set(devices.map(to => to.userId))].sort()
     const wakesOf =
       recipients.length === 0
         ? new Map<string, ChatWake>()
-        : await wakesFor(db, message, conversation, recipients)
+        : await wakesFor(db, message, conversation, recipients, ageless)
     // Every device left is a recipient's, so has its wake.
     return await sendToDevices(
       db,

@@ -8,6 +8,7 @@ import { notFound } from '../../common/errors'
 import { asUserId } from '../../common/userId'
 import {
   approveLink,
+  chatAgeRequired,
   chatCaller,
   createLink,
   declineLink,
@@ -110,6 +111,7 @@ export function chatKeyRoutes(
   clock: () => Date = () => new Date()
 ): Router {
   const router = Router()
+  const ageGate = chatAgeRequired(db, clock)
 
   router.post(
     '/chat/devices',
@@ -242,6 +244,7 @@ export function chatKeyRoutes(
   router.get(
     '/chat/users/:userId/keys',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       let userId: string
@@ -257,6 +260,7 @@ export function chatKeyRoutes(
   router.get(
     '/chat/identities/:identityId',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
       const id = pathParam(req.params.identityId)

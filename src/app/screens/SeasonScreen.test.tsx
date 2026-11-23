@@ -20,7 +20,7 @@ import {
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
 import { pageOfGames } from '../../test/pageOf'
-import type { TabCorrection } from '../chat/ChatAgeGate'
+import type { TabCorrection } from '../chat/AgeGate'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { scheduleDate, shortTime } from './format'

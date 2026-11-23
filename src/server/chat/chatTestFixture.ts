@@ -25,6 +25,7 @@ import type { SpaceSettings } from '../media/spacesHls'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
+import { accountRoutes } from '../routes/account'
 import { chatRoutes } from '../routes/chat'
 import { chatAttachmentRoutes } from '../routes/chatAttachments'
 import { chatEpochRoutes } from '../routes/chatEpochs'
@@ -33,6 +34,7 @@ import {
   type ChatMessageRouteOptions,
   chatMessageRoutes
 } from '../routes/chatMessages'
+import { guardianRoutes } from '../routes/guardians'
 import { mintUserId } from '../users/mintUserId'
 import { spaceObjectStore } from './attachments'
 import { drainDirty } from './reconciler'
@@ -77,12 +79,16 @@ export interface ChatFixture {
   sessionOf: (who: string) => string
   /** The bearer token `who` calls with, for a socket. */
   tokenOf: (who: string) => string
-  /** Makes a person (an account unless `account: false`) with a session. */
+  /**
+   * Makes a person (an account unless `account: false`) with a session: an
+   * adult by `is_adult` unless given a birth month, or `noAge`.
+   */
   person: (
     key: string,
     options?: {
       account?: boolean
       birth?: { year: number; month: number }
+      noAge?: boolean
       userId?: string
     }
   ) => Promise<string>
@@ -256,7 +262,9 @@ export async function openChatFixture(
             // An account is switched on as it settles; its address follows.
             login_enabled: account,
             birth_year: personOptions.birth?.year ?? null,
-            birth_month: personOptions.birth?.month ?? null
+            birth_month: personOptions.birth?.month ?? null,
+            is_adult:
+              personOptions.birth == null && personOptions.noAge !== true
           })
           .execute()
         if (account) {
@@ -291,6 +299,21 @@ export async function openChatFixture(
     app.use(
       '/api/v1',
       chatKeyRoutes(db, () => fixture.now)
+    )
+    // `/people/:userId/age`, whose first age re-checks the person's DMs.
+    app.use(
+      '/api/v1',
+      guardianRoutes(db, { sendInvite: async () => undefined })
+    )
+    // `/me/account/age`, whose first answer re-checks the person's DMs.
+    app.use(
+      '/api/v1',
+      accountRoutes(db, {
+        ffmpegPath: TEST_MEDIA.ffmpegPath,
+        space,
+        publicUrl: TEST_MEDIA.publicUrl,
+        sendCode: async () => undefined
+      })
     )
     app.use(
       '/api/v1',

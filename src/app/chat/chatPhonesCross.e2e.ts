@@ -99,6 +99,13 @@ async function dmOf(
 
 /** All sixteen indexed safety words, in their displayed order. */
 async function safetyWords(m: Device, name: string): Promise<string> {
+  // The members screen was just opened by a link: a tap in its first second
+  // can be lost, so the row is waited for and given a moment.
+  await m.assertVisible({
+    text: `Safety words with ${name},.*`,
+    timeout: 30000
+  })
+  await new Promise(resolve => setTimeout(resolve, 2000))
   await m.tapOn({ text: `Safety words with ${name},.*` })
   await m.assertVisible({ text: `Safety words with ${name}`, timeout: 30000 })
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -168,9 +175,13 @@ async function main(): Promise<void> {
     const words = `From the iPhone ${Date.now() % 100000} 🎉`
     await iphone.launchApp({
       appId: APP,
-      environment: { TS_DECLARED_AGE_LOWER: '13' }
+      environment: { TS_DECLARED_AGE_LOWER: '18' }
     })
     await iphone.openLink({ link: `teamstation://chat/${dm}` })
+    // A tap in the first second after the launch can be lost: the composer
+    // is waited for and given a moment.
+    await iphone.assertVisible({ id: 'chat-composer', timeout: 60000 })
+    await new Promise(resolve => setTimeout(resolve, 2000))
     await iphone.tapOn({ id: 'chat-composer', timeout: 60000 })
     await iphone.inputText({ text: words })
     await iphone.hideKeyboard().catch(() => undefined)

@@ -52,7 +52,7 @@ interface Sent {
   scopeName: string
 }
 
-describe('guardians, birth months and the SafeSport setting (U2)', function () {
+describe('guardians, ages and the SafeSport setting (U2)', function () {
   this.timeout(120000)
 
   let adminPool: Pool | undefined
@@ -313,6 +313,64 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
       )
       expect(gone.body).deep.equals({ removed: true })
       expect(await membership(id('B'))).deep.equals(before)
+      expect(await relatives('R')).deep.equals([])
+    })
+
+    it('refuses a guardian known to be under 18, but not one with no age yet, and keeps family of any age', async function () {
+      const setB = async (fields: {
+        birth_year: number | null
+        birth_month: number | null
+        is_adult: boolean
+      }): Promise<void> => {
+        await database()
+          .updateTable('users')
+          .set(fields)
+          .where('id', '=', id('B'))
+          .execute()
+      }
+      await setB({
+        birth_year: new Date().getUTCFullYear() - 16,
+        birth_month: 1,
+        is_adult: false
+      })
+      try {
+        const refused = await call('Ha', 'POST', guardiansPath('R'), {
+          userId: String(id('B'))
+        })
+        expect(refused.status).equals(400)
+        expect(refused.body.details.reason).equals('guardianNotAdult')
+        // Invitations and the seed link through the same function.
+        let thrown: unknown
+        try {
+          await linkGuardian(
+            database(),
+            id('R'),
+            id('B'),
+            seed.teams.hawks,
+            null,
+            'guardian'
+          )
+        } catch (error) {
+          thrown = error
+        }
+        expect(JSON.stringify(thrown)).includes('guardianNotAdult')
+        const family = await call('Ha', 'POST', guardiansPath('R'), {
+          userId: String(id('B')),
+          kind: 'family'
+        })
+        expect(family.status).equals(201)
+        await call('Hc', 'DELETE', `${guardiansPath('R')}/${id('B')}`)
+
+        // Somebody who has not given an age yet may be linked.
+        await setB({ birth_year: null, birth_month: null, is_adult: false })
+        const fresh = await call('Ha', 'POST', guardiansPath('R'), {
+          userId: String(id('B'))
+        })
+        expect(fresh.status).equals(201)
+        await call('Hc', 'DELETE', `${guardiansPath('R')}/${id('B')}`)
+      } finally {
+        await setB({ birth_year: null, birth_month: null, is_adult: true })
+      }
       expect(await relatives('R')).deep.equals([])
     })
 
@@ -698,40 +756,194 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
     })
   })
 
-  describe('birth months', function () {
-    const path = (key: string): string => `/players/${id(key)}/birth-month`
-
-    it('may be set by staff and guardians, and nobody else', async function () {
-      const hc = await call('Hc', 'PUT', path('P'), { year: 2012, month: 3 })
-      expect(hc.status).equals(200)
-      expect(hc.body).deep.equals({ userId: id('P'), birthMonth: '2012-03' })
-      const g1 = await call('G1', 'PUT', path('P'), { year: 2012, month: 2 })
-      expect(g1.body.birthMonth).equals('2012-02')
-      const site = await call('Z', 'PUT', path('P'), { year: 2012, month: 2 })
-      expect(site.status).equals(200)
-
-      for (const key of ['P', 'A', 'F', 'Hk', 'Ec']) {
-        const refused = await call(key, 'PUT', path('P'), {
-          year: 2012,
-          month: 3
+  describe('ages', function () {
+    const path = (key: string): string => `/people/${id(key)}/age`
+    /** Today's year and month in UTC, `years` back and a month more. */
+    const born = (years: number): { year: number; month: number } => {
+      const now = new Date()
+      const total =
+        now.getUTCFullYear() * 12 + now.getUTCMonth() - years * 12 - 1
+      return { year: Math.floor(total / 12), month: (total % 12) + 1 }
+    }
+    const text = (birth: { year: number; month: number }): string =>
+      `${birth.year}-${String(birth.month).padStart(2, '0')}`
+    const setP = async (fields: {
+      birth_year?: number | null
+      birth_month?: number | null
+      is_adult?: boolean
+    }): Promise<void> => {
+      await database()
+        .updateTable('users')
+        .set({
+          birth_year: null,
+          birth_month: null,
+          is_adult: false,
+          ...fields
         })
+        .where('id', '=', id('P'))
+        .execute()
+    }
+    const teen = born(14)
+
+    it('may be changed by a guardian and a site administrator, and nobody else', async function () {
+      await setP({ birth_year: teen.year, birth_month: teen.month })
+      const older = born(15)
+      const g1 = await call('G1', 'PUT', path('P'), older)
+      expect(g1.status).equals(200)
+      expect(g1.body).deep.equals({
+        userId: id('P'),
+        band: 'minor',
+        birthMonth: text(older),
+        isAdult: false
+      })
+      const setAt = async (): Promise<unknown> =>
+        (
+          await database()
+            .selectFrom('users')
+            .select(['age_source', 'age_set_at'])
+            .where('id', '=', id('P'))
+            .executeTakeFirstOrThrow()
+        ).age_set_at
+      const firstAnswer = await setAt()
+      const site = await call('Z', 'PUT', path('P'), teen)
+      expect(site.status).equals(200)
+      const row = await database()
+        .selectFrom('users')
+        .select(['age_source', 'age_set_at'])
+        .where('id', '=', id('P'))
+        .executeTakeFirstOrThrow()
+      // A change by somebody else leaves when the person first answered.
+      expect(row).deep.equals({ age_source: 'admin', age_set_at: firstAnswer })
+
+      // Coaches no longer keep a player's age.
+      for (const key of ['Hc', 'Ha', 'P', 'A', 'F', 'Hk', 'Ec']) {
+        const refused = await call(key, 'PUT', path('P'), born(16))
         expect(refused.status, key).equals(404)
       }
-      // Nobody keeps the birth month of somebody who plays nowhere.
       expect(
-        (await call('Hc', 'PUT', path('A'), { year: 1990, month: 1 })).status
+        (await call('Z', 'PUT', '/people/123456789/age', teen)).status
       ).equals(404)
-      expect(
-        (
-          await call('Hc', 'PUT', '/players/123456789/birth-month', {
-            year: 1990,
-            month: 1
-          })
-        ).status
-      ).equals(404)
+      const audit = await database()
+        .selectFrom('audit_log')
+        .select(['before', 'after'])
+        .where('entity_type', '=', 'age')
+        .where('entity_id', '=', id('P'))
+        .execute()
+      expect(audit.length).greaterThanOrEqual(2)
     })
 
-    it('takes a year and a month and never a day', async function () {
+    it('counts a guardian link only while the guardian is an adult', async function () {
+      await setP({ birth_year: teen.year, birth_month: teen.month })
+      const g1 = await database()
+        .selectFrom('users')
+        .select(['birth_year', 'birth_month', 'is_adult'])
+        .where('id', '=', id('G1'))
+        .executeTakeFirstOrThrow()
+      const setG1 = async (fields: {
+        birth_year: number | null
+        birth_month: number | null
+        is_adult: boolean
+      }): Promise<void> => {
+        await database()
+          .updateTable('users')
+          .set(fields)
+          .where('id', '=', id('G1'))
+          .execute()
+      }
+      const sixteen = born(16)
+      try {
+        // A link left from before guardians had to be adults, to a minor.
+        await setG1({
+          birth_year: sixteen.year,
+          birth_month: sixteen.month,
+          is_adult: false
+        })
+        const refused = await call('G1', 'PUT', path('P'), { adult: true })
+        expect(refused.status).equals(404)
+        const page = await call('G1', 'GET', `/players/${id('P')}`)
+        expect(page.status).equals(200)
+        expect(page.body).not.to.have.property('birthMonth')
+        // And to somebody with no age at all.
+        await setG1({ birth_year: null, birth_month: null, is_adult: false })
+        expect(
+          (await call('G1', 'PUT', path('P'), { adult: true })).status
+        ).equals(404)
+      } finally {
+        await setG1(g1)
+      }
+      expect((await call('G1', 'PUT', path('P'), born(15))).status).equals(200)
+    })
+
+    it('lets a guardian correct an answer under 13', async function () {
+      const child = born(11)
+      await setP({ birth_year: child.year, birth_month: child.month })
+      const corrected = await call('G1', 'PUT', path('P'), born(14))
+      expect(corrected.status).equals(200)
+      expect(corrected.body.band).equals('minor')
+      const source = await database()
+        .selectFrom('users')
+        .select('age_source')
+        .where('id', '=', id('P'))
+        .executeTakeFirstOrThrow()
+      expect(source.age_source).equals('guardian')
+    })
+
+    it('lets only a site administrator make an adult a minor, or clear an age', async function () {
+      for (const adult of [
+        { is_adult: true },
+        { birth_year: born(30).year, birth_month: born(30).month }
+      ]) {
+        await setP(adult)
+        const minor = await call('G1', 'PUT', path('P'), teen)
+        expect(minor.status).equals(403)
+        expect(minor.body.details.reason).equals('adultToMinor')
+      }
+      const cleared = await call('G1', 'PUT', path('P'), {
+        year: null,
+        month: null
+      })
+      expect(cleared.status).equals(403)
+      expect(cleared.body.details.reason).equals('clearNotAllowed')
+
+      const site = await call('Z', 'PUT', path('P'), teen)
+      expect(site.body.band).equals('minor')
+      const adultAgain = await call('G1', 'PUT', path('P'), { adult: true })
+      expect(adultAgain.status).equals(200)
+      expect(adultAgain.body).deep.equals({
+        userId: id('P'),
+        band: 'adult',
+        birthMonth: null,
+        isAdult: true
+      })
+      const forgotten = await call('Z', 'PUT', path('P'), {
+        year: null,
+        month: null
+      })
+      expect(forgotten.body).deep.equals({
+        userId: id('P'),
+        band: 'unknown',
+        birthMonth: null,
+        isAdult: false
+      })
+      // Cleared means never answered, so the person may answer again.
+      expect(
+        await database()
+          .selectFrom('users')
+          .select(['age_source', 'age_set_at'])
+          .where('id', '=', id('P'))
+          .executeTakeFirstOrThrow()
+      ).deep.equals({ age_source: null, age_set_at: null })
+    })
+
+    it('leaves the first answer to the person themselves', async function () {
+      await setP({})
+      const first = await call('G1', 'PUT', path('P'), teen)
+      expect(first.status).equals(409)
+      expect(first.body.details.reason).equals('ageNotSet')
+    })
+
+    it('takes a year and a month or 18 or older, and never a day', async function () {
+      await setP({ birth_year: teen.year, birth_month: teen.month })
       for (const body of [
         { year: 2012, month: 3, day: 14 },
         { year: 2012, month: 13 },
@@ -739,9 +951,13 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
         { year: 1800, month: 1 },
         { year: 2012.5, month: 1 },
         { year: '2012', month: 1 },
+        { year: new Date().getUTCFullYear() + 1, month: 1 },
+        { adult: false },
+        { adult: true, year: 2000, month: 1 },
+        { apple: { lowerBound: 18 } },
         [2012, 3]
       ]) {
-        const answer = await call('Hc', 'PUT', path('P'), body)
+        const answer = await call('Z', 'PUT', path('P'), body)
         expect(answer.status, JSON.stringify(body)).equals(400)
       }
       const row = await database()
@@ -749,25 +965,29 @@ describe('guardians, birth months and the SafeSport setting (U2)', function () {
         .select(['birth_year', 'birth_month'])
         .where('id', '=', id('P'))
         .executeTakeFirstOrThrow()
-      expect(row).deep.equals({ birth_year: 2012, birth_month: 2 })
+      expect(row).deep.equals({
+        birth_year: teen.year,
+        birth_month: teen.month
+      })
     })
 
-    it('is shown on the player page only to those who may set it, and can be cleared', async function () {
+    it('is shown on the player page only to those who may change it, and clearable only by a site administrator', async function () {
+      await setP({ birth_year: teen.year, birth_month: teen.month })
       const page = async (key: string): Promise<Answer> =>
         await call(key, 'GET', `/players/${id('P')}`)
-      expect((await page('Hc')).body.birthMonth).equals('2012-02')
-      expect((await page('G2')).body.birthMonth).equals('2012-02')
-      for (const key of ['A', 'P', 'R']) {
+      const guardian = (await page('G2')).body
+      expect(guardian.birthMonth).equals(text(teen))
+      expect(guardian.mayClearAge).equals(false)
+      expect(guardian.ageBand).equals('minor')
+      const site = (await page('Z')).body
+      expect(site.birthMonth).equals(text(teen))
+      expect(site.mayClearAge).equals(true)
+      for (const key of ['Hc', 'A', 'P', 'R']) {
         const answer = await page(key)
         expect(answer.status, key).equals(200)
         expect(answer.body, key).not.to.have.property('birthMonth')
+        expect(answer.body, key).not.to.have.property('mayClearAge')
       }
-      const cleared = await call('Hc', 'PUT', path('P'), {
-        year: null,
-        month: null
-      })
-      expect(cleared.body).deep.equals({ userId: id('P'), birthMonth: null })
-      expect((await page('Hc')).body.birthMonth).equals(null)
     })
   })
 

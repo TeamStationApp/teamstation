@@ -17,6 +17,7 @@ import {
 } from '../../test/gameFormDom'
 import { GroupSettingsScreen } from './GroupSettingsScreen'
 import { InvitationsWaiting } from './InvitationsWaiting'
+import { SafesportRow } from './SafesportRow'
 
 function fixture(kind: GroupRef['kind'] = 'team'): {
   client: TeamStationClient
@@ -661,5 +662,136 @@ describe('the Playing Time Rules row on settings', () => {
       expect(text()).not.includes('Playing Time Rules')
       await unmount()
     }
+  })
+})
+
+describe('a league’s SafeSport switch', () => {
+  afterEach(unmount)
+  const LABEL = 'SafeSport Local Affiliated Organization'
+  const toggle = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>(
+      `input[type="checkbox"][aria-label="${LABEL}"]`
+    )
+  const flip = async (): Promise<void> => {
+    await act(async () => {
+      toggle()!.click()
+    })
+    await settle(0)
+  }
+  /** A league fixture whose manage page says `lao`, and the saves it took. */
+  const league = (
+    lao: boolean | undefined
+  ): {
+    f: ReturnType<typeof fixture>
+    saved: boolean[]
+    failNext: { value: boolean }
+  } => {
+    const f = fixture('league')
+    const saved: boolean[] = []
+    const failNext = { value: false }
+    f.client.managePage = async (asked, id) =>
+      asManagePage({
+        scope: {
+          kind: asked,
+          id,
+          name: 'Bluebirds',
+          ...(lao == null ? {} : { safesportLao: lao })
+        },
+        tree: { leagues: [], seasons: [], teams: [] },
+        people: [],
+        pending: [],
+        invites: []
+      })
+    f.client.setSafesport = async (_leagueId, next) => {
+      saved.push(next)
+      if (failNext.value) throw new Error('Offline')
+      return next
+    }
+    return { f, saved, failNext }
+  }
+  const show = async (f: ReturnType<typeof fixture>): Promise<void> => {
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'league', id: 'canonical' }}
+      />
+    )
+    await settle()
+  }
+
+  it('is hidden when the manage page does not say, or cannot be read', async () => {
+    await show(league(undefined).f)
+    expect(toggle()).equals(null)
+    expect(text()).not.includes(LABEL)
+    await unmount()
+    const refused = league(false).f
+    refused.client.managePage = async () => {
+      throw new Error('Not found')
+    }
+    await show(refused)
+    expect(toggle()).equals(null)
+  })
+
+  it('is off by default, and asks before it turns on; Cancel leaves it off', async () => {
+    const { f, saved } = league(false)
+    await show(f)
+    expect(toggle()?.checked).equals(false)
+    expect(text()).includes(LABEL)
+    await flip()
+    expect(text()).includes('Turn On SafeSport?')
+    expect(text()).includes("won't reopen if you turn it off")
+    await press('Cancel')
+    expect(text()).not.includes('Turn On SafeSport?')
+    expect(toggle()?.checked).equals(false)
+    expect(saved).deep.equals([])
+  })
+
+  it('saves on once confirmed, and off without asking', async () => {
+    const { f, saved } = league(false)
+    await show(f)
+    await flip()
+    await press('Turn On')
+    await settle(0)
+    expect(saved).deep.equals([true])
+    expect(toggle()?.checked).equals(true)
+    await flip()
+    await settle(0)
+    expect(text()).not.includes('Turn On SafeSport?')
+    expect(saved).deep.equals([true, false])
+    expect(toggle()?.checked).equals(false)
+  })
+
+  it('puts the switch back and says so when a save fails', async () => {
+    const { f, saved, failNext } = league(true)
+    await show(f)
+    expect(toggle()?.checked).equals(true)
+    failNext.value = true
+    await flip()
+    await settle(0)
+    expect(saved).deep.equals([false])
+    expect(toggle()?.checked).equals(true)
+    expect(text()).includes('That didn’t save.')
+  })
+
+  it('starts afresh on another league while a save is still out', async () => {
+    const { f } = league(false)
+    f.client.setSafesport = async () => await new Promise<boolean>(() => {})
+    let switchTo: (id: string) => void = () => undefined
+    function Switcher(): React.ReactElement {
+      const [id, setId] = React.useState('one')
+      switchTo = setId
+      return <SafesportRow client={f.client} leagueId={id} />
+    }
+    await mount(<Switcher />)
+    await flip()
+    await press('Turn On')
+    await settle(0)
+    expect(toggle()?.disabled).equals(true)
+    await act(async () => {
+      switchTo('two')
+    })
+    await settle()
+    expect(toggle()?.checked).equals(false)
+    expect(toggle()?.disabled).equals(false)
   })
 })

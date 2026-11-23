@@ -531,17 +531,16 @@ const mergedPlayerStats: Action = {
 }
 
 /**
- * Confirms the tab's person for chat, as agreeing to the "Before You Chat"
- * sheet does: until then every chat screen stands behind that sheet. The
- * fixture's people never saw it.
+ * Gives the tab's person an adult age, as answering the age modal does: until
+ * then the server refuses them every chat read. An age already given (409
+ * `ageSet`) is as good.
  */
-async function confirmChatAge(tab: Surface, label: string): Promise<void> {
-  const answer = okBody(
-    await tab.api('PUT', '/me/account/chat-age', { source: 'self' }),
-    `${label} confirming its age for chat`
-  ) as { confirmed?: unknown } | null
-  if (answer?.confirmed !== true)
-    throw new Error(`${label} is still not confirmed for chat`)
+async function giveAdultAge(tab: Surface, label: string): Promise<void> {
+  const answer = await tab.api('PUT', '/me/account/age', { adult: true })
+  const reason = (answer.body as { details?: { reason?: unknown } } | null)
+    ?.details?.reason
+  if (answer.status === 409 && reason === 'ageSet') return
+  okBody(answer, `${label} giving its age`)
 }
 
 /** Two people in a team's chat on different nodes, typing and sending. */
@@ -554,8 +553,8 @@ async function chatBetween(
 ): Promise<string> {
   const sender = await tabOf(context, writer)
   const receiver = await tabOf(context, reader, farServer(context))
-  await confirmChatAge(sender, writer)
-  await confirmChatAge(receiver, reader)
+  await giveAdultAge(sender, writer)
+  await giveAdultAge(receiver, reader)
   await receiver.open('/chat')
   await receiver.press(`${chatLabel}*`)
   await receiver.waitForLabel('Message', context.patienceMs)

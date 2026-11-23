@@ -164,6 +164,8 @@ struct ChatWake {
   let title: String?
   let url: String
   let envelope: [String: Any]?
+  /// For a recipient with no age on file, who reads no chat: no envelope, `Someone`, no title.
+  let generic: Bool
 
   /// The wake a push carries beside `aps`, or nil for anything else.
   init?(_ payload: [AnyHashable: Any]) {
@@ -183,6 +185,7 @@ struct ChatWake {
     self.title = payload["title"] as? String
     self.url = url
     self.envelope = payload["env"] as? [String: Any]
+    self.generic = payload["generic"] as? Bool == true
   }
 }
 
@@ -249,12 +252,14 @@ struct ChatWakeDecryptor {
    * sender and the message; a mention of `wake.user` shows "<from> in
    * <title>"; any other message, and anything but a new post, shows nothing.
    * A DM that cannot be opened here still says who wrote; a group message
-   * that cannot shows nothing.
+   * that cannot shows nothing. A `generic` wake shows only that there is a
+   * new message, and reads neither the record nor the API.
    */
   func open(_ wake: ChatWake) async -> WakeNotification? {
     let shown = { (title: String, body: String) in
       WakeNotification(title: title, body: body, url: wake.url, tag: "chat:\(wake.conversation)", seq: wake.seq)
     }
+    if wake.generic { return shown("TeamStation", "You have a new message") }
     let fallback = wake.dm ? shown(wake.from, "New message from \(wake.from)") : nil
     guard let record, record.userId == wake.user else { return fallback }
     let post: Post?
@@ -588,7 +593,8 @@ enum ChatWakes {
    * out, or for anybody but the person signed in (`TSPush.setUser`), a wake
    * shows nothing, not even who wrote a DM: whoever holds the phone is not
    * told who writes to another person. A reminder (`t: "event"`) is shown as
-   * the server sent it, and likewise only for the person signed in.
+   * the server sent it, and likewise only for the person signed in, and so is
+   * a `generic` wake, whose alert already says only "You have a new message".
    */
   static func open(_ payload: [AnyHashable: Any]) async -> WakeOutcome {
     if payload["t"] as? String == "event" {
@@ -596,6 +602,10 @@ enum ChatWakes {
       return .notWake
     }
     guard let wake = ChatWake(payload) else { return .notWake }
+    // A generic wake opens nothing, so it needs no session: only the person.
+    if wake.generic {
+      return WakeKeychain.signedInUser() == wake.user ? .notWake : .hide
+    }
     guard let session = WakeKeychain.session(), WakeKeychain.signedInUser() == wake.user else {
       return .hide
     }

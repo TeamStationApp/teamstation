@@ -2354,7 +2354,7 @@ export class Chat2UI {
     await this.device.launchApp({
       appId: this.fixture.appId,
       ...(platform === 'ios'
-        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
         : {})
     })
     // A phone's Google Password Manager sheet outlives the app that raised it,
@@ -2777,7 +2777,7 @@ export class Chat2UI {
       await this.device.launchApp({
         appId: this.fixture.appId,
         ...(this.surface === 'ios'
-          ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+          ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
           : {})
       })
       await this.open(path)
@@ -3986,7 +3986,7 @@ export class Chat2UI {
     await this.device.launchApp({
       appId: this.fixture.appId,
       ...(this.surface === 'ios'
-        ? { environment: { TS_DECLARED_AGE_LOWER: '13' } }
+        ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
         : {})
     })
     await until(
@@ -4734,7 +4734,7 @@ export class Chat2UI {
             'launchctl',
             'setenv',
             'TS_DECLARED_AGE_LOWER',
-            '13'
+            '18'
           ) === 0,
           'QA app launch setting for its link failed'
         )

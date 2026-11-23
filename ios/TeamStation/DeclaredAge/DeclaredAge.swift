@@ -5,28 +5,36 @@ import UIKit
 import DeclaredAgeRange
 #endif
 
-/// The age gate chat asks Apple for, and the dictionary that answer becomes.
+/**
+ * The ages chat asks Apple about: 13, below which there is no chat; 16, so a
+ * teenager's range is 13 to 15 or 16 to 17; and 18, an adult.
+ */
 enum DeclaredAgePayload {
-  static let ageGate = 13
+  static let chatGate = 13
+  static let olderTeenGate = 16
+  static let adultGate = 18
+  static let ageGates = [chatGate, olderTeenGate, adultGate]
 }
 
 /**
  * The declared-age answer the bridge resolves.
  *
  * A numeric `TS_DECLARED_AGE_LOWER` is a shared lower bound and never calls
- * the system. Below iOS 26 the platform has no API. No view controller has
- * not settled. Everything else is the outcome of one fetch.
+ * the system; a numeric `TS_DECLARED_AGE_UPPER` at or above it is its upper
+ * bound. Below iOS 26 the platform has no API. No view controller has not
+ * settled. Everything else is the outcome of one fetch.
  */
 func ageDecision(
   osAtLeast26: Bool,
   debugLower: String,
+  debugUpper: String = "",
   hasPresenter: Bool,
   outcome: String,
   lower: Int?,
   upper: Int?
-) -> (answer: [String: Any], fetchedAgeGate: Int?) {
-  if let bound = finiteInteger(debugLower) {
-    return (["status": "sharing", "lowerBound": bound], nil)
+) -> (answer: [String: Any], fetchedAgeGates: [Int]?) {
+  if let answer = standIn(debugLower, debugUpper) {
+    return (answer, nil)
   }
   if !osAtLeast26 {
     return (["status": "unsupported"], nil)
@@ -34,7 +42,7 @@ func ageDecision(
   if !hasPresenter {
     return (["status": "unready"], nil)
   }
-  let fetched = DeclaredAgePayload.ageGate
+  let fetched = DeclaredAgePayload.ageGates
   if outcome == "declinedSharing" {
     return (["status": "declined"], fetched)
   }
@@ -45,6 +53,14 @@ func ageDecision(
     return (body, fetched)
   }
   return (["status": "unavailable"], fetched)
+}
+
+/// The stand-in's answer, or nil when `lower` is not a whole number.
+private func standIn(_ lower: String, _ upper: String) -> [String: Any]? {
+  guard let bound = finiteInteger(lower) else { return nil }
+  var body: [String: Any] = ["status": "sharing", "lowerBound": bound]
+  if let top = finiteInteger(upper), top >= bound { body["upperBound"] = top }
+  return body
 }
 
 private func finiteInteger(_ raw: String) -> Int? {
@@ -65,7 +81,9 @@ enum AppleDeclaredAge {
     #if canImport(DeclaredAgeRange)
     do {
       let response = try await AgeRangeService.shared.requestAgeRange(
-        ageGates: DeclaredAgePayload.ageGate,
+        ageGates: DeclaredAgePayload.chatGate,
+        DeclaredAgePayload.olderTeenGate,
+        DeclaredAgePayload.adultGate,
         in: controller
       )
       switch response {
@@ -104,25 +122,26 @@ private func presenter() -> UIViewController? {
 
 @objc(TSDeclaredAge)
 public class TSDeclaredAge: NSObject {
-  @objc public static func payloadAgeGate() -> NSNumber {
-    NSNumber(value: DeclaredAgePayload.ageGate)
+  @objc public static func payloadAgeGates() -> NSArray {
+    DeclaredAgePayload.ageGates.map { NSNumber(value: $0) } as NSArray
   }
 
-  /// The decision table the hosted tests call. `fetchedAgeGate` is set only when a fetch would run.
+  /// The decision table the hosted tests call. `fetchedAgeGates` is set only when a fetch would run.
   @objc public static func declaredAgeAnswer(_ input: NSDictionary) -> NSDictionary {
     let outcome = input["outcome"] as? String ?? ""
     let result = ageDecision(
       osAtLeast26: (input["osAtLeast26"] as? NSNumber)?.boolValue ?? false,
       debugLower: input["debugLower"] as? String ?? "",
+      debugUpper: input["debugUpper"] as? String ?? "",
       hasPresenter: (input["hasPresenter"] as? NSNumber)?.boolValue ?? false,
       outcome: outcome,
       lower: (input["lower"] as? NSNumber)?.intValue,
       upper: (input["upper"] as? NSNumber)?.intValue
     )
     var body = result.answer
-    body["fetched"] = result.fetchedAgeGate != nil
-    if let gate = result.fetchedAgeGate {
-      body["fetchedAgeGate"] = gate
+    body["fetched"] = result.fetchedAgeGates != nil
+    if let gates = result.fetchedAgeGates {
+      body["fetchedAgeGates"] = gates
     }
     return dictionary(body)
   }
@@ -142,9 +161,12 @@ public class TSDeclaredAge: NSObject {
   }
 
   @objc public static func request(_ resolve: @escaping (NSDictionary) -> Void) {
-    let debug = ProcessInfo.processInfo.environment["TS_DECLARED_AGE_LOWER"] ?? ""
-    if let bound = finiteInteger(debug) {
-      resolve(dictionary(["status": "sharing", "lowerBound": bound]))
+    let environment = ProcessInfo.processInfo.environment
+    if let answer = standIn(
+      environment["TS_DECLARED_AGE_LOWER"] ?? "",
+      environment["TS_DECLARED_AGE_UPPER"] ?? ""
+    ) {
+      resolve(dictionary(answer))
       return
     }
     if #available(iOS 26, *) {

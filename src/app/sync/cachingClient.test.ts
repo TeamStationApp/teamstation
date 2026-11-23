@@ -1403,20 +1403,23 @@ describe('CachingClient', function () {
     expect(failure).property('code', 'offline')
   })
 
-  it('keeps the chat age confirmation, and answers it offline', async function () {
-    const confirmed = {
-      confirmed: true,
-      source: 'self',
-      confirmedAt: '2027-04-12T12:00:00.000Z'
+  it('keeps the account’s age band, and answers it offline', async function () {
+    const age = {
+      band: 'adult',
+      birthYear: null,
+      birthMonth: null,
+      isAdult: true,
+      ageSource: 'self',
+      ageSetAt: '2027-04-12T12:00:00.000Z'
     }
     const net = server({
-      '/me/account/chat-age': { body: confirmed }
+      '/me/account/age': { body: age }
     })
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
-    expect(await client.chatAge()).deep.equals(confirmed)
+    expect(await client.myAge()).deep.equals(age)
     net.offline = true
-    expect(await client.chatAge()).deep.equals(confirmed)
+    expect(await client.myAge()).deep.equals(age)
   })
 
   it('answers a pending document the server sent back unreadable as the server answer', async function () {
@@ -2188,7 +2191,7 @@ describe('CachingClient', function () {
 describe('document keys', function () {
   it('names exactly the GETs the phone keeps', function () {
     expect(documentKeyOf('/me/home')).equals('home.lists')
-    expect(documentKeyOf('/me/account/chat-age')).equals('me.chatAge')
+    expect(documentKeyOf('/me/account/age')).equals('me.age')
     expect(documentKeyOf('/teams')).equals('home.teams')
     expect(documentKeyOf('/users?guardedBy=me')).equals('home.guarded')
     expect(documentKeyOf('/events?played=1&limit=1')).equals('home.recent')

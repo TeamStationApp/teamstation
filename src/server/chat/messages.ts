@@ -548,10 +548,25 @@ export async function messagesOf(
 ): Promise<ChatMessageView[]> {
   const hidden =
     page.userId == null ? [] : await blockedSenderIds(db, page.userId)
+  // A member who gave an age of 13 to 17 after joining a DM that then closed
+  // is served nothing from before they answered.
+  const hiddenBefore =
+    page.userId == null
+      ? undefined
+      : (
+          await db
+            .selectFrom('chat_members')
+            .select('hidden_before')
+            .where('conversation_id', '=', conversationId)
+            .where('user_id', '=', page.userId)
+            .executeTakeFirst()
+        )?.hidden_before
   let query = db
     .selectFrom('chat_messages')
     .selectAll()
     .where('conversation_id', '=', conversationId)
+  if (hiddenBefore != null)
+    query = query.where('created_at', '>=', hiddenBefore)
   if (hidden.length > 0)
     query = query.where(eb =>
       eb.or([

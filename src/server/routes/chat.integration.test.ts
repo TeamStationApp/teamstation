@@ -138,6 +138,81 @@ describe('chat routes and the DM rules (U5)', function () {
     return userId
   }
 
+  describe('the age gate', function () {
+    const gated: Array<[string, string]> = [
+      ['GET', '/chat/conversations'],
+      ['PATCH', '/chat/conversations/cnv_x/preferences'],
+      ['GET', '/chat/conversations/cnv_x/pins'],
+      ['PUT', '/chat/conversations/cnv_x/pins/msg_x'],
+      ['DELETE', '/chat/conversations/cnv_x/pins/msg_x'],
+      ['GET', '/chat/conversations/cnv_x/members'],
+      ['GET', '/chat/conversations/cnv_x/reads'],
+      ['GET', '/chat/conversations/cnv_x/log'],
+      ['GET', '/chat/dm-candidates'],
+      ['GET', '/chat/included-adults'],
+      ['POST', '/chat/dms'],
+      ['POST', '/chat/dms/cnv_x/members'],
+      ['POST', '/chat/conversations/cnv_x/messages'],
+      ['GET', '/chat/conversations/cnv_x/messages'],
+      ['PUT', '/chat/conversations/cnv_x/read'],
+      ['POST', '/chat/reports'],
+      ['GET', '/chat/conversations/cnv_x/epochs'],
+      ['POST', '/chat/conversations/cnv_x/epochs'],
+      ['GET', '/chat/grants'],
+      ['POST', '/chat/grants'],
+      ['GET', '/chat/users/usr_x/keys'],
+      ['GET', '/chat/identities/cid_x'],
+      ['POST', '/chat/attachments'],
+      ['PUT', '/chat/attachments/att_x/parts/0'],
+      ['POST', '/chat/attachments/att_x/complete'],
+      ['GET', '/chat/attachments/att_x']
+    ]
+    const open: Array<[string, string]> = [
+      ['GET', '/chat/blocks'],
+      ['PUT', '/chat/blocks/usr_x'],
+      ['DELETE', '/chat/blocks/usr_x'],
+      ['DELETE', '/chat/dms/cnv_x/members/me'],
+      ['GET', '/chat/devices'],
+      ['POST', '/chat/devices'],
+      ['GET', '/chat/me/keys'],
+      ['GET', '/chat/links'],
+      ['POST', '/chat/identity']
+    ]
+    const reasonOf = (answer: Answer): unknown =>
+      (answer.body as { details?: { reason?: unknown } } | null)?.details
+        ?.reason
+
+    it('refuses every read and post to somebody with no age, and to somebody under 13', async function () {
+      await fixture.person('ageless', { noAge: true })
+      for (const [method, path] of gated) {
+        const body = method === 'GET' ? undefined : {}
+        const ageless = await call('ageless', method, path, body)
+        expect(ageless.status, `${method} ${path}`).equals(403)
+        expect(reasonOf(ageless), `${method} ${path}`).equals('ageRequired')
+        const child = await call('R', method, path, body)
+        expect(child.status, `${method} ${path}`).equals(403)
+        expect(reasonOf(child), `${method} ${path}`).equals('underAge')
+      }
+    })
+
+    it('leaves enrolment, blocks and leaving open to somebody with no age', async function () {
+      for (const [method, path] of open) {
+        const body = method === 'GET' || method === 'DELETE' ? undefined : {}
+        const answer = await call('ageless', method, path, body)
+        expect(reasonOf(answer), `${method} ${path}`).not.equals('ageRequired')
+      }
+      // Reading opens once they give an age.
+      await db
+        .updateTable('users')
+        .set({ is_adult: true })
+        .where('id', '=', fixture.id('ageless'))
+        .execute()
+      expect(
+        (await call('ageless', 'GET', '/chat/conversations')).status
+      ).equals(200)
+    })
+  })
+
   // Before any test below changes the Hawks' members or their links.
   describe('affiliation lines', function () {
     it('lines each person up with the family and teams the reader may see', async function () {
@@ -219,7 +294,14 @@ describe('chat routes and the DM rules (U5)', function () {
       `${team} Members`
     ]
     const expected: Record<string, string[]> = {
-      L: [ALL_STAFF, ANNOUNCEMENTS, 'Harbor League Org', SEASON_STAFF],
+      // L also plays on Hawks.
+      L: [
+        ALL_STAFF,
+        ANNOUNCEMENTS,
+        'Harbor League Org',
+        'Hawks Members',
+        SEASON_STAFF
+      ],
       S: [ALL_STAFF, ANNOUNCEMENTS, SEASON_STAFF],
       K: [ALL_STAFF, ANNOUNCEMENTS, SEASON_STAFF],
       Z: [],
@@ -248,6 +330,13 @@ describe('chat routes and the DM rules (U5)', function () {
     }
     for (const [who, chats] of Object.entries(expected)) {
       it(`${who}: ${chats.length === 0 ? 'no chats' : chats.join(', ')}`, async function () {
+        if (who === 'R' || who === 'T') {
+          // Under 13: in no chat, and refused the list itself.
+          const answer = await call(who, 'GET', '/chat/conversations')
+          expect(answer.status).equals(403)
+          expect(answer.body.details.reason).equals('underAge')
+          return
+        }
         expect(await titles(who)).deep.equals([...chats].sort())
       })
     }
@@ -279,7 +368,7 @@ describe('chat routes and the DM rules (U5)', function () {
       })
       expect(a['Hawks Members']).to.include({
         canPost: true,
-        memberCount: 11,
+        memberCount: 12,
         scopeName: 'Hawks'
       })
       const s = await list('S')
@@ -313,7 +402,20 @@ describe('chat routes and the DM rules (U5)', function () {
         ])
       )
       expect(Object.keys(byKey).sort()).deep.equals(
-        ['A', 'B', 'C', 'G1', 'G2', 'Ha', 'Hc', 'Hk', 'Hs', 'N', 'P'].sort()
+        [
+          'A',
+          'B',
+          'C',
+          'G1',
+          'G2',
+          'Ha',
+          'Hc',
+          'Hk',
+          'Hs',
+          'L',
+          'N',
+          'P'
+        ].sort()
       )
       expect(byKey.Q).equals(undefined)
       expect(byKey.Hc).to.include({
@@ -354,7 +456,7 @@ describe('chat routes and the DM rules (U5)', function () {
         ])
       )
       expect(labels).to.include({
-        L: 'League',
+        L: 'League · Player · Hawks',
         S: 'Season staff',
         Hc: 'Coach · Hawks',
         Ha: 'Admin · Hawks'
@@ -498,8 +600,8 @@ describe('chat routes and the DM rules (U5)', function () {
   })
 
   describe('naming people in a DM', function () {
-    it('lets P be named by guardians, staff, season staff, the league and season-mates', async function () {
-      for (const who of ['G1', 'Hc', 'S', 'K', 'L', 'E']) {
+    it('lets P be named by guardians, their team’s coaches and admins, and season-mates their age', async function () {
+      for (const who of ['G1', 'Hc', 'Ha', 'E']) {
         const answer = await dm(who, ['P'])
         expect(answer.status, `${who}: ${JSON.stringify(answer.body)}`).equals(
           201
@@ -514,16 +616,16 @@ describe('chat routes and the DM rules (U5)', function () {
       }
     })
 
-    it('refuses P to parents, fans, other teams’ staff and All Staff', async function () {
-      for (const who of ['A', 'F', 'Ec', 'Ea']) {
+    it('refuses P to parents, fans, scorekeepers, season and league staff, and an adult player with no birth month', async function () {
+      for (const who of ['A', 'F', 'Ec', 'Ea', 'Hk', 'Hs', 'S', 'K', 'L']) {
         const answer = await dm(who, ['P'])
         refusedAs(answer, 'notCandidate')
         expect(answer.body.details.userIds).deep.equals([fixture.id('P')])
       }
     })
 
-    it('lets P name their own staff, season staff and league, as they may name P', async function () {
-      for (const who of ['Hc', 'Ha', 'S', 'K', 'L']) {
+    it('lets P name their own coaches and admins, as they may name P', async function () {
+      for (const who of ['Hc', 'Ha']) {
         // A DM P and Hc already share comes back as it is (200).
         const answer = await dm('P', [who])
         expect([200, 201], `${who}: ${JSON.stringify(answer.body)}`).includes(
@@ -531,7 +633,7 @@ describe('chat routes and the DM rules (U5)', function () {
         )
         expect(await memberKeys(answer.body.id)).deep.equals(['P', who].sort())
       }
-      for (const who of ['A', 'F', 'Ec', 'Ea']) {
+      for (const who of ['A', 'F', 'Ec', 'Ea', 'S', 'K', 'L']) {
         refusedAs(await dm('P', [who]), 'notCandidate')
       }
     })
@@ -539,7 +641,8 @@ describe('chat routes and the DM rules (U5)', function () {
     it('never names a player under 13 or without an account', async function () {
       refusedAs(await dm('Hc', ['R']), 'notCandidate')
       refusedAs(await dm('Hc', ['Q']), 'notCandidate')
-      refusedAs(await dm('R', ['Hc']), 'notCandidate')
+      // R, under 13, is refused chat altogether.
+      refusedAs(await dm('R', ['Hc']), 'underAge')
     })
 
     it('lets fan F be named by Hawks staff, season staff, All Staff and the league', async function () {
@@ -690,7 +793,7 @@ describe('chat routes and the DM rules (U5)', function () {
         const [all, everybody] = await queries('')
         const [one, kept] = await queries('blair')
         const [none, nobody] = await queries('nobody here')
-        expect([everybody, kept, nobody]).deep.equals([9, 1, 0])
+        expect([everybody, kept, nobody]).deep.equals([10, 1, 0])
         // No more reads for everybody than for one, and none of a line or a
         // label when the search keeps nobody.
         expect(one).at.most(all)
@@ -713,7 +816,7 @@ describe('chat routes and the DM rules (U5)', function () {
           .sort()
       }
       expect(await names('A')).deep.equals(
-        ['B', 'C', 'G1', 'G2', 'Ha', 'Hc', 'Hk', 'Hs', 'N'].sort()
+        ['B', 'C', 'G1', 'G2', 'Ha', 'Hc', 'Hk', 'Hs', 'L', 'N'].sort()
       )
       expect(await names('A', 'blair')).deep.equals(['B'])
       const hc = await names('Hc')
@@ -723,12 +826,12 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(hc).not.includes('R')
       expect(hc).not.includes('D')
       // Parents share Hawks Members with P but the pair rule keeps them
-      // out; P's staff (team, season and league) may name P, so P may name
-      // them back.
-      expect(await names('P')).deep.equals(
-        ['E', 'G1', 'G2', 'Ha', 'Hc', 'Hk', 'Hs', 'K', 'L', 'S'].sort()
-      )
-      expect(await names('R')).deep.equals([])
+      // out; P's coaches and admins, guardians and season-mates of their age
+      // may name P, so P may name them back.
+      expect(await names('P')).deep.equals(['E', 'G1', 'G2', 'Ha', 'Hc'].sort())
+      const under13 = await call('R', 'GET', '/chat/dm-candidates?q=')
+      expect(under13.status).equals(403)
+      expect(under13.body.details.reason).equals('underAge')
     })
   })
 
@@ -1089,9 +1192,13 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(withFamily.status).equals(201)
       expect(withFamily.body.memberCount).equals(3)
 
-      const withStaff = await dm('Hc', ['P', 'K'])
+      const withStaff = await dm('Hc', ['P', 'Ha'])
       expect(withStaff.status).equals(201)
       expect(withStaff.body.memberCount).equals(3)
+
+      // A scorekeeper, or season staff, is no staff of P's at all.
+      refusedAs(await dm('Hc', ['P', 'Hk']), 'notCandidate')
+      refusedAs(await dm('Hc', ['P', 'K']), 'notCandidate')
     })
 
     it('needs nobody for two young players, or a guardian and child', async function () {
@@ -1103,19 +1210,44 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(p.status).equals(201)
     })
 
-    it('counts a player of 21 as an adult beside P', async function () {
-      await addPlayer('X21', 'eagles', { year: 2006, month: 1 })
-      refusedAs(await dm('X21', ['P']), 'adultRequired')
+    it('takes a season-mate no more than 4 years older as P’s peer, needing nobody beside them', async function () {
+      // P was born 15 years and a month before the seed ran.
+      const born = (years: number): { year: number; month: number } => {
+        const at = fixture.now
+        const total =
+          at.getUTCFullYear() * 12 + at.getUTCMonth() - years * 12 - 1
+        return { year: Math.floor(total / 12), month: (total % 12) + 1 }
+      }
+      await addPlayer('X18', 'eagles', born(18))
+      const close = await dm('X18', ['P'])
+      expect(close.status, JSON.stringify(close.body)).equals(201)
+      // Older than that, or an adult with no birth month, is no peer.
+      await addPlayer('X21', 'eagles', born(21))
+      refusedAs(await dm('X21', ['P']), 'notCandidate')
+      await addPlayer('XA', 'eagles')
+      refusedAs(await dm('XA', ['P']), 'notCandidate')
     })
 
-    it('takes coach, player and season staff for a player with no guardian', async function () {
+    it('takes coach and admin for a minor with no guardian', async function () {
       await addPlayer('P2', 'hawks', { year: 2012, month: 1 })
-      expect((await dm('Hc', ['P2', 'K'])).status).equals(201)
+      expect((await dm('Hc', ['P2', 'Ha'])).status).equals(201)
+      refusedAs(await dm('Hc', ['P2']), 'adultRequired')
     })
 
-    it('treats a player with no birth month as under 18', async function () {
-      await addPlayer('P3', 'hawks')
-      refusedAs(await dm('Hc', ['P3']), 'adultRequired')
+    it('treats a player with no age as no minor', async function () {
+      const p3 = await fixture.person('P3', { noAge: true })
+      await db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: p3,
+          team_id: fixture.seed.teams.hawks,
+          role: 'member',
+          is_player: true
+        })
+        .execute()
+      await fixture.drain()
+      expect((await dm('Hc', ['P3'])).status).equals(201)
     })
 
     it('suggests guardians, family and immediate coaches, and finds staff by name', async function () {
@@ -1133,26 +1265,24 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(await adults('Hc')).deep.equals(
         ['B Family', 'G1 Guardian', 'G2 Guardian', 'Ha Admin · Hawks'].sort()
       )
-      expect(await adults('K')).deep.equals(
-        [
-          'B Family',
-          'G1 Guardian',
-          'G2 Guardian',
-          'Ha Admin · Hawks',
-          'Hc Coach · Hawks'
-        ].sort()
+      expect(await adults('Ha')).deep.equals(
+        ['B Family', 'G1 Guardian', 'G2 Guardian', 'Hc Coach · Hawks'].sort()
       )
-      expect(await adults('Hc', 'keeper')).deep.equals(['K Season staff'])
-      expect(await adults('Hc', 'sam')).deep.equals(['S Season staff'])
-      expect(await adults('Hc', 'lena')).deep.equals(['L League'])
-      expect(await adults('Hc', 'scorer')).deep.equals([
-        'Hk Scorekeeper · Hawks'
-      ])
-      // K reads Hank Coach as Hank C, so finds him by that and not by the
-      // surname it hides.
-      expect(await adults('K', 'hank')).deep.equals(['Hc Coach · Hawks'])
-      expect(await adults('K', 'coach')).deep.equals([])
+      // Season staff, the league and scorekeepers are no included adults.
+      expect(await adults('Hc', 'keeper')).deep.equals([])
+      expect(await adults('Hc', 'sam')).deep.equals([])
+      expect(await adults('Hc', 'lena')).deep.equals([])
+      expect(await adults('Hc', 'scorer')).deep.equals([])
+      expect(await adults('Ha', 'hank')).deep.equals(['Hc Coach · Hawks'])
       expect(await adults('Hc', 'coach')).deep.equals([])
+      refusedAs(
+        await call(
+          'K',
+          'GET',
+          `/chat/included-adults?playerIds=${fixture.id('P')}`
+        ),
+        'notCandidate'
+      )
       expect(await adults('Hc', 'fan')).deep.equals([])
       expect(await adults('Hc', 'ashby')).deep.equals([])
       refusedAs(
@@ -1172,9 +1302,9 @@ describe('chat routes and the DM rules (U5)', function () {
     })
 
     it('lets the included adult leave, and closes the DM', async function () {
-      const three = await dm('Hc', ['P', 'K'])
+      const three = await dm('Hc', ['P', 'Ha'])
       const id = three.body.id as string
-      const leave = await call('K', 'DELETE', `/chat/dms/${id}/members/me`)
+      const leave = await call('Ha', 'DELETE', `/chat/dms/${id}/members/me`)
       expect(leave.body).deep.equals({ left: true, closed: true })
       expect(await isClosed(id)).equals(true)
       const last = await db
@@ -1186,7 +1316,7 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(last).deep.equals({
         event: 'closed',
         user_id: fixture.id('P'),
-        actor_user_id: fixture.id('K'),
+        actor_user_id: fixture.id('Ha'),
         reason: 'adultRequired'
       })
       // Leaving a closed DM is still allowed.
@@ -1221,12 +1351,25 @@ describe('chat routes and the DM rules (U5)', function () {
     })
 
     it('closes a DM when a staff role goes', async function () {
+      // Hk is an assistant too, for a while: a minor's staff.
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: makeId('scopeRole'),
+          user_id: fixture.id('Hk'),
+          scope_type: 'team',
+          scope_id: fixture.seed.teams.hawks,
+          role: 'assistant'
+        })
+        .execute()
+      await fixture.drain()
       const hk = (await dm('Hk', ['P', 'G2'])).body.id as string
       expect(await isClosed(hk)).equals(false)
       await db
         .deleteFrom('scope_roles')
         .where('user_id', '=', fixture.id('Hk'))
         .where('scope_id', '=', fixture.seed.teams.hawks)
+        .where('role', '=', 'assistant')
         .execute()
       await fixture.drain()
       expect(await isClosed(hk)).equals(true)
@@ -1244,7 +1387,7 @@ describe('chat routes and the DM rules (U5)', function () {
         })
         .execute()
       await fixture.drain()
-      const id = (await dm('Hc', ['P', 'K'])).body.id as string
+      const id = (await dm('Hc', ['P', 'Ha'])).body.id as string
       expect(await isClosed(id)).equals(false)
       await db
         .deleteFrom('memberships')
@@ -1435,8 +1578,8 @@ describe('chat routes and the DM rules (U5)', function () {
       ])
       // A reader shown the short name finds them by what it shows, never by
       // the surname it hides.
-      expect(await candidates('P')).deep.equals([])
-      expect(await candidates('P', 'cal%20r')).deep.equals([
+      expect(await candidates('Hk')).deep.equals([])
+      expect(await candidates('Hk', 'cal%20r')).deep.equals([
         { userId: ripken, shortName: 'Cal R', compactName: undefined }
       ])
       // The members of the league's own chat read the same.

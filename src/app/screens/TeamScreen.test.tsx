@@ -25,7 +25,7 @@ import {
   TestChatAge
 } from '../../test/chatAgeTesting'
 import { pageOfGames } from '../../test/pageOf'
-import type { TabCorrection } from '../chat/ChatAgeGate'
+import type { TabCorrection } from '../chat/AgeGate'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { staffSubtitle, TeamScreen } from './TeamScreen'
@@ -620,7 +620,7 @@ describe('a team page before the age sheet is agreed to', function () {
       null
     )
     await act(async () => {
-      pressChatAge('decline')
+      pressChatAge('close')
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(chatAgeSheet()).equals(null)
@@ -630,7 +630,7 @@ describe('a team page before the age sheet is agreed to', function () {
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     await act(async () => {
-      pressChatAge('agree')
+      pressChatAge('adult')
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(chatAgeSheet()).equals(null)
@@ -655,7 +655,7 @@ describe('a team page before the age sheet is agreed to', function () {
     )
     expect(chatAgeSheet()).not.equals(null)
     await act(async () => {
-      pressChatAge('decline')
+      pressChatAge('close')
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(pillTabs().selected).equals('Videos')

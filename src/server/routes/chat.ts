@@ -13,7 +13,7 @@ import {
   includedAdultIds,
   leaveDm
 } from '../chat/dms'
-import { chatCaller } from '../chat/keys'
+import { chatAgeRequired, chatCaller } from '../chat/keys'
 import {
   chatNames,
   chatPeople,
@@ -62,6 +62,7 @@ export function chatRoutes(
   clock: () => Date = () => new Date()
 ): Router {
   const router = Router()
+  const ageGate = chatAgeRequired(db, clock)
 
   router.get(
     '/chat/blocks',
@@ -97,6 +98,7 @@ export function chatRoutes(
   router.get(
     '/chat/conversations',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -116,6 +118,7 @@ export function chatRoutes(
   router.patch(
     '/chat/conversations/:conversationId/preferences',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -135,6 +138,7 @@ export function chatRoutes(
   router.get(
     '/chat/conversations/:conversationId/pins',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -147,6 +151,7 @@ export function chatRoutes(
     router[method](
       '/chat/conversations/:conversationId/pins/:messageId',
       requireActor,
+      ageGate,
       withAsync(async (req, res) => {
         const actor = req.actor
         if (actor == null) throw unauthorized()
@@ -168,6 +173,7 @@ export function chatRoutes(
   router.get(
     '/chat/conversations/:conversationId/members',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -189,6 +195,7 @@ export function chatRoutes(
   router.get(
     '/chat/conversations/:conversationId/reads',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -201,6 +208,7 @@ export function chatRoutes(
   router.get(
     '/chat/conversations/:conversationId/log',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -215,6 +223,7 @@ export function chatRoutes(
   router.get(
     '/chat/dm-candidates',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -258,6 +267,7 @@ export function chatRoutes(
   router.get(
     '/chat/included-adults',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -283,7 +293,6 @@ export function chatRoutes(
         db,
         actor.userId,
         playerIds,
-        query !== '',
         clock()
       )
       const people = await chatPeople(
@@ -314,6 +323,7 @@ export function chatRoutes(
   router.post(
     '/chat/dms',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
@@ -342,6 +352,7 @@ export function chatRoutes(
   router.post(
     '/chat/dms/:conversationId/members',
     requireActor,
+    ageGate,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()

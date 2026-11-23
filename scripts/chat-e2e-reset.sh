@@ -8,9 +8,10 @@
 # passwords is kept as <artifacts>/seed.txt), and empties
 # <artifacts>/profiles/, where each browser device keeps its keys.
 #
-# Every seeded person is confirmed for chat (as if they had agreed to the age
-# sheet), except the keys in TS_CHAT_SEED_UNCONFIRMED (comma-separated, e.g.
-# TS_CHAT_SEED_UNCONFIRMED=C), which the seed passes through.
+# Every seeded person has an age (a birth month, or 18 or older), except the
+# keys in TS_CHAT_SEED_NO_AGE (comma-separated, e.g. TS_CHAT_SEED_NO_AGE=C),
+# which the seed passes through: they have no age, and read no chat until
+# they give one.
 #
 # The database is the one the local serverConfig.json names, and nothing else:
 # its databaseUrl must be on localhost, so this can never drop a database

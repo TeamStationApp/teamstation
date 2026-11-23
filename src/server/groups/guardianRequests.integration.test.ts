@@ -587,6 +587,30 @@ describe('guardian invitations and requests', function () {
       }
     })
 
+    it('refuses the link when its guardian is known to be under 18', async () => {
+      const assistant = userIdOfGumbo(f.people.assistant)
+      const before = await guardians(202)
+      const sent = await ask(202, f.people.assistant)
+      expect(sent.status).equals(201)
+      await f.h.db
+        .updateTable('users')
+        .set({ birth_year: new Date().getUTCFullYear() - 16, birth_month: 1 })
+        .where('id', '=', assistant)
+        .execute()
+      try {
+        const refused = await decide(sent.body.id, 'accept', f.people.teamCoach)
+        expect(refused.status).equals(400)
+        expect(refused.body.details.reason).equals('guardianNotAdult')
+        expect(await guardians(202)).deep.equals(before)
+      } finally {
+        await f.h.db
+          .updateTable('users')
+          .set({ birth_year: null, birth_month: null })
+          .where('id', '=', assistant)
+          .execute()
+      }
+    })
+
     it('reaches the coach of a team the player plays on under a closed row, and no coach of another team', async () => {
       // Elijah's place on the Hawks is held by an older row, closed into him.
       await insertFixtureUsers(f.h.db, {

@@ -191,7 +191,8 @@ describe('chat identity metadata through authorized routes', function () {
       expect(league.some(row => row.scope?.type === 'league')).equals(true)
       expect(byId.filter(table => table === 'seasons').length).equals(1)
       expect(byId.filter(table => table === 'leagues').length).equals(1)
-      expect(byId.filter(table => table === 'teams').length).equals(0)
+      // L also plays for Hawks, so its Members chat is on L's list.
+      expect(byId.filter(table => table === 'teams').length).equals(1)
       byId = []
       const team = await list('Hc')
       expect(team.some(row => row.scope?.type === 'team')).equals(true)

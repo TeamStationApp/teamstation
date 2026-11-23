@@ -34,6 +34,8 @@ sealed class PushPayload {
       val url: String,
       /** The wake as it came, for `chatWakeTask.native.ts` to clean and open. */
       val json: String,
+      /** For a recipient with no age on file, who reads no chat: it names nobody. */
+      val generic: Boolean = false,
   ) : PushPayload()
 
   /** The person read [conversation] elsewhere, up to [seq]. */
@@ -71,7 +73,8 @@ sealed class PushPayload {
                   json.get("dm") as? Boolean ?: throw JSONException("dm"),
                   json.text("from"),
                   json.text("url"),
-                  text)
+                  text,
+                  json.opt("generic") == true)
           "read" ->
               Read(json.text("u"), json.text("c"), json.number("seq"))
           else -> null

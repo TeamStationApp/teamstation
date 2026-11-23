@@ -1,3 +1,4 @@
+import type { RequestHandler } from 'express'
 import { type Kysely, type Selectable, sql } from 'kysely'
 
 import { verifyPuk } from '../../common/chatCrypto/chain'
@@ -14,6 +15,7 @@ import { makeId } from '../../common/ids'
 import { CHAT_DEVICE_APPROVAL } from '../../common/notifications'
 import type { Actor } from '../auth/sessions'
 import type { ChatDevicesTable, Database } from '../db/database'
+import { ageBandOfUser } from '../users/age'
 import { reconcileHistoryRequests } from './historyRequests'
 import {
   appendLog,
@@ -69,6 +71,42 @@ export function chatCaller(actor: Actor | undefined): ChatCaller {
     })
   }
   return { userId: actor.userId, sessionId: actor.sessionId }
+}
+
+/**
+ * Refuses a caller who may not read or write chat yet: 403 `ageRequired`
+ * while their age is unknown (the app then asks for it), and 403 `underAge`
+ * under 13. Device enrolment, blocks, leaving a DM and `/me/account/age` stay
+ * open, so the app can enrol, ask, and leave.
+ */
+export async function requireChatAge(
+  db: Kysely<Database>,
+  userId: string,
+  now: Date
+): Promise<void> {
+  const band = await ageBandOfUser(db, userId, now)
+  if (band === 'unknown' || band == null) {
+    throw forbidden('Give your age to use chat', { reason: 'ageRequired' })
+  }
+  if (band === 'under13') {
+    throw forbidden('Chat is for ages 13 and up', { reason: 'underAge' })
+  }
+}
+
+/** `requireChatAge` as a route's middleware, after `requireActor`. */
+export function chatAgeRequired(
+  db: Kysely<Database>,
+  clock: () => Date = () => new Date()
+): RequestHandler {
+  return (req, res, next) => {
+    if (req.actor == null) {
+      next(unauthorized())
+      return
+    }
+    requireChatAge(db, req.actor.userId, clock()).then(() => {
+      next()
+    }, next)
+  }
 }
 
 type DeviceRow = Selectable<ChatDevicesTable>
