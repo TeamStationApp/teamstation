@@ -87,6 +87,7 @@ const SETTINGS_ROUTES = new Set([
   'teamCreatePlayer',
   'umpireLevels',
   'umpireNoteTypes',
+  'umpireNotifications',
   'umpireRequirementEdit',
   'umpireRequirements',
   'userManagement',

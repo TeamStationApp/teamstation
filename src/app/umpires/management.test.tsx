@@ -673,6 +673,40 @@ describe('management.test.tsx', () => {
     await press('Enable umpire management')
     expect(settings.credits).equals(true)
   })
+  it('ends with Send me notifications, under Enable Team Credits, open with management off', async () => {
+    const f = fixture()
+    f.client.umpireSettings = async () => ({
+      management: false,
+      credits: false
+    })
+    const opened: string[] = []
+    await mount(
+      <UmpireSettingsCard
+        client={f.client}
+        league="demo"
+        onOpen={n => opened.push(n)}
+      />
+    )
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label]')
+    ].map(n => n.getAttribute('aria-label'))
+    const credits = rows.indexOf('Enable Team Credits')
+    const send = rows.indexOf(
+      'Send me notifications, Receive in-app and push notifications for updates to the umpire schedule'
+    )
+    expect(credits).greaterThan(-1)
+    expect(send).greaterThan(credits)
+    expect(rows.slice(send + 1)).deep.equals([])
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="umpire-send-me-notifications"]'
+    )!
+    expect(row.getAttribute('aria-disabled')).not.equals('true')
+    await act(async () => {
+      row.click()
+    })
+    expect(opened).deep.equals(['umpireNotifications'])
+  })
+
   it('keeps requirements disabled for an enabled league with no levels', async () => {
     const f = fixture()
     f.levels.length = 0

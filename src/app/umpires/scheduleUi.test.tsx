@@ -179,6 +179,34 @@ describe('scheduleUi.test.tsx', () => {
       else Object.defineProperty(HTMLElement.prototype, 'scroll', scroll)
     }
   })
+  it('opens on the route’s game, and on the next game with none', async () => {
+    for (const [game, around] of [
+      ['game', 'game'],
+      [undefined, 'next']
+    ] as const) {
+      const f = fixture()
+      const pages: unknown[] = []
+      f.client.umpireSchedulePage = async (_id, _q, page) => {
+        pages.push(page)
+        return pageOfUmpireSchedule(f.schedule, page)
+      }
+      await mount(
+        <UmpireScheduleScreen
+          client={f.client}
+          leagues={[]}
+          route={{
+            name: 'umpireSchedule',
+            id: 'demo',
+            view: 'league',
+            ...(game == null ? {} : { game })
+          }}
+          onRoute={() => undefined}
+        />
+      )
+      expect(pages[0], around).deep.equals({ around })
+    }
+  })
+
   it('requests the viewer timezone and puts compact conflicts after custom notes', async () => {
     const f = fixture()
     f.schedule.noteTypes = [

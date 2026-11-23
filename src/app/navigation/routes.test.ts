@@ -9,6 +9,7 @@ import {
   safeNext,
   withoutTab
 } from './routes'
+import { screenIdentity } from './screenIdentity'
 
 /** Every route survives being written down and read back. */
 const roundTrip = (route: Route): Route => {
@@ -79,6 +80,52 @@ describe('addresses', function () {
         sort: 'certification'
       })
     ).equals('/umpires/lea_demo?filter=none&sort=certification')
+  })
+  it('opens Umpire Management Notifications from its address, a screen of its league', () => {
+    const route = { name: 'umpireNotifications', id: 'lea_demo' } as const
+    expect(routePath(route)).equals(
+      '/groups/league/lea_demo/umpire-notifications'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(screenIdentity(route)).equals(
+      screenIdentity({ name: 'umpireNotifications', id: 'lea_demo' })
+    )
+    expect(screenIdentity(route)).not.equals(
+      screenIdentity({ name: 'umpireNotifications', id: 'lea_other' })
+    )
+  })
+  it('carries the game the umpire schedule opens on through its address', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'league',
+      game: 'gam_demo'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=league&game=gam_demo'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(
+      routePath({ name: 'umpireSchedule', id: 'lea_demo', game: 'gam_demo' })
+    ).equals('/umpires/lea_demo?game=gam_demo')
+  })
+  it('keeps the umpire schedule’s game only when it is a game id, so a bad one opens on the next game (2.harness-review.2)', () => {
+    for (const bad of ['abc', 'gam_', 'lea_demo', 'gam_a b', ''])
+      expect(
+        parseRoute(
+          '/umpires/lea_demo',
+          `?view=league&game=${encodeURIComponent(bad)}`
+        )
+      ).deep.equals({
+        name: 'umpireSchedule',
+        id: 'lea_demo',
+        pill: 'schedule',
+        view: 'league'
+      })
+    expect(
+      parseRoute('/umpires/lea_demo', '?view=league&game=gam_Ab-9_x')
+    ).deep.include({ game: 'gam_Ab-9_x' })
   })
   it('carries the umpire schedule’s chosen no-filter through its address, and nothing else for filter (6.harness-review.3)', () => {
     const route = {

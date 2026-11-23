@@ -80,6 +80,40 @@ describe('locales', function () {
     )
   })
 
+  it('names Send me notifications, its screen and the umpire notices', function () {
+    expect(enUs.umpire_send_me_notifications).equals('Send me notifications')
+    expect(enUs.umpire_send_me_notifications_detail).equals(
+      'Receive in-app and push notifications for updates to the umpire schedule'
+    )
+    expect(enUs.umpire_notifications_title).equals(
+      'Umpire Management Notifications'
+    )
+    expect([
+      enUs.umpire_notifications_missing_slots,
+      enUs.umpire_notifications_days,
+      enUs.umpire_notifications_sign_ups,
+      enUs.umpire_notifications_withdrawals
+    ]).deep.equals([
+      'Send notifications for missing slots',
+      'Number of days prior to send notification',
+      'Receive notifications when umpires sign up',
+      'Receive notifications when umpires withdraw'
+    ])
+    expect(sprintf(enUs.umpire_notifications_days_named, 7)).equals(
+      'Number of days prior: 7'
+    )
+    expect(enUs.umpire_notifications_days_range).equals('Choose 1 to 30 days')
+    expect(enUs.umpire_notifications_days_done).equals('Done')
+    expect(enUs.umpire_notifications_cannot_save).equals(
+      'Your notifications could not be saved. Try again.'
+    )
+    expect([
+      enUs.umpire_notice_missing_slots,
+      enUs.umpire_notice_sign_up,
+      enUs.umpire_notice_withdraw
+    ]).deep.equals(['Missing umpires', 'Umpire signed up', 'Umpire withdrew'])
+  })
+
   it('merges a translation over the master', function () {
     selectLocale({ login_title: 'Iniciar sesión' })
     expect(lstrings.login_title).equals('Iniciar sesión')

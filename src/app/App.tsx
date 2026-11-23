@@ -30,6 +30,7 @@ import type {
 import { asTeamSummary } from '../common/api'
 import { GameSocket, type ScreenScope } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
+import { isUmpireNotice } from '../common/notifications'
 import { managesRoster } from '../common/roles'
 import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
@@ -275,6 +276,7 @@ import {
 } from './theme/ThemeContext'
 import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
+import { UmpireNotificationsScreen } from './umpires/UmpireNotificationsScreen'
 import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
 import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
 import { useUmpireLeaveGuard } from './umpires/useUmpireLeaveGuard'
@@ -3242,6 +3244,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'umpireLevels' ? (
       <UmpireLevelsScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'umpireNotifications' ? (
+      <UmpireNotificationsScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'umpireRequirements' ||
       top.name === 'umpireRequirementEdit' ? (
       <UmpireRequirementsScreen
@@ -3471,7 +3475,17 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'notification', id })
         }}
         onOpenTarget={notice => {
-          if (notice.venueId != null)
+          // An umpire notice names a game too, but opens the league's umpire
+          // schedule on it.
+          if (isUmpireNotice(notice.type)) {
+            if (notice.leagueId != null)
+              push({
+                name: 'umpireSchedule',
+                id: notice.leagueId,
+                view: 'league',
+                ...(notice.gameId == null ? {} : { game: notice.gameId })
+              })
+          } else if (notice.venueId != null)
             push({ name: 'venue', venueId: notice.venueId })
           else if (notice.gameId != null)
             push({

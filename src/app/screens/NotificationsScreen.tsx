@@ -7,9 +7,12 @@ import type { GroupRef } from '../../common/groupCreation'
 import {
   CHAT_DEVICE_APPROVAL,
   isSchedulingNews,
+  isUmpireNotice,
   LOCAL_COPY_EXPIRING,
   type Notification,
-  RECORDING_UPLOAD
+  RECORDING_UPLOAD,
+  UMPIRE_MISSING_SLOTS,
+  UMPIRE_SIGN_UP
 } from '../../common/notifications'
 import {
   DeviceApprovalActions,
@@ -23,6 +26,7 @@ import { useNoticedRead } from '../hooks/useNoticedRead'
 import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { useUserTopic } from '../hooks/useUserTopic'
+import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 /**
@@ -97,7 +101,8 @@ export function NotificationsScreen({
   onOpen: (id: string) => void
   /**
    * A scheduling notice opens what it names: a venue, a game, a league's
-   * Auto-Scheduler or a season. It is marked read first.
+   * Auto-Scheduler or a season. An umpire notice opens its league's umpire
+   * schedule on its game. It is marked read first.
    */
   onOpenTarget?: (notice: Notification) => void
   /** Opens the reminder's game on its Videos tab, where Upload Recording is. */
@@ -207,7 +212,10 @@ export function NotificationsScreen({
     if (item.gameId != null) onUpload?.(item.gameId)
   })
   const open = useStableCallback((item: Notification): void => {
-    if (onOpenTarget != null && isSchedulingNews(item.type)) {
+    if (
+      onOpenTarget != null &&
+      (isSchedulingNews(item.type) || isUmpireNotice(item.type))
+    ) {
       client.viewNotification(item.id).catch(() => undefined)
       onOpenTarget(item)
     } else onOpen(item.requestId)
@@ -457,6 +465,39 @@ function NotificationRow(props: {
         </View>
       </Card>
     )
+  // The day's games still missing umpires: opens the umpire schedule on the
+  // first, and waits until dismissed or the next day's replaces it.
+  if (mode === 'pending' && item.type === UMPIRE_MISSING_SLOTS)
+    return (
+      <Card style={styles.card}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={item.title}
+          style={styles.cardBody}
+          onPress={() => {
+            props.onOpen(item)
+          }}
+        >
+          <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
+          <Text style={styles.name}>{item.title}</Text>
+          <Text style={styles.hint}>{item.description}</Text>
+        </Pressable>
+        <Text style={styles.status}>{statusLine(item, mode)}</Text>
+        <View style={styles.tabs}>
+          <Button
+            compact
+            kind="secondary"
+            label="Dismiss"
+            accessibilityLabel={`Dismiss ${item.title}`}
+            busy={dismissing === item.requestId}
+            disabled={dismissing != null}
+            onPress={() => {
+              dismiss(item).catch(() => undefined)
+            }}
+          />
+        </View>
+      </Card>
+    )
   // A player taken off the team by their side: read, and dismissed.
   if (mode === 'pending' && item.type === 'playerAddRejected')
     return (
@@ -573,7 +614,10 @@ function NotificationRow(props: {
       <Card style={styles.card}>
         <Text style={styles.hint}>{inviteDate(item.sentAt)}</Text>
         <Text style={styles.name}>{item.title}</Text>
-        <Text style={styles.hint}>{item.description}</Text>
+        {/* An umpire sign-up or withdrawal says it all in its title. */}
+        {item.description !== '' && (
+          <Text style={styles.hint}>{item.description}</Text>
+        )}
         <Text style={styles.status}>{statusLine(item, mode)}</Text>
       </Card>
     </Pressable>
@@ -589,6 +633,12 @@ function statusLine(item: Notification, mode: Mode): string {
     return 'Approved'
   if (item.type === 'grant') return item.viewed ? 'Added' : 'New'
   if (isReminder(item)) return 'Reminder'
+  if (isUmpireNotice(item.type))
+    return item.type === UMPIRE_MISSING_SLOTS
+      ? lstrings.umpire_notice_missing_slots
+      : item.type === UMPIRE_SIGN_UP
+        ? lstrings.umpire_notice_sign_up
+        : lstrings.umpire_notice_withdraw
   if (item.status === 'applied')
     return item.canReject === true && item.rejectUntil != null
       ? `You can reject this until ${inviteDate(item.rejectUntil)}.`

@@ -15,6 +15,7 @@ import puppeteer, {
 import { TeamStationClient } from '../common/api'
 import { makeId } from '../common/ids'
 import type { ChatRead, ChatWake, EventReminder } from '../common/push'
+import { localClock, localDate } from '../common/umpireTime'
 import { createSession } from '../server/auth/sessions'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { makeDatabase } from '../server/db/database'
@@ -22,6 +23,7 @@ import type { PushLogRecord } from '../server/push/log'
 import { makePushEnqueuer } from '../server/push/queue'
 import { dueReminders } from '../server/push/rsvpReminders'
 import type { ServerConfig } from '../server/serverConfig'
+import { recordUmpireDigests } from '../server/umpires/notices'
 import { readSeedTable, type SeedTablePerson } from '../test/chatSeedTable'
 import { ChatEngine } from './chat/engine/engine'
 import type { ChatKeyRecord } from './chat/keyRecord'
@@ -61,6 +63,12 @@ import {
  * (`ServiceWorker.deliverPushMessage`), which needs no network. Only
  * notifications tagged `chat:` or `event:` are TeamStation's; the browser may
  * add its own when a push shows nothing.
+ *
+ * N5–N7 are QPLL admin L's Umpire Management Notifications, with umpire B
+ * and A2, guardian G1, whom L makes a second admin.
+ * Their proving artifacts (screenshots, `umpire-digest.log` and
+ * `umpire-notices.log`) go to `TS_UMPIRE_PROOF` when it is set, as the
+ * umpire end-to-end files' do, else to `TS_NOTIFY_ARTIFACTS`.
  */
 const artifacts = required('TS_NOTIFY_ARTIFACTS')
 const WEB = (process.env.TS_NOTIFY_WEB ?? 'http://127.0.0.1:8080').replace(
@@ -93,6 +101,28 @@ const LOGS = {
   seen: 'web-seen-guard-and-clear.log',
   n4: 'web-reminder-tap.log',
   n1b: 'web-league-management-switch.log'
+}
+
+/** Where N5–N7's proving artifacts go. */
+const proofs = process.env.TS_UMPIRE_PROOF ?? artifacts
+const UMPIRE_LOGS = {
+  n6: 'umpire-digest.log',
+  n7: 'umpire-notices.log'
+}
+
+/** A line of an umpire case's log, among the proving artifacts. */
+async function umpireLine(
+  log: keyof typeof UMPIRE_LOGS,
+  text: string
+): Promise<void> {
+  await appendFile(path.join(proofs, UMPIRE_LOGS[log]), text + '\n')
+}
+
+/** A proving artifact: `page`'s viewport, under its own name. */
+async function proof(page: Page, name: string): Promise<void> {
+  await page.evaluate(async () => await document.fonts.ready)
+  await pause(800)
+  await page.screenshot({ path: path.join(proofs, name) })
 }
 
 function required(name: string): string {
@@ -575,6 +605,9 @@ describe('notifications in the finished web app', function () {
     await mkdir(artifacts, { recursive: true })
     for (const log of Object.values(LOGS))
       await writeFile(path.join(artifacts, log), '')
+    await mkdir(proofs, { recursive: true })
+    for (const log of Object.values(UMPIRE_LOGS))
+      await writeFile(path.join(proofs, log), '')
     await askLine(
       '$ TS_NOTIFY_ARTIFACTS=<dir> npx mocha -r sucrase/register --timeout 600000 src/app/notifications.e2e.ts (web, Chrome)'
     )
@@ -1445,5 +1478,789 @@ describe('notifications in the finished web app', function () {
     expect([on.messages, on.rsvp_events]).deep.equals([true, true])
     expect(on.id).equals(off.id)
     await say(`${LEAGUE_MANAGEMENT} on again`, on)
+  })
+
+  describe('Umpire Management Notifications (N5–N7)', function () {
+    const ZONE = 'America/Los_Angeles'
+    const MISSING_SLOTS = 'Send notifications for missing slots'
+    const SIGN_UPS = 'Receive notifications when umpires sign up'
+    const WITHDRAWALS = 'Receive notifications when umpires withdraw'
+    const DAYS = '[data-testid="umpire-notifications-days"]'
+    const DAYS_CELL = '[data-testid="grid-cell-umpire-notifications-days"]'
+    const DAYS_INPUT =
+      '[data-testid="grid-cell-input-umpire-notifications-days"]'
+    let lena: SeedTablePerson
+    let blair: SeedTablePerson
+    /** QPLL's second admin, made one in the setup. */
+    let admin2: SeedTablePerson
+    let admin2Client: TeamStationClient
+    /** L's browser: the one pushed to, now that P2 is done with it. */
+    let l: Device
+    let lClient: TeamStationClient
+    let bClient: TeamStationClient
+    let league: string
+    /** Today in Pacific, QPLL's zone with no locality: D. */
+    let today: string
+    /** The two games 1 day out on D, in start order, and the one 4 days out. */
+    let near: [string, string]
+    let far: string
+    /**
+     * A game on D+1 at 12:00, its Plate filled: the next upcoming game, and
+     * not in the digest.
+     */
+    let noon: string
+    let slot: string
+
+    /** `day` (`YYYY-MM-DD`) at `time` (`HH:mm`) in Pacific, as an instant. */
+    const pacific = (day: string, time: string): Date => {
+      for (const hours of [7, 8]) {
+        const at = new Date(
+          Date.parse(`${day}T${time}:00Z`) + hours * 60 * 60 * 1000
+        )
+        if (localDate(at, ZONE) === day && localClock(at, ZONE) === time)
+          return at
+      }
+      throw new Error(`no ${day} ${time} in ${ZONE}`)
+    }
+    const plusDays = (day: string, days: number): string =>
+      new Date(Date.parse(`${day}T12:00:00Z`) + days * 86_400_000)
+        .toISOString()
+        .slice(0, 10)
+    const settings = async (): Promise<
+      Awaited<ReturnType<TeamStationClient['umpireNotifications']>>
+    > => await lClient.umpireNotifications(league)
+    /** The digest rows of L in QPLL for `day`: one at most, ever. */
+    const digestsOn = async (
+      day: string
+    ): Promise<Array<{ id: string; metadata: unknown; created_at: Date }>> =>
+      await db
+        .selectFrom('notification_events')
+        .select(['id', 'metadata', 'created_at'])
+        .where('source_type', '=', 'umpireMissingSlots')
+        .where('source_id', '=', `${league}:${lena.userId}`)
+        .where('revision', '=', Number(day.replaceAll('-', '')))
+        .execute()
+    /** L's (or `who`'s) notices of `type`, oldest first. */
+    const noticesOf = async (
+      type: 'umpireSignUp' | 'umpireWithdraw',
+      who: SeedTablePerson = lena
+    ): Promise<Array<{ id: string; metadata: unknown }>> =>
+      await db
+        .selectFrom('notification_events')
+        .select(['id', 'metadata'])
+        .where('source_type', '=', type)
+        .where(eb =>
+          eb(eb.val(who.userId), '=', eb.fn.any('recorded_recipients'))
+        )
+        .orderBy('created_at')
+        .orderBy('id')
+        .execute()
+    /** The pushes `push.jsonl` holds to L (or `who`) for the notice `id`. */
+    const pushesOf = async (
+      id: string,
+      who: SeedTablePerson = lena
+    ): Promise<PushLogRecord[]> =>
+      (await records()).filter(
+        record =>
+          record.userId === who.userId &&
+          record.message.platform === 'web' &&
+          record.message.payload.includes(`event:league:${id}`)
+      )
+    const leaguePushes = async (
+      who: SeedTablePerson = lena
+    ): Promise<PushLogRecord[]> =>
+      (await records()).filter(
+        record =>
+          record.userId === who.userId &&
+          record.message.platform === 'web' &&
+          record.message.payload.includes('event:league:')
+      )
+    const metadataOf = (
+      metadata: unknown
+    ): { title: string; description: string; gameId: string } =>
+      metadata as { title: string; description: string; gameId: string }
+    /** Exactly one push for `id`, and still one a moment later. */
+    const onePush = async (id: string): Promise<PushLogRecord> => {
+      await until(`a push for ${id}`, async () =>
+        (await pushesOf(id)).length > 0 ? true : undefined
+      )
+      await pause(2000)
+      const found = await pushesOf(id)
+      expect(found, `pushes for ${id}`).length(1)
+      return found[0]
+    }
+    const payloadOf = (record: PushLogRecord): EventReminder =>
+      JSON.parse(
+        record.message.platform === 'web' ? record.message.payload : '{}'
+      ) as EventReminder
+    /** Runs the digest sweep at `at` and queues what it recorded. */
+    const sweep = async (at: Date): Promise<number> => {
+      const requests = await recordUmpireDigests(db, at)
+      // A queue closed before it has connected leaves its socket open, and
+      // the run with it: one is made only for something to queue.
+      if (requests.length > 0) {
+        const queue = makePushEnqueuer(config, () => undefined)
+        try {
+          for (const request of requests)
+            await until(
+              `queueing ${request.tag}`,
+              async () => await queue.add(request)
+            )
+        } finally {
+          await queue.close()
+        }
+      }
+      await umpireLine(
+        'n6',
+        `$ recordUmpireDigests(db, ${at.toISOString()} = ${localDate(at, ZONE)} ${localClock(at, ZONE)} Pacific) and queue what it answers: ${requests.length} recorded (${requests.length === 0 ? 'none' : requests.map(request => `${request.tag} to ${request.u.join(',')}: ${request.body}`).join('; ')})`
+      )
+      return requests.length
+    }
+    /** L's Notifications, on `mode`, once `words` are on it. */
+    const notifications = async (
+      mode: 'Pending' | 'History',
+      words: string
+    ): Promise<void> => {
+      await l.page.goto(`${WEB}/notifications`, { waitUntil: 'networkidle0' })
+      if (mode === 'History') await pressText(l, 'History')
+      await until(`${words} in ${mode}`, async () =>
+        (await text(l)).includes(words)
+      )
+    }
+
+    before(async () => {
+      const seedText = await readFile(required('TS_NOTIFY_SEED'), 'utf8')
+      const qpll = /^QPLL (\S+)\s+Spring 2027 (\S+)/m.exec(seedText)
+      const template = /^Owls v Hawks \(next week\) (\S+)/m.exec(seedText)
+      if (qpll == null || template == null)
+        throw new Error('The seed table names QPLL, Spring 2027 and its games')
+      league = qpll[1]
+      const season = qpll[2]
+      lena = seed.L
+      blair = seed.B
+      lClient = await clientOf(lena)
+      bClient = await clientOf(blair)
+      // A second QPLL admin, for N7: G1, on QPLL's people as a guardian and
+      // nobody's admin there until L makes them one.
+      admin2 = seed.G1
+      admin2Client = await clientOf(admin2)
+      expect(
+        await admin2Client.umpireNotifications(league).then(
+          () => 200,
+          (error: unknown) => (error as { status?: number }).status ?? error
+        ),
+        'G1 is not yet a QPLL admin'
+      ).equals(403)
+      await lClient.addRole('league', league, admin2.userId, 'admin')
+      // QPLL manages umpires: Majors needs one Plate, and B may take it.
+      await lClient.setUmpireSettings(league, { management: true })
+      const plate =
+        (await lClient.umpireTypes(league)).find(t => t.name === 'Plate') ??
+        (await lClient.addUmpireType(league, 'Plate'))
+      const majors =
+        (await lClient.umpireLevels(league)).find(v => v.name === 'Majors') ??
+        (await lClient.addUmpireLevel(league, 'Majors'))
+      await lClient.setUmpireRequirements(league, {
+        seasonIds: [season],
+        levelId: majors.id,
+        types: [{ typeId: plate.id, required: 1, optional: 0 }]
+      })
+      await lClient.grantUmpire(league, blair.userId)
+      await lClient.certifyUmpire(league, blair.userId, {
+        levelId: majors.id,
+        typeId: plate.id,
+        enabled: true
+      })
+      slot = `${plate.id}:1`
+      // The seed's season is in UTC; days out are counted in the season's
+      // zone, so it is put in QPLL's, Pacific, for D+1 to be a day out.
+      await db
+        .updateTable('seasons')
+        .set({ timezone: ZONE })
+        .where('id', '=', season)
+        .execute()
+      // Two games 1 day out and one 4 days out, none assigned.
+      today = localDate(new Date(), ZONE)
+      const game = await db
+        .selectFrom('games')
+        .selectAll()
+        .where('id', '=', template[1])
+        .executeTakeFirstOrThrow()
+      const made: string[] = []
+      for (const [days, time] of [
+        [1, '18:00'],
+        [1, '19:00'],
+        [4, '18:00']
+      ] as const) {
+        const id = makeId('game')
+        const startAt = pacific(plusDays(today, days), time)
+        await db
+          .insertInto('games')
+          .values({
+            ...game,
+            id,
+            start_at: startAt,
+            end_at: new Date(startAt.getTime() + 2 * 60 * 60 * 1000),
+            timezone: ZONE,
+            status: 'scheduled',
+            withdrawn_at: null
+          })
+          .execute()
+        made.push(id)
+      }
+      near = [made[0], made[1]]
+      far = made[2]
+      // Before them on D+1, a game at 12:00 whose Plate B has: the next game
+      // to come, though no digest lists it.
+      noon = makeId('game')
+      const noonAt = pacific(plusDays(today, 1), '12:00')
+      await db
+        .insertInto('games')
+        .values({
+          ...game,
+          id: noon,
+          start_at: noonAt,
+          end_at: new Date(noonAt.getTime() + 2 * 60 * 60 * 1000),
+          timezone: ZONE,
+          status: 'scheduled',
+          withdrawn_at: null
+        })
+        .execute()
+      await db
+        .insertInto('umpire_assignments')
+        .values({
+          game_id: noon,
+          slot,
+          user_id: blair.userId,
+          assigned_by: lena.userId,
+          credit_team_id: null
+        })
+        .execute()
+      // Enough games after them for the schedule to scroll, so it can open
+      // with a game other than the first at the top.
+      for (let days = 6; days <= 13; days++) {
+        const startAt = pacific(plusDays(today, days), '18:00')
+        await db
+          .insertInto('games')
+          .values({
+            ...game,
+            id: makeId('game'),
+            start_at: startAt,
+            end_at: new Date(startAt.getTime() + 2 * 60 * 60 * 1000),
+            timezone: ZONE,
+            status: 'scheduled',
+            withdrawn_at: null
+          })
+          .execute()
+      }
+      await umpireLine(
+        'n6',
+        `# N6 — QPLL ${league} (no locality: Pacific), admin L (${lena.name}); D = ${today}; games ${near[0]} and ${near[1]} at D+1 18:00 and 19:00, ${far} at D+4 18:00, Majors needing one Plate, none assigned; ${noon} at D+1 12:00 with its Plate filled by B (the next game, never listed); eight more at D+6 to D+13 18:00, so the schedule scrolls; Spring 2027's zone set to ${ZONE}`
+      )
+    })
+
+    it('N5: L opts in on Umpire Management Notifications, with the ask, and Days refuses 31', async () => {
+      // P2 is done with the pushed browser: it is L's now, never asked here.
+      await phone.page.close()
+      l = await open('L', lena, 'prompt', true)
+      await l.page.setViewport({
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 2
+      })
+      await l.page.goto(`${WEB}/groups/league/${league}/settings`, {
+        waitUntil: 'networkidle0'
+      })
+      expect((await keptFor(l, lena.userId)).asked).equals(null)
+      await l.page.waitForSelector(
+        '[data-testid="umpire-send-me-notifications"]',
+        { timeout: 60000 }
+      )
+      // The card's last row, under Enable Team Credits.
+      expect(
+        await l.page.evaluate(() => {
+          const credits = document.querySelector(
+            '[aria-label="Enable Team Credits"]'
+          )!
+          const send = document.querySelector(
+            '[data-testid="umpire-send-me-notifications"]'
+          )!
+          return (
+            (credits.compareDocumentPosition(send) &
+              Node.DOCUMENT_POSITION_FOLLOWING) !==
+              0 && send.parentElement!.lastElementChild === send
+          )
+        })
+      ).equals(true)
+      await l.page.$eval(
+        '[data-testid="umpire-send-me-notifications"]',
+        node => {
+          ;(node as HTMLElement).click()
+        }
+      )
+      await until(
+        'Umpire Management Notifications',
+        async () =>
+          new URL(l.page.url()).pathname ===
+            `/groups/league/${league}/umpire-notifications` &&
+          (await text(l)).includes('Umpire Management Notifications') &&
+          (await l.page.$(DAYS_CELL)) != null
+      )
+      // 2. Days reads 7, greyed out until missing slots is on.
+      const gated = async (): Promise<string | null> =>
+        await l.page.$eval(DAYS, node => node.getAttribute('aria-disabled'))
+      expect(await l.page.$eval(DAYS_CELL, node => node.textContent)).equals(
+        '7'
+      )
+      expect(await gated()).equals('true')
+      for (const label of [MISSING_SLOTS, SIGN_UPS, WITHDRAWALS])
+        expect(await checked(l, label), label).equals(false)
+      await proof(l.page, 'umpire-notifications-screen.png')
+      await flip(l, MISSING_SLOTS)
+      const said = await untilAsk(l)
+      expect(said).contains(ASK_TITLE).and.contains('Continue')
+      // The browser's own question, answered Allow.
+      await allow(l.context, 'granted')
+      await answerAsk(l, 'continue')
+      await l.page.waitForSelector('[data-testid="notification-ask"]', {
+        hidden: true,
+        timeout: 60000
+      })
+      await until(
+        'missingSlots saved',
+        async () => (await settings()).missingSlots
+      )
+      await until('Days active', async () => (await gated()) !== 'true')
+      // The browser's first ask turns all three switches on.
+      const registered = await until(
+        'L’s registration with League management on',
+        async () => {
+          const found = await db
+            .selectFrom('push_registrations')
+            .select(['id', 'messages', 'rsvp_events', 'league_management'])
+            .where('session_id', '=', l.sessionId)
+            .executeTakeFirst()
+          return found?.league_management === true ? found : undefined
+        },
+        60000
+      )
+      expect([registered.messages, registered.rsvp_events]).deep.equals([
+        true,
+        true
+      ])
+      await askLine(
+        `$ web N5: L (${lena.name}), never asked in this browser, turns on missing slots: the ask; Continue, the browser allows: push_registrations ${registered.id} messages ${String(registered.messages)}, rsvp_events ${String(registered.rsvp_events)}, league_management ${String(registered.league_management)}`
+      )
+      // 3. 31 is refused and saves nothing; 1 saves.
+      const typeDays = async (value: string): Promise<void> => {
+        if ((await l.page.$(DAYS_INPUT)) == null)
+          await l.page.$eval(DAYS_CELL, node => {
+            ;(node as HTMLElement).click()
+          })
+        await l.page.waitForSelector(DAYS_INPUT, { timeout: 10000 })
+        await l.page.$eval(DAYS_INPUT, node => {
+          const input = node as HTMLInputElement
+          input.focus()
+          input.select()
+        })
+        await l.page.keyboard.type(value)
+        await l.page.keyboard.press('Enter')
+      }
+      await typeDays('31')
+      await until('the refusal', async () =>
+        (await text(l)).includes('Choose 1 to 30 days')
+      )
+      await pause(1000)
+      expect((await settings()).daysBefore).equals(7)
+      await typeDays('1')
+      await until('daysBefore 1', async () =>
+        (await settings()).daysBefore === 1 ? true : undefined
+      )
+      await l.page.waitForSelector(DAYS_INPUT, { hidden: true })
+      // Gated while the save is on its way, and active once it answers.
+      await until('Days active at 1', async () =>
+        (await gated()) !== 'true' &&
+        (await l.page.$eval(DAYS_CELL, node => node.textContent)) === '1'
+          ? true
+          : undefined
+      )
+      await proof(l.page, 'umpire-notifications-days.png')
+      expect(await settings()).deep.equals({
+        missingSlots: true,
+        daysBefore: 1,
+        signUps: false,
+        withdrawals: false
+      })
+    })
+
+    it('N6: the day’s digest is recorded once, pushed once, replaced the next day, and opens the schedule on its first game', async () => {
+      const tomorrow = plusDays(today, 1)
+      // D 10:01: the two games 1 day out, not the one 4 days out.
+      await sweep(pacific(today, '10:01'))
+      const [first] = await until('D’s digest', async () => {
+        const rows = await digestsOn(today)
+        return rows.length > 0 ? rows : undefined
+      })
+      expect(await digestsOn(today)).length(1)
+      const digest = metadataOf(first.metadata)
+      expect(digest.title).equals('2 games still need umpires')
+      const lines = digest.description.split('\n')
+      expect(lines).length(2)
+      for (const row of lines) expect(row).matches(/\(1 day out\)$/)
+      expect(digest.gameId).equals(near[0])
+      expect(digest.description).not.contains('4 days out')
+      const pushed = payloadOf(await onePush(first.id))
+      expect(pushed).include({
+        t: 'event',
+        u: lena.userId,
+        title: 'QPLL',
+        body: '2 games still need umpires',
+        url: `teamstation://umpires/${league}?view=league&game=${near[0]}`,
+        tag: `event:league:${first.id}`
+      })
+      await umpireLine(
+        'n6',
+        `notification_events umpireMissingSlots for (L, QPLL, ${today}): 1 row ${first.id}, recorded ${first.created_at.toISOString()}\n  ${digest.title}\n  ${lines.join('\n  ')}\npush.jsonl to L: 1 push ${JSON.stringify(pushed)}`
+      )
+      await notifications('Pending', digest.title)
+      expect(
+        await l.page.$$eval(
+          '[data-testid^="notification-row-"]',
+          (rows, title) =>
+            rows.filter(row => String(row.textContent).includes(title)).length,
+          digest.title
+        )
+      ).equals(1)
+      for (const row of lines) expect(await text(l)).includes(row)
+      await proof(l.page, 'notifications-digest.png')
+
+      // D 10:20, a rerun the same day: nothing more.
+      await sweep(pacific(today, '10:20'))
+      expect(await digestsOn(today)).length(1)
+      await pause(2000)
+      expect(await pushesOf(first.id)).length(1)
+      await umpireLine(
+        'n6',
+        `notification_events for (L, QPLL, ${today}): still 1 row; push.jsonl: still 1 push`
+      )
+
+      // D+1 10:01: a new digest, the only one in Pending.
+      await sweep(pacific(tomorrow, '10:01'))
+      const next = await digestsOn(tomorrow)
+      expect(next).length(1)
+      const second = metadataOf(next[0].metadata)
+      expect(second.title).equals('2 games still need umpires')
+      expect(second.gameId).equals(near[0])
+      const nextLines = second.description.split('\n')
+      expect(nextLines).length(2)
+      for (const row of nextLines) expect(row).matches(/\(today\)$/)
+      const nextPush = payloadOf(await onePush(next[0].id))
+      expect(nextPush.body).equals('2 games still need umpires')
+      const settled = await db
+        .selectFrom('notification_receipts')
+        .select('dismissed_at')
+        .where('event_id', '=', first.id)
+        .where('user_id', '=', lena.userId)
+        .executeTakeFirst()
+      expect(settled?.dismissed_at).not.equals(null)
+      await umpireLine(
+        'n6',
+        `notification_events for (L, QPLL, ${tomorrow}): 1 row ${next[0].id}\n  ${second.title}\n  ${nextLines.join('\n  ')}\npush.jsonl to L: 1 push ${JSON.stringify(nextPush)}\nnotification_receipts ${first.id}: dismissed ${settled?.dismissed_at?.toISOString() ?? '(none)'}`
+      )
+      await notifications('Pending', second.title)
+      expect(
+        await l.page.$(`[data-testid="notification-row-${next[0].id}"]`)
+      ).not.equals(null)
+      expect(
+        await l.page.$(`[data-testid="notification-row-${first.id}"]`)
+      ).equals(null)
+
+      // A tap opens the league's umpire schedule on the first game listed.
+      await l.page.$eval(
+        `[data-testid="notification-row-${next[0].id}"] [role="button"]`,
+        node => {
+          ;(node as HTMLElement).click()
+        }
+      )
+      await until('the umpire schedule', async () => {
+        const url = new URL(l.page.url())
+        return (
+          url.pathname === `/umpires/${league}` &&
+          url.searchParams.get('view') === 'league' &&
+          url.searchParams.get('game') === near[0]
+        )
+      })
+      const row = `[data-testid="umpire-game-${near[0]}"]`
+      await l.page.waitForSelector(row, { timeout: 60000 })
+      const onScreen = async (): Promise<boolean> =>
+        await l.page.$eval(row, node => {
+          const box = node.getBoundingClientRect()
+          return box.top >= 0 && box.top < window.innerHeight
+        })
+      /**
+       * Whether the middle of `id`'s row shows that row, rather than being
+       * off screen or under the header.
+       */
+      const showing = async (id: string): Promise<boolean> =>
+        await l.page.$eval(`[data-testid="umpire-game-${id}"]`, node => {
+          const box = node.getBoundingClientRect()
+          const y = box.top + box.height / 2
+          if (y < 0 || y >= window.innerHeight) return false
+          const hit = document.elementFromPoint(box.left + 8, y)
+          return hit != null && node.contains(hit)
+        })
+      await until(
+        'the 18:00 game on screen, the 12:00 one scrolled away',
+        async () => (await onScreen()) && !(await showing(noon))
+      )
+      await pause(1500)
+      expect(await onScreen()).equals(true)
+      expect(await showing(near[0]), 'the 18:00 game showing').equals(true)
+      expect(await showing(noon), 'the 12:00 game showing').equals(false)
+      await proof(l.page, 'umpire-digest-open.png')
+      // It opens on the digest's first game, not where `around=next` opens,
+      // on the 12:00 game before it: the rows from the opening one down.
+      const opening = async (
+        around: string
+      ): Promise<{ anchorId: string | null; rows: string[] }> => {
+        const page = await lClient.umpireSchedulePage(league, 'view=schedule', {
+          around
+        })
+        const from = page.items.findIndex(item => item.id === page.anchorId)
+        return {
+          anchorId: page.anchorId,
+          rows: page.items
+            .slice(Math.max(0, from), Math.max(0, from) + 3)
+            .map(
+              item =>
+                `${item.id} ${localDate(new Date(item.startAt), ZONE)} ${localClock(new Date(item.startAt), ZONE)}`
+            )
+        }
+      }
+      const onGame = await opening(near[0])
+      const onNext = await opening('next')
+      expect(onGame.anchorId).equals(near[0])
+      expect(onNext.anchorId).equals(noon)
+      expect(onGame.rows).not.deep.equals(onNext.rows)
+      // Where each game's row is, and the scrolling table's top.
+      const geometry = await l.page.$$eval(
+        '[data-testid^="umpire-game-"]',
+        rows => {
+          // No `??` or `?.` here: the page has no helpers for them.
+          let scroller: Element | null = rows.length > 0 ? rows[0] : null
+          while (scroller != null) {
+            const style = getComputedStyle(scroller)
+            if (
+              /(auto|scroll)/.test(style.overflowY) &&
+              scroller.scrollHeight > scroller.clientHeight
+            )
+              break
+            scroller = scroller.parentElement
+          }
+          return {
+            scrollTop:
+              scroller == null
+                ? 0
+                : Math.round(scroller.getBoundingClientRect().top),
+            rows: rows.map(node => ({
+              id: String(node.getAttribute('data-testid')).replace(
+                'umpire-game-',
+                ''
+              ),
+              top: Math.round(node.getBoundingClientRect().top),
+              bottom: Math.round(node.getBoundingClientRect().bottom)
+            }))
+          }
+        }
+      )
+      await umpireLine(
+        'n6',
+        `$ L taps the digest in Pending: ${new URL(l.page.url()).pathname}${new URL(l.page.url()).search}; ${near[0]} (D+1 18:00) is the top row showing, ${noon} (D+1 12:00) is scrolled away\nscroller top ${geometry.scrollTop} px; rows (id top..bottom px): ${geometry.rows.map(row => `${row.id} ${row.top}..${row.bottom}`).join(', ')}\n$ GET /leagues/${league}/umpire-schedule?view=schedule&paged=1&around=${near[0]}: anchorId ${onGame.anchorId}, rows from it ${onGame.rows.join('; ')}\n$ GET /leagues/${league}/umpire-schedule?view=schedule&paged=1&around=next: anchorId ${onNext.anchorId}, rows from it ${onNext.rows.join('; ')}`
+      )
+    })
+
+    it('N7: sign-ups and withdrawals notify L, an admin’s removal notifies no admin, and League management off stops only the push', async () => {
+      await umpireLine(
+        'n7',
+        `# N7 — QPLL ${league}, admin L (${lena.name}), umpire B (${blair.name}), game ${near[0]}, slot ${slot}`
+      )
+      await l.page.goto(`${WEB}/groups/league/${league}/umpire-notifications`, {
+        waitUntil: 'networkidle0'
+      })
+      await l.page.waitForSelector(`input[aria-label="${SIGN_UPS}"]`, {
+        timeout: 60000
+      })
+      await flip(l, SIGN_UPS)
+      await until('signUps saved', async () => (await settings()).signUps)
+      await flip(l, WITHDRAWALS)
+      await until(
+        'withdrawals saved',
+        async () => (await settings()).withdrawals
+      )
+      // Asked before, and allowed: no sheet.
+      expect(await askAfter(l, 2000)).equals(false)
+      await umpireLine(
+        'n7',
+        `$ L turns on sign-ups and withdrawals: ${JSON.stringify(await settings())}`
+      )
+      // QPLL's second admin, A2 (guardian G1), made one by L in the setup,
+      // hears of withdrawals alone, on a device with League management on.
+      const admin2Device = await admin2Client.registerPush({
+        platform: 'web',
+        address: unusedSubscription(),
+        environment: 'production',
+        messages: false,
+        rsvpEvents: false,
+        leagueManagement: true
+      })
+      const admin2Settings = await admin2Client.setUmpireNotifications(league, {
+        withdrawals: true
+      })
+      expect(admin2Settings).include({ withdrawals: true, signUps: false })
+      await umpireLine(
+        'n7',
+        `$ L makes A2 (${admin2.name}) a QPLL admin in the setup: PUT /manage/league/${league}/people/${admin2.userId}/roles/admin (before it, A2's GET /leagues/${league}/umpire-notifications was 403)\n$ A2 turns on withdrawals alone: ${JSON.stringify(admin2Settings)}; push_registrations ${admin2Device} league_management true`
+      )
+      /** The one new notice of `type` since `before`, with its single push. */
+      const arrives = async (
+        type: 'umpireSignUp' | 'umpireWithdraw',
+        before: number,
+        pushed: boolean
+      ): Promise<{ id: string; title: string }> => {
+        const found = await until(`a new ${type}`, async () => {
+          const rows = await noticesOf(type)
+          return rows.length > before ? rows : undefined
+        })
+        expect(found, type).length(before + 1)
+        const id = found.at(-1)!.id
+        // The row keeps the umpire's id, never a name: L's inbox names them.
+        expect(JSON.stringify(found.at(-1)!.metadata)).not.includes(
+          blair.name.split(' ')[0]
+        )
+        const notice = { id, title: (await lClient.notification(id)).title }
+        if (pushed) {
+          const push = payloadOf(await onePush(notice.id))
+          expect(push.body).equals(notice.title)
+          await umpireLine(
+            'n7',
+            `notification_events ${type} ${notice.id} to L: ${notice.title}\npush.jsonl to L: ${JSON.stringify(push)}`
+          )
+        } else {
+          await pause(8000)
+          expect(await pushesOf(notice.id)).length(0)
+          await umpireLine(
+            'n7',
+            `notification_events ${type} ${notice.id} to L: ${notice.title}\npush.jsonl to L for ${notice.id}: none (8 s later)`
+          )
+        }
+        return notice
+      }
+
+      await bClient.assignUmpire(near[0], { slot, userId: blair.userId })
+      await umpireLine(
+        'n7',
+        `$ B signs up: POST /games/${near[0]}/umpire-slots ${slot}`
+      )
+      const signedUp = await arrives('umpireSignUp', 0, true)
+      expect(signedUp.title).contains(' signed up as Plate for ')
+      await bClient.removeUmpire(near[0], slot)
+      await umpireLine(
+        'n7',
+        `$ B withdraws: DELETE /games/${near[0]}/umpire-slots ${slot}`
+      )
+      const withdrew = await arrives('umpireWithdraw', 0, true)
+      expect(withdrew.title).contains(' withdrew from Plate for ')
+      // A2 heard of B's own withdrawal, in the app and pushed, and not of the
+      // sign-up.
+      expect(
+        (await noticesOf('umpireWithdraw', admin2)).map(row => row.id)
+      ).deep.equals([withdrew.id])
+      expect(await noticesOf('umpireSignUp', admin2)).length(0)
+      await until('a push to A2', async () =>
+        (await pushesOf(withdrew.id, admin2)).length > 0 ? true : undefined
+      )
+      expect(await pushesOf(withdrew.id, admin2)).length(1)
+      expect(await leaguePushes(admin2)).length(1)
+      await umpireLine(
+        'n7',
+        `notification_events umpireWithdraw ${withdrew.id} to A2 too; umpireSignUp to A2: none\npush.jsonl to A2: 1 push, for ${withdrew.id}`
+      )
+      await notifications('History', withdrew.title)
+      expect(await text(l)).includes(signedUp.title)
+      await proof(l.page, 'notifications-umpire-history.png')
+
+      // An assignment of B's that L did not make, which L removes.
+      await db
+        .insertInto('umpire_assignments')
+        .values({
+          game_id: near[1],
+          slot,
+          user_id: blair.userId,
+          assigned_by: blair.userId,
+          credit_team_id: null
+        })
+        .execute()
+      const pushesBefore = (await leaguePushes()).length
+      const admin2PushesBefore = (await leaguePushes(admin2)).length
+      const withdrawalsBefore = await db
+        .selectFrom('notification_events')
+        .select(db.fn.countAll<string>().as('count'))
+        .where('source_type', '=', 'umpireWithdraw')
+        .executeTakeFirstOrThrow()
+      await lClient.removeUmpire(near[1], slot)
+      await pause(8000)
+      expect(await noticesOf('umpireWithdraw')).length(1)
+      expect(await noticesOf('umpireSignUp')).length(1)
+      expect(await leaguePushes()).length(pushesBefore)
+      // A2, opted in to withdrawals and not the one removing it, hears nothing
+      // either: an admin's removal is no withdrawal.
+      expect(
+        (await noticesOf('umpireWithdraw', admin2)).map(row => row.id)
+      ).deep.equals([withdrew.id])
+      expect(await leaguePushes(admin2)).length(admin2PushesBefore)
+      const withdrawalsAfter = await db
+        .selectFrom('notification_events')
+        .select(db.fn.countAll<string>().as('count'))
+        .where('source_type', '=', 'umpireWithdraw')
+        .executeTakeFirstOrThrow()
+      expect(withdrawalsAfter.count).equals(withdrawalsBefore.count)
+      await umpireLine(
+        'n7',
+        `$ L removes B's assignment of ${near[1]} (assigned by B): DELETE /games/${near[1]}/umpire-slots ${slot}\nnotification_events umpireWithdraw, to anyone: ${withdrawalsBefore.count} before, ${withdrawalsAfter.count} after; to A2: still only ${withdrew.id} (B's own)\npush.jsonl: no new push to L (${pushesBefore} league pushes before and after) and none to A2 (${admin2PushesBefore} before and after), 8 s later`
+      )
+
+      // League management off in Account: the notice, and no push.
+      await account(l)
+      await l.page.waitForSelector(`input[aria-label="${LEAGUE_MANAGEMENT}"]`, {
+        timeout: 60000
+      })
+      expect(await checked(l, LEAGUE_MANAGEMENT)).equals(true)
+      await flip(l, LEAGUE_MANAGEMENT)
+      await follows(l, LEAGUE_MANAGEMENT, false)
+      const off = await until(
+        'League management off on L’s registration',
+        async () => {
+          const found = await db
+            .selectFrom('push_registrations')
+            .select(['id', 'league_management'])
+            .where('session_id', '=', l.sessionId)
+            .executeTakeFirst()
+          return found?.league_management === false ? found : undefined
+        },
+        60000
+      )
+      await umpireLine(
+        'n7',
+        `$ L turns ${LEAGUE_MANAGEMENT} off in Account: push_registrations ${off.id} league_management false`
+      )
+      await bClient.assignUmpire(near[0], { slot, userId: blair.userId })
+      await umpireLine(
+        'n7',
+        `$ B signs up again: POST /games/${near[0]}/umpire-slots ${slot}`
+      )
+      const quiet = await arrives('umpireSignUp', 1, false)
+      await notifications('History', quiet.title)
+      await umpireLine('n7', `L's History lists it: ${quiet.title}`)
+    })
   })
 })

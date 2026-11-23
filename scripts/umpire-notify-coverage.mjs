@@ -18,8 +18,9 @@ import { webSettings } from './web-build-settings.mjs'
 // the client, OpenAPI, the API-key family, account deletion and merging,
 // the migration, and the app's League management switch (stored, read,
 // registered, asked for past the asked record, and in Account), from the
-// suites that exercise them (and, as a later milestone adds them, the app's
-// screen and notices). Each file the
+// suites that exercise them, and the app's Send me notifications row, its
+// Umpire Management Notifications screen, the notices in Notifications and
+// the umpire schedule opening on a notice's game. Each file the
 // work adds must have 95% of its lines covered and each file it edits 95% of
 // the lines it changes, read from `TS_COVERAGE_BASE` (origin/develop unless
 // given) to HEAD, the repository's combined bar. `--screens` runs only the
@@ -60,7 +61,9 @@ const specs = [
   'src/app/platform/pushDevice.test.ts',
   'src/app/platform/pushDevice.native.test.ts',
   'src/app/push/notificationAsk.test.ts',
-  'src/app/locales/strings.test.ts'
+  'src/app/locales/strings.test.ts',
+  // The Umpire Management Notifications route and the schedule's game.
+  'src/app/navigation/routes.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = [
@@ -68,7 +71,16 @@ const screens = [
   'src/app/push/NotificationAskHost.test.tsx',
   'src/app/App.notificationAsk.test.tsx',
   // Account → Notifications' three switches.
-  'src/app/screens/AccountScreen.test.tsx'
+  'src/app/screens/AccountScreen.test.tsx',
+  // Send me notifications, the screen it opens, and the screen in the app.
+  'src/app/umpires/management.test.tsx',
+  'src/app/umpires/notificationsScreen.test.tsx',
+  // Umpire notices in Notifications, and App opening the schedule on one.
+  'src/app/screens/NotificationsScreen.test.tsx',
+  // The schedule's game: its address and its first read.
+  'src/app/umpires/routes.test.tsx',
+  'src/app/umpires/scheduleUi.test.tsx',
+  'src/app/umpires/schedulePages.test.tsx'
 ].filter(
   file =>
     existsSync(file) &&
@@ -83,7 +95,8 @@ const slowUnderCoverage = 'Account settings screen .*(behind a slide|deleted)'
 // Added whole: 95% of every line, from the unit and integration suites together.
 const required = [
   'src/migrate/migrations/130umpireNotifications.ts',
-  'src/server/umpires/notices.ts'
+  'src/server/umpires/notices.ts',
+  'src/app/umpires/UmpireNotificationsScreen.tsx'
 ]
 // Edited: 95% of the lines the branch changes, from the suites together.
 const edited = [
@@ -118,7 +131,14 @@ const edited = [
   'src/app/push/notificationAsk.ts',
   'src/app/push/NotificationAskHost.tsx',
   'src/app/screens/AccountScreen.tsx',
-  'src/app/locales/en_US.ts'
+  'src/app/locales/en_US.ts',
+  'src/app/umpires/UmpireSettingsCard.tsx',
+  'src/app/navigation/routes.ts',
+  'src/app/navigation/screenIdentity.ts',
+  'src/app/components/GridNumberCell.tsx',
+  'src/app/screens/NotificationsScreen.tsx',
+  'src/app/umpires/UmpireScheduleScreen.tsx',
+  'src/app/App.tsx'
 ]
 
 if (!screensOnly) {

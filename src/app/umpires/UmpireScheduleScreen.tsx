@@ -413,9 +413,14 @@ export function UmpireScheduleScreen({
       animated: false
     })
   }, [tableY, firstY, sectionHeight])
+  // The game a notice opened the schedule on, which every first page opens
+  // on until the reader moves the page; then the route lets it go.
   const noteReaderMoved = useCallback(() => {
     readerMoved.current = true
+    const { game, ...held } = latestRoute.current
+    if (game != null) latestOnRoute.current(held)
   }, [])
+  const around = (): string => latestRoute.current.game ?? 'next'
   const sequence = useRef(0)
   // Counts the sort defaults saved here. A page read begun before a save
   // answers with the default as it was, which must not undo the save.
@@ -466,7 +471,7 @@ export function UmpireScheduleScreen({
         route.id,
         query,
         cursor == null
-          ? { around: 'next' }
+          ? { around: around() }
           : { cursor, ...(count == null ? {} : { limit: count }) }
       )
       if (live() && seq === sequence.current)
@@ -500,7 +505,7 @@ export function UmpireScheduleScreen({
     setFirstY(undefined)
     run(async () => {
       const [next, ranks] = await Promise.all([
-        client.umpireSchedulePage(route.id, query, { around: 'next' }),
+        client.umpireSchedulePage(route.id, query, { around: around() }),
         client.umpireLeaderboard(route.id)
       ])
       if (live() && seq === sequence.current) {

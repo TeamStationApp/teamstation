@@ -16,7 +16,7 @@ import {
 } from '../../test/PagedListStandIn'
 import { pageOfUmpireSchedule } from '../../test/pageOf'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
-import type { UmpireScheduleRoute } from '../navigation/routes'
+import { parseRoute, type UmpireScheduleRoute } from '../navigation/routes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { UmpireScheduleScreen } from './UmpireScheduleScreen'
 
@@ -312,6 +312,58 @@ describe('umpire schedule pages', () => {
       measure('umpire-sticky-stack', 1200, 120, 0)
     })
     expect(asked).deep.equals([504, 544])
+  })
+
+  it('opens on a notice’s game, and lets the route forget it once the reader moves the page', async () => {
+    const f = world(0)
+    const routes: UmpireScheduleRoute[] = []
+    function Harness(): React.ReactElement {
+      const [route, setRoute] = useState<UmpireScheduleRoute>({
+        ...ROUTE,
+        view: 'league',
+        game: 'game-80'
+      })
+      return (
+        <UmpireScheduleScreen
+          client={f.client}
+          route={route}
+          leagues={[]}
+          onRoute={next => {
+            routes.push(next)
+            setRoute(next)
+          }}
+        />
+      )
+    }
+    await mount(<Harness />)
+    expect(f.reads[0].page).deep.equals({ around: 'game-80' })
+    expect(listProps().anchorKey).equals('game-80')
+    const { node } = pageScroller()
+    await act(async () => {
+      node.dispatchEvent(new window.Event('wheel'))
+    })
+    expect(routes).deep.equals([{ ...ROUTE, view: 'league' }])
+    // Moving it again asks nothing more of the route.
+    await act(async () => {
+      node.dispatchEvent(new window.Event('wheel'))
+    })
+    expect(routes).length(1)
+    expect(f.reads).length(1)
+  })
+
+  it('opens on the next game when the address’s game is not a game id (2.harness-review.2)', async () => {
+    const f = world(0)
+    const route = parseRoute('/umpires/demo', '?view=league&game=abc')
+    expect(route.name).equals('umpireSchedule')
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={route as UmpireScheduleRoute}
+        leagues={[]}
+        onRoute={() => {}}
+      />
+    )
+    expect(f.reads[0].page).deep.equals({ around: 'next' })
   })
 
   it('draws its mounted rows again only for what they show', async () => {

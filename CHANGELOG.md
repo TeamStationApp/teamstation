@@ -21,6 +21,7 @@
 - added: League admins can put the league's seasons in order on the umpire requirements screen with Sort, and the umpire schedule's Season 1→9 sort follows that order
 - added: League admins can be notified, in the app and by push, of games still missing umpires, of umpire sign-ups and of withdrawals, through the API
 - added: Account → Notifications has a League management switch, on by default
+- added: League admins turn on umpire schedule notifications for themselves with Send me notifications in Umpire Management, and a notice opens the umpire schedule on its game
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file

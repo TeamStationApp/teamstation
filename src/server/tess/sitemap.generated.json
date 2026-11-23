@@ -50,6 +50,7 @@
         "Notifications",
         "Notify for direct messages and mentions",
         "Notify for RSVPed events",
+        "Notify for league management",
         "Notifications are blocked by this device",
         "Allow notifications on this device",
         "Walk-up songs",
@@ -165,6 +166,7 @@
         "Notifications",
         "Notify for direct messages and mentions",
         "Notify for RSVPed events",
+        "Notify for league management",
         "Notifications are blocked by this device",
         "Allow notifications on this device",
         "Walk-up songs",
@@ -657,6 +659,8 @@
         "Manage Umpire Game Notes",
         "Enable Team Credits",
         "Allow umpires to credit teams that they are a member of.",
+        "Send me notifications",
+        "Receive in-app and push notifications for updates to the umpire schedule",
         "Game proposals",
         "at",
         "Open game proposal",
@@ -1325,6 +1329,23 @@
         "Removing notes type “…” permanently clears its notes from every game.",
         "Removing … “…” clears its season requirements, certifications, game assignments and their credits.",
         "Cancel"
+      ]
+    },
+    {
+      "name": "umpireNotifications",
+      "path": "/groups/league/:id/umpire-notifications",
+      "title": "Umpire notifications",
+      "tabs": [],
+      "settings": [
+        "Umpire Management Notifications",
+        "Send notifications for missing slots",
+        "Receive notifications when umpires sign up",
+        "Receive notifications when umpires withdraw",
+        "Your notifications could not be saved. Try again.",
+        "Choose 1 to 30 days",
+        "Number of days prior to send notification",
+        "Number of days prior: %s",
+        "Done"
       ]
     },
     {

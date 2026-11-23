@@ -3,7 +3,12 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { turnWheel, wheelAt, type WheelNode } from '../../../e2e/rigs/iosWheel'
+import {
+  turnWheel,
+  wheelAt,
+  type WheelNode,
+  wheelValue
+} from '../../../e2e/rigs/iosWheel'
 import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   LONG_LISTS_SHAPE,
@@ -106,7 +111,7 @@ const MOST_BELOW_PILLS = 110
 /** The screen's width, and where a row is clear of the tab bar. */
 const PHONE_WIDTH = 402
 const LOWEST_ROW = 700
-const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13,E14'
+const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13,E14,E15'
 /** The umpire schedule's second sort wheel under Date: Season and Certification. */
 const THEN_BY = [
   'Season · A to Z',
@@ -121,6 +126,34 @@ function required(name: string): string {
   const value = process.env[name]
   if (value == null || value === '') throw new Error(`Supply ${name}`)
   return value
+}
+
+/**
+ * A session of the fixture's person (101) for the API, from a second
+ * e-mailed link, as `signIn` signs the phone in: a case sends it as a bearer
+ * header to read what the phone saved.
+ */
+async function apiSession(manifest: Manifest): Promise<string> {
+  const asked = await fetch(`${manifest.apiBaseUrl}/auth/email-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: manifest.email })
+  })
+  assert.equal(asked.status, 202)
+  const answer = await fetch(
+    `${manifest.origin}${manifest.signInLinkRoute}?email=${encodeURIComponent(manifest.email)}`
+  )
+  assert.ok(answer.ok, 'apiSession: no sign-in mail')
+  const { link } = (await answer.json()) as { link?: string }
+  const token = link?.split('/signin/')[1]
+  assert.ok(token != null && token !== '', `apiSession: no link in ${link}`)
+  const verified = await fetch(`${manifest.apiBaseUrl}/auth/link/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  })
+  assert.equal(verified.status, 200, 'apiSession: the link signs in')
+  return ((await verified.json()) as { token: string }).token
 }
 
 async function main(): Promise<void> {
@@ -1611,33 +1644,7 @@ async function main(): Promise<void> {
         })
         await pause(1200)
       }
-      /** 101's own session for the API, from a second e-mailed link. */
-      const apiSession = async (): Promise<string> => {
-        const asked = await fetch(`${manifest.apiBaseUrl}/auth/email-code`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: manifest.email })
-        })
-        assert.equal(asked.status, 202)
-        const answer = await fetch(
-          `${manifest.origin}${manifest.signInLinkRoute}?email=${encodeURIComponent(manifest.email)}`
-        )
-        assert.ok(answer.ok, 'E14: no sign-in mail')
-        const { link } = (await answer.json()) as { link?: string }
-        const token = link?.split('/signin/')[1]
-        assert.ok(token != null && token !== '', `E14: no link in ${link}`)
-        const verified = await fetch(
-          `${manifest.apiBaseUrl}/auth/link/verify`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token })
-          }
-        )
-        assert.equal(verified.status, 200, 'E14: the link signs in')
-        return ((await verified.json()) as { token: string }).token
-      }
-      const session = await apiSession()
+      const session = await apiSession(manifest)
       const apiLog: string[] = []
       /** The season of the schedule's top row under Season 1→9. */
       const topSeason = async (): Promise<string> => {
@@ -1748,6 +1755,139 @@ async function main(): Promise<void> {
       })
       await visible('Division', 30000)
       await note(`E14: the schedule's top row went from ${before} to ${after}`)
+    },
+    E15: async () => {
+      const league = manifest.leagueId
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const centre = (node: ViewNode): string =>
+        `${Math.round(node.bounds!.x + node.bounds!.width / 2)},${Math.round(node.bounds!.y + node.bounds!.height / 2)}`
+      const session = await apiSession(manifest)
+      const apiLog: string[] = []
+      /** 101's own Umpire Management Notifications for League A. */
+      const saved = async (): Promise<{
+        missingSlots: boolean
+        daysBefore: number
+      }> => {
+        const path = `/leagues/${league}/umpire-notifications`
+        const answer = await fetch(`${manifest.apiBaseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${session}` }
+        })
+        const text = await answer.text()
+        apiLog.push(`$ GET /api/v1${path}`, `${answer.status}`, text, '')
+        assert.equal(answer.status, 200, text)
+        return JSON.parse(text) as { missingSlots: boolean; daysBefore: number }
+      }
+      const until = async <T>(
+        what: string,
+        read: () => Promise<T | undefined>
+      ): Promise<T> => {
+        for (let wait = 0; wait < 30; wait++) {
+          const found = await read()
+          if (found !== undefined) return found
+          await pause(500)
+        }
+        throw new Error(`E15: never ${what}`)
+      }
+      /** A node by its test id, scrolled up until it is above the tab bar. */
+      const reach = async (id: string): Promise<ViewNode> => {
+        for (let turn = 0; turn < 12; turn++) {
+          const found = byId(await settled(), id)
+          // Its middle, where it is tapped, clear of the tab bar: the
+          // card's last row may sit lower at the page's end.
+          if (
+            found != null &&
+            found.bounds!.y > 0 &&
+            found.bounds!.y + found.bounds!.height / 2 < LOWEST_ROW
+          )
+            return found
+          await m.swipe({ start: '50%, 70%', end: '50%, 40%', duration: 400 })
+          await pause(900)
+        }
+        throw new Error(`E15: never reached ${id}`)
+      }
+
+      // 1. The Umpire Management card's last row opens the screen.
+      await m.openLink({
+        link: `teamstation://groups/league/${league}/settings`
+      })
+      // The settings open at their top; the umpire card is further down, under
+      // whatever sections precede it (SafeSport among them), and reach scrolls
+      // to its last row.
+      await visible('League Management', 30000)
+      const send = await reach('umpire-send-me-notifications')
+      const credits = (await settled()).find(
+        node => node.text === 'Enable Team Credits' && node.bounds != null
+      )
+      assert.ok(
+        credits == null || credits.bounds!.y < send.bounds!.y,
+        'E15: Send me notifications is under Enable Team Credits'
+      )
+      await m.tapOnPoint({ point: centre(send) })
+      await visible('Umpire Management Notifications', 30000)
+      await note('E15: Send me notifications opened its screen')
+
+      // 2. Missing slots on: the ask, Continue, and the system's Allow.
+      const missing = await reach('umpire-notifications-missingSlots')
+      const { x, y, width, height } = missing.bounds!
+      // Its switch is at the row's right edge.
+      await m.tapOnPoint({
+        point: `${Math.round(x + width - 40)},${Math.round(y + height / 2)}`
+      })
+      await m.assertVisible({ id: 'notification-ask-continue', timeout: 15000 })
+      const sheet = (await all()).map(node => node.text ?? '').join('\n')
+      assert.ok(
+        sheet.includes(
+          "TeamStation would like to send you notifications for events you've RSVP'd to and for direct messages from other users"
+        ),
+        'E15: the ask with its existing words'
+      )
+      await shot(`${platform}-umpire-notifications-ask.png`)
+      await m.tapOn({ id: 'notification-ask-continue', timeout: 10000 })
+      await m.tapOn({ text: 'Allow', timeout: 15000 })
+      await pause(1500)
+      const on = await until('saved missing slots on', async () => {
+        const now = await saved()
+        return now.missingSlots ? now : undefined
+      })
+      assert.equal(on.daysBefore, 7)
+      await note('E15: missing slots on, after the ask and the system’s Allow')
+
+      // 3. Days opens a wheel at 7, turned to 3, and Done saves it.
+      const days = await reach('umpire-notifications-days')
+      await m.tapOnPoint({ point: centre(days) })
+      await visible('Done', 15000)
+      const options = Array.from({ length: 30 }, (unused, i) => String(i + 1))
+      const wheel = await wheelAt(m as unknown as Parameters<typeof wheelAt>[0])
+      assert.equal(wheelValue(wheel, options), '7', `E15: ${wheel.text}`)
+      await proof('umpire-notifications-wheel-ios.png')
+      await turnWheel(
+        m as unknown as Parameters<typeof turnWheel>[0],
+        async (): Promise<WheelNode> =>
+          await wheelAt(m as unknown as Parameters<typeof wheelAt>[0]),
+        '3',
+        options
+      )
+      await m.tapOn({ text: 'Done', timeout: 10000 })
+      await pause(1200)
+      const three = await until('the row reading 3', async () =>
+        byId(await settled(), 'umpire-notifications-days')?.text ===
+        'Number of days prior: 3'
+          ? true
+          : undefined
+      )
+      assert.ok(three)
+      const after = await until('saved 3 days', async () => {
+        const now = await saved()
+        return now.daysBefore === 3 ? now : undefined
+      })
+      assert.equal(after.missingSlots, true)
+      await writeFile(
+        join(artifacts, 'umpire-notifications-ios.log'),
+        apiLog.join('\n')
+      )
+      await shot(`${platform}-umpire-notifications-days.png`)
+      await note('E15: Days turned to 3 on the wheel and saved')
     }
   }
 

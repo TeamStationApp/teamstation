@@ -1042,6 +1042,23 @@ export const enUs = {
   umpire_season_priority_move_named: 'Reorder %s',
   umpire_season_priority_row: 'draggable season row',
   umpire_season_priority_insertion: 'Season insertion point',
+  umpire_send_me_notifications: 'Send me notifications',
+  umpire_send_me_notifications_detail:
+    'Receive in-app and push notifications for updates to the umpire schedule',
+  umpire_notifications_title: 'Umpire Management Notifications',
+  umpire_notifications_missing_slots: 'Send notifications for missing slots',
+  umpire_notifications_days: 'Number of days prior to send notification',
+  umpire_notifications_days_named: 'Number of days prior: %s',
+  umpire_notifications_days_range: 'Choose 1 to 30 days',
+  umpire_notifications_days_done: 'Done',
+  umpire_notifications_sign_ups: 'Receive notifications when umpires sign up',
+  umpire_notifications_withdrawals:
+    'Receive notifications when umpires withdraw',
+  umpire_notifications_cannot_save:
+    'Your notifications could not be saved. Try again.',
+  umpire_notice_missing_slots: 'Missing umpires',
+  umpire_notice_sign_up: 'Umpire signed up',
+  umpire_notice_withdraw: 'Umpire withdrew',
   chat_proxy_choose_person: 'Message %s',
   chat_include_title: 'Include another adult',
   chat_include_detail:
