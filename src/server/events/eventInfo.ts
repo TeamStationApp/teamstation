@@ -617,6 +617,11 @@ export async function saveEventRsvp(
         })
       )
       .execute()
+    // Who is coming shows on the event's Info and on its schedule rows.
+    noteScopeChange(
+      trx,
+      event.eventKind === 'game' ? { gameId: id } : { teamId: event.teamId }
+    )
   })
 }
 

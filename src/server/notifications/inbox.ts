@@ -18,7 +18,7 @@ import {
   RECORDING_UPLOAD
 } from '../../common/notifications'
 import type { Role } from '../../common/roles'
-import { adminScopes, guardedRows, roleScopes } from '../access'
+import { adminScopes, guardedRows, guardiansOf, roleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type {
@@ -948,6 +948,78 @@ export interface PendingAnswer {
   hasPending: boolean
   /** The next time a pending item expires, or null. */
   nextExpiry: string | null
+}
+
+/**
+ * Who may answer one request beyond its sides' staff, as `candidateRequests`
+ * finds it for each of them: the owner of a verified address a side names,
+ * everybody it was already recorded for, a player's guardians (and the player
+ * of a player add), and, for a game, the admins of its season (`seasonIds`,
+ * answered as a season side). For the bell's notice, read once per request.
+ */
+export async function requestAnswerers(
+  db: Kysely<Database>,
+  requestId: string
+): Promise<{ userIds: string[]; seasonIds: string[] }> {
+  const request = await db
+    .selectFrom('group_requests')
+    .select(['kind', 'terms'])
+    .where('id', '=', requestId)
+    .executeTakeFirst()
+  if (request == null) return { userIds: [], seasonIds: [] }
+  const terms = (
+    typeof request.terms === 'string'
+      ? JSON.parse(request.terms)
+      : request.terms
+  ) as {
+    playerUserId?: unknown
+    userId?: unknown
+    game?: { seasonId?: unknown }
+  } | null
+  const addresses = (
+    await db
+      .selectFrom('group_request_sides')
+      .select('scope_id')
+      .where('request_id', '=', requestId)
+      .where('scope_type', '=', 'user')
+      .where('scope_id', 'like', 'email:%')
+      .execute()
+  ).map(side => side.scope_id.slice('email:'.length).toLowerCase())
+  const owners =
+    addresses.length === 0
+      ? []
+      : await db
+          .selectFrom('user_emails')
+          .select('user_id')
+          .where('verified_at', 'is not', null)
+          .where(sql<string>`lower(email)`, 'in', addresses)
+          .execute()
+  const recorded = await db
+    .selectFrom('notification_events')
+    .select('recorded_recipients')
+    .where('source_type', '=', 'groupRequest')
+    .where('source_id', '=', requestId)
+    .execute()
+  const player =
+    request.kind === 'guardian'
+      ? terms?.playerUserId
+      : request.kind === 'playerAdd'
+        ? terms?.userId
+        : undefined
+  const players = typeof player === 'string' ? [player] : []
+  const guardians = players.length === 0 ? [] : await guardiansOf(db, players)
+  const season = request.kind === 'game' ? terms?.game?.seasonId : undefined
+  return {
+    userIds: [
+      ...new Set([
+        ...owners.map(row => String(row.user_id)),
+        ...recorded.flatMap(row => row.recorded_recipients.map(String)),
+        ...guardians,
+        ...(request.kind === 'playerAdd' ? players : [])
+      ])
+    ],
+    seasonIds: typeof season === 'string' ? [season] : []
+  }
 }
 
 /** A read for one person, and who still waits on it. */

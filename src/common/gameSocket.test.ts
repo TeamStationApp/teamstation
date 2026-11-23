@@ -11,6 +11,7 @@ import {
   type ScreenScopeEvent,
   socketUrl,
   TYPING_INTERVAL_MS,
+  type UserTopicEvent,
   type WebSocketLike
 } from './gameSocket'
 import { userIdOfValue } from './userId'
@@ -1012,7 +1013,7 @@ describe('GameSocket (U16)', function () {
       last().drop(1006)
       expect(heard.slice(-2)).deep.equals([
         { type: 'resync' },
-        { type: 'unreachable' }
+        { type: 'unreachable', outage: 1 }
       ])
       expect(timers.delays).deep.equals([1000])
       timers.fire()
@@ -1051,16 +1052,17 @@ describe('GameSocket (U16)', function () {
       last().drop()
       timers.fire()
       expect(timers.delays).deep.equals([1000, 2000])
-      // Each failed connect says the socket is down: the screen reads at once.
+      // Each failed connect says the socket is down: the screen reads at
+      // once, and both retries are the same outage.
       expect(heard).deep.equals([
-        { type: 'unreachable' },
-        { type: 'unreachable' }
+        { type: 'unreachable', outage: 1 },
+        { type: 'unreachable', outage: 1 }
       ])
       // A screen arriving while it waits to retry hears so at once too, and
       // one on a first connect on its way does not.
       const later: ScreenScopeEvent[] = []
       socket.subscribeScope({ scope: 'schedule' }, event => later.push(event))
-      expect(later).deep.equals([{ type: 'unreachable' }])
+      expect(later).deep.equals([{ type: 'unreachable', outage: 1 }])
       const retrying = last()
       const first = makeSocket()
       const fresh: ScreenScopeEvent[] = []
@@ -1545,5 +1547,219 @@ describe('GameSocket chat (U9)', function () {
       WebSocketImpl: FakeSocket
     })
     expect(() => socket.onChat(() => undefined)).throws(/relative/)
+  })
+})
+
+describe('GameSocket user topics, outages and team and group scopes', function () {
+  it('subscribes a topic once however many listen, keeps the socket open for it, and asks again on each connection', function () {
+    const { socket, timers } = makeSocket({ token: 'tok' })
+    const a: UserTopicEvent[] = []
+    const b: UserTopicEvent[] = []
+    const stopA = socket.onUserChanged('badge', event => a.push(event))
+    const stopB = socket.onUserChanged('badge', event => b.push(event))
+    last().open()
+    expect(last().sent).deep.equals([
+      {
+        type: 'subscribe',
+        topic: 'badge',
+        id: 'c1',
+        protocol: GAME_SOCKET_PROTOCOL
+      }
+    ])
+    last().receive({ type: 'subscribed', topic: 'badge', id: 'c1' })
+    expect(a).deep.equals([{ type: 'subscribed', afterGap: false }])
+    last().receive({ type: 'userChanged', topic: 'badge' })
+    last().receive({ type: 'userChanged', topic: 'tess' })
+    last().receive({ type: 'userResync', topics: ['badge', 'mystery'] })
+    expect(b.slice(1)).deep.equals([{ type: 'changed' }, { type: 'resync' }])
+    // Lost: every retry is the same outage, and the next connection asks
+    // again and says notices may have been missed.
+    last().drop(1006)
+    timers.fire()
+    last().drop(1006)
+    expect(a.filter(event => event.type === 'unreachable')).deep.equals([
+      { type: 'unreachable', outage: 1 },
+      { type: 'unreachable', outage: 1 }
+    ])
+    expect(socket.outage).equals(1)
+    timers.fire()
+    last().open()
+    expect(last().sent).deep.equals([
+      {
+        type: 'subscribe',
+        topic: 'badge',
+        id: 'c2',
+        protocol: GAME_SOCKET_PROTOCOL
+      }
+    ])
+    last().receive({ type: 'subscribed', topic: 'badge', id: 'c2' })
+    expect(a.at(-1)).deep.equals({ type: 'subscribed', afterGap: true })
+    // A later outage is another.
+    last().drop(1006)
+    expect(a.at(-1)).deep.equals({ type: 'unreachable', outage: 2 })
+    timers.fire()
+    last().open()
+    last().receive({ type: 'subscribed', topic: 'badge', id: 'c3' })
+    stopA()
+    expect(last().closedWith).equals(undefined)
+    stopB()
+    expect(last().sent.at(-1)).deep.include({
+      type: 'unsubscribe',
+      topic: 'badge'
+    })
+    expect(last().closedWith, 'nothing left holds it').equals(1000)
+    socket.close()
+  })
+
+  it('lets go of a topic released while its subscribe was unanswered, once the server holds it', function () {
+    const { socket } = makeSocket({ token: 'tok' })
+    // The bell keeps the socket open.
+    const stopBell = socket.onUserChanged('badge', () => undefined)
+    last().open()
+    const stopSet = socket.onUserChanged('offlineSet', () => undefined)
+    const asked = last().sent.find(
+      frame => (frame as { topic?: string }).topic === 'offlineSet'
+    ) as { id: string }
+    stopSet()
+    expect(
+      last().sent.filter(
+        frame => (frame as { type?: string }).type === 'unsubscribe'
+      ),
+      'nothing to let go of yet'
+    ).deep.equals([])
+    last().receive({ type: 'subscribed', topic: 'offlineSet', id: asked.id })
+    expect(last().sent.at(-1)).deep.include({
+      type: 'unsubscribe',
+      topic: 'offlineSet'
+    })
+    stopBell()
+    socket.close()
+  })
+
+  it('hears an older server refuse topics as unsupported, and asks again on each connection, which a newer one holds', function () {
+    const { socket, timers } = makeSocket({ token: 'tok' })
+    const heard: UserTopicEvent[] = []
+    socket.onUserChanged('offlineSet', event => heard.push(event))
+    last().open()
+    last().receive({
+      type: 'error',
+      id: 'c1',
+      code: 'malformed',
+      message: 'Every frame is a JSON object with a type'
+    })
+    expect(heard).deep.equals([{ type: 'unsupported' }])
+    const late: UserTopicEvent[] = []
+    socket.onUserChanged('offlineSet', event => late.push(event))
+    expect(late).deep.equals([{ type: 'unsupported' }])
+    // Another older worker refuses it again.
+    last().drop(1006)
+    timers.fire()
+    last().open()
+    const again = last().sent.find(
+      frame => (frame as { type?: string }).type === 'subscribe'
+    ) as { id: string; topic: string } | undefined
+    expect(again?.topic, 'asked again').equals('offlineSet')
+    last().receive({
+      type: 'error',
+      id: again!.id,
+      code: 'malformed',
+      message: 'Every frame is a JSON object with a type'
+    })
+    expect(heard.filter(event => event.type === 'unsupported')).length(2)
+    // A rolling deploy reaches a newer worker: the topic is held.
+    last().drop(1006)
+    timers.fire()
+    last().open()
+    const newer = last().sent.find(
+      frame => (frame as { type?: string }).type === 'subscribe'
+    ) as { id: string; topic: string } | undefined
+    expect(newer?.topic).equals('offlineSet')
+    last().receive({ type: 'subscribed', topic: 'offlineSet', id: newer!.id })
+    expect(heard.at(-1)).deep.include({ type: 'subscribed' })
+    last().receive({ type: 'userChanged', topic: 'offlineSet' })
+    expect(heard.at(-1)).deep.equals({ type: 'changed' })
+    // Its own failure is asked again on the next connection.
+    const other = makeSocket({ token: 'tok' })
+    const failed: UserTopicEvent[] = []
+    other.socket.onUserChanged('tess', event => failed.push(event))
+    last().open()
+    last().receive({ type: 'error', id: 'c1', code: 'internal', message: 'x' })
+    expect(failed).deep.equals([])
+    other.socket.close()
+    socket.close()
+  })
+
+  it('holds a team or a group scope and hears only its own notices', function () {
+    const { socket } = makeSocket()
+    const heard: ScreenScopeEvent[] = []
+    socket.subscribeScope({ scope: 'team', teamId: 't1' }, event =>
+      heard.push(event)
+    )
+    last().open()
+    expect(last().sent).deep.equals([
+      {
+        type: 'subscribe',
+        scope: 'team',
+        teamId: 't1',
+        id: 'c1',
+        protocol: GAME_SOCKET_PROTOCOL
+      }
+    ])
+    last().receive({ type: 'subscribed', scope: 'team', id: 'c1' })
+    last().receive({ type: 'changed', scope: 'team', teamId: 't2' })
+    last().receive({
+      type: 'changed',
+      scope: 'team',
+      teamId: 't1',
+      gameId: 'g1'
+    })
+    expect(heard).deep.equals([
+      { type: 'subscribed' },
+      { type: 'changed', gameId: 'g1' }
+    ])
+    const group: ScreenScopeEvent[] = []
+    socket.subscribeScope({ scope: 'group', kind: 'league', id: 'l1' }, event =>
+      group.push(event)
+    )
+    expect(last().sent.at(-1)).deep.equals({
+      type: 'subscribe',
+      scope: 'group',
+      kind: 'league',
+      groupId: 'l1',
+      id: 'c2',
+      protocol: GAME_SOCKET_PROTOCOL
+    })
+    last().receive({ type: 'subscribed', scope: 'group', id: 'c2' })
+    last().receive({ type: 'changed', scope: 'group', groupId: 'l2' })
+    last().receive({ type: 'changed', scope: 'group', groupId: 'l1' })
+    expect(group).deep.equals([{ type: 'subscribed' }, { type: 'changed' }])
+    socket.close()
+  })
+
+  it('passes a game its roster and default lineup changes', function () {
+    const { socket } = makeSocket()
+    const heard: GameSocketEvent[] = []
+    socket.subscribe('g1', event => heard.push(event))
+    last().open()
+    const at = new Date(0).toISOString()
+    last().receive({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'roster',
+      at,
+      data: { teamId: 't1' }
+    })
+    last().receive({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'defaultLineup',
+      at,
+      data: { teamId: 't2' }
+    })
+    expect(heard.map(event => (event as { kind?: string }).kind)).deep.equals([
+      'roster',
+      'defaultLineup'
+    ])
+    socket.close()
   })
 })

@@ -13,7 +13,11 @@ import {
   tagMetadata,
   tagTargets
 } from '../../common/eventTags'
-import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
+import {
+  GAME_SOCKET_PROTOCOL,
+  MINIMUM_SAVE_PROTOCOL,
+  PROTOCOL_HEADER
+} from '../../common/gameSocket'
 import {
   asGumboPlay,
   asPostEventsBody,
@@ -664,7 +668,7 @@ describe('posting and reading plays', function () {
       { 'x-teamstation-app': 'TS' },
       {
         'x-teamstation-app': 'TS',
-        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL - 1)
+        [PROTOCOL_HEADER]: String(MINIMUM_SAVE_PROTOCOL - 1)
       },
       { 'x-teamstation-app': 'TS web', [PROTOCOL_HEADER]: 'four' }
     ] as Array<Record<string, string>>) {

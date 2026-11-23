@@ -4,6 +4,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { conflict } from '../../common/errors'
 import type { Database } from '../db/database'
+import { publishUserNotice } from '../socket/userNotices'
 import { whileLive } from './liveUser'
 
 /**
@@ -156,6 +157,8 @@ export async function withTurn<T>(
       .where('turn_owner', '=', owner)
       .execute()
       .catch(() => undefined)
+    // The answer is stored, or the turn failed: the person's screens read it.
+    await publishUserNotice(db, [userId], 'tess').catch(() => undefined)
   }
 }
 

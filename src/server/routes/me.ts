@@ -12,6 +12,7 @@ import { withAsync } from '../middleware/withErrors'
 import { distributionSettings } from '../nodeSettings'
 import { activeHuman } from '../oauth/provider'
 import { offlineScoringManifest } from '../scoring/offlineManifest'
+import { publishUserNotice } from '../socket/userNotices'
 import { accountAffiliationsOf } from '../users/accountAffiliations'
 import { readerOf } from '../users/readerNames'
 import { eventListItems } from './eventList'
@@ -128,6 +129,14 @@ export function meRoutes(
           ? req.query.held.split(',').slice(0, 3)
           : []
       const manifest = await offlineScoringManifest(db, actor, held)
+      // When the choice next changes with nothing written, the socket says so.
+      if (manifest.nextBoundary != null)
+        await publishUserNotice(
+          db,
+          [actor.userId],
+          'offlineSet',
+          new Date(manifest.nextBoundary)
+        )
       const rows =
         manifest.games.length === 0
           ? []

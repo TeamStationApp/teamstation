@@ -11,7 +11,13 @@ import {
   testDatabaseUrlOf
 } from '../testDatabase'
 import { migration129DropChatAgeConfirmations as migration } from './129dropChatAgeConfirmations'
-import { migrations } from './index'
+import { migrations as all } from './index'
+
+// Through this migration: those after it are another test's.
+const migrations = all.slice(
+  0,
+  all.findIndex(m => m.name === migration.name) + 1
+)
 
 /** The 13-or-older confirmation columns go, and come back empty going down. */
 describe('dropping the chat age confirmations', function () {

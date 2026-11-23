@@ -234,7 +234,16 @@ export class GameFanout {
         ? this.watched.has(change.game)
           ? [change.game]
           : []
-        : [...this.watched.keys()]
+        : [...this.watched.keys()].filter(gameId => {
+            // A roster or a default lineup reaches the team's own games
+            // alone: no row is read for the rest.
+            if (change.kind === 'walkUpSong') return true
+            const scope = this.watched.get(gameId)?.scope
+            return (
+              scope?.homeTeamId === change.team ||
+              scope?.awayTeamId === change.team
+            )
+          })
     if (games.length === 0) return
     let song: FanoutSong | undefined
     // Only a song names a player; a plan names its team as `teamId`.
@@ -352,6 +361,15 @@ export class GameFanout {
       gameId,
       at: this.now().toISOString()
     }
+    if (change.kind === 'roster' || change.kind === 'defaultLineup') {
+      const named: GameChange = {
+        ...head,
+        kind: change.kind,
+        data: { teamId: change.team }
+      }
+      for (const subscriber of held.recipients) subscriber.send(named)
+      return
+    }
     const message: GameChange =
       change.kind === 'walkUpSong'
         ? { ...head, kind: 'walkUpSong', data: song! }
@@ -391,9 +409,11 @@ export class GameFanout {
                   ...head,
                   kind: 'playEdits',
                   data:
-                    game.play_generation !== change.generation
+                    game.play_generation !==
+                    (change as PlayEditsNotice).generation
                       ? readAgain(game.play_generation)
-                      : (frame ?? (await this.readEdits(game, change)))
+                      : (frame ??
+                        (await this.readEdits(game, change as PlayEditsNotice)))
                 }
     for (const subscriber of held.recipients) subscriber.send(message)
   }

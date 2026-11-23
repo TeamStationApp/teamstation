@@ -203,6 +203,51 @@ describe('notices from the writes', function () {
     await notices.named(mark, { teamId: f.teamA })
   })
 
+  it('tells a game and a team’s schedule who is coming (RSVP)', async function () {
+    // A player on the team answers for themself.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: user(101),
+        team_id: f.teamA,
+        role: 'member'
+      })
+      .execute()
+    await quiet()
+    let mark = notices.mark()
+    await ok(
+      'PUT',
+      `/events/${unscored}/rsvps/${user(101)}`,
+      { response: 'no' },
+      101
+    )
+    await notices.named(mark, { gameId: unscored })
+    const made = await ok(
+      'POST',
+      '/events',
+      {
+        teamId: f.teamA,
+        eventType: 'practice',
+        startAt: new Date(Date.UTC(2027, 3, 3, 17)).toISOString(),
+        timezone: 'UTC',
+        venue: null,
+        status: 'scheduled',
+        idempotencyKey: 'writer-notices-rsvp-practice'
+      },
+      101
+    )
+    const { id } = (await made.json()) as { id: string }
+    mark = notices.mark()
+    await ok(
+      'PUT',
+      `/events/${id}/rsvps/${user(101)}`,
+      { response: 'yes' },
+      101
+    )
+    await notices.named(mark, { teamId: f.teamA })
+  })
+
   it('tells a new game’s schedule', async function () {
     const mark = notices.mark()
     const made = await ok(

@@ -1,4 +1,5 @@
 import {
+  asArray,
   asBoolean,
   asEither,
   asMaybe,
@@ -41,11 +42,14 @@ import type { WalkUpSong } from './walkUpSong'
  * reads an end of the half that keeps the at-bat in progress (`keepAtBat`):
  * an older app drops that at-bat on replay, and every later play moves down
  * an index. 5 reads explicit pitcher resets and selected batting slots.
+ * 6 holds user topics (the bell, the phone's offline games, Tess's answer),
+ * the team and group screen scopes, and a game's `roster` and
+ * `defaultLineup` changes.
  * It is the socket's and the API's version only: how the engine
  * folds a log, which a phone's queued saves are judged by, is
  * `FOLD_VERSION`, and moves only when that does.
  */
-export const GAME_SOCKET_PROTOCOL = 5
+export const GAME_SOCKET_PROTOCOL = 6
 
 /**
  * The oldest protocol a game or scope subscribe may name on any server: an
@@ -106,7 +110,13 @@ export type PlayEdit =
 
 /** What a `change` is about. */
 export type GameChangeKind =
-  'playEdits' | 'lineups' | 'walkUpSong' | 'game' | 'plans'
+  | 'playEdits'
+  | 'lineups'
+  | 'walkUpSong'
+  | 'game'
+  | 'plans'
+  | 'roster'
+  | 'defaultLineup'
 
 /**
  * How a game's stored plays changed, as a `playEdits` change carries it: the
@@ -162,6 +172,10 @@ export interface GameChangeData {
    * coaches read `GET /games/:gameId/plans` again.
    */
   plans: { teamId: string; inning: number }
+  /** One side's roster changed: read it again. */
+  roster: { teamId: string }
+  /** One side's default lineup changed: read it again. */
+  defaultLineup: { teamId: string }
   game: {
     status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
     awayScore: number | null
@@ -244,11 +258,50 @@ export type GameSocketListener = (event: GameSocketEvent) => void
  * The screens that hold a scope on the socket. A socket holds at most one,
  * the visible screen's, and a subscribe to another replaces it.
  */
-export type ScreenScopeName = 'home' | 'schedule' | 'event'
+export type ScreenScopeName = 'home' | 'schedule' | 'event' | 'team' | 'group'
 
-/** One screen's scope: Home, Schedule, or one event. */
+/** A season, league or node a group screen shows. */
+export type GroupScopeKind = 'season' | 'league' | 'node'
+
+/** One screen's scope: Home, Schedule, one event, one team or one group. */
 export type ScreenScope =
-  { scope: 'home' } | { scope: 'schedule' } | { scope: 'event'; gameId: string }
+  | { scope: 'home' }
+  | { scope: 'schedule' }
+  | { scope: 'event'; gameId: string }
+  | { scope: 'team'; teamId: string }
+  | { scope: 'group'; kind: GroupScopeKind; id: string }
+
+/**
+ * What the signed-in person hears whatever screen is open: the bell, the
+ * games a phone keeps to score with no signal, and Tess's answer.
+ */
+export type UserTopic = 'badge' | 'offlineSet' | 'tess'
+
+export const USER_TOPICS: readonly UserTopic[] = ['badge', 'offlineSet', 'tess']
+
+/**
+ * What a user topic's listener hears. Nothing carries a record: `changed`
+ * says to read the topic's resource once over REST.
+ */
+export type UserTopicEvent =
+  /**
+   * The server holds the topic for this socket. `afterGap`: the socket had
+   * been lost, so notices may have been missed; read once.
+   */
+  | { type: 'subscribed'; afterGap: boolean }
+  /** Something the topic covers changed, or its time came. */
+  | { type: 'changed' }
+  /** Notices may have been missed: read once. */
+  | { type: 'resync' }
+  /**
+   * The socket is down and waiting to try again. `outage` stays the same
+   * through every retry of one outage, so a reader reads once per outage.
+   */
+  | { type: 'unreachable'; outage: number }
+  /** The server holds no topics (an older one): read once per connection. */
+  | { type: 'unsupported' }
+
+export type UserTopicListener = (event: UserTopicEvent) => void
 
 /**
  * What the screen holding a scope hears. No frame carries a record: a
@@ -274,9 +327,10 @@ export type ScreenScopeEvent =
   /**
    * The socket is down after a connection was lost or refused, and is
    * waiting to try again: no acknowledgement is coming soon, so the screen
-   * reads at once, and the next `subscribed` reads again.
+   * reads at once, and the next `subscribed` reads again. `outage` stays
+   * the same through every retry of one outage.
    */
-  | { type: 'unreachable' }
+  | { type: 'unreachable'; outage?: number }
 
 export type ScreenScopeListener = (event: ScreenScopeEvent) => void
 
@@ -337,6 +391,28 @@ export type GameSocketRequest =
       id: string
       protocol?: number
     }
+  | {
+      type: 'subscribe' | 'unsubscribe'
+      scope: 'team'
+      teamId: string
+      id: string
+      protocol?: number
+    }
+  | {
+      type: 'subscribe' | 'unsubscribe'
+      scope: 'group'
+      kind: GroupScopeKind
+      groupId: string
+      id: string
+      protocol?: number
+    }
+  /** A user topic of the signed-in person; needs protocol 6. */
+  | {
+      type: 'subscribe' | 'unsubscribe'
+      topic: UserTopic
+      id: string
+      protocol?: number
+    }
   | { type: 'ping'; id: string }
   /** The person is typing in a conversation they may post in. */
   | { type: 'typing'; conversationId: string; id: string }
@@ -349,10 +425,22 @@ export type ScreenScopeReply =
       type: 'changed'
       scope: ScreenScopeName
       gameId?: string
+      /** A team scope's team. */
+      teamId?: string
+      /** A group scope's group. */
+      groupId?: string
       byPost?: boolean
     }
   /** The worker lost its `LISTEN`: subscribe the scope again and read. */
   | { type: 'resync' }
+
+/** A user topic's frames from the server. */
+export type UserTopicReply =
+  | { type: 'subscribed'; topic: UserTopic; id: string }
+  | { type: 'unsubscribed'; topic: UserTopic; id: string }
+  | { type: 'userChanged'; topic: UserTopic }
+  /** The worker lost its `LISTEN`: read each of these topics once. */
+  | { type: 'userResync'; topics: UserTopic[] }
 
 /** A frame the server sends. */
 export type GameSocketReply =
@@ -361,6 +449,7 @@ export type GameSocketReply =
   | { type: 'subscribed'; gameId: string; id: string }
   | { type: 'unsubscribed'; gameId: string; id: string }
   | ScreenScopeReply
+  | UserTopicReply
   | { type: 'pong'; id: string }
   /** A typing hint was passed on. */
   | { type: 'typed'; conversationId: string; id: string }
@@ -496,7 +585,9 @@ const asChangeHead = asObject({
     'lineups',
     'walkUpSong',
     'game',
-    'plans'
+    'plans',
+    'roster',
+    'defaultLineup'
   ) as Cleaner<GameChangeKind>,
   at: asString
 })
@@ -556,15 +647,44 @@ const SCOPE_REFUSED: ScreenScopeEvent = {
 const asScreenScopeName = asLiteral(
   'home',
   'schedule',
-  'event'
+  'event',
+  'team',
+  'group'
 ) as Cleaner<ScreenScopeName>
 
 const asScopeChanged = asObject({
   type: asLiteral('changed'),
   scope: asScreenScopeName,
   gameId: asOptional(asString),
+  teamId: asOptional(asString),
+  groupId: asOptional(asString),
   byPost: asOptional(asBoolean)
 })
+
+const asUserTopic = asLiteral(
+  'badge',
+  'offlineSet',
+  'tess'
+) as Cleaner<UserTopic>
+
+const asUserChanged = asObject({
+  type: asLiteral('userChanged'),
+  topic: asUserTopic
+})
+
+const asUserResync = asObject({
+  type: asLiteral('userResync'),
+  topics: asArray(asMaybe(asUserTopic))
+})
+
+/** One user topic held: its listeners, and the subscribe that stands for it. */
+interface HeldTopic {
+  listeners: Set<UserTopicListener>
+  /** The last subscribe sent for it on this connection, until answered. */
+  id: string | undefined
+  /** The server answered that it holds no topics. */
+  unsupported: boolean
+}
 
 /** A game being asked for again: how many times, and the wait now set. */
 interface Retry {
@@ -645,6 +765,19 @@ export class GameSocket {
   private readonly refused = new Set<string>()
   private readonly updateListeners = new Set<() => void>()
   private screen: HeldScreen | undefined
+  /** The user topics held, by topic. */
+  private readonly topics = new Map<UserTopic, HeldTopic>()
+  /** Which topic each outstanding topic subscribe was for, by its id. */
+  private readonly topicRequests = new Map<string, UserTopic>()
+  /**
+   * Counts outages: it moves when a connection that had opened is lost, or
+   * the first attempt since one opened fails, and holds through the retries.
+   */
+  private outages = 0
+  /** Whether the current outage has been counted. */
+  private outageCounted = false
+  /** Whether this connection opened after one was lost. */
+  private openedAfterGap = false
   /** The ids of screen-scope requests still unanswered on this connection. */
   private readonly scopeRequests = new Set<string>()
   /** Screen scopes wait for a new token: see the class comment. */
@@ -774,7 +907,7 @@ export class GameSocket {
       !this.open &&
       this.interrupted
     )
-      listener({ type: 'unreachable' })
+      listener({ type: 'unreachable', outage: this.outages })
     return () => {
       if (this.screen !== held) return
       this.screen = undefined
@@ -792,7 +925,11 @@ export class GameSocket {
     const held = this.screen
     if (held?.id != null && this.open) this.sendScope('unsubscribe', held)
     this.stopScope()
-    if (this.listeners.size === 0 && this.chatListeners.size === 0)
+    if (
+      this.listeners.size === 0 &&
+      this.chatListeners.size === 0 &&
+      this.topics.size === 0
+    )
       this.hangUp()
   }
 
@@ -819,7 +956,8 @@ export class GameSocket {
     if (
       this.screen != null ||
       this.listeners.size > 0 ||
-      this.chatListeners.size > 0
+      this.chatListeners.size > 0 ||
+      this.topics.size > 0
     )
       this.connect()
   }
@@ -840,6 +978,46 @@ export class GameSocket {
       this.chatListeners.delete(listener)
       this.closeIfIdle()
     }
+  }
+
+  /**
+   * Hears one user topic of the signed-in person. The first listener
+   * subscribes it, on this connection and each one after, and the socket
+   * stays open while any topic is held; the last one lets it go. A listener
+   * added during an outage hears `unreachable` at once.
+   */
+  onUserChanged(topic: UserTopic, listener: UserTopicListener): () => void {
+    if (this.closed) throw new Error('This game socket is closed')
+    if (this.socket == null && this.timer == null) this.endpoint()
+    let held = this.topics.get(topic)
+    if (held == null) {
+      held = { listeners: new Set(), id: undefined, unsupported: false }
+      this.topics.set(topic, held)
+      if (this.open) this.requestTopic(topic)
+    }
+    held.listeners.add(listener)
+    if (held.unsupported) listener({ type: 'unsupported' })
+    else if (!this.open && this.interrupted)
+      listener({ type: 'unreachable', outage: this.outages })
+    if (this.socket == null && this.timer == null) this.connect()
+    let listening = true
+    return () => {
+      if (!listening) return
+      listening = false
+      const current = this.topics.get(topic)
+      if (current == null) return
+      current.listeners.delete(listener)
+      if (current.listeners.size > 0) return
+      this.topics.delete(topic)
+      if (this.open && current.id == null && !current.unsupported)
+        this.send({ type: 'unsubscribe', topic, id: `c${this.nextId++}` })
+      this.closeIfIdle()
+    }
+  }
+
+  /** How many outages the socket has had: the current one's number. */
+  get outage(): number {
+    return this.outages
   }
 
   /**
@@ -872,6 +1050,8 @@ export class GameSocket {
     this.refused.clear()
     this.updateListeners.clear()
     this.screen = undefined
+    this.topics.clear()
+    this.topicRequests.clear()
     this.chatListeners.clear()
     this.typing.clear()
     if (socket != null) {
@@ -893,15 +1073,18 @@ export class GameSocket {
     if (
       (this.scopeAsked() && this.screen != null) ||
       this.listeners.size > 0 ||
-      this.chatListeners.size > 0
+      this.chatListeners.size > 0 ||
+      this.topics.size > 0
     )
       return
     if (this.timer != null) this.clearTimer(this.timer)
     this.timer = undefined
     this.stopRetries()
     this.requests.clear()
+    this.topicRequests.clear()
     this.typing.clear()
     this.interrupted = false
+    this.outageCounted = false
     this.attempt = 0
     const socket = this.socket
     this.socket = undefined
@@ -940,7 +1123,16 @@ export class GameSocket {
       this.requests.clear()
       this.scopeRequests.clear()
       this.typing.clear()
+      this.outageCounted = false
+      this.openedAfterGap = this.interrupted
+      this.topicRequests.clear()
       this.setOpen(true)
+      // Each connection asks again: an older worker that refused a topic
+      // may be gone, after a rolling deploy, from the one answering now.
+      for (const [topic, held] of [...this.topics]) {
+        held.unsupported = false
+        this.requestTopic(topic)
+      }
       for (const gameId of this.listeners.keys())
         if (!this.refused.has(gameId)) this.request('subscribe', gameId)
       if (this.screen != null && this.scopeAsked())
@@ -977,9 +1169,14 @@ export class GameSocket {
     if (
       !this.scopeAsked() &&
       this.listeners.size === 0 &&
-      this.chatListeners.size === 0
+      this.chatListeners.size === 0 &&
+      this.topics.size === 0
     )
       return
+    if (!this.outageCounted) {
+      this.outageCounted = true
+      this.outages++
+    }
     const delay =
       RECONNECT_DELAYS_MS[
         Math.min(this.attempt, RECONNECT_DELAYS_MS.length - 1)
@@ -989,7 +1186,9 @@ export class GameSocket {
       this.connect()
     }, delay)
     // The screen does not wait out the retry for its acknowledgement.
-    if (this.scopeAsked()) this.screen?.listener({ type: 'unreachable' })
+    if (this.scopeAsked())
+      this.screen?.listener({ type: 'unreachable', outage: this.outages })
+    this.emitTopics({ type: 'unreachable', outage: this.outages })
   }
 
   /** Lets go of the socket; the scope's acknowledgement goes with it. */
@@ -1063,9 +1262,35 @@ export class GameSocket {
     this.send(
       scope.scope === 'event'
         ? { type, scope: 'event', gameId: scope.gameId, id, protocol }
-        : { type, scope: scope.scope, id, protocol }
+        : scope.scope === 'team'
+          ? { type, scope: 'team', teamId: scope.teamId, id, protocol }
+          : scope.scope === 'group'
+            ? {
+                type,
+                scope: 'group',
+                kind: scope.kind,
+                groupId: scope.id,
+                id,
+                protocol
+              }
+            : { type, scope: scope.scope, id, protocol }
     )
     return id
+  }
+
+  private requestTopic(topic: UserTopic): void {
+    const held = this.topics.get(topic)
+    if (held == null || held.unsupported || !this.open) return
+    const id = `c${this.nextId++}`
+    held.id = id
+    this.topicRequests.set(id, topic)
+    this.send({ type: 'subscribe', topic, id, protocol: GAME_SOCKET_PROTOCOL })
+  }
+
+  private emitTopics(event: UserTopicEvent, only?: UserTopic): void {
+    for (const [topic, held] of [...this.topics])
+      if (only == null || only === topic)
+        for (const listener of [...held.listeners]) listener(event)
   }
 
   private send(frame: GameSocketRequest): void {
@@ -1099,6 +1324,26 @@ export class GameSocket {
     }
     if (head.type === 'typed') {
       if (head.id != null) this.typing.delete(head.id)
+      return
+    }
+    // A user topic's own frames, before anything a game listener hears.
+    if (head.id != null && this.topicRequests.has(head.id)) {
+      this.topicAnswered(head.id, raw)
+      return
+    }
+    if (head.type === 'userChanged') {
+      try {
+        const { topic } = asUserChanged(raw)
+        this.emitTopics({ type: 'changed' }, topic)
+      } catch {}
+      return
+    }
+    if (head.type === 'userResync') {
+      try {
+        const { topics } = asUserResync(raw)
+        for (const topic of topics)
+          if (topic != null) this.emitTopics({ type: 'resync' }, topic)
+      } catch {}
       return
     }
     // A screen scope's own frames, before anything a game listener hears.
@@ -1181,6 +1426,45 @@ export class GameSocket {
     for (const listener of [...this.updateListeners]) listener()
   }
 
+  /** The answer to a topic subscribe: held, or refused by an older server. */
+  private topicAnswered(id: string, raw: unknown): void {
+    const topic = this.topicRequests.get(id)
+    this.topicRequests.delete(id)
+    if (topic == null) return
+    const held = this.topics.get(topic)
+    const type = (raw as { type?: unknown }).type
+    // Let go while it was being asked for: the server holds it now.
+    if (held == null) {
+      if (type === 'subscribed' && this.open)
+        this.send({ type: 'unsubscribe', topic, id: `c${this.nextId++}` })
+      return
+    }
+    if (held.id !== id) return
+    held.id = undefined
+    if (type === 'subscribed') {
+      const event: UserTopicEvent = {
+        type: 'subscribed',
+        afterGap: this.openedAfterGap
+      }
+      for (const listener of [...held.listeners]) listener(event)
+      return
+    }
+    if (type !== 'error') return
+    let error: ReturnType<typeof asErrorReply>
+    try {
+      error = asErrorReply(raw)
+    } catch {
+      return
+    }
+    // A server older than protocol 6 reads no topic frame.
+    if (error.code === 'malformed' || error.reason === 'updateRequired') {
+      held.unsupported = true
+      for (const listener of [...held.listeners])
+        listener({ type: 'unsupported' })
+    }
+    // Its own failure: asked again on the next connection.
+  }
+
   /** The answer to a scope request: only the held scope's subscribe counts. */
   private scopeAnswered(id: string, raw: unknown): void {
     this.scopeRequests.delete(id)
@@ -1219,6 +1503,8 @@ export class GameSocket {
     const scope = this.screen?.scope
     if (scope?.scope !== changed.scope) return
     if (scope.scope === 'event' && scope.gameId !== changed.gameId) return
+    if (scope.scope === 'team' && scope.teamId !== changed.teamId) return
+    if (scope.scope === 'group' && scope.id !== changed.groupId) return
     this.screen?.listener({
       type: 'changed',
       ...(changed.gameId != null ? { gameId: changed.gameId } : {}),

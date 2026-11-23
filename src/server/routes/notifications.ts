@@ -13,6 +13,7 @@ import {
   markViewed,
   notificationDetail
 } from '../notifications/inbox'
+import { publishUserNotice } from '../socket/userNotices'
 
 export function notificationRoutes(
   db: Kysely<Database>,
@@ -60,12 +61,20 @@ export function notificationRoutes(
       res.on('close', () => {
         if (!res.writableFinished) gone.abort()
       })
-      const { hasPending } = await hasPendingNotifications(
+      const { hasPending, nextExpiry } = await hasPendingNotifications(
         db,
         req.actor,
         clock,
         gone.signal
       )
+      // When an item runs out with nothing written, the socket says so.
+      if (nextExpiry != null)
+        await publishUserNotice(
+          db,
+          [req.actor.userId],
+          'badge',
+          new Date(nextExpiry)
+        )
       res.json({ hasPending })
     })
   )
