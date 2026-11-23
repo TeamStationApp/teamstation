@@ -16,8 +16,10 @@ import { webSettings } from './web-build-settings.mjs'
 // `league` push request, the League management switch and its sender, the
 // push routes' `leagueManagement`, the umpire schedule opening on a game,
 // the client, OpenAPI, the API-key family, account deletion and merging,
-// and the migration, from the suites that exercise them (and, as later
-// milestones add them, the app's switch, screen and notices). Each file the
+// the migration, and the app's League management switch (stored, read,
+// registered, asked for past the asked record, and in Account), from the
+// suites that exercise them (and, as a later milestone adds them, the app's
+// screen and notices). Each file the
 // work adds must have 95% of its lines covered and each file it edits 95% of
 // the lines it changes, read from `TS_COVERAGE_BASE` (origin/develop unless
 // given) to HEAD, the repository's combined bar. `--screens` runs only the
@@ -52,10 +54,22 @@ const specs = [
   'src/migrate/runner.integration.test.ts',
   // Starts `index.ts` with background jobs on: the digest sweep and the
   // umpire routes' push.
-  'src/server/serverStart.integration.test.ts'
+  'src/server/serverStart.integration.test.ts',
+  // The League management switch on the device, its registrations and its ask.
+  'src/app/platform/notificationSwitches.test.ts',
+  'src/app/platform/pushDevice.test.ts',
+  'src/app/platform/pushDevice.native.test.ts',
+  'src/app/push/notificationAsk.test.ts',
+  'src/app/locales/strings.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
-const screens = [].filter(
+const screens = [
+  // The ask as the shell draws it, and as App's triggers start it.
+  'src/app/push/NotificationAskHost.test.tsx',
+  'src/app/App.notificationAsk.test.tsx',
+  // Account → Notifications' three switches.
+  'src/app/screens/AccountScreen.test.tsx'
+].filter(
   file =>
     existsSync(file) &&
     (process.env.TS_UMPIRE_NOTIFY_SCREENS == null ||
@@ -96,7 +110,15 @@ const edited = [
   'src/server/routes/umpires.ts',
   'src/server/umpires/assignments.ts',
   'src/server/umpires/openApi.ts',
-  'src/server/umpires/schedule.ts'
+  'src/server/umpires/schedule.ts',
+  'src/app/platform/notificationSwitches.ts',
+  'src/app/platform/pushState.ts',
+  'src/app/platform/pushDevice.ts',
+  'src/app/platform/pushDevice.native.ts',
+  'src/app/push/notificationAsk.ts',
+  'src/app/push/NotificationAskHost.tsx',
+  'src/app/screens/AccountScreen.tsx',
+  'src/app/locales/en_US.ts'
 ]
 
 if (!screensOnly) {

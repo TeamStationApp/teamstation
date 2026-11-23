@@ -679,6 +679,7 @@ export const enUs = {
   account_notifications: 'Notifications',
   account_notifications_messages: 'Notify for direct messages and mentions',
   account_notifications_rsvp_events: 'Notify for RSVPed events',
+  account_notifications_league_management: 'Notify for league management',
   account_notifications_blocked: 'Notifications are blocked by this device',
   account_notifications_allow: 'Allow notifications on this device',
   notifications_ask_title:

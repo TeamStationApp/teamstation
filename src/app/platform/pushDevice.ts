@@ -107,7 +107,8 @@ export async function registerBrowser(
     address: JSON.stringify(subscription.toJSON()),
     environment: 'production',
     messages: switches.messages,
-    rsvpEvents: switches.rsvpEvents
+    rsvpEvents: switches.rsvpEvents,
+    leagueManagement: switches.leagueManagement
   })
 }
 

@@ -5,6 +5,7 @@ import type { PushRegistration, PushSwitches } from '../../common/api'
 import {
   type NotificationSwitches,
   readSwitches,
+  switchesKey,
   writeSwitches
 } from './notificationSwitches'
 import {
@@ -22,8 +23,13 @@ import type { UserSettingStorage } from './userSetting'
 
 type Permission = 'granted' | 'denied' | 'default'
 
-const OFF: NotificationSwitches = { messages: false, rsvpEvents: false }
-const ON: NotificationSwitches = { messages: true, rsvpEvents: false }
+const OFF: NotificationSwitches = {
+  messages: false,
+  rsvpEvents: false,
+  leagueManagement: false
+}
+const ON: NotificationSwitches = { ...OFF, messages: true }
+const BOTH: NotificationSwitches = { ...OFF, messages: true, rsvpEvents: true }
 /** The signed-in person. */
 const U = 'usr_1'
 
@@ -280,7 +286,8 @@ describe('notifications in a browser', function () {
         }),
         environment: 'production',
         messages: true,
-        rsvpEvents: false
+        rsvpEvents: false,
+        leagueManagement: false
       }
     ])
     // Signed in again, the same subscription is posted again, with the
@@ -419,7 +426,7 @@ describe('notifications in a browser', function () {
     const api = notification('default', 'granted')
     const device = await browserDevice(
       { notification: () => api, workers: () => workers() },
-      { messages: true, rsvpEvents: true }
+      BOTH
     )
     const on = client()
     expect(await askWhenWanted(device, on, U)).equals('prompt')
@@ -440,15 +447,41 @@ describe('notifications in a browser', function () {
     expect(await device.switches(U)).deep.equals(OFF)
     expect(
       await device.setSwitches(client(), U, { rsvpEvents: true })
-    ).deep.equals({ messages: false, rsvpEvents: true })
+    ).deep.equals({ ...OFF, rsvpEvents: true })
     expect(
       await device.setSwitches(client(), U, { messages: true })
-    ).deep.equals({ messages: true, rsvpEvents: true })
-    expect(await readSwitches(U, storage)).deep.equals({
-      messages: true,
-      rsvpEvents: true
-    })
+    ).deep.equals(BOTH)
+    expect(await readSwitches(U, storage)).deep.equals(BOTH)
+    // League management is a switch of its own, sent with the others.
+    expect(
+      await device.setSwitches(client(), U, { leagueManagement: true })
+    ).deep.equals({ ...BOTH, leagueManagement: true })
     expect(await device.switches('usr_2')).deep.equals(OFF)
+  })
+
+  it('registers League management as stored: on from an earlier build’s pair, off once turned off', async function () {
+    const storage = memory()
+    // Kept by a build before League management with a switch on: it reads on.
+    await storage.setItem(
+      switchesKey(U),
+      '{"messages":true,"rsvpEvents":false}'
+    )
+    const api = client()
+    const device = await browserDevice(
+      {
+        notification: () => notification('granted', 'granted'),
+        workers: () => workers()
+      },
+      undefined,
+      storage
+    )
+    await device.sync(api, U)
+    expect(api.posted.at(-1)).deep.include({ ...ON, leagueManagement: true })
+    await device.setSwitches(api, U, { leagueManagement: false })
+    expect(api.patched).deep.equals([['psh_1', ON]])
+    // Every register after it posts it off.
+    await device.sync(api, U)
+    expect(api.posted.at(-1)).deep.include(ON)
   })
 
   it('patches its own registration when a switch changes, and posts again when it has none or the server lost it', async function () {
@@ -465,9 +498,8 @@ describe('notifications in a browser', function () {
     ])
     expect(api.patched).deep.equals([])
     // Registered: the registration takes the switches as stored.
-    const both = { messages: true, rsvpEvents: true }
     await device.setSwitches(api, U, { rsvpEvents: true })
-    expect(api.patched).deep.equals([['psh_1', both]])
+    expect(api.patched).deep.equals([['psh_1', BOTH]])
     expect(api.posted).lengthOf(1)
     // The server no longer has it: posted again with the switches.
     api.updatePush = async () => {
@@ -529,10 +561,10 @@ describe('notifications in a browser', function () {
       })
     }
     api.registerPush = async registration => {
-      const { messages, rsvpEvents } = registration
+      const { messages, rsvpEvents, leagueManagement = true } = registration
       held.order.push(`post ${String(messages)} ${String(rsvpEvents)}`)
       await answer()
-      held.server = { messages, rsvpEvents }
+      held.server = { messages, rsvpEvents, leagueManagement }
       return 'psh_1'
     }
     api.updatePush = async (id, change) => {
@@ -541,7 +573,7 @@ describe('notifications in a browser', function () {
       )
       await answer()
       held.server = { ...held.server!, ...change }
-      return { leagueManagement: true, ...held.server }
+      return held.server
     }
     return held
   }
@@ -588,7 +620,7 @@ describe('notifications in a browser', function () {
         notification: () => notification('granted', 'granted'),
         workers: () => workers()
       },
-      { messages: true, rsvpEvents: true },
+      BOTH,
       storage
     )
     const syncing = device.sync(api, U)
@@ -611,7 +643,7 @@ describe('notifications in a browser', function () {
       'patch true false',
       'patch true false'
     ])
-    expect(api.server).deep.equals({ messages: true, rsvpEvents: false })
+    expect(api.server).deep.equals(ON)
     expect(await readSwitches(U, storage)).deep.equals(api.server)
   })
 
@@ -672,7 +704,7 @@ describe('notifications in a browser', function () {
     expect(api.posted).lengthOf(1)
     offline = false
     expect(await askWhenWanted(device, api, U)).equals('granted')
-    expect(api.posted[1]).deep.include({ messages: true, rsvpEvents: true })
+    expect(api.posted[1]).deep.include(BOTH)
     // Caught up, a foreground posts nothing more.
     await askWhenWanted(device, api, U)
     expect(api.posted).lengthOf(2)
@@ -683,7 +715,7 @@ describe('notifications in a browser', function () {
     const api = client()
     const device = await browserDevice(
       { notification: () => browser, workers: () => workers() },
-      { messages: true, rsvpEvents: true }
+      BOTH
     )
     await device.sync(api, U)
     expect(await askWhenWanted(device, api, U)).equals('denied')
@@ -707,14 +739,18 @@ describe('notifications in a browser', function () {
     }
     const tabClient = (): ReturnType<typeof client> => {
       const api = client()
-      api.registerPush = async ({ messages, rsvpEvents }) => {
-        server.switches = { messages, rsvpEvents }
+      api.registerPush = async ({
+        messages,
+        rsvpEvents,
+        leagueManagement = true
+      }) => {
+        server.switches = { messages, rsvpEvents, leagueManagement }
         server.posted.push(server.switches)
         return 'psh_1'
       }
       api.updatePush = async (id, change) => {
         server.switches = { ...server.switches, ...change }
-        return { leagueManagement: true, ...server.switches }
+        return server.switches
       }
       return api
     }
@@ -722,7 +758,7 @@ describe('notifications in a browser', function () {
       notification: () => notification('granted', 'granted'),
       workers: () => workers()
     })
-    await writeSwitches(U, { messages: true, rsvpEvents: true }, storage)
+    await writeSwitches(U, BOTH, storage)
     const a = await browserDevice(browser(), undefined, storage)
     const b = await browserDevice(browser(), undefined, storage)
     const inA = tabClient()
@@ -744,7 +780,7 @@ describe('notifications in a browser', function () {
     expect(server.posted.length).equals(posts)
     await askWhenWanted(b, inB, U)
     expect(server.posted.slice(posts)).deep.equals([
-      { messages: false, rsvpEvents: true }
+      { ...OFF, rsvpEvents: true }
     ])
   })
 

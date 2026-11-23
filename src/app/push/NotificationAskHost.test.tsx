@@ -30,8 +30,10 @@ import {
   ModalPresenceProvider
 } from '../components/modalPresence'
 import {
+  ALL_ON,
   type NotificationSwitches,
   readAsked,
+  SWITCHES_OFF,
   writeAsked
 } from '../platform/notificationSwitches'
 import type { PushClient, PushState } from '../platform/pushState'
@@ -89,14 +91,14 @@ function stubDevice(
       await reading
       return permission
     },
-    switches: async () => ({ messages: false, rsvpEvents: false }),
+    switches: async () => SWITCHES_OFF,
     setSwitches: async (
       _client: PushClient,
       _user: string,
       change: Partial<NotificationSwitches>
     ) => {
       device.switched.push(change)
-      return { messages: false, rsvpEvents: false, ...change }
+      return { ...SWITCHES_OFF, ...change }
     },
     enable: async () => {
       device.enabled++
@@ -441,14 +443,14 @@ describe('the notification ask over the app', function () {
     expect(await readAsked(U, storage)).equals(true)
   })
 
-  it('on Continue closes at once, turns both on and asks the system', async function () {
+  it('on Continue closes at once, turns all three on and asks the system', async function () {
     const device = stubDevice('prompt')
     const storage = memory()
     await mount(device, storage)
     await request('rsvp')
     await press('continue')
     expect(sheet()).equals(null)
-    expect(device.switched).deep.equals([{ messages: true, rsvpEvents: true }])
+    expect(device.switched).deep.equals([ALL_ON])
     expect(device.enabled).equals(1)
     expect(await readAsked(U, storage)).equals(true)
   })
@@ -465,7 +467,7 @@ describe('the notification ask over the app', function () {
     await press('continue')
     expect(opened).equals(1)
     expect(sheet()).equals(null)
-    expect(device.switched).deep.equals([{ messages: true, rsvpEvents: true }])
+    expect(device.switched).deep.equals([ALL_ON])
     expect(device.enabled).equals(0)
   })
 
@@ -479,19 +481,113 @@ describe('the notification ask over the app', function () {
     expect(
       document.querySelector('[data-testid="notification-ask-continue"]')
     ).equals(null)
-    expect(device.switched).deep.equals([{ messages: true, rsvpEvents: true }])
+    expect(device.switched).deep.equals([ALL_ON])
     await press('done')
     expect(sheet()).equals(null)
   })
 
-  it('turns both on quietly on a device allowed already', async function () {
+  it('turns all three on quietly on a device allowed already', async function () {
     const device = stubDevice('granted')
     const storage = memory()
     await mount(device, storage)
     await request('messaging')
     expect(sheet()).equals(null)
-    expect(device.switched).deep.equals([{ messages: true, rsvpEvents: true }])
+    expect(device.switched).deep.equals([ALL_ON])
     expect(await readAsked(U, storage)).equals(true)
+  })
+
+  describe('a League management request', function () {
+    const LEAGUE = [{ leagueManagement: true }]
+
+    it('asks with the existing words, and on a device never asked turns all three on and keeps the ask', async function () {
+      const device = stubDevice('prompt')
+      const storage = memory()
+      await mount(device, storage)
+      await request('leagueManagement')
+      expect(sheet()!.textContent).contains(TITLE)
+      await press('continue')
+      expect(sheet()).equals(null)
+      expect(device.switched).deep.equals([ALL_ON])
+      expect(device.enabled).equals(1)
+      expect(await readAsked(U, storage)).equals(true)
+      // Allowed already on a device never asked: the same, with no question.
+      const granted = stubDevice('granted')
+      const fresh = memory()
+      await act(async () => root?.unmount())
+      await mount(granted, fresh)
+      await request('leagueManagement')
+      expect(sheet()).equals(null)
+      expect(granted.switched).deep.equals([ALL_ON])
+      expect(await readAsked(U, fresh)).equals(true)
+    })
+
+    it('asks again on a device asked before, turning on only League management, while an RSVP request stays silent', async function () {
+      const device = stubDevice('prompt')
+      const storage = memory()
+      await writeAsked(U, storage)
+      await mount(device, storage)
+      await request('rsvp')
+      expect(sheet()).equals(null)
+      await request('leagueManagement')
+      expect(sheet()!.textContent).contains(TITLE)
+      await press('continue')
+      expect(device.switched).deep.equals(LEAGUE)
+      expect(device.enabled).equals(1)
+      // Not Now changes nothing.
+      await request('leagueManagement')
+      await press('not-now')
+      expect(device.switched).deep.equals(LEAGUE)
+      expect(device.enabled).equals(1)
+    })
+
+    it('turns on only League management with no question on a device asked before and allowed', async function () {
+      const device = stubDevice('granted')
+      const storage = memory()
+      await writeAsked(U, storage)
+      await mount(device, storage)
+      await request('leagueManagement')
+      expect(sheet()).equals(null)
+      expect(device.switched).deep.equals(LEAGUE)
+      expect(device.enabled).equals(0)
+    })
+
+    it('takes the refused path on a device asked before and refused', async function () {
+      const device = stubDevice('denied')
+      const storage = memory()
+      await writeAsked(U, storage)
+      await mount(device, storage, {}, async () => false)
+      await request('leagueManagement')
+      await press('continue')
+      expect(
+        document.querySelector('[data-testid="notification-ask-hint"]')
+          ?.textContent
+      ).equals(HINT)
+      expect(device.switched).deep.equals(LEAGUE)
+    })
+
+    it('waits for a modal, and again for one that came up while it was worked out', async function () {
+      const draw = await mount(stubDevice('prompt'), memory(), { held: true })
+      await request('leagueManagement')
+      expect(sheet()).equals(null)
+      await draw({ held: false })
+      expect(sheet()).not.equals(null)
+
+      await act(async () => root?.unmount())
+      let read!: () => void
+      const reading = new Promise<void>(resolve => {
+        read = resolve
+      })
+      const again = await mount(stubDevice('prompt', reading), memory())
+      await request('leagueManagement')
+      await again({ choices: true })
+      await act(async () => {
+        read()
+      })
+      await settle()
+      expect(sheet(), 'never over the sheet of choices').equals(null)
+      await again({ choices: false })
+      expect(sheet()).not.equals(null)
+    })
   })
 
   it('does nothing on a device that cannot notify, nor for someone asked already', async function () {

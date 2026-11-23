@@ -72,6 +72,7 @@ const API = (
 ).replace(/\/+$/, '')
 const MESSAGES = 'Notify for direct messages and mentions'
 const RSVP_EVENTS = 'Notify for RSVPed events'
+const LEAGUE_MANAGEMENT = 'Notify for league management'
 const BLOCKED = 'Notifications are blocked by this device'
 const ALLOW = 'Allow notifications on this device'
 const WITHIN_MS = 5000
@@ -90,7 +91,8 @@ const LOGS = {
   n3: 'web-dm-mention-notifications.log',
   /** N3 steps 8–9, the seen-message steps, on their own. */
   seen: 'web-seen-guard-and-clear.log',
-  n4: 'web-reminder-tap.log'
+  n4: 'web-reminder-tap.log',
+  n1b: 'web-league-management-switch.log'
 }
 
 function required(name: string): string {
@@ -605,9 +607,12 @@ describe('notifications in the finished web app', function () {
         (key: string) => window.localStorage.getItem(key),
         switchesKey(p1.userId)
       )
+      const reads: string[] = []
+      for (const label of [MESSAGES, RSVP_EVENTS, LEAGUE_MANAGEMENT])
+        reads.push(`${label} ${(await checked(device, label)) ? 'on' : 'off'}`)
       await line(
         'n1',
-        `$ ${device.name} ${when}: ${MESSAGES} ${(await checked(device, MESSAGES)) ? 'on' : 'off'}; localStorage ${kept ?? '(nothing)'}`
+        `$ ${device.name} ${when}: ${reads.join(', ')}; localStorage ${kept ?? '(nothing)'}`
       )
     }
     for (const device of [a, b]) {
@@ -639,6 +644,12 @@ describe('notifications in the finished web app', function () {
     )
     await line('n1', `$ A sections: ${order.join(' > ')}`)
     await line('n1', `$ A and B are two browsers, both signed in as P1`)
+    // Three switches, all off in a browser never asked.
+    for (const device of [a, b])
+      for (const label of [MESSAGES, RSVP_EVENTS, LEAGUE_MANAGEMENT])
+        expect(await checked(device, label), `${device.name} ${label}`).equals(
+          false
+        )
     await state(a, 'opened')
     await state(b, 'opened')
 
@@ -658,6 +669,7 @@ describe('notifications in the finished web app', function () {
     await account(a)
     expect(await checked(a, MESSAGES)).equals(true)
     expect(await checked(a, RSVP_EVENTS)).equals(false)
+    expect(await checked(a, LEAGUE_MANAGEMENT)).equals(false)
     await state(a, 'after a reload')
 
     // Nothing is kept for the account: there is no account-wide table.
@@ -698,7 +710,7 @@ describe('notifications in the finished web app', function () {
     expect(kept.asked).not.equals(null)
     expect(kept.switches).equals(null)
     await askLine(
-      `$ web N1.7: Not Now: ${askedKey(fresh.userId)} ${kept.asked}; switches ${kept.switches ?? '(none, both off)'}`
+      `$ web N1.7: Not Now: ${askedKey(fresh.userId)} ${kept.asked}; switches ${kept.switches ?? '(none, all off)'}`
     )
     await tab(c, 'Home')
     await tab(c, 'Chat')
@@ -757,17 +769,29 @@ describe('notifications in the finished web app', function () {
       async () =>
         await db
           .selectFrom('push_registrations')
-          .select(['id', 'platform', 'address_key', 'messages', 'rsvp_events'])
+          .select([
+            'id',
+            'platform',
+            'address_key',
+            'messages',
+            'rsvp_events',
+            'league_management'
+          ])
           .where('session_id', '=', phone.sessionId)
           .executeTakeFirst(),
       30000
     )
     expect(row.platform).equals('web')
-    // Registered with this browser's own switches.
-    expect([row.messages, row.rsvp_events]).deep.equals([false, true])
+    // Registered with this browser's own switches, League management off
+    // as kept here.
+    expect([row.messages, row.rsvp_events, row.league_management]).deep.equals([
+      false,
+      true,
+      false
+    ])
     endpointHost = new URL(row.address_key).host
     say(
-      `$ allowed, then ${ALLOW}: registration ${row.platform} at ${new URL(row.address_key).host}, messages ${String(row.messages)}, rsvp_events ${String(row.rsvp_events)}`
+      `$ allowed, then ${ALLOW}: registration ${row.platform} at ${new URL(row.address_key).host}, messages ${String(row.messages)}, rsvp_events ${String(row.rsvp_events)}, league_management ${String(row.league_management)}`
     )
     await until(
       'the blocked line to go',
@@ -776,7 +800,7 @@ describe('notifications in the finished web app', function () {
     control = await workerControl(phone)
     await measuredWorker(control)
 
-    // 6. Refused at the browser, the ask's Continue turns both switches on
+    // 6. Refused at the browser, the ask's Continue turns all three switches on
     // and, with no settings page a site can open, says where to allow them.
     const refusing = seed.Es
     const r = await open('R', refusing, 'denied')
@@ -793,7 +817,9 @@ describe('notifications in the finished web app', function () {
     )
     expect(hint).equals(ASK_WEB_BLOCKED)
     const refused = await keptFor(r, refusing.userId)
-    expect(refused.switches).equals('{"messages":true,"rsvpEvents":true}')
+    expect(refused.switches).equals(
+      '{"messages":true,"rsvpEvents":true,"leagueManagement":true}'
+    )
     expect(refused.asked).not.equals(null)
     await askLine(
       `$ web N2.6: ${refusing.name}, notifications denied in this browser, taps the Chat tab, then Continue: "${hint}"; switches ${refused.switches}`
@@ -1231,8 +1257,8 @@ describe('notifications in the finished web app', function () {
       `$ web N4.7: P2 (${p2.name}) taps the reminder (/games/${eventId}) and the DM notification (/chat/${dmId}): no ask, nothing kept`
     )
 
-    // 8. Allowed already, an RSVP answered in the app turns both switches on
-    // quietly and tells the registration.
+    // 8. Allowed already, an RSVP answered in the app turns all three
+    // switches on quietly and tells the registration.
     await phone.page.goto(`${WEB}/games/${eventId}`, {
       waitUntil: 'networkidle0'
     })
@@ -1240,27 +1266,36 @@ describe('notifications in the finished web app', function () {
     expect(await askAfter(phone, 3000), 'no question when allowed').equals(
       false
     )
-    const quiet = await until('P2’s switches both on', async () => {
+    const quiet = await until('P2’s switches all on', async () => {
       const now = await keptFor(phone, p2.userId)
       return now.asked != null &&
-        now.switches === '{"messages":true,"rsvpEvents":true}'
+        now.switches ===
+          '{"messages":true,"rsvpEvents":true,"leagueManagement":true}'
         ? now
         : undefined
     })
-    const quietRow = await until('P2’s registration with both on', async () => {
-      const row = await db
-        .selectFrom('push_registrations')
-        .select(['id', 'messages', 'rsvp_events'])
-        .where('session_id', '=', phone.sessionId)
-        .executeTakeFirst()
-      return row?.messages === true && row.rsvp_events ? row : undefined
-    })
+    const quietRow = await until(
+      'P2’s registration with all three on',
+      async () => {
+        const row = await db
+          .selectFrom('push_registrations')
+          .select(['id', 'messages', 'rsvp_events', 'league_management'])
+          .where('session_id', '=', phone.sessionId)
+          .executeTakeFirst()
+        return row?.messages === true &&
+          row.rsvp_events &&
+          row.league_management
+          ? row
+          : undefined
+      }
+    )
     await askLine(
-      `$ web N4.8: P2, notifications allowed, answers Maybe in the RSVP sheet and closes it: no ask; switches ${quiet.switches}; push_registrations ${quietRow.id} messages ${String(quietRow.messages)}, rsvp_events ${String(quietRow.rsvp_events)}`
+      `$ web N4.8: P2, notifications allowed, answers Maybe in the RSVP sheet and closes it: no ask; switches ${quiet.switches}; push_registrations ${quietRow.id} messages ${String(quietRow.messages)}, rsvp_events ${String(quietRow.rsvp_events)}, league_management ${String(quietRow.league_management)}`
     )
 
     // 9. Not decided yet, an RSVP answered in the app asks once the sheet
-    // has closed; Continue turns both on, asks the browser, and registers.
+    // has closed; Continue turns all three on, asks the browser, and
+    // registers.
     const rsvper = seed.D
     const { token: rsvperToken, sessionId: rsvperSession } =
       await createSession(db, rsvper.userId, 'notifications-e2e')
@@ -1286,29 +1321,129 @@ describe('notifications in the finished web app', function () {
     await allow(phone.context, 'granted')
     await answerAsk(phone, 'continue')
     const row = await until(
-      `${rsvper.name}’s registration with both on`,
+      `${rsvper.name}’s registration with all three on`,
       async () => {
         const found = await db
           .selectFrom('push_registrations')
-          .select(['id', 'platform', 'messages', 'rsvp_events'])
+          .select([
+            'id',
+            'platform',
+            'messages',
+            'rsvp_events',
+            'league_management'
+          ])
           .where('session_id', '=', rsvperSession)
           .executeTakeFirst()
-        return found?.messages === true && found.rsvp_events ? found : undefined
+        return found?.messages === true &&
+          found.rsvp_events &&
+          found.league_management
+          ? found
+          : undefined
       },
       60000
     )
     const continued = await keptFor(phone, rsvper.userId)
-    expect(continued.switches).equals('{"messages":true,"rsvpEvents":true}')
+    expect(continued.switches).equals(
+      '{"messages":true,"rsvpEvents":true,"leagueManagement":true}'
+    )
     expect(continued.asked).not.equals(null)
     // Up, busy, under the browser's question, and gone once it is answered.
     await phone.page.waitForSelector('[data-testid="notification-ask"]', {
       hidden: true
     })
     await askLine(
-      `$ web N4.9: Continue, the browser allows: switches ${continued.switches}; push_registrations ${row.id} ${row.platform} messages ${String(row.messages)}, rsvp_events ${String(row.rsvp_events)}`
+      `$ web N4.9: Continue, the browser allows: switches ${continued.switches}; push_registrations ${row.id} ${row.platform} messages ${String(row.messages)}, rsvp_events ${String(row.rsvp_events)}, league_management ${String(row.league_management)}`
     )
     await rsvpInApp(phone, rsvper.userId, 2)
     expect(await askAfter(phone, 3000), 'asked again').equals(false)
     await askLine(`$ web N4.9: another answer (No): never asked again`)
+  })
+
+  it('N1b: League management turned off and on in Account changes only its own column', async () => {
+    // P2 again in the browser that is pushed to, where N4.8 turned all three
+    // of P2's switches on.
+    const { token, sessionId } = await createSession(
+      db,
+      p2.userId,
+      'notifications-e2e'
+    )
+    await phone.context.setCookie({
+      name: SESSION_COOKIE,
+      value: token,
+      domain: '127.0.0.1',
+      path: '/',
+      httpOnly: true
+    })
+    await allow(phone.context, 'granted')
+    const p2Phone: Device = { ...phone, sessionId }
+    await account(p2Phone)
+    await line(
+      'n1b',
+      `$ P2 (${p2.name}) signed in again in the pushed browser, opens Account`
+    )
+    const row = async (
+      what: string,
+      done: (found: {
+        messages: boolean
+        rsvp_events: boolean
+        league_management: boolean
+      }) => boolean
+    ): Promise<{
+      id: string
+      messages: boolean
+      rsvp_events: boolean
+      league_management: boolean
+    }> =>
+      await until(
+        what,
+        async () => {
+          const found = await db
+            .selectFrom('push_registrations')
+            .select(['id', 'messages', 'rsvp_events', 'league_management'])
+            .where('session_id', '=', sessionId)
+            .executeTakeFirst()
+          return found != null && done(found) ? found : undefined
+        },
+        60000
+      )
+    const say = async (
+      when: string,
+      found: Awaited<ReturnType<typeof row>>
+    ): Promise<void> => {
+      await line(
+        'n1b',
+        `$ ${when}: push_registrations ${found.id} messages ${String(found.messages)}, rsvp_events ${String(found.rsvp_events)}, league_management ${String(found.league_management)}; localStorage ${(await keptFor(p2Phone, p2.userId)).switches ?? '(nothing)'}`
+      )
+    }
+    for (const label of [MESSAGES, RSVP_EVENTS, LEAGUE_MANAGEMENT])
+      expect(await checked(p2Phone, label), label).equals(true)
+    await say(
+      'opened, all three on',
+      await row(
+        'P2’s registration with all three on',
+        found => found.messages && found.rsvp_events && found.league_management
+      )
+    )
+
+    await flip(p2Phone, LEAGUE_MANAGEMENT)
+    await follows(p2Phone, LEAGUE_MANAGEMENT, false)
+    const off = await row(
+      'League management off on the registration',
+      found => !found.league_management
+    )
+    expect([off.messages, off.rsvp_events]).deep.equals([true, true])
+    expect(await checked(p2Phone, MESSAGES)).equals(true)
+    expect(await checked(p2Phone, RSVP_EVENTS)).equals(true)
+    await say(`${LEAGUE_MANAGEMENT} off`, off)
+
+    await flip(p2Phone, LEAGUE_MANAGEMENT)
+    await follows(p2Phone, LEAGUE_MANAGEMENT, true)
+    const on = await row(
+      'League management on again on the registration',
+      found => found.league_management
+    )
+    expect([on.messages, on.rsvp_events]).deep.equals([true, true])
+    expect(on.id).equals(off.id)
+    await say(`${LEAGUE_MANAGEMENT} on again`, on)
   })
 })

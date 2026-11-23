@@ -2,25 +2,35 @@ import { deviceStorage } from './deviceStorage'
 import type { UserSettingStorage } from './userSetting'
 
 /**
- * This device's two notification switches for one person: direct messages
- * and mentions, and reminders before the events they said yes to. They are
+ * This device's three notification switches for one person: direct messages
+ * and mentions, reminders before the events they said yes to, and League
+ * management notices (missing umpires, sign-ups and withdrawals). They are
  * the device's own, not the account's: each phone and browser keeps its own,
  * nothing syncs them, and nobody else's Account shows them.
  */
 export interface NotificationSwitches {
   messages: boolean
   rsvpEvents: boolean
+  leagueManagement: boolean
 }
 
-/** Both off: what a device starts from for anybody. */
+/** All off: what a device starts from for anybody, until it is asked. */
 export const SWITCHES_OFF: NotificationSwitches = {
   messages: false,
-  rsvpEvents: false
+  rsvpEvents: false,
+  leagueManagement: false
 }
 
-/** Whether either switch is on. */
+/** All on: what a device's first ask turns on. */
+export const ALL_ON: NotificationSwitches = {
+  messages: true,
+  rsvpEvents: true,
+  leagueManagement: true
+}
+
+/** Whether any switch is on. */
 export function anySwitchOn(switches: NotificationSwitches): boolean {
-  return switches.messages || switches.rsvpEvents
+  return switches.messages || switches.rsvpEvents || switches.leagueManagement
 }
 
 /** Where a person's switches are kept on this device. */
@@ -30,9 +40,14 @@ export function switchesKey(userId: string): string {
 
 /**
  * This device's switches for `userId`: the browser's `localStorage` or the
- * phone's AsyncStorage (`deviceStorage`). Both off until saved, and for
- * anything unreadable. Signing out leaves them, so signing back in on this
- * device finds them; somebody else signing in here reads their own.
+ * phone's AsyncStorage (`deviceStorage`). All off until saved, and for
+ * anything unreadable. A set saved by a build before League management
+ * (without `leagueManagement`) reads it as on while either of the other two
+ * is on, so a device that receives notifications has it on by default, and
+ * off when both are off, so somebody who turned every notification off is
+ * not asked by the system, nor shown as blocked, for it. Signing out leaves
+ * them, so signing back in on this device finds them; somebody else signing
+ * in here reads their own.
  */
 export async function readSwitches(
   userId: string,
@@ -43,9 +58,15 @@ export async function readSwitches(
     if (raw == null) return SWITCHES_OFF
     const value: unknown = JSON.parse(raw)
     if (typeof value !== 'object' || value == null) return SWITCHES_OFF
+    const messages = 'messages' in value && value.messages === true
+    const rsvpEvents = 'rsvpEvents' in value && value.rsvpEvents === true
     return {
-      messages: 'messages' in value && value.messages === true,
-      rsvpEvents: 'rsvpEvents' in value && value.rsvpEvents === true
+      messages,
+      rsvpEvents,
+      leagueManagement:
+        'leagueManagement' in value
+          ? value.leagueManagement === true
+          : messages || rsvpEvents
     }
   } catch {
     return SWITCHES_OFF
@@ -63,7 +84,8 @@ export async function writeSwitches(
       switchesKey(userId),
       JSON.stringify({
         messages: switches.messages,
-        rsvpEvents: switches.rsvpEvents
+        rsvpEvents: switches.rsvpEvents,
+        leagueManagement: switches.leagueManagement
       })
     )
   } catch {
@@ -81,8 +103,9 @@ export function askedKey(userId: string): string {
 
 /**
  * Whether this device has asked `userId` about notifications already, at an
- * RSVP or on entering messaging: once it has, it never asks them again, and
- * never changes their switches itself. Unreadable reads as not asked.
+ * RSVP or on entering messaging: once it has, it never asks them so again,
+ * and never changes their switches itself; only a League management ask
+ * goes past it, and then turns on League management alone. Unreadable reads as not asked.
  */
 export async function readAsked(
   userId: string,

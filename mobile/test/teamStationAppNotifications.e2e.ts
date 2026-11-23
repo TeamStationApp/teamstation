@@ -75,6 +75,7 @@ import { attach, type AttachedDevice, flatten } from './maestroD'
 const APP = 'app.teamstation.app'
 const MESSAGES = 'Notify for direct messages and mentions'
 const RSVP_EVENTS = 'Notify for RSVPed events'
+const LEAGUE_MANAGEMENT = 'Notify for league management'
 const BLOCKED = 'Notifications are blocked by this device'
 const ALLOW_ID = 'com.android.permissioncontroller:id/permission_allow_button'
 const DENY_ID = 'com.android.permissioncontroller:id/permission_deny_button'
@@ -416,9 +417,11 @@ async function openLink(
 /** Opens Account and brings the notification switches on screen. */
 async function account(m: AttachedDevice): Promise<void> {
   await openLink(m, 'teamstation://account', ACCOUNT_SCREEN)
-  // Down to Sign out, so neither switch is under the floating tab bar.
+  // Down to Sign out, so none of the three switches is under the floating
+  // tab bar.
   await m.scrollUntilVisible({ element: { text: 'Sign out' }, timeout: 30000 })
   await m.assertVisible({ text: RSVP_EVENTS })
+  await m.assertVisible({ text: LEAGUE_MANAGEMENT })
 }
 
 /** Taps on Sign out before Account takes it as signing out. */
@@ -648,23 +651,30 @@ async function signInKeeping(
   await m.assertVisible({ text: 'Account, .*', timeout: 30000 })
 }
 
-/** `who`'s registration from `since` on this platform, once both switches are on. */
-async function bothOn(
+/** `who`'s registration from `since` on this platform, once all three switches are on. */
+async function allOn(
   who: SeedTablePerson,
   since: Date,
   timeoutMs = 60000
-): Promise<{ id: string; messages: boolean; rsvp_events: boolean }> {
+): Promise<{
+  id: string
+  messages: boolean
+  rsvp_events: boolean
+  league_management: boolean
+}> {
   return await until(
-    `${who.name}’s registration with both switches on`,
+    `${who.name}’s registration with all three switches on`,
     async () => {
       const row = await db
         .selectFrom('push_registrations')
-        .select(['id', 'messages', 'rsvp_events'])
+        .select(['id', 'messages', 'rsvp_events', 'league_management'])
         .where('user_id', '=', who.userId)
         .where('platform', '=', IOS ? 'ios' : 'android')
         .where('seen_at', '>', since)
         .executeTakeFirst()
-      return row?.messages === true && row.rsvp_events ? row : undefined
+      return row?.messages === true && row.rsvp_events && row.league_management
+        ? row
+        : undefined
     },
     timeoutMs
   )
@@ -695,7 +705,7 @@ async function rsvpInApp(
 
 /**
  * The app's ask about notifications (Paul, 2026-11-17), on a fresh install:
- * after an RSVP, Continue turns both switches on, the system asks and a
+ * after an RSVP, Continue turns all three switches on, the system asks and a
  * registration follows; allowed already, the Chat tab turns them on with no
  * question; not decided, the Chat tab asks, and Not Now never asks again.
  */
@@ -754,15 +764,15 @@ async function askSteps(
   await answerAsk(m, 'continue')
   await allowSystem(m, 'event-replies-open')
   if (!IOS) adb('shell', `am broadcast -p ${APP} -a ${APP}.PUSH_DEBUG_TOKEN`)
-  const row = await bothOn(rsvper, since)
+  const row = await allOn(rsvper, since)
   await sayAsk(
-    `$ Continue; the system asks; Allow${IOS ? '' : '; PUSH_DEBUG_TOKEN'}: push_registrations ${row.id} messages ${String(row.messages)}, rsvp_events ${String(row.rsvp_events)}`
+    `$ Continue; the system asks; Allow${IOS ? '' : '; PUSH_DEBUG_TOKEN'}: push_registrations ${row.id} messages ${String(row.messages)}, rsvp_events ${String(row.rsvp_events)}, league_management ${String(row.league_management)}`
   )
   await rsvpInApp(m, rsvper, 2)
   if (await askAfter(m, 3000)) throw new Error(`${rsvper.name} was asked again`)
   await sayAsk('$ another answer (No): never asked again')
 
-  // b. Allowed already, the Chat tab turns both on for someone else with no
+  // b. Allowed already, the Chat tab turns all three on for someone else with no
   // question.
   await account(m)
   // Clear of the floating tab bar, as step 7b does.
@@ -783,17 +793,17 @@ async function askSteps(
   // the simulator may not hand a new one back until the app starts again:
   // started again, it registers with the switches it keeps.
   let restarted = ''
-  const quiet = await bothOn(allowed, quietSince, IOS ? 20000 : 60000).catch(
+  const quiet = await allOn(allowed, quietSince, IOS ? 20000 : 60000).catch(
     async () => {
       if (!IOS) throw new Error(`No registration for ${allowed.name}`)
       terminateIos()
       await m.launchApp({ appId: APP, stopApp: true })
       restarted = ', after the app started again'
-      return await bothOn(allowed, quietSince)
+      return await allOn(allowed, quietSince)
     }
   )
   await sayAsk(
-    `$ signed out, then ${allowed.name} signs in (notifications allowed on this phone) and taps the Chat tab: no ask; push_registrations ${quiet.id} messages ${String(quiet.messages)}, rsvp_events ${String(quiet.rsvp_events)}${restarted}`
+    `$ signed out, then ${allowed.name} signs in (notifications allowed on this phone) and taps the Chat tab: no ask; push_registrations ${quiet.id} messages ${String(quiet.messages)}, rsvp_events ${String(quiet.rsvp_events)}, league_management ${String(quiet.league_management)}${restarted}`
   )
 
   // c. Not decided, the Chat tab asks someone never asked; Not Now is kept.
@@ -836,7 +846,7 @@ function settingsShown(): boolean {
  * Refused at the system. `chose`, who changed the switches in Account on this
  * install, is never asked by the app here: an RSVP changes nothing. `who`,
  * signed in after them and never asked here, is asked at an RSVP; its
- * Continue turns both switches on and opens this app's notification
+ * Continue turns all three switches on and opens this app's notification
  * settings, and Account shows them on with the blocked line.
  */
 async function askRefused(
@@ -884,7 +894,9 @@ async function askRefused(
   // permission as it launches.
   await account(m)
   await m.assertVisible({ text: BLOCKED })
-  await sayAsk(`$ back in the app, Account: both switches on, "${BLOCKED}"`)
+  await sayAsk(
+    `$ back in the app, Account: all three switches on, "${BLOCKED}"`
+  )
 }
 
 async function android(): Promise<void> {
@@ -919,7 +931,8 @@ async function android(): Promise<void> {
       await signIn(m, who)
     })
     await dumpCoverage('before signing P2 in')
-    // 2. Signed in as P2, chat set up, both switches on, notifications allowed.
+    // 2. Signed in as P2, chat set up, all three switches on, notifications
+    // allowed.
     await signIn(m, p2)
     await say(`$ P2 (${p2.name}) signs in on ${serial}`)
     await openLink(
@@ -937,11 +950,12 @@ async function android(): Promise<void> {
     await m.tapOn({ id: ALLOW_ID, timeout: 30000 })
     await say(`$ ${MESSAGES} on; the system asks; tapOn Allow`)
     await m.tapOn({ text: RSVP_EVENTS })
+    await m.tapOn({ text: LEAGUE_MANAGEMENT })
     await m.assertNotVisible({ text: BLOCKED })
     adb('shell', `am broadcast -p ${APP} -a ${APP}.PUSH_DEBUG_TOKEN`)
     // Posted with the switches this phone keeps for P2.
     const registration = await until(
-      'P2’s debug registration, with both switches on',
+      'P2’s debug registration, with all three switches on',
       async () => {
         const row = await db
           .selectFrom('push_registrations')
@@ -951,18 +965,23 @@ async function android(): Promise<void> {
             'address',
             'environment',
             'messages',
-            'rsvp_events'
+            'rsvp_events',
+            'league_management'
           ])
           .where('user_id', '=', p2.userId)
           .where('platform', '=', 'android')
           .executeTakeFirst()
-        return row?.messages === true && row.rsvp_events ? row : undefined
+        return row?.messages === true &&
+          row.rsvp_events &&
+          row.league_management
+          ? row
+          : undefined
       }
     )
     if (!registration.address.startsWith('debug-'))
       throw new Error(`Unexpected registration ${registration.address}`)
     await say(
-      `$ PUSH_DEBUG_TOKEN: push_registrations row ${registration.id} ${registration.platform} ${registration.environment} debug-…, messages ${String(registration.messages)}, rsvp_events ${String(registration.rsvp_events)}`
+      `$ PUSH_DEBUG_TOKEN: push_registrations row ${registration.id} ${registration.platform} ${registration.environment} debug-…, messages ${String(registration.messages)}, rsvp_events ${String(registration.rsvp_events)}, league_management ${String(registration.league_management)}`
     )
 
     // 3. P1 writes P2 a DM.
@@ -1356,7 +1375,7 @@ async function android(): Promise<void> {
       '$ signed out: PUSH_DEBUG of the DM and the reminder: nothing posted'
     )
 
-    // 8. A fresh install keeps nothing of the old one's switches: both off,
+    // 8. A fresh install keeps nothing of the old one's switches: all off,
     // and nothing asked at sign-in. Turned on here and refused, the switch
     // stays on with the blocked line, and nothing is posted.
     await dumpCoverage('before the fresh install')
@@ -1691,7 +1710,8 @@ async function ios(): Promise<void> {
     })
     await home(m)
     await pullProfiles('before signing P2 in')
-    // 1. Signed in as P2, chat set up, both switches on, notifications allowed.
+    // 1. Signed in as P2, chat set up, all three switches on, notifications
+    // allowed.
     await signInIos(m, p2)
     await say(`$ P2 (${p2.name}) signs in on the simulator`)
     await openLink(
@@ -1723,10 +1743,11 @@ async function ios(): Promise<void> {
     await allowIos(m)
     await say(`$ ${MESSAGES} on; iOS asks; tapOn Allow`)
     await toggleIos(m, RSVP_EVENTS)
+    await toggleIos(m, LEAGUE_MANAGEMENT)
     await m.assertNotVisible({ text: BLOCKED })
-    // Registered with this phone's own switches, both on now.
+    // Registered with this phone's own switches, all three on now.
     const registration = await until(
-      'P2’s APNs registration, with both switches on',
+      'P2’s APNs registration, with all three switches on',
       async () => {
         const row = await db
           .selectFrom('push_registrations')
@@ -1736,18 +1757,23 @@ async function ios(): Promise<void> {
             'address',
             'environment',
             'messages',
-            'rsvp_events'
+            'rsvp_events',
+            'league_management'
           ])
           .where('user_id', '=', p2.userId)
           .where('platform', '=', 'ios')
           .where('seen_at', '>', started)
           .executeTakeFirst()
-        return row?.messages === true && row.rsvp_events ? row : undefined
+        return row?.messages === true &&
+          row.rsvp_events &&
+          row.league_management
+          ? row
+          : undefined
       },
       60000
     )
     await say(
-      `$ push_registrations row ${registration.id} ${registration.platform} ${registration.environment} (an APNs token of ${registration.address.length} hex digits), messages ${String(registration.messages)}, rsvp_events ${String(registration.rsvp_events)}`
+      `$ push_registrations row ${registration.id} ${registration.platform} ${registration.environment} (an APNs token of ${registration.address.length} hex digits), messages ${String(registration.messages)}, rsvp_events ${String(registration.rsvp_events)}, league_management ${String(registration.league_management)}`
     )
 
     // 2. The default build, iosFiltering off. A DM is an alert the extension opens.

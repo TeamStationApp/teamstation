@@ -68,6 +68,18 @@ describe('locales', function () {
     ).equals('Reorder Fall Minors')
   })
 
+  it('names the three notification switches in Account', function () {
+    expect(enUs.account_notifications_messages).equals(
+      'Notify for direct messages and mentions'
+    )
+    expect(enUs.account_notifications_rsvp_events).equals(
+      'Notify for RSVPed events'
+    )
+    expect(enUs.account_notifications_league_management).equals(
+      'Notify for league management'
+    )
+  })
+
   it('merges a translation over the master', function () {
     selectLocale({ login_title: 'Iniciar sesión' })
     expect(lstrings.login_title).equals('Iniciar sesión')

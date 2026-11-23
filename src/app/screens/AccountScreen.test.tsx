@@ -28,6 +28,7 @@ import {
   type NotificationSwitches,
   readAsked,
   readSwitches,
+  SWITCHES_OFF,
   switchesKey,
   writeSwitches
 } from '../platform/notificationSwitches'
@@ -397,6 +398,7 @@ async function flip(label: string): Promise<void> {
 }
 const MESSAGES = 'Notify for direct messages and mentions'
 const RSVP_EVENTS = 'Notify for RSVPed events'
+const LEAGUE_MANAGEMENT = 'Notify for league management'
 const BLOCKED = 'Notifications are blocked by this device'
 const ALLOW = 'Allow notifications on this device'
 afterEach(async () => {
@@ -424,10 +426,10 @@ async function askAfter(
   const switched: Array<Partial<NotificationSwitches>> = []
   const stub: AskDevice = {
     state: async () => permission,
-    switches: async () => ({ messages: false, rsvpEvents: false }),
+    switches: async () => SWITCHES_OFF,
     setSwitches: async (_client, _user, change) => {
       switched.push(change)
-      return { messages: false, rsvpEvents: false, ...change }
+      return { ...SWITCHES_OFF, ...change }
     },
     enable: async () => permission
   }
@@ -571,7 +573,7 @@ describe('Account settings screen', () => {
     expect(f.calls).includes('/me/account/photo')
     expect(button('Add photo')).not.equals(undefined)
   })
-  it('shows Notifications after Chat, before Walk-up songs and API keys, with both switches off', async () => {
+  it('shows Notifications after Chat, before Walk-up songs and API keys, with all three switches off', async () => {
     const web = Platform.OS
     try {
       Platform.OS = 'ios'
@@ -589,6 +591,10 @@ describe('Account settings screen', () => {
       expect(at('API KEYS')).greaterThan(at('WALK-UP SONGS'))
       expect(toggle(MESSAGES)?.checked).equals(false)
       expect(toggle(RSVP_EVENTS)?.checked).equals(false)
+      expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(false)
+      expect(page.indexOf(LEAGUE_MANAGEMENT)).greaterThan(
+        page.indexOf(RSVP_EVENTS)
+      )
       expect(page).not.includes(BLOCKED)
       expect(button(ALLOW)).equals(undefined)
     } finally {
@@ -625,16 +631,81 @@ describe('Account settings screen', () => {
     expect([...f.switchStorage.kept]).deep.equals([
       [
         switchesKey(f.session.user.id),
-        JSON.stringify({ messages: false, rsvpEvents: true })
+        JSON.stringify({
+          messages: false,
+          rsvpEvents: true,
+          leagueManagement: false
+        })
       ]
     ])
     expect(f.calls.filter(call => call.includes('notifications'))).deep.equals(
       []
     )
   })
+  it('shows League management to everyone, saving it on this device like the other two', async () => {
+    // Not an administrator of anything.
+    const f = fixture()
+    const phone = device('granted')
+    await render(
+      <AccountScreen {...f} onSignOut={() => undefined} pushDevice={phone} />
+    )
+    expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(false)
+    await flip(LEAGUE_MANAGEMENT)
+    expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(true)
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    expect(phone.given).deep.equals([
+      ['set', { leagueManagement: true }],
+      ['enable']
+    ])
+    expect(await readSwitches(f.session.user.id, f.switchStorage)).deep.equals({
+      messages: false,
+      rsvpEvents: false,
+      leagueManagement: true
+    })
+    await flip(LEAGUE_MANAGEMENT)
+    expect(phone.given.at(-1)).deep.equals(['set', { leagueManagement: false }])
+    expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(false)
+  })
+  it('shows League management as an earlier build’s switches have it: off with both off, on with either on, and counts it alone as wanted', async () => {
+    const f = fixture()
+    const shown = async (kept: object): Promise<void> => {
+      if (root != null)
+        await act(async () => {
+          root?.unmount()
+          root = undefined
+        })
+      document.body.replaceChildren()
+      f.switchStorage.kept.set(
+        switchesKey(f.session.user.id),
+        JSON.stringify(kept)
+      )
+      await render(
+        <AccountScreen
+          {...f}
+          onSignOut={() => undefined}
+          pushDevice={device('denied')}
+        />
+      )
+    }
+    // Everything turned off before the update: nothing wanted, nothing blocked.
+    await shown({ messages: false, rsvpEvents: false })
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(false)
+    expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(false)
+    expect(text()).not.includes(BLOCKED)
+    // RSVP events on: League management on beside it.
+    await shown({ messages: false, rsvpEvents: true })
+    expect(toggle(RSVP_EVENTS)?.checked).equals(true)
+    expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(true)
+    expect(text()).includes(BLOCKED)
+    // League management alone on is a switch this device refuses.
+    await shown({ messages: false, rsvpEvents: false, leagueManagement: true })
+    expect(toggle(LEAGUE_MANAGEMENT)?.checked).equals(true)
+    expect(text()).includes(BLOCKED)
+  })
   it('opens on what this device kept, keeps it after a reload, and starts another person here from their own', async () => {
     const f = fixture()
-    f.kept({ messages: false, rsvpEvents: true })
+    f.kept({ messages: false, rsvpEvents: true, leagueManagement: false })
     await render(
       <AccountScreen
         {...f}
@@ -682,14 +753,14 @@ describe('Account settings screen', () => {
   })
   it('reads the switches again at each foreground, and when another tab changes them, and builds on what is stored', async () => {
     const f = fixture()
-    f.kept({ messages: true, rsvpEvents: true })
+    f.kept({ messages: true, rsvpEvents: true, leagueManagement: false })
     const browser = device('granted')
     await render(
       <AccountScreen {...f} onSignOut={() => undefined} pushDevice={browser} />
     )
     expect(toggle(MESSAGES)?.checked).equals(true)
     // Another tab turns Messages off: its storage event shows it here.
-    f.kept({ messages: false, rsvpEvents: true })
+    f.kept({ messages: false, rsvpEvents: true, leagueManagement: false })
     await act(async () => {
       window.dispatchEvent(
         Object.assign(new window.Event('storage'), {
@@ -700,7 +771,7 @@ describe('Account settings screen', () => {
     })
     expect(toggle(MESSAGES)?.checked).equals(false)
     // Another key changing reads nothing.
-    f.kept({ messages: true, rsvpEvents: true })
+    f.kept({ messages: true, rsvpEvents: true, leagueManagement: false })
     await act(async () => {
       window.dispatchEvent(
         Object.assign(new window.Event('storage'), { key: 'other' })
@@ -724,18 +795,22 @@ describe('Account settings screen', () => {
     }
     expect(toggle(MESSAGES)?.checked).equals(true)
     // A change sends only itself, and the device keeps it on what is stored.
-    f.kept({ messages: false, rsvpEvents: true })
+    f.kept({ messages: false, rsvpEvents: true, leagueManagement: false })
     await flip(RSVP_EVENTS)
     expect(browser.given).deep.equals([['set', { rsvpEvents: false }]])
     expect(f.switchStorage.kept.get(switchesKey(f.session.user.id))).equals(
-      JSON.stringify({ messages: false, rsvpEvents: false })
+      JSON.stringify({
+        messages: false,
+        rsvpEvents: false,
+        leagueManagement: false
+      })
     )
     expect(toggle(MESSAGES)?.checked).equals(false)
     expect(toggle(RSVP_EVENTS)?.checked).equals(false)
   })
   it('shows no Notifications in an administrator’s view of another person’s account', async () => {
     const f = fixture(false, true)
-    f.kept({ messages: true, rsvpEvents: true })
+    f.kept({ messages: true, rsvpEvents: true, leagueManagement: false })
     const admin = device('granted')
     await render(
       <AccountScreen
@@ -770,7 +845,7 @@ describe('Account settings screen', () => {
   })
   it('offers to allow notifications in a browser that has not asked yet', async () => {
     const f = fixture()
-    f.kept({ messages: true, rsvpEvents: false })
+    f.kept({ messages: true, rsvpEvents: false, leagueManagement: false })
     const browser = device('prompt', 'granted')
     await render(
       <AccountScreen {...f} onSignOut={() => undefined} pushDevice={browser} />
@@ -818,14 +893,15 @@ describe('Account settings screen', () => {
     expect(ask.switched).deep.equals([])
     expect(await readSwitches(me, f.switchStorage)).deep.equals({
       messages: true,
-      rsvpEvents: false
+      rsvpEvents: false,
+      leagueManagement: false
     })
   })
   it('counts Allow tapped here as asked: entering chat after it neither asks nor changes the switches', async () => {
     window.localStorage.clear()
     const f = fixture()
     const me = f.session.user.id
-    f.kept({ messages: true, rsvpEvents: false })
+    f.kept({ messages: true, rsvpEvents: false, leagueManagement: false })
     const browser = device('prompt', 'denied')
     await render(
       <AccountScreen {...f} onSignOut={() => undefined} pushDevice={browser} />
@@ -844,7 +920,7 @@ describe('Account settings screen', () => {
       for (const os of ['ios', 'android'] as const) {
         Platform.OS = os
         const f = fixture()
-        f.kept({ messages: true, rsvpEvents: false })
+        f.kept({ messages: true, rsvpEvents: false, leagueManagement: false })
         const phone = device('prompt', 'granted')
         await render(
           <AccountScreen

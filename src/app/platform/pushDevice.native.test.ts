@@ -5,6 +5,7 @@ import type { PushRegistration, PushSwitches } from '../../common/api'
 import {
   type NotificationSwitches,
   readSwitches,
+  switchesKey,
   writeSwitches
 } from './notificationSwitches'
 import type {
@@ -16,9 +17,13 @@ import type {
 } from './pushState'
 import type { UserSettingStorage } from './userSetting'
 
-const OFF: NotificationSwitches = { messages: false, rsvpEvents: false }
-const ON: NotificationSwitches = { messages: true, rsvpEvents: false }
-const BOTH: NotificationSwitches = { messages: true, rsvpEvents: true }
+const OFF: NotificationSwitches = {
+  messages: false,
+  rsvpEvents: false,
+  leagueManagement: false
+}
+const ON: NotificationSwitches = { ...OFF, messages: true }
+const BOTH: NotificationSwitches = { ...OFF, messages: true, rsvpEvents: true }
 /** The signed-in person. */
 const U = 'usr_1'
 
@@ -232,14 +237,16 @@ describe('notifications on a phone', function () {
         address: 'fcm-token-1',
         environment: 'production',
         messages: false,
-        rsvpEvents: false
+        rsvpEvents: false,
+        leagueManagement: false
       },
       {
         platform: 'android',
         address: 'fcm-token-2',
         environment: 'production',
         messages: true,
-        rsvpEvents: false
+        rsvpEvents: false,
+        leagueManagement: false
       }
     ])
     registered = []
@@ -268,7 +275,8 @@ describe('notifications on a phone', function () {
         address: 'apns-1',
         environment: 'development',
         messages: false,
-        rsvpEvents: false
+        rsvpEvents: false,
+        leagueManagement: false
       }
     ])
     const offline: PushClient = {
@@ -282,7 +290,7 @@ describe('notifications on a phone', function () {
     ).equals('granted')
   })
 
-  it('asks a phone not asked yet once either of its own switches is on, and only then', async function () {
+  it('asks a phone not asked yet once any of its own switches is on, and only then', async function () {
     // Asked before, either way: nothing is asked again.
     await keep(BOTH)
     for (const state of ['granted', 'denied'] as const) {
@@ -297,9 +305,13 @@ describe('notifications on a phone', function () {
     const off = loadWith(waiting)
     expect(await ask()(off, client, U)).equals('prompt')
     expect(waiting.asked).equals(0)
-    // Either switch on: asked once, and the allowed phone registers with
-    // them.
-    for (const switches of [ON, { messages: false, rsvpEvents: true }]) {
+    // Any switch on, League management alone too: asked once, and the
+    // allowed phone registers with them.
+    for (const switches of [
+      ON,
+      { ...OFF, rsvpEvents: true },
+      { ...OFF, leagueManagement: true }
+    ]) {
       await keep(switches)
       const push = module('prompt', 'granted', 'fcm-on')
       const device = loadWith(push)
@@ -307,11 +319,57 @@ describe('notifications on a phone', function () {
       expect(push.asked).equals(1)
     }
     expect(
-      registered.map(row => [row.address, row.messages, row.rsvpEvents])
+      registered.map(row => [
+        row.address,
+        row.messages,
+        row.rsvpEvents,
+        row.leagueManagement
+      ])
     ).deep.equals([
-      ['fcm-on', true, false],
-      ['fcm-on', false, true]
+      ['fcm-on', true, false, false],
+      ['fcm-on', false, true, false],
+      ['fcm-on', false, false, true]
     ])
+  })
+
+  it('does not ask a phone not asked yet whose earlier build kept both switches off, and asks one that kept either on', async function () {
+    for (const [raw, asked] of [
+      ['{"messages":false,"rsvpEvents":false}', 0],
+      ['{"messages":true,"rsvpEvents":false}', 1],
+      ['{"messages":false,"rsvpEvents":true}', 1]
+    ] as const) {
+      await storage.setItem(switchesKey(U), raw)
+      const push = module('prompt', 'granted', 'fcm-legacy')
+      const device = loadWith(push)
+      expect(await ask()(device, client, U), raw).equals(
+        asked === 0 ? 'prompt' : 'granted'
+      )
+      expect(push.asked, raw).equals(asked)
+    }
+  })
+
+  it('registers League management as stored: on from an earlier build’s pair, off once turned off', async function () {
+    // Kept by a build before League management with a switch on: it reads on.
+    await storage.setItem(
+      switchesKey(U),
+      '{"messages":false,"rsvpEvents":true}'
+    )
+    const push = module('granted', 'granted', 'fcm-lm')
+    const device = loadWith(push)
+    await device.sync(client, U)
+    expect(registered.at(-1)).deep.include({
+      messages: false,
+      rsvpEvents: true,
+      leagueManagement: true
+    })
+    // Turned off, the registration takes it off, and so does the next one.
+    await device.setSwitches(client, U, { leagueManagement: false })
+    expect(patched.at(-1)).deep.equals([
+      'reg-1',
+      { messages: false, rsvpEvents: true, leagueManagement: false }
+    ])
+    await loadWith(module('granted', 'granted', 'fcm-lm')).sync(client, U)
+    expect(registered.at(-1)).deep.include({ leagueManagement: false })
   })
 
   it('asks once while the question is up', async function () {

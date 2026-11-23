@@ -58,7 +58,8 @@ export async function registerAddress(
     address,
     environment: environment === 'development' ? 'development' : 'production',
     messages: switches.messages,
-    rsvpEvents: switches.rsvpEvents
+    rsvpEvents: switches.rsvpEvents,
+    leagueManagement: switches.leagueManagement
   })
 }
 
@@ -121,7 +122,7 @@ export function phonePushDevice(
 let asking: Promise<PushState> | undefined
 
 /**
- * Asks a phone that has never been asked, once either of its switches
+ * Asks a phone that has never been asked, once any of its switches
  * stored for `userId` is on: at start, after a sign-in and whenever the app
  * comes to the foreground. Asked already, it catches up (`catchUp`): a phone
  * allowed in its settings since the last look, or whose register failed,
