@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 import type { Kysely } from 'kysely'
-import { after, before, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 
 import { makeId } from '../../common/ids'
 import { addGame, addTeam, scratchDatabase } from '../../test/scoreboardKit'
@@ -14,8 +14,11 @@ import type { Database } from '../db/database'
 import { startFakeSpace } from '../dev/fakeSpace'
 import { ffmpegEncoders, remuxToHls } from './ffmpeg'
 import { ingestVideoFile, probeVideoFile } from './ingestFile'
+import { presignGetUrl } from './presign'
 import type { SpaceSettings } from './spacesHls'
+import { listSpaceObjectEntries } from './spacesVideo'
 import { boxesInFile, readFragment, readTracks } from './trackStarts'
+import { videoPrefix } from './videoPrefix'
 
 const run = promisify(execFile)
 const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
@@ -259,5 +262,151 @@ describe('what has to name an ingested video, in the commit that writes it', fun
       .executeTakeFirst()
     expect(row).equals(undefined)
     expect(await objects(videoId)).deep.equals([])
+  })
+})
+
+describe('an ingested take in the Space, segmented', function () {
+  this.timeout(120000)
+
+  let db: Kysely<Database> | undefined
+  let drop: (() => Promise<void>) | undefined
+  let store: Awaited<ReturnType<typeof startFakeSpace>> | undefined
+  let dir = ''
+  let gameId = ''
+  const space: SpaceSettings = {
+    bucket: 'test',
+    region: 'sfo3',
+    endpoint: '',
+    accessKeyId: 'k',
+    secretAccessKey: 's',
+    pathStyle: true
+  }
+
+  before(async function () {
+    dir = await mkdtemp(join(tmpdir(), 'tsIngestSegmented-'))
+    // Twenty seconds at a keyframe a second: four segments.
+    await run(FFMPEG, [
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=duration=20:size=320x240:rate=30',
+      '-c:v',
+      'libx264',
+      '-g',
+      '30',
+      '-pix_fmt',
+      'yuv420p',
+      join(dir, 'take.mp4')
+    ])
+    ;({ db, drop } = await scratchDatabase('ingest_segmented'))
+    gameId = await addGame(db, {
+      homeTeamId: await addTeam(db, 'Pioneers'),
+      awayTeamId: await addTeam(db, 'Visitors'),
+      startAt: new Date()
+    })
+    store = await startFakeSpace({ space, dir: join(dir, 'space') })
+    space.endpoint = store.url
+  })
+
+  after(async function () {
+    if (store != null) {
+      await new Promise<void>(resolve =>
+        store!.server.close(() => {
+          resolve()
+        })
+      )
+    }
+    await drop?.()
+    if (dir !== '') await rm(dir, { recursive: true, force: true })
+  })
+
+  afterEach(function () {
+    store?.faults.clear()
+  })
+
+  const ingest = async (videoId: string): Promise<void> => {
+    await ingestVideoFile({
+      db: db!,
+      space,
+      ffmpegPath: FFMPEG,
+      file: join(dir, 'take.mp4'),
+      gameId,
+      kind: 'program',
+      title: 'Programme',
+      startAt: new Date(),
+      startAtSource: 'distributor',
+      videoId,
+      log: () => {}
+    })
+  }
+
+  /** Every object of the video, under any of its prefixes, with its size. */
+  const objects = async (
+    videoId: string
+  ): Promise<Array<{ name: string; size: number }>> =>
+    (await listSpaceObjectEntries(space, `videos/${videoId}`)).map(entry => ({
+      name: entry.key.split('/').slice(-1)[0],
+      size: entry.size
+    }))
+
+  it('holds the playlists, init.mp4 and its segments, and no single file', async function () {
+    const videoId = makeId('video')
+    await ingest(videoId)
+    const found = await objects(videoId)
+    const names = found.map(object => object.name).sort()
+    const segments = names.filter(name => /^seg\d{6}\.m4s$/.test(name))
+    expect(segments).deep.equals(
+      segments.map((_, i) => `seg${String(i).padStart(6, '0')}.m4s`)
+    )
+    expect(segments.length).greaterThanOrEqual(3)
+    expect(names).deep.equals(
+      ['init.mp4', 'master.m3u8', ...segments, 'video.m3u8'].sort()
+    )
+    expect(names).does.not.contain('video.mp4')
+
+    // The row's size is what the Space holds for it.
+    const row = await db!
+      .selectFrom('videos')
+      .select(['size_bytes', 'duration_sec', 'space_secret'])
+      .where('id', '=', videoId)
+      .executeTakeFirstOrThrow()
+    expect(Number(row.size_bytes)).equals(
+      found.reduce((sum, object) => sum + object.size, 0)
+    )
+    expect(row.duration_sec).equals(20)
+    const response = await fetch(
+      presignGetUrl({
+        ...space,
+        key: `${videoPrefix({ id: videoId, spaceSecret: row.space_secret })}video.m3u8`,
+        expiresSec: 60
+      })
+    )
+    expect(response.status).equals(200)
+    const playlist = await response.text()
+    expect(playlist).contains('#EXT-X-MAP:URI="init.mp4"')
+    expect(playlist).contains('seg000000.m4s')
+    expect(playlist).does.not.contain('BYTERANGE')
+  })
+
+  it('leaves the Space empty when a put fails after the third', async function () {
+    const videoId = makeId('video')
+    // The fourth object to go up, in upload order: init.mp4, then segments.
+    store!.faults.set({ method: 'PUT', key: /seg000002\.m4s$/, status: 500 })
+    let failure: unknown
+    try {
+      await ingest(videoId)
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure)).contains('500')
+    expect(await objects(videoId)).deep.equals([])
+    const row = await db!
+      .selectFrom('videos')
+      .select('id')
+      .where('id', '=', videoId)
+      .executeTakeFirst()
+    expect(row).equals(undefined)
   })
 })

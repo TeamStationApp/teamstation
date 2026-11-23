@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
@@ -9,6 +11,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { startFakeSpace } from '../dev/fakeSpace'
 import { createLiveStream } from '../live/streamKeys'
+import { ingestVideoFile } from '../media/ingestFile'
 import type { MediaContext } from '../media/mediaContext'
 import { signQueryToken } from '../media/mediaTokens'
 import { mediaRoutes } from './media'
@@ -248,5 +251,89 @@ describe('playback through an API node without media files', function () {
       unavailable: true,
       pending: true
     })
+  })
+
+  /**
+   * TS Director's takes, TS Distributor's programmes and a phone's local copy
+   * all reach `/director/uploads` and its finish, which hands each to
+   * `ingestVideoFile`; only their titles and start sources differ.
+   */
+  it('plays an upload as segments from the CDN, with no byte ranges', async () => {
+    const ffmpeg = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+    const take = join(root, 'take.mp4')
+    await promisify(execFile)(ffmpeg, [
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=duration=14:size=320x240:rate=30',
+      '-c:v',
+      'libx264',
+      '-g',
+      '30',
+      '-pix_fmt',
+      'yuv420p',
+      take
+    ])
+    const cdn = `${store.url}/${media.space.bucket}`
+    media.space.mediaBaseUrl = cdn
+    try {
+      for (const [title, startAtSource] of [
+        ['Director take', 'manual'],
+        ['Distributor programme', 'distributor'],
+        ['Phone recording', 'publisher']
+      ] as const) {
+        const { videoId } = await ingestVideoFile({
+          db: f.h.db,
+          space: media.space,
+          ffmpegPath: ffmpeg,
+          file: take,
+          gameId: 'gam_origin',
+          kind: 'program',
+          title,
+          startAt: new Date(),
+          startAtSource,
+          log: () => {}
+        })
+        const playback = await f.h.request(
+          'GET',
+          `/videos/${videoId}/playback`,
+          undefined,
+          105
+        )
+        expect(playback.status, title).equals(200)
+        expect((await playback.json()).url).contains('/hls/master.m3u8?t=')
+        const variant = await (await hls(videoId, 'master.m3u8')).text()
+        expect(variant).contains('/hls/video.m3u8?t=')
+        const body = await (await hls(videoId, 'video.m3u8')).text()
+        expect(body, title).does.not.contain('BYTERANGE')
+        expect(body).does.not.contain('video.mp4')
+        const lines = body.split('\n')
+        const map = /#EXT-X-MAP:URI="([^"]+)"/.exec(body)?.[1] ?? ''
+        expect(map.startsWith(`${cdn}/videos/${videoId}-`)).equals(true)
+        expect(map.endsWith('/init.mp4')).equals(true)
+        const pieces = lines.filter(line => line.startsWith('http'))
+        expect(pieces.length).greaterThanOrEqual(2)
+        pieces.forEach((url, i) => {
+          // Unsigned, under the video's secret path, one object a segment.
+          expect(url).match(
+            new RegExp(
+              `^${cdn}/videos/${videoId}-[0-9a-f]{32}/seg${String(i).padStart(6, '0')}\\.m4s$`
+            )
+          )
+        })
+        const first = await fetch(pieces[0])
+        expect(first.status).equals(200)
+        const box = Buffer.from(await first.arrayBuffer()).toString(
+          'latin1',
+          4,
+          8
+        )
+        expect(['moof', 'styp']).contains(box)
+      }
+    } finally {
+      delete media.space.mediaBaseUrl
+    }
   })
 })

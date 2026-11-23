@@ -54,16 +54,25 @@ describe('uploads under a video’s secret path', function () {
   /** What a finished recording's secret path should hold, and how. */
   const expectPublished = async (id: string, secret: string): Promise<void> => {
     const prefix = videoPrefix({ id, spaceSecret: secret })
-    expect(await listSpaceObjects(space, prefix)).deep.equals([
-      `${prefix}master.m3u8`,
-      `${prefix}video.m3u8`,
-      `${prefix}video.mp4`
-    ])
-    const recording = await fetch(plain(`${prefix}video.mp4`), {
-      method: 'HEAD'
-    })
-    expect(recording.status).equals(200)
-    expect(recording.headers.get('cache-control')).equals('public, max-age=600')
+    const keys = await listSpaceObjects(space, prefix)
+    const names = keys.map(key => key.slice(prefix.length))
+    const segments = names.filter(name => /^seg\d{6}\.m4s$/.test(name))
+    // Segmented: the two playlists, the init segment and one object a
+    // fragment, and no single file.
+    expect(segments.length).greaterThan(0)
+    expect(names).deep.equals(
+      ['init.mp4', 'master.m3u8', ...segments, 'video.m3u8'].sort()
+    )
+    // Every piece is public and unsigned under the secret, cached as the
+    // live origin's are; the playlists, which name them, stay private.
+    for (const name of [segments[0], segments[segments.length - 1]]) {
+      const piece = await fetch(plain(`${prefix}${name}`), { method: 'HEAD' })
+      expect(piece.status, name).equals(200)
+      expect(piece.headers.get('cache-control')).equals('public, max-age=600')
+    }
+    const init = await fetch(plain(`${prefix}init.mp4`), { method: 'HEAD' })
+    expect(init.status).equals(200)
+    expect(init.headers.get('cache-control')).equals('no-cache')
     expect((await fetch(plain(`${prefix}video.m3u8`))).status).equals(403)
     expect(
       await listSpaceObjects(space, `videos/${id}/`),
@@ -118,7 +127,7 @@ describe('uploads under a video’s secret path', function () {
   })
 
   it('takes a failed upload’s copy back out of its secret path', async function () {
-    fake.faults.set({ method: 'GET', key: /video\.mp4$/, status: 503 })
+    fake.faults.set({ method: 'GET', key: /seg000000\.m4s$/, status: 503 })
     let message = ''
     const before = await listSpaceObjects(space, 'videos/')
     await ingest().catch(

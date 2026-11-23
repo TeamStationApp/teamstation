@@ -383,8 +383,8 @@ describe('the wall clock of an upload', function () {
 
   it('takes in a take whose remux the wall clock cannot be read out of, with no points, and says so', async function () {
     // An FFmpeg that remuxes as the real one does, then damages the run of
-    // the remux's last fragment, past the first segment that FFmpeg's own
-    // probe reads. The ffprobe beside it is the real one.
+    // the remux's last fragment, in its last segment, past the first segment
+    // that FFmpeg's own probe reads. The ffprobe beside it is the real one.
     const tools = join(dir, 'damaging')
     await mkdir(tools)
     const ffmpeg = join(tools, 'ffmpeg')
@@ -392,13 +392,15 @@ describe('the wall clock of an upload', function () {
       ffmpeg,
       `#!${process.execPath}
 const { spawnSync } = require('node:child_process')
-const { readFileSync, writeFileSync } = require('node:fs')
+const { readdirSync, readFileSync, writeFileSync } = require('node:fs')
+const { dirname, join } = require('node:path')
 const args = process.argv.slice(2)
 const done = spawnSync(${JSON.stringify(FFMPEG)}, args, { stdio: 'inherit' })
 if (done.status !== 0) process.exit(done.status ?? 1)
 const playlist = args.at(-1)
 if (playlist.endsWith('/video.m3u8')) {
-  const file = playlist.replace(/video\\.m3u8$/, 'video.mp4')
+  const segments = readdirSync(dirname(playlist)).filter(n => /^seg\\d{6}\\.m4s$/.test(n)).sort()
+  const file = join(dirname(playlist), segments.at(-1))
   const bytes = readFileSync(file)
   const boxes = (start, end) => {
     const found = []

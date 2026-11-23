@@ -4,7 +4,9 @@
 
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
+- changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
+- fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 
 ## 1.4.0 (2026-11-21)
 

@@ -13,11 +13,9 @@ import type { Database, VideosTable } from '../db/database'
 import { noteGameFigures } from '../socket/syncRevision'
 import {
   AAC_PRIMING_SAMPLES,
-  MASTER_PLAYLIST,
   MEDIA_PLAYLIST,
   probeDuration,
-  remuxToHls,
-  VIDEO_FILE
+  remuxToHls
 } from './ffmpeg'
 import type { SpaceSettings } from './spacesHls'
 import {
@@ -365,7 +363,8 @@ export async function ingestVideoFile(
       input: file,
       outDir: work,
       videoTag: tagFor(probed.codecName),
-      soundPrimingSamples: probed.soundPrimingSamples
+      soundPrimingSamples: probed.soundPrimingSamples,
+      layout: 'segments'
     })
 
     // How long it runs, read back off what was written rather than worked
@@ -392,7 +391,9 @@ export async function ingestVideoFile(
     }
 
     onStep?.('uploading')
-    const files = [MASTER_PLAYLIST, MEDIA_PLAYLIST, VIDEO_FILE]
+    // Every file the remux wrote: the two playlists, `init.mp4` and one
+    // object per segment, each small enough that a seek through the CDN is
+    // one cheap miss rather than a range deep inside one huge file.
     // From the first byte copied to the row being written, this video's
     // objects exist with nothing pointing at them. Anything that goes wrong
     // in between has to take them back out: a copy that failed half way
@@ -405,8 +406,7 @@ export async function ingestVideoFile(
         space,
         videoId,
         spaceSecret,
-        dir: work,
-        files
+        dir: work
       })
       const verified = await verifyVideoDirectory({
         space,

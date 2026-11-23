@@ -4187,6 +4187,76 @@
       "file": "e2e/tests/platform/push/phone.e2e.ts"
     },
     {
+      "id": "playback/recordings/director-take-finish#real-take",
+      "title": "A real multi-gigabyte TS Director take is taken in as segments inside the apps’ 900 s",
+      "kind": "e2e",
+      "covers": [
+        "src/server/media/ingestFile.ts",
+        "src/server/media/spacesVideo.ts",
+        "src/server/routes/directorUploads.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 30,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/recordings/director-take-finish",
+      "file": "e2e/tests/playback/recordings/director-take-finish.e2e.ts"
+    },
+    {
+      "id": "playback/recordings/segmented-seek#upload",
+      "title": "A recording in the Space is segments, and a highlight plays within 5 s on a cold cache",
+      "kind": "e2e",
+      "covers": [
+        "src/server/media/ffmpeg.ts",
+        "src/server/media/ingestFile.ts",
+        "src/server/media/spacesVideo.ts",
+        "src/server/routes/directorUploads.ts",
+        "src/server/routes/media.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/recordings/segmented-seek",
+      "file": "e2e/tests/playback/recordings/segmented-seek.e2e.ts"
+    },
+    {
       "id": "schedule/auto-scheduler/build-modal#limit-accept",
       "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
       "kind": "e2e",
