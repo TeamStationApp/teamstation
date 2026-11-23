@@ -26,3 +26,34 @@ export async function hasRecordedPlays(
     .executeTakeFirst()
   return row != null
 }
+
+/**
+ * `hasRecordedPlays` for many games at once: the ids of those with a
+ * recorded at-bat in progress, decided from the row already read, or a play
+ * that carries its record, in one read for the rest.
+ */
+export async function recordedPlaysOf(
+  db: Kysely<Database>,
+  games: ReadonlyArray<{ id: string; currentPlay: unknown }>
+): Promise<Set<string>> {
+  const recorded = new Set<string>()
+  const rest: string[] = []
+  for (const game of games)
+    if (
+      game.currentPlay != null &&
+      typeof game.currentPlay === 'object' &&
+      'teamStation' in game.currentPlay
+    )
+      recorded.add(game.id)
+    else rest.push(game.id)
+  if (rest.length === 0) return recorded
+  const rows = await db
+    .selectFrom('events')
+    .select('gameId')
+    .distinct()
+    .where('gameId', 'in', rest)
+    .where(sql<boolean>`gumbo ? 'teamStation'`)
+    .execute()
+  for (const row of rows) recorded.add(row.gameId)
+  return recorded
+}

@@ -20,6 +20,9 @@ import ts from 'typescript'
  * tell which prefix of it is unchanged; it changes nothing. `swapDocuments`
  * makes a phone's copy of a game as the server's swap leaves it, through the
  * server's own record transforms; the swap itself is the server's.
+ * `scoringEntry` says how a game may be scored, so the Game page and the
+ * server's choice of games a phone keeps for scoring agree; it inspects a
+ * game, changes nothing.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -36,7 +39,8 @@ export const APP_MAY_IMPORT = [
   'baseOutWords',
   'playsLost',
   'actionChain',
-  'swapDocuments'
+  'swapDocuments',
+  'scoringEntry'
 ]
 const LIBRARY = 'src/common/scoring'
 

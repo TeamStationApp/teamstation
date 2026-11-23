@@ -8,6 +8,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import {
   dismissNotification,
+  hasPendingNotifications,
   inbox,
   markViewed,
   notificationDetail
@@ -54,9 +55,18 @@ export function notificationRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      res.json({
-        hasPending: (await inbox(db, req.actor, {}, clock)).hasPending
+      // A client that has gone stops the walk.
+      const gone = new AbortController()
+      res.on('close', () => {
+        if (!res.writableFinished) gone.abort()
       })
+      const { hasPending } = await hasPendingNotifications(
+        db,
+        req.actor,
+        clock,
+        gone.signal
+      )
+      res.json({ hasPending })
     })
   )
   router.get(
