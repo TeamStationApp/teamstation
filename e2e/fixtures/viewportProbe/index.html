@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The scoring route's own viewport (`useFieldSurface`). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Toolbar probe</title>
+    <!--
+      The scoring route's geometry under a phone browser's bottom toolbar
+      (#373), with nothing of the app: a root 100lvh tall painted the field's
+      dark green, html painted the same, a deck-sized block placed from the
+      visual viewport as `useToolbarOverlap` places the deck, and a magenta
+      band from the visual viewport's bottom (the toolbar's top edge) to the
+      bottom of the root. The scenario
+      `platform/web/scoring-viewport#toolbar-probe` reads the screenshot's
+      colours and this page's readings, drawn as large text so maestro-d
+      finds them in the view hierarchy, and kept on `window.__probe`.
+
+      The document is three screens tall, behind the fixed root, so a swipe
+      scrolls it and the browser collapses its toolbar as it does on any
+      long page.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0f5a2a;
+      }
+      #scroller {
+        height: 300vh;
+      }
+      #root {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 100lvh;
+        background: #0f5a2a;
+        overflow: hidden;
+      }
+      .measure {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1px;
+        visibility: hidden;
+      }
+      #lvh {
+        height: 100lvh;
+      }
+      #svh {
+        height: 100svh;
+      }
+      #dvh {
+        height: 100dvh;
+      }
+      #insetBottom {
+        height: env(safe-area-inset-bottom, 0px);
+      }
+      #deck {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        /* CONTROL_DECK_HEIGHT: two 56px rows and their 8px gap. */
+        height: 120px;
+        background: #2f6bff;
+      }
+      #band {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: #ff00ff;
+      }
+      #readings {
+        position: absolute;
+        top: 22%;
+        left: 16px;
+        right: 16px;
+        color: #ffffff;
+        font:
+          600 22px/30px -apple-system,
+          system-ui,
+          sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="scroller"></div>
+    <div id="root">
+      <div id="lvh" class="measure"></div>
+      <div id="svh" class="measure"></div>
+      <div id="dvh" class="measure"></div>
+      <div id="insetBottom" class="measure"></div>
+      <div id="readings"></div>
+      <div id="deck"></div>
+      <div id="band"></div>
+    </div>
+    <script>
+      // The strip under the deck (SCORING_BOTTOM_STRIP) and the deck's gap
+      // above it (FIELD_EDGE_GAP).
+      var STRIP = 32
+      var GAP = 8
+      var root = document.getElementById('root')
+      var deck = document.getElementById('deck')
+      var band = document.getElementById('band')
+      var readings = document.getElementById('readings')
+      var probe = { bandTaps: 0, pageTaps: 0, lastTapY: -1 }
+      var MIRROR_TO_URL = /Android/.test(navigator.userAgent)
+      window.__probe = probe
+
+      function height(id) {
+        return document.getElementById(id).getBoundingClientRect().height
+      }
+
+      function round(value) {
+        return Math.round(value * 10) / 10
+      }
+
+      function update() {
+        var vv = window.visualViewport
+        var rootHeight = root.getBoundingClientRect().height
+        var vvTop = vv == null ? 0 : vv.offsetTop
+        var vvHeight = vv == null ? window.innerHeight : vv.height
+        // useToolbarOverlap: how far the root reaches past the visual
+        // viewport's bottom, the toolbar's top edge.
+        var overlap = Math.max(0, rootHeight - (vvTop + vvHeight))
+        deck.style.bottom = overlap + STRIP + GAP + 'px'
+        band.style.height = overlap + 'px'
+        var bandRect = band.getBoundingClientRect()
+        var deckRect = deck.getBoundingClientRect()
+        probe.innerWidth = window.innerWidth
+        probe.innerHeight = window.innerHeight
+        probe.dpr = window.devicePixelRatio
+        probe.lvh = round(height('lvh'))
+        probe.svh = round(height('svh'))
+        probe.dvh = round(height('dvh'))
+        probe.insetBottom = round(height('insetBottom'))
+        probe.rootHeight = round(rootHeight)
+        probe.vvHeight = round(vvHeight)
+        probe.vvTop = round(vvTop)
+        probe.overlap = round(overlap)
+        probe.bandTop = round(bandRect.top)
+        probe.bandHeight = round(bandRect.height)
+        probe.deckBottom = round(deckRect.bottom)
+        probe.scrollY = round(window.scrollY)
+        var shown = [
+          'innerWidth',
+          'innerHeight',
+          'dpr',
+          'lvh',
+          'svh',
+          'dvh',
+          'insetBottom',
+          'rootHeight',
+          'vvHeight',
+          'vvTop',
+          'overlap',
+          'bandTop',
+          'bandHeight',
+          'deckBottom',
+          'scrollY',
+          'bandTaps',
+          'pageTaps',
+          'lastTapY'
+        ]
+        readings.innerHTML = shown
+          .map(function (name) {
+            return '<div>' + name + '=' + probe[name] + '</div>'
+          })
+          .join('')
+        // Chrome on Android reports none of a page's text to the view
+        // hierarchy, only its address bar: the readings go there too.
+        if (MIRROR_TO_URL) {
+          history.replaceState(
+            null,
+            '',
+            '#' +
+              shown
+                .map(function (name) {
+                  return name + '=' + probe[name]
+                })
+                .join('&')
+          )
+        }
+      }
+
+      var queued = false
+      function schedule() {
+        if (queued) return
+        queued = true
+        requestAnimationFrame(function () {
+          queued = false
+          update()
+        })
+      }
+
+      band.addEventListener('pointerdown', function () {
+        probe.bandTaps++
+      })
+      // Any tap that reaches the page, band or not, and where.
+      document.addEventListener(
+        'pointerdown',
+        function (event) {
+          probe.pageTaps++
+          probe.lastTapY = round(event.clientY)
+          schedule()
+        },
+        true
+      )
+      if (window.visualViewport != null) {
+        window.visualViewport.addEventListener('resize', schedule)
+        window.visualViewport.addEventListener('scroll', schedule)
+      }
+      window.addEventListener('resize', schedule)
+      window.addEventListener('scroll', schedule)
+      window.addEventListener('orientationchange', schedule)
+      update()
+    </script>
+  </body>
+</html>
