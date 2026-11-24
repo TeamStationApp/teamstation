@@ -6250,6 +6250,55 @@
       "file": "e2e/tests/platform/web/main-flows.e2e.ts"
     },
     {
+      "id": "platform/web/scoring-viewport#toolbar-probe",
+      "title": "What a phone browser’s bottom toolbar leaves the web scoring screen: paint, strip, taps and the deck",
+      "kind": "e2e",
+      "covers": [
+        "e2e/fixtures/viewportProbe/index.html",
+        "src/app/field/useFieldSurface.ts"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/web/scoring-viewport",
+      "file": "e2e/tests/platform/web/scoring-viewport.e2e.ts"
+    },
+    {
       "id": "playback/recordings/director-take-finish#real-take",
       "title": "A real multi-gigabyte TS Director take is taken in as segments inside the apps’ 900 s",
       "kind": "e2e",
