@@ -67,7 +67,7 @@ describe('keeping a game page’s videos current', function () {
     active?: boolean
   }): null {
     const { videos, publishing, refresh, active } = props
-    useVideoListRefresh({ videos, publishing, refresh, everyMs: 40, active })
+    useVideoListRefresh({ videos, publishing, refresh, active })
     return null
   }
 
@@ -87,7 +87,7 @@ describe('keeping a game page’s videos current', function () {
     await render(probe(true))
     expect(asked).equals(1)
     await wait(150)
-    expect(asked).to.be.at.least(3)
+    expect(asked, 'nothing on a timer').equals(1)
   })
 
   it('asks nothing of a game nothing is live on', async function () {
@@ -103,7 +103,7 @@ describe('keeping a game page’s videos current', function () {
     expect(asked).equals(0)
   })
 
-  it('asks again, every so often, while one of its videos is live', async function () {
+  it('asks nothing on a timer while one of its videos is live: the game’s notices read it', async function () {
     let asked = 0
     await render(
       <Probe
@@ -113,19 +113,7 @@ describe('keeping a game page’s videos current', function () {
       />
     )
     await wait(150)
-    expect(asked).to.be.at.least(2)
-
-    // Once nothing is live, it stops.
-    await render(
-      <Probe
-        videos={[video('v1', 'ready')]}
-        publishing={[]}
-        refresh={() => asked++}
-      />
-    )
-    const after = asked
-    await wait(150)
-    expect(asked).equals(after)
+    expect(asked).equals(0)
   })
 
   it('asks at once for a publishing video the page does not hold, and only once', async function () {

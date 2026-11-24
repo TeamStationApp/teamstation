@@ -88,6 +88,7 @@ import {
   useOutboxNotice,
   usePhoneOffline
 } from '../sync/useOffline'
+import { whenBack } from '../sync/whenBack'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { BoxScore, type LineupBatter } from './BoxScore'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
@@ -531,7 +532,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     if (socket == null || opened == null) return
     let live = true
     let reading = false
-    let retry: ReturnType<typeof setTimeout> | undefined
+    let retry: (() => void) | undefined
     const canAdopt = (): boolean =>
       live && !dirtyNow.current && openedNow.current === opened
     const refresh = async (): Promise<void> => {
@@ -543,11 +544,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         if (!canAdopt()) playRefreshPending.current = true
       } catch {
         playRefreshPending.current = true
+        // Asked again once the network or the app comes back, or on the
+        // next play frame; never on a timer.
         if (live)
-          retry = setTimeout(() => {
+          retry = whenBack(() => {
             retry = undefined
             refresh().catch(() => undefined)
-          }, 1000)
+          })
       } finally {
         reading = false
       }
@@ -570,7 +573,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       if (reading) playRefreshPending.current = true
       live = false
       stop()
-      if (retry != null) clearTimeout(retry)
+      retry?.()
     }
   }, [socket, gameId, opened, unsaved, reload])
 

@@ -655,12 +655,11 @@ describe('saving from the scoring screen', function () {
       async () => Date.now() + 90_000,
       memoryStorage(),
       {
-        setInterval: () => {
+        whenBack: () => {
           const timer = {}
           timers.add(timer)
-          return timer
-        },
-        clearInterval: timer => timers.delete(timer)
+          return () => timers.delete(timer)
+        }
       }
     )
     const source: ScoringSource = {

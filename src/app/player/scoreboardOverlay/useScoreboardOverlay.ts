@@ -24,7 +24,7 @@ const answered = new WeakMap<
 >()
 
 /** How long a failed ask waits before the next, doubling up to the most. */
-export const overlayRetry = { firstMs: 2000, mostMs: 30000 }
+export const overlayRetry = { firstMs: 2000, mostMs: 30000, tries: 6 }
 
 async function ask(
   client: TeamStationClient,
@@ -83,6 +83,7 @@ export function useScoreboardOverlay(
     if (gameId == null) return
     let live = true
     let timer: ReturnType<typeof setTimeout> | undefined
+    let tries = 0
     const attempt = (waitMs: number): void => {
       ask(client, gameId)
         .then(value => {
@@ -102,6 +103,10 @@ export function useScoreboardOverlay(
             setOverlay({ gameId, value: null })
             return
           }
+          // A few tries, then it rests: a board with no placement shows
+          // where it was put by default.
+          if (tries >= overlayRetry.tries) return
+          tries++
           timer = setTimeout(() => {
             attempt(Math.min(waitMs * 2, overlayRetry.mostMs))
           }, waitMs)

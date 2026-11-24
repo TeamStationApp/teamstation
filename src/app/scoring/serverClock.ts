@@ -1,15 +1,17 @@
 import { measureOffset } from '../../common/serverClock'
+import { whenBack } from '../sync/whenBack'
 import type { PreferenceStorage } from './scoringPreferenceStore'
 
-/** How often the scoring screen measures the server's clock while open. */
-export const CLOCK_REFRESH_MS = 5 * 60_000
 const KEY = 'teamstation:scoring:serverClockOffset'
 
 export interface ServerClockOptions {
   /** This device's clock. Swapped out in tests. */
   local?: () => number
-  setInterval?: (run: () => void, ms: number) => unknown
-  clearInterval?: (handle: unknown) => void
+  /**
+   * Runs its argument once the network or the app comes back, and returns
+   * the way to stop waiting: `whenBack` unless given.
+   */
+  whenBack?: (again: () => void) => () => void
 }
 
 /**
@@ -22,8 +24,7 @@ export class ServerClock {
   private offsetMs = 0
   private measured = false
   private readonly local: () => number
-  private readonly setInterval: (run: () => void, ms: number) => unknown
-  private readonly clearInterval: (handle: unknown) => void
+  private readonly whenBack: (again: () => void) => () => void
   /** The offset kept from an earlier measurement, read once. */
   readonly restored: Promise<void>
 
@@ -33,13 +34,7 @@ export class ServerClock {
     options: ServerClockOptions = {}
   ) {
     this.local = options.local ?? Date.now
-    this.setInterval =
-      options.setInterval ?? ((run, ms) => globalThis.setInterval(run, ms))
-    this.clearInterval =
-      options.clearInterval ??
-      (handle => {
-        globalThis.clearInterval(handle as ReturnType<typeof setInterval>)
-      })
+    this.whenBack = options.whenBack ?? whenBack
     this.restored = storage
       .getItem(KEY)
       .then(raw => {
@@ -73,17 +68,20 @@ export class ServerClock {
   }
 
   /**
-   * Measures now and every five minutes until the returned function is
-   * called: the scoring screen keeps time this way while it is open.
+   * Measures now, and again each time the network or the app comes back,
+   * until the returned function is called: the scoring screen keeps time
+   * this way while it is open. A clock that drifts by seconds over a game
+   * needs no more than that.
    */
   keepTime(): () => void {
+    let stop: (() => void) | undefined
     const measure = (): void => {
       this.measure().catch(() => undefined)
+      stop = this.whenBack(measure)
     }
     measure()
-    const handle = this.setInterval(measure, CLOCK_REFRESH_MS)
     return () => {
-      this.clearInterval(handle)
+      stop?.()
     }
   }
 }

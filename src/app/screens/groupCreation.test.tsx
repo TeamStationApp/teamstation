@@ -21,6 +21,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { FakeSearchServer } from '../../test/fakeSearchSocket'
 import { reachEnd } from '../../test/PagedListStandIn'
 import { pageOf, pageOfGames } from '../../test/pageOf'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
@@ -37,6 +38,8 @@ import {
 import { PromoteExternalScreen } from './PromoteExternalScreen'
 import { SEARCH_PLACEHOLDER, SearchScreen } from './SearchScreen'
 
+const notices = new ScreenNotices()
+
 let root: Root | undefined
 afterEach(async () => {
   await act(async () => root?.unmount())
@@ -47,7 +50,11 @@ async function mount(element: React.ReactElement): Promise<void> {
   document.body.append(host)
   root = createRoot(host)
   await act(async () => {
-    root!.render(<ThemeProvider>{element}</ThemeProvider>)
+    root!.render(
+      <ThemeProvider>
+        <NoticesProvider notices={notices}>{element}</NoticesProvider>
+      </ThemeProvider>
+    )
   })
 }
 async function press(label: string): Promise<void> {
@@ -591,9 +598,7 @@ describe('creation and organization interface behavior', () => {
     api.notification = async () => {
       throw new HttpError('offline', 'Offline read')
     }
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).includes(notification.description)
     expect(document.body.textContent).includes('Showing the saved invitation')
     await press('Accept invitation')
@@ -605,9 +610,7 @@ describe('creation and organization interface behavior', () => {
     api.notification = async () => {
       throw new HttpError('forbidden', 'Access removed')
     }
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).not.includes(notification.description)
   })
   it('does not show or submit a previous invitation while a different route is loading or offline', async () => {
@@ -636,11 +639,13 @@ describe('creation and organization interface behavior', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <NotificationDetailScreen
-            client={api}
-            id="request_next"
-            onChanged={() => {}}
-          />
+          <NoticesProvider notices={notices}>
+            <NotificationDetailScreen
+              client={api}
+              id="request_next"
+              onChanged={() => {}}
+            />
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -671,16 +676,12 @@ describe('creation and organization interface behavior', () => {
     api.notifications = async () => {
       throw new HttpError('offline', 'Offline read')
     }
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).includes(notification.title)
     api.notifications = async () => {
       throw new HttpError('forbidden', 'Access removed')
     }
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).not.includes(notification.title)
   })
   it('discards an older private invitation response after a newer refusal and preserves resend retry identity', async () => {
@@ -702,9 +703,7 @@ describe('creation and organization interface behavior', () => {
         onChanged={() => {}}
       />
     )
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).includes('Permission removed')
     await act(async () => {
       resolveOld(notification)
@@ -730,46 +729,6 @@ describe('creation and organization interface behavior', () => {
     await press('Submit again')
     expect(keys[0]).equals(keys[1])
     expect(document.body.textContent).includes('Resend offline')
-  })
-  it('keeps a saved account-mail switch when an older refresh finishes later', async () => {
-    const api = client()
-    api.nodeAccounts = async () => []
-    let hang = false
-    let release!: (value: { accountMessages: boolean }) => void
-    api.accountMail = async () => {
-      if (!hang) return { accountMessages: false }
-      return await new Promise(resolve => {
-        release = resolve
-      })
-    }
-    api.setAccountMail = async () => {}
-    await mount(<NodeAdministrationScreen client={api} onChanged={() => {}} />)
-    expect(
-      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
-        ?.checked
-    ).equals(false)
-    hang = true
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
-    await act(async () => {
-      document.querySelector<HTMLElement>('[role="switch"]')!.click()
-    })
-    expect(
-      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
-        ?.checked
-    ).equals(true)
-    await act(async () => {
-      release({ accountMessages: false })
-    })
-    expect(
-      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
-        ?.checked
-    ).equals(true)
-    expect(
-      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
-        ?.checked
-    ).equals(true)
   })
   it('keeps the account list when account mail cannot load', async () => {
     const api = client()
@@ -1064,11 +1023,13 @@ describe('creation and organization interface behavior', () => {
     )
     await mount(screen(league))
     hold = true
+    await notices.notify()
     await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
-    await act(async () => {
-      root!.render(<ThemeProvider>{screen(season)}</ThemeProvider>)
+      root!.render(
+        <ThemeProvider>
+          <NoticesProvider notices={notices}>{screen(season)}</NoticesProvider>
+        </ThemeProvider>
+      )
     })
     expect(document.body.textContent).not.includes(league.name)
     expect(document.body.textContent).not.includes('Create Team')
@@ -1106,15 +1067,11 @@ describe('creation and organization interface behavior', () => {
       await new Promise(resolve => {
         resolveOld = resolve
       })
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     api.group = async () => {
       throw new HttpError('forbidden', 'Group access removed')
     }
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     await act(async () => {
       resolveOld(detail)
     })
@@ -1302,9 +1259,7 @@ describe('creation and organization interface behavior', () => {
     api.notification = async () => {
       throw new HttpError('notFound', 'Not found')
     }
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).not.includes(notification.description)
   })
   it('paginates shared notifications and retries loading while keeping pending separate from sent and history', async () => {
@@ -1341,9 +1296,7 @@ describe('creation and organization interface behavior', () => {
     await act(async () => {
       reachEnd()
     })
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(document.body.textContent).includes('Next invitation')
     // The second page's approval is decided on its card, not opened.
     expect(

@@ -75,6 +75,7 @@ import {
   useOutboxSummary,
   usePhoneOffline
 } from '../sync/useOffline'
+import { whenBack } from '../sync/whenBack'
 import { useTheme } from '../theme/ThemeContext'
 import {
   NO_WALK_UP_MUSIC,
@@ -337,6 +338,12 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   // Held edits given up while a page is over the scorer (a player's page
   // shows the banner, whose list can give them up): open the game again,
   // as the scorer's own notice does, once per clear and per game.
+  // Open, the game is this screen's: the phone's offline set keeps its
+  // documents and leaves its changes to the screen.
+  useEffect(() => {
+    if (!(props.client instanceof CachingClient)) return
+    return props.client.holdGame(props.gameId)
+  }, [props.client, props.gameId])
   const heldHere = useHeldGameControl(props.client, props.gameId) != null
   const heldBefore = useRef({ gameId: props.gameId, held: heldHere })
   useEffect(() => {
@@ -2727,10 +2734,10 @@ function ScoringPanel(props: {
     state.dictationQuestion == null
   followAllowed.current = settled
   const following = useRef(false)
-  const followRetry = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const followRetry = useRef<(() => void) | null>(null)
   useEffect(
     () => () => {
-      if (followRetry.current != null) clearTimeout(followRetry.current)
+      followRetry.current?.()
     },
     []
   )
@@ -2771,12 +2778,13 @@ function ScoringPanel(props: {
       .catch(() => {
         again()
         failed = true
-        // A quiet game must recover even if no further socket notice arrives.
+        // A quiet game recovers once the network or the app comes back, even
+        // with no further socket notice; never on a timer.
         if (follow.current.mounted && followRetry.current == null)
-          followRetry.current = setTimeout(() => {
+          followRetry.current = whenBack(() => {
             followRetry.current = null
             if (follow.current.mounted) setStaleCheck(value => value + 1)
-          }, 1000)
+          })
       })
       .finally(() => {
         following.current = false

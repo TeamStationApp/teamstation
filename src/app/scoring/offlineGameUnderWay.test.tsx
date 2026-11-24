@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { ScoringSession } from '../../common/scoring/session'
 import { fieldServer, memoryStorage } from '../../test/offlineFieldServer'
+import { prepareOffline } from '../../test/offlineSetTesting'
 import { listProps } from '../../test/PagedListStandIn'
 import { scoringSession } from '../../test/scoringSession'
 import {
@@ -115,7 +116,7 @@ describe('a game under way, read ahead and opened with no signal', function () {
       refreshRetryMs: 100
     })
     client.openFor('usr_scorer')
-    if (prefetch) await client.prefetch()
+    if (prefetch) await prepareOffline(client)
     // Nothing read, nothing opened: nothing stored.
     const last = executors.at(-1)
     const stored = (

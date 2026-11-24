@@ -23,12 +23,25 @@ import { useSceneShown } from '../components/sceneShown'
 
 /** One scope as a string, so two of them compare as values. */
 export function screenScopeKey(scope: ScreenScope): string {
-  return scope.scope === 'event' ? `event:${scope.gameId}` : scope.scope
+  if (scope.scope === 'event') return `event:${scope.gameId}`
+  if (scope.scope === 'team') return `team:${scope.teamId}`
+  if (scope.scope === 'group') return `group:${scope.kind}:${scope.id}`
+  return scope.scope
 }
 
 function scopeOfKey(key: string): ScreenScope {
   if (key.startsWith('event:'))
     return { scope: 'event', gameId: key.slice('event:'.length) }
+  if (key.startsWith('team:'))
+    return { scope: 'team', teamId: key.slice('team:'.length) }
+  if (key.startsWith('group:')) {
+    const [, kind, ...id] = key.split(':')
+    return {
+      scope: 'group',
+      kind: kind as 'season' | 'league' | 'node',
+      id: id.join(':')
+    }
+  }
   return { scope: key as 'home' | 'schedule' }
 }
 
@@ -190,7 +203,7 @@ export function ScreenScopeProvider(
  * (`byPost`) pass, since that post's play frames already read it.
  *
  * Returns the function the screen calls wherever it called `load` before:
- * from `useForegroundRefresh`, a timer, or a socket's game frame. While
+ * from `useNoticedRead`, a timer, or a socket's game frame. While
  * online with a socket, the first call holds the screen's scope and the
  * load waits for the server's `subscribed` (or three seconds); a later
  * `changed` runs it again at once, or, within `COALESCE_MS` of the last

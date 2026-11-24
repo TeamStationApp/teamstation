@@ -524,38 +524,34 @@ describe('DJ Game on the socket (U29)', function () {
     ).includes('Otto V')
   })
 
-  it('polls only while the socket is down', async function () {
+  it('reads once when the socket drops, and nothing on a timer', async function () {
     clock = pollClock(40)
     const socket = new FakeSocket()
     const client = djClient([game()])
-    await render({ client, socket, pollMs: 40 })
-    expect(clock.running()).equals(0)
-    for (let i = 0; i < 3; i++) await clock.tick()
+    await render({ client, socket })
     expect(client.reads).equals(1)
     await socket.status(false)
-    expect(clock.running()).equals(1)
-    for (let i = 0; i < 3; i++) await clock.tick()
-    expect(client.reads).equals(4)
-    await socket.status(true)
+    expect(client.reads, 'once for the outage').equals(2)
     expect(clock.running()).equals(0)
     for (let i = 0; i < 3; i++) await clock.tick()
-    expect(client.reads).equals(4)
+    expect(client.reads).equals(2)
+    await socket.status(true)
+    expect(client.reads).equals(2)
   })
 
-  it('polls while the server has refused the game (internal), until it is subscribed again', async function () {
+  it('reads once while the server has refused the game (internal), and again once it is subscribed', async function () {
     clock = pollClock(40)
     const socket = new FakeSocket()
     const client = djClient([game()])
-    await render({ client, socket, pollMs: 40 })
-    expect(clock.running()).equals(0)
-    // Other refusals are not the server failing: still no poll.
+    await render({ client, socket })
+    // Other refusals are not the server failing: nothing is read.
     await socket.emit('g1', {
       type: 'error',
       gameId: 'g1',
       code: 'tooMany',
       message: 'Too many'
     })
-    expect(clock.running()).equals(0)
+    expect(client.reads).equals(1)
     await socket.emit('g1', {
       type: 'error',
       gameId: 'g1',
@@ -563,52 +559,48 @@ describe('DJ Game on the socket (U29)', function () {
       message: 'The server could not subscribe; try again'
     })
     expect(socket.connected).equals(true)
-    expect(clock.running()).equals(1)
-    for (let i = 0; i < 3; i++) await clock.tick()
-    expect(client.reads).equals(4)
-    await socket.emit('g1', { type: 'subscribed', gameId: 'g1' })
+    expect(client.reads).equals(2)
     expect(clock.running()).equals(0)
+    for (let i = 0; i < 3; i++) await clock.tick()
+    expect(client.reads).equals(2)
+    await socket.emit('g1', { type: 'subscribed', gameId: 'g1' })
     // The answer that ends the refusal reads the list once, in case a change
-    // came after the last poll.
-    expect(client.reads).equals(5)
-    // The list's own batched update after that read settles inside act.
+    // came after the last read.
+    expect(client.reads).equals(3)
     await act(async () => {
       await delay(100)
     })
-    for (let i = 0; i < 3; i++) await clock.tick()
-    expect(client.reads).equals(5)
     // A later subscribed (a reconnect's) reads nothing more by itself.
     await socket.emit('g1', { type: 'subscribed', gameId: 'g1' })
-    expect(client.reads).equals(5)
+    expect(client.reads).equals(3)
   })
 
   it('recovers from "Cannot load" when the refusal ends, with no Retry', async function () {
     clock = pollClock(40)
     const socket = new FakeSocket()
     const down = new Error('down')
-    const client = djClient([down, down, down, game()])
-    await render({ client, socket, pollMs: 40 })
+    const client = djClient([down, down, game()])
+    await render({ client, socket })
     await socket.emit('g1', {
       type: 'error',
       gameId: 'g1',
       code: 'internal',
       message: 'The server could not subscribe; try again'
     })
-    for (let i = 0; i < 2; i++) await clock.tick()
-    expect(client.reads).equals(3)
+    expect(client.reads).equals(2)
     expect(text()).includes('Cannot load')
     await socket.emit('g1', { type: 'subscribed', gameId: 'g1' })
     expect(text()).not.includes('Cannot load')
     expect(names()[0]).includes('Tom A')
   })
 
-  it('polls with no socket at all', async function () {
+  it('reads once with no socket at all', async function () {
     clock = pollClock(40)
     const client = djClient([game()])
-    await render({ client, pollMs: 40 })
-    expect(clock.running()).equals(1)
+    await render({ client })
+    expect(clock.running()).equals(0)
     for (let i = 0; i < 3; i++) await clock.tick()
-    expect(client.reads).equals(4)
+    expect(client.reads).equals(1)
   })
 
   it('holds an update while a finger is down, and shows it on release', async function () {

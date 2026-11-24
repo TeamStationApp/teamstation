@@ -256,7 +256,7 @@ describe("a game's line score, fetched (U5)", function () {
     expect(seen.at(-1)?.steps).equals(null)
   })
 
-  it('asks again on each change notice while live, and polls while the socket is down', async function () {
+  it('asks again on each change notice while live, and once when the socket drops, never on a timer', async function () {
     const server = overlayServer()
     server.lines.set('g1', [{ at: 5, line: LINE }])
     const client = new TeamStationClient({
@@ -308,19 +308,20 @@ describe("a game's line score, fetched (U5)", function () {
     })
     await advance(NOTICE_DEBOUNCE_MS)
     expect(asks()).equals(3)
-    // While the socket is open the poll asks nothing; once it is down, it
-    // asks every poll.
-    await advance(BOARD_POLL_MS)
+    // While the socket is open nothing asks on a timer.
+    await advance(BOARD_POLL_MS * 3)
     expect(asks()).equals(3)
+    // It drops: asked once for the outage, and nothing more while it is
+    // down, however long.
     await act(async () => {
       sockets.latest().drop(4403)
     })
-    await advance(BOARD_POLL_MS)
-    expect(asks()).equals(4)
-    // A failed ask is asked again by the next poll.
-    server.fail.add('/games/g1/box-score')
-    await advance(BOARD_POLL_MS)
+    await settle(5)
+    expect(asks(), 'once for the outage').equals(4)
+    await advance(BOARD_POLL_MS * 5)
+    expect(asks(), 'nothing on a timer while down').equals(4)
     expect(seen.at(-1)?.steps).length(1)
+    server.fail.add('/games/g1/box-score')
     // Unmounted, it asks no more.
     await act(async () => {
       root?.unmount()

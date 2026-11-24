@@ -633,6 +633,53 @@ describe('the screen scope gate', function () {
     expect(loads()).equals(4)
     gate.leave()
   })
+
+  it('reads once in each outage, live or waiting, and never for its retries (Outage)', async function () {
+    const { gate, socket, loads } = makeGate()
+    gate.enter({ scope: 'schedule' })
+    socket.deliver({ type: 'subscribed' })
+    await settle()
+    expect(loads(), 'the first read').equals(1)
+    // The socket drops: the acknowledgement goes, and the screen reads once.
+    socket.deliver({ type: 'resync' })
+    socket.deliver({ type: 'unreachable', outage: 1 })
+    await settle()
+    expect(loads(), 'one read for the outage').equals(2)
+    // Its retries fail too, in the same outage: nothing more.
+    for (let retry = 0; retry < 5; retry++)
+      socket.deliver({ type: 'unreachable', outage: 1 })
+    await settle()
+    expect(loads(), 'retries read nothing').equals(2)
+    // Back: the catch-up.
+    socket.deliver({ type: 'subscribed' })
+    await settle()
+    expect(loads(), 'one catch-up').equals(3)
+    // The next outage reads once again.
+    socket.deliver({ type: 'resync' })
+    socket.deliver({ type: 'unreachable', outage: 2 })
+    socket.deliver({ type: 'unreachable', outage: 2 })
+    await settle()
+    expect(loads(), 'one read for the next outage').equals(4)
+    gate.leave()
+  })
+
+  it('reads once for a screen opened in an outage the last screen read in (Outage)', async function () {
+    const { gate, socket, clock, loads } = makeGate()
+    gate.enter({ scope: 'home' })
+    socket.deliver({ type: 'unreachable', outage: 3 })
+    await settle()
+    expect(loads()).equals(1)
+    expect(clock.pending(), 'no wait left for an acknowledgement').deep.equals(
+      []
+    )
+    // Another screen, the same outage: it reads what it shows, once.
+    gate.enter({ scope: 'schedule' })
+    socket.deliver({ type: 'unreachable', outage: 3 })
+    socket.deliver({ type: 'unreachable', outage: 3 })
+    await settle()
+    expect(loads()).equals(2)
+    gate.leave()
+  })
 })
 
 describe('TeamStationClient offline', function () {

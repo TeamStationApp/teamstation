@@ -750,6 +750,135 @@
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
     {
+      "id": "app-shell/refresh/socket#badge-parity",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
+      "id": "app-shell/refresh/socket#failed-connection",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
+      "id": "app-shell/refresh/socket#spectator-idle",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
       "id": "app-shell/search/keyboard-dock#rides-keyboard",
       "title": "Search’s dock rides the keyboard up and down on a phone, with its location pills above the field",
       "kind": "e2e",
@@ -5893,6 +6022,147 @@
       "manual": false,
       "spec": "scoring/game-plan/share-print",
       "file": "e2e/tests/scoring/game-plan/share-print.e2e.ts"
+    },
+    {
+      "id": "scoring/offline/eligible#cold-offline-open",
+      "title": "A phone keeps its nearest three scorable games ready offline",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/offlineSet.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/server/scoring/offlineManifest.ts",
+        "src/server/routes/me.ts",
+        "src/server/socket/userNotices.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices",
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/offline/eligible",
+      "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
+    },
+    {
+      "id": "scoring/offline/eligible#nearest-three",
+      "title": "A phone keeps its nearest three scorable games ready offline",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/offlineSet.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/server/scoring/offlineManifest.ts",
+        "src/server/routes/me.ts",
+        "src/server/socket/userNotices.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices",
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/offline/eligible",
+      "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
+    },
+    {
+      "id": "scoring/offline/eligible#spectator-zero",
+      "title": "A phone keeps its nearest three scorable games ready offline",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/offlineSet.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/server/scoring/offlineManifest.ts",
+        "src/server/routes/me.ts",
+        "src/server/socket/userNotices.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices",
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/offline/eligible",
+      "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
     },
     {
       "id": "streaming/basic/four-synthetic#scrub",

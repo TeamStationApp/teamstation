@@ -7,7 +7,7 @@ import type { ScreenScope } from '../../common/gameSocket'
 import type { ScreenScopeSocket } from '../../common/screenScope'
 import { useBackOverride, useHeaderHandoff } from '../components/headerSlot'
 import { useSceneShown } from '../components/sceneShown'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import {
   type ScreenScopeValue,
   ScreenScopeValueProvider,
@@ -219,7 +219,7 @@ describe('scene slot', function () {
     const reads = new Map<string, number>()
     function Showing(props: { name: string }): React.ReactElement {
       shown.set(props.name, useSceneShown())
-      useForegroundRefresh(async () => {
+      useNoticedRead(async () => {
         reads.set(props.name, (reads.get(props.name) ?? 0) + 1)
       })
       return <span>{props.name}</span>
@@ -275,11 +275,11 @@ describe('scene slot', function () {
         { name: 'game', role: 'covered' },
         { name: 'player', role: 'top' }
       ])
-      // Back to the app: the screen on show reads, the covered one does not.
+      // Back to the app: neither reads; what changes comes as a notice.
       await act(async () => {
         window.dispatchEvent(new window.Event('focus'))
       })
-      expect(reads.get('player')).equals(2)
+      expect(reads.get('player')).equals(1)
       expect(reads.get('game')).equals(1)
       // Shown again, it reads once.
       await place([{ name: 'game', role: 'top' }])

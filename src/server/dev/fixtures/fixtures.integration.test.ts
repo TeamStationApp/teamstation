@@ -31,6 +31,7 @@ import {
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runRefreshNotices } from './refreshNotices'
 import {
   hasGroupCoordinates,
   runSearch,
@@ -397,6 +398,47 @@ describe('fixture worlds', function () {
       'First Base',
       'Home Plate'
     ])
+  })
+
+  it('refresh-notices gives a spectator 320 games on four teams, and a scorekeeper four soon on three of them', async function () {
+    const world = await runRefreshNotices({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const teams = world.ids.teams.split(',')
+    expect(teams).to.have.length(4)
+    const games = await the()
+      .selectFrom('games')
+      .select(['id', 'start_at', 'status', 'home_team_id', 'away_team_id'])
+      .where('home_team_id', 'in', teams)
+      .execute()
+    expect(games).to.have.length(320)
+    const soon = world.ids.soon.split(',')
+    const now = Date.now()
+    for (const id of soon) {
+      const game = games.find(row => row.id === id)!
+      const hours = (new Date(game.start_at).getTime() - now) / 3_600_000
+      expect(hours).within(0, 96)
+      expect(game.status).equals('scheduled')
+    }
+    const memberships = await the()
+      .selectFrom('memberships')
+      .select('team_id')
+      .where('user_id', '=', world.accounts.spectator.userId as never)
+      .execute()
+    expect(memberships.map(row => row.team_id).sort()).deep.equals(
+      [...teams].sort()
+    )
+    const roles = await the()
+      .selectFrom('scope_roles')
+      .select(['scope_id', 'role'])
+      .where('user_id', '=', world.accounts.scorer.userId as never)
+      .execute()
+    expect(roles.map(row => row.scope_id).sort()).deep.equals(
+      teams.slice(0, 3).sort()
+    )
+    expect(roles.every(row => row.role === 'scorekeeper')).equals(true)
   })
 
   it('coach-game gives the home team a head coach, an assistant and a scorekeeper, and names its lineup', async function () {

@@ -111,6 +111,8 @@ export class ScreenScopeGate {
   private direct = true
   /** The socket is down and retrying: reads run at once until it is back. */
   private unreachable = false
+  /** The outage this screen has read in, so it reads once in each. */
+  private readOutage: number | undefined
   /** A read is wanted and waits for the acknowledgement. */
   private wanted = false
   private giveUp: unknown
@@ -221,6 +223,7 @@ export class ScreenScopeGate {
     this.acked = false
     this.direct = true
     this.unreachable = false
+    this.readOutage = undefined
     this.running = false
     this.again = false
     this.dirty = false
@@ -237,6 +240,21 @@ export class ScreenScopeGate {
         this.requestLoad()
         return
       case 'unreachable':
+        // Once in each outage the screen reads what it shows, whether its
+        // scope had been acknowledged or was still waiting; the retries of
+        // that outage read nothing more.
+        if (event.outage != null) {
+          this.acked = false
+          this.unreachable = true
+          if (event.outage === this.readOutage) {
+            this.runWanted()
+            return
+          }
+          this.readOutage = event.outage
+          this.stopWaiting()
+          this.requestLoad()
+          return
+        }
         if (this.acked) return
         this.unreachable = true
         this.runWanted()

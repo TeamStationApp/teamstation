@@ -97,8 +97,8 @@ import {
   SearchSocketFactoryContext
 } from './hooks/searchSocketFactory'
 import { useForegroundEntry } from './hooks/useForegroundEntry'
-import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
+import { UserTopicProvider, useUserTopic } from './hooks/useUserTopic'
 import { lstrings, sprintf } from './locales/strings'
 import { routeOfUrl } from './navigation/deepLink'
 import {
@@ -553,6 +553,9 @@ function Shell(props: AppProps): React.ReactElement {
     [apiBaseUrl, initialToken, documentCache]
   )
   const caching = client instanceof CachingClient ? client : undefined
+  // Only the phone's shell gives the App a cache that outlives it: a tab
+  // keeps nothing past its own life, and keeps no games to score offline.
+  const keepsDocuments = props.documentCache != null
   useEffect(() => {
     client.analyticsApp = analytics?.app
     client.captureAnalytics =
@@ -645,7 +648,6 @@ function Shell(props: AppProps): React.ReactElement {
         setHasPending(false)
     }
   }, [client, notificationUser])
-  useForegroundRefresh(refreshNotifications)
   // A device already allowed to notify registers again for each session it
   // is signed in with, at start and after a sign-in, with the switches it
   // keeps for this person, so the server knows where to wake them.
@@ -1076,8 +1078,8 @@ function Shell(props: AppProps): React.ReactElement {
   /**
    * A session the phone opened on its stored user, because the server could
    * not say who it was (no signal, a restart), is asked about again once the
-   * server answers: the first request that leaves the device, the app coming
-   * to the front, and every half minute until it is settled.
+   * server answers: the first request that leaves the device, and the socket
+   * connecting again.
    */
   useEffect(() => {
     if (caching == null || signedInAs == null) return
@@ -1108,41 +1110,18 @@ function Shell(props: AppProps): React.ReactElement {
     const stop = client.subscribeOffline(offline => {
       if (!offline) confirm()
     })
-    const timer = setInterval(confirm, SESSION_CONFIRM_MS)
-    const foreground = AppState.addEventListener('change', state => {
-      if (state === 'active') confirm()
+    const connected = gameSocket?.onStatus(open => {
+      if (open) confirm()
     })
     return () => {
       live = false
       stop()
-      clearInterval(timer)
-      foreground.remove()
+      connected?.()
     }
-  }, [caching, client, signedInAs, sessionRefusedOnPhone])
+  }, [caching, client, signedInAs, sessionRefusedOnPhone, gameSocket])
   useEffect(() => {
     gameSocket?.setToken(client.token)
   }, [client, gameSocket, session])
-  /**
-   * What the phone needs offline, read after the first Home load of a
-   * sign-in, each time the app comes back to the front, and when the server
-   * answers again after no signal. Home reading again on a notice (every
-   * play of a game somebody is scoring) does not read it all ahead again. It
-   * never holds a screen up. Only the phone's shell gives the App a cache
-   * that outlives it; a tab keeps nothing past its own life, so it reads
-   * nothing ahead: it only sends what it has queued.
-   */
-  const keepsDocuments = props.documentCache != null
-  const prefetchDocuments = useCallback((): void => {
-    if (signedInAs == null) return
-    if (keepsDocuments) caching?.prefetch().catch(() => undefined)
-    else caching?.wakeOutbox(true)
-  }, [caching, signedInAs, keepsDocuments])
-  const prefetchedFor = useRef<string | undefined>(undefined)
-  const prefetchAfterHome = useCallback((): void => {
-    if (signedInAs == null || prefetchedFor.current === signedInAs) return
-    prefetchedFor.current = signedInAs
-    prefetchDocuments()
-  }, [signedInAs, prefetchDocuments])
   useEffect(() => {
     if (caching == null || signedInAs == null) return
     const subscription = AppState.addEventListener('change', state => {
@@ -1151,22 +1130,33 @@ function Shell(props: AppProps): React.ReactElement {
       // sending: its queue is only in this tab's memory, which the browser
       // may discard while the tab is hidden.
       caching.setActive(Platform.OS === 'web' || state === 'active')
-      if (state === 'active' && !caching.offline) prefetchDocuments()
+      if (state === 'active' && !caching.offline) caching.wakeOutbox(true)
     })
-    // The network back only wakes the queue; its next send finds out.
+    // The network back only wakes the queue; its next send finds out. No
+    // read follows: each screen reads what it shows on its own notices.
     const unwatch = watchReachability(() => {
       caching.wakeOutbox(true)
     })
     // A request that leaves the device again, after none could.
     const reconnected = caching.subscribeOffline(offline => {
-      if (!offline) prefetchDocuments()
+      if (!offline) caching.wakeOutbox(true)
     })
     return () => {
       subscription.remove()
       unwatch()
       reconnected()
     }
-  }, [caching, signedInAs, prefetchDocuments])
+  }, [caching, signedInAs])
+  // The phone keeps the games its person may score with no signal, for as
+  // long as they are signed in.
+  useEffect(() => {
+    if (!keepsDocuments || caching == null || gameSocket == null) return
+    if (signedInAs == null) return
+    const set = caching.startOfflineSet(gameSocket)
+    return () => {
+      set.stop()
+    }
+  }, [keepsDocuments, caching, gameSocket, signedInAs])
   /**
    * The chat engine, for as long as somebody is signed in. It hears the
    * socket's chat hints from the start, so they arrive on every screen; it
@@ -1239,10 +1229,16 @@ function Shell(props: AppProps): React.ReactElement {
       deviceApprovals?.stop()
     }
   }, [deviceApprovals])
-  const refreshApprovals = useCallback(async () => {
-    await deviceApprovals?.refresh()
-  }, [deviceApprovals])
-  useForegroundRefresh(refreshApprovals)
+  // The bell and the device approvals read once now, and again on the
+  // person's `badge` notices: a request, a receipt, a device asking to be
+  // approved, its expiry.
+  const refreshBell = useCallback(async () => {
+    await Promise.all([
+      refreshNotifications(),
+      deviceApprovals?.refresh() ?? Promise.resolve()
+    ])
+  }, [refreshNotifications, deviceApprovals])
+  useUserTopic('badge', refreshBell, gameSocket)
   useEffect(() => {
     let revision = deviceApprovals?.snapshot().revision
     return deviceApprovals?.subscribe(() => {
@@ -2396,6 +2392,7 @@ function Shell(props: AppProps): React.ReactElement {
               client={client}
               userId={signedIn.user.id}
               onFailure={reportChatStart}
+              socket={gameSocket}
             >
               {screen}
             </ChatGate>
@@ -2833,7 +2830,6 @@ function Shell(props: AppProps): React.ReactElement {
           }}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
-          onLoaded={prefetchAfterHome}
           onOpenUmpireSchedule={
             umpireLeagues.length === 0
               ? undefined
@@ -3602,7 +3598,11 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'chatDevices' ? (
       locked(signedIn => (
         <ChatCoreGate onUnavailable={reportChatCore}>
-          <ChatDevicesScreen client={client} userId={signedIn.user.id} />
+          <ChatDevicesScreen
+            client={client}
+            userId={signedIn.user.id}
+            socket={gameSocket}
+          />
         </ChatCoreGate>
       ))
     ) : top.name === 'chatReports' ? (
@@ -3615,6 +3615,7 @@ function Shell(props: AppProps): React.ReactElement {
           <LinkDeviceScreen
             client={client}
             userId={signedIn.user.id}
+            socket={gameSocket}
             onDone={() => {
               // Linked or reset: the devices list takes this screen's place,
               // so Back does not return to a finished link.
@@ -4366,127 +4367,137 @@ function Shell(props: AppProps): React.ReactElement {
         <DeviceApprovalContext.Provider value={deviceApprovals}>
           <ChatOverlayHost>
             <TessOverlayProvider active={tessColumn}>
-              <View style={[styles.app, tessColumn && styles.split]}>
-                <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-                  <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
-                    <ScreenScopeProvider
-                      socket={gameSocket}
-                      scope={visibleScope}
+              {/* The person's topics reach the pane and Tess's layer beside it. */}
+              <UserTopicProvider socket={gameSocket}>
+                <View style={[styles.app, tessColumn && styles.split]}>
+                  <View
+                    key="pane"
+                    style={styles.pane}
+                    {...coveredBy(tessLayer)}
+                  >
+                    <PaneBesideTess
+                      open={tessColumn}
+                      sidebarWidth={sidebarWidth}
                     >
-                      <StackNavigator
-                        sidebarWidth={sidebarWidth}
-                        sidebar={
-                          sidebarWidth > 0 ? (
-                            <AppSidebar
-                              account={account}
-                              notifications={notifications}
-                              nodeAdministration={nodeAdministration}
-                              selected={tab}
-                              onSelect={selectTab}
-                              unread={chatOn && hasUnread(chatList)}
-                              apiBaseUrl={apiBaseUrl}
-                              buildsClient={
-                                session == null ? undefined : client
-                              }
-                              isAdmin={isAdmin}
-                            />
-                          ) : undefined
-                        }
-                        top={topScene}
-                        retained={retainedScene}
-                        // The field preview is one scene, with nothing beneath.
-                        renderBelow={() =>
-                          props.fieldPreview !== true && stack.length > 0
-                            ? sceneOf(stack.length - 2)
-                            : undefined
-                        }
-                        chrome={chrome}
-                        onForget={key => sceneVisits.current.delete(key)}
-                        onSwipeBack={swipeBack ? popFromDrag : undefined}
-                        intent={navigationIntent}
-                        // Not under Tess's layer: there Back closes the chat
-                        // (`useTessBack`), and must not drag away the screen it
-                        // covers.
-                        predictiveBack={
-                          predictiveBack && !tessLayer && !headerMenuOpen
-                        }
-                        predictiveBackNow={predictiveBackNow}
-                        popPending={popPending}
-                        headerHeight={headerHeight}
-                        navigationHeight={
-                          isWide || sidebarWidth > 0 ? 0 : navigationHeight
-                        }
-                        bannerHeight={bottomBanner}
-                        onHandoff={setHandoff}
-                        onHandoffHeight={setHandoffHeight}
-                        onBackOverride={setBack}
-                      />
-                    </ScreenScopeProvider>
-                    <View
-                      pointerEvents="box-none"
-                      style={[styles.paneOverlay, { left: sidebarWidth }]}
-                    >
-                      <TessOverlayHost />
-                    </View>
-                  </PaneBesideTess>
-                </View>
-                {tessPanel}
-                {/* Over an immersive scene (the scorer) the chrome, and the
+                      <ScreenScopeProvider
+                        socket={gameSocket}
+                        scope={visibleScope}
+                      >
+                        <StackNavigator
+                          sidebarWidth={sidebarWidth}
+                          sidebar={
+                            sidebarWidth > 0 ? (
+                              <AppSidebar
+                                account={account}
+                                notifications={notifications}
+                                nodeAdministration={nodeAdministration}
+                                selected={tab}
+                                onSelect={selectTab}
+                                unread={chatOn && hasUnread(chatList)}
+                                apiBaseUrl={apiBaseUrl}
+                                buildsClient={
+                                  session == null ? undefined : client
+                                }
+                                isAdmin={isAdmin}
+                              />
+                            ) : undefined
+                          }
+                          top={topScene}
+                          retained={retainedScene}
+                          // The field preview is one scene, with nothing beneath.
+                          renderBelow={() =>
+                            props.fieldPreview !== true && stack.length > 0
+                              ? sceneOf(stack.length - 2)
+                              : undefined
+                          }
+                          chrome={chrome}
+                          onForget={key => sceneVisits.current.delete(key)}
+                          onSwipeBack={swipeBack ? popFromDrag : undefined}
+                          intent={navigationIntent}
+                          // Not under Tess's layer: there Back closes the chat
+                          // (`useTessBack`), and must not drag away the screen it
+                          // covers.
+                          predictiveBack={
+                            predictiveBack && !tessLayer && !headerMenuOpen
+                          }
+                          predictiveBackNow={predictiveBackNow}
+                          popPending={popPending}
+                          headerHeight={headerHeight}
+                          navigationHeight={
+                            isWide || sidebarWidth > 0 ? 0 : navigationHeight
+                          }
+                          bannerHeight={bottomBanner}
+                          onHandoff={setHandoff}
+                          onHandoffHeight={setHandoffHeight}
+                          onBackOverride={setBack}
+                        />
+                      </ScreenScopeProvider>
+                      <View
+                        pointerEvents="box-none"
+                        style={[styles.paneOverlay, { left: sidebarWidth }]}
+                      >
+                        <TessOverlayHost />
+                      </View>
+                    </PaneBesideTess>
+                  </View>
+                  {tessPanel}
+                  {/* Over an immersive scene (the scorer) the chrome, and the
                   banner in it, is not drawn: nothing to clear. */}
-                <SuccessToast
-                  notice={successNotice}
-                  bannerHeight={immersiveTop ? 0 : bottomBanner}
-                />
-                {chatOn && <DeviceApprovalPrompt />}
-                <ChatAgeHost
-                  state={chatAge}
-                  topKey={topKey}
-                  chatSurface={isChatSurface(tab, top?.name)}
-                  onLeaveChat={declineChat}
-                />
-                <NotificationAskHost
-                  state={notificationAsk}
-                  client={client}
-                  userId={signedInAs}
-                  chatShown={isChatSurface(tab, top?.name)}
-                />
-                {confirmingSignOut && (
-                  <ChoiceSheet
-                    title="Sign Out?"
-                    choices={[
-                      {
-                        label: 'Sign Out',
-                        detail: unsentLossText(outbox?.count ?? 0),
-                        destructive: true,
-                        onPress: signOutNow
-                      }
-                    ]}
-                    onClose={() => {
-                      setConfirmingSignOut(false)
-                    }}
+                  <SuccessToast
+                    notice={successNotice}
+                    bannerHeight={immersiveTop ? 0 : bottomBanner}
                   />
-                )}
-                {heldOpen && caching != null && (
-                  <HeldEditsSheet
-                    edits={held}
-                    names={heldNames}
-                    actions={{
-                      retry: async edit => {
-                        if (edit.kind === 'game')
-                          await caching.retryGame(edit.id)
-                        else await caching.retryTeam(edit.id)
-                      },
-                      discard: async edit => await caching.discardHeld(edit)
-                    }}
-                    onClose={closeHeld}
+                  {chatOn && <DeviceApprovalPrompt />}
+                  <ChatAgeHost
+                    state={chatAge}
+                    topKey={topKey}
+                    chatSurface={isChatSurface(tab, top?.name)}
+                    onLeaveChat={declineChat}
                   />
-                )}
-                {updateRequired && (
-                  <UpdateRequiredNotice
-                    onReload={Platform.OS === 'web' ? reloadPage : undefined}
+                  <NotificationAskHost
+                    state={notificationAsk}
+                    client={client}
+                    userId={signedInAs}
+                    chatShown={isChatSurface(tab, top?.name)}
                   />
-                )}
-              </View>
+                  {confirmingSignOut && (
+                    <ChoiceSheet
+                      title="Sign Out?"
+                      choices={[
+                        {
+                          label: 'Sign Out',
+                          detail: unsentLossText(outbox?.count ?? 0),
+                          destructive: true,
+                          onPress: signOutNow
+                        }
+                      ]}
+                      onClose={() => {
+                        setConfirmingSignOut(false)
+                      }}
+                    />
+                  )}
+                  {heldOpen && caching != null && (
+                    <HeldEditsSheet
+                      edits={held}
+                      names={heldNames}
+                      actions={{
+                        retry: async edit => {
+                          if (edit.kind === 'game')
+                            await caching.retryGame(edit.id)
+                          else await caching.retryTeam(edit.id)
+                        },
+                        discard: async edit => await caching.discardHeld(edit)
+                      }}
+                      onClose={closeHeld}
+                    />
+                  )}
+                  {updateRequired && (
+                    <UpdateRequiredNotice
+                      onReload={Platform.OS === 'web' ? reloadPage : undefined}
+                    />
+                  )}
+                </View>
+              </UserTopicProvider>
             </TessOverlayProvider>
           </ChatOverlayHost>
         </DeviceApprovalContext.Provider>
@@ -4518,9 +4529,6 @@ function reloadPage(): void {
   globalThis.location?.reload()
 }
 
-/** How often a session opened on the stored user is asked about again. */
-export const SESSION_CONFIRM_MS = 30_000
-
 /**
  * Whether `next` is the form for something only the server makes: a team, a
  * season, a league, or a new game or event. Editing a game that exists is
@@ -4545,7 +4553,8 @@ export function screenScopeOf(
 ): ScreenScope | undefined {
   if (top == null) {
     if (tab === 'home') return { scope: 'home' }
-    if (tab === 'schedule') return { scope: 'schedule' }
+    // Videos lists the same games, and hears the same notices.
+    if (tab === 'schedule' || tab === 'videos') return { scope: 'schedule' }
     return undefined
   }
   switch (top.name) {
@@ -4556,6 +4565,14 @@ export function screenScopeOf(
     case 'djGame':
       // Where there is no DJ Game, its address is the game's page.
       return djSupported ? undefined : { scope: 'event', gameId: top.gameId }
+    case 'team':
+      return { scope: 'team', teamId: top.team.id }
+    case 'season':
+      return { scope: 'group', kind: 'season', id: top.season.id }
+    case 'group':
+      return top.kind === 'team'
+        ? { scope: 'team', teamId: top.id }
+        : { scope: 'group', kind: top.kind, id: top.id }
     default:
       return undefined
   }

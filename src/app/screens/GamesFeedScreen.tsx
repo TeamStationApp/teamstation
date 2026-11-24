@@ -38,7 +38,7 @@ import {
 } from '../components/PinnedBands'
 import { ActiveView, TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { useStableCallback } from '../hooks/useStableCallback'
@@ -232,8 +232,8 @@ export function GamesFeedScreen(
     )
     if (stored != null) paint(stored)
   }, [client, list, mode, paint])
-  // Schedule waits for its scope's acknowledgement before it reads. Videos
-  // takes no scope, so it reads at once.
+  // Schedule and Videos wait for the schedule scope's acknowledgement before
+  // they read, and read again on its notices.
   const scoped = useScreenScope(loadGames, client, paintGames)
   const listsNow = useRef(lists)
   listsNow.current = lists
@@ -249,7 +249,7 @@ export function GamesFeedScreen(
     if (chosen && last != null && Date.now() - last < REREAD_MS) return
     await scoped()
   }, [list, paintGames, scoped])
-  useForegroundRefresh(refresh)
+  useNoticedRead(refresh)
 
   // The latest handler, under one identity, which leaves the cards as drawn.
   const open = useStableCallback(onOpenGame)

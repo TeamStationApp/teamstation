@@ -132,7 +132,7 @@ describe('the scope the visible route holds', () => {
     await settle(50)
   }
 
-  it('holds home, then schedule, then nothing on Videos, reading each after its ack', async () => {
+  it('holds home, then schedule, and keeps schedule on Videos, reading each after its ack', async () => {
     showRoute({ name: 'home' }, true)
     await mount(<App initialToken="token-one" />)
     const socket = sockets.latest()
@@ -145,7 +145,7 @@ describe('the scope the visible route holds', () => {
       {
         type: 'subscribe',
         scope: 'home',
-        id: 'c1',
+        id: (scopeFrames(socket)[0] as { id: string }).id,
         protocol: GAME_SOCKET_PROTOCOL
       }
     ])
@@ -171,10 +171,9 @@ describe('the scope the visible route holds', () => {
 
     const before = scopeFrames(socket).length
     await tab('Videos')
-    // Videos takes no scope: Schedule's is let go, and the list reads at once.
-    expect(scopeFrames(socket).slice(before)).deep.equals([
-      { type: 'unsubscribe', scope: 'schedule', id: 'c4' }
-    ])
+    // Videos lists the same games: it keeps Schedule's scope, already
+    // acknowledged, and reads its list once.
+    expect(scopeFrames(socket).slice(before)).deep.equals([])
     expect(reads).deep.equals(['home', 'games', 'games'])
   })
 
@@ -261,14 +260,16 @@ describe('which scope a route holds', () => {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
   type Top = Parameters<typeof screenScopeOf>[1]
-  it('holds home and schedule as tabs, an event for a game, its scoring and Coach Game, and nothing else', () => {
+  it('holds home and schedule (Videos too) as tabs, an event for a game, its scoring and Coach Game, a team, a season or league, and nothing else', () => {
     expect(screenScopeOf('home', undefined, false)).deep.equals({
       scope: 'home'
     })
     expect(screenScopeOf('schedule', undefined, false)).deep.equals({
       scope: 'schedule'
     })
-    expect(screenScopeOf('videos', undefined, false)).equals(undefined)
+    expect(screenScopeOf('videos', undefined, false)).deep.equals({
+      scope: 'schedule'
+    })
     expect(screenScopeOf('search', undefined, false)).equals(undefined)
     const tops: Top[] = [
       { name: 'game', gameId: 'g1', title: 'Game' },
@@ -291,5 +292,26 @@ describe('which scope a route holds', () => {
       screenScopeOf('home', { name: 'scoreOptions', gameId: 'g1' }, false)
     ).equals(undefined)
     expect(screenScopeOf('home', { name: 'account' }, false)).equals(undefined)
+    // A team, a season and a league hold their own.
+    expect(
+      screenScopeOf(
+        'home',
+        { name: 'team', team: { id: 't1' } } as unknown as Top,
+        false
+      )
+    ).deep.equals({ scope: 'team', teamId: 't1' })
+    expect(
+      screenScopeOf('home', { name: 'group', kind: 'team', id: 't2' }, false)
+    ).deep.equals({ scope: 'team', teamId: 't2' })
+    expect(
+      screenScopeOf('home', { name: 'group', kind: 'league', id: 'l1' }, false)
+    ).deep.equals({ scope: 'group', kind: 'league', id: 'l1' })
+    expect(
+      screenScopeOf(
+        'home',
+        { name: 'season', season: { id: 's1' } } as unknown as Top,
+        false
+      )
+    ).deep.equals({ scope: 'group', kind: 'season', id: 's1' })
   })
 })

@@ -2822,8 +2822,24 @@ export class Outbox {
       teamId: call.teamId,
       body: JSON.stringify(entry)
     })
+    // Only the whole names kept (a scoring screen read those): the roster
+    // every other screen reads is theirs without them, so the new player is
+    // listed there too until his create lands.
+    const plainOf = (body: string): string =>
+      JSON.stringify(listOf(body).map(plainEntry))
+    const shownPlain: StoredDocument | undefined =
+      plain ??
+      (full == null
+        ? undefined
+        : {
+            ...full,
+            body: plainOf(full.body),
+            serverDigest: null,
+            serverBody:
+              full.serverBody == null ? null : plainOf(full.serverBody)
+          })
     for (const [key, document, shown] of [
-      [rosterKey(call.teamId), plain, plainEntry(entry)],
+      [rosterKey(call.teamId), shownPlain, plainEntry(entry)],
       [fullRosterKey(call.teamId), full, entry]
     ] as const)
       if (document != null)

@@ -481,7 +481,7 @@ describe('the scoring screen on the game socket', function () {
     ])
   })
 
-  it('retries a failed remote read without waiting for another pitch', async function () {
+  it('retries a failed remote read once the network is back, without waiting for another pitch', async function () {
     const { changes, other, store } = await scoring()
     const peer = await other()
     peer.apply({ type: 'pitch', call: 'B' })
@@ -498,6 +498,13 @@ describe('the scoring screen on the game socket', function () {
     await changes.plays()
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    await settle()
+    expect(document.body.textContent, 'nothing on a timer').not.includes(
+      '1 balls 0 strikes'
+    )
+    await act(async () => {
+      window.dispatchEvent(new window.Event('online'))
     })
     await settle()
     expect(document.body.textContent).includes('1 balls 0 strikes')

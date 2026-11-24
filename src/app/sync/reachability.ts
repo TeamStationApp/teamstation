@@ -14,3 +14,11 @@ export function watchReachability(onReachable: () => void): () => void {
     window.removeEventListener('online', online)
   }
 }
+
+/**
+ * Calls `onBack` each time the page's network comes back: the window's
+ * `online` event, which only a return sends.
+ */
+export function watchReachableAgain(onBack: () => void): () => void {
+  return watchReachability(onBack)
+}

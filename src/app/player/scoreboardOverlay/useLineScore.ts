@@ -10,7 +10,6 @@ import {
 } from '../../scoreboard/scoreboardSocket'
 import { latestQueue } from './latestQueue'
 import {
-  BOARD_POLL_MS,
   BOARD_SOCKET_STOP,
   isChangeNotice,
   NOTICE_DEBOUNCE_MS,
@@ -49,8 +48,9 @@ export interface LineScoreHandle {
  * A game's line score is small, a step an action at most, so it is asked for
  * whole. While a take is live it is asked again on each change notice of
  * the board's socket (`?timeline=1`, which every play post sends),
- * debounced, and every `BOARD_POLL_MS` while that socket is down; and on a
- * seek, through `refetch`, which picks up a correction made since.
+ * debounced, once when that socket drops (its reconnect asks again), and on
+ * a seek, through `refetch`, which picks up a correction made since. Nothing
+ * asks on a timer.
  */
 export function useLineScore(options: LineScoreOptions): LineScoreHandle {
   const {
@@ -94,7 +94,6 @@ export function useLineScore(options: LineScoreOptions): LineScoreHandle {
 
     let open = false
     let gathering: (() => void) | undefined
-    let polling: (() => void) | undefined
     let socket: { close: () => void } | undefined
     if (live) {
       try {
@@ -108,7 +107,10 @@ export function useLineScore(options: LineScoreOptions): LineScoreHandle {
             open = true
             load()
           },
+          // Dropped: asked once for the outage. A retry that fails again
+          // asks nothing; the next open asks.
           onClose: () => {
+            if (open) load()
             open = false
           },
           onMessage: data => {
@@ -124,22 +126,14 @@ export function useLineScore(options: LineScoreOptions): LineScoreHandle {
           }
         })
       } catch {
-        // No address for a socket: the poll below is all there is.
+        // No address for a socket: the first read and seeks are all there is.
       }
-      const poll = (): void => {
-        polling = schedule(() => {
-          if (!open) load()
-          poll()
-        }, BOARD_POLL_MS)
-      }
-      poll()
     }
     load()
     return () => {
       done = true
       refetch.current = () => undefined
       gathering?.()
-      polling?.()
       socket?.close()
     }
   }, [client, gameId, live, schedule, WebSocketImpl])

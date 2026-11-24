@@ -43,7 +43,6 @@ export class DeviceApprovals {
   private projection?: string
   private working = false
   private unsubscribe?: () => void
-  private timer?: ReturnType<typeof setInterval>
 
   constructor(
     private readonly setup: ChatSetup,
@@ -75,12 +74,9 @@ export class DeviceApprovals {
           this.refresh().catch(() => undefined)
       })
     } catch {
-      // Polling and foreground refresh still work when a socket cannot open.
+      // With no socket, the bell's notices still read it again (`refresh`).
     }
     this.refresh().catch(() => undefined)
-    this.timer = setInterval(() => {
-      this.refresh().catch(() => undefined)
-    }, 5000)
   }
 
   stop(): void {
@@ -90,7 +86,6 @@ export class DeviceApprovals {
     this.refreshing = undefined
     this.projection = undefined
     this.unsubscribe?.()
-    clearInterval(this.timer)
     this.publish(EMPTY_APPROVAL_STATE)
   }
 

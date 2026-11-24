@@ -5742,12 +5742,60 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * The games this phone keeps to score with no signal: at most three, as the
+   * server chooses them, each with its schedule row. `held` names the games
+   * the phone keeps now, so one under way stays kept.
+   */
+  async offlineScoring(held: string[] = []): Promise<{
+    games: Array<{
+      id: string
+      startAt: string
+      homeTeamId: string
+      awayTeamId: string
+      started: boolean
+      schedule: SeasonGame | null
+    }>
+    nextBoundary: string | null
+    digest: string
+  }> {
+    const query =
+      held.length === 0
+        ? ''
+        : `?held=${held.map(id => encodeURIComponent(id)).join(',')}`
+    return await this.request(
+      'GET',
+      `/me/offline-scoring${query}`,
+      asObject({
+        games: asArray(
+          asObject({
+            id: asString,
+            startAt: asString,
+            homeTeamId: asString,
+            awayTeamId: asString,
+            started: asBoolean,
+            schedule: asNullable(asSeasonGame)
+          })
+        ),
+        nextBoundary: asNullable(asString),
+        digest: asString
+      })
+    )
+  }
+
+  /**
+   * Whether anything waits in Notifications. It never changes the client's
+   * `offline` (`keepsOffline`): the bell is one small read, and a slow
+   * answer to it says nothing about the rest of the app's requests.
+   */
   async hasNotifications(): Promise<boolean> {
     return (
       await this.request(
         'GET',
         '/me/notifications/summary',
-        asObject({ hasPending: asBoolean })
+        asObject({ hasPending: asBoolean }),
+        undefined,
+        { keepsOffline: true }
       )
     ).hasPending
   }

@@ -5,6 +5,7 @@ import { dictationModelOf } from '../../common/api'
 import { Checkbox } from '../components/Checkbox'
 import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
+import { whenBack } from '../sync/whenBack'
 import { useTheme } from '../theme/ThemeContext'
 import { dictationOn } from './dictationPlatform'
 import type {
@@ -26,11 +27,6 @@ import { useSpaceToTalk } from './spaceToTalk'
 import { useDictation } from './useDictation'
 
 export { TAP_MS }
-/**
- * How soon a failed health check is asked again. The button stays hidden
- * until one succeeds.
- */
-const HEALTH_RETRY_MS = 1000
 /** The log shows at most this many lines; older ones scroll off the top. */
 export const LOG_LINES = DICTATION_LOG_LINES
 const LINE_HEIGHT = DICTATION_LOG_LINE_HEIGHT
@@ -120,7 +116,8 @@ export function useDictationControls(
   })
   useEffect(() => {
     let live = true
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let waiting: (() => void) | undefined
+    // A failed check is asked again once the network or the app comes back.
     const ask = (): void => {
       health().then(
         reply => {
@@ -130,14 +127,14 @@ export function useDictationControls(
         },
         () => {
           if (!live) return
-          timer = setTimeout(ask, HEALTH_RETRY_MS)
+          waiting = whenBack(ask)
         }
       )
     }
     ask()
     return () => {
       live = false
-      clearTimeout(timer)
+      waiting?.()
     }
   }, [health])
   const keys = useRef<TalkKeys>({ hold: () => false, release: () => {} })

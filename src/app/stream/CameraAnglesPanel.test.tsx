@@ -13,8 +13,10 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { UserTopic, UserTopicListener } from '../../common/gameSocket'
 import { userIdOfGumbo } from '../../common/userId'
 import { TextField } from '../components/TextField'
+import { UserTopicProvider } from '../hooks/useUserTopic'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   angleNameProblem,
@@ -266,20 +268,22 @@ async function mount(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <CameraAnglesPanel
-          signedIn
-          client={fake.client}
-          gameId="gam_1"
-          phone={makePhoneStream(native)}
-          deviceId={async () => DEVICE_ID}
-          Screen={FakeScreen as never}
-          copy={text => copied.push(text)}
-          links={links}
-          hasVideo={hasVideo}
-          onPlay={id => played.push(id)}
-          appState={appState}
-          launchLimitMs={launchLimitMs}
-        />
+        <UserTopicProvider socket={bell}>
+          <CameraAnglesPanel
+            signedIn
+            client={fake.client}
+            gameId="gam_1"
+            phone={makePhoneStream(native)}
+            deviceId={async () => DEVICE_ID}
+            Screen={FakeScreen as never}
+            copy={text => copied.push(text)}
+            links={links}
+            hasVideo={hasVideo}
+            onPlay={id => played.push(id)}
+            appState={appState}
+            launchLimitMs={launchLimitMs}
+          />
+        </UserTopicProvider>
       </ThemeProvider>
     )
     await delay(20)
@@ -611,32 +615,37 @@ function take(patch: Partial<typeof RECORDING> = {}): typeof RECORDING {
   return { ...RECORDING, gameId: 'gam_1', liveStreamId: 'liv_1', ...patch }
 }
 
-/** The panel's five-second poll, held so a test can run it when it likes. */
-function heldPoll(): { poll: () => Promise<void>; restore: () => void } {
-  const real = globalThis.setInterval
-  const realClear = globalThis.clearInterval
-  const held = new Map<unknown, () => void>()
-  globalThis.setInterval = ((callback: () => void, ms?: number) => {
-    if (ms !== 5000) return real(callback, ms)
-    const id = { poll: held.size + 1 }
-    held.set(id, callback)
-    return id
-  }) as unknown as typeof setInterval
-  globalThis.clearInterval = (id: unknown) => {
-    if (held.delete(id)) return
-    realClear(id as Parameters<typeof clearInterval>[0])
+/**
+ * The person's bell, which the panel hears to read again what somebody may do
+ * and, for somebody who films, the cameras: a role given or taken, a request
+ * answered.
+ */
+class Bell {
+  private readonly listeners = new Set<UserTopicListener>()
+  onUserChanged(topic: UserTopic, listener: UserTopicListener): () => void {
+    if (topic !== 'badge') return () => undefined
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
   }
+
+  ring(): void {
+    for (const listener of [...this.listeners]) listener({ type: 'changed' })
+  }
+}
+const bell = new Bell()
+
+/** A notice that the panel reads again on, sent when a test likes. */
+function heldPoll(): { poll: () => Promise<void>; restore: () => void } {
   return {
     poll: async () => {
       await act(async () => {
-        for (const callback of [...held.values()]) callback()
+        bell.ring()
         await delay(20)
       })
     },
-    restore: () => {
-      globalThis.setInterval = real
-      globalThis.clearInterval = realClear
-    }
+    restore: () => undefined
   }
 }
 
@@ -665,7 +674,7 @@ describe('the cameras on a game, on a phone', function () {
     expect(byTestId('angle-row-liv_1')?.textContent).contains(refused)
   })
 
-  it('lists every angle with its subtitle, state and duration, and reads them again every five seconds', async function () {
+  it('lists every angle with its subtitle, state and duration, and reads them again on each notice', async function () {
     const poll = heldPoll()
     try {
       const fake = fakeClient()
@@ -3059,13 +3068,15 @@ describe('web camera management', function () {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <StreamFooter
-            signedIn
-            client={fake.client}
-            gameId="gam_1"
-            hasVideo={hasVideo}
-            onPlay={id => played.push(id)}
-          />
+          <UserTopicProvider socket={bell}>
+            <StreamFooter
+              signedIn
+              client={fake.client}
+              gameId="gam_1"
+              hasVideo={hasVideo}
+              onPlay={id => played.push(id)}
+            />
+          </UserTopicProvider>
         </ThemeProvider>
       )
       await delay(10)
@@ -3144,13 +3155,13 @@ describe('web camera management', function () {
     expect(text()).contains('7 cameras')
     await act(async () => {
       fake.gameCanAdd = 1
-      document.dispatchEvent(new window.Event('visibilitychange'))
+      bell.ring()
       await delay(10)
     })
     expect(text()).contains('4 cameras')
     await act(async () => {
       fake.canAdd = 1
-      document.dispatchEvent(new window.Event('visibilitychange'))
+      bell.ring()
       await delay(10)
     })
     expect(byTestId('record-video-limit')).equals(null)
@@ -3379,7 +3390,8 @@ describe('web camera management', function () {
     await renderWeb(fake, true)
     fake.allowed = false
     await act(async () => {
-      document.dispatchEvent(new window.Event('visibilitychange'))
+      // The role taken away rings the person's bell.
+      bell.ring()
       await delay(10)
       finishRead({
         gameId: 'gam_1',

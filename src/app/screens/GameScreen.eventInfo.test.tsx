@@ -20,11 +20,14 @@ import {
   heldTimers,
   testClock
 } from '../../test/fakeScreenScope'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { ScreenScopeProvider } from '../hooks/useScreenScope'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameScreen } from './GameScreen'
+
+const notices = new ScreenNotices()
 
 let root: Root | undefined
 afterEach(async () => {
@@ -114,9 +117,11 @@ async function render(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <GestureHandlerRootView>
-          <GameScreen signedIn {...props} />
-        </GestureHandlerRootView>
+        <NoticesProvider notices={notices}>
+          <GestureHandlerRootView>
+            <GameScreen signedIn {...props} />
+          </GestureHandlerRootView>
+        </NoticesProvider>
       </ThemeProvider>
     )
   })
@@ -177,9 +182,11 @@ describe('the event page’s automatic and explicit sections', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <GestureHandlerRootView>
-            <GameScreen signedIn key="all-actions" {...props} />
-          </GestureHandlerRootView>
+          <NoticesProvider notices={notices}>
+            <GestureHandlerRootView>
+              <GameScreen signedIn key="all-actions" {...props} />
+            </GestureHandlerRootView>
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -240,7 +247,7 @@ describe('the event page’s automatic and explicit sections', () => {
     expect(visible()).equals(false)
   })
 
-  it('uses the backend LIVE flag and refreshes its decision on foreground', async () => {
+  it('uses the backend LIVE flag and refreshes its decision on its notice', async () => {
     const { client, game } = fixture()
     // Deliberately inconsistent local dates/scoring: the UI must trust the flag.
     game.isGameLive = true
@@ -249,9 +256,7 @@ describe('the event page’s automatic and explicit sections', () => {
       document.querySelector('[aria-label="Live now"]') != null
     expect(visible()).equals(true)
     game.isGameLive = false
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(visible()).equals(false)
   })
 
@@ -303,14 +308,16 @@ describe('the event page’s automatic and explicit sections', () => {
       await act(async () => {
         root!.render(
           <ThemeProvider>
-            <GestureHandlerRootView>
-              <GameScreen
-                signedIn
-                client={client}
-                gameId="g1"
-                initialTab={initialTab}
-              />
-            </GestureHandlerRootView>
+            <NoticesProvider notices={notices}>
+              <GestureHandlerRootView>
+                <GameScreen
+                  signedIn
+                  client={client}
+                  gameId="g1"
+                  initialTab={initialTab}
+                />
+              </GestureHandlerRootView>
+            </NoticesProvider>
           </ThemeProvider>
         )
       })
@@ -325,9 +332,7 @@ describe('the event page’s automatic and explicit sections', () => {
     game.title = 'Team dinner'
     game.venue = 'Demo Park'
     game.status = 'cancelled'
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     await show('boxScore')
     expect(selected()).equals('Info')
     expect(document.body.textContent).not.includes('Demo Park')
@@ -409,15 +414,17 @@ describe('the event page’s automatic and explicit sections', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <GestureHandlerRootView>
-            <GameScreen
-              signedIn
-              client={client}
-              gameId="g1"
-              initialTab="boxScore"
-              socket={socket}
-            />
-          </GestureHandlerRootView>
+          <NoticesProvider notices={notices}>
+            <GestureHandlerRootView>
+              <GameScreen
+                signedIn
+                client={client}
+                gameId="g1"
+                initialTab="boxScore"
+                socket={socket}
+              />
+            </GestureHandlerRootView>
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -426,11 +433,13 @@ describe('the event page’s automatic and explicit sections', () => {
   it('changes the default and moves Info last at the scheduled end while remaining mounted', async () => {
     const { client, game } = fixture()
     game.startAt = new Date(Date.now() - 60000).toISOString()
-    game.endAt = new Date(Date.now() + 200).toISOString()
+    // A second ahead: a render on a busy machine can take the 200 ms this
+    // once allowed, and reach the end before the first look.
+    game.endAt = new Date(Date.now() + 1000).toISOString()
     await render({ client, gameId: 'g1' })
     expect(selected()).equals('Info')
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 260))
+      await new Promise(resolve => setTimeout(resolve, 1100))
     })
     expect(selected()).equals('Box score')
     const pills = [...document.querySelectorAll('[role="tab"]')].map(
@@ -477,7 +486,7 @@ describe('the event page’s automatic and explicit sections', () => {
     expect(selected()).equals('Info')
     await act(async () => {
       game.hasScoringEvents = true
-      window.dispatchEvent(new window.Event('focus'))
+      notices.notifyNow()
     })
     expect(selected()).equals('Box score')
   })
@@ -526,14 +535,16 @@ describe('the event page’s automatic and explicit sections', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <GestureHandlerRootView>
-            <GameScreen
-              signedIn
-              client={client}
-              gameId="g2"
-              initialTab="boxScore"
-            />
-          </GestureHandlerRootView>
+          <NoticesProvider notices={notices}>
+            <GestureHandlerRootView>
+              <GameScreen
+                signedIn
+                client={client}
+                gameId="g2"
+                initialTab="boxScore"
+              />
+            </GestureHandlerRootView>
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -545,9 +556,7 @@ describe('the event page’s automatic and explicit sections', () => {
     await render({ client, gameId: 'g1' })
     game.startAt = new Date(Date.now() - 60000).toISOString()
     game.endAt = new Date(Date.now() - 1).toISOString()
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(selected()).equals('Box score')
     expect(
       [...document.querySelectorAll('[role="tab"]')].at(-1)?.textContent
@@ -572,9 +581,7 @@ describe('the event page’s automatic and explicit sections', () => {
       finish = resolve
     })
     client.gameScheduling = async () => await pending
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(action.isConnected).equals(true)
     await act(async () => {
       finish({ ...state, withdrawTeamIds: [] })
@@ -632,9 +639,7 @@ describe('the event page’s automatic and explicit sections', () => {
       })
     })
     expect(asks).equals(initial)
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(asks).equals(initial + 1)
     await act(async () => {
       listener!({ type: 'resync', gameId: 'g1' })
@@ -669,9 +674,7 @@ describe('the event page’s automatic and explicit sections', () => {
     })
     let reads = 0
     client.game = async () => (++reads === 1 ? await held : { ...game })
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-    })
+    await notices.notify()
     expect(reads).equals(1)
     await act(async () => {
       listener!({
@@ -728,9 +731,7 @@ describe('the event page’s automatic and explicit sections', () => {
       throw new Error('Offline')
     }
     try {
-      await act(async () => {
-        window.dispatchEvent(new window.Event('focus'))
-      })
+      await notices.notify()
       expect(
         document.querySelector('[data-testid="event-hero"]')?.textContent
       ).includes(
@@ -752,21 +753,23 @@ describe('the event page’s automatic and explicit sections', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <HeaderSlotProvider
-            headerHeight={56}
-            onHandoff={node => {
-              handed.push(node)
-            }}
-          >
-            <GestureHandlerRootView>
-              <GameScreen
-                signedIn
-                client={client}
-                gameId="g1"
-                initialTab="info"
-              />
-            </GestureHandlerRootView>
-          </HeaderSlotProvider>
+          <NoticesProvider notices={notices}>
+            <HeaderSlotProvider
+              headerHeight={56}
+              onHandoff={node => {
+                handed.push(node)
+              }}
+            >
+              <GestureHandlerRootView>
+                <GameScreen
+                  signedIn
+                  client={client}
+                  gameId="g1"
+                  initialTab="info"
+                />
+              </GestureHandlerRootView>
+            </HeaderSlotProvider>
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -781,7 +784,11 @@ describe('the event page’s automatic and explicit sections', () => {
     const headerRoot = createRoot(header)
     await act(async () => {
       headerRoot.render(
-        <ThemeProvider>{handed.filter(Boolean).at(-1)}</ThemeProvider>
+        <ThemeProvider>
+          <NoticesProvider notices={notices}>
+            {handed.filter(Boolean).at(-1)}
+          </NoticesProvider>
+        </ThemeProvider>
       )
     })
     expect(header.textContent).equals('Practice')
@@ -847,15 +854,17 @@ describe('the event page’s screen scope', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <GestureHandlerRootView>
-            <ScreenScopeProvider
-              socket={socket}
-              scope={{ scope: 'event', gameId: props.gameId }}
-              timers={clock}
-            >
-              <GameScreen signedIn {...props} />
-            </ScreenScopeProvider>
-          </GestureHandlerRootView>
+          <NoticesProvider notices={notices}>
+            <GestureHandlerRootView>
+              <ScreenScopeProvider
+                socket={socket}
+                scope={{ scope: 'event', gameId: props.gameId }}
+                timers={clock}
+              >
+                <GameScreen signedIn {...props} />
+              </ScreenScopeProvider>
+            </GestureHandlerRootView>
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -1243,7 +1252,11 @@ describe('the event page’s screen scope', () => {
     const clock = testClock(0)
     const socket = new FakeScopeSocket()
     const { client, game } = fixture()
-    client.cached = (async () => ({ ...game })) as TeamStationClient['cached']
+    // The phone stored the game, and nothing else.
+    client.cached = (async (key: string) =>
+      key === 'game.g1'
+        ? { ...game }
+        : undefined) as TeamStationClient['cached']
     let failure: Error = new HttpError('offline', 'Cannot reach TeamStation.')
     client.game = async () => {
       throw failure

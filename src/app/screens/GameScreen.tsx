@@ -73,7 +73,7 @@ import { useSceneReveals, useSceneShown } from '../components/sceneShown'
 import { useScreenBottom } from '../components/Screen'
 import { TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
@@ -503,6 +503,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         return
       setGame(found)
+      // The video playing takes its fresh entry: a camera that ended reads
+      // as no longer live, and a start the phone corrected is the one an
+      // angle switch maps through.
+      setVideo(current => {
+        if (current == null) return current
+        const listed = found.videos.find(item => item.id === current.id)
+        return listed == null || sameVideos([current], [listed])
+          ? current
+          : listed
+      })
       const projection = JSON.stringify([
         found.id,
         found.homeTeamId,
@@ -619,7 +629,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // not a new game.
   const readLatest = useRef(readGame)
   readLatest.current = readGame
-  useForegroundRefresh(readGame)
+  useNoticedRead(readGame)
   useEffect(() => {
     if (game == null) return
     if (game.eventKind === 'event') setTab('info')

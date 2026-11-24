@@ -18,10 +18,11 @@ import {
 import { Button, Card, Screen } from '../components'
 import { PagedList } from '../components/PagedList'
 import { PagedListEnd } from '../components/PagedListEnd'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
+import { useUserTopic } from '../hooks/useUserTopic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 /**
@@ -147,7 +148,9 @@ export function NotificationsScreen({
   }
   const list = lists[mode]
   const { rows, refreshHeld: load, loadMore } = list
-  useForegroundRefresh(load)
+  useNoticedRead(load)
+  // The person's bell says when what Notifications lists changed.
+  useUserTopic('badge', load, undefined, { readNow: false })
   useEffect(() => {
     if (approvals.revision > 0) load().catch(() => undefined)
   }, [load, approvals.revision])
@@ -655,7 +658,9 @@ function NotificationDetail({
       )
     }
   }, [client, id, begin])
-  useForegroundRefresh(load)
+  useNoticedRead(load)
+  // The person's bell says when what Notifications lists changed.
+  useUserTopic('badge', load, undefined, { readNow: false })
   useEffect(() => {
     if (approvals.revision > 0) load().catch(() => undefined)
   }, [load, approvals.revision])

@@ -23,6 +23,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { playedFromStart } from '../../test/liveJoin'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { App } from '../App'
 import { SceneShownProvider } from '../components/sceneShown'
 import { parseRoute, routePath } from '../navigation/routes'
@@ -90,44 +91,23 @@ const delay = async (ms: number): Promise<void> => {
 }
 
 /**
- * The screen's half-minute look at what is live, held so a test can run it
- * when it likes instead of waiting thirty seconds.
+ * The home scope's notices, which the screen reads its live block and its
+ * recent card again on: a test sends one when it likes. Nothing reads on a
+ * timer.
  */
+const notices = new ScreenNotices()
 function liveClock(): {
   tick: () => Promise<void>
-  running: () => number
   restore: () => void
 } {
-  const realSet = globalThis.setInterval
-  const realClear = globalThis.clearInterval
-  const looks = new Map<unknown, () => void>()
-  let nextId = 0
-  globalThis.setInterval = ((
-    callback: () => void,
-    ms?: number,
-    ...rest: unknown[]
-  ) => {
-    if (ms !== 30_000) return realSet(callback, ms, ...rest)
-    const id = { look: ++nextId }
-    looks.set(id, callback)
-    return id
-  }) as unknown as typeof setInterval
-  globalThis.clearInterval = (id: unknown) => {
-    if (looks.delete(id)) return
-    realClear(id as Parameters<typeof clearInterval>[0])
-  }
   return {
-    running: () => looks.size,
     tick: async () => {
+      await notices.changed()
       await act(async () => {
-        for (const callback of Array.from(looks.values())) callback()
         await delay(10)
       })
     },
-    restore: () => {
-      globalThis.setInterval = realSet
-      globalThis.clearInterval = realClear
-    }
+    restore: () => undefined
   }
 }
 let clock: ReturnType<typeof liveClock> | undefined
@@ -418,39 +398,41 @@ async function mount(setup: Setup = {}): Promise<Calls> {
   homeShown = true
   const tree = (): React.ReactElement => (
     <SceneShownProvider value={homeShown}>
-      <ThemeProvider>
-        <HomeScreen
-          client={client}
-          now={JUST_AFTER}
-          onCreateGroup={() => undefined}
-          onOpenTeam={opened => calls.teams.push(opened)}
-          onOpenSeason={opened => calls.seasons.push(opened)}
-          onOpenGame={(gameId, title, options) =>
-            calls.games.push({ gameId, title, options })
-          }
-          onOpenGroup={
-            setup.groups == null
-              ? undefined
-              : ref => {
-                  calls.groups.push(ref)
-                }
-          }
-          onOpenUmpireSchedule={
-            setup.onOpenUmpireSchedule == null
-              ? undefined
-              : () => {
-                  setup.onOpenUmpireSchedule?.()
-                }
-          }
-          onOpenPlayer={
-            setup.players == null
-              ? undefined
-              : (...args) => {
-                  calls.players.push(args)
-                }
-          }
-        />
-      </ThemeProvider>
+      <NoticesProvider notices={notices}>
+        <ThemeProvider>
+          <HomeScreen
+            client={client}
+            now={JUST_AFTER}
+            onCreateGroup={() => undefined}
+            onOpenTeam={opened => calls.teams.push(opened)}
+            onOpenSeason={opened => calls.seasons.push(opened)}
+            onOpenGame={(gameId, title, options) =>
+              calls.games.push({ gameId, title, options })
+            }
+            onOpenGroup={
+              setup.groups == null
+                ? undefined
+                : ref => {
+                    calls.groups.push(ref)
+                  }
+            }
+            onOpenUmpireSchedule={
+              setup.onOpenUmpireSchedule == null
+                ? undefined
+                : () => {
+                    setup.onOpenUmpireSchedule?.()
+                  }
+            }
+            onOpenPlayer={
+              setup.players == null
+                ? undefined
+                : (...args) => {
+                    calls.players.push(args)
+                  }
+            }
+          />
+        </ThemeProvider>
+      </NoticesProvider>
     </SceneShownProvider>
   )
   redraw = async () => {
@@ -871,9 +853,8 @@ describe('the home screen', function () {
       { gameId: 'gam_c', title: 'Cubs @ Reds', options: { autoPlay: true } }
     ])
 
-    // Live listings and recent-game metadata each refresh on their own timer.
-    expect(clock.running()).equals(2)
-    // The same game still playing keeps the address it has.
+    // Live listings and recent-game metadata each read again on the home
+    // scope's notices. The same game still playing keeps the address it has.
     await clock.tick()
     expect(calls.playbacks).deep.equals(['vid_a'])
 
@@ -905,27 +886,33 @@ describe('the home screen', function () {
   it('stops its live preview and its look at what is live while a screen covers it', async function () {
     clock = liveClock()
     restoreVideo = playableVideo()
+    let looks = 0
     await mount({
-      live: async () => [liveGame('vid_a', 'gam_a', 'Alta Hawks', 'Bay Stars')]
+      live: async () => {
+        looks++
+        return [liveGame('vid_a', 'gam_a', 'Alta Hawks', 'Bay Stars')]
+      }
     })
     expect(document.querySelector('video')?.getAttribute('src')).equals(
       'https://video.example/vid_a.m3u8'
     )
-    expect(clock.running()).equals(2)
+    expect(looks).equals(1)
     // The live game its hero opened is pushed over it.
     homeShown = false
     await redraw()
     expect(document.querySelector('video')).equals(null)
-    // Nothing on a timer: neither its look at what is live nor the recent
-    // card's refresh, which stands down as every covered screen's does.
-    expect(clock.running()).equals(0)
+    // A notice while covered reads nothing: neither its look at what is
+    // live nor the recent card, which stands down as every covered screen's
+    // does.
+    await clock.tick()
+    expect(looks).equals(1)
     // Back: playing and looking again.
     homeShown = true
     await redraw()
     expect(document.querySelector('video')?.getAttribute('src')).equals(
       'https://video.example/vid_a.m3u8'
     )
-    expect(clock.running()).equals(2)
+    expect(looks).equals(2)
   })
 
   it('stops the recent game’s preview while a screen covers it', async function () {
@@ -1044,12 +1031,6 @@ describe('the home screen', function () {
     expect(text()).not.includes('offline')
     await clock.tick()
     expect(text()).includes('Alta Hawks')
-    // The timer goes with the screen.
-    await act(async () => {
-      root?.unmount()
-    })
-    root = undefined
-    expect(clock.running()).equals(0)
   })
 })
 

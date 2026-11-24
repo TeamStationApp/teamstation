@@ -10,6 +10,8 @@ import {
 
 import { TessTurnError } from '../../common/api'
 import { type ErrorCode, HttpError } from '../../common/errors'
+import type { UserTopicEvent } from '../../common/gameSocket'
+import { useUserTopicSocket } from '../hooks/useUserTopic'
 import { lstrings } from '../locales/strings'
 import {
   enqueue,
@@ -39,8 +41,66 @@ import type {
   TessUpload
 } from './tessTypes'
 
-/** How long the chat waits between reads while Tess is still answering. */
+/**
+ * How long the chat waits between reads while Tess is still answering, where
+ * the person's `tess` topic cannot be held: no socket, or an older server.
+ */
 export const ANSWERING_POLL_MS = 2000
+
+/**
+ * What the chat waits on while Tess answers: the person's `tess` notice,
+ * once her answer is stored, or once for each outage of the socket. Where no
+ * topic is held, a wait also ends after `ANSWERING_POLL_MS`. A notice heard
+ * while no wait is out (between a read and the wait after it) ends the next
+ * wait at once.
+ */
+export class AnswerWaiter {
+  private readonly waiting = new Set<() => void>()
+  /** Whether the topic is held: until then, and once refused, waits time out. */
+  held = false
+  private lastOutage: number | undefined
+  /** A notice no wait has taken yet. */
+  private missed = false
+
+  async wait(): Promise<void> {
+    if (this.missed) {
+      this.missed = false
+      return
+    }
+    await new Promise<void>(resolve => {
+      this.waiting.add(resolve)
+      if (!this.held)
+        setTimeout(() => {
+          this.waiting.delete(resolve)
+          resolve()
+        }, ANSWERING_POLL_MS)
+    })
+  }
+
+  heard(event: UserTopicEvent): void {
+    if (event.type === 'subscribed') {
+      this.held = true
+      if (!event.afterGap) return
+    }
+    if (event.type === 'unsupported') this.held = false
+    if (event.type === 'unreachable') {
+      if (this.lastOutage === event.outage) return
+      this.lastOutage = event.outage
+    }
+    if (this.waiting.size === 0) {
+      this.missed = true
+      return
+    }
+    for (const resolve of [...this.waiting]) resolve()
+    this.waiting.clear()
+  }
+
+  /** Ends every wait: the chat closed. */
+  release(): void {
+    for (const resolve of [...this.waiting]) resolve()
+    this.waiting.clear()
+  }
+}
 
 /**
  * What the server answers a message with before it stores any of it: a
@@ -147,7 +207,7 @@ function newClientId(): string {
 
 /**
  * The conversation as the server has it once no turn holds it: `first`, or a
- * read, and another every `ANSWERING_POLL_MS` while Tess is still answering.
+ * read, and another each time `waiter` says to while Tess is still answering.
  * A request that gave up waiting for a long turn (a phone's network stack
  * does, after a minute) leaves her answering on the server. Null when the
  * conversation cannot be read, or the chat has closed.
@@ -155,17 +215,14 @@ function newClientId(): string {
 async function settledConversation(
   api: TessApi,
   mounted: RefObject<boolean>,
+  waiter: AnswerWaiter,
   first?: TessConversation
 ): Promise<TessConversation | null> {
   let conversation = first
   for (;;) {
     if (conversation != null) {
       if (conversation.answering !== true) return conversation
-      await new Promise<void>(resolve => {
-        setTimeout(() => {
-          resolve()
-        }, ANSWERING_POLL_MS)
-      })
+      await waiter.wait()
       if (!mounted.current) return null
     }
     try {
@@ -302,6 +359,24 @@ export function useTess(
   const [messages, setMessages] = useState<TessMessage[]>([])
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
+  const waiter = useRef(new AnswerWaiter())
+  const topics = useUserTopicSocket()
+  useEffect(() => {
+    const held = waiter.current
+    let stop: (() => void) | undefined
+    try {
+      stop = topics?.onUserChanged('tess', event => {
+        held.heard(event)
+      })
+    } catch {
+      // No socket to be had: the waits time out.
+    }
+    return () => {
+      stop?.()
+      held.held = false
+      held.release()
+    }
+  }, [topics])
   // The client id of the turn the server named as running when the chat
   // opened, which a stop names when no message or confirm is out.
   const running = useRef<string | null>(null)
@@ -406,10 +481,14 @@ export function useTess(
           if (running.current === turnClientId) running.current = null
           endWatching()
         }
-        settledConversation(api, mounted, conversation).then(settled => {
-          if (settled != null && mounted.current) setMessages(settled.messages)
-          ended()
-        }, ended)
+        settledConversation(api, mounted, waiter.current, conversation).then(
+          settled => {
+            if (settled != null && mounted.current)
+              setMessages(settled.messages)
+            ended()
+          },
+          ended
+        )
       },
       (failure: unknown) => {
         if (!mounted.current) return
@@ -431,7 +510,7 @@ export function useTess(
       if (store.unseen === seen) return
       seen = store.unseen
       beginWatching()
-      settledConversation(api, mounted).then(settled => {
+      settledConversation(api, mounted, waiter.current).then(settled => {
         if (settled != null && mounted.current) setMessages(settled.messages)
         endWatching()
       }, endWatching)
@@ -546,7 +625,11 @@ export function useTess(
           return false
         }
         if (!mounted.current) return closed()
-        const conversation = await settledConversation(api, mounted)
+        const conversation = await settledConversation(
+          api,
+          mounted,
+          waiter.current
+        )
         if (!mounted.current) return closed()
         if (conversation == null) {
           // Kept, it stays as the server showed it, and is not sent twice.
@@ -751,7 +834,11 @@ export function useTess(
         // As for one change: what the server says once Tess is done, or
         // what it already told, or the hold again when it can be asked
         // neither.
-        const conversation = await settledConversation(api, mounted)
+        const conversation = await settledConversation(
+          api,
+          mounted,
+          waiter.current
+        )
         if (!mounted.current) return
         if (conversation != null) setMessages(conversation.messages)
         else if (!told) setStatuses('pending')

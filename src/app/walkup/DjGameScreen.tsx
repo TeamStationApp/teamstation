@@ -74,11 +74,7 @@ export interface DjGameScreenProps {
   onSide?: (side: DjTeamSide) => void
   /** Where this device remembers what it has said about offline songs. */
   readiness?: ReadinessStore
-  /** How often to read the game while the socket is down. 10 s. */
-  pollMs?: number
 }
-
-const POLL_MS = 10_000
 
 /**
  * DJ Game: each team's batters in order, with their walk-up songs one tap
@@ -118,7 +114,6 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
     resolve,
     onEditSong,
     onSide,
-    pollMs = POLL_MS,
     readiness: readinessStore
   } = props
   const theme = useTheme()
@@ -245,16 +240,16 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
     }
   }, [client, gameId, socket, load, publish])
 
-  // Polls only while the socket is down, or not subscribed after a failure.
+  // The socket going down, or the game refused after a failure, reads the
+  // list once for that outage; the socket's next `subscribed` reads again.
+  // Nothing reads on a timer.
+  const healthy = useRef<boolean | undefined>(undefined)
   useEffect(() => {
-    if (connected && !refused) return
-    const timer = setInterval(() => {
-      load().catch(() => undefined)
-    }, pollMs)
-    return () => {
-      clearInterval(timer)
-    }
-  }, [connected, refused, load, pollMs])
+    const now = connected && !refused
+    const was = healthy.current
+    healthy.current = now
+    if (was === true && !now) load().catch(() => undefined)
+  }, [connected, refused, load])
 
   // The ring follows the plate appearance: fade out, and on a new half move
   // the pill before fading the next ring in.

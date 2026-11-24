@@ -145,19 +145,19 @@ describe('the web shell on its in-memory cache', () => {
     }
   })
 
-  it('reads nothing ahead after Home, on a return to the tab or once a read succeeds again, and only sends what is queued', async function () {
+  it('reads nothing ahead and keeps no games to score, and on a return to the tab or once a read succeeds again only sends what is queued', async function () {
     this.timeout(30_000)
     const listen = AppState.addEventListener.bind(AppState)
-    const prefetch = Object.getOwnPropertyDescriptor(
-      CachingClient.prototype,
-      'prefetch'
-    )!
     const wakeOutbox = Object.getOwnPropertyDescriptor(
       CachingClient.prototype,
       'wakeOutbox'
     )!
+    const startSet = Object.getOwnPropertyDescriptor(
+      CachingClient.prototype,
+      'startOfflineSet'
+    )!
+    let started = 0
     const changes: Array<(state: string) => void> = []
-    let prefetched = 0
     const woken: boolean[] = []
     AppState.addEventListener = ((
       type: 'change',
@@ -166,8 +166,9 @@ describe('the web shell on its in-memory cache', () => {
       changes.push(listener)
       return listen(type, listener)
     }) as typeof AppState.addEventListener
-    CachingClient.prototype.prefetch = async () => {
-      prefetched++
+    CachingClient.prototype.startOfflineSet = function () {
+      started++
+      return startSet.value.call(this, ...arguments)
     }
     CachingClient.prototype.wakeOutbox = function (reachable = false) {
       woken.push(reachable)
@@ -177,14 +178,14 @@ describe('the web shell on its in-memory cache', () => {
       await mount(<App initialToken="token-one" initialUser={BETTS} />)
       await settle(COALESCE_MS + 200)
       expect(reads, 'Home read').includes('/api/v1/me/home')
-      expect(woken, 'after Home').deep.equals([true])
+      expect(woken, 'nothing after Home').deep.equals([])
       await act(async () => {
         for (const change of changes) change('background')
       })
       await act(async () => {
         for (const change of changes) change('active')
       })
-      expect(woken, 'on a return').deep.equals([true, true])
+      expect(woken, 'on a return').deep.equals([true])
       offline = true
       await tab('Schedule')
       await settle(COALESCE_MS + 200)
@@ -193,8 +194,8 @@ describe('the web shell on its in-memory cache', () => {
       await tab('Home')
       await settle(COALESCE_MS + 200)
       expect(bannerText(), 'back online').equals(undefined)
-      expect(woken.length, 'once a read succeeds again').greaterThan(2)
-      expect(prefetched).equals(0)
+      expect(woken.length, 'once a read succeeds again').greaterThan(1)
+      expect(started, 'a tab keeps no games to score offline').equals(0)
       // The list of games a prefetch stores for scoring.
       expect(
         reads.filter(path => path.includes('lookbackHours')),
@@ -202,8 +203,12 @@ describe('the web shell on its in-memory cache', () => {
       ).deep.equals([])
     } finally {
       AppState.addEventListener = listen
-      Object.defineProperty(CachingClient.prototype, 'prefetch', prefetch)
       Object.defineProperty(CachingClient.prototype, 'wakeOutbox', wakeOutbox)
+      Object.defineProperty(
+        CachingClient.prototype,
+        'startOfflineSet',
+        startSet
+      )
     }
   })
 })

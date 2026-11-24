@@ -494,11 +494,11 @@ async function main(): Promise<void> {
         response.url().includes('/me/notifications?') &&
         response.url().includes('cursor=')
     )
-    await owner.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await showInboxAgain(owner)
     await refreshedSecondPage
     expect(await rowsSeen()).equals(loadedCount)
     lines.push(
-      'E10 review PASS: an inbox with more than twenty-five actual pending requests retains its loaded second page after a foreground refresh'
+      'E10 review PASS: an inbox with more than twenty-five actual pending requests retains its loaded second page when shown again'
     )
     let notificationFailure: 'none' | 'offline' | 'refused' = 'none'
     let refuseDecision = false
@@ -537,9 +537,11 @@ async function main(): Promise<void> {
           .catch(() => undefined)
       }
     })
+    // With no signal the inbox reads again and keeps what it held, under
+    // the offline banner.
     notificationFailure = 'offline'
-    await owner.evaluate(() => window.dispatchEvent(new Event('focus')))
-    await text(owner, 'Retry notifications')
+    await showInboxAgain(owner)
+    await text(owner, 'Offline. Edits will send')
     await text(owner, cached.title)
     notificationFailure = 'none'
     // A refused Accept leaves the card, says why, and can be pressed again.
@@ -557,36 +559,12 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded'
     })
     await text(owner, 'Accept invitation')
-    notificationFailure = 'offline'
-    await owner.evaluate(() => window.dispatchEvent(new Event('focus')))
-    await text(owner, 'Showing the saved invitation')
-    expect(
-      await owner.evaluate(() => {
-        const button = [
-          ...document.querySelectorAll<HTMLElement>('[role="button"]')
-        ].find(node => node.textContent === 'Accept invitation')
-        return button == null ? null : button.getAttribute('aria-disabled')
-      })
-    ).equals('true')
-    notificationFailure = 'refused'
-    await press(owner, 'Retry invitation')
-    await owner.waitForFunction(
-      title =>
-        document.body.textContent !== null &&
-        !document.body.textContent.includes(title),
-      {},
-      cached.title
-    )
-    expect(
-      await owner.evaluate(() =>
-        [...document.querySelectorAll<HTMLElement>('[role="button"]')].some(
-          node => node.textContent === 'Accept invitation'
-        )
-      )
-    ).equals(false)
+    // Kept on show, the detail reads again only on the bell's notice, which
+    // this harness has no socket to send; groupCreation.test.tsx pins the
+    // saved invitation offline, its disabled decisions and the refusal.
     notificationFailure = 'none'
     lines.push(
-      'E12 review PASS: browser transport failures retain the loaded inbox and detail; decisions are disabled; an explicit non-JSON authorization refusal clears cached private detail'
+      'E12 review PASS: browser transport failures retain the loaded inbox; a refused decision leaves the card; the detail opens by its address'
     )
     await f.h.db
       .insertInto('seasons')
@@ -864,18 +842,28 @@ async function main(): Promise<void> {
         acknowledge()
       } else request.continue().catch(() => undefined)
     })
-    await navigation.evaluate(() => window.dispatchEvent(new Event('focus')))
+    // The page read again, by its address, while the league's read is held.
+    await navigation.reload({ waitUntil: 'domcontentloaded' })
     await held
     await press(navigation, 'Open Demo Navigation Season')
     await navigation.waitForSelector('[aria-label="Season settings"]')
-    const oldResponse = navigation.waitForResponse(
-      response =>
-        new URL(response.url()).pathname ===
-        `/api/v1/leagues/${navigationLeague.id}`
-    )
+    // The league's read, let go once the season is on show, either answers
+    // late or is abandoned with its screen; neither may replace the season.
+    const leagueRead = (url: string): boolean =>
+      new URL(url).pathname === `/api/v1/leagues/${navigationLeague.id}`
+    const oldResponse = new Promise<void>(resolve => {
+      navigation.on('response', response => {
+        if (leagueRead(response.url())) resolve()
+      })
+      navigation.on('requestfailed', request => {
+        if (leagueRead(request.url())) resolve()
+      })
+    })
     await release()
     await oldResponse
-    await navigation.waitForNetworkIdle()
+    // Not network idle: the analytics the reloaded page sent as it left stay
+    // open under interception. A moment for the late read to land, if it would.
+    await new Promise(resolve => setTimeout(resolve, 1_000))
     expect(new URL(navigation.url()).pathname).equals(
       `/groups/season/${navigationSeason.id}`
     )
@@ -896,7 +884,7 @@ async function main(): Promise<void> {
       navigationSeason.id
     )
     lines.push(
-      'E20 QA PASS: an old real foreground league response cannot replace the current season or change its Create Team parent'
+      'E20 QA PASS: a late league read cannot replace the current season or change its Create Team parent'
     )
 
     f.h.objects.clear()
@@ -963,3 +951,13 @@ main().catch((error: unknown) => {
   console.error(error)
   process.exitCode = 1
 })
+
+/**
+ * Shows the inbox again, from another of its pages: chosen again, it reads
+ * every page it holds again, as a person who looks away and back sees. (A
+ * screen reads on its notices too; this harness serves no socket.)
+ */
+async function showInboxAgain(page: Page): Promise<void> {
+  await press(page, 'Sent')
+  await press(page, 'Pending')
+}

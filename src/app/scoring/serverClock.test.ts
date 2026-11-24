@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { PreferenceStorage } from './scoringPreferenceStore'
-import { CLOCK_REFRESH_MS, ServerClock } from './serverClock'
+import { ServerClock } from './serverClock'
 
 /** Storage in memory, which can be made to refuse. */
 function memory(held: Record<string, string> = {}): PreferenceStorage & {
@@ -96,8 +96,8 @@ describe('the scoring clock (U43)', function () {
     expect(blocked.offset).equals(1500)
   })
 
-  it('measures when it starts keeping time and every five minutes until stopped', async function () {
-    const timers: Array<{ run: () => void; ms: number }> = []
+  it('measures when it starts keeping time and each time the network or the app comes back, until stopped', async function () {
+    const waits: Array<() => void> = []
     let asked = 0
     const clock = new ServerClock(
       async () => {
@@ -107,29 +107,29 @@ describe('the scoring clock (U43)', function () {
       memory(),
       {
         local: () => DEVICE,
-        setInterval: (run, ms) => {
-          const timer = { run, ms }
-          timers.push(timer)
-          return timer
-        },
-        clearInterval: handle => {
-          timers.splice(timers.indexOf(handle as (typeof timers)[0]), 1)
+        whenBack: again => {
+          waits.push(again)
+          return () => {
+            waits.splice(waits.indexOf(again), 1)
+          }
         }
       }
     )
     const stop = clock.keepTime()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(asked).equals(5)
-    expect(timers.map(timer => timer.ms)).deep.equals([CLOCK_REFRESH_MS])
-    expect(CLOCK_REFRESH_MS).equals(300_000)
-    timers[0].run()
+    expect(waits, 'nothing on a timer, one wait').length(1)
+    const back = waits[0]
+    waits.splice(0, 1)
+    back()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(asked).equals(10)
+    expect(waits).length(1)
     stop()
-    expect(timers).length(0)
+    expect(waits).length(0)
   })
 
-  it('keeps time on the platform timers by default', function () {
+  it('waits for the platform to come back by default', function () {
     const stop = new ServerClock(ahead, memory()).keepTime()
     stop()
   })

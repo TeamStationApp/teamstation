@@ -12,9 +12,12 @@ import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import { pageOf, pageOfGames } from '../../test/pageOf'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ManagementCard } from './ManagementCard'
 import { TeamPage } from './TeamPage'
+
+const notices = new ScreenNotices()
 
 let root: Root | undefined
 const detail = (patch: Partial<GroupDetail> = {}): GroupDetail =>
@@ -47,7 +50,11 @@ async function mount(el: React.ReactElement): Promise<void> {
   document.body.append(host)
   root = createRoot(host)
   await act(async () => {
-    root!.render(<ThemeProvider>{el}</ThemeProvider>)
+    root!.render(
+      <ThemeProvider>
+        <NoticesProvider notices={notices}>{el}</NoticesProvider>
+      </ThemeProvider>
+    )
     await new Promise(resolve => setTimeout(resolve, 20))
   })
 }
@@ -143,7 +150,7 @@ describe('restored access-aware team presentation', () => {
       expect(document.body.textContent).includes('Pending approval')
       refreshed = true
       await act(async () => {
-        window.dispatchEvent(new window.Event('focus'))
+        notices.notifyNow()
         await new Promise(resolve => setTimeout(resolve, 20))
       })
       expect(groups).equals(2)
@@ -196,7 +203,11 @@ describe('restored access-aware team presentation', () => {
       await press('Manage')
       expect(settings).equals('canonical')
       await act(async () => {
-        root!.render(<ThemeProvider>{view('b')}</ThemeProvider>)
+        root!.render(
+          <ThemeProvider>
+            <NoticesProvider notices={notices}>{view('b')}</NoticesProvider>
+          </ThemeProvider>
+        )
       })
       expect(document.body.textContent).includes('Loading…')
       expect(document.body.textContent).not.includes('Demo Hawks')
@@ -379,7 +390,7 @@ describe('restored access-aware team presentation', () => {
     await press('Retry team')
     expect(document.body.textContent).includes('Demo Hawks')
   })
-  it('discards an older access answer and clears a private page after revocation', async () => {
+  it('reads one answer at a time, and clears a private page after revocation', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.publicGamesPage = async (_kind, _id, query) => pageOf([], query)
     let first!: (value: GroupDetail) => void
@@ -401,25 +412,29 @@ describe('restored access-aware team presentation', () => {
     await mount(
       <TeamPage client={api} id="demo" onOpenGame={() => undefined} />
     )
+    // A notice while the first read is out waits for it: no second read
+    // can overtake it.
     await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
+      notices.notifyNow()
       await new Promise(resolve => setTimeout(resolve, 20))
     })
-    expect(privateReads).equals(1)
-    await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
-      await new Promise(resolve => setTimeout(resolve, 20))
-    })
-    expect(document.body.textContent).includes(
-      'No game has a video attached yet.'
-    )
+    expect(calls).equals(1)
     await act(async () => {
       first(detail({ canViewPrivate: true }))
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(calls, 'the notice read once the first answered').equals(2)
+    expect(privateReads).greaterThan(0)
+    // Revoked: the next notice's answer clears the private page.
+    const before = privateReads
+    await act(async () => {
+      notices.notifyNow()
+      await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(document.body.textContent).includes(
       'No game has a video attached yet.'
     )
-    expect(privateReads).equals(1)
+    expect(privateReads).equals(before)
   })
   it('follows changed tab addresses while preserving the mounted private team', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
@@ -443,12 +458,14 @@ describe('restored access-aware team presentation', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <TeamPage
-            client={api}
-            id="demo"
-            initialTab="stats"
-            onOpenGame={() => undefined}
-          />
+          <NoticesProvider notices={notices}>
+            <TeamPage
+              client={api}
+              id="demo"
+              initialTab="stats"
+              onOpenGame={() => undefined}
+            />
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -456,12 +473,14 @@ describe('restored access-aware team presentation', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <TeamPage
-            client={api}
-            id="demo"
-            initialTab="roster"
-            onOpenGame={() => undefined}
-          />
+          <NoticesProvider notices={notices}>
+            <TeamPage
+              client={api}
+              id="demo"
+              initialTab="roster"
+              onOpenGame={() => undefined}
+            />
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -536,7 +555,9 @@ describe('gear-only team actions', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <ManagementCard detail={detail()} />
+          <NoticesProvider notices={notices}>
+            <ManagementCard detail={detail()} />
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -544,12 +565,14 @@ describe('gear-only team actions', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <ManagementCard
-            detail={detail({
-              group: { ...detail().group, kind: 'league' },
-              canManage: true
-            })}
-          />
+          <NoticesProvider notices={notices}>
+            <ManagementCard
+              detail={detail({
+                group: { ...detail().group, kind: 'league' },
+                canManage: true
+              })}
+            />
+          </NoticesProvider>
         </ThemeProvider>
       )
     })

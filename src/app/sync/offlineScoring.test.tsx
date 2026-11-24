@@ -18,6 +18,7 @@ import {
   memoryStorage,
   SERVER_GUMBO
 } from '../../test/offlineFieldServer'
+import { prepareOffline } from '../../test/offlineSetTesting'
 import { scoringSession } from '../../test/scoringSession'
 import {
   sql,
@@ -40,7 +41,14 @@ import {
   type SqlExecutor
 } from './cacheStore'
 import { CachingClient } from './cachingClient'
-import { eventsKey, fullRosterKey, lineupsKey, rosterKey } from './documentKeys'
+import {
+  documentKeyOf,
+  eventsKey,
+  fullRosterKey,
+  lineupsKey,
+  OFFLINE_SET,
+  rosterKey
+} from './documentKeys'
 import {
   NEWER_LINEUP_MESSAGE,
   type OutboxNotice,
@@ -170,7 +178,13 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     root = undefined
     document.body.replaceChildren()
     HTMLCanvasElement.prototype.getContext = getContext
-    for (const executor of executors) await executor.close()
+    // A test that opens another account has closed its file already.
+    for (const executor of executors)
+      try {
+        await executor.close()
+      } catch {
+        // Closed by the client already.
+      }
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -221,7 +235,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       outbox: { setTimer: () => 0, clearTimer: () => undefined }
     })
     client.openFor('usr_scorer')
-    await client.prefetch()
+    await prepareOffline(client)
     return {
       client,
       net,
@@ -267,6 +281,46 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     })
     await settle(50)
   }
+
+  it('keeps its choice across a restart, lets an earlier build’s read-ahead go once, and holds a game opened twice until both close', async function () {
+    const { client, document: stored } = await preparedPhone()
+    const file = executors.at(-1)!
+    // What an earlier build read ahead: every game it listed, one not chosen.
+    const near = documentKeyOf('/events?when=all&lookbackHours=6')!
+    const old = documentKeyOf('/games/g-old')!
+    for (const [key, body] of [
+      [near, JSON.stringify([{ id: 'g-old' }, { id: 'g1' }])],
+      [old, JSON.stringify({ id: 'g-old' })]
+    ])
+      await sql(
+        file,
+        'INSERT OR REPLACE INTO documents (key, body, revision, pending) VALUES (?, ?, ?, 0)',
+        [key, body, '0']
+      )
+    // The kept state as that build left it: never upgraded.
+    const kept = (await stored(OFFLINE_SET))!.body as Record<string, unknown>
+    await sql(file, 'UPDATE documents SET body = ? WHERE key = ?', [
+      JSON.stringify({ ...kept, upgraded: false }),
+      OFFLINE_SET
+    ])
+    const set = await prepareOffline(client)
+    expect(client.offlineGames).equals(set)
+    expect(await stored(old), 'the game not chosen').equals(undefined)
+    expect(await stored('game.g1'), 'the chosen game').not.equals(undefined)
+    expect(
+      ((await stored(OFFLINE_SET))!.body as { upgraded: boolean }).upgraded
+    ).equals(true)
+    // Opened twice, the game is held until the second closes too.
+    const first = client.holdGame('g1')
+    const second = client.holdGame('g1')
+    second()
+    second()
+    first()
+    first()
+    // Another account's file: the set goes with the account it was for.
+    client.openFor('usr_other')
+    expect(client.offlineGames, 'stopped for another account').equals(undefined)
+  })
 
   it('opens the game, adds a named player, puts him in the lineup and records a play, all from the phone, then sends them once', async function () {
     const { client, net, rows, document: stored } = await preparedPhone()
@@ -1201,7 +1255,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       net.refused.set('/teams/away/roster', 403)
       net.refused.set('/teams/away/roster?includeFullNames=true', 403)
       await reopen()
-      await client.prefetch()
+      // A refused read forgets what the phone stored.
+      await client.roster('away').catch(() => undefined)
+      await client
+        .roster('away', { includeFullNames: true })
+        .catch(() => undefined)
       await settle(100)
       expect(await stored(rosterKey('away')), 'not on the phone').equals(
         undefined
@@ -1231,7 +1289,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       net.refused.set('/teams/away/roster', 403)
       net.refused.set('/teams/away/roster?includeFullNames=true', 403)
       await reopen()
-      await client.prefetch()
+      // A refused read forgets what the phone stored.
+      await client.roster('away').catch(() => undefined)
+      await client
+        .roster('away', { includeFullNames: true })
+        .catch(() => undefined)
       await settle(100)
       const release = holdAll(net)
       const opens: Array<Side[] | undefined> = []

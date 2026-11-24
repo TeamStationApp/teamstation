@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import { HttpError } from '../../common/errors'
+import type { GameSocket } from '../../common/gameSocket'
 import { Button, Card, Screen } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
+import { whenBack } from '../sync/whenBack'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   type ChatKeysClient,
@@ -31,6 +33,11 @@ export interface LinkDeviceScreenProps {
   device?: { name: string; platform: 'web' | 'ios' | 'android' }
   /** Linked, reset, or linked already: on to Chat devices. */
   onDone: () => void
+  /**
+   * The person's socket, whose chat `link` hint says the request was
+   * answered. With none, the code is asked about every `pollMs`.
+   */
+  socket?: Pick<GameSocket, 'onChat'>
   pollMs?: number
 }
 
@@ -147,7 +154,7 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
   useEffect(() => {
     if (step.kind !== 'code') return
     let live = true
-    const timer = setInterval(() => {
+    const check = (): void => {
       pollLink(setup, step.record)
         .then(polled => {
           if (!live) return
@@ -167,12 +174,40 @@ function LinkDevice(props: LinkDeviceScreenProps): React.ReactElement {
           // and Try again starts over from what the store holds.
           if (live && !passing(caught)) setStep({ kind: 'failed' })
         })
-    }, pollMs)
+    }
+    // Asked when the server says the request was answered, and when the
+    // network or the app comes back; on a timer only with no socket.
+    let unsubscribe: (() => void) | undefined
+    try {
+      unsubscribe = props.socket?.onChat(event => {
+        if (
+          event.type === 'resync' ||
+          (event.type === 'chatUser' && event.kind === 'link')
+        )
+          check()
+      })
+    } catch {
+      // A platform with no socket to be had asks on a timer.
+    }
+    if (unsubscribe == null) {
+      const timer = setInterval(check, pollMs)
+      return () => {
+        live = false
+        clearInterval(timer)
+      }
+    }
+    let waiting: (() => void) | undefined
+    const again = (): void => {
+      check()
+      waiting = whenBack(again)
+    }
+    waiting = whenBack(again)
     return () => {
       live = false
-      clearInterval(timer)
+      waiting?.()
+      unsubscribe?.()
     }
-  }, [pollMs, setup, step])
+  }, [pollMs, setup, step, props.socket])
 
   const run = (work: () => Promise<void>): void => {
     setBusy(true)

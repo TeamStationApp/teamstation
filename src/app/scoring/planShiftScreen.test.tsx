@@ -13,6 +13,7 @@ import type { GameSocketEvent } from '../../common/gameSocket'
 import { ScoringSession as GameSession } from '../../common/scoring/session'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { fieldServer, memoryStorage } from '../../test/offlineFieldServer'
+import { prepareOffline } from '../../test/offlineSetTesting'
 import { PLAN_START, PLAN_SWAPPED } from '../../test/scoringPlans'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import { testCachingClient } from '../../test/testCachingClient'
@@ -385,7 +386,7 @@ describe('plan innings on the scoring screen', function () {
       outbox: { setTimer: () => 0, clearTimer: () => undefined }
     })
     client.openFor('usr_scorer')
-    await client.prefetch()
+    await prepareOffline(client)
     // What the phone reads ahead is not the scoring screen's.
     const ahead = asked.length
     net.offline = true

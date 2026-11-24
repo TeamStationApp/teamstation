@@ -175,6 +175,23 @@ describe('the phone session with no signal', () => {
     expect(caches.destroyed).deep.equals([])
   })
 
+  it('starts the phone’s offline scoring set once signed in: it asks which games to keep', async () => {
+    showRoute({ name: 'home' }, true)
+    const caches = memoryCaches()
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={ICHIRO}
+        documentCache={caches.open}
+      />
+    )
+    await settle(50)
+    expect(
+      fetched.filter(url => url.includes('/me/offline-scoring')),
+      'the set reads its manifest'
+    ).length.greaterThan(0)
+  })
+
   it('clears the token and the stored user when the server says nobody, and keeps their file', async () => {
     showRoute({ name: 'home' }, true)
     answer = async () => null
@@ -209,7 +226,7 @@ describe('the phone session with no signal', () => {
     expect(caches.opened).deep.equals([])
   })
 
-  it('keeps who answered, opens their file, reads ahead after Home and on foreground, and deletes it on sign-out', async () => {
+  it('keeps who answered, opens their file, reads nothing ahead after Home or on foreground, and deletes it on sign-out', async () => {
     showRoute({ name: 'account' }, true)
     answer = async () =>
       asSessionUser({
@@ -236,7 +253,10 @@ describe('the phone session with no signal', () => {
       for (const listener of foreground) listener('active')
     })
     await settle(50)
-    expect(fetched.slice(before)).includes('/api/v1/me/roles')
+    expect(
+      fetched.slice(before).filter(url => url.includes('lookbackHours')),
+      'nothing read ahead'
+    ).deep.equals([])
 
     await press('Sign out')
     await settle(50)
@@ -730,8 +750,9 @@ describe('the phone session with no signal', () => {
         displayName: 'Ichiro Suzuki',
         isAdmin: false
       })
+    // The socket connecting again asks once more.
     await act(async () => {
-      for (const listener of foreground) listener('active')
+      sockets.latest().open()
     })
     await settle(50)
     expect(users).deep.equals([
@@ -741,7 +762,7 @@ describe('the phone session with no signal', () => {
         isAdmin: false
       }
     ])
-    // Settled: the next foreground does not ask again.
+    // Settled: nothing asks again, the foreground least of all.
     let asked = 0
     answer = async () => {
       asked++
@@ -749,6 +770,9 @@ describe('the phone session with no signal', () => {
     }
     await act(async () => {
       for (const listener of foreground) listener('active')
+    })
+    await act(async () => {
+      sockets.latest().drop(1006)
     })
     await settle(50)
     expect(asked).equals(0)
@@ -771,7 +795,7 @@ describe('the phone session with no signal', () => {
     await settle(50)
     answer = async () => null
     await act(async () => {
-      for (const listener of foreground) listener('active')
+      sockets.latest().open()
     })
     await settle(50)
     expect(tokens).deep.equals([undefined])
@@ -804,10 +828,21 @@ describe('the phone session with no signal', () => {
     )
     await settle(50)
     expect(tokens).deep.equals([])
-    // The next read is answered 401.
+    // The next read, the bell's on its notice, is answered 401.
     refuseReads = true
+    const socket = sockets.latest()
     await act(async () => {
-      for (const listener of foreground) listener('active')
+      socket.open()
+    })
+    const bell = socket
+      .messages()
+      .find(
+        (frame): frame is { id: string } =>
+          (frame as { topic?: string }).topic === 'badge'
+      )!
+    await act(async () => {
+      socket.receive({ type: 'subscribed', topic: 'badge', id: bell.id })
+      socket.receive({ type: 'userChanged', topic: 'badge' })
     })
     await settle(50)
     expect(tokens).deep.equals([undefined])
@@ -816,7 +851,7 @@ describe('the phone session with no signal', () => {
       null
     )
   })
-  it('reads ahead once after Home, not on every notice Home reads again for, and again when the server answers after no signal', async () => {
+  it('reads nothing ahead after Home, on Home’s notices, or when the server answers after no signal', async () => {
     showRoute({ name: 'home' }, true)
     answer = async () =>
       asSessionUser({
@@ -838,8 +873,7 @@ describe('the phone session with no signal', () => {
     )
     await settle(50)
     const ahead = (): number =>
-      fetched.filter(url => url.endsWith('/me/roles')).length
-    // Home's scope is acknowledged, its lists read, and the phone reads ahead.
+      fetched.filter(url => url.includes('lookbackHours')).length
     const socket = sockets.latest()
     await act(async () => {
       socket.open()
@@ -855,10 +889,9 @@ describe('the phone session with no signal', () => {
     })
     await settle(50)
     const reads = homeReads
-    expect(ahead(), 'once, after Home').equals(1)
-    // Somebody scores: a team's notice reads Home's lists again, and not
-    // everything ahead. The second, inside the gate's window, adds nothing;
-    // both are read once the window has passed.
+    expect(ahead(), 'nothing after Home').equals(0)
+    // Somebody scores: a team's notice reads Home's lists again, and
+    // nothing ahead.
     for (let i = 0; i < 2; i++) {
       await act(async () => {
         socket.receive({ type: 'changed', scope: 'home' })
@@ -867,14 +900,13 @@ describe('the phone session with no signal', () => {
     }
     await settle(COALESCE_MS)
     expect(homeReads).greaterThan(reads)
-    expect(ahead()).equals(1)
-    // No signal, then the server answers again: it reads ahead once more.
+    expect(ahead()).equals(0)
+    // No signal, then the server answers again: still nothing ahead.
     netDown = true
     await act(async () => {
       for (const listener of foreground) listener('active')
     })
     await settle(50)
-    const before = ahead()
     netDown = false
     await act(async () => {
       document
@@ -882,6 +914,6 @@ describe('the phone session with no signal', () => {
         .click()
     })
     await settle(100)
-    expect(ahead()).greaterThan(before)
+    expect(ahead()).equals(0)
   })
 })

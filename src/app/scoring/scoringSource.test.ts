@@ -371,12 +371,11 @@ describe('the server scoring source’s clock (U43)', function () {
       deviceStorage,
       {
         local: () => Date.parse('2026-09-28T18:00:00.000Z'),
-        setInterval: () => {
+        whenBack: () => {
           const timer = {}
           timers.add(timer)
-          return timer
-        },
-        clearInterval: timer => timers.delete(timer)
+          return () => timers.delete(timer)
+        }
       }
     )
     const source = new ServerScoringSource(fake, clock)

@@ -27,6 +27,7 @@ import { copyState, setupOf } from '../../common/scoring/state'
 import { playForWire } from '../../common/scoring/wireRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { prepareOffline } from '../../test/offlineSetTesting'
 import { scoringSession } from '../../test/scoringSession'
 import { candidateNames } from '../scoring/candidateNames'
 import { shortPlayerNames } from '../scoring/currentSetup'
@@ -915,6 +916,153 @@ describe('the phone outbox', function () {
     const [events, lineup] = bare.posts()
     expect(events.body).not.have.property('lineupsBase')
     expect((lineup.body as { base: string }).base).equals('')
+  })
+
+  it('lists a player made with only the whole-name roster kept on the plain roster too, until his create lands', async function () {
+    let online = true
+    const p = phone(
+      server(
+        {
+          '/teams/tem_home/roster?includeFullNames=true': [],
+          '/teams/tem_home/roster': []
+        },
+        sent => {
+          if (sent.path === '/teams/tem_home/roster-players')
+            return online
+              ? {
+                  status: 403,
+                  body: { code: 'forbidden', message: 'Not yours' }
+                }
+              : 'offline'
+          return { body: lineupsDoc('D1') }
+        }
+      )
+    )
+    // A scoring screen reads the whole names alone.
+    await p.client.roster('tem_home', { includeFullNames: true })
+    expect(p.document(rosterKey('tem_home'))).equals(undefined)
+    online = false
+    await p.client.createRosterPlayer('tem_home', newPlayer('Held'))
+    const plain = p.document(rosterKey('tem_home'))
+    expect(String(plain?.body), 'listed on the plain roster').includes('Held')
+    expect(String(plain?.body), 'without his whole name').not.includes(
+      'nameDetails'
+    )
+    expect(
+      String(plain?.server_body),
+      'the server’s copy kept beside it, without him'
+    ).equals('[]')
+    // Refused once it is sent, he is still listed where the Team page reads.
+    online = true
+    await p.client.drainOutbox()
+    const read = await p.client.roster('tem_home')
+    expect(
+      read.some(entry => entry.shortName.startsWith('Held')),
+      'listed while held'
+    ).equals(true)
+  })
+
+  it('derives the plain roster with no server copy when the whole-name one has none', async function () {
+    const p = phone(
+      server(
+        {
+          '/teams/tem_home/roster?includeFullNames=true': [],
+          '/teams/tem_home/roster': []
+        },
+        sent =>
+          sent.path === '/teams/tem_home/roster-players'
+            ? 'offline'
+            : { body: lineupsDoc('D1') }
+      )
+    )
+    await p.client.roster('tem_home', { includeFullNames: true })
+    // As an older build left the file: the phone's copy alone.
+    p.sql(
+      `UPDATE documents SET server_body = NULL WHERE key = '${fullRosterKey('tem_home')}'`
+    )
+    await p.client.createRosterPlayer('tem_home', newPlayer('Held'))
+    const plain = p.document(rosterKey('tem_home'))
+    expect(String(plain?.body)).includes('Held')
+    expect(plain?.server_body).equals(null)
+  })
+
+  it('writes no roster for a player made with neither of the team’s rosters kept', async function () {
+    const p = phone(server({}, () => 'offline'))
+    await p.client.createRosterPlayer('tem_home', newPlayer('Held'))
+    expect(p.document(rosterKey('tem_home'))).equals(undefined)
+    expect(p.document(fullRosterKey('tem_home'))).equals(undefined)
+  })
+
+  it('keeps a roster that holds a refused player when the offline set lets its game go', async function () {
+    let chosen = true
+    let online = false
+    const p = phone(
+      server(
+        {
+          '/teams/tem_home/roster': [],
+          '/teams/tem_home/roster?includeFullNames=true': []
+        },
+        sent => {
+          if (sent.path === '/me/offline-scoring')
+            return {
+              body: chosen
+                ? {
+                    games: [
+                      {
+                        id: 'g1',
+                        startAt: new Date(Date.now() + 3_600_000).toISOString(),
+                        homeTeamId: 'tem_home',
+                        awayTeamId: 'tem_away',
+                        started: false
+                      }
+                    ],
+                    nextBoundary: null,
+                    digest: 'one'
+                  }
+                : { games: [], nextBoundary: null, digest: 'none' }
+            }
+          // Made with no signal, the new player is refused once it can be
+          // sent: the queue holds him.
+          if (sent.path === '/teams/tem_home/roster-players')
+            return !online
+              ? 'offline'
+              : {
+                  status: 403,
+                  body: { code: 'forbidden', message: 'Not yours' }
+                }
+          if (sent.path === '/me/roles')
+            return {
+              body: { teams: { tem_home: ['scorekeeper'] }, guardianOf: [] }
+            }
+          return { body: lineupsDoc('D1') }
+        }
+      )
+    )
+    await prepareOffline(p.client)
+    await p.client.roster('tem_home')
+    await p.client.roster('tem_home', { includeFullNames: true })
+    await p.client.createRosterPlayer('tem_home', newPlayer('Held'))
+    expect(
+      String(p.document(rosterKey('tem_home'))?.body),
+      'listed on the phone'
+    ).includes('Held')
+    online = true
+    await p.client.drainOutbox()
+    expect(
+      String(p.document(rosterKey('tem_home'))?.body),
+      'listed while held'
+    ).includes('Held')
+    // The game leaves the set: its documents go, but not the roster the
+    // queue still holds.
+    chosen = false
+    await prepareOffline(p.client)
+    expect(
+      String(p.document(rosterKey('tem_home'))?.body),
+      'still listed'
+    ).includes('Held')
+    expect(p.document('game.g1'), 'the game’s own documents go').equals(
+      undefined
+    )
   })
 
   it('sends a lineup naming two players made on the phone only after both, with their server ids (Local players)', async function () {
@@ -3663,7 +3811,7 @@ describe('the phone outbox', function () {
     expect(await p.client.cached(lineupsKey('g1'), raw => raw)).equals(
       undefined
     )
-    await p.client.prefetch()
+    await prepareOffline(p.client)
     // And a write the other session makes goes straight to the server,
     // never into this file's queue.
     await p.client.saveLineups('g1', lineupSave('D0'))
@@ -4038,7 +4186,7 @@ describe('the phone outbox', function () {
     expect(p.rows()).deep.equals([])
   })
 
-  it('sends what is queued before a prefetch reads (push before pull)', async function () {
+  it('sends what is queued once the outbox is woken (push before pull)', async function () {
     let online = false
     const p = phone(
       server(
@@ -4055,7 +4203,8 @@ describe('the phone outbox', function () {
     online = true
     p.client.offline = false
     const from = p.sent.length
-    await p.client.prefetch()
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
     expect(p.sent[from].method).equals('POST')
     expect(p.rows()).deep.equals([])
   })

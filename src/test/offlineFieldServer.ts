@@ -1,6 +1,5 @@
 import { gameFixture } from '../app/scoring/isUnscoredGame.test'
 import type { PreferenceStorage } from '../app/scoring/scoringPreferenceStore'
-import { PREFETCH_NEAR_PATH } from '../app/sync/cachingClient'
 import type { GumboPlay } from '../common/gumboPlay'
 import { EMPTY_PLAN_SAME_DAY } from '../common/planWarnings'
 import { playForWire, playFromWire } from '../common/scoring/wireRecord'
@@ -137,6 +136,23 @@ export function fieldServer(stored: {
       Date.now() + (state.underWay ? -1 : 24) * 3_600_000
     ).toISOString()
   })
+  const offlineManifest = (): unknown => {
+    const game = nearListed() as { startAt: string }
+    return {
+      games: [
+        {
+          id: 'g1',
+          startAt: game.startAt,
+          homeTeamId: 'home',
+          awayTeamId: 'away',
+          started: state.underWay,
+          schedule: game
+        }
+      ],
+      nextBoundary: null,
+      digest: `g1:${String(state.underWay)}`
+    }
+  }
   const routes: Record<string, () => unknown> = {
     // The scorekeeper also coaches the Hawks, for Coach Game.
     '/games/g1': () => ({
@@ -167,8 +183,10 @@ export function fieldServer(stored: {
     // Past's first page: g1 once it has begun.
     '/events?paged=1&when=past': () =>
       pageOf(state.underWay ? [nearListed()] : [], {}, { counts: null }),
-    // Every game from the look-back on: g1, begun an hour ago or due tomorrow.
-    [PREFETCH_NEAR_PATH]: () => [nearListed()],
+    // The games the phone keeps to score: g1, begun an hour ago (and held)
+    // or due tomorrow.
+    '/me/offline-scoring': () => offlineManifest(),
+    '/me/offline-scoring?held=g1': () => offlineManifest(),
     '/events/g1/info': () => ({
       id: 'g1',
       eventKind: 'game',
