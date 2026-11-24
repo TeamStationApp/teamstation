@@ -9,7 +9,6 @@ import {
   isSecretKeyOf,
   oldVideoPrefix,
   uploadHeadersFor,
-  videoPrefix,
   withoutSecrets
 } from './videoPrefix'
 
@@ -515,13 +514,17 @@ export async function secretKeysOf(
  * stills (and, before the move, its media). The trailing slash keeps the
  * second from matching the first.
  *
- * `spaceSecret` is the row's: null for a video with none, undefined for one
- * whose row has gone and whose secret nobody holds. Without a secret,
+ * Every secret prefix of the video goes, whatever its row says:
  * `videos/<id>-` is listed and only keys whose second segment is exactly
  * `<id>-` and 32 hex characters are taken, since another video's id can start
- * with this one's. A video with no secret can still have them: a move that
- * copied its objects and stopped before storing the secret left public copies
- * that nothing else will ever find.
+ * with this one's. A video can have more than its row's: `segmentSpaceVideos`
+ * leaves the old one until `--delete-old`, a run of it that stopped leaves a
+ * partial one, and a move that copied its objects and stopped before storing
+ * the secret left public copies. Nothing else would ever find those once the
+ * row is gone.
+ *
+ * `spaceSecret` is the row's, kept in the signature for the callers that
+ * have it; null or undefined when there is none.
  *
  * Individual signed deletes with bounded concurrency avoid a separate signed
  * batch-payload implementation while keeping large fragment sets practical.
@@ -531,11 +534,8 @@ export async function deleteVideoFromSpace(options: {
   videoId: string
   spaceSecret: string | null | undefined
 }): Promise<{ deleted: number }> {
-  const { space, videoId, spaceSecret } = options
-  const secretKeys =
-    spaceSecret == null
-      ? await secretKeysOf(space, videoId)
-      : await listSpaceObjects(space, videoPrefix({ id: videoId, spaceSecret }))
+  const { space, videoId } = options
+  const secretKeys = await secretKeysOf(space, videoId)
   const fromSecret = await deleteSpaceKeys(space, secretKeys)
   const fromOld = await deleteSpacePrefix(space, oldVideoPrefix(videoId))
   return { deleted: fromSecret.deleted + fromOld.deleted }

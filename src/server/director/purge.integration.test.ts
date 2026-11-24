@@ -62,11 +62,18 @@ describe('purging a replaced recording under its secret path', function () {
         })
         .where('id', '=', 'vid_live')
         .execute()
+      // Its row's prefix, and an old one a repackage left for --delete-old;
+      // and a video whose id starts with this one's, which keeps its own.
+      const OLDER = 'fedcba9876543210fedcba9876543210'
       for (const key of [
-        `videos/vid_live-${SECRET}/video.mp4`,
+        `videos/vid_live-${SECRET}/init.mp4`,
+        `videos/vid_live-${SECRET}/seg000000.m4s`,
         `videos/vid_live-${SECRET}/video.m3u8`,
+        `videos/vid_live-${OLDER}/video.mp4`,
+        `videos/vid_live-${OLDER}/video.m3u8`,
         'videos/vid_live/stills/150.jpg',
-        'videos/vid_upload/stills/1.jpg'
+        'videos/vid_upload/stills/1.jpg',
+        `videos/vid_live-x-${OLDER}/seg000000.m4s`
       ])
         await putObject({
           space,
@@ -83,6 +90,7 @@ describe('purging a replaced recording under its secret path', function () {
         })
       ).deep.equals(['vid_live'])
       expect(await listSpaceObjects(space, 'videos/')).deep.equals([
+        'videos/vid_live-x-fedcba9876543210fedcba9876543210/seg000000.m4s',
         'videos/vid_upload/stills/1.jpg'
       ])
     } finally {

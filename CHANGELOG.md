@@ -3,6 +3,7 @@
 ## Unreleased
 
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
+- added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with a dry run first and `--delete-old` for the old copies afterwards
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV

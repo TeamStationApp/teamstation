@@ -276,10 +276,11 @@ export async function putObject(
   )
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
-    throw new Error(
+    throw new SpaceRefusal(
       withoutSecrets(
         `Upload of ${key} answered ${response.status} ${detail.slice(0, 200)}`
-      )
+      ),
+      response.status
     )
   }
 }

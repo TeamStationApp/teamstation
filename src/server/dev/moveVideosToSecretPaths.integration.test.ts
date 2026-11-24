@@ -117,16 +117,28 @@ describe('moving videos to their secret paths', function () {
       contentType: 'application/octet-stream'
     })
   }
-  /** A finished recording and a live one from before secrets, on their old paths. */
+  /**
+   * A finished recording and a live one from before secrets, on their old
+   * paths, both segments; and one that is still a single file.
+   */
   const seed = async (): Promise<void> => {
     await addVideo('vid_done', 'spaces')
     for (const [file, bytes] of [
       ['master.m3u8', 40],
       ['video.m3u8', 80],
-      ['video.mp4', 5000],
+      ['init.mp4', 300],
+      ['seg000000.m4s', 2400],
+      ['seg000001.m4s', 2300],
       ['stills/10.jpg', 30]
     ] as const)
       await put(`videos/vid_done/${file}`, bytes)
+    await addVideo('vid_single', 'spaces')
+    for (const [file, bytes] of [
+      ['master.m3u8', 40],
+      ['video.m3u8', 80],
+      ['video.mp4', 5000]
+    ] as const)
+      await put(`videos/vid_single/${file}`, bytes)
     await addVideo('vid_live', 'spaces', null, { closed: true })
     for (const [file, bytes] of [
       ['master.m3u8', 40],
@@ -178,7 +190,8 @@ describe('moving videos to their secret paths', function () {
       moved: ['vid_done', 'vid_live'],
       finished: [],
       secretOnly: ['vid_empty'],
-      skipped: ['vid_demo']
+      skipped: ['vid_demo'],
+      refused: ['vid_single']
     })
     expect(await files()).deep.equals(before.files)
     expect(await secrets()).deep.equals(before.secrets)
@@ -194,7 +207,8 @@ describe('moving videos to their secret paths', function () {
       moved: ['vid_done', 'vid_live'],
       finished: [],
       secretOnly: ['vid_empty'],
-      skipped: ['vid_demo']
+      skipped: ['vid_demo'],
+      refused: ['vid_single']
     })
     const done = await secretOf('vid_done')
     const live = await secretOf('vid_live')
@@ -208,9 +222,11 @@ describe('moving videos to their secret paths', function () {
     const donePrefix = videoPrefix({ id: 'vid_done', spaceSecret: done })
     const livePrefix = videoPrefix({ id: 'vid_live', spaceSecret: live })
     expect(await listSpaceObjects(space, donePrefix)).deep.equals([
+      `${donePrefix}init.mp4`,
       `${donePrefix}master.m3u8`,
-      `${donePrefix}video.m3u8`,
-      `${donePrefix}video.mp4`
+      `${donePrefix}seg000000.m4s`,
+      `${donePrefix}seg000001.m4s`,
+      `${donePrefix}video.m3u8`
     ])
     expect(await listSpaceObjects(space, livePrefix)).length(5)
     // Stills stay where every still is.
@@ -230,9 +246,14 @@ describe('moving videos to their secret paths', function () {
     expect(Number(piece.headers.get('content-length'))).equals(3100)
     const init = await fetch(plain(`${livePrefix}init.mp4`))
     expect(init.headers.get('cache-control')).equals('no-cache')
-    const recording = await fetch(plain(`${donePrefix}video.mp4`))
+    const recording = await fetch(plain(`${donePrefix}seg000000.m4s`))
     expect(recording.status).equals(200)
-    expect(recording.headers.get('content-type')).equals('video/mp4')
+    expect(recording.headers.get('content-type')).equals('video/iso.segment')
+    // The single file stays where it was, with no secret.
+    expect((await secrets()).vid_single).equals(null)
+    expect(await listSpaceObjects(space, oldVideoPrefix('vid_single'))).length(
+      3
+    )
     for (const playlist of [
       `${livePrefix}index.m3u8`,
       `${livePrefix}master.m3u8`,
@@ -250,7 +271,8 @@ describe('moving videos to their secret paths', function () {
       moved: [],
       finished: [],
       secretOnly: [],
-      skipped: ['vid_demo']
+      skipped: ['vid_demo'],
+      refused: ['vid_single']
     })
     expect(await files()).deep.equals(after.files)
     expect(await secrets()).deep.equals(after.secrets)
@@ -260,17 +282,17 @@ describe('moving videos to their secret paths', function () {
     await seed()
     fake.faults.set({
       method: 'PUT',
-      key: /-[0-9a-f]{32}\/video\.mp4$/,
+      key: /-[0-9a-f]{32}\/seg000001\.m4s$/,
       truncateTo: 10
     })
     let message = ''
     await move({ videoId: 'vid_done' }).catch(
       (error: unknown) => (message = (error as Error).message)
     )
-    expect(message).matches(/video\.mp4 is 10, not 5000 bytes/)
+    expect(message).matches(/seg000001\.m4s is 10, not 2300 bytes/)
     expect(message).not.matches(/[0-9a-f]{32}/)
     expect((await secrets()).vid_done).equals(null)
-    expect(await listSpaceObjects(space, oldVideoPrefix('vid_done'))).length(4)
+    expect(await listSpaceObjects(space, oldVideoPrefix('vid_done'))).length(6)
     // The next run reuses the copies that are whole, and finishes.
     fake.faults.clear()
     expect((await move({ videoId: 'vid_done' })).moved).deep.equals([
@@ -281,14 +303,15 @@ describe('moving videos to their secret paths', function () {
         space,
         videoPrefix({ id: 'vid_done', spaceSecret: await secretOf('vid_done') })
       )
-    ).length(3)
+    ).length(5)
   })
 
   it('finishes a run stopped after its copies by deleting the old objects', async function () {
     await addVideo('vid_stop', 'spaces')
     await put('videos/vid_stop/master.m3u8', 40)
     await put('videos/vid_stop/video.m3u8', 80)
-    await put('videos/vid_stop/video.mp4', 900)
+    await put('videos/vid_stop/init.mp4', 100)
+    await put('videos/vid_stop/seg000000.m4s', 800)
     // Another video whose id starts with this one's is not mistaken for it.
     await addVideo('vid_stop-x', 'spaces', SECRET)
     const prefix = videoPrefix({
@@ -298,7 +321,8 @@ describe('moving videos to their secret paths', function () {
     for (const [file, bytes] of [
       ['master.m3u8', 40],
       ['video.m3u8', 80],
-      ['video.mp4', 900]
+      ['init.mp4', 100],
+      ['seg000000.m4s', 800]
     ] as const)
       await copyObject({
         space,
@@ -316,7 +340,7 @@ describe('moving videos to their secret paths', function () {
     expect(
       await listSpaceObjects(space, oldVideoPrefix('vid_stop'))
     ).deep.equals([])
-    expect(await listSpaceObjects(space, prefix)).length(3)
+    expect(await listSpaceObjects(space, prefix)).length(4)
   })
 
   it('moves at most --limit videos, and copies a large object in parts', async function () {
@@ -332,8 +356,8 @@ describe('moving videos to their secret paths', function () {
       id: 'vid_done',
       spaceSecret: await secretOf('vid_done')
     })
-    const recording = await fetch(plain(`${prefix}video.mp4`))
-    expect(Number(recording.headers.get('content-length'))).equals(5000)
+    const recording = await fetch(plain(`${prefix}seg000000.m4s`))
+    expect(Number(recording.headers.get('content-length'))).equals(2400)
     expect(recording.headers.get('cache-control')).equals('public, max-age=600')
   })
 
@@ -384,6 +408,18 @@ describe('moving videos to their secret paths', function () {
     const report = await move()
     expect(report.skipped).deep.equals(['vid_demo'])
     expect((await secrets()).vid_live).not.equals(null)
+  })
+
+  it('refuses a single-file video, and names what moves it instead', async function () {
+    await seed()
+    const report = await move({ videoId: 'vid_single' })
+    expect(report.refused).deep.equals(['vid_single'])
+    expect(report.moved).deep.equals([])
+    expect(lines.join('\n')).contains(
+      'refuse vid_single: it is one video.mp4; run segmentSpaceVideos'
+    )
+    expect((await secrets()).vid_single).equals(null)
+    expect(await listSpaceObjects(space, 'videos/vid_single-')).deep.equals([])
   })
 
   it('refuses without a Space', async function () {

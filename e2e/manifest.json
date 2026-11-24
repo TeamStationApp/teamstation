@@ -4221,6 +4221,44 @@
       "file": "e2e/tests/playback/recordings/director-take-finish.e2e.ts"
     },
     {
+      "id": "playback/recordings/segmented-seek#repackage",
+      "title": "A recording in the Space is segments, and a highlight plays within 5 s on a cold cache",
+      "kind": "e2e",
+      "covers": [
+        "src/server/media/ffmpeg.ts",
+        "src/server/media/ingestFile.ts",
+        "src/server/media/spacesVideo.ts",
+        "src/server/routes/directorUploads.ts",
+        "src/server/routes/media.ts",
+        "src/server/dev/segmentSpaceVideos.ts",
+        "src/server/media/sliceRecording.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/recordings/segmented-seek",
+      "file": "e2e/tests/playback/recordings/segmented-seek.e2e.ts"
+    },
+    {
       "id": "playback/recordings/segmented-seek#upload",
       "title": "A recording in the Space is segments, and a highlight plays within 5 s on a cold cache",
       "kind": "e2e",
@@ -4229,7 +4267,9 @@
         "src/server/media/ingestFile.ts",
         "src/server/media/spacesVideo.ts",
         "src/server/routes/directorUploads.ts",
-        "src/server/routes/media.ts"
+        "src/server/routes/media.ts",
+        "src/server/dev/segmentSpaceVideos.ts",
+        "src/server/media/sliceRecording.ts"
       ],
       "stack": "isolated",
       "fixtures": [

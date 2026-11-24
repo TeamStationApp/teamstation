@@ -47,6 +47,11 @@ import {
  * are another bucket's, is left alone, secret and all; so is a live
  * recording the ingest still holds: its stream open, or ended with its close
  * not yet verified. A later run moves it.
+ *
+ * A video that is one `video.mp4` is refused, and left where it is: behind
+ * the CDN a seek into it is a range deep inside a huge file, which can stall
+ * for over a minute. `segmentSpaceVideos` repackages it into segments under a
+ * secret path instead.
  */
 
 /** Copies in flight at once for one video. */
@@ -78,6 +83,8 @@ export interface MoveReport {
   secretOnly: string[]
   /** Read-only-source videos, and videos being published to. */
   skipped: string[]
+  /** Single-file videos, which `segmentSpaceVideos` moves instead. */
+  refused: string[]
 }
 
 /** A secret, shortened for a log: the whole of it is a capability. */
@@ -99,7 +106,8 @@ export async function moveVideosToSecretPaths(
     moved: [],
     finished: [],
     secretOnly: [],
-    skipped: []
+    skipped: [],
+    refused: []
   }
   const batchSize = options.batchSize ?? 100
   let after = ''
@@ -137,17 +145,7 @@ export async function moveVideosToSecretPaths(
         report.moved.length + report.finished.length >= options.limit
       )
         return report
-      // A live recording whose stream ended is still the ingest's until its
-      // close is verified (or, with no Space then, until it is put away): its
-      // origin finishes it on the path it started on.
-      const unfinished = row.kind === 'live' && row.spaces_verified_at == null
-      const why = isReadOnlySource(space, row.id)
-        ? 'read-only source'
-        : open.has(row.id)
-          ? 'its stream is open'
-          : unfinished
-            ? 'its recording is not closed yet'
-            : undefined
+      const why = holdReason(space, row, open)
       if (why != null) {
         report.skipped.push(row.id)
         log(`skip ${row.id}: ${why}`)
@@ -158,6 +156,26 @@ export async function moveVideosToSecretPaths(
     if (rows.length < batchSize) break
   }
   return report
+}
+
+/**
+ * Why a batch over the Space's videos must leave this one alone, or undefined
+ * when it may touch it: a read-only-source video, whose objects are another
+ * bucket's; one whose stream is open, which the ingest holds an origin for
+ * inside its reconnect grace; and a live recording whose stream ended but is
+ * still the ingest's until its close is verified (or, with no Space then,
+ * until it is put away), finished on the path it started on.
+ */
+export function holdReason(
+  space: SpaceSettings,
+  row: { id: string; kind: string; spaces_verified_at: Date | null },
+  openStreams: ReadonlySet<string | null>
+): string | undefined {
+  if (isReadOnlySource(space, row.id)) return 'read-only source'
+  if (openStreams.has(row.id)) return 'its stream is open'
+  if (row.kind === 'live' && row.spaces_verified_at == null)
+    return 'its recording is not closed yet'
+  return undefined
 }
 
 /** A video whose objects the read-only source names lives in another bucket. */
@@ -179,6 +197,13 @@ async function moveOne(
   const objects = (await listSpaceObjectEntries(space, old)).filter(
     entry => !entry.key.startsWith(`${old}stills/`)
   )
+  if (objects.some(entry => entry.key === `${old}video.mp4`)) {
+    report.refused.push(videoId)
+    log(
+      `refuse ${videoId}: it is one video.mp4; run segmentSpaceVideos, which puts it under a secret path as segments`
+    )
+    return
+  }
   if (objects.length === 0) {
     if (held != null) return
     report.secretOnly.push(videoId)
@@ -358,7 +383,7 @@ async function main(): Promise<void> {
     console.log(
       `${args.dryRun ? 'dry run: ' : ''}${report.moved.length} moved, ` +
         `${report.finished.length} finished, ${report.secretOnly.length} given a secret, ` +
-        `${report.skipped.length} skipped`
+        `${report.skipped.length} skipped, ${report.refused.length} refused (single-file)`
     )
   } finally {
     await db.destroy()
