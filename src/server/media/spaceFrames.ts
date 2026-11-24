@@ -246,18 +246,22 @@ export async function fetchSpaceFrame(
  * fragment is from the Space: its own init segment, then its own bytes.
  *
  * `path` is the playlist, or the file beside the playlist that lists it.
- * Undefined for anything else, which is read where it lies.
+ * Undefined for anything else, which is read where it lies. With `always`,
+ * any playlist is read this way: a segmented recording on this host, whose
+ * moment is one small segment away.
  */
 export async function readLocalFrame(
   path: string,
   atSec: number,
-  workDir: string
+  workDir: string,
+  options: { always?: boolean } = {}
 ): Promise<SpaceFrame | undefined> {
   const playlistPath = path.endsWith('.m3u8')
     ? path
     : join(dirname(path), MEDIA_PLAYLIST)
   const playlist = await readFile(playlistPath, 'utf8').catch(() => undefined)
-  if (playlist == null || !changesInit(playlist)) return undefined
+  if (playlist == null) return undefined
+  if (options.always !== true && !changesInit(playlist)) return undefined
   const fragment = fragmentAt(playlist, atSec)
   if (fragment == null) return undefined
   const dir = dirname(playlistPath)

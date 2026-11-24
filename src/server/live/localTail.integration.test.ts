@@ -333,7 +333,18 @@ describe('the ingest keeps only the newest pieces on disk (M4)', function () {
     await finishStream(f.options, f.stream.id, 'Finished')
     await drainPublishForTest(f.videoId)
     expect((await f.row())?.storage).equals('local')
-    expect((await files.stat(join(f.dir, 'video.mp4'))).isFile()).equals(true)
+    // The recording, segmented, in `recording/` beside the live pieces.
+    const recording = join(f.dir, 'recording')
+    expect((await files.stat(join(recording, 'init.mp4'))).isFile()).equals(
+      true
+    )
+    expect(
+      (await files.stat(join(recording, 'seg000000.m4s'))).isFile()
+    ).equals(true)
+    await files.stat(join(recording, 'video.mp4')).then(
+      () => expect.fail('no single file'),
+      () => undefined
+    )
   })
 
   it('restarts from the pieces on disk and publishes the same playlist body', async () => {

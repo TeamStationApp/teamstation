@@ -2185,10 +2185,13 @@ describe('a live playlist through a reconnect', function () {
     ])
     const vod = join(dir, 'vod')
     mkdirSync(vod)
+    // One file, read by the checks below: the splitter is what is under
+    // test here, and this remux only makes its input.
     await remuxToHls(ffmpeg, {
       input: source,
       outDir: vod,
-      concatList: true
+      concatList: true,
+      layout: 'single-file'
     })
     const probed = execFileSync(ffmpeg.replace(/ffmpeg$/, 'ffprobe'), [
       '-v',
@@ -2273,7 +2276,11 @@ describe('a live playlist through a reconnect', function () {
     mkdirSync(copy)
     execFileSync(
       ffmpeg,
-      remuxToHlsArgs({ input: join(vod, VIDEO_FILE), outDir: copy })
+      remuxToHlsArgs({
+        input: join(vod, VIDEO_FILE),
+        outDir: copy,
+        layout: 'single-file'
+      })
     )
     const live = packets(closed, 'v:0')
     const liveSound = packets(closed, 'a:0')

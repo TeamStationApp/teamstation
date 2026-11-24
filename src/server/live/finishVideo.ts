@@ -1,28 +1,29 @@
-import { createReadStream, createWriteStream } from 'node:fs'
 import {
   mkdir,
   readdir,
   readFile,
   rename,
   rm,
-  stat,
   writeFile
 } from 'node:fs/promises'
 import { join } from 'node:path'
-import { pipeline } from 'node:stream/promises'
 
 import { type Kysely, sql } from 'kysely'
 
 import type { Database } from '../db/database'
 import {
   ffprobeFor,
+  INIT_FILE,
+  initFileName,
   MASTER_PLAYLIST,
   MEDIA_PLAYLIST,
   probeDuration,
   probeVideoStream,
   remuxToHls,
+  segmentFileName,
   VIDEO_FILE
 } from '../media/ffmpeg'
+import { isSegmentedRecording, RECORDING_DIR } from '../media/locations'
 import {
   isStampedAt,
   type PartReader,
@@ -46,16 +47,18 @@ import { LIVE_PLAYLIST_NAME } from './splitter'
  * While a game is on, the stream is a growing playlist and a segment every few
  * seconds, because that is what a viewer can join in the middle of. A finished
  * game is a different thing: it is watched from the start, seeked around, and
- * has to be stored somewhere cheap. Every other recording in TeamStation is one
- * fragmented MP4 with a byte-range playlist, which is what lets a video in the
- * Space need **one** presigned URL instead of one per segment.
+ * has to be stored somewhere cheap. Every recording in TeamStation is segments
+ * in the Space, one object per fragment under a playlist with no byte ranges,
+ * so a seek through the CDN fetches one small object.
  *
- * So the segments are remuxed into that shape the moment the stream ends. It is
- * still `-c copy` — the same pictures, in one file instead of two thousand —
- * and afterwards the video is indistinguishable from an uploaded one, so
- * everything downstream (the Space, the playlist rewriting, stills) works
- * without knowing this video was ever live.
+ * So the live pieces are remuxed into a recording the moment the stream ends,
+ * with its holes filled and its configurations joined. It is still `-c copy`,
+ * the same pictures, and afterwards the video is indistinguishable from an
+ * uploaded one, so everything downstream (the Space, the playlist rewriting,
+ * stills) works without knowing this video was ever live.
  */
+
+export { RECORDING_DIR }
 
 /** The files a live stream leaves behind, alongside the recording it becomes. */
 export function isLivePart(name: string): boolean {
@@ -84,24 +87,25 @@ export interface MovedStretch {
 }
 
 /**
- * Remuxes a closed live playlist in place, and takes the segments away.
+ * Remuxes a closed live playlist into `<dir>/recording/`.
  *
- * The remux writes into a subdirectory first and the files are moved up only
- * once it has finished, so a crash in the middle leaves the live playlist
- * standing rather than a half-written recording where a game used to be.
+ * Everything is built in `<dir>/.vod/` and the finished recording appears with
+ * one rename, so `recording/` only ever holds a whole recording: a crash, a
+ * kill or a failure part way leaves `.vod/`, which nothing serves or sends and
+ * the next attempt removes. The live pieces stay in `<dir>/` for anybody still
+ * holding the live playlist; they go when the local copy does, hours later.
  *
  * A playlist whose holes were filled that then fails to remux is logged and
  * remuxed again with its holes unfilled, as it packed before the filler
  * existed, so a fault only the filler causes never leaves a game unpacked.
  *
  * A recording that changed configuration part way (`absorbWriterPlaylist`) has
- * more than one init segment, which one fragmented MP4's one sample entry
- * cannot hold, and which FFmpeg will not read across. Each configuration is
- * remuxed by itself and the results follow each other in the one file, each
- * with its own `moov`: `video.mp4` is then read only by its playlist, whose
- * `EXT-X-MAP` byte ranges say where each starts. It is still one object in the
- * Space and one presigned URL. The gap where two configurations meet stays in
- * the file, filled as a hole is, so its positions keep to the clock.
+ * more than one init segment, which FFmpeg will not read across. Each
+ * configuration is remuxed by itself and the runs follow each other: run k's
+ * segments are renamed to carry on run k − 1's numbering, its init is
+ * `init<NNNNNN>.mp4` after its first segment, and the playlists are joined
+ * with a discontinuity at each join. The gap where two configurations meet
+ * stays on the clock, filled as a hole is, so its positions keep to the clock.
  */
 export async function toRecording(
   ffmpegPath: string,
@@ -110,7 +114,22 @@ export async function toRecording(
 ): Promise<VodResult> {
   const staging = join(dir, '.vod')
   await rm(staging, { recursive: true, force: true })
-  await mkdir(staging, { recursive: true })
+  try {
+    return await packInto(ffmpegPath, dir, staging, log)
+  } finally {
+    // Whole and renamed away, or failed: either way nothing is left half made.
+    await rm(staging, { recursive: true, force: true })
+  }
+}
+
+async function packInto(
+  ffmpegPath: string,
+  dir: string,
+  staging: string,
+  log: (message: string) => void
+): Promise<VodResult> {
+  const out = join(staging, 'out')
+  await mkdir(out, { recursive: true })
 
   const live = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8').catch(
     () => ''
@@ -124,6 +143,7 @@ export async function toRecording(
       ffmpegPath,
       dir,
       staging,
+      out,
       parts,
       log
     ))
@@ -133,39 +153,26 @@ export async function toRecording(
       dir,
       join(dir, LIVE_PLAYLIST_NAME),
       FIRST_INIT,
-      staging,
+      out,
       log
     )
   }
 
-  // Of the first configuration, which is all a demuxer reads of the file. Its
-  // size is the largest of any, as the master says: the size of the first
-  // part alone undersold a recording that went on at a larger one.
+  // Of the first configuration, as the master's codecs are. Its size is the
+  // largest of any, as the master says: the size of the first part alone
+  // undersold a recording that went on at a larger one.
   const probe = await probeVideoStream(
     ffprobeFor(ffmpegPath),
-    join(staging, VIDEO_FILE)
+    join(out, INIT_FILE)
   )
   const durationSec = Math.max(
     span ?? 0,
-    await probeDuration(ffprobeFor(ffmpegPath), join(staging, MEDIA_PLAYLIST))
+    await probeDuration(ffprobeFor(ffmpegPath), join(out, MEDIA_PLAYLIST))
   )
 
-  // The segments stay where they are.
-  //
-  // Somebody is watching this game — that is what a game that has just ended
-  // means — and their player is holding the live playlist and asking for the
-  // next segment by name. Deleting the segments the moment the remux finished
-  // took the end of the game away from exactly the people who cared most about
-  // it. They go when the local copy does, hours later.
-  //
-  // The playlist itself is replaced, so anybody arriving afterwards gets the
-  // recording rather than a live stream that has stopped.
-  const files: string[] = []
-  for (const name of await readdir(staging)) {
-    await rename(join(staging, name), join(dir, name))
-    files.push(name)
-  }
-  await rm(staging, { recursive: true, force: true })
+  const recording = join(dir, RECORDING_DIR)
+  await rm(recording, { recursive: true, force: true })
+  await rename(out, recording)
 
   return {
     durationSec,
@@ -173,7 +180,7 @@ export async function toRecording(
     height: largest?.height ?? probe.height,
     codecName: probe.codecName,
     codecTag: probe.codecTag,
-    files: files.sort(),
+    files: (await readdir(recording)).sort(),
     moved
   }
 }
@@ -379,6 +386,7 @@ async function remuxRuns(
   ffmpegPath: string,
   dir: string,
   staging: string,
+  out: string,
   runs: ConfigurationRun[],
   log: (message: string) => void
 ): Promise<{ largest: PictureSize | undefined; moved: MovedStretch[] }> {
@@ -411,37 +419,68 @@ async function remuxRuns(
 
   const playlists: string[] = []
   const moved: MovedStretch[] = []
-  let offset = 0
+  let first = 0
   let liveSec = 0
   let fileSec = 0
-  const video = join(staging, VIDEO_FILE)
   for (const [index, outDir] of remuxed.entries()) {
     const media = await readFile(join(outDir, MEDIA_PLAYLIST), 'utf8')
-    playlists.push(shiftByteRanges(media, offset))
+    const numbered = renumberRun(media, first)
+    for (const [from, to] of numbered.renames) {
+      await rename(join(outDir, from), join(out, to))
+    }
+    playlists.push(numbered.playlist)
+    first += numbered.segments
     liveSec += lengthSec(runPlaylist(runs[index]))
     fileSec += lengthSec(media)
     const byMs = Math.round((fileSec - liveSec) * 1000)
     if (index + 1 < remuxed.length && byMs >= MOVED_AT_LEAST_MS) {
       moved.push({ fromMs: Math.round(liveSec * 1000), byMs })
     }
-    const file = join(outDir, VIDEO_FILE)
-    offset += (await stat(file)).size
-    await pipeline(
-      createReadStream(file),
-      createWriteStream(video, { flags: 'a' })
-    )
   }
-  await writeFile(join(staging, MEDIA_PLAYLIST), joinMediaPlaylists(playlists))
+  await writeFile(join(out, MEDIA_PLAYLIST), joinMediaPlaylists(playlists))
   const masters: string[] = []
   for (const outDir of remuxed) {
     masters.push(await readFile(join(outDir, MASTER_PLAYLIST), 'utf8'))
   }
   const master = combinedMaster(masters)
-  await writeFile(join(staging, MASTER_PLAYLIST), master)
+  await writeFile(join(out, MASTER_PLAYLIST), master)
   for (const outDir of remuxed) {
     await rm(outDir, { recursive: true, force: true })
   }
   return { largest: masterPictureSize(master), moved }
+}
+
+/**
+ * One run's segmented remux, renamed to follow the runs before it: its
+ * segments numbered on from `first`, and its init named after its own first
+ * segment, `init<NNNNNN>.mp4`, unless it is the first run's `init.mp4`. These
+ * are the names the live origin uses, so everything that reads a recording's
+ * pieces reads these too. Answers the renames to make, the playlist that
+ * lists the new names, and how many segments it has.
+ */
+export function renumberRun(
+  playlist: string,
+  first: number
+): { playlist: string; renames: Array<[string, string]>; segments: number } {
+  const init = initFileName(first)
+  const renames: Array<[string, string]> = []
+  let segments = 0
+  const lines = playlist.split('\n').map(line => {
+    const map = /^#EXT-X-MAP:URI="([^"]+)"$/.exec(line)
+    if (map != null) {
+      renames.push([map[1], init])
+      return `#EXT-X-MAP:URI="${init}"`
+    }
+    if (line === '' || line.startsWith('#')) return line
+    if (!/^seg\d{6,}\.m4s$/.test(line)) {
+      throw new Error(`a run's remux listed ${line}, not a segment`)
+    }
+    const renamed = segmentFileName(first + segments)
+    segments++
+    renames.push([line, renamed])
+    return renamed
+  })
+  return { playlist: lines.join('\n'), renames, segments }
 }
 
 /** A wall-clock point is only good to about a second, so no less moves one. */
@@ -592,24 +631,9 @@ function runPlaylist(run: ConfigurationRun): string {
   ].join('\n')}\n`
 }
 
-/** A single-file media playlist with its byte ranges moved along its file. */
-export function shiftByteRanges(playlist: string, offset: number): string {
-  return playlist
-    .replace(
-      /(#EXT-X-MAP:.*BYTERANGE=")(\d+)@(\d+)"/g,
-      (_line, head: string, length: string, at: string) =>
-        `${head}${length}@${String(Number(at) + offset)}"`
-    )
-    .replace(
-      /^#EXT-X-BYTERANGE:(\d+)@(\d+)$/gm,
-      (_line, length: string, at: string) =>
-        `#EXT-X-BYTERANGE:${length}@${String(Number(at) + offset)}`
-    )
-}
-
 /**
- * Single-file media playlists as one, each after the first behind a
- * discontinuity and its own `EXT-X-MAP`. The timestamps of each start again,
+ * Media playlists as one, each after the first behind a discontinuity and its
+ * own `EXT-X-MAP`. The timestamps of each start again,
  * which is what a discontinuity tells a player to expect. The target duration
  * is the largest of theirs, as every segment has to fit under it.
  */
@@ -765,11 +789,37 @@ async function remuxSources(
   return { source: list, unfilled }
 }
 
-/** Whether a directory has already been turned into a recording. */
-export async function isRecordingShape(dir: string): Promise<boolean> {
+/**
+ * What a finished stream's directory holds.
+ *
+ * - `'segments'`: a recording in `recording/`, which only ever appears whole.
+ * - `'single-file'`: the shape the release before this one packed into the
+ *   directory itself, `video.mp4` beside its playlists. It is sent as it is.
+ * - `null`: live pieces only, or a `.vod/` a crash left, so not yet packed.
+ *
+ * In that order: a directory with both is the segmented one.
+ */
+export type RecordingShape = 'segments' | 'single-file'
+
+export async function recordingShape(
+  dir: string
+): Promise<RecordingShape | null> {
+  const packed = await readdir(join(dir, RECORDING_DIR)).catch(
+    (): string[] => []
+  )
+  if (isSegmentedRecording(packed)) return 'segments'
   const names = await readdir(dir).catch((): string[] => [])
-  return names.includes(VIDEO_FILE) && names.includes(MASTER_PLAYLIST)
+  if (names.includes(VIDEO_FILE) && names.includes(MASTER_PLAYLIST))
+    return 'single-file'
+  return null
 }
+
+/** What the release before this one packed into a stream's directory. */
+export const SINGLE_FILE_RECORDING: readonly string[] = [
+  MASTER_PLAYLIST,
+  MEDIA_PLAYLIST,
+  VIDEO_FILE
+]
 
 /**
  * Moves a finished stream's wall-clock points onto the recording it became.

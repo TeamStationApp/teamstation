@@ -221,12 +221,13 @@ describe('reading the wall clock out of fMP4 (U23)', function () {
       await remuxToHls(FFMPEG, { input, outDir: out, segmentSeconds: 1 })
       const path = join(out, 'video.m3u8')
       const lines = (await readFile(path, 'utf8')).split('\n')
-      const firstSegment = lines.indexOf('video.mp4')
+      const isSegment = (line: string): boolean => /^seg\d{6}\.m4s$/.test(line)
+      const firstSegment = lines.findIndex(isSegment)
       await writeFile(
         path,
         lines
           .map((line, i) =>
-            line === 'video.mp4' && i > firstSegment ? 'gone.mp4' : line
+            isSegment(line) && i > firstSegment ? 'gone.m4s' : line
           )
           .join('\n')
       )
@@ -240,7 +241,7 @@ describe('reading the wall clock out of fMP4 (U23)', function () {
     await scanRecording(plain).catch((thrown: unknown) => {
       error = thrown
     })
-    expect(String(error)).includes('gone.mp4')
+    expect(String(error)).includes('gone.m4s')
 
     // A stamped one is read to its end: every segment's points, as before.
     const out = join(dir, 'firstStamped')

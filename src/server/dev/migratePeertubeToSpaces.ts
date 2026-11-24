@@ -8,7 +8,7 @@ import type { Kysely } from 'kysely'
 import { type Database, makeDatabase } from '../db/database'
 import { remuxToHls } from '../media/ffmpeg'
 import { probeVideoFile, tagFor } from '../media/ingestFile'
-import { locateVideoFile } from '../media/locations'
+import { videoFrameSource } from '../media/locations'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import {
   uploadVideoDirectory,
@@ -244,11 +244,25 @@ export async function migrateOne(
   const { space, ffmpegPath } = settings
   if (!spaceConfigured(space)) throw new Error('no Space is configured')
 
-  const file = await locateVideoFile({
+  const source = await videoFrameSource({
     mediaRoot,
     storage: video.storage,
-    videoId: video.id
+    videoId: video.id,
+    space,
+    spaceSecret: null
   })
+  // Already segments, a finished stream's `recording/` or a segmented local
+  // upload: sent as it lies, with nothing to remux.
+  if (source?.kind === 'dir') {
+    const db = makeDatabase(databaseUrl)
+    try {
+      const spaceSecret = await secretForMigration(db, video.id)
+      return await uploadMigrated(db, space, video.id, spaceSecret, source.dir)
+    } finally {
+      await db.destroy()
+    }
+  }
+  const file = source?.kind === 'file' ? source.path : undefined
   if (file == null) {
     throw new Error('no fragmented MP4 on disk')
   }
@@ -260,8 +274,7 @@ export async function migrateOne(
     await remuxToHls(ffmpegPath, {
       input: file,
       outDir: work,
-      videoTag: tagFor(probed.codecName),
-      layout: 'segments'
+      videoTag: tagFor(probed.codecName)
     })
     const db = makeDatabase(databaseUrl)
     try {

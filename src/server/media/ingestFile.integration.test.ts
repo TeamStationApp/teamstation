@@ -82,11 +82,13 @@ describe('a remux of sound whose priming is undeclared, through real ffmpeg', fu
 
   /** How far the sound's first fragment starts after the picture's. */
   async function soundAfterPicture(outDir: string): Promise<number> {
-    const path = join(outDir, 'video.mp4')
     let tracks = readTracks(Buffer.alloc(0))
-    for await (const moov of boxesInFile(path, 'moov'))
+    for await (const moov of boxesInFile(join(outDir, 'init.mp4'), 'moov'))
       tracks = readTracks(moov)
-    for await (const moof of boxesInFile(path, 'moof')) {
+    for await (const moof of boxesInFile(
+      join(outDir, 'seg000000.m4s'),
+      'moof'
+    )) {
       const runs = readFragment(moof, tracks)
       const picture = runs.find(one => one.kind === 'video')
       const sound = runs.find(one => one.kind === 'audio')

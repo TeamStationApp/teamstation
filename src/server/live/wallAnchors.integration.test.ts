@@ -676,11 +676,13 @@ describe('the controller and the wall clock (U25, U26)', function () {
     // The recording is the live segments end to end: as long as they were,
     // so each point is still at its segment's start.
     const vod = parseMediaPlaylist(
-      await readFile(join(live, 'video.m3u8'), 'utf8')
+      await readFile(join(live, 'recording', 'video.m3u8'), 'utf8')
     )
     const total = vod.segments.reduce((sum, one) => sum + one.durationSec, 0)
     expect(total).within(4.99, 5.01)
-    expect(await replaceAnchorsFromRecording(db, videoId, live)).equals(0)
+    expect(
+      await replaceAnchorsFromRecording(db, videoId, join(live, 'recording'))
+    ).equals(0)
   })
 
   it('keeps the arrival points of a stream’s unstamped stretch through its end, beside the recording’s stamped points (U26)', async function () {
@@ -723,7 +725,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
     expect(after.filter(([, , source]) => source === 'arrival')).deep.equals(
       arrivals
     )
-    const scan = await readRecordingStamps(live)
+    const scan = await readRecordingStamps(join(live, 'recording'))
     expect(
       after
         .filter(([, , source]) => source === 'sei')
@@ -749,12 +751,14 @@ describe('the controller and the wall clock (U25, U26)', function () {
 
   it('scans a finished stream’s recording again only when the stream carried the SEI', async function () {
     const videoId = await stream('rescanned')
-    const recording = liveVideoDir(mediaRoot, videoId)
-    await mkdir(recording, { recursive: true })
-    await writeLive(stamped, recording, { seconds: 3 })
+    const live = liveVideoDir(mediaRoot, videoId)
+    await mkdir(live, { recursive: true })
+    await writeLive(stamped, live, { seconds: 3 })
     await syncAndScan(options)
     await finishStream(options, 'liv_rescanned', 'the stream was ended')
     await settleLiveWork()
+    // The rescan read the recording the finish made, in `recording/`.
+    const recording = join(live, 'recording')
     const scanned = await anchors(videoId)
     expect(scanned.length).greaterThan(0)
 

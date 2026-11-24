@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -247,7 +247,7 @@ describe('shared still ownership', function () {
       videoTag: null,
       segmentSeconds: 5
     })
-    for (const name of ['master.m3u8', 'video.m3u8', 'video.mp4'])
+    for (const name of await readdir(outDir))
       sourceAssets.set(
         `videos/demo/${name}`,
         await readFile(join(outDir, name))
@@ -269,7 +269,9 @@ describe('shared still ownership', function () {
     }
     expect(await ensureStill(options)).equals(stillKey('demo', 20))
     expect(sourceReads).greaterThan(0)
-    expect(sourceRanges).equals(2)
+    // The init segment and the one segment holding the moment, each a whole
+    // object: nothing is read as a range of a bigger one.
+    expect(sourceRanges).equals(0)
     expect(sourceWrites).equals(0)
     expect(destinationWrites).equals(1)
     const readsAfterGeneration = sourceReads

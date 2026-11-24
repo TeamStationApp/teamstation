@@ -363,8 +363,7 @@ export async function ingestVideoFile(
       input: file,
       outDir: work,
       videoTag: tagFor(probed.codecName),
-      soundPrimingSamples: probed.soundPrimingSamples,
-      layout: 'segments'
+      soundPrimingSamples: probed.soundPrimingSamples
     })
 
     // How long it runs, read back off what was written rather than worked

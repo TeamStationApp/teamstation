@@ -99,10 +99,7 @@ export interface RemuxOptions {
    * be a `concat:` of the init segment and one media segment.
    */
   concatList?: boolean
-  /**
-   * How the recording is laid out on disk. See `RemuxLayout`.
-   * `'single-file'` by default.
-   */
+  /** How the recording is laid out on disk: `'segments'` unless asked. */
   layout?: RemuxLayout
 }
 
@@ -113,7 +110,7 @@ export interface RemuxOptions {
  * is a cache miss the CDN can sit on for over a minute.
  *
  * `'single-file'`: one fragmented `video.mp4` and a byte-range playlist, the
- * shape recordings had before. Only a video kept in that shape asks for it.
+ * shape recordings had before. Only a test of that shape asks for it.
  */
 export type RemuxLayout = 'segments' | 'single-file'
 
@@ -222,7 +219,7 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     videoTag = 'hvc1',
     soundPrimingSamples = 0,
     concatList = false,
-    layout = 'single-file'
+    layout = 'segments'
   } = options
   return [
     '-hide_banner',
@@ -297,7 +294,7 @@ export async function remuxToHls(
   await run(ffmpegPath, remuxToHlsArgs(options), { maxBuffer: 1 << 22 })
   await addCodecsToMaster(
     options.outDir,
-    (options.layout ?? 'single-file') === 'segments' ? INIT_FILE : VIDEO_FILE
+    (options.layout ?? 'segments') === 'segments' ? INIT_FILE : VIDEO_FILE
   )
 }
 

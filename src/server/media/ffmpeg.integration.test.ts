@@ -149,11 +149,14 @@ describe('ffmpeg contract', function () {
     const before = await probeVideoStream(ffprobePath, source)
     expect(before.codecName).equals('hevc')
 
-    await remuxToHls(ffmpegPath, { input: source, outDir: workDir })
+    await remuxToHls(ffmpegPath, {
+      input: source,
+      outDir: workDir,
+      layout: 'single-file'
+    })
 
-    // One fragmented MP4 and a byte-range playlist, not a directory of
-    // segments: the Space needs one presigned URL per video, and a still is
-    // taken by seeking inside one file.
+    // The single-file shape, one fragmented MP4 and a byte-range playlist,
+    // which the videos repackaged by `segmentSpaceVideos` were made in.
     const media = await readFile(join(workDir, 'video.m3u8'), 'utf8')
     expect(media).contains('#EXTM3U')
     expect(media).contains('#EXT-X-MAP:URI="video.mp4"')
@@ -438,7 +441,11 @@ describe('ffmpeg contract', function () {
   })
 
   it('never writes the temporary name into a single-file playlist', function () {
-    const args = remuxToHlsArgs({ input: 'in.mp4', outDir: '/tmp/out' })
+    const args = remuxToHlsArgs({
+      input: 'in.mp4',
+      outDir: '/tmp/out',
+      layout: 'single-file'
+    })
     const flags = args[args.indexOf('-hls_flags') + 1]
     expect(flags).contains('single_file')
     expect(flags).does.not.contain('temp_file')

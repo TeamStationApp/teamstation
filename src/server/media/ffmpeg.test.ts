@@ -40,27 +40,30 @@ describe('remuxToHlsArgs', function () {
     return out
   }
 
-  it('writes init.mp4 and seg######.m4s for the segmented layout', function () {
-    const args = remuxToHlsArgs({
-      input: 'in.mov',
-      outDir: '/tmp/out',
-      layout: 'segments'
-    })
-    expect(valueOf(args, '-hls_fmp4_init_filename')).equals(INIT_FILE)
-    expect(INIT_FILE).equals('init.mp4')
-    expect(valueOf(args, '-start_number')).equals('0')
-    expect(valueOf(args, '-hls_segment_filename')).equals(
-      `/tmp/out/${SEGMENT_FILE_PATTERN}`
-    )
-    expect(SEGMENT_FILE_PATTERN).equals('seg%06d.m4s')
-    expect(valueOf(args, '-hls_flags')).equals('independent_segments')
-    expect(args.join(' ')).does.not.contain('single_file')
-    expect(args.join(' ')).does.not.contain(VIDEO_FILE)
-  })
-
-  it('writes one video.mp4 for the single-file layout, and by default', function () {
+  it('writes init.mp4 and seg######.m4s by default, and when asked', function () {
     for (const args of [
       remuxToHlsArgs({ input: 'in.mov', outDir: '/tmp/out' }),
+      remuxToHlsArgs({
+        input: 'in.mov',
+        outDir: '/tmp/out',
+        layout: 'segments'
+      })
+    ]) {
+      expect(valueOf(args, '-hls_fmp4_init_filename')).equals(INIT_FILE)
+      expect(INIT_FILE).equals('init.mp4')
+      expect(valueOf(args, '-start_number')).equals('0')
+      expect(valueOf(args, '-hls_segment_filename')).equals(
+        `/tmp/out/${SEGMENT_FILE_PATTERN}`
+      )
+      expect(SEGMENT_FILE_PATTERN).equals('seg%06d.m4s')
+      expect(valueOf(args, '-hls_flags')).equals('independent_segments')
+      expect(args.join(' ')).does.not.contain('single_file')
+      expect(args.join(' ')).does.not.contain(VIDEO_FILE)
+    }
+  })
+
+  it('writes one video.mp4 for the single-file layout', function () {
+    for (const args of [
       remuxToHlsArgs({
         input: 'in.mov',
         outDir: '/tmp/out',

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { MEDIA_PLAYLIST } from './ffmpeg'
 import { putObject } from './images'
 import type { MediaContext } from './mediaContext'
 import { signQueryToken } from './mediaTokens'
@@ -33,6 +34,8 @@ const run = promisify(execFile)
 
 export type FrameSource =
   | { kind: 'file'; path: string }
+  /** A segmented recording on this host: its playlist, init and segments. */
+  | { kind: 'dir'; dir: string }
   | {
       kind: 'space'
       space: SpaceSettings
@@ -247,6 +250,23 @@ async function openFrame(
 ): Promise<
   { path: string; seekSec: number; release: () => Promise<void> } | undefined
 > {
+  if (source.kind === 'dir') {
+    // Its init and the one segment holding the moment, as from the Space.
+    const playlist = join(source.dir, MEDIA_PLAYLIST)
+    const fragment = await readLocalFrame(playlist, atSec, scratch, {
+      always: true
+    })
+    if (fragment != null) return fragment
+    // A moment the one-segment reader could not place, inside the recording,
+    // is sought in the playlist itself; one past its end has no picture.
+    const listed = await readFile(playlist, 'utf8').catch(() => '')
+    const lengthSec = listed
+      .split('\n')
+      .filter(line => line.startsWith('#EXTINF:'))
+      .reduce((sum, line) => sum + Number.parseFloat(line.slice(8)), 0)
+    if (!(atSec < lengthSec)) return undefined
+    return { path: playlist, seekSec: atSec, release: async () => undefined }
+  }
   if (source.kind === 'file') {
     const fragment = await readLocalFrame(source.path, atSec, scratch)
     if (fragment != null) return fragment

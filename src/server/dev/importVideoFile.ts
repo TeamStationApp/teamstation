@@ -224,8 +224,7 @@ async function main(): Promise<void> {
     await remuxToHls(serverConfig.ffmpegPath, {
       input: args.file,
       outDir: work,
-      videoTag,
-      layout: 'segments'
+      videoTag
     })
 
     console.log('  uploading to the Space…')

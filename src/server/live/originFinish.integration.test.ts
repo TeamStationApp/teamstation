@@ -9,6 +9,7 @@ import {
   stampFile,
   writeLive
 } from '../../test/wallClockFixtures'
+import { listSpaceObjects } from '../media/spacesVideo'
 import { parseMediaPlaylist, readRecordingStamps } from '../media/wallClockScan'
 import {
   drainLiveController,
@@ -66,8 +67,23 @@ describe('closing a live Space origin', function () {
     expect(row?.status).equals('ready')
     expect(await f.body()).contains('#EXT-X-ENDLIST')
     expect(await files.stat(f.dir).catch(() => undefined)).equals(undefined)
-    const names = await files.readdir(f.remoteDir)
+    // The origin's own pieces are the recording, kept as they were published.
+    // The fake Space keeps each object's headers in files beside it.
+    const names = (await files.readdir(f.remoteDir)).filter(
+      name => !/\.(acl|cache-control|content-type)$/.test(name)
+    )
     expect(names).not.contains('video.mp4')
+    expect(names).contains('index.m3u8')
+    expect(names.some(name => /^init\d*\.mp4$/.test(name))).equals(true)
+    expect(names.filter(name => /^seg\d{6}\.m4s$/.test(name)).length).equals(12)
+    if (process.env.TS_PROOF_TRACE != null) {
+      console.log(
+        `\n    closed origin recording, ${names.length} objects:\n${[...names]
+          .sort((a, b) => a.localeCompare(b))
+          .map(name => `      ${name}`)
+          .join('\n')}`
+      )
+    }
     const stills = await files.readdir(join(f.oldRemoteDir, 'stills'))
     expect(stills.some(name => name.endsWith('.jpg'))).equals(true)
     expect(
@@ -350,7 +366,9 @@ describe('closing a live Space origin', function () {
       release()
       await drainPublishForTest(f.videoId)
       expect(calls).equals(1)
-      expect((await files.stat(join(f.dir, 'video.mp4'))).isFile()).equals(true)
+      expect(
+        (await files.stat(join(f.dir, 'recording', 'video.m3u8'))).isFile()
+      ).equals(true)
     } finally {
       release()
       await drainPublishForTest(f.videoId)
@@ -433,7 +451,9 @@ describe('closing a live Space origin', function () {
     await f.begin()
     await finish()
     expect((await f.row())?.storage).equals('local')
-    expect((await files.stat(join(f.dir, 'video.mp4'))).isFile()).equals(true)
+    expect(
+      (await files.stat(join(f.dir, 'recording', 'video.m3u8'))).isFile()
+    ).equals(true)
     expect(f.requests).length(0)
   })
 
@@ -449,9 +469,91 @@ describe('closing a live Space origin', function () {
     expect(
       await files.readFile(join(f.remoteDir, 'master.m3u8'), 'utf8')
     ).contains('video.m3u8')
-    expect((await files.stat(join(f.remoteDir, 'video.mp4'))).isFile()).equals(
+    // The fallback's recording, segments as it lies, and no single file.
+    expect((await files.stat(join(f.remoteDir, 'init.mp4'))).isFile()).equals(
       true
     )
+    expect(
+      await files.readFile(join(f.remoteDir, 'video.m3u8'), 'utf8')
+    ).does.not.contain('BYTERANGE')
+    await files.stat(join(f.remoteDir, 'video.mp4')).then(
+      () => expect.fail('no single file in the Space'),
+      () => undefined
+    )
+  })
+
+  it('puts a fallback recording under a new secret when the origin left pieces of the same names', async () => {
+    // The origin published, but the row never heard (its first-segment
+    // update did not land): the end goes the no-origin way, over the same
+    // prefix, where `seg000000.m4s` is a live piece a CDN may hold.
+    await f.stage()
+    await f.begin()
+    await drainPublishForTest(f.videoId)
+    const left = (await files.readdir(f.remoteDir)).filter(name =>
+      /^seg\d{6}\.m4s$/.test(name)
+    )
+    expect(left.length).greaterThan(0)
+    await f.f.h.db
+      .updateTable('videos')
+      .set({ storage: 'local', spaces_verified_at: null })
+      .where('id', '=', f.videoId)
+      .execute()
+    await finish()
+    const row = await f.row()
+    expect(row?.spaces_verified_at).not.equals(null)
+    expect(row?.space_secret).not.equals(f.spaceSecret)
+    const fresh = join(
+      f.remoteDir,
+      '..',
+      `${f.videoId}-${row?.space_secret ?? ''}`
+    )
+    expect(await files.readFile(join(fresh, 'video.m3u8'), 'utf8')).contains(
+      'seg000000.m4s'
+    )
+    expect((await files.stat(join(fresh, 'init.mp4'))).isFile()).equals(true)
+    // What the origin left is gone, so nothing old answers for the new names.
+    expect(
+      (await files.readdir(f.remoteDir).catch(() => [])).filter(name =>
+        /\.(m4s|mp4|m3u8)$/.test(name)
+      )
+    ).deep.equals([])
+  })
+
+  it('takes back a copy under a new secret that did not verify, and makes no third one on the retry', async () => {
+    await f.stage()
+    await f.begin()
+    await drainPublishForTest(f.videoId)
+    await f.f.h.db
+      .updateTable('videos')
+      .set({ storage: 'local', spaces_verified_at: null })
+      .where('id', '=', f.videoId)
+      .execute()
+    // Every verify GET of a piece fails; uploads still land.
+    f.store.faults.set({
+      method: 'GET',
+      key: /-[0-9a-f]{32}\/seg\d{6}\.m4s$/,
+      status: 404
+    })
+    await finish()
+    expect((await f.row())?.storage).equals('local')
+    expect((await f.row())?.space_secret).equals(f.spaceSecret)
+    const prefixes = async (): Promise<string[]> =>
+      [
+        ...new Set(
+          (
+            await listSpaceObjects(f.options.space!, `videos/${f.videoId}-`)
+          ).map(key => key.split('/')[1])
+        )
+      ].sort((a, b) => a.localeCompare(b))
+    // Only the row's own prefix: the copy that did not verify was removed.
+    expect(await prefixes()).deep.equals([`${f.videoId}-${f.spaceSecret}`])
+    f.store.faults.clear()
+    await retry()
+    const row = await f.row()
+    expect(row?.storage).equals('spaces')
+    expect(await prefixes()).deep.equals([
+      `${f.videoId}-${row?.space_secret ?? ''}`
+    ])
   })
 
   it('reconciles settled frame clocks at close and preserves unstamped arrival spans', async () => {
