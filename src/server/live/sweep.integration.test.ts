@@ -11,11 +11,13 @@ import { Pool } from 'pg'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { answerListOrDelete } from '../../test/heldSpace'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { SpaceSettings } from '../media/spacesHls'
 import type { LiveControllerOptions } from './controller'
 import { liveVideoDir, settleLiveWork, sweepLocalCopies } from './controller'
+import { recordingShape } from './finishVideo'
 
 /**
  * The two jobs of the five-minute round: letting go of a local copy the Space
@@ -41,6 +43,11 @@ describe('the live sweep', function () {
   let mediaRoot = ''
   let space: Server | undefined
   let held = new Map<string, Buffer>()
+  /** While set, every PUT is answered only once it settles. */
+  let gate: Promise<void> | undefined
+  let puts = 0
+  /** Called on the next PUT, once. */
+  let onPut: (() => void) | undefined
   let options: LiveControllerOptions | undefined
 
   before(async function () {
@@ -62,12 +69,20 @@ describe('the live sweep', function () {
     mediaRoot = await mkdtemp(join(tmpdir(), 'tsSweep-'))
     space = createServer((req, res) => {
       const key = (req.url ?? '').split('?')[0] ?? ''
+      if (answerListOrDelete(held, req, res)) return
       if (req.method === 'PUT') {
         const chunks: Buffer[] = []
         req.on('data', chunk => chunks.push(chunk as Buffer))
         req.on('end', () => {
+          puts++
           held.set(key, Buffer.concat(chunks))
-          res.writeHead(200).end()
+          onPut?.()
+          onPut = undefined
+          const answer = (): void => {
+            res.writeHead(200).end()
+          }
+          if (gate == null) answer()
+          else gate.then(answer, answer)
         })
         return
       }
@@ -142,15 +157,42 @@ describe('the live sweep', function () {
       updatedAt?: Date
       replacedBy?: string
     },
-    shape: 'packed' | 'segments'
+    shape: 'packed' | 'segments' | 'recording' | 'both' | 'halfPacked'
   ): Promise<void> {
     const dir = liveVideoDir(mediaRoot, id)
     await mkdir(dir, { recursive: true })
-    if (shape === 'packed') {
+    if (shape === 'recording' || shape === 'both') {
+      // What a finish leaves now: the recording in `recording/`, beside the
+      // live pieces it was made from.
+      const recording = join(dir, 'recording')
+      await mkdir(recording, { recursive: true })
+      await writeFile(join(recording, 'init.mp4'), Buffer.alloc(512, 4))
+      await writeFile(join(recording, 'seg000000.m4s'), Buffer.alloc(2048, 5))
+      await writeFile(
+        join(recording, 'video.m3u8'),
+        '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg000000.m4s\n#EXT-X-ENDLIST\n'
+      )
+      await writeFile(join(recording, 'master.m3u8'), '#EXTM3U\nvideo.m3u8\n')
+      await writeFile(join(dir, 'init.mp4'), Buffer.alloc(512, 2))
+      await writeFile(join(dir, 'seg000000.m4s'), Buffer.alloc(512, 3))
+    }
+    if (shape === 'halfPacked') {
+      // A finish a crash cut short: live pieces, and a `.vod/` with a
+      // playlist and part of its segments.
+      await writeFile(join(dir, 'init.mp4'), Buffer.alloc(512, 2))
+      await writeFile(join(dir, 'seg000000.m4s'), Buffer.alloc(512, 3))
+      await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\nseg000000.m4s\n')
+      const out = join(dir, '.vod', 'out')
+      await mkdir(out, { recursive: true })
+      await writeFile(join(out, 'video.m3u8'), '#EXTM3U\nseg000000.m4s\n')
+      await writeFile(join(out, 'master.m3u8'), '#EXTM3U\nvideo.m3u8\n')
+      await writeFile(join(out, 'seg000000.m4s'), Buffer.alloc(256, 6))
+    }
+    if (shape === 'packed' || shape === 'both') {
       await writeFile(join(dir, 'video.mp4'), Buffer.alloc(4096, 1))
       await writeFile(join(dir, 'video.m3u8'), '#EXTM3U\n#EXT-X-ENDLIST\n')
       await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\nvideo.m3u8\n')
-    } else {
+    } else if (shape === 'segments') {
       await writeFile(join(dir, 'init.mp4'), Buffer.alloc(512, 2))
       await writeFile(join(dir, 'seg000000.m4s'), Buffer.alloc(512, 3))
       await writeFile(join(dir, 'master.m3u8'), '#EXTM3U\nseg000000.m4s\n')
@@ -253,6 +295,8 @@ describe('the live sweep', function () {
 
     await sweepLocalCopies(options)
 
+    await settleLiveWork()
+
     expect(await storageOf('vid_packed'), 'the packed one goes').equals(
       'spaces'
     )
@@ -288,6 +332,8 @@ describe('the live sweep', function () {
 
     await sweepLocalCopies(options)
 
+    await settleLiveWork()
+
     expect(
       await storageOf('vid_failed'),
       'the recording the Space never took is tried again'
@@ -296,5 +342,108 @@ describe('the live sweep', function () {
       await storageOf('vid_replaced0'),
       'a replaced copy is left for the purge'
     ).equals('local')
+  })
+
+  it('sends a recording from recording/, as it lies, and that before a single file beside it', async function () {
+    if (options == null) this.skip()
+    held = new Map()
+    await makeVideo('vid_segmented', { storage: 'local' }, 'recording')
+    await sweepLocalCopies(options)
+    await settleLiveWork()
+    const sent = [...held.keys()].filter(key => key.includes('vid_segmented'))
+    expect(
+      sent.map(key => key.split('/').at(-1)!).sort((a, b) => a.localeCompare(b))
+    ).deep.equals(['init.mp4', 'master.m3u8', 'seg000000.m4s', 'video.m3u8'])
+    expect(
+      held
+        .get(sent.find(key => key.endsWith('/seg000000.m4s'))!)
+        ?.equals(Buffer.alloc(2048, 5)),
+      "the recording's segment, not the live piece of the same name"
+    ).equals(true)
+    expect(await storageOf('vid_segmented')).equals('spaces')
+
+    held = new Map()
+    await makeVideo('vid_both', { storage: 'local' }, 'both')
+    await sweepLocalCopies(options)
+    await settleLiveWork()
+    const both = [...held.keys()].filter(key => key.includes('vid_both'))
+    expect(both.some(key => key.endsWith('/init.mp4'))).equals(true)
+    expect(both.some(key => key.endsWith('/video.mp4'))).equals(false)
+  })
+
+  it('does not end a sweep while it is still sending, so the next cannot send the same recording', async function () {
+    if (options == null) this.skip()
+    held = new Map()
+    await makeVideo('vid_held', { storage: 'local' }, 'recording')
+    let release = (): void => undefined
+    gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    puts = 0
+    const putSeen = new Promise<void>(resolve => {
+      onPut = resolve
+    })
+    let ended = false
+    const first = sweepLocalCopies(options).then(() => {
+      ended = true
+    })
+    try {
+      await putSeen
+      await new Promise(resolve => setTimeout(resolve, 200))
+      expect(ended, 'the sweep waits for its upload').equals(false)
+    } finally {
+      release()
+      gate = undefined
+    }
+    await first
+    const sent = puts
+    expect(await storageOf('vid_held')).equals('spaces')
+    await sweepLocalCopies(options)
+    await settleLiveWork()
+    expect(puts, 'nothing is sent again').equals(sent)
+  })
+
+  it('takes back what it sent of a video deleted while it was being sent', async function () {
+    if (options == null || db == null) this.skip()
+    held = new Map()
+    await makeVideo('vid_deleted', { storage: 'local' }, 'recording')
+    const rows = db
+    const deleted = new Promise<void>(resolve => {
+      onPut = () => {
+        rows
+          .deleteFrom('videos')
+          .where('id', '=', 'vid_deleted')
+          .execute()
+          .then(() => {
+            resolve()
+          }, resolve)
+      }
+    })
+    // Nothing is answered until the row is gone, so the delete lands mid-send.
+    gate = deleted
+    try {
+      await sweepLocalCopies(options)
+      await settleLiveWork()
+    } finally {
+      gate = undefined
+    }
+    expect(
+      [...held.keys()].filter(key => key.includes('vid_deleted'))
+    ).deep.equals([])
+  })
+
+  it('takes a finish a crash cut short for unpacked, and never sends it', async function () {
+    if (options == null) this.skip()
+    held = new Map()
+    await makeVideo('vid_halfPacked', { storage: 'local' }, 'halfPacked')
+    const dir = liveVideoDir(mediaRoot, 'vid_halfPacked')
+    expect(await recordingShape(dir)).equals(null)
+    await sweepLocalCopies(options)
+    await settleLiveWork()
+    expect(
+      [...held.keys()].some(key => key.includes('vid_halfPacked')),
+      'nothing of it reached the Space'
+    ).equals(false)
+    expect(await storageOf('vid_halfPacked')).equals('local')
   })
 })

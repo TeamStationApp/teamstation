@@ -249,35 +249,83 @@ export function structureSql(options: StructureOptions): string {
 }
 
 /** What a media playlist says about its segments. */
+/**
+ * A media playlist's shape. An upload is either one file the playlist
+ * addresses by byte range, or, since uploads are stored as segments, an init
+ * section and a file per piece, whose sizes the playlist does not carry.
+ */
 export interface PlaylistShape {
   segments: number
   durationSec: number
-  /** Byte sizes of the segments, in order. */
+  /** Byte sizes of the segments, in order. Empty for separate pieces until read. */
   sizes: number[]
-  /** The init section and the first segment, as one byte range from 0. */
+  /** The init section and the first segment, as one byte range from 0; 0 for separate pieces. */
   headBytes: number
   firstUrl: string | null
+  /** Separate pieces: the init section's URL. */
+  mapUrl: string | null
+  /** Separate pieces: each piece's URL, in order. */
+  pieceUrls: string[]
 }
 
 export function playlistShape(text: string): PlaylistShape {
   const lines = text.split('\n').map(line => line.trim())
   let durationSec = 0
   const sizes: number[] = []
+  const pieceUrls: string[] = []
   let firstUrl: string | null = null
   let headBytes = 0
+  let mapUrl: string | null = null
+  let ranged = false
   lines.forEach((line, index) => {
+    const map = /^#EXT-X-MAP:URI="([^"]+)"(,BYTERANGE=)?/.exec(line)
+    if (map != null && map[2] == null) mapUrl ??= map[1]
     const extinf = /^#EXTINF:([0-9.]+)/.exec(line)
     if (extinf != null) durationSec += Number(extinf[1])
     const range = /^#EXT-X-BYTERANGE:(\d+)@(\d+)/.exec(line)
     if (range != null) {
+      ranged = true
       sizes.push(Number(range[1]))
       if (sizes.length === 1) {
         headBytes = Number(range[1]) + Number(range[2])
         firstUrl = lines[index + 1] ?? null
       }
+    } else if (line !== '' && !line.startsWith('#') && !ranged) {
+      pieceUrls.push(line)
+      firstUrl ??= line
     }
   })
-  return { segments: sizes.length, durationSec, sizes, headBytes, firstUrl }
+  if (ranged)
+    return {
+      segments: sizes.length,
+      durationSec,
+      sizes,
+      headBytes,
+      firstUrl,
+      mapUrl: null,
+      pieceUrls: []
+    }
+  return {
+    segments: pieceUrls.length,
+    durationSec,
+    sizes,
+    headBytes: 0,
+    firstUrl,
+    mapUrl,
+    pieceUrls
+  }
+}
+
+/** An object's length, from a one-byte ranged GET: its URL is signed for GET. */
+async function objectLength(
+  fetchFn: typeof fetch,
+  url: string
+): Promise<number> {
+  const response = await fetchFn(url, { headers: { Range: 'bytes=0-0' } })
+  await response.body?.cancel()
+  const total = /\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
+  if (total == null) throw new Error(`${url.split('?')[0]} answered no length`)
+  return Number(total[1])
 }
 
 export function median(values: number[]): number {
@@ -373,13 +421,33 @@ export async function angleShape(
   const masterText = await (await tools.fetch(master)).text()
   const media = masterText.split('\n').find(line => line.startsWith('http'))
   if (media == null) throw new Error(`${videoId}: no media playlist`)
-  const playlist = playlistShape(await (await tools.fetch(media)).text())
+  let playlist = playlistShape(await (await tools.fetch(media)).text())
   if (playlist.firstUrl == null) throw new Error(`${videoId}: no segments`)
-  const head = await tools.fetch(playlist.firstUrl, {
-    headers: { Range: `bytes=0-${playlist.headBytes * 3 - 1}` }
-  })
   const file = join(tools.scratch, `${videoId}.mp4`)
-  await writeFile(file, Buffer.from(await head.arrayBuffer()))
+  if (playlist.mapUrl == null) {
+    const head = await tools.fetch(playlist.firstUrl, {
+      headers: { Range: `bytes=0-${playlist.headBytes * 3 - 1}` }
+    })
+    await writeFile(file, Buffer.from(await head.arrayBuffer()))
+  } else {
+    // The init section and the first three pieces, as the byte-range head
+    // above reads three segments' worth; and every piece's size, eight at a time.
+    const parts: Buffer[] = []
+    for (const url of [playlist.mapUrl, ...playlist.pieceUrls.slice(0, 3)])
+      parts.push(Buffer.from(await (await tools.fetch(url)).arrayBuffer()))
+    await writeFile(file, Buffer.concat(parts))
+    const sizes: number[] = new Array(playlist.pieceUrls.length)
+    let next = 0
+    await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        while (next < playlist.pieceUrls.length) {
+          const at = next++
+          sizes[at] = await objectLength(tools.fetch, playlist.pieceUrls[at])
+        }
+      })
+    )
+    playlist = { ...playlist, sizes }
+  }
   const probe = await tools.ffprobe([
     '-v',
     'error',

@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { execFile } from 'child_process'
-import { mkdtemp, readFile, rm } from 'fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'fs/promises'
 import { after, before, describe, it } from 'mocha'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -11,6 +11,7 @@ import {
   AAC_PRIMING_SAMPLES,
   assertPinnedFfmpeg,
   ffmpegEncoders,
+  INIT_FILE,
   KEEP_STREAM_TIMES,
   probeFfmpeg,
   probeVideoStream,
@@ -148,11 +149,14 @@ describe('ffmpeg contract', function () {
     const before = await probeVideoStream(ffprobePath, source)
     expect(before.codecName).equals('hevc')
 
-    await remuxToHls(ffmpegPath, { input: source, outDir: workDir })
+    await remuxToHls(ffmpegPath, {
+      input: source,
+      outDir: workDir,
+      layout: 'single-file'
+    })
 
-    // One fragmented MP4 and a byte-range playlist, not a directory of
-    // segments: the Space needs one presigned URL per video, and a still is
-    // taken by seeking inside one file.
+    // The single-file shape, one fragmented MP4 and a byte-range playlist,
+    // which the videos repackaged by `segmentSpaceVideos` were made in.
     const media = await readFile(join(workDir, 'video.m3u8'), 'utf8')
     expect(media).contains('#EXTM3U')
     expect(media).contains('#EXT-X-MAP:URI="video.mp4"')
@@ -241,6 +245,179 @@ describe('ffmpeg contract', function () {
     expect(carried.height).equals(240)
   })
 
+  /**
+   * The segmented layout against the single file, on the same 60 s of HEVC
+   * with sound: the same timeline, the same CODECS, every frame decodable,
+   * and a playlist of plain segment URIs. The table is the proof log.
+   */
+  it("writes init and segment files with the single file's timing", async function () {
+    if (!hasHevc) this.skip()
+    const source = join(workDir, 'sixty.mp4')
+    await run(
+      ffmpegPath,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=size=640x360:rate=30',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=frequency=440:sample_rate=48000',
+        '-t',
+        '60',
+        '-c:v',
+        'libx265',
+        '-x265-params',
+        'log-level=none:keyint=60',
+        '-tag:v',
+        'hvc1',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        source
+      ],
+      { maxBuffer: 1 << 22 }
+    )
+    const segmented = join(workDir, 'segmented')
+    const single = join(workDir, 'single')
+    await mkdir(segmented)
+    await mkdir(single)
+    await remuxToHls(ffmpegPath, {
+      input: source,
+      outDir: segmented,
+      layout: 'segments'
+    })
+    await remuxToHls(ffmpegPath, {
+      input: source,
+      outDir: single,
+      layout: 'single-file'
+    })
+
+    const media = await readFile(join(segmented, 'video.m3u8'), 'utf8')
+    expect(media).does.not.contain('BYTERANGE')
+    expect(media).contains(`#EXT-X-MAP:URI="${INIT_FILE}"`)
+    expect(media).contains('#EXT-X-ENDLIST')
+    const uris = media.split('\n').filter(l => l !== '' && !l.startsWith('#'))
+    expect(uris.length).greaterThan(5)
+    uris.forEach((uri, index) =>
+      expect(uri).equals(`seg${String(index).padStart(6, '0')}.m4s`)
+    )
+    const names = (await readdir(segmented)).sort()
+    expect(names).deep.equals(
+      ['init.mp4', 'master.m3u8', ...uris, 'video.m3u8'].sort()
+    )
+    expect(names).does.not.contain('video.mp4')
+
+    const duration = async (dir: string): Promise<number> =>
+      Number(
+        (
+          await run(ffprobePath, [
+            '-v',
+            'error',
+            '-show_entries',
+            'format=duration',
+            '-of',
+            'csv=p=0',
+            join(dir, 'video.m3u8')
+          ])
+        ).stdout.trim()
+      )
+    const segmentedSec = await duration(segmented)
+    const singleSec = await duration(single)
+    expect(Math.abs(segmentedSec - singleSec)).lessThan(0.001)
+
+    const frames = async (dir: string): Promise<number> => {
+      const { stderr } = await run(
+        ffmpegPath,
+        [
+          '-hide_banner',
+          '-v',
+          'error',
+          '-stats',
+          '-i',
+          join(dir, 'video.m3u8'),
+          '-map',
+          '0:v',
+          '-f',
+          'null',
+          '-'
+        ],
+        { maxBuffer: 1 << 24 }
+      )
+      const all = [...stderr.matchAll(/frame=\s*(\d+)/g)]
+      return Number(all[all.length - 1]?.[1] ?? 0)
+    }
+    const segmentedFrames = await frames(segmented)
+    expect(segmentedFrames).equals(await frames(single))
+    expect(segmentedFrames).equals(1800)
+
+    const codecsOf = async (dir: string): Promise<string | undefined> =>
+      /CODECS="([^"]+)"/.exec(
+        await readFile(join(dir, 'master.m3u8'), 'utf8')
+      )?.[1]
+    const segmentedCodecs = await codecsOf(segmented)
+    expect(segmentedCodecs).match(/^hvc1\./)
+    expect(segmentedCodecs).equals(await codecsOf(single))
+
+    let segmentBytes = 0
+    for (const name of names)
+      segmentBytes += (await stat(join(segmented, name))).size
+    const singleBytes = (await stat(join(single, 'video.mp4'))).size
+    console.log(
+      [
+        '',
+        '    | remux | files | duration (s) | frames decoded | CODECS | media bytes |',
+        '    | --- | --- | --- | --- | --- | --- |',
+        `    | single-file | video.mp4 + 2 playlists | ${singleSec.toFixed(6)} | ${await frames(single)} | ${await codecsOf(single)} | ${singleBytes} |`,
+        `    | segments | init.mp4 + ${uris.length} × seg######.m4s + 2 playlists | ${segmentedSec.toFixed(6)} | ${segmentedFrames} | ${segmentedCodecs} | ${segmentBytes} (with playlists) |`,
+        ''
+      ].join('\n')
+    )
+  })
+
+  it('keeps an H.264 recording as avc1 when segmented', async function () {
+    const encoders = await ffmpegEncoders(ffmpegPath)
+    if (!encoders.has('libx264')) this.skip()
+    const source = join(workDir, 'avc.mp4')
+    await run(
+      ffmpegPath,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=size=320x240:rate=30',
+        '-t',
+        '8',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        source
+      ],
+      { maxBuffer: 1 << 22 }
+    )
+    const out = join(workDir, 'avc')
+    await mkdir(out)
+    await remuxToHls(ffmpegPath, {
+      input: source,
+      outDir: out,
+      layout: 'segments',
+      videoTag: 'avc1'
+    })
+    const master = await readFile(join(out, 'master.m3u8'), 'utf8')
+    expect(master).match(/CODECS="avc1\./)
+    const probed = await probeVideoStream(ffprobePath, join(out, 'video.m3u8'))
+    expect(probed.codecTag).equals('avc1')
+  })
+
   it('keeps every track at its own stream time', function () {
     // Without it a sound track that starts late is stamped from 0 s, beside a
     // picture that is minutes in.
@@ -264,7 +441,11 @@ describe('ffmpeg contract', function () {
   })
 
   it('never writes the temporary name into a single-file playlist', function () {
-    const args = remuxToHlsArgs({ input: 'in.mp4', outDir: '/tmp/out' })
+    const args = remuxToHlsArgs({
+      input: 'in.mp4',
+      outDir: '/tmp/out',
+      layout: 'single-file'
+    })
     const flags = args[args.indexOf('-hls_flags') + 1]
     expect(flags).contains('single_file')
     expect(flags).does.not.contain('temp_file')

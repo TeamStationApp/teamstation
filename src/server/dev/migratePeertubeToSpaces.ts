@@ -6,14 +6,9 @@ import { join } from 'node:path'
 import type { Kysely } from 'kysely'
 
 import { type Database, makeDatabase } from '../db/database'
-import {
-  MASTER_PLAYLIST,
-  MEDIA_PLAYLIST,
-  remuxToHls,
-  VIDEO_FILE
-} from '../media/ffmpeg'
+import { remuxToHls } from '../media/ffmpeg'
 import { probeVideoFile, tagFor } from '../media/ingestFile'
-import { locateVideoFile } from '../media/locations'
+import { videoFrameSource } from '../media/locations'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import {
   uploadVideoDirectory,
@@ -249,11 +244,25 @@ export async function migrateOne(
   const { space, ffmpegPath } = settings
   if (!spaceConfigured(space)) throw new Error('no Space is configured')
 
-  const file = await locateVideoFile({
+  const source = await videoFrameSource({
     mediaRoot,
     storage: video.storage,
-    videoId: video.id
+    videoId: video.id,
+    space,
+    spaceSecret: null
   })
+  // Already segments, a finished stream's `recording/` or a segmented local
+  // upload: sent as it lies, with nothing to remux.
+  if (source?.kind === 'dir') {
+    const db = makeDatabase(databaseUrl)
+    try {
+      const spaceSecret = await secretForMigration(db, video.id)
+      return await uploadMigrated(db, space, video.id, spaceSecret, source.dir)
+    } finally {
+      await db.destroy()
+    }
+  }
+  const file = source?.kind === 'file' ? source.path : undefined
   if (file == null) {
     throw new Error('no fragmented MP4 on disk')
   }
@@ -267,11 +276,10 @@ export async function migrateOne(
       outDir: work,
       videoTag: tagFor(probed.codecName)
     })
-    const files = [MASTER_PLAYLIST, MEDIA_PLAYLIST, VIDEO_FILE]
     const db = makeDatabase(databaseUrl)
     try {
       const spaceSecret = await secretForMigration(db, video.id)
-      return await uploadMigrated(db, space, video.id, spaceSecret, work, files)
+      return await uploadMigrated(db, space, video.id, spaceSecret, work)
     } finally {
       await db.destroy()
     }
@@ -285,15 +293,14 @@ async function uploadMigrated(
   space: SpaceSettings,
   videoId: string,
   spaceSecret: string,
-  work: string,
-  files: string[]
+  /** Every file in it: a segmented recording, playlists and all. */
+  work: string
 ): Promise<{ bytes: number }> {
   const uploaded = await uploadVideoDirectory({
     space,
     videoId,
     spaceSecret,
-    dir: work,
-    files
+    dir: work
   })
   const verified = await verifyVideoDirectory({
     space,

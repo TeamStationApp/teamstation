@@ -2,14 +2,13 @@ import { createHash } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { putObjectFile } from './images'
+import { putObjectFile, SpaceRefusal } from './images'
 import { presignGetUrl } from './presign'
 import { spaceConfigured, spaceKey, type SpaceSettings } from './spacesHls'
 import {
   isSecretKeyOf,
   oldVideoPrefix,
   uploadHeadersFor,
-  videoPrefix,
   withoutSecrets
 } from './videoPrefix'
 
@@ -37,12 +36,137 @@ export interface UploadedVideo {
 }
 
 /**
+ * How many objects of one video go up, or are checked, at once.
+ *
+ * A segmented recording is a thousand or more ~3 MB objects, and one at a
+ * time would turn a 3.5 GB take's few minutes into the better part of an
+ * hour. Eight keeps a single upload far below the bucket's 800 operations a
+ * second, shared with every player and every other upload.
+ */
+export const OBJECTS_IN_FLIGHT = 8
+
+/** A transient failure is retried after these waits; then it is a failure. */
+export const SPACE_RETRY_WAITS_MS = [500, 1000, 2000, 4000, 8000] as const
+
+/** Network failures that a second try can get past. */
+const TRANSIENT_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT'
+])
+
+/** How long one verify request may take before it is tried again. */
+export const VERIFY_TIMEOUT_MS = 60_000
+
+/**
+ * Whether a failure talking to the Space is worth another try: the bucket
+ * asking for less (`503 Slow Down`, `429`), another 5xx, a connection reset
+ * or refused, a name or route that did not resolve, or a request that timed
+ * out or went quiet. A refusal of the request itself (403, 404, a short
+ * object) is not, and neither is a caller cancelling on purpose (`AbortError`):
+ * only a timeout (`TimeoutError`) is the Space's doing.
+ */
+export function isTransientSpaceError(error: unknown): boolean {
+  if (error instanceof SpaceRefusal)
+    return error.status >= 500 || error.status === 429
+  if (!(error instanceof Error)) return false
+  if (error.name === 'TimeoutError') return true
+  if (error.message === 'The Space stopped answering') return true
+  const code = (error as { code?: unknown }).code
+  const cause = (error as { cause?: { code?: unknown } }).cause?.code
+  return (
+    (typeof code === 'string' && TRANSIENT_CODES.has(code)) ||
+    (typeof cause === 'string' && TRANSIENT_CODES.has(cause))
+  )
+}
+
+/**
+ * Runs `work`, and runs it again after each of `SPACE_RETRY_WAITS_MS` while it
+ * fails in a way another try can get past (`isTransientSpaceError`). A
+ * recording is a thousand objects or more, so one reset or one `503 Slow
+ * Down` must not cost the whole upload.
+ */
+export async function withSpaceRetry<T>(
+  work: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = defaultSleep
+): Promise<T> {
+  for (const waitMs of SPACE_RETRY_WAITS_MS) {
+    try {
+      return await work()
+    } catch (error) {
+      if (!isTransientSpaceError(error)) throw error
+      await sleep(waitMs)
+    }
+  }
+  return await work()
+}
+
+async function defaultSleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * `work` over every item, at most `limit` at once, in order of starting.
+ *
+ * The first failure stops anything new from starting, waits for what is
+ * already running, and is then thrown, so nothing is still writing to the
+ * Space when the caller goes on to clean up after it.
+ */
+export async function eachInFlight<T>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0
+  let failed = false
+  let failure: unknown
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (!failed && next < items.length) {
+        const item = items[next++]
+        try {
+          await work(item)
+        } catch (error) {
+          if (!failed) failure = error
+          failed = true
+        }
+      }
+    })
+  )
+  if (failed) throw failure
+}
+
+/**
+ * Media first, then the playlists, so no playlist is in the Space before
+ * every object it lists. Each part in name order.
+ */
+function playlistsLast(names: readonly string[]): {
+  media: string[]
+  playlists: string[]
+} {
+  const sorted = [...names].sort()
+  return {
+    media: sorted.filter(name => !name.endsWith('.m3u8')),
+    playlists: sorted.filter(name => name.endsWith('.m3u8'))
+  }
+}
+
+/**
  * Uploads every file of a finished video.
  *
- * In name order, which puts `init.mp4` and the playlists before the segments
- * — it does not matter for correctness, since nothing is served from the
- * Space until the whole thing is verified, but a half-finished upload that
- * somebody looks at reads better this way.
+ * `OBJECTS_IN_FLIGHT` at a time, `init*.mp4` and the segments before the
+ * playlists that list them. Nothing is served from the Space until the whole
+ * set is verified, but a playlist that only appears once its pieces are there
+ * is never wrong, whoever looks.
  */
 export async function uploadVideoDirectory(options: {
   space: SpaceSettings
@@ -66,19 +190,24 @@ export async function uploadVideoDirectory(options: {
     options.files ?? (await readdir(dir)).filter(name => !name.startsWith('.'))
   ).sort()
   let bytes = 0
-  for (const name of names) {
+  const put = async (name: string): Promise<void> => {
     const path = join(dir, name)
     const info = await stat(path)
-    if (!info.isFile()) continue
-    await putObjectFile({
-      space,
-      key: spaceKey(video, name),
-      path,
-      contentType: contentTypeFor(name),
-      ...uploadHeadersFor(video.spaceSecret, name)
+    if (!info.isFile()) return
+    await withSpaceRetry(async () => {
+      await putObjectFile({
+        space,
+        key: spaceKey(video, name),
+        path,
+        contentType: contentTypeFor(name),
+        ...uploadHeadersFor(video.spaceSecret, name)
+      })
     })
     bytes += info.size
   }
+  const { media, playlists } = playlistsLast(names)
+  await eachInFlight(media, OBJECTS_IN_FLIGHT, put)
+  await eachInFlight(playlists, OBJECTS_IN_FLIGHT, put)
   return { files: names, bytes }
 }
 
@@ -101,19 +230,58 @@ export async function verifyVideoDirectory(options: {
   files: string[]
   expiresSec?: number
   fetch?: typeof fetch
+  /** For a test: how the retries wait. */
+  sleep?: (ms: number) => Promise<void>
 }): Promise<VerifyResult> {
   const { space, dir, files } = options
   const video = { id: options.videoId, spaceSecret: options.spaceSecret }
-  const doFetch = options.fetch ?? globalThis.fetch
+  const baseFetch = options.fetch ?? globalThis.fetch
+  // A request that stalls or meets a `503 Slow Down` throws, so that the
+  // check it belongs to is tried again below.
+  const doFetch = (async (url: string, init?: RequestInit) => {
+    const response = await baseFetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS)
+    })
+    if (response.status >= 500 || response.status === 429) {
+      await response.body?.cancel()
+      throw new SpaceRefusal(
+        withoutSecrets(`${url.split('?')[0]} answered ${response.status}`),
+        response.status
+      )
+    }
+    return response
+  }) as typeof fetch
   const expiresSec = options.expiresSec ?? 300
 
   let checked = 0
-  for (const name of files) {
+  let mismatch: VerifyResult | undefined
+  const check = async (name: string): Promise<void> => {
+    if (mismatch != null) return
+    // A thousand checks at eight a time meet the same `503 Slow Down` and the
+    // same resets the upload does, and a check that fails for want of a retry
+    // throws away an upload that arrived whole. Each try signs its URL again:
+    // six of them can outlast one signature. What still fails after the
+    // retries is a real answer, and comes back as one.
+    const result = await withSpaceRetry(
+      async () => await checkOne(name),
+      options.sleep
+    ).catch((error: unknown): VerifyResult => ({
+      ok: false,
+      reason: withoutSecrets(
+        `${name}: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }))
+    if (result == null) return
+    if (!result.ok) mismatch ??= result
+    else checked += 1
+  }
+  const checkOne = async (name: string): Promise<VerifyResult | undefined> => {
     const path = join(dir, name)
     // A name that is not a file here is not a file to check there either:
     // the upload only ever put files in.
     const local = await stat(path).catch(() => undefined)
-    if (local?.isFile() !== true) continue
+    if (local?.isFile() !== true) return undefined
 
     const url = presignGetUrl({
       ...space,
@@ -126,6 +294,7 @@ export async function verifyVideoDirectory(options: {
     if (name.endsWith('.m3u8')) {
       const response = await doFetch(url)
       if (!response.ok) {
+        await response.body?.cancel()
         return { ok: false, reason: `${name} answered ${response.status}` }
       }
       const remote = Buffer.from(await response.arrayBuffer())
@@ -133,21 +302,23 @@ export async function verifyVideoDirectory(options: {
       if (sha256(remote) !== sha256(here)) {
         return { ok: false, reason: `${name} came back different` }
       }
-      checked += 1
-      continue
+      return { ok: true, checked: 1 }
     }
 
-    const result = await verifyObjectLength({
+    return await verifyObjectLength({
       space,
       key: spaceKey(video, name),
       size: local.size,
       expiresSec,
       fetch: doFetch
     })
-    if (!result.ok) return result
-    checked += 1
   }
 
+  // The same order as the upload, and the first mismatch stops the rest.
+  const { media, playlists } = playlistsLast(files)
+  await eachInFlight(media, OBJECTS_IN_FLIGHT, check)
+  await eachInFlight(playlists, OBJECTS_IN_FLIGHT, check)
+  if (mismatch != null) return mismatch
   if (checked === 0) return { ok: false, reason: 'nothing to verify' }
   return { ok: true, checked }
 }
@@ -343,13 +514,17 @@ export async function secretKeysOf(
  * stills (and, before the move, its media). The trailing slash keeps the
  * second from matching the first.
  *
- * `spaceSecret` is the row's: null for a video with none, undefined for one
- * whose row has gone and whose secret nobody holds. Without a secret,
+ * Every secret prefix of the video goes, whatever its row says:
  * `videos/<id>-` is listed and only keys whose second segment is exactly
  * `<id>-` and 32 hex characters are taken, since another video's id can start
- * with this one's. A video with no secret can still have them: a move that
- * copied its objects and stopped before storing the secret left public copies
- * that nothing else will ever find.
+ * with this one's. A video can have more than its row's: `segmentSpaceVideos`
+ * leaves the old one until `--delete-old`, a run of it that stopped leaves a
+ * partial one, and a move that copied its objects and stopped before storing
+ * the secret left public copies. Nothing else would ever find those once the
+ * row is gone.
+ *
+ * `spaceSecret` is the row's, kept in the signature for the callers that
+ * have it; null or undefined when there is none.
  *
  * Individual signed deletes with bounded concurrency avoid a separate signed
  * batch-payload implementation while keeping large fragment sets practical.
@@ -359,11 +534,8 @@ export async function deleteVideoFromSpace(options: {
   videoId: string
   spaceSecret: string | null | undefined
 }): Promise<{ deleted: number }> {
-  const { space, videoId, spaceSecret } = options
-  const secretKeys =
-    spaceSecret == null
-      ? await secretKeysOf(space, videoId)
-      : await listSpaceObjects(space, videoPrefix({ id: videoId, spaceSecret }))
+  const { space, videoId } = options
+  const secretKeys = await secretKeysOf(space, videoId)
   const fromSecret = await deleteSpaceKeys(space, secretKeys)
   const fromOld = await deleteSpacePrefix(space, oldVideoPrefix(videoId))
   return { deleted: fromSecret.deleted + fromOld.deleted }

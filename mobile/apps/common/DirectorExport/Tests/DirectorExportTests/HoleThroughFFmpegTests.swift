@@ -66,7 +66,7 @@ struct HoleThroughFFmpegTests {
     expectHole(direct, label: "file")
 
     // The upload's copy into HLS, with `remuxToHlsArgs`'s arguments for an H.264 file whose sound
-    // priming is declared.
+    // priming is declared: segmented, `init.mp4` and one `seg######.m4s` per fragment.
     let hls = root.appendingPathComponent("hls", isDirectory: true)
     try FileManager.default.createDirectory(at: hls, withIntermediateDirectories: true)
     try run(tools.ffmpeg, [
@@ -75,8 +75,9 @@ struct HoleThroughFFmpegTests {
       "-c", "copy", "-tag:v", "avc1",
       "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod", "-hls_segment_type", "fmp4",
       "-hls_segment_options", "movflags=+frag_discont",
-      "-hls_flags", "single_file+independent_segments",
-      "-hls_segment_filename", hls.appendingPathComponent("video.mp4").path,
+      "-hls_flags", "independent_segments",
+      "-hls_fmp4_init_filename", "init.mp4", "-start_number", "0",
+      "-hls_segment_filename", hls.appendingPathComponent("seg%06d.m4s").path,
       "-master_pl_name", "master.m3u8",
       hls.appendingPathComponent("video.m3u8").path
     ])

@@ -1,7 +1,13 @@
 import type { Stats } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 
+import {
+  INIT_FILE,
+  MASTER_PLAYLIST,
+  MEDIA_PLAYLIST,
+  VIDEO_FILE
+} from './ffmpeg'
 import type { SpaceSettings } from './spacesHls'
 import { spaceConfigured } from './spacesHls'
 import type { FrameSource } from './stills'
@@ -49,8 +55,40 @@ export async function videoFrameSource(
       verified: options.verified
     }
   }
+  if (storage === 'local') {
+    // An id names a directory here: one that is not a plain id is no video's.
+    if (!/^[A-Za-z0-9_-]+$/.test(videoId)) return undefined
+    const location = await locateVideo(options)
+    if (location == null) return undefined
+    const dir = resolve(options.mediaRoot, location.dir)
+    if (!dir.startsWith(resolve(options.mediaRoot) + sep)) return undefined
+    // A segmented recording, a fallback's `recording/` or an upload segmented
+    // in its own directory, is read a segment at a time; `video.mp4` is a file.
+    const names = await readdir(dir).catch((): string[] => [])
+    if (isSegmentedRecording(names)) return { kind: 'dir', dir }
+    return names.includes(VIDEO_FILE)
+      ? { kind: 'file', path: join(dir, VIDEO_FILE) }
+      : undefined
+  }
   const path = await locateVideoFile(options)
   return path == null ? undefined : { kind: 'file', path }
+}
+
+/** Where a finished live stream's recording is, beside its live pieces. */
+export const RECORDING_DIR = 'recording'
+
+/**
+ * Whether a directory's files are a whole segmented recording: its master,
+ * its media playlist and an init segment, and no single file. The one test
+ * for it, wherever a recording on this host is looked for.
+ */
+export function isSegmentedRecording(names: readonly string[]): boolean {
+  return (
+    names.includes(MASTER_PLAYLIST) &&
+    names.includes(MEDIA_PLAYLIST) &&
+    names.includes(INIT_FILE) &&
+    !names.includes(VIDEO_FILE)
+  )
 }
 
 /**
@@ -110,7 +148,17 @@ export async function locateVideo(
   const { mediaRoot, storage, videoId } = options
 
   if (storage === 'local') {
+    // An id names a directory here: one that is not a plain id is no video's.
+    if (!/^[A-Za-z0-9_-]+$/.test(videoId)) return undefined
+    // A finished stream's recording is in `recording/`, beside the live
+    // pieces it was made from; anything else is the directory itself.
     const dir = `work/videos/${videoId}`
+    const recording = `${dir}/${RECORDING_DIR}`
+    const packedDir = resolve(mediaRoot, recording)
+    if (!packedDir.startsWith(resolve(mediaRoot) + sep)) return undefined
+    const packed = await readdir(packedDir).catch((): string[] => [])
+    if (isSegmentedRecording(packed))
+      return { dir: recording, master: MASTER_PLAYLIST }
     const found = await exists(join(mediaRoot, dir, 'master.m3u8'))
     return found ? { dir, master: 'master.m3u8' } : undefined
   }

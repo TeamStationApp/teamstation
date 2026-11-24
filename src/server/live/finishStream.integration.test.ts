@@ -3,6 +3,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -21,6 +22,7 @@ import { Pool } from 'pg'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { answerListOrDelete } from '../../test/heldSpace'
 import { addPerson } from '../../test/scoreboardKit'
 import { listenScreenScopes } from '../../test/screenScopeNotices'
 import type { Database } from '../db/database'
@@ -87,6 +89,7 @@ describe('the end of a live stream', function () {
 
     space = createServer((req, res) => {
       const key = (req.url ?? '').split('?')[0] ?? ''
+      if (answerListOrDelete(held, req, res)) return
       if (req.method === 'PUT') {
         const chunks: Buffer[] = []
         req.on('data', chunk => chunks.push(chunk as Buffer))
@@ -374,13 +377,19 @@ describe('the end of a live stream', function () {
 
     await settleLiveWork()
 
-    // One file instead of three segments, with the byte-range playlist every
-    // other recording has.
-    expect((await stat(join(dir, 'video.mp4'))).size).greaterThan(0)
-    const media = await readFile(join(dir, 'video.m3u8'), 'utf8')
-    expect(media).contains('#EXT-X-BYTERANGE:')
-    // The segments stay for whoever is still watching the stream that just
-    // ended; they go with the local copy, hours later.
+    // The recording, segments under a playlist with no byte ranges, in
+    // `recording/` beside the live pieces it was made from.
+    const recording = join(dir, 'recording')
+    expect((await stat(join(recording, 'init.mp4'))).size).greaterThan(0)
+    const media = await readFile(join(recording, 'video.m3u8'), 'utf8')
+    expect(media).contains('seg000000.m4s')
+    expect(media).does.not.contain('BYTERANGE')
+    await stat(join(recording, 'video.mp4')).then(
+      () => expect.fail('no single file'),
+      () => undefined
+    )
+    // The live pieces stay for whoever is still watching the stream that
+    // just ended; they go with the local copy, hours later.
     expect((await stat(join(dir, 'seg000000.m4s'))).size).greaterThan(0)
 
     const row = await db
@@ -400,10 +409,28 @@ describe('the end of a live stream', function () {
     expect(row?.verifiedAt).not.equals(null)
     expect(row?.message).equals(null)
 
-    // And what it uploaded is the recording, not the segments it was made of.
-    const keys = [...held.keys()]
-    expect(keys.some(key => key.endsWith('vid_played/video.mp4'))).equals(true)
-    expect(keys.some(key => key.includes('seg000000'))).equals(false)
+    // And what it uploaded is the recording as it lies, not the live pieces
+    // it was made of: the same files, byte for byte.
+    // Its poster is kept beside it under `stills/`, which is not the recording.
+    const sent = [...held.entries()].filter(
+      ([key]) => key.includes('vid_played') && !key.includes('/stills/')
+    )
+    const byName = (a: string, b: string): number => a.localeCompare(b)
+    const names = sent.map(([key]) => key.split('/').at(-1)!).sort(byName)
+    expect(names).deep.equals((await readdir(recording)).sort(byName))
+    if (process.env.TS_PROOF_TRACE != null) {
+      console.log(
+        `\n    a finish with no origin: recording/ ${names.join(', ')}; in the Space under videos/vid_played-…/: ${sent
+          .map(([key, bytes]) => `${key.split('/').at(-1)} (${bytes.length})`)
+          .join(', ')}`
+      )
+    }
+    for (const [key, bytes] of sent) {
+      const name = key.split('/').at(-1)!
+      expect(bytes.equals(await readFile(join(recording, name))), name).equals(
+        true
+      )
+    }
   })
   /**
    * What a writer continuing the recording leaves when this process dies
@@ -572,7 +599,7 @@ describe('the end of a live stream', function () {
     })
     const closed = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
     expect(closed.trimEnd().endsWith('#EXT-X-ENDLIST')).equals(true)
-    await stat(join(dir, 'video.mp4')).then(
+    await stat(join(dir, 'recording')).then(
       () => expect.fail('nothing is packed up'),
       () => undefined
     )
@@ -602,16 +629,20 @@ describe('the end of a live stream', function () {
     await settleLiveWork()
 
     const dir = liveVideoDir(mediaRoot, 'vid_replaced')
-    expect((await stat(join(dir, 'video.mp4'))).size).greaterThan(0)
+    expect((await stat(join(dir, 'recording', 'video.m3u8'))).size).greaterThan(
+      0
+    )
     const row = await db
       .selectFrom('videos')
       .select(['storage', 'replaced_by as replacedBy'])
       .where('id', '=', 'vid_replaced')
       .executeTakeFirstOrThrow()
     expect(row).deep.equals({ storage: 'spaces', replacedBy: null })
-    expect(
-      [...held.keys()].some(key => key.endsWith('vid_replaced/video.mp4'))
-    ).equals(true)
+    const replaced = [...held.keys()].filter(key =>
+      key.includes('vid_replaced')
+    )
+    expect(replaced.some(key => key.endsWith('/video.m3u8'))).equals(true)
+    expect(replaced.some(key => key.endsWith('/video.mp4'))).equals(false)
   })
 
   it('says nothing about late sound kept at its stream time', async function () {

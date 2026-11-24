@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,7 +29,7 @@ import {
   configurationRuns,
   joinMediaPlaylists,
   recordingSpanSec,
-  shiftByteRanges,
+  renumberRun,
   toRecording,
   type VodResult
 } from './finishVideo'
@@ -232,15 +233,51 @@ describe('a recording that changed configuration part way', function () {
     let result: Awaited<ReturnType<typeof toRecording>>
 
     before(async function () {
+      // What a finish a crash cut short leaves: a `.vod/` with a playlist and
+      // part of its segments. The next finish starts again without it.
+      const half = join(dir, '.vod', 'out')
+      await mkdir(half, { recursive: true })
+      await writeFile(join(half, 'video.m3u8'), '#EXTM3U\nseg000000.m4s\n')
+      await writeFile(join(half, 'seg000000.m4s'), Buffer.alloc(64, 1))
       result = await toRecording(FFMPEG, dir, () => undefined)
     })
 
-    it('is the three files every recording is', function () {
-      expect(result.files).deep.equals([
-        'master.m3u8',
-        'video.m3u8',
-        'video.mp4'
-      ])
+    it('starts again over a finish a crash cut short, and leaves nothing half made', async function () {
+      expect(existsSync(join(dir, '.vod'))).equals(false)
+      const recording = join(dir, 'recording')
+      const playlist = parseMediaPlaylist(
+        await readFile(join(recording, 'video.m3u8'), 'utf8')
+      )
+      // Every piece it lists is there, and they last the whole recording.
+      for (const segment of playlist.segments) {
+        expect(existsSync(join(recording, segment.uri)), segment.uri).equals(
+          true
+        )
+      }
+      expect(
+        playlist.segments.reduce((sum, one) => sum + one.durationSec, 0)
+      ).closeTo(result.durationSec, 0.2)
+    })
+
+    it('is its playlists, an init segment for each part and the segments', function () {
+      const inits = result.files.filter(name => /^init\d*\.mp4$/.test(name))
+      const segments = result.files.filter(name => /^seg\d{6}\.m4s$/.test(name))
+      // The first part's init is init.mp4; each later part's is named after
+      // its first segment, as the live origin names them.
+      expect(inits[0]).equals('init.mp4')
+      expect(inits).length(3)
+      for (const init of inits.slice(1)) {
+        expect(segments).contains(`seg${init.slice(4, 10)}.m4s`)
+      }
+      expect(result.files).deep.equals(
+        ['master.m3u8', 'video.m3u8', ...inits, ...segments].sort()
+      )
+      expect(result.files).does.not.contain('video.mp4')
+      if (process.env.TS_PROOF_TRACE != null) {
+        console.log(
+          `\n    a stream that changed configuration twice: recording/ holds ${result.files.join(', ')}`
+        )
+      }
       expect(result.durationSec).closeTo(9, 0.2)
       // The largest part's, not the first's.
       expect(result.width).equals(320)
@@ -248,7 +285,10 @@ describe('a recording that changed configuration part way', function () {
     })
 
     it('says in its master what its largest part needs', async function () {
-      const master = await readFile(join(dir, 'master.m3u8'), 'utf8')
+      const master = await readFile(
+        join(dir, 'recording', 'master.m3u8'),
+        'utf8'
+      )
       const variant = master
         .split('\n')
         .find(line => line.startsWith('#EXT-X-STREAM-INF:'))
@@ -258,18 +298,28 @@ describe('a recording that changed configuration part way', function () {
     })
 
     it("decodes whole, part by part, with each part's own init segment", async function () {
-      const body = await readFile(join(dir, 'video.m3u8'), 'utf8')
+      const recording = join(dir, 'recording')
+      const body = await readFile(join(recording, 'video.m3u8'), 'utf8')
       const playlist = parseMediaPlaylist(body)
       expect(body.match(/#EXT-X-DISCONTINUITY/g)).length(2)
-      const groups = new Map<number, Uint8Array[]>()
+      expect(body).does.not.contain('BYTERANGE')
+      if (process.env.TS_PROOF_TRACE != null) {
+        console.log(
+          `\n    its recording/video.m3u8:\n${body
+            .trimEnd()
+            .split('\n')
+            .map(line => `      ${line}`)
+            .join('\n')}`
+        )
+      }
+      const groups = new Map<string, Uint8Array[]>()
       for (const segment of playlist.segments) {
         const map = segment.map ?? playlist.map!
-        const at = map.range?.offset ?? 0
-        const parts = groups.get(at) ?? [
-          await readPart(join(dir, map.uri), map.range)
+        const parts = groups.get(map.uri) ?? [
+          await readPart(join(recording, map.uri), map.range)
         ]
-        parts.push(await readPart(join(dir, segment.uri), segment.range))
-        groups.set(at, parts)
+        parts.push(await readPart(join(recording, segment.uri), segment.range))
+        groups.set(map.uri, parts)
       }
       expect(groups.size).equals(3)
       const sizes: string[] = []
@@ -284,15 +334,15 @@ describe('a recording that changed configuration part way', function () {
     })
 
     it('is read for its stamps from the part that carries them', async function () {
-      const scan = await readRecordingStamps(dir)
+      const scan = await readRecordingStamps(join(dir, 'recording'))
       expect(scan.stamped).length(1)
       expect(scan.stamped[0][0]).closeTo(3000, 200)
       expect(scan.stamped[0][1]).closeTo(6000, 200)
       expect(scan.points.length).above(0)
     })
 
-    it('cuts a still from any part of the file', async function () {
-      const video = join(dir, 'video.mp4')
+    it('cuts a still from any part of the recording', async function () {
+      const video = join(dir, 'recording', 'video.m3u8')
       const frame = await readLocalFrame(video, 4.5, root)
       expect(await videoSize(frame!.path)).equals('320,240')
       await frame!.release()
@@ -411,13 +461,16 @@ describe('two configurations apart on the clock', function () {
   it('reads its span from the clock while it is still the live playlist', async function () {
     expect(spanLive).closeTo(GAP_SEC + 6, 0.5)
     expect(
-      await probeDuration(ffprobeFor(FFMPEG), join(dir, 'video.m3u8'))
+      await probeDuration(
+        ffprobeFor(FFMPEG),
+        join(dir, 'recording', 'video.m3u8')
+      )
     ).closeTo(GAP_SEC + 6, 0.5)
   })
 
   it('keeps the gap in the file, and says it in the length', async function () {
     expect(recording.durationSec).closeTo(GAP_SEC + 6, 0.5)
-    const media = await readFile(join(dir, 'video.m3u8'), 'utf8')
+    const media = await readFile(join(dir, 'recording', 'video.m3u8'), 'utf8')
     const lines = media.split('\n')
     const secondMap = lines.findIndex(
       (line, index) =>
@@ -442,17 +495,17 @@ describe('two configurations apart on the clock', function () {
   })
 
   it('fills the gap with pictures that decode, and goes on with each part', async function () {
-    const body = await readFile(join(dir, 'video.m3u8'), 'utf8')
+    const recordingDir = join(dir, 'recording')
+    const body = await readFile(join(recordingDir, 'video.m3u8'), 'utf8')
     const playlist = parseMediaPlaylist(body)
-    const groups = new Map<number, Uint8Array[]>()
+    const groups = new Map<string, Uint8Array[]>()
     for (const segment of playlist.segments) {
       const map = segment.map ?? playlist.map!
-      const at = map.range?.offset ?? 0
-      const parts = groups.get(at) ?? [
-        await readPart(join(dir, map.uri), map.range)
+      const parts = groups.get(map.uri) ?? [
+        await readPart(join(recordingDir, map.uri), map.range)
       ]
-      parts.push(await readPart(join(dir, segment.uri), segment.range))
-      groups.set(at, parts)
+      parts.push(await readPart(join(recordingDir, segment.uri), segment.range))
+      groups.set(map.uri, parts)
     }
     expect(groups.size).equals(2)
     const sizes: string[] = []
@@ -638,29 +691,52 @@ describe('splitting a playlist at its configurations', function () {
   })
 })
 
-describe('joining single-file playlists', function () {
-  const one = [
-    '#EXTM3U',
-    '#EXT-X-VERSION:7',
-    '#EXT-X-TARGETDURATION:4',
-    '#EXT-X-MAP:URI="video.mp4",BYTERANGE="100@0"',
-    '#EXTINF:4.000000,',
-    '#EXT-X-BYTERANGE:50@100',
-    'video.mp4',
-    '#EXT-X-ENDLIST',
-    ''
-  ].join('\n')
+describe('joining runs of segments', function () {
+  const run = (target: number): string =>
+    [
+      '#EXTM3U',
+      '#EXT-X-VERSION:7',
+      `#EXT-X-TARGETDURATION:${String(target)}`,
+      '#EXT-X-MAP:URI="init.mp4"',
+      '#EXTINF:4.000000,',
+      'seg000000.m4s',
+      '#EXTINF:2.000000,',
+      'seg000001.m4s',
+      '#EXT-X-ENDLIST',
+      ''
+    ].join('\n')
 
-  it('moves every byte range along the file', function () {
-    const moved = shiftByteRanges(one, 1000)
-    expect(moved).contains('BYTERANGE="100@1000"')
-    expect(moved).contains('#EXT-X-BYTERANGE:50@1100')
+  it("keeps the first run's names", function () {
+    const first = renumberRun(run(4), 0)
+    expect(first.segments).equals(2)
+    expect(first.renames).deep.equals([
+      ['init.mp4', 'init.mp4'],
+      ['seg000000.m4s', 'seg000000.m4s'],
+      ['seg000001.m4s', 'seg000001.m4s']
+    ])
+  })
+
+  it('numbers a later run on, its init after its first segment', function () {
+    const later = renumberRun(run(4), 40)
+    expect(later.renames).deep.equals([
+      ['init.mp4', 'init000040.mp4'],
+      ['seg000000.m4s', 'seg000040.m4s'],
+      ['seg000001.m4s', 'seg000041.m4s']
+    ])
+    expect(later.playlist).contains('#EXT-X-MAP:URI="init000040.mp4"')
+    expect(later.playlist).does.not.contain('seg000000.m4s')
+  })
+
+  it('refuses a run that is not segments', function () {
+    expect(() =>
+      renumberRun(run(4).replace('seg000001.m4s', 'video.mp4'), 0)
+    ).throws(/not a segment/)
   })
 
   it('puts a discontinuity and a map between them, and one end', function () {
     const joined = joinMediaPlaylists([
-      one,
-      shiftByteRanges(one.replace('DURATION:4', 'DURATION:6'), 150)
+      renumberRun(run(4), 0).playlist,
+      renumberRun(run(6), 2).playlist
     ])
     const lines = joined.trimEnd().split('\n')
     expect(lines.slice(0, 3)).deep.equals([
@@ -670,16 +746,17 @@ describe('joining single-file playlists', function () {
     ])
     expect(joined.match(/#EXT-X-ENDLIST/g)).length(1)
     expect(lines.at(-1)).equals('#EXT-X-ENDLIST')
+    expect(joined).does.not.contain('BYTERANGE')
     const at = lines.indexOf('#EXT-X-DISCONTINUITY')
-    expect(lines[at + 1]).equals(
-      '#EXT-X-MAP:URI="video.mp4",BYTERANGE="100@150"'
-    )
+    expect(lines[at + 1]).equals('#EXT-X-MAP:URI="init000002.mp4"')
     const playlist = parseMediaPlaylist(joined)
-    expect(playlist.segments[1].map?.range).deep.equals({
-      offset: 150,
-      length: 100
-    })
-    expect(playlist.segments[1].discontinuity).equals(true)
+    expect(playlist.segments.map(segment => segment.uri)).deep.equals([
+      'seg000000.m4s',
+      'seg000001.m4s',
+      'seg000002.m4s',
+      'seg000003.m4s'
+    ])
+    expect(playlist.segments[2].discontinuity).equals(true)
   })
 })
 

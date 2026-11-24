@@ -99,7 +99,20 @@ export interface RemuxOptions {
    * be a `concat:` of the init segment and one media segment.
    */
   concatList?: boolean
+  /** How the recording is laid out on disk: `'segments'` unless asked. */
+  layout?: RemuxLayout
 }
+
+/**
+ * `'segments'`: `init.mp4` and one `seg######.m4s` per fragment, numbered
+ * from 0, under a playlist with no byte ranges. A seek through the Spaces CDN
+ * then fetches one small object; a range deep inside a multi-gigabyte file
+ * is a cache miss the CDN can sit on for over a minute.
+ *
+ * `'single-file'`: one fragmented `video.mp4` and a byte-range playlist, the
+ * shape recordings had before. Only a test of that shape asks for it.
+ */
+export type RemuxLayout = 'segments' | 'single-file'
 
 /**
  * The encoder delay every Apple AAC encoder puts at the head of its sound.
@@ -119,6 +132,25 @@ export const AAC_PRIMING_SAMPLES = 2112
 export const MASTER_PLAYLIST = 'master.m3u8'
 export const MEDIA_PLAYLIST = 'video.m3u8'
 export const VIDEO_FILE = 'video.mp4'
+/** A segmented remux's init segment, the name the live origin writes too. */
+export const INIT_FILE = 'init.mp4'
+/** A segmented remux's fragments: `seg000000.m4s`, `seg000001.m4s`, … */
+export const SEGMENT_FILE_PATTERN = 'seg%06d.m4s'
+
+/** The name `SEGMENT_FILE_PATTERN` gives the segment numbered `index`. */
+export function segmentFileName(index: number): string {
+  return `seg${String(index).padStart(6, '0')}.m4s`
+}
+
+/**
+ * A later configuration's init segment, named after the first segment that
+ * uses it, as the live origin names them; the first is `init.mp4`.
+ */
+export function initFileName(firstSegment: number): string {
+  return firstSegment === 0
+    ? INIT_FILE
+    : `init${String(firstSegment).padStart(6, '0')}.mp4`
+}
 
 /**
  * Every fragment stamped with its own tracks' stream times.
@@ -170,15 +202,14 @@ const HOLD_ACROSS_HOLE =
  * - `KEEP_STREAM_TIMES`, so a track that starts late keeps its real start.
  * - `soundPrimingSamples`, so sound whose AAC priming the file left undeclared
  *   starts at its first real sample, not 44 ms late.
- * - `single_file` writes **one** fragmented MP4 with a byte-range playlist,
- *   the shape PeerTube already uses. It is what lets a video in the Space
- *   need one presigned URL instead of one per segment, and it is what lets a
- *   still be taken by seeking inside a single file.
+ * - `layout` (see `RemuxLayout`): one object per fragment, named as the live
+ *   origin names its pieces, or one `video.mp4` with a byte-range playlist.
  *
  * `temp_file` is deliberately absent. It is for live, where a viewer must not
- * fetch a half-written segment — and combined with `single_file` it writes the
- * *temporary* name into the playlist, leaving every entry pointing at a
- * `video.mp4.tmp` that is renamed away the moment the remux finishes.
+ * fetch a half-written segment, and the remux writes into a directory nothing
+ * serves until it has finished. Combined with `single_file` it would also
+ * write the *temporary* name into the playlist, leaving every entry pointing
+ * at a `video.mp4.tmp` that is renamed away the moment the remux finishes.
  */
 export function remuxToHlsArgs(options: RemuxOptions): string[] {
   const {
@@ -187,7 +218,8 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     segmentSeconds = 6,
     videoTag = 'hvc1',
     soundPrimingSamples = 0,
-    concatList = false
+    concatList = false,
+    layout = 'segments'
   } = options
   return [
     '-hide_banner',
@@ -232,10 +264,23 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     '-hls_segment_type',
     'fmp4',
     ...KEEP_STREAM_TIMES,
-    '-hls_flags',
-    'single_file+independent_segments',
-    '-hls_segment_filename',
-    `${outDir}/${VIDEO_FILE}`,
+    ...(layout === 'segments'
+      ? [
+          '-hls_flags',
+          'independent_segments',
+          '-hls_fmp4_init_filename',
+          INIT_FILE,
+          '-start_number',
+          '0',
+          '-hls_segment_filename',
+          `${outDir}/${SEGMENT_FILE_PATTERN}`
+        ]
+      : [
+          '-hls_flags',
+          'single_file+independent_segments',
+          '-hls_segment_filename',
+          `${outDir}/${VIDEO_FILE}`
+        ]),
     '-master_pl_name',
     MASTER_PLAYLIST,
     `${outDir}/${MEDIA_PLAYLIST}`
@@ -247,7 +292,10 @@ export async function remuxToHls(
   options: RemuxOptions
 ): Promise<void> {
   await run(ffmpegPath, remuxToHlsArgs(options), { maxBuffer: 1 << 22 })
-  await addCodecsToMaster(options.outDir)
+  await addCodecsToMaster(
+    options.outDir,
+    (options.layout ?? 'segments') === 'segments' ? INIT_FILE : VIDEO_FILE
+  )
 }
 
 /**
@@ -256,14 +304,18 @@ export async function remuxToHls(
  * FFmpeg writes BANDWIDTH and RESOLUTION but no CODECS when it is only copying
  * streams, because it never parses the extradata it passes through. Safari
  * decides whether to attempt an HEVC stream from that attribute, so the value
- * is read out of the file itself and inserted into the line FFmpeg wrote,
- * leaving its own measurements alone.
+ * is read out of the init segment itself, `init.mp4` or the head of
+ * `video.mp4`, and inserted into the line FFmpeg wrote, leaving its own
+ * measurements alone.
  */
-export async function addCodecsToMaster(outDir: string): Promise<void> {
+export async function addCodecsToMaster(
+  outDir: string,
+  initFile: string = VIDEO_FILE
+): Promise<void> {
   const masterPath = join(outDir, MASTER_PLAYLIST)
   const [master, head] = await Promise.all([
     readFile(masterPath, 'utf8'),
-    readInitBytes(join(outDir, VIDEO_FILE))
+    readInitBytes(join(outDir, initFile))
   ])
 
   const codecs = codecsAttribute(codecsFromInit(head))

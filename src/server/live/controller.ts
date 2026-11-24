@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'fs'
-import { mkdir, readFile, rm, stat } from 'fs/promises'
+import { mkdir, readdir, readFile, rm, stat } from 'fs/promises'
 import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { join } from 'path'
 
@@ -10,13 +10,15 @@ import { anyOf } from '../db/anyOf'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
-import { ffprobeFor, probeDuration, VIDEO_FILE } from '../media/ffmpeg'
+import { ffprobeFor, probeDuration } from '../media/ffmpeg'
 import { ValkeyPlaylistSink } from '../media/livePlaylists'
 import { posterSecond } from '../media/posters'
 import { presignGetUrl } from '../media/presign'
 import type { SpaceSettings } from '../media/spacesHls'
 import { spaceConfigured, spaceKey } from '../media/spacesHls'
 import {
+  deleteSpaceKeys,
+  deleteSpacePrefix,
   deleteVideoFromSpace,
   listSpaceObjects,
   uploadVideoDirectory,
@@ -28,7 +30,11 @@ import {
   isSoundStepProblem,
   soundStepProblem
 } from '../media/trackStarts'
-import { newSpaceSecret, oldVideoPrefix } from '../media/videoPrefix'
+import {
+  newSpaceSecret,
+  oldVideoPrefix,
+  videoPrefix
+} from '../media/videoPrefix'
 import { parseMediaPlaylist } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
 import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
@@ -36,10 +42,13 @@ import type { LiveSettings } from '../serverConfig'
 import { LIVE_LOCAL_TAIL_SEC, LIVE_RESYNC_MS } from '../serverConfigSchema'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import {
-  isRecordingShape,
   moveWallPoints,
+  RECORDING_DIR,
+  type RecordingShape,
+  recordingShape,
   recordingSpanSec,
   replaceAnchorsFromRecording,
+  SINGLE_FILE_RECORDING,
   toRecording
 } from './finishVideo'
 import { OriginPublisher } from './originPublisher'
@@ -828,11 +837,29 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   let unpacked: string | undefined
   for (const row of rows) {
     const dir = liveVideoDir(mediaRoot, row.id)
-    if (!(await isRecordingShape(dir))) {
+    const shape = await recordingShape(dir)
+    if (shape == null) {
       unpacked ??= row.id
       continue
     }
-    await toTheSpace(current, row.id, row.space_secret, dir, RECORDING_FILES)
+    // Behind any finish of the same video still sending it: two uploads of
+    // one recording at once would each take the other's objects for stale.
+    // Waited for, so the sweep that sends it is the only one running until
+    // it ends, and the next one cannot queue the same row behind it.
+    const videoId = row.id
+    await queued(`publish:${videoId}`, async () => {
+      const still = await db
+        .selectFrom('videos')
+        .select(['space_secret'])
+        .where('id', '=', videoId)
+        .where('storage', '=', 'local')
+        .where('replaced_by', 'is', null)
+        .executeTakeFirst()
+      if (still == null) return
+      const now = await recordingShape(dir)
+      if (now != null)
+        await sendRecording(current, videoId, still.space_secret, dir, now)
+    })
     return
   }
   if (unpacked == null) return
@@ -892,6 +919,11 @@ export function stopLiveController(): void {
  * has already gone.
  */
 function queue(key: string, task: () => Promise<void>): void {
+  queued(key, task).catch(() => undefined)
+}
+
+/** {@link queue}, with a promise that settles once this task has run. */
+async function queued(key: string, task: () => Promise<void>): Promise<void> {
   const previous = work.get(key) ?? Promise.resolve()
   const next: Promise<void> = previous
     .then(task)
@@ -904,6 +936,7 @@ function queue(key: string, task: () => Promise<void>): void {
       if (work.get(key) === next) work.delete(key)
     })
   work.set(key, next)
+  await next
 }
 
 /** Test seam: one key's work, queued as the controller queues it. */
@@ -2367,10 +2400,12 @@ async function putAway(
 
   // Already packed up: this is a second attempt, because the Space could not
   // be reached the first time. The remux is not repeated — it is the same
-  // recording, and doing it again would rewrite the file somebody may be
-  // watching.
-  if (await isRecordingShape(dir)) {
-    await toTheSpace(current, videoId, spaceSecret, dir, RECORDING_FILES)
+  // recording, and doing it again would rewrite what somebody may be
+  // watching. A recording the release before this one packed into one file
+  // is sent in that shape, and `segmentSpaceVideos` repackages it.
+  const shape = await recordingShape(dir)
+  if (shape != null) {
+    await sendRecording(current, videoId, spaceSecret, dir, shape)
     return
   }
 
@@ -2395,7 +2430,7 @@ async function putAway(
   // The recording's own timeline, which is where the points belong now.
   try {
     await moveWallPoints(db, videoId, recording.moved)
-    await replaceAnchorsFromRecording(db, videoId, dir)
+    await replaceAnchorsFromRecording(db, videoId, join(dir, RECORDING_DIR))
   } catch (error) {
     log(`live: wall clock of ${videoId} not rescanned: ${String(error)}`)
   }
@@ -2413,8 +2448,8 @@ async function putAway(
     .execute()
 
   await keepAPicture(current, videoId, recording.durationSec, {
-    kind: 'file',
-    path: join(dir, VIDEO_FILE)
+    kind: 'dir',
+    dir: join(dir, RECORDING_DIR)
   })
 
   if (space == null || !spaceConfigured(space)) {
@@ -2424,7 +2459,13 @@ async function putAway(
     return
   }
 
-  await toTheSpace(current, videoId, spaceSecret, dir, recording.files)
+  await toTheSpace(
+    current,
+    videoId,
+    spaceSecret,
+    join(dir, RECORDING_DIR),
+    recording.files
+  )
 }
 
 /**
@@ -2456,8 +2497,29 @@ async function keepAPicture(
   }
 }
 
-/** What a packed-up recording is made of. */
-const RECORDING_FILES = ['master.m3u8', 'video.m3u8', 'video.mp4']
+/**
+ * Sends a packed recording as it lies: `recording/`'s files, or the single
+ * file and its playlists the release before this one packed.
+ */
+async function sendRecording(
+  current: LiveControllerOptions,
+  videoId: string,
+  spaceSecret: string | null,
+  dir: string,
+  shape: RecordingShape
+): Promise<void> {
+  if (shape === 'single-file') {
+    await toTheSpace(current, videoId, spaceSecret, dir, [
+      ...SINGLE_FILE_RECORDING
+    ])
+    return
+  }
+  const recording = join(dir, RECORDING_DIR)
+  const files = (await readdir(recording))
+    .filter(name => !name.startsWith('.'))
+    .sort()
+  await toTheSpace(current, videoId, spaceSecret, recording, files)
+}
 
 /**
  * Copies a finished recording to the Space, and only says so once the Space
@@ -2483,23 +2545,73 @@ async function toTheSpace(
     })
   if (space == null || !spaceConfigured(space)) return
 
+  // A copy that does not become the row's is nobody's, and is taken back out
+  // on every way this can end short of that: one made under a fresh secret
+  // always, and one made under the row's own secret when the row is gone —
+  // its delete took only what was there when it ran. Says what it did.
+  let fresh: string | undefined
+  const takeBack = async (): Promise<string> => {
+    let prefix: string
+    if (fresh != null) {
+      prefix = videoPrefix({ id: videoId, spaceSecret: fresh })
+    } else {
+      const row = await db
+        .selectFrom('videos')
+        .select('id')
+        .where('id', '=', videoId)
+        .executeTakeFirst()
+        .catch(() => null)
+      if (row !== undefined) return 'what was sent is left under its prefix'
+      prefix = videoPrefix({ id: videoId, spaceSecret })
+    }
+    try {
+      await deleteSpacePrefix(space, prefix)
+      return fresh != null
+        ? 'the copy under a new secret is deleted'
+        : 'it was deleted meanwhile, and so is what was sent'
+    } catch (error) {
+      return `what was sent could not be deleted: ${String(error)}`
+    }
+  }
+
   try {
+    // An origin that ran before this stream fell back here, or an earlier
+    // attempt, may have left objects under the row's prefix, and the
+    // recording's pieces carry the origin's own names: `seg000000.m4s`
+    // there is a live piece a CDN edge may still hold for ten minutes. So a
+    // prefix with anything in it is not reused: the recording goes under a
+    // new secret, the row moves there once it is verified, and what was left
+    // is deleted after.
+    const prefix = videoPrefix({ id: videoId, spaceSecret })
+    const stale = (await listSpaceObjects(space, prefix)).filter(
+      key => !key.startsWith(`${prefix}stills/`)
+    )
+    if (stale.length > 0) fresh = newSpaceSecret()
+    const secret = fresh ?? spaceSecret
+    if (stale.length > 0)
+      log(
+        `live: ${videoId}'s prefix already holds ${stale.length} objects; ` +
+          'the recording goes under a new secret'
+      )
     const uploaded = await uploadVideoDirectory({
       space,
       videoId,
-      spaceSecret,
+      spaceSecret: secret,
       dir,
       files
     })
     const verified = await verifyVideoDirectory({
       space,
       videoId,
-      spaceSecret,
+      spaceSecret: secret,
       dir,
       files: uploaded.files
     })
     if (!verified.ok) {
-      log(`live: ${videoId} did not verify in the Space: ${verified.reason}`)
+      log(
+        `live: ${videoId} did not verify in the Space: ${verified.reason}; ` +
+          (await takeBack())
+      )
       await db
         .updateTable('videos')
         .set({
@@ -2523,10 +2635,14 @@ async function toTheSpace(
       ? before?.message
       : null
     const now = new Date()
-    await db
+    // Only the row this attempt started from: still here, still local, still
+    // on the secret it began with. Anything else means another attempt or a
+    // delete got there first, and this copy is not the one the row names.
+    const moved = await db
       .updateTable('videos')
       .set({
         storage: 'spaces',
+        space_secret: secret,
         status_message: soundProblem ?? null,
         spaces_verified_at: now,
         // The grace is for playback tokens already in somebody's player, which
@@ -2535,13 +2651,34 @@ async function toTheSpace(
         updated_at: now
       })
       .where('id', '=', videoId)
-      .execute()
+      .where('storage', '=', 'local')
+      .where(eb =>
+        spaceSecret == null
+          ? eb('space_secret', 'is', null)
+          : eb('space_secret', '=', spaceSecret)
+      )
+      .executeTakeFirst()
+    if (moved.numUpdatedRows === 0n) {
+      log(
+        `live: ${videoId} changed while it was being sent; ` +
+          (await takeBack())
+      )
+      return
+    }
     log(
       `live: ${videoId} is in the Space (${uploaded.files.length} files, ` +
         `${uploaded.bytes} bytes), local copy goes in six hours`
     )
+    if (stale.length > 0) {
+      await deleteSpaceKeys(space, stale).catch((error: unknown) => {
+        log(`live: ${videoId}'s old objects were not deleted: ${String(error)}`)
+      })
+    }
   } catch (error) {
-    log(`live: ${videoId} could not be copied to the Space: ${String(error)}`)
+    log(
+      `live: ${videoId} could not be copied to the Space: ${String(error)}; ` +
+        (await takeBack())
+    )
     await db
       .updateTable('videos')
       .set({

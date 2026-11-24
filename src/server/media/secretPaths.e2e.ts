@@ -420,7 +420,12 @@ describe('E2E-3: unsigned media under the secret path (M5)', function () {
     const id = `vid_seedfinished${randomBytes(2).toString('hex')}`
     const dir = join(scratch, 'seed-finished')
     await mkdir(dir, { recursive: true })
-    await remuxToHls('ffmpeg', { input: sample, outDir: dir })
+    // One video.mp4, as every recording was stored before segments.
+    await remuxToHls('ffmpeg', {
+      input: sample,
+      outDir: dir,
+      layout: 'single-file'
+    })
     for (const name of ['master.m3u8', 'video.m3u8', 'video.mp4'])
       await putObjectFile({
         space,
@@ -528,7 +533,10 @@ describe('E2E-3: unsigned media under the secret path (M5)', function () {
         ]
       )
     const dry = await move(true)
-    expect(dry).contains(`would move ${finished}`)
+    // A single file behind the CDN is what hangs on a seek: it is refused,
+    // and `segmentSpaceVideos` puts it under a secret path as segments.
+    expect(dry).contains(`refuse ${finished}`)
+    expect(dry).contains('segmentSpaceVideos')
     expect(dry).contains(`would move ${origin}`)
     expect(await secretOf(finished)).equals(null)
     expect(await listSpaceObjects(space, oldVideoPrefix(finished))).deep.equals(
@@ -539,12 +547,41 @@ describe('E2E-3: unsigned media under the secret path (M5)', function () {
     )
 
     const moved = await move(false)
-    expect(moved).contains(`moved ${finished}`)
+    expect(moved).contains(`refuse ${finished}`)
     expect(moved).contains(`moved ${origin}`)
+    expect(await secretOf(finished)).equals(null)
+
+    const segment = async (args: string[]): Promise<string> =>
+      await logged(
+        `node -r sucrase/register src/server/dev/segmentSpaceVideos.ts ${args.join(' ')} --config <scratch>/api/serverConfig.json`.replace(
+          /\s+/g,
+          ' '
+        ),
+        process.execPath,
+        [
+          '-r',
+          register,
+          'src/server/dev/segmentSpaceVideos.ts',
+          ...args,
+          '--config',
+          configPath
+        ]
+      )
+    expect(await segment(['--dry-run'])).contains(`would repackage ${finished}`)
+    expect(await segment([])).contains(`repackaged ${finished}`)
+    expect(await segment(['--delete-old'])).contains(
+      `deleted 3 old objects of ${finished}`
+    )
     for (const id of [finished, origin]) {
       const secret = await secretOf(id)
       expect(secret).matches(/^[0-9a-f]{32}$/)
-      const uris = expectUnsigned(await served(id), id, secret!)
+      const body = await served(id)
+      expect(body, id).does.not.contain('BYTERANGE')
+      const uris = expectUnsigned(body, id, secret!)
+      expect(
+        uris.every(uri => !uri.endsWith('/video.mp4')),
+        id
+      ).equals(true)
       const status = await curl(uris.at(-1)!, true)
       expect(['200', '206']).includes(status)
     }
@@ -564,7 +601,10 @@ describe('E2E-3: unsigned media under the secret path (M5)', function () {
         '--config',
         configPath
       ]
-    ).then(again => expect(again).contains('0 moved, 0 finished'))
+    ).then(again => {
+      expect(again).contains('0 moved, 0 finished')
+      expect(again).contains('0 refused')
+    })
   })
 
   it('publishes a new game unsigned under its secret path, keeps its playlists private, and deletes both prefixes', async function () {

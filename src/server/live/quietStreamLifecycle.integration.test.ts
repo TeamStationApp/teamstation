@@ -311,7 +311,10 @@ describe('quiet streams through the running API and controller', function () {
       expect(liveKeys()).not.includes(s.key)
       expect(await resolveKey(s.key, f.options)).is.a('string')
       expect(
-        await readFile(join(dirname(s.playlist), 'video.m3u8'), 'utf8')
+        await readFile(
+          join(dirname(s.playlist), 'recording', 'video.m3u8'),
+          'utf8'
+        )
       ).contains('#EXT-X-ENDLIST')
       const video = await f.db
         .selectFrom('videos')
@@ -328,7 +331,7 @@ describe('quiet streams through the running API and controller', function () {
           'error',
           '-y',
           '-i',
-          join(dirname(s.playlist), 'video.m3u8'),
+          join(dirname(s.playlist), 'recording', 'video.m3u8'),
           '-c',
           'copy',
           join(process.env.TS_E2E_ARTIFACT_DIR, 'idle-expired-recording.mp4')

@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-import { ffprobeFor, VIDEO_FILE } from '../media/ffmpeg'
+import { ffprobeFor } from '../media/ffmpeg'
 import { RECONNECT_GRACE_MS } from './controller'
 import { fileForRemux, toRecording } from './finishVideo'
 import {
@@ -294,6 +294,38 @@ describe('filling a live recording’s holes', function () {
       expect(readFileSync(list, 'utf8')).not.match(/filler\d\.mp4/)
     })
 
+    it('packs the filled hole into the segmented recording, at full length', async function () {
+      this.timeout(30_000)
+      liveWithHole(ffmpeg, dir, [
+        '-c:v',
+        'libx265',
+        '-x265-params',
+        'log-level=error:bframes=0:keyint=30',
+        '-tag:v',
+        'hvc1'
+      ])
+      const recording = await toRecording(ffmpeg, dir, () => undefined)
+      expect(recording.durationSec).closeTo(32, 0.5)
+      const playlist = readFileSync(
+        join(dir, 'recording', 'video.m3u8'),
+        'utf8'
+      )
+      expect(playlist).does.not.contain('BYTERANGE')
+      expect(playlist).does.not.contain('DISCONTINUITY')
+      const listed = playlist
+        .split('\n')
+        .filter(line => line.startsWith('#EXTINF:'))
+        .reduce((sum, line) => sum + Number.parseFloat(line.slice(8)), 0)
+      expect(listed).closeTo(32, 0.5)
+      expect(recording.files).does.not.include('video.mp4')
+      if (process.env.TS_PROOF_TRACE != null) {
+        console.log(
+          `\n    a 30 s hole, filled: recording/ holds ${recording.files.join(', ')}; ` +
+            `${recording.durationSec.toFixed(2)} s, playlist lists ${listed.toFixed(2)} s, no discontinuity`
+        )
+      }
+    })
+
     it('packs from the unfilled list when the filled remux fails', async function () {
       this.timeout(30_000)
       liveWithHole(ffmpeg, dir, [
@@ -328,7 +360,9 @@ describe('filling a live recording’s holes', function () {
         said.push(message)
       )
       expect(said.join('\n')).match(/remux of the filled holes failed/)
-      expect(recording.files).includes(VIDEO_FILE)
+      expect(recording.files).includes('init.mp4')
+      expect(recording.files).includes('video.m3u8')
+      expect(existsSync(join(dir, 'recording', 'video.m3u8'))).equals(true)
       expect(recording.durationSec).closeTo(32, 0.5)
       expect(existsSync(join(dir, '.holes'))).equals(false)
     })

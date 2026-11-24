@@ -6,12 +6,7 @@ import { promisify } from 'node:util'
 
 import { makeId } from '../../common/ids'
 import { makeDatabase } from '../db/database'
-import {
-  MASTER_PLAYLIST,
-  MEDIA_PLAYLIST,
-  remuxToHls,
-  VIDEO_FILE
-} from '../media/ffmpeg'
+import { remuxToHls } from '../media/ffmpeg'
 import { spaceConfigured } from '../media/spacesHls'
 import {
   uploadVideoDirectory,
@@ -39,9 +34,9 @@ const run = promisify(execFile)
  * What it does, in the order that makes each step safe to repeat:
  *
  * 1. Reads the file: codec, shape, and how long it really is.
- * 2. Remuxes it to the shape everything downstream expects — one fragmented
- *    MP4 with a byte-range playlist — **without re-encoding it**, and tagged
- *    as the codec it actually is.
+ * 2. Remuxes it to the shape everything downstream expects — `init.mp4` and
+ *    six-second `seg######.m4s` pieces under a playlist — **without
+ *    re-encoding it**, and tagged as the codec it actually is.
  * 3. Puts it in the Space and checks every file arrived, the same way a
  *    finished live recording is checked.
  * 4. Writes the row, last, so a row never names bytes that are not there.
@@ -232,14 +227,12 @@ async function main(): Promise<void> {
       videoTag
     })
 
-    const files = [MASTER_PLAYLIST, MEDIA_PLAYLIST, VIDEO_FILE]
     console.log('  uploading to the Space…')
     const uploaded = await uploadVideoDirectory({
       space,
       videoId,
       spaceSecret,
-      dir: work,
-      files
+      dir: work
     })
     const verified = await verifyVideoDirectory({
       space,

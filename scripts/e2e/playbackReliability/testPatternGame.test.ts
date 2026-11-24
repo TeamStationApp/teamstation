@@ -202,6 +202,31 @@ describe('playback probe: test-pattern game', function () {
       'https://media.example.test/v/video.mp4?sig=1'
     )
     assert.equal(playlistShape('#EXTM3U').firstUrl, null)
+    const pieces = playlistShape(
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-MAP:URI="https://media.example.test/v/init.mp4?sig=0"',
+        '#EXTINF:6.000000,',
+        'https://media.example.test/v/seg000000.m4s?sig=1',
+        '#EXTINF:6.000000,',
+        'https://media.example.test/v/seg000001.m4s?sig=2',
+        '#EXTINF:2.300000,',
+        'https://media.example.test/v/seg000002.m4s?sig=3',
+        '#EXT-X-ENDLIST'
+      ].join('\n')
+    )
+    assert.equal(pieces.segments, 3)
+    assert.ok(Math.abs(pieces.durationSec - 14.3) < 1e-9)
+    assert.deepEqual(pieces.sizes, [])
+    assert.equal(pieces.headBytes, 0)
+    assert.equal(pieces.mapUrl, 'https://media.example.test/v/init.mp4?sig=0')
+    assert.equal(
+      pieces.firstUrl,
+      'https://media.example.test/v/seg000000.m4s?sig=1'
+    )
+    assert.equal(pieces.pieceUrls.length, 3)
+    assert.equal(playlistShape(PLAYLIST).mapUrl, null)
     assert.deepEqual(
       streamShape(
         '{"streams":[{"codec_tag_string":"hvc1","r_frame_rate":"60/1"}]}',

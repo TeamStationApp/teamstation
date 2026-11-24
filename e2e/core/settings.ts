@@ -54,6 +54,11 @@ export interface LocalSettings {
    * reads motion (`e2e/rigs/app/keyboardMotion.ts`).
    */
   webcam?: { url: string; crops?: Record<string, string> }
+  /**
+   * A real TS Director take of several gigabytes on this machine, which
+   * `playback/recordings/director-take-finish` uploads to time the finish.
+   */
+  directorTake?: string
 }
 
 export function settingsPath(env = process.env): string {

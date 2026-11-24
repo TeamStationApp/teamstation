@@ -174,7 +174,7 @@ describe('a still from the Space', function () {
 
     const fromFile = await ensureStill({
       ffmpegPath,
-      source: { kind: 'file', path: join(workDir, 'video.mp4') },
+      source: { kind: 'dir', dir: workDir },
       space,
       videoId: 'vid_here',
       atSec
@@ -243,7 +243,7 @@ describe('a still from the Space', function () {
         async atSec =>
           await ensureStill({
             ffmpegPath: wrapper,
-            source: { kind: 'file', path: join(workDir, 'video.mp4') },
+            source: { kind: 'dir', dir: workDir },
             space,
             videoId: 'vid_many',
             atSec
@@ -286,7 +286,7 @@ describe('a still from the Space', function () {
         async atSec =>
           await ensureStill({
             ffmpegPath,
-            source: { kind: 'file', path: join(workDir, 'video.mp4') },
+            source: { kind: 'dir', dir: workDir },
             space,
             videoId: 'vid_failing',
             atSec
@@ -301,7 +301,7 @@ describe('a still from the Space', function () {
     expect(
       await ensureStill({
         ffmpegPath,
-        source: { kind: 'file', path: join(workDir, 'video.mp4') },
+        source: { kind: 'dir', dir: workDir },
         space,
         videoId: 'vid_failing',
         atSec: 5
@@ -367,7 +367,7 @@ describe('a still from the Space', function () {
   it('refuses to cut a still with no Space to keep it in', async function () {
     const refused = await ensureStill({
       ffmpegPath,
-      source: { kind: 'file', path: join(workDir, 'video.mp4') },
+      source: { kind: 'dir', dir: workDir },
       space: { ...space, bucket: '' },
       videoId: 'vid_here',
       atSec: 20
