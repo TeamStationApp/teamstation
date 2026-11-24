@@ -14,6 +14,9 @@
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 - fixed: A ball scored on the web just before browser Back is no longer lost
 - fixed: Scoring opens at once from what the phone or tab holds, with a pitch still on its way to the server, instead of waiting on a slow server
+- changed: Screens read again only when the server's socket says something they show changed, once on opening, and once for each time the socket drops; nothing reads on a timer or on coming back to the app, and the bell's slow answer no longer puts the app offline
+- changed: A phone keeps the nearest three games its person is a scorekeeper of, in the next four days, ready to open and score with no signal, even one never opened; nobody else's phone downloads games ahead
+- fixed: A tab or phone left open on a busy schedule no longer reads every game again and again
 
 ## 1.4.0 (2026-11-21)
 

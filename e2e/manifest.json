@@ -836,6 +836,49 @@
       "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
     },
     {
+      "id": "app-shell/refresh/socket#incident-320",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
       "id": "app-shell/refresh/socket#spectator-idle",
       "title": "Reads follow the socket’s notices, never a timer",
       "kind": "e2e",

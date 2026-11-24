@@ -113,7 +113,7 @@ async function sql(
   ctx: E2eContext,
   text: string,
   values: unknown[] = []
-): Promise<void> {
+): Promise<Array<Record<string, unknown>>> {
   const { Client } = await import('pg')
   const client = new Client({
     connectionString: await stackDatabaseUrl(ctx),
@@ -121,7 +121,9 @@ async function sql(
   })
   await client.connect()
   try {
-    await client.query(text, values)
+    return (await client.query(text, values)).rows as Array<
+      Record<string, unknown>
+    >
   } finally {
     await client.end()
   }
@@ -465,6 +467,64 @@ export default defineE2e({
           ...reads.frames
         ])
         await session.close()
+      }
+    },
+
+    // The incident: a spectator of 320 games whose bell's read is slow, who
+    // then goes. The bell's read is the bell's alone, nothing reads ahead,
+    // and the server stops working for them as soon as they have gone.
+    'incident-320': async ctx => {
+      const { session, reads, world } = await openAs(ctx, 'spectator')
+      const lines: string[] = []
+      let closed = false
+      try {
+        await go(ctx, session, '/schedule')
+        await go(ctx, session, '/')
+        const opened = reads.reads.length
+        lines.push(`$ opened Home and Schedule: ${opened} reads`)
+        await slowBell(session, 11_000)
+        const rung = reads.mark()
+        await sql(
+          ctx,
+          `insert into notification_events
+             (id, source_type, source_id, revision, actor_id, metadata, recorded_recipients, created_at)
+           values ($1, 'playerAddRejected', $1, 1, null, '{}', array[$2], now())`,
+          [`e2e-${world.nonce}-incident`, world.accounts.spectator.userId]
+        )
+        await sleep(3000)
+        const during = reads.since(rung)
+        lines.push(
+          `$ the bell rung, its summary held: ${JSON.stringify(byPath(during))}`
+        )
+        // The person goes while the summary is still on its way.
+        await session.close()
+        closed = true
+        await sleep(5000)
+        const running = await sql(
+          ctx,
+          `select count(*)::int as n from pg_stat_activity
+           where datname = current_database() and pid <> pg_backend_pid()
+             and state = 'active' and query not ilike '%listen%'`
+        )
+        const n = Number(running[0]?.n ?? -1)
+        lines.push(`$ 5 s after they went: ${n} app queries running`)
+        lines.push(
+          `offline-scoring reads: ${reads.reads.filter(read => read.path === '/api/v1/me/offline-scoring').length}`
+        )
+        expect(
+          during.map(read => read.path),
+          'the bell reads its summary, once, and nothing else'
+        ).to.deep.equal([SUMMARY])
+        expect(
+          reads.reads.filter(
+            read => read.path === '/api/v1/me/offline-scoring'
+          ),
+          'the web keeps no games to score'
+        ).to.deep.equal([])
+        expect(n, 'nothing left running for them').to.equal(0)
+      } finally {
+        log(ctx, 'incident-320.log', lines)
+        if (!closed) await session.close()
       }
     },
 
