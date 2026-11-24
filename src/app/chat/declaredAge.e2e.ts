@@ -89,6 +89,7 @@ interface Device {
   assertNotVisible: (options: object) => Promise<unknown>
   tapOn: (options: object) => Promise<unknown>
   inputText: (options: object) => Promise<unknown>
+  eraseText: (options: object) => Promise<unknown>
   hideKeyboard: () => Promise<unknown>
   openBrowser: (options: object) => Promise<unknown>
   evalBrowserScript: (options: { script: string }) => Promise<{ data: string }>
@@ -176,13 +177,16 @@ async function age(m: Device): Promise<{
   )
 }
 
-/** Types into one of the modal's fields, its text replaced. */
+/**
+ * Types into one of the modal's fields, its text replaced: tapped, emptied
+ * (a field holds at most four digits) and typed into, as a person would, so
+ * no script is built from the text.
+ */
 async function typeField(m: Device, id: string, text: string): Promise<void> {
   step(`type ${text} into ${id}`)
-  await read(
-    m,
-    `(() => { const f = document.querySelector('[data-testid="${id}"]'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(f, ${JSON.stringify(text)}); f.dispatchEvent(new Event('input', { bubbles: true })); return true })()`
-  )
+  await m.tapOn({ id })
+  await m.eraseText({ characters: 8 })
+  await m.inputText({ text })
 }
 
 /** Whether the modal's Save can be pressed. */
