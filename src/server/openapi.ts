@@ -4207,6 +4207,51 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/auth/password/link': {
+        post: {
+          summary: 'Sign in from a development web password link',
+          description:
+            'Requires a development server and a valid password proof. To change accounts, repeat the request with the two IDs from the confirmation prompt.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email', 'clientHash'],
+                  properties: {
+                    email: { type: 'string', maxLength: 254 },
+                    clientHash: clientHashSchema,
+                    confirmation: {
+                      type: 'object',
+                      required: ['currentId', 'targetId'],
+                      properties: {
+                        currentId: { type: 'string' },
+                        targetId: { type: 'string' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'Signed in',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Session' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse,
+            429: errorResponse
+          }
+        }
+      },
       '/auth/email-code': {
         post: {
           summary: 'Ask for a sign-in code by e-mail',
