@@ -4,7 +4,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { AppState, Platform } from 'react-native'
+import { AppState, Dimensions, Platform } from 'react-native'
 
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
@@ -532,6 +532,72 @@ describe('chat composer current send state', function () {
       ).equals(44)
     } finally {
       Object.defineProperty(Platform, 'OS', saved)
+    }
+  })
+
+  it('keeps the measured line in the middle in normal, reply and edit modes', async function () {
+    const original = Platform.OS
+    const contexts: Array<ComposerProps['context']> = [
+      undefined,
+      { kind: 'reply', name: 'Teammate', snippet: 'Practice' },
+      { kind: 'edit' }
+    ]
+    try {
+      for (const platform of ['ios', 'android', 'web'] as const) {
+        Platform.OS = platform
+        for (const context of contexts) {
+          for (const text of ['', 'Hello']) {
+            await render(<Composer {...props({ text, context })} />)
+            const edit = input()
+            expect(edit.value).equals(text)
+            const style = getComputedStyle(edit)
+            const interior = parseFloat(style.minHeight)
+            expect(interior).equals(42)
+            expect(parseFloat(style.paddingLeft)).equals(14)
+            const inset = parseFloat(style.paddingTop)
+            // The physical iOS caret is 22 points high and starts one
+            // point above the declared text inset. Android and the browser
+            // use the declared 20-unit line and center it directly.
+            const top = platform === 'ios' ? inset - 1 : inset
+            const line = platform === 'ios' ? 22 : parseFloat(style.lineHeight)
+            expect(top).equals(interior - top - line)
+            const bottomInset = parseFloat(style.paddingBottom)
+            expect(bottomInset).equals(platform === 'ios' ? 7 : 11)
+            if (platform === 'ios') {
+              const measure = edit.previousElementSibling!
+              expect(measure.textContent).equals(text + '\u200b')
+              expect(getComputedStyle(measure).alignSelf).equals('stretch')
+              expect(getComputedStyle(measure).paddingLeft).equals(
+                style.paddingLeft
+              )
+            }
+          }
+        }
+      }
+    } finally {
+      Platform.OS = original
+    }
+  })
+
+  it('leaves room for scaled lines and the caret after an external clear', async function () {
+    const original = Platform.OS
+    const dimensions = Dimensions.get('window')
+    const originalScale = dimensions.fontScale
+    try {
+      Platform.OS = 'ios'
+      dimensions.fontScale = 1.75
+      await render(
+        <Composer {...props({ text: 'One\nTwo\nThree\nFour\nFive\nSix' })} />
+      )
+      expect(getComputedStyle(input()).maxHeight).equals('220.5px')
+      await render(<Composer {...props({ text: '' })} />)
+      const style = getComputedStyle(input())
+      expect(style.height).equals('57px')
+      expect(style.minHeight).equals(style.height)
+      expect(style.lineHeight).equals('20px') // The native renderer scales the font once.
+    } finally {
+      Platform.OS = original
+      dimensions.fontScale = originalScale
     }
   })
 
