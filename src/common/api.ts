@@ -263,6 +263,7 @@ import {
 } from './venues'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
+import { EXPECTED_ACTOR_HEADER, SIGNED_OUT_ACTOR } from './webPasswordLink'
 
 /**
  * The client the app talks to the server through.
@@ -4351,7 +4352,51 @@ function statisticsPath(
   return `/games/${encodeURIComponent(gameId)}/box-score?${params}`
 }
 
+declare const TS_PASSWORD_LINK_BUILD: boolean
+declare const TS_PASSWORD_LINK_ORIGIN: string
+// Web globals accessed only on the configured development web origin. The
+// shared client also type-checks against the native runtime without lib.dom.
+declare const window: {
+  navigator: {
+    locks: {
+      request: <T>(
+        key: string,
+        options: { signal: AbortSignal },
+        run: () => Promise<T>
+      ) => Promise<T>
+    }
+  }
+}
+
 export class TeamStationClient {
+  /** A UI client knows whose documents it has open. */
+  get cacheUser(): string | undefined {
+    return undefined
+  }
+
+  private get guardsCookieIdentity(): boolean {
+    return (
+      typeof TS_PASSWORD_LINK_BUILD !== 'undefined' &&
+      TS_PASSWORD_LINK_BUILD &&
+      this.baseUrl === '/api/v1'
+    )
+  }
+
+  get coordinatesBrowserSession(): boolean {
+    return (
+      this.guardsCookieIdentity &&
+      typeof TS_PASSWORD_LINK_ORIGIN !== 'undefined' &&
+      (globalThis as { location?: { origin: string } }).location?.origin ===
+        TS_PASSWORD_LINK_ORIGIN
+    )
+  }
+
+  private get cookieActor(): string | undefined {
+    return this.guardsCookieIdentity && this.token == null
+      ? this.cacheUser
+      : undefined
+  }
+
   private readonly statisticsRequests = new Map<
     string,
     Promise<GameStatistics>
@@ -4934,7 +4979,7 @@ export class TeamStationClient {
    * its session only while the client still holds it: once the code, a
    * password, a link or an earlier claim has signed in, the wait is over.
    */
-  private askedSignInAs?: { requestId: string; token: string | undefined }
+  private askedSignInAs?: { requestId: string; token?: string; actor: string }
   token: string | undefined
   /** Captures the current analytics identity before a request starts. */
   captureAnalytics?: () => AnalyticsSink
@@ -5180,7 +5225,15 @@ export class TeamStationClient {
   /** Irrecoverable: this account and every one merged into it can never sign in again. */
   async deleteAccount(): Promise<void> {
     try {
-      await this.request('DELETE', '/me/account', asUnknownOk)
+      await this.sessionRequest(
+        'DELETE',
+        '/me/account',
+        asUnknownOk,
+        undefined,
+        {
+          headers: this.expectedBrowserActor(this.cacheUser)
+        }
+      )
     } catch (error) {
       // Refused for want of a session: this token is no good either way.
       if (error instanceof HttpError && error.code === 'unauthorized')
@@ -5315,20 +5368,69 @@ export class TeamStationClient {
     )
   }
 
-  async signInWithPassword(email: string, password: string): Promise<Session> {
+  // Coordinate only requests that can install or clear the origin's session
+  // cookie. Preparing a password proof does not need exclusive access.
+  protected async sessionRequest<T>(
+    method: string,
+    path: string,
+    cleaner: Cleaner<T>,
+    body?: unknown,
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const withDeadline = (): AbortSignal => {
+      const expiry = AbortSignal.timeout(this.requestDeadlineMs)
+      return options.signal == null
+        ? expiry
+        : AbortSignal.any([options.signal, expiry])
+    }
+    // Start a fresh timer on admission. Abort the transport itself before
+    // releasing the lock so late response headers cannot install a cookie.
+    const send = async (): Promise<T> =>
+      await this.request(
+        method,
+        path,
+        cleaner,
+        body,
+        options.deadline === true
+          ? { ...options, signal: withDeadline(), deadline: false }
+          : options
+      )
+    if (!this.coordinatesBrowserSession) return await send()
+    return await window.navigator.locks.request(
+      'teamstation.password-link',
+      { signal: withDeadline() },
+      send
+    )
+  }
+
+  protected async passwordProof(
+    email: string,
+    password: string,
+    options?: RequestOptions
+  ): Promise<string> {
     const derive = this.requirePasswordKdf()
     const parameters = await this.request(
       'POST',
       '/auth/password/parameters',
       raw => asArgonParameters(raw),
-      { email }
+      { email },
+      options
     )
-    const clientHash = asClientHash(await derive(password, parameters))
-    const session = await this.request('POST', '/auth/password', asSession, {
-      email,
-      clientHash,
-      deviceModel: this.deviceModel
-    })
+    return asClientHash(await derive(password, parameters))
+  }
+
+  async signInWithPassword(email: string, password: string): Promise<Session> {
+    const clientHash = await this.passwordProof(email, password)
+    const session = await this.sessionRequest(
+      'POST',
+      '/auth/password',
+      asSession,
+      {
+        email,
+        clientHash,
+        deviceModel: this.deviceModel
+      }
+    )
     this.token = session.token
     return session
   }
@@ -5345,6 +5447,10 @@ export class TeamStationClient {
     email: string,
     options: SignInRequestOptions = {}
   ): Promise<SignInWait> {
+    const began = {
+      token: this.token,
+      actor: this.cacheUser ?? SIGNED_OUT_ACTOR
+    }
     const wait = await this.request('POST', '/auth/email-code', asSignInWait, {
       email,
       origin: options.origin ?? 'web',
@@ -5352,7 +5458,7 @@ export class TeamStationClient {
       appOrigin: options.appOrigin
     })
     this.askedSignIn = wait.requestId
-    this.askedSignInAs = { requestId: wait.requestId, token: this.token }
+    this.askedSignInAs = { requestId: wait.requestId, ...began }
     return wait
   }
 
@@ -5407,12 +5513,17 @@ export class TeamStationClient {
    * long-lived, named session a device does.
    */
   async signInWithLink(token: string, deviceName?: string): Promise<Session> {
-    const session = await this.request('POST', '/auth/link/verify', asSession, {
-      token,
-      deviceName,
-      requestId: deviceName == null ? undefined : this.askedSignIn,
-      deviceModel: this.deviceModel
-    })
+    const session = await this.sessionRequest(
+      'POST',
+      '/auth/link/verify',
+      asSession,
+      {
+        token,
+        deviceName,
+        requestId: deviceName == null ? undefined : this.askedSignIn,
+        deviceModel: this.deviceModel
+      }
+    )
     this.token = session.token
     this.askedSignIn = undefined
     return session
@@ -5429,10 +5540,10 @@ export class TeamStationClient {
     // whose token the phone kept and its offline file was opened for.
     const asked =
       this.askedSignInAs?.requestId === wait.requestId
-        ? this.askedSignInAs.token
-        : this.token
-    if (this.token !== asked) return undefined
-    const answer = await this.request(
+        ? this.askedSignInAs
+        : { token: this.token, actor: this.cacheUser ?? SIGNED_OUT_ACTOR }
+    if (this.token !== asked.token) return undefined
+    const answer = await this.sessionRequest(
       'POST',
       '/auth/request/claim',
       asMaybeSession,
@@ -5440,17 +5551,18 @@ export class TeamStationClient {
         requestId: wait.requestId,
         clientSecret: wait.clientSecret,
         deviceModel: this.deviceModel
-      }
+      },
+      { headers: this.expectedBrowserActor(asked.actor) }
     )
     if (!('token' in answer)) return undefined
     // A sign-in that landed while the claim was out is the one in use.
-    if (this.token !== asked) return undefined
+    if (this.token !== asked.token) return undefined
     this.token = answer.token
     return answer
   }
 
   async signInWithCode(email: string, code: string): Promise<Session> {
-    const session = await this.request(
+    const session = await this.sessionRequest(
       'POST',
       '/auth/email-code/verify',
       asSession,
@@ -5460,8 +5572,19 @@ export class TeamStationClient {
     return session
   }
 
-  async signOut(): Promise<void> {
-    await this.request('POST', '/auth/logout', asUnknownOk)
+  private expectedBrowserActor(
+    actor: string | undefined
+  ): Record<string, string> | undefined {
+    return this.guardsCookieIdentity && actor != null
+      ? { [EXPECTED_ACTOR_HEADER]: actor }
+      : undefined
+  }
+
+  async signOut(departingActor = this.cacheUser): Promise<void> {
+    const headers = this.expectedBrowserActor(departingActor)
+    await this.sessionRequest('POST', '/auth/logout', asUnknownOk, undefined, {
+      headers
+    })
     this.token = undefined
   }
 
@@ -8379,6 +8502,10 @@ export class TeamStationClient {
     code: string,
     options: { email: string; displayName?: string } & SignInRequestOptions
   ): Promise<SignInWait> {
+    const began = {
+      token: this.token,
+      actor: this.cacheUser ?? SIGNED_OUT_ACTOR
+    }
     const wait = await this.request(
       'POST',
       `/join/${encodeURIComponent(code)}/email-code`,
@@ -8386,7 +8513,7 @@ export class TeamStationClient {
       { ...options, origin: options.origin ?? 'web' }
     )
     this.askedSignIn = wait.requestId
-    this.askedSignInAs = { requestId: wait.requestId, token: this.token }
+    this.askedSignInAs = { requestId: wait.requestId, ...began }
     return wait
   }
 
@@ -8886,6 +9013,8 @@ export class TeamStationClient {
     xhr.setRequestHeader(PROTOCOL_HEADER, String(GAME_SOCKET_PROTOCOL))
     if (this.token != null)
       xhr.setRequestHeader('authorization', `Bearer ${this.token}`)
+    const actor = this.cookieActor
+    if (actor != null) xhr.setRequestHeader(EXPECTED_ACTOR_HEADER, actor)
     xhr.send(body === undefined ? undefined : JSON.stringify(body))
   }
 
@@ -8912,6 +9041,9 @@ export class TeamStationClient {
       headers['x-teamstation-app'] = this.analyticsApp
     headers[PROTOCOL_HEADER] = String(GAME_SOCKET_PROTOCOL)
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
+    const actor = this.cookieActor
+    if (actor != null && headers[EXPECTED_ACTOR_HEADER] == null)
+      headers[EXPECTED_ACTOR_HEADER] = actor
     const json =
       bytes == null && body !== undefined ? JSON.stringify(body) : undefined
     // A link that takes the request and then stalls answers nothing: past

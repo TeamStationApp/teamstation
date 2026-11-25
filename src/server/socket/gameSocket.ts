@@ -16,6 +16,7 @@ import {
   type UserTopic
 } from '../../common/gameSocket'
 import { usesOverrideSlots } from '../../common/scoring/actions'
+import { socketActorMatches } from '../../common/webPasswordLink'
 import {
   canSeeGame,
   canSeeTeam,
@@ -1490,6 +1491,10 @@ export function attachGameSocket(
     }
     actorForToken(db, token)
       .then(async actor => {
+        if (!socketActorMatches(req.url, actor?.userId)) {
+          refuseUpgrade(socket, 403, 'Forbidden')
+          return
+        }
         if (actor == null) {
           refuseUpgrade(socket, 401, 'Unauthorized')
           return

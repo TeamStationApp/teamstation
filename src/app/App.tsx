@@ -34,6 +34,7 @@ import { isUmpireNotice } from '../common/notifications'
 import { managesRoster } from '../common/roles'
 import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
+import { SIGNED_OUT_ACTOR } from '../common/webPasswordLink'
 import { tsLogoSource } from './assets'
 import {
   ChatAgeContext,
@@ -100,7 +101,8 @@ import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
 import {
   openSearchSocket,
-  SearchSocketFactoryContext
+  SearchSocketFactoryContext,
+  searchSocketForActor
 } from './hooks/searchSocketFactory'
 import { useForegroundEntry } from './hooks/useForegroundEntry'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
@@ -784,7 +786,8 @@ function Shell(props: AppProps): React.ReactElement {
       const left = sessionTurn.current
       Promise.allSettled([releasing, forgotten])
         .then(async () => {
-          if (sessionTurn.current === left) await client.signOut()
+          if (sessionTurn.current === left)
+            await client.signOut(session?.user.id)
         })
         .catch(() => undefined)
     }
@@ -893,6 +896,14 @@ function Shell(props: AppProps): React.ReactElement {
    * can do is hide a tab.
    */
   const signedInAs = session?.user.id
+  const browserActor = client.coordinatesBrowserSession
+    ? (signedInAs ?? SIGNED_OUT_ACTOR)
+    : undefined
+  const openSearch = props.searchSocketFactory ?? openSearchSocket
+  const searchSocketFactory = useMemo(
+    () => searchSocketForActor(openSearch, browserActor),
+    [openSearch, browserActor]
+  )
   // A refused save keeps its plays on the device for the person signed in.
   useEffect(() => {
     scoringSource.account = signedInAs
@@ -1009,8 +1020,12 @@ function Shell(props: AppProps): React.ReactElement {
     () =>
       signedInAs == null
         ? undefined
-        : new GameSocket({ baseUrl: apiBaseUrl, token: client.token }),
-    [apiBaseUrl, client, signedInAs]
+        : new GameSocket({
+            baseUrl: apiBaseUrl,
+            token: client.token,
+            expectedActor: browserActor
+          }),
+    [apiBaseUrl, client, signedInAs, browserActor]
   )
   useEffect(() => {
     gameSocketRef.current = gameSocket
@@ -2863,7 +2878,7 @@ function Shell(props: AppProps): React.ReactElement {
           signedIn={session != null}
           onOpenGroup={openGroup}
           onOpenPerson={openPlayer}
-          searchSocketFactory={props.searchSocketFactory}
+          searchSocketFactory={searchSocketFactory}
         />
       ) : tab === 'videos' ? (
         <GamesFeedScreen
@@ -2895,7 +2910,7 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenPerson={openPlayer}
         // Signed out, no row can be followed, so none is offered.
         follow={top.follow === true && session != null}
-        searchSocketFactory={props.searchSocketFactory}
+        searchSocketFactory={searchSocketFactory}
       />
     ) : top.name === 'createGroup' ? (
       <CreateGroupScreen
@@ -4013,6 +4028,9 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreboardOverride' ? (
       <ScoreboardOverrideScreen
+        expectedActor={
+          client.coordinatesBrowserSession ? signedInAs : undefined
+        }
         apiBaseUrl={apiBaseUrl}
         gameId={top.gameId}
         token={client.token}
@@ -4408,9 +4426,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   const shell = withChatKeyboard(
     <GestureHandlerRootView style={styles.root}>
-      <SearchSocketFactoryContext.Provider
-        value={props.searchSocketFactory ?? openSearchSocket}
-      >
+      <SearchSocketFactoryContext.Provider value={searchSocketFactory}>
         <DeviceApprovalContext.Provider value={deviceApprovals}>
           <ChatOverlayHost>
             <TessOverlayProvider active={tessColumn}>

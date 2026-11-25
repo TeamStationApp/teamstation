@@ -1,4 +1,10 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 
@@ -45,10 +51,14 @@ export function mergeCoverage(dir: string, output: string): number {
   }
   const merged = createCoverageMap({})
   const files = readdirSync(dir).filter(name => name.endsWith('.json'))
+  const measured: unknown[] = []
   for (const file of files) {
+    const raw = join(dir, file + '.v8')
+    if (existsSync(raw)) measured.push(...JSON.parse(readFileSync(raw, 'utf8')))
     merged.merge(JSON.parse(readFileSync(join(dir, file), 'utf8')))
   }
   mkdirSync(dirname(output), { recursive: true })
   writeFileSync(output, JSON.stringify(merged.toJSON()))
+  writeFileSync(output + '.v8', JSON.stringify(measured))
   return files.length
 }
