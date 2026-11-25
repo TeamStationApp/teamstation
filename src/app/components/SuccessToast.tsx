@@ -6,6 +6,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { NAV_CLEARANCE_REM } from './AppNav'
 import { GlassView } from './GlassView'
 import { useBreakpoint } from './useBreakpoint'
+import { useMotionPreference } from './useMotionPreference'
 
 export interface SuccessNotice {
   id: number
@@ -26,18 +27,28 @@ export function SuccessToast({
   const insets = useInsets()
   const phone = useBreakpoint() === 'phone'
   const [visible, setVisible] = useState(false)
-  const opacity = useRef(new Animated.Value(1)).current
+  const opacity = useRef(new Animated.Value(0)).current
+  const reduced = useMotionPreference()
+  const reducedMotion = useRef(reduced)
+  useEffect(() => {
+    reducedMotion.current = reduced
+  }, [reduced])
   useEffect(() => {
     if (notice == null) {
       setVisible(false)
+      opacity.setValue(0)
       return
     }
     setVisible(true)
-    opacity.setValue(1)
+    Animated.timing(opacity, {
+      toValue: 1,
+      duration: reducedMotion.current ? 90 : 160,
+      useNativeDriver: Platform.OS !== 'web'
+    }).start()
     const timer = setTimeout(() => {
       Animated.timing(opacity, {
         toValue: 0,
-        duration: 250,
+        duration: reducedMotion.current ? 90 : 250,
         useNativeDriver: Platform.OS !== 'web'
       }).start(({ finished }) => {
         if (finished) setVisible(false)
@@ -51,6 +62,9 @@ export function SuccessToast({
   if (!visible || notice == null) return null
   return (
     <Animated.View
+      dataSet={
+        Platform.OS === 'web' ? { offlineBannerDock: 'true' } : undefined
+      }
       pointerEvents="none"
       style={[
         styles.position,
