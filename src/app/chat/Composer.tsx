@@ -18,6 +18,12 @@ import {
   TextInput,
   View
 } from 'react-native'
+import Reanimated, {
+  FadeIn,
+  FadeOut,
+  LinearTransition,
+  ReduceMotion
+} from 'react-native-reanimated'
 
 import { Icon } from '../components'
 import { ButtonIcon } from '../components/ButtonIcon'
@@ -162,22 +168,25 @@ export function Composer(props: ComposerProps): React.ReactElement {
   }, [choosing, web])
   const angle = useRef(new Animated.Value(0)).current
   const reduced = useMotionPreference()
-  useEffect(() => {
-    const target = choosing ? 1 : 0
-    if (reduced) {
-      angle.setValue(target)
-      return
-    }
+  // The browser menu floats outside its row. Keep its last frame mounted until
+  // the exit finishes, including when another tap reverses that exit.
+  const fadeIn = reduced ? reducedEntrance : entrance
+  const fadeOut = reduced ? reducedExit : exit
+  const [menuExiting, setMenuExiting] = useState(false)
+  useLayoutEffect(() => {
+    if (web && choosing) setMenuExiting(true)
     const animation = Animated.timing(angle, {
-      toValue: target,
-      duration: 150,
-      useNativeDriver: Platform.OS !== 'web'
+      toValue: choosing ? 1 : 0,
+      duration: reduced ? 95 : 150,
+      useNativeDriver: !web
     })
-    animation.start()
+    animation.start(({ finished }) => {
+      if (finished && web && !choosing) setMenuExiting(false)
+    })
     return () => {
       animation.stop()
     }
-  }, [choosing, angle, reduced])
+  }, [choosing, angle, reduced, web])
   const input = useRef<React.ComponentRef<typeof TextInput>>(null)
   useLayoutEffect(() => {
     if (web) sizeComposerText(input.current)
@@ -244,6 +253,18 @@ export function Composer(props: ComposerProps): React.ReactElement {
     text.trim() !== '' ||
     attachments.length > 0 ||
     (context?.kind === 'edit' && context.hasAttachments === true)
+  const sendProgress = useRef(new Animated.Value(showSend ? 1 : 0)).current
+  useLayoutEffect(() => {
+    const animation = Animated.timing(sendProgress, {
+      toValue: showSend ? 1 : 0,
+      duration: reduced ? 95 : 150,
+      useNativeDriver: false
+    })
+    animation.start()
+    return () => {
+      animation.stop()
+    }
+  }, [reduced, showSend, sendProgress])
   const acceptsShortcut =
     takes &&
     props.preparing !== true &&
@@ -346,7 +367,8 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const compactSources =
     !web && (props.attachmentPanelHeight ?? 260) < theme.rem(6)
   const showSources =
-    canAttach && (choosing || (!web && props.returningToKeyboard === true))
+    canAttach &&
+    (choosing || (web ? menuExiting : props.returningToKeyboard === true))
   const sourceButtons =
     showSources &&
     props.sources.map(source => (
@@ -378,17 +400,18 @@ export function Composer(props: ComposerProps): React.ReactElement {
       </Pressable>
     ))
   const panel = showSources && (
-    <View
+    <Animated.View
       ref={panelRef}
       testID={choosing ? 'chat-attachment-panel' : undefined}
       pointerEvents={choosing ? 'auto' : 'none'}
       accessibilityElementsHidden={!choosing}
       importantForAccessibility={choosing ? 'auto' : 'no-hide-descendants'}
-      style={
+      style={[
         web
           ? styles.webMenu
-          : [styles.sources, { height: props.attachmentPanelHeight ?? 260 }]
-      }
+          : [styles.sources, { height: props.attachmentPanelHeight ?? 260 }],
+        { opacity: angle }
+      ]}
     >
       {web ? (
         <View style={styles.menuRows}>{sourceButtons}</View>
@@ -403,13 +426,18 @@ export function Composer(props: ComposerProps): React.ReactElement {
           {sourceButtons}
         </ScrollView>
       )}
-    </View>
+    </Animated.View>
   )
 
   return (
     <View style={styles.composer}>
       {context != null && (
-        <View style={styles.chip}>
+        <Reanimated.View
+          key={context.kind}
+          style={styles.chip}
+          entering={fadeIn}
+          exiting={fadeOut}
+        >
           <View style={styles.chipText}>
             <Text style={styles.chipTitle}>
               {context.kind === 'reply'
@@ -439,10 +467,14 @@ export function Composer(props: ComposerProps): React.ReactElement {
               color={theme.secondaryTextColor}
             />
           </Pressable>
-        </View>
+        </Reanimated.View>
       )}
       {attachments.length > 0 && (
-        <View style={styles.files}>
+        <Reanimated.View
+          style={styles.files}
+          entering={fadeIn}
+          exiting={fadeOut}
+        >
           {attachments.map((file, index) => (
             <View
               key={`${file.fileName}-${index}`}
@@ -479,7 +511,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
               </Pressable>
             </View>
           ))}
-        </View>
+        </Reanimated.View>
       )}
       <ChatComposerRow style={styles.row} collapsable={false}>
         {web && panel}
@@ -506,10 +538,14 @@ export function Composer(props: ComposerProps): React.ReactElement {
               style={{
                 transform: [
                   {
-                    rotate: angle.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0deg', '45deg']
-                    })
+                    rotate: reduced
+                      ? choosing
+                        ? '45deg'
+                        : '0deg'
+                      : angle.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['0deg', '45deg']
+                        })
                   }
                 ]
               }}
@@ -523,9 +559,14 @@ export function Composer(props: ComposerProps): React.ReactElement {
             </Animated.View>
           </Pressable>
         )}
-        <View
+        <Reanimated.View
+          layout={!web && !reduced ? resizeField : undefined}
           testID="chat-composer-field"
-          style={[styles.field, !enabled && styles.inputOff]}
+          style={[
+            styles.field,
+            props.sources.length > 0 && styles.afterToggle,
+            !enabled && styles.inputOff
+          ]}
         >
           {Platform.OS === 'ios' && (
             // UITextView can change its intrinsic height on blur. Measure the
@@ -624,12 +665,27 @@ export function Composer(props: ComposerProps): React.ReactElement {
               />
             </Pressable>
           )}
-        </View>
-        {showSend && (
+        </Reanimated.View>
+        <Animated.View
+          pointerEvents={showSend ? 'auto' : 'none'}
+          accessibilityElementsHidden={!showSend}
+          importantForAccessibility={showSend ? 'auto' : 'no-hide-descendants'}
+          style={[
+            styles.sendSlot,
+            {
+              width: sendProgress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, theme.rem(3)]
+              }),
+              opacity: sendProgress
+            }
+          ]}
+        >
           <Pressable
-            accessibilityRole="button"
-            testID="chat-send"
-            accessibilityLabel={lstrings.chat_send}
+            accessible={showSend}
+            accessibilityRole={showSend ? 'button' : undefined}
+            testID={showSend ? 'chat-send' : undefined}
+            accessibilityLabel={showSend ? lstrings.chat_send : undefined}
             accessibilityState={{ disabled: !canSend }}
             disabled={!canSend}
             onPress={props.onSend}
@@ -644,7 +700,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
               color={canSend ? theme.buttonTextColor : theme.tertiaryTextColor}
             />
           </Pressable>
-        )}
+        </Animated.View>
       </ChatComposerRow>
       {!web && panel}
       {emoji && (
@@ -663,6 +719,13 @@ export function Composer(props: ComposerProps): React.ReactElement {
   )
 }
 
+// Keep the builders stable across keystrokes and message arrivals.
+const entrance = FadeIn.duration(150)
+const exit = FadeOut.duration(150)
+const reducedEntrance = FadeIn.duration(95).reduceMotion(ReduceMotion.Never)
+const reducedExit = FadeOut.duration(95).reduceMotion(ReduceMotion.Never)
+const resizeField = LinearTransition.duration(150)
+
 const getStyles = cacheStyles((theme: Theme) => ({
   composer: {
     gap: theme.rem(theme.spaceXsRem),
@@ -670,9 +733,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   row: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: theme.rem(0.25)
+    alignItems: 'flex-end'
   },
+  afterToggle: { marginLeft: theme.rem(0.25) },
+  sendSlot: { alignItems: 'flex-end', overflow: 'hidden' },
   icon: {
     width: theme.rem(2.75),
     height: theme.rem(2.75),

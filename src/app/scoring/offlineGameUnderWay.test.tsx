@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { mock } from 'node:test'
 
 import { expect } from 'chai'
 import { afterEach, before, beforeEach, describe, it } from 'mocha'
@@ -488,27 +489,33 @@ describe('a game under way, read ahead and opened with no signal', function () {
     const { net, release } = await coachOffline()
     net.refused.set('/games/g1/plans', 503)
     net.hold = undefined
-    release()
-    // When each read of the plan sets out, watched over the waits of 100,
-    // 200 and 400 ms the client takes.
-    const times: number[] = []
-    const started = Date.now()
-    let seen = 0
-    while (Date.now() - started < 1500) {
-      const count = net.requested.filter(
-        path => path === '/games/g1/plans'
-      ).length
-      for (; seen < count; seen++) times.push(Date.now())
-      await settle(5)
+    const requests = (): number =>
+      net.requested.filter(path => path === '/games/g1/plans').length
+    const advance = async (ms: number): Promise<void> => {
+      await act(async () => {
+        mock.timers.tick(ms)
+      })
     }
-    const gaps = times.slice(1).map((at, index) => at - times[index])
-    expect(gaps.length, 'tried again, then given up').within(2, 4)
-    // Each wait longer than the one before.
-    for (let at = 1; at < gaps.length; at++)
-      expect(gaps[at]).greaterThan(gaps[at - 1] * 1.5)
-    net.requested.length = 0
-    await settle(900)
-    expect(net.requested, 'given up').not.includes('/games/g1/plans')
+    mock.timers.enable({ apis: ['setTimeout'] })
+    try {
+      await act(async () => {
+        release()
+      })
+      const initial = requests()
+      expect(initial).greaterThan(0)
+      let expected = initial
+      for (const delay of [100, 200, 400]) {
+        await advance(delay - 1)
+        expect(requests(), 'wait until the retry is due').equals(expected)
+        await advance(1)
+        expected++
+        expect(requests(), 'one more request at the deadline').equals(expected)
+      }
+      await advance(5000)
+      expect(requests(), 'given up after the third retry').equals(expected)
+    } finally {
+      mock.timers.reset()
+    }
   })
 
   it('reads Coach Game’s plan again when the server’s, read behind the phone’s copy, differs (2.harness-review.3)', async function () {

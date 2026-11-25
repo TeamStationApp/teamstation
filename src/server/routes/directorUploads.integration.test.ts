@@ -384,7 +384,14 @@ describe('a Director sending a recording in', function () {
     const quiet = console.error
     const said: string[] = []
     before(function () {
-      console.error = (line: unknown) => said.push(String(line))
+      console.error = (line: unknown, ...details: unknown[]) => {
+        if (
+          typeof line === 'string' &&
+          line.startsWith('reopening interrupted uploads:')
+        )
+          said.push(line)
+        else quiet(line, ...details)
+      }
     })
     after(function () {
       console.error = quiet
@@ -425,7 +432,9 @@ describe('a Director sending a recording in', function () {
       while ((await stateOf(id)) !== 'open' && Date.now() < deadline)
         await new Promise(resolve => setTimeout(resolve, 10))
       expect(await stateOf(id)).equals('open')
-      expect(said.length).equals(2)
+      const failure =
+        'reopening interrupted uploads: Error: timeout exceeded when trying to connect'
+      expect(said).deep.equals([failure, failure])
     })
 
     it('logs any other failure and leaves it', async function () {

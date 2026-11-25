@@ -5,12 +5,14 @@ import { after, afterEach, before, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import type * as NativeBand from './ChatComposerBand.native'
 import type * as NativeHistory from './ChatHistoryList.native'
 import type {
   ChatHistoryHandle,
   ChatHistoryKeyboard,
   ChatHistoryListProps
 } from './chatHistoryListTypes'
+import type { ChatComposerBandProps } from './ChatViewport'
 
 /**
  * The phone's history list over stand-ins for Legend List's keyboard
@@ -19,8 +21,27 @@ import type {
  */
 describe('native virtualized chat history', function () {
   let history: typeof NativeHistory
+  let composerBand: typeof NativeBand
+  interface KeyboardFrame {
+    height: number
+    progress: number
+  }
+  let frameHandlers: {
+    onStart?: (event: KeyboardFrame) => void
+    onMove: (event: KeyboardFrame) => void
+    onInteractive: (event: KeyboardFrame) => void
+    onEnd: (event: KeyboardFrame) => void
+  }
+  let initialKeyboardHeight = 0
+  let sampleStyle: () => { transform: Array<{ translateY: number }> }
+  let bandBottom: number
   const saved = new Map<string, NodeJS.Module | undefined>()
-  const platform = { OS: 'android' }
+  const platform = { OS: 'android', isPad: false }
+  interface GuideProps {
+    onChatKeyboardInset: (event: { height: number }) => void
+    onChatKeyboardRest: (event: { nativeEvent: { height: number } }) => void
+  }
+  let guide: GuideProps
   const shown = new Set<() => void>()
   const enabled: boolean[] = []
   const providers: Array<{ enabled: boolean }> = []
@@ -69,8 +90,29 @@ describe('native virtualized chat history', function () {
   }
 
   before(async function () {
-    stand('react-native', { Platform: platform })
+    stand('react-native', {
+      Platform: platform,
+      Dimensions: { get: () => ({ width: 1210, height: 834 }) },
+      StyleSheet: { absoluteFill: {} },
+      requireNativeComponent: (name: string) => {
+        expect(name).equals('TSChatKeyboardGuide')
+        return (props: GuideProps) => {
+          guide = props
+          return null
+        }
+      }
+    })
     stand('react-native-reanimated', {
+      createAnimatedComponent: (component: unknown) => component,
+      useEvent: (handler: unknown) => handler,
+      View: ({ style }: { style: [unknown, { bottom: number }, unknown] }) => {
+        bandBottom = style[1].bottom
+        return null
+      },
+      useAnimatedStyle: (sample: typeof sampleStyle) => {
+        sampleStyle = sample
+        return sample()
+      },
       useSharedValue: (initial: unknown) =>
         React.useRef({ value: initial }).current,
       useDerivedValue: (derive: () => unknown) => ({
@@ -80,6 +122,13 @@ describe('native virtualized chat history', function () {
       })
     })
     stand('react-native-keyboard-controller', {
+      useGenericKeyboardHandler: (handlers: typeof frameHandlers) => {
+        frameHandlers = handlers
+      },
+      KeyboardGestureArea: (props: {
+        children: React.ReactNode
+      }): React.ReactElement =>
+        React.createElement(React.Fragment, null, props.children),
       KeyboardProvider: (props: {
         enabled: boolean
         children: React.ReactNode
@@ -91,7 +140,10 @@ describe('native virtualized chat history', function () {
         setEnabled: (value: boolean) => enabled.push(value)
       }),
       // No keyboard up: a conversation that leaves lets go at once.
-      KeyboardController: { isVisible: () => false },
+      KeyboardController: {
+        isVisible: () => initialKeyboardHeight > 0,
+        state: () => ({ height: initialKeyboardHeight })
+      },
       KeyboardEvents: {
         addListener: (name: string, callback: () => void) => {
           if (name === 'keyboardDidShow') shown.add(callback)
@@ -126,6 +178,7 @@ describe('native virtualized chat history', function () {
       })
     })
     history = await import('./ChatHistoryList.native')
+    composerBand = await import('./ChatComposerBand.native')
   })
 
   after(function () {
@@ -138,6 +191,7 @@ describe('native virtualized chat history', function () {
   let root: Root | undefined
   let host: HTMLElement | undefined
   afterEach(async function () {
+    initialKeyboardHeight = 0
     if (root != null)
       await act(async () => {
         root!.unmount()
@@ -148,6 +202,7 @@ describe('native virtualized chat history', function () {
     providers.length = 0
     calls.length = 0
     platform.OS = 'android'
+    platform.isPad = false
     atEnd = false
   })
 
@@ -159,12 +214,15 @@ describe('native virtualized chat history', function () {
   type Over = Partial<ChatHistoryListProps<string>> & {
     active?: boolean
     attachmentHandoff?: boolean
+    onTabletKeyboardRest?: (height: number) => void
     onKeyboardReturnSettled?: () => void
   }
   function Screen(props: { over: Over; state: Harness }): React.ReactElement {
     const { over, state } = props
     const keyboard = history.useChatHistoryKeyboard({
       closedClearance: 100,
+      dockClearance: 33,
+      onTabletKeyboardRest: over.onTabletKeyboardRest,
       keyboardOffset: 92,
       attachmentHandoff: over.attachmentHandoff,
       onKeyboardReturnSettled: over.onKeyboardReturnSettled,
@@ -224,6 +282,101 @@ describe('native virtualized chat history', function () {
       root!.render(element)
     })
   }
+
+  it('follows intermediate native keyboard frames through a reversal, handoff and pane switch', async function () {
+    const frame = { value: { height: 0, progress: 0, revision: 0 } }
+    const render = async (
+      consumed: number,
+      follow = true,
+      active = true
+    ): Promise<void> => {
+      const viewport: ChatComposerBandProps['viewport'] = {
+        composerBottom: 32,
+        composerDock: { bottom: 88, gap: 8, consumed, follow }
+      }
+      await mount(
+        React.createElement(composerBand.ChatComposerBand, {
+          active,
+          viewport,
+          frame
+        })
+      )
+    }
+    function shift(height: number, progress: number): number {
+      frame.value = { height, progress, revision: frame.value.revision + 1 }
+      return sampleStyle().transform[0].translateY
+    }
+    await render(0)
+    expect(bandBottom).equals(88)
+    expect(shift(0, 0)).equals(0)
+    expect(shift(150, 0.5)).equals(-110)
+    expect(shift(300, 1)).equals(-220)
+    expect(shift(225, 0.75)).equals(-165)
+    expect(shift(270, 0.9)).equals(-198)
+    await render(60)
+    expect(shift(150, 0.5)).equals(-50)
+    expect(shift(0, 0)).equals(0)
+    await render(60, false)
+    expect(bandBottom).equals(32)
+    expect(shift(300, 1)).equals(0)
+    await render(60, true, false)
+    expect(shift(225, 0.75)).equals(0)
+  })
+  it('uses the docked iPad guide for the band and history throughout rotation and interactive dismissal', async function () {
+    platform.OS = 'ios'
+    platform.isPad = true
+    const settled: number[] = []
+    const { element, state } = harness({
+      onTabletKeyboardRest: height => settled.push(height)
+    })
+    await mount(element)
+    expect(listProps.keyboardOffset).equals(1210)
+    expect(listProps.keyboardLiftBehavior).equals('whenAtEnd')
+    const inset = listProps.contentInsetEndAdjustment as { value: number }
+    const keyboard = state.keyboard.current!
+    const lift = keyboard.tabletLift!
+    frameHandlers.onMove({ height: 1210, progress: 1 })
+    for (const height of [0, 154, 427, 234, 334, 0]) {
+      guide.onChatKeyboardInset({ height })
+      expect(lift.value).equals(Math.max(0, height - 33))
+      expect(inset.value).equals(156 + lift.value)
+    }
+    guide.onChatKeyboardRest({ nativeEvent: { height: 0 } })
+    expect(settled).deep.equals([0])
+    expect(calls, 'An older reader receives no scroll command').deep.equals([])
+    guide.onChatKeyboardInset({ height: 427 })
+    const viewport = {
+      composerBottom: 435,
+      composerDock: { bottom: 41, gap: 8, consumed: 427, follow: true }
+    }
+    for (const active of [true, false]) {
+      await mount(
+        React.createElement(composerBand.ChatComposerBand, {
+          viewport,
+          active,
+          frame: keyboard.frame,
+          tabletLift: lift
+        })
+      )
+      expect(sampleStyle().transform[0].translateY).equals(active ? -394 : 0)
+    }
+  })
+
+  it('distinguishes a static keyboard from an interactive gesture that reverses to its starting height', async function () {
+    initialKeyboardHeight = 300
+    const { element, state } = harness()
+    await mount(element)
+    const frame = state.keyboard.current!.frame!
+    frameHandlers.onStart?.({ height: 0, progress: 0 })
+    expect(frame.value).to.deep.equal({ height: 300, progress: 1, revision: 0 })
+    frameHandlers.onMove({ height: 300, progress: 1 })
+    frameHandlers.onInteractive({ height: 230, progress: 0.77 })
+    frameHandlers.onInteractive({ height: 300, progress: 1 })
+    expect(frame.value).to.deep.equal({ height: 300, progress: 1, revision: 2 })
+    frameHandlers.onMove({ height: 90, progress: 0.3 })
+    frameHandlers.onEnd({ height: 0, progress: 0 })
+    expect(frame.value).to.deep.equal({ height: 0, progress: 0, revision: 4 })
+  })
 
   it('holds the existing keyboard inset while the source panel replaces the keyboard', async function () {
     const { element, state } = harness()

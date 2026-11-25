@@ -83,6 +83,13 @@ async function edit(ctx: E2eContext): Promise<void> {
           userId: author.person.userId
         })
       }
+      const send =
+        platform === 'ios'
+          ? { id: 'chat-send', enabled: true }
+          : { text: '^Send$' }
+      const back = platform === 'ios' ? { id: 'Back' } : { text: '^Back$' }
+      const cancelEdit =
+        platform === 'ios' ? { id: 'Cancel edit' } : { text: '^Cancel edit$' }
       const row = (id: string): string => 'chat-message-' + id
       const openMenu = async (id: string): Promise<void> => {
         if (web != null) {
@@ -105,7 +112,7 @@ async function edit(ctx: E2eContext): Promise<void> {
           if (!present)
             await m.scrollUntilVisible({
               element: target,
-              direction: 'up',
+              direction: id === incoming.id ? 'down' : 'up',
               timeout: 12000
             })
           await revealChatTarget(m, node => node.id === bubbleId)
@@ -297,7 +304,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       )
       await dismissAsk()
       // Use in-app Back so the two conversations retain their draft owner.
-      await m.tapOn({ text: '^Back$', timeout: 10000 })
+      await m.tapOn({ ...back, timeout: 10000 })
       const listId = 'chat-conversation-' + room
       await m.assertVisible({ id: listId })
       const openListedConversation = async (id: string): Promise<void> => {
@@ -347,7 +354,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       await m.assertVisible(field)
       await m.assertNotVisible({ text: '^Editing your message$' })
       await dismissAsk()
-      await m.tapOn({ text: '^Back$', timeout: 10000 })
+      await m.tapOn({ ...back, timeout: 10000 })
       await openListedConversation(listId)
       await m.assertVisible({ text: '^Editing your message$' })
       assert.equal(
@@ -356,7 +363,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       )
 
       await dismissAsk()
-      await m.tapOn({ text: '^Cancel edit$', timeout: 10000 })
+      await m.tapOn({ ...cancelEdit, timeout: 10000 })
       if (web != null) await m.assertVisible({ text: '^Remove equipment.txt$' })
       assert.equal(await readChatComposer(m, platform, web), draft)
       await openMenu(original.id)
@@ -368,7 +375,7 @@ async function edit(ctx: E2eContext): Promise<void> {
         id: 'chat-dismiss-link-preview',
         timeout: 18000
       })
-      await m.tapOn({ text: '^Send$' })
+      await m.tapOn(send)
       const expectSavedDraft = async (): Promise<void> => {
         if (platform !== 'android') {
           await m.assertNotVisible({
@@ -434,7 +441,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       // Removing the preview changes the composer height. Tap its settled Send
       // button after the card and multiline caption have collapsed.
       if (web == null) await m.waitForAnimationToEnd()
-      await m.tapOn({ text: '^Send$' })
+      await m.tapOn(send)
       await expectSavedDraft()
       const cleared = await readBack('')
       assert.deepEqual(cleared.attachments, original.attachments)

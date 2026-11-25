@@ -382,4 +382,7 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       value: 1280
     })
   }
-}).timeout(10000)
+}).timeout(
+  // Mounting the shell for each route takes longer while V8 records coverage.
+  process.env.NODE_V8_COVERAGE == null ? 10000 : 30000
+)

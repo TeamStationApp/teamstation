@@ -5900,8 +5900,26 @@ async function main(): Promise<void> {
       )
       await revealMessage(fixture.conversationId, posts[0].id)
       await physicalMessageHold(m, `chat-message-${posts[0].id}`, body, 550)
-      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
-        await m.assertVisible({ text: action, timeout: 10000 })
+      for (const action of ['Reply', 'Edit', 'Copy'])
+        await m.assertVisible({ text: action })
+      const menu = flatten(await m.hierarchy())
+      if (
+        !menu.some(node => node.text === 'Delete' || node.label === 'Delete')
+      ) {
+        const panel = menu.find(
+          node => node.id === 'chat-message-spotlight-panel'
+        )?.bounds
+        assert(panel != null, 'The message action list must be open')
+        const x = Math.round(panel.x + panel.width / 2)
+        await m.swipe({
+          startX: x,
+          endX: x,
+          startY: Math.round(panel.y + panel.height * 0.8),
+          endY: Math.round(panel.y + panel.height * 0.2),
+          duration: 350
+        })
+      }
+      await m.assertVisible({ text: 'Delete' })
       await photo('own-message-actions-after')
       await m.tapOnPoint({ point: '5%,15%' })
       results.replySend = {
