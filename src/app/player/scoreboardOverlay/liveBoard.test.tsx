@@ -433,6 +433,27 @@ describe('the live scoreboard timeline (U36)', function () {
     expect(asks()).greaterThan(opened + 2)
   })
 
+  it('reads the whole window once after its socket drops, however many reconnects fail', async function () {
+    const h = await setup({}, [boardStep(OVERLAY_T0)])
+    h.playhead.wall = OVERLAY_T0 + 120_000
+    h.sockets.latest().open()
+    await flush()
+    const asked = boardAsks(h.server).length
+    h.sockets.latest().drop(1006)
+    let tried = h.sockets.sockets.length
+    for (let elapsed = 0; elapsed < BOARD_POLL_MS * 2; elapsed += 1000) {
+      await advance(h.clock, 1000)
+      if (h.sockets.sockets.length === tried) continue
+      tried = h.sockets.sockets.length
+      h.sockets.latest().drop(1006)
+    }
+    expect(tried).greaterThan(3)
+    expect(boardAsks(h.server).slice(asked)).deep.equals([
+      OVERLAY_T0,
+      OVERLAY_T0 + 120_000 - LOOK_BACK_MS
+    ])
+  })
+
   it('keeps polling when the board is gone for good, and when the request fails', async function () {
     const h = await setup({}, [boardStep(OVERLAY_T0)])
     h.sockets.latest().open()

@@ -392,7 +392,9 @@ export function makeScoreboardHub(
    * with sockets is read once whenever either connection is ready again. A
    * timeline notice lost the same way cannot be read back, so each
    * `timeline=1` socket is told its timeline may have changed: its socket
-   * stayed open throughout, so nothing else would make it fetch again.
+   * stayed open throughout, so nothing else would make it fetch again. The
+   * lost notice's `fromMs` is unknown, so the socket reads its whole window,
+   * once for each reconnect of this worker's connection.
    */
   function resync(): void {
     for (const room of rooms.values()) {

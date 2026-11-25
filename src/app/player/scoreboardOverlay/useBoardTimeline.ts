@@ -165,8 +165,10 @@ export function useBoardTimeline(
             changed.current?.()
           },
           onClose: () => {
-            // A notice with an older correction can be missed while disconnected.
-            invalidFrom = fromMs
+            // A notice with an older correction can be missed while
+            // disconnected: the next fetch reads the whole window, once a
+            // drop, and not again for each reconnect that fails.
+            if (open) invalidFrom = fromMs
             open = false
           },
           onMessage: data => {
