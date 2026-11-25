@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer } from 'react'
 
+import type { AttachmentRef } from '../../common/chatContent'
 import {
   type ChatLinkPreview,
   withoutThumbnail
@@ -24,6 +25,8 @@ interface Draft {
   page?: PreviewMetadata
   /** The image step is over: uploaded, absent or refused. */
   settled?: boolean
+  /** An upload outlives the run that started it; a later run awaits it. */
+  upload?: Promise<AttachmentRef>
 }
 type PreviewEngine = Pick<ChatScreenEngine, 'uploadPreviewThumbnail'>
 const drafts = new WeakMap<PreviewEngine, Map<string, Draft>>()
@@ -107,17 +110,23 @@ export function useChatLinkPreview(
         draft.settled = true
         return
       }
-      const file = await source.previewThumbnail(imageUrl, signal)
-      if (!live()) return
-      if (file == null) {
-        draft.settled = true
-        return
+      let upload = draft.upload
+      if (upload == null) {
+        const file = await source.previewThumbnail(imageUrl, signal)
+        if (!live()) return
+        if (file == null) {
+          draft.settled = true
+          return
+        }
+        const started = engine.uploadPreviewThumbnail(conversationId, file)
+        upload = draft.upload = started
+        // A failed upload is tried again by a later run.
+        started.catch(() => {
+          if (draft.upload === started) delete draft.upload
+        })
       }
       clearTimeout(deadline)
-      const thumbnail = await engine.uploadPreviewThumbnail(
-        conversationId,
-        file
-      )
+      const thumbnail = await upload
       if (live()) {
         draft.ready = { ...metadata, thumbnail }
         draft.uploadedAt = Date.now()

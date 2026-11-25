@@ -285,6 +285,41 @@ describe('chat link preview drafts', function () {
     await settled()
     expect([reads, images]).deep.equals([1, 2])
   })
+  it('awaits an upload a pause interrupted instead of uploading again', async () => {
+    let images = 0
+    let uploads = 0
+    let finish: ((value: AttachmentRef) => void) | undefined
+    transport.readPreviewPage = async () =>
+      '<title>Fixture</title><meta property="og:image" content="thumb.jpg">'
+    transport.previewThumbnail = async () => {
+      images++
+      return {
+        fileName: ref.fileName,
+        contentType: ref.contentType,
+        bytes: Uint8Array.of(1, 2, 3)
+      }
+    }
+    const engine: PreviewEngine = {
+      uploadPreviewThumbnail: async () => {
+        uploads++
+        return await new Promise(resolve => {
+          finish = resolve
+        })
+      }
+    }
+    await show(engine, url)
+    await settled()
+    expect(uploads).equals(1)
+    await show(engine, url, 'c1', undefined, false)
+    await act(async () => {
+      finish!(ref)
+    })
+    expect(latest.preview?.thumbnail).equals(undefined)
+    await show(engine, url)
+    await settled()
+    expect(latest.preview?.thumbnail).equals(ref)
+    expect([images, uploads]).deep.equals([1, 1])
+  })
   it('opens only the typed address from a received card, preserves holds and loads its encrypted thumbnail', async () => {
     host = document.createElement('div')
     document.body.append(host)
