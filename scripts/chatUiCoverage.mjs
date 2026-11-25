@@ -147,6 +147,7 @@ const specs = [
   'src/server/socket/gameSocket.integration.test.ts',
   'src/server/socket/fanout.integration.test.ts',
   'src/common/api.test.ts',
+  'e2e/rigs/chat/composerMotion.test.ts',
   'src/common/age.test.ts',
   'src/app/scoring/microphone.test.ts',
   'src/app/components/iconFont.test.ts',

@@ -3,8 +3,6 @@ import { randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import type { HTTPRequest } from 'puppeteer'
-
 import type { ChatLinkPreview } from '../../../../src/common/chatLinkPreview'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
@@ -274,6 +272,7 @@ async function send(ctx: E2eContext): Promise<void> {
           )
         })
       } else {
+        type HTTPRequest = Awaited<ReturnType<typeof web.page.waitForRequest>>
         let held: HTTPRequest | undefined
         const intercept = (request: HTTPRequest): void => {
           if (request.isInterceptResolutionHandled()) return
