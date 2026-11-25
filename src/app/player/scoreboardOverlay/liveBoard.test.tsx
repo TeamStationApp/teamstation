@@ -17,6 +17,7 @@ import {
   BOARD_POLL_MS,
   type BoardTimelineHandle,
   type BoardTimelineOptions,
+  isChangeNotice,
   LOOK_BACK_MS,
   NOTICE_DEBOUNCE_MS,
   useBoardTimeline
@@ -320,6 +321,13 @@ describe('the live scoreboard timeline (U36)', function () {
     await rerender()
     return { server, clock, sockets, out, playhead, socketsAtAsk, rerender }
   }
+
+  it('recognizes both legacy and timed change notices for the line score', () => {
+    expect(isChangeNotice('{"type":"changed"}')).equals(true)
+    expect(isChangeNotice('{"type":"changed","fromMs":42}')).equals(true)
+    expect(isChangeNotice('{"type":"other"}')).equals(false)
+    expect(isChangeNotice('malformed')).equals(false)
+  })
 
   it('opens the change socket first, then fetches the window', async function () {
     const steps = [

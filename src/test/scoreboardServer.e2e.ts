@@ -344,9 +344,28 @@ async function pitch(page: Page, label: string): Promise<number> {
     },
     { timeout: 30_000 }
   )
-  const at = Date.now()
-  await click(page, label)
-  return at
+  // Puppeteer can wait for several animation frames before dispatching the
+  // click. Measure from the input the scorekeeper actually delivers.
+  const press = await page.evaluateHandle(() => ({
+    at: new Promise<number>(resolve => {
+      document.addEventListener(
+        'click',
+        () => {
+          resolve(Date.now())
+        },
+        {
+          capture: true,
+          once: true
+        }
+      )
+    })
+  }))
+  try {
+    await click(page, label)
+    return await press.evaluate(async event => await event.at)
+  } finally {
+    await press.dispose()
+  }
 }
 
 async function e3(): Promise<void> {
