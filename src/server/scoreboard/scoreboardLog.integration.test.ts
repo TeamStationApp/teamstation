@@ -434,7 +434,7 @@ describe('the scoreboard log', function () {
     expect(reset).deep.equals(await computeBoardTimeline(db, gameId))
   })
 
-  it('ends playback on the newest board when two writers log versions and times in opposite orders', async () => {
+  it('replays the board, resets and exits as live ran them when two writers log versions and times in opposite orders', async () => {
     const gameId = await newGame()
     const row = {
       gameId,
@@ -458,6 +458,54 @@ describe('the scoreboard log', function () {
     })
     const timeline = await computeBoardTimeline(db, gameId)
     expect(timeline?.steps.at(-1)?.state.balls).equals(2)
+
+    // A reset that ran after an exit, with an earlier time, cleared it.
+    const cleared = await newGame()
+    await logScoreboard(db, {
+      ...row,
+      gameId: cleared,
+      version: 20,
+      at: clock + 1100,
+      publisher: { state: { exitVelocity: 55 }, receivedAt: clock + 1100 },
+      radar: { exitVelocity: 55 }
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: cleared,
+      cause: 'reset',
+      publisher: undefined,
+      version: 21,
+      at: clock + 1000
+    })
+    const afterReset = await computeBoardTimeline(db, cleared)
+    expect(afterReset?.steps.map(step => step.state.exitReading)).deep.equals(
+      afterReset?.steps.map(() => undefined)
+    )
+
+    // An exit that ran after a reset, with an earlier time, stays.
+    const kept = await newGame()
+    await logScoreboard(db, {
+      ...row,
+      gameId: kept,
+      cause: 'reset',
+      publisher: undefined,
+      version: 30,
+      at: clock + 3000
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: kept,
+      version: 31,
+      at: clock + 2900,
+      publisher: { state: { exitVelocity: 70 }, receivedAt: clock + 2900 },
+      radar: { exitVelocity: 70 }
+    })
+    const afterExit = await computeBoardTimeline(db, kept)
+    expect(afterExit?.steps.at(-1)?.state.exitReading).deep.equals({
+      mph: 70,
+      startedAt: clock + 2900,
+      receivedAt: clock + 2900
+    })
   })
 
   it('persists a late WebSocket radar reading on the current scored pitch', async function () {
