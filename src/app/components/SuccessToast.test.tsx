@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { AccessibilityInfo, Animated } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -56,6 +57,88 @@ function controlledDismissals(): Array<{
 }
 
 describe('success confirmation toast', () => {
+  for (const reduced of [false, true]) {
+    it(`fades in and out with Reduce Motion ${reduced ? 'on' : 'off'}`, async () => {
+      const preference = Object.getOwnPropertyDescriptor(
+        AccessibilityInfo,
+        'isReduceMotionEnabled'
+      )!
+      const timing = Object.getOwnPropertyDescriptor(Animated, 'timing')!
+      const timers = controlledDismissals()
+      const changes: Array<{ to: number; duration?: number }> = []
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      let advance!: (opacity: number, finished?: boolean) => void
+      const animate: typeof Animated.timing = (value, config) => ({
+        start: end => {
+          changes.push({
+            to: Number(config.toValue),
+            duration: config.duration
+          })
+          advance = (opacity, finished) => {
+            ;(value as Animated.Value).setValue(opacity)
+            if (finished === true) end?.({ finished: true })
+          }
+        },
+        stop: () => {},
+        reset: () => {}
+      })
+      const draw = async (notice?: {
+        id: number
+        message: string
+      }): Promise<void> => {
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <SuccessToast notice={notice} />
+            </ThemeProvider>
+          )
+        })
+      }
+      try {
+        AccessibilityInfo.isReduceMotionEnabled = async () => reduced
+        Object.defineProperty(Animated, 'timing', { ...timing, value: animate })
+        await draw()
+        await draw({ id: 1, message: 'Game changes saved' })
+        const toast = host.querySelector<HTMLElement>(
+          '[data-offline-banner-dock]'
+        )!
+        expect(Number(getComputedStyle(toast).opacity)).equals(0)
+        await act(async () => {
+          advance(0.5)
+        })
+        expect(Number(getComputedStyle(toast).opacity)).equals(0.5)
+        await act(async () => {
+          advance(1, true)
+        })
+        expect(Number(getComputedStyle(toast).opacity)).equals(1)
+        await act(async () => {
+          timers[0].fire()
+        })
+        await act(async () => {
+          advance(0.4)
+        })
+        expect(Number(getComputedStyle(toast).opacity)).equals(0.4)
+        expect(host.contains(toast)).equals(true)
+        await act(async () => {
+          advance(0, true)
+        })
+        expect(host.contains(toast)).equals(false)
+        expect(changes).deep.equals([
+          { to: 1, duration: reduced ? 90 : 160 },
+          { to: 0, duration: reduced ? 90 : 250 }
+        ])
+      } finally {
+        Object.defineProperty(
+          AccessibilityInfo,
+          'isReduceMotionEnabled',
+          preference
+        )
+        Object.defineProperty(Animated, 'timing', timing)
+      }
+    })
+  }
   it('clears floating navigation on a phone and keeps desktop confirmation near the bottom', async () => {
     controlledDismissals()
     const old = Object.getOwnPropertyDescriptor(
