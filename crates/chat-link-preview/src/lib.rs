@@ -121,8 +121,17 @@ impl Resolver for PublicResolver {
         let endpoint =
             DefaultResolver::host_and_port(scheme, authority).ok_or(ureq::Error::HostNotFound)?;
         // OS name resolution can outlive a request. A bounded pool of lookup
-        // threads lets the calling worker stop at its deadline or cancellation.
-        let permit = WorkPermit::take(&RESOLVING).ok_or(ureq::Error::HostNotFound)?;
+        // threads lets the calling worker stop at its deadline or cancellation,
+        // and a lookup still holding its thread delays the next until then.
+        let permit = loop {
+            if let Some(permit) = WorkPermit::take(&RESOLVING) {
+                break permit;
+            }
+            if !self.live() {
+                return Err(ureq::Error::HostNotFound);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let lookup = self.lookup;
         std::thread::Builder::new().spawn(move || {

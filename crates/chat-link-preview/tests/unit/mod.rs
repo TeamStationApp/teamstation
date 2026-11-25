@@ -248,6 +248,37 @@ fn bounds_concurrent_work_and_releases_every_permit() {
 }
 
 #[test]
+fn a_lookup_waits_for_a_resolver_thread_until_its_deadline() {
+    let _workers = WORKERS.lock().unwrap();
+    fn fixture(_: &str) -> std::io::Result<std::vec::IntoIter<SocketAddr>> {
+        Ok(vec!["93.184.216.34:80".parse().unwrap()].into_iter())
+    }
+    let resolver = |until: Duration| PublicResolver {
+        lookup: fixture,
+        stop: Arc::new(AtomicBool::new(false)),
+        until: Instant::now() + until,
+    };
+    let uri: Uri = "http://public.example.org/".parse().unwrap();
+    let held = [
+        WorkPermit::take(&RESOLVING).unwrap(),
+        WorkPermit::take(&RESOLVING).unwrap(),
+    ];
+    let started = Instant::now();
+    assert!(resolver(Duration::from_millis(100))
+        .resolve(&uri, &Config::default(), NextTimeout::default())
+        .is_err());
+    assert!(started.elapsed() >= Duration::from_millis(100));
+    let waiting = std::thread::spawn(move || {
+        resolver(DEADLINE)
+            .resolve(&uri, &Config::default(), NextTimeout::default())
+            .map(|addresses| addresses.len())
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    drop(held);
+    assert_eq!(waiting.join().unwrap().unwrap(), 1);
+}
+
+#[test]
 fn canceled_and_reserved_destinations_are_unavailable() {
     let _workers = WORKERS.lock().unwrap();
     let cancel = PreviewJob::default();
