@@ -363,6 +363,15 @@ struct ScoreboardMonitorPageTests {
     _ = try await web.evaluateJavaScript("document.getElementById('team').style.width = '1100px'")
     #expect(await fitted())
     let coordinator = try #require(web.navigationDelegate as? ScoreboardMonitorPage.Coordinator)
+    func response(_ status: Int) throws -> HTTPURLResponse {
+      try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil))
+    }
+    // A deploy's 502 or 503 is retried like a lost connection; the board itself, and a frame's
+    // error, are not.
+    #expect(ScoreboardMonitorPage.Coordinator.isErrorPage(try response(503), mainFrame: true))
+    #expect(ScoreboardMonitorPage.Coordinator.isErrorPage(try response(404), mainFrame: true))
+    #expect(!ScoreboardMonitorPage.Coordinator.isErrorPage(try response(200), mainFrame: true))
+    #expect(!ScoreboardMonitorPage.Coordinator.isErrorPage(try response(503), mainFrame: false))
     let failure = URLError(.networkConnectionLost)
     coordinator.webView(web, didFailProvisionalNavigation: nil, withError: failure)
     let first = try #require(coordinator.retry)

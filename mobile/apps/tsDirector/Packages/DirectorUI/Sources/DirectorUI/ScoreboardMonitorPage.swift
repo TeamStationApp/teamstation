@@ -52,6 +52,21 @@ struct ScoreboardMonitorPage: UIViewRepresentable {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { reload(webView) }
 
+    /// A proxy's 502 or 503 during a deploy is a finished load, so WebKit reports no failure, and
+    /// its page has no script to reconnect. The board's own page is retried instead.
+    static func isErrorPage(_ response: URLResponse, mainFrame: Bool) -> Bool {
+      mainFrame && ((response as? HTTPURLResponse)?.statusCode ?? 0) >= 400
+    }
+
+    func webView(
+      _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse
+    ) async -> WKNavigationResponsePolicy {
+      guard Self.isErrorPage(navigationResponse.response, mainFrame: navigationResponse.isForMainFrame)
+      else { return .allow }
+      reload(webView)
+      return .cancel
+    }
+
     private func reload(_ webView: WKWebView) {
       retry?.cancel()
       retry = Task { [weak webView, url] in
