@@ -11,14 +11,27 @@ import React, {
   useRef,
   useState
 } from 'react'
-import { Platform, type View } from 'react-native'
 import {
+  Dimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+  requireNativeComponent,
+  StyleSheet,
+  type View,
+  type ViewProps
+} from 'react-native'
+import {
+  KeyboardController,
   KeyboardEvents,
-  KeyboardProvider
+  KeyboardGestureArea,
+  KeyboardProvider,
+  useGenericKeyboardHandler
 } from 'react-native-keyboard-controller'
-import {
+import Animated, {
   type SharedValue,
   useDerivedValue,
+  useEvent,
   useSharedValue
 } from 'react-native-reanimated'
 
@@ -33,7 +46,48 @@ import type {
 
 export type { ChatHistoryHandle } from './chatHistoryListTypes'
 
+interface GuideEvent {
+  height: number
+}
+interface GuideProps extends ViewProps {
+  onChatKeyboardInset: (event: GuideEvent) => void
+  onChatKeyboardRest: (event: NativeSyntheticEvent<GuideEvent>) => void
+}
+let Guide: React.ComponentType<GuideProps> | undefined
+
+function TabletKeyboardGuide({
+  height,
+  onRest
+}: {
+  height: SharedValue<number>
+  onRest?: (height: number) => void
+}): React.ReactElement {
+  // Register the iOS-only native component only on its platform.
+  Guide ??= Animated.createAnimatedComponent(
+    requireNativeComponent<GuideProps>('TSChatKeyboardGuide')
+  )
+  const received = useEvent<GuideEvent>(
+    event => {
+      'worklet'
+      height.value = event.height
+    },
+    ['onChatKeyboardInset']
+  )
+  return (
+    <Guide
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+      onChatKeyboardRest={event => onRest?.(event.nativeEvent.height)}
+      onChatKeyboardInset={received}
+    />
+  )
+}
+
 interface NativeKeyboardProps {
+  /** The end inset with no keyboard: the composer and the clearance below it. */
+  closedEndInset?: SharedValue<number>
+  guideHeight?: SharedValue<number>
+  onTabletKeyboardRest?: (height: number) => void
   contentInsetEndAdjustment: SharedValue<number>
   freeze: SharedValue<boolean>
   keyboardOffset: number
@@ -85,9 +139,30 @@ export function ChatHistoryList<T>(
     }),
     []
   )
-  // On Android the scroll view's raw content height includes the floating
-  // composer's inset. Legend knows when the last row is already at the end.
+  // keyboard-controller judges the end without the composer's end inset.
+  // Android's raw content height includes that inset, so the last row is
+  // never at its end; Legend knows when it is. iOS leaves the inset out, so
+  // a reader whose newest rows sit under the composer and the bar below it
+  // counts as at the end and is lifted with the keyboard. There the end is
+  // measured with the closed inset: the composer and the clearance below
+  // it. The keyboard's and the iPad guide's share comes and goes with them
+  // (and spikes through a rotation) without a scroll event to judge again.
   const [atInsetAdjustedEnd, setAtInsetAdjustedEnd] = useState(false)
+  const onScroll = props.onScroll
+  const closedEndInset = (props.keyboard as NativeKeyboardProps | undefined)
+    ?.closedEndInset
+  const judgeIosEnd = (
+    event: NativeSyntheticEvent<NativeScrollEvent>
+  ): void => {
+    const { contentOffset, layoutMeasurement, contentSize, contentInset } =
+      event.nativeEvent
+    const inset = closedEndInset?.value ?? contentInset?.bottom ?? 0
+    setAtInsetAdjustedEnd(
+      contentOffset.y + layoutMeasurement.height >=
+        contentSize.height + inset - IOS_END_SLOP
+    )
+    onScroll?.(event)
+  }
   useLayoutEffect(() => {
     if (Platform.OS !== 'android') return
     const state = list.current?.getState()
@@ -117,10 +192,12 @@ export function ChatHistoryList<T>(
     ...rest
   } = props
   const keys = keyboard as NativeKeyboardProps | undefined
-  return (
+  const history = (
     <KeyboardAwareLegendList
       {...rest}
+      {...(Platform.OS === 'ios' ? { onScroll: judgeIosEnd } : {})}
       ref={list}
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
       keyExtractor={(item: T) => keyOf(item)}
       renderItem={({ item, index }: { item: T; index: number }) =>
         renderItem(item, index)
@@ -134,7 +211,13 @@ export function ChatHistoryList<T>(
       ListFooterComponent={footer}
       maintainVisibleContentPosition={{ size: true, data: false }}
       recycleItems={false}
-      keyboardLiftBehavior={atInsetAdjustedEnd ? 'always' : 'whenAtEnd'}
+      keyboardLiftBehavior={
+        atInsetAdjustedEnd
+          ? 'always'
+          : Platform.OS === 'android'
+            ? 'whenAtEnd'
+            : 'never'
+      }
       // The list itself reads every frame; the reader's bookkeeping keeps the
       // pace the history's ScrollView had before virtualization.
       scrollEventThrottle={100}
@@ -147,7 +230,27 @@ export function ChatHistoryList<T>(
           })}
     />
   )
+  const handleTabletRest = keys?.onTabletKeyboardRest
+  if (keys?.guideHeight != null)
+    return (
+      <>
+        {history}
+        <TabletKeyboardGuide
+          height={keys.guideHeight}
+          onRest={handleTabletRest}
+        />
+      </>
+    )
+  if (Platform.OS !== 'android') return history
+  return (
+    <KeyboardGestureArea style={props.style} interpolator="linear">
+      {history}
+    </KeyboardGestureArea>
+  )
 }
+
+/** Points short of the inset-adjusted end that still count as at the end. */
+const IOS_END_SLOP = 2
 
 /** The scroll view's inset already holds the composer and the keyboard. */
 const noEndPadding = (): number => 0
@@ -170,6 +273,39 @@ export function useChatHistoryKeyboard(
   } | null>(null)
   const { contentInsetEndAdjustment, onComposerLayout } =
     useKeyboardChatComposerInset(listRef, composerRef, 0)
+  const tablet = Platform.OS === 'ios' && Platform.isPad
+  const guideHeight = useSharedValue(0)
+  const dockClearance = options.dockClearance ?? options.keyboardOffset
+  const tabletLift = useDerivedValue(() =>
+    Math.max(0, guideHeight.value - dockClearance)
+  )
+  const [initialHeight] = useState(() =>
+    KeyboardController.isVisible() ? KeyboardController.state().height : 0
+  )
+  const frame = useSharedValue({
+    height: initialHeight,
+    progress: initialHeight > 0 ? 1 : 0,
+    revision: 0
+  })
+  const updateFrame = (event: { height: number; progress: number }): void => {
+    'worklet'
+    const previous = frame.value
+    if (
+      event.height !== previous.height ||
+      event.progress !== previous.progress
+    )
+      frame.value = {
+        height: event.height,
+        progress: event.progress,
+        revision: previous.revision + 1
+      }
+  }
+  // iOS announces the destination height at the start of a transition. Its
+  // move and interactive events carry the keyboard's actual position.
+  useGenericKeyboardHandler(
+    { onMove: updateFrame, onInteractive: updateFrame, onEnd: updateFrame },
+    [frame]
+  )
   const clearance = useSharedValue(options.closedClearance)
   useEffect(() => {
     clearance.value = options.closedClearance
@@ -203,7 +339,14 @@ export function useChatHistoryKeyboard(
     }
   }, [options.attachmentHandoff, heldInset])
   const endInset = useDerivedValue(
-    () => heldInset.value ?? contentInsetEndAdjustment.value + clearance.value
+    () =>
+      heldInset.value ??
+      contentInsetEndAdjustment.value +
+        clearance.value +
+        (tablet ? tabletLift.value : 0)
+  )
+  const closedEndInset = useDerivedValue(
+    () => contentInsetEndAdjustment.value + clearance.value
   )
   const scrollTarget = useRef<ChatHistoryHandle | null>(null)
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({
@@ -225,10 +368,12 @@ export function useChatHistoryKeyboard(
   )
   useKeyboardControllerOwner(options.active)
   return {
+    frame,
+    tabletLift: tablet ? tabletLift : undefined,
     composerRef,
     holdKeyboardInset: () => {
       holdingInset.current = true
-      heldInset.value = contentInsetEndAdjustment.value + clearance.value
+      heldInset.value = endInset.value
     },
     onComposerLayout: event => {
       // The drawer replaces the keyboard inset already held by the scroll view.
@@ -237,8 +382,18 @@ export function useChatHistoryKeyboard(
     listProps: {
       // Read only by the scroll view's worklets.
       contentInsetEndAdjustment: endInset,
+      closedEndInset,
       freeze: freezeInset,
-      keyboardOffset: options.keyboardOffset
+      guideHeight: tablet ? guideHeight : undefined,
+      onTabletKeyboardRest: options.onTabletKeyboardRest,
+      // The guide already accounts for the full overlap in the extra end inset.
+      // Suppress the second inset from keyboard-controller's screen-coordinate frame.
+      keyboardOffset: tablet
+        ? Math.max(
+            Dimensions.get('screen').height,
+            Dimensions.get('screen').width
+          )
+        : options.keyboardOffset
     } satisfies NativeKeyboardProps,
     managesEndInset: true,
     endPadding: noEndPadding,

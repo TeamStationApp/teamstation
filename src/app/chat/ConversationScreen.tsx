@@ -59,6 +59,7 @@ import { chatLinkOrigins } from './chatBrowser'
 import { chatBrowserVisible, watchChatBrowser } from './chatBrowserVisibility'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
+import { ChatComposerBand } from './ChatComposerBand'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
 import { ChatDropTarget } from './ChatDropTarget'
 import * as platformFiles from './chatFiles'
@@ -170,6 +171,8 @@ export const OPEN_TRIES = 8
  * final offset.
  */
 const JUMP_LANDING_QUIET_MS = 400
+/** How near the end a reader still follows the newest message. */
+const FOLLOW_DISTANCE = 48
 
 /** An explicit jump's animated scroll, from its start until it lands. */
 interface JumpLanding {
@@ -515,7 +518,10 @@ export function ConversationScreen(
   // waits until the scroll lands.
   const jumpLanding = useRef<JumpLanding | undefined>(undefined)
   const gestureGeneration = useRef(0)
-  const keyboardDragStart = useRef<number | undefined>(undefined)
+  const keyboardDragStart = useRef<
+    | { start: number; last: number; towardOlder: boolean; motion?: number }
+    | undefined
+  >(undefined)
   const gestureOffset = useRef({ x: 0, y: 0 })
   const nativeUserScroll = useRef<'drag' | 'momentum' | undefined>(undefined)
   const nativeMomentumFromDrag = useRef(false)
@@ -544,13 +550,16 @@ export function ConversationScreen(
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
   // Scenes with their own fields (mention search, emoji search) take the
   // keyboard back, so Android resizes the window for them as it did before.
+  const ownsKeyboard =
+    props.active !== false && mentionChoosing == null && reacting == null
   const keyboard = useChatHistoryKeyboard({
     closedClearance: viewport.closedClearance,
     keyboardOffset: viewport.keyboardOffset,
+    dockClearance: viewport.composerDock.bottom - viewport.composerDock.gap,
+    onTabletKeyboardRest: viewport.onTabletKeyboardRest,
     attachmentHandoff: viewport.attachmentHandoff,
     onKeyboardReturnSettled: viewport.keyboardReturnSettled,
-    active:
-      props.active !== false && mentionChoosing == null && reacting == null
+    active: ownsKeyboard
   })
   const { endPadding, managesEndInset } = keyboard
   // Clearance the list keeps as a scroll inset instead of content padding.
@@ -962,8 +971,11 @@ export function ConversationScreen(
     mentionChoosing
   ])
   const hasView = view != null
+  // The history's frame changed size since the reader last scrolled.
+  const resizedWindow = useRef(false)
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
+    resizedWindow.current = false
     endJumpLanding(jumpLanding)
     initialFollow.current = false
     settlingAnchor.current = undefined
@@ -1356,6 +1368,27 @@ export function ConversationScreen(
     anchor = scrolled.current.anchor
   ): number => {
     const target = reachableOffset(requestedOffset)
+    // After the window resizes (a rotation), a restored row that lands
+    // within the follow distance of the end would leave the newest rows
+    // under the composer. That reader is at the newest message: follow it
+    // from there, as any scroll there would, instead of pinning the row.
+    const end = reachableOffset(Number.POSITIVE_INFINITY)
+    if (
+      resizedWindow.current &&
+      Number.isFinite(end) &&
+      target >= end - FOLLOW_DISTANCE
+    ) {
+      resizedWindow.current = false
+      restoreTarget.current = undefined
+      restoreAnchor.current = undefined
+      settlingAnchor.current = undefined
+      scrolled.current.offset = end
+      scrolled.current.hasPosition = true
+      scrolled.current.followNewest = true
+      atBottom.current = true
+      onDraftChange?.(currentDraft())
+      return end
+    }
     if (anchor != null && target !== requestedOffset)
       anchor = {
         ...anchor,
@@ -2920,14 +2953,22 @@ export function ConversationScreen(
     const input = nativeUserScroll.current
     const owned =
       Platform.OS !== 'web' && input != null && (end == null || end === input)
-    if (
-      owned &&
-      input === 'drag' &&
-      keyboardDragStart.current != null &&
-      event.nativeEvent.contentOffset.y < keyboardDragStart.current - 2
-    ) {
-      keyboardDragStart.current = undefined
-      Keyboard.dismiss()
+    const drag = keyboardDragStart.current
+    if (owned && input === 'drag' && drag != null) {
+      const y = event.nativeEvent.contentOffset.y
+      if (Math.abs(y - drag.last) > 2) {
+        drag.towardOlder = y < drag.last
+        drag.last = y
+      }
+      // Let the native interactive gesture reverse while the finger is down.
+      // A release above the keyboard can still request dismissal from history.
+      if (
+        end === 'drag' &&
+        drag.towardOlder &&
+        y < drag.start - 2 &&
+        drag.motion === keyboard.frame?.value.revision
+      )
+        Keyboard.dismiss()
     }
     // An authoritative user offset must not be discarded as an outstanding
     // programmatic restoration acknowledgement.
@@ -2998,6 +3039,11 @@ export function ConversationScreen(
   const syncPositions = (): void => {
     if (!mounted.current || !paneActive.current) return
     for (const id of [...messageRefs.current.keys()]) rowPlaced(id, true)
+    // The browser list publishes positions before React commits the rows' new
+    // coordinates. Measure the held reader after that layout, even when the
+    // row's own size stayed the same. A user scroll clears the restoration.
+    if (Platform.OS === 'web' && restoreAnchor.current != null)
+      requestAnimationFrame(restoreReadingAnchor)
   }
   if (!initialScrollChosen.current) {
     initialScrollChosen.current = true
@@ -3371,9 +3417,15 @@ export function ConversationScreen(
               mounted.current &&
               paneActive.current
             ) {
+              const y =
+                event?.nativeEvent.contentOffset.y ?? gestureOffset.current.y
               keyboardDragStart.current = viewport.softwareKeyboardOpen
-                ? (event?.nativeEvent.contentOffset.y ??
-                  gestureOffset.current.y)
+                ? {
+                    start: y,
+                    last: y,
+                    towardOlder: false,
+                    motion: keyboard.frame?.value.revision
+                  }
                 : undefined
               nativeUserScroll.current = 'drag'
               nativeMomentumFromDrag.current = true
@@ -3386,6 +3438,11 @@ export function ConversationScreen(
               widthRevision.current += 1
               if (restoringAnchor.current) restoreAnchorDirty.current = true
             }
+            if (
+              scrolled.current.height > 0 &&
+              scrolled.current.height !== event.nativeEvent.layout.height
+            )
+              resizedWindow.current = true
             scrolled.current.width = event.nativeEvent.layout.width
             scrolled.current.height = event.nativeEvent.layout.height
             awaitingWidthLayout.current = false
@@ -3624,7 +3681,11 @@ export function ConversationScreen(
             )}
           </GlassView>
         )}
-        <View
+        <ChatComposerBand
+          active={ownsKeyboard}
+          frame={keyboard.frame}
+          tabletLift={keyboard.tabletLift}
+          viewport={viewport}
           testID="chat-composer-band"
           ref={keyboard.composerRef}
           pointerEvents="box-none"
@@ -3648,7 +3709,6 @@ export function ConversationScreen(
             position: 'absolute',
             left: Math.max(margin, insets.left),
             right: Math.max(margin, insets.right),
-            bottom: viewport.composerBottom,
             zIndex: 4
           }}
         >
@@ -3777,7 +3837,7 @@ export function ConversationScreen(
               onSend={send}
             />
           )}
-        </View>
+        </ChatComposerBand>
       </ChatViewport>
       {mentionChoosing?.text === text &&
         view.composer === 'enabled' &&

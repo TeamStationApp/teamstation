@@ -1811,12 +1811,19 @@ describe('chat follow-up conversation message integration', function () {
           callbacks.onScroll(event(260))
           callbacks.onScroll(event(230))
         })
-        expect(dismiss.mock.callCount()).equals(1)
+        expect(dismiss.mock.callCount()).equals(0)
         await act(async () => {
           callbacks.onScrollEndDrag(event(220))
           callbacks.onScrollBeginDrag(event(280))
           callbacks.onScrollEndDrag(event(290))
           callbacks.onScroll(event(240))
+        })
+        expect(dismiss.mock.callCount()).equals(1)
+        // Reversing toward the latest messages before release keeps the field open.
+        await act(async () => {
+          callbacks.onScrollBeginDrag(event(280))
+          callbacks.onScroll(event(220))
+          callbacks.onScrollEndDrag(event(265))
         })
         expect(dismiss.mock.callCount()).equals(1)
         // A quick drag can finish before Android emits an intermediate onScroll.
