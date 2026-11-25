@@ -1,30 +1,36 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, StyleSheet, useWindowDimensions, View } from 'react-native'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  Animated,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View
+} from 'react-native'
 
+import { useMotionPreference } from '../components/useMotionPreference'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { type ChatBounds, menuPosition } from './chatInteractionModel'
 import { ChatOverlayPortal } from './ChatOverlayHost'
 import { bindPopupKeys, watchMessageAnchor } from './chatWebInteractions'
 
-export function ChatAnchoredMenu(props: {
+interface AnchoredMenuProps {
   anchor: unknown
   label: string
+  closing: boolean
   onClose: () => void
+  onClosed: () => void
   children: React.ReactNode
-}): React.ReactElement {
+}
+
+export function ChatAnchoredMenu(props: AnchoredMenuProps): React.ReactElement {
   return (
-    <ChatOverlayPortal>
+    <ChatOverlayPortal modal={!props.closing}>
       <AnchoredFrame {...props} />
     </ChatOverlayPortal>
   )
 }
-function AnchoredFrame(props: {
-  anchor: unknown
-  label: string
-  onClose: () => void
-  children: React.ReactNode
-}): React.ReactElement {
+function AnchoredFrame(props: AnchoredMenuProps): React.ReactElement {
   const theme = useTheme()
   const viewport = useWindowDimensions()
   const [bounds, setBounds] = useState<ChatBounds>({
@@ -54,23 +60,46 @@ function AnchoredFrame(props: {
   )
   useEffect(
     () =>
-      bindPopupKeys(
-        panel.current,
-        () => {
-          close.current()
-        },
-        true,
-        false,
-        undefined,
-        props.anchor
-      ),
-    [props.anchor]
+      props.closing
+        ? undefined
+        : bindPopupKeys(
+            panel.current,
+            () => {
+              close.current()
+            },
+            true,
+            false,
+            undefined,
+            props.anchor
+          ),
+    [props.anchor, props.closing]
   )
+  const reduced = useMotionPreference()
+  const progress = useRef(new Animated.Value(0)).current
+  const closed = useRef(props.onClosed)
+  closed.current = props.onClosed
+  useLayoutEffect(() => {
+    const host = panel.current
+    if (host != null && 'inert' in host) host.inert = props.closing
+    const transition = Animated.timing(progress, {
+      toValue: props.closing ? 0 : 1,
+      duration: reduced ? 85 : 150,
+      useNativeDriver: false
+    })
+    transition.start(({ finished }) => {
+      if (finished && props.closing) closed.current()
+    })
+    return () => {
+      transition.stop()
+    }
+  }, [progress, reduced, props.closing])
   const position = menuPosition(bounds, size, viewport)
   return (
     <View
       style={[StyleSheet.absoluteFill, { zIndex: 100 }]}
-      accessibilityViewIsModal
+      pointerEvents={props.closing ? 'none' : 'auto'}
+      aria-hidden={props.closing}
+      accessibilityViewIsModal={!props.closing}
     >
       <Pressable
         style={StyleSheet.absoluteFill}
@@ -78,13 +107,14 @@ function AnchoredFrame(props: {
         accessibilityLabel={lstrings.chat_cancel}
         onPress={props.onClose}
       />
-      <View
+      <Animated.View
         ref={panel}
-        accessibilityLabel={props.label}
+        accessibilityLabel={props.closing ? undefined : props.label}
         onLayout={event => {
           setSize(event.nativeEvent.layout)
         }}
         style={{
+          opacity: progress,
           position: 'absolute',
           ...position,
           width: Math.min(224, viewport.width - 16),
@@ -99,7 +129,7 @@ function AnchoredFrame(props: {
         }}
       >
         {props.children}
-      </View>
+      </Animated.View>
     </View>
   )
 }

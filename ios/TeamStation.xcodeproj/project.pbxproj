@@ -52,6 +52,7 @@
 		A1D1C7A70000000000000002 /* TSPointerEvents.m in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000001 /* TSPointerEvents.m */; };
 		D7E5A1F00000000000000002 /* TSShiftReturn.m in Sources */ = {isa = PBXBuildFile; fileRef = D7E5A1F00000000000000001 /* TSShiftReturn.m */; };
 		B621A9C41123456789000002 /* ChatKeyboard.mm in Sources */ = {isa = PBXBuildFile; fileRef = B621A9C41123456789000001 /* ChatKeyboard.mm */; };
+		C283C62D1123456789000002 /* ChatKeyboardGuide.mm in Sources */ = {isa = PBXBuildFile; fileRef = C283C62D1123456789000001 /* ChatKeyboardGuide.mm */; };
 		A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000003 /* DictationMicrophone.swift */; };
 		A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */ = {isa = PBXBuildFile; fileRef = A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */; };
 		D3C1A9E10000000000000002 /* DeclaredAge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C1A9E10000000000000001 /* DeclaredAge.swift */; };
@@ -187,6 +188,7 @@
 		A1D1C7A70000000000000001 /* TSPointerEvents.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TSPointerEvents.m; path = TeamStation/TSPointerEvents.m; sourceTree = SOURCE_ROOT; };
 		D7E5A1F00000000000000001 /* TSShiftReturn.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = TSShiftReturn.m; path = TeamStation/TSShiftReturn.m; sourceTree = SOURCE_ROOT; };
 		B621A9C41123456789000001 /* ChatKeyboard.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ChatKeyboard.mm; path = TeamStation/ChatKeyboard/ChatKeyboard.mm; sourceTree = SOURCE_ROOT; };
+		C283C62D1123456789000001 /* ChatKeyboardGuide.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; name = ChatKeyboardGuide.mm; path = TeamStation/ChatKeyboard/ChatKeyboardGuide.mm; sourceTree = SOURCE_ROOT; };
 		A1D1C7A70000000000000003 /* DictationMicrophone.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DictationMicrophone.swift; sourceTree = "<group>"; };
 		A1D1C7A70000000000000005 /* RCTDictationMicrophone.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTDictationMicrophone.mm; sourceTree = "<group>"; };
 		D3C1A9E10000000000000001 /* DeclaredAge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DeclaredAge.swift; sourceTree = "<group>"; };
@@ -295,6 +297,7 @@
 				A1D1C7A70000000000000001 /* TSPointerEvents.m */,
 				D7E5A1F00000000000000001 /* TSShiftReturn.m */,
 				B621A9C41123456789000001 /* ChatKeyboard.mm */,
+				C283C62D1123456789000001 /* ChatKeyboardGuide.mm */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
 				D3C1A9E10000000000000005 /* DeclaredAge */,
 				5B0A5E000000000000000007 /* SponsorMedia */,
@@ -855,6 +858,7 @@
 				A1D1C7A70000000000000002 /* TSPointerEvents.m in Sources */,
 				D7E5A1F00000000000000002 /* TSShiftReturn.m in Sources */,
 				B621A9C41123456789000002 /* ChatKeyboard.mm in Sources */,
+				C283C62D1123456789000002 /* ChatKeyboardGuide.mm in Sources */,
 				A1D1C7A70000000000000006 /* RCTDictationMicrophone.mm in Sources */,
 				A1D1C7A70000000000000004 /* DictationMicrophone.swift in Sources */,
 				D3C1A9E10000000000000004 /* RCTDeclaredAge.mm in Sources */,

@@ -1020,6 +1020,60 @@ describe('virtualized reader saved under the floating pin band', function () {
     expect(owner.draft('cnv_1').scrollAnchor?.relativeY).equals(70)
   })
 
+  it('follows the newest once a restored reader lands at the end, as after an iPad rotation', async function () {
+    // The reader kept its row a line short of the end while the keyboard
+    // covered the newest; the window then resized around it.
+    const state = fixture(view({ messages: history(80) }))
+    const layout = browserLayout(() =>
+      state.shown.messages.map(item => item.id)
+    )
+    const end = TOP + 80 * STEP + 200 - VIEWPORT
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: end - 20,
+      followNewest: false,
+      scrollAnchor: {
+        id: 'msg_179',
+        relativeY: layout.rowTop('msg_179') - (end - 20)
+      }
+    })
+    const owner = new ChatDraftOwner(workspace)
+    await open(state, owner)
+    expect(scroller().scrollTop, 'The reader kept its row').equals(end - 20)
+    // Landscape with the keyboard up, then the taller portrait window.
+    await handle('chat-message-history', 600)
+    await handle('chat-message-history', VIEWPORT)
+    await steady()
+    expect(scroller().scrollTop, 'At the newest after the rotation').equals(end)
+    await act(async () => {
+      state.update({
+        ...state.shown,
+        messages: [...state.shown.messages, ...history(1, 180)]
+      })
+      await wait()
+    })
+    // The browser lays out the longer content.
+    await act(async () => {
+      ;(
+        scroller().firstElementChild as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 6100 } }
+      })
+      await wait(60)
+    })
+    await steady()
+    expect(
+      scroller().scrollTop,
+      'The newest message is shown above the composer'
+    ).equals(end + STEP)
+    expect(shownAt(layout, 'msg_180')).lessThan(VIEWPORT - STEP)
+  })
+
   it('still clears a reader from a band that genuinely newly covers it', async function () {
     const state = fixture(view({ messages: history(80) }))
     const layout = browserLayout(() =>
