@@ -208,6 +208,39 @@
       "file": "e2e/tests/account/sign-in/password.e2e.ts"
     },
     {
+      "id": "account/sign-in/password-link#confirm-account-switch",
+      "title": "Development password links sign in and ask before switching accounts",
+      "kind": "e2e",
+      "covers": [
+        "src/app/web/index.tsx",
+        "src/app/web/passwordLogin.ts",
+        "src/server/routes/auth.ts"
+      ],
+      "stack": "seat",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "account/sign-in/password-link",
+      "file": "e2e/tests/account/sign-in/password-link.e2e.ts"
+    },
+    {
       "id": "app-shell/chat/composer-keyboard#rides-keyboard",
       "title": "A conversation’s composer rides the keyboard on a phone",
       "kind": "e2e",
