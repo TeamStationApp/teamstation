@@ -126,6 +126,19 @@ describe('sentry scrub', function () {
     })
   })
 
+  it('removes development sign-in fragments and structured credentials', function () {
+    const url = 'https://app.example.test/password-login'
+    const privateUrl = url + '?source=test#extra=1&%61uth=fixture-marker'
+    const event = scrubEvent({
+      request: { url: privateUrl },
+      breadcrumbs: [{ category: 'navigation', data: { to: privateUrl } }],
+      extra: { auth: 'fixture-marker' }
+    })
+    expect(event.request.url).equals(url)
+    expect(event.breadcrumbs[0].data.to).equals(url)
+    expect(event.extra.auth).equals(FILTERED)
+  })
+
   it('stops descending past a depth limit', function () {
     let deep: Record<string, unknown> = { leaf: 1 }
     for (let i = 0; i < 12; i++) deep = { next: deep }

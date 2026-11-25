@@ -24,7 +24,7 @@ export const FILTERED = '[Filtered]'
  * session token travel under exactly those names.
  */
 const SECRET_KEY =
-  /token|secret|passw|clienthash|code|cookie|authorization|bearer|session|credential|csrf|api[-_]?key|private[-_]?key|stream[-_]?key|dsn|email/i
+  /^auth$|token|secret|passw|clienthash|code|cookie|authorization|bearer|session|credential|csrf|api[-_]?key|private[-_]?key|stream[-_]?key|dsn|email/i
 
 /** Names that contain a secret's word but hold none: status and error codes. */
 const SAFE_KEY = /^(http\.(response\.)?)?status_?code$|^(error|exit)_?code$/i
@@ -44,6 +44,8 @@ export function scrubText(text: string): string {
       // A query follows a URL or path character and starts with a word character,
       // so `a?.b()` and `'?'` in an error message are left alone.
       .replace(/([\w/.%-])\?[\w%-][^\s#'"()]*/g, '$1')
+      // The entire fragment on a password link is private, even if malformed.
+      .replace(/\/password-login#[^\s'"<>]*/g, '/password-login')
       .replace(/\/signin\/[^\s/?#]+/g, `/signin/${FILTERED}`)
       .replace(
         /\/(i|join|invite|approvals|native-approval)\/[^\s/?#]+/g,
