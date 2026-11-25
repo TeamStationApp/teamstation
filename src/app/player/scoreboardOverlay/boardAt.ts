@@ -63,10 +63,11 @@ export function zeroedStep(
 ): BoardStep | null {
   const first = steps[0]
   if (first == null) return null
+  const { exitReading, serverNow, ...initial } = first.state
   return {
     at,
     state: {
-      ...first.state,
+      ...initial,
       inGame: false,
       inning: 0,
       // Between halves: neither arrow is lit.

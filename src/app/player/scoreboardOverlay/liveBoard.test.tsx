@@ -366,6 +366,19 @@ describe('the live board timeline (U36)', function () {
     expect(h.out.current?.steps?.[0]).equals(heldEarly)
   })
 
+  it('refetches from the earliest delayed exit in a burst of notices', async () => {
+    const h = await setup({}, [boardStep(OVERLAY_T0)])
+    h.sockets.latest().open()
+    await flush()
+    h.playhead.wall = OVERLAY_T0 + 150_000
+    const corrected = OVERLAY_T0 + 5000
+    h.sockets.latest().receive({ type: 'changed', fromMs: corrected })
+    h.sockets.latest().receive({ type: 'changed', fromMs: corrected + 1000 })
+    h.sockets.latest().receive({ type: 'changed' })
+    await advance(h.clock, NOTICE_DEBOUNCE_MS)
+    expect(boardAsks(h.server).at(-1)).equals(corrected)
+  })
+
   it('never refetches from before the window', async function () {
     const h = await setup({}, [boardStep(OVERLAY_T0)])
     h.sockets.latest().open()

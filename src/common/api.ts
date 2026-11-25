@@ -4249,6 +4249,7 @@ export const asWallTimeline: Cleaner<WallTimeline> = asObject({
 export interface BoardStep {
   /** Milliseconds, on the server's clock. */
   at: number
+  /** Includes the last explicit exit reading as of `at`, for playback on the video clock. */
   state: ScoreboardState
 }
 

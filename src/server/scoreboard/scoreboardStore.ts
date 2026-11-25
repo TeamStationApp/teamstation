@@ -13,6 +13,7 @@ import { type CommandParser, createClient, defineScript } from 'redis'
 import { asLiteral } from '../../common/asLiteral'
 import {
   asDashboardOverrides,
+  asExitReading,
   asScoreboardUpdate,
   carriesContested,
   type DashboardOverrides,
@@ -162,6 +163,7 @@ const asStamp: Cleaner<number> = asEither(asNumber, (raw: unknown) => {
 
 const asStoredSource = asObject({
   state: asScoreboardUpdate,
+  exitReading: asOptional(asExitReading),
   receivedAt: asStamp,
   sourceVersion: asOptional(asStamp)
 })
@@ -215,6 +217,7 @@ function sourceOf(
   if (raw == null) return undefined
   return withoutAbsent({
     state: withoutAbsent(raw.state),
+    exitReading: raw.exitReading,
     receivedAt: raw.receivedAt,
     sourceVersion: raw.sourceVersion
   })
@@ -296,7 +299,7 @@ export interface ScoreboardStore {
   ) => Promise<WriteResult>
   readScoreboard: (gameId: string) => Promise<ScoreboardHash | undefined>
   /** Tells every worker that the game's board timeline has changed. */
-  announceTimeline: (gameId: string) => Promise<void>
+  announceTimeline: (gameId: string, fromMs?: number) => Promise<void>
   exists: (gameId: string) => Promise<boolean>
   /** Called each time the command connection is ready, the first included. */
   onReady: (listener: () => void) => void
@@ -447,10 +450,13 @@ export function makeScoreboardStore(options: {
         overrides: parse('overrides', asDashboardOverrides)
       })
     },
-    announceTimeline: async gameId => {
+    announceTimeline: async (gameId, fromMs) => {
       await command(
         async () =>
-          await client.publish(timelineChannel, JSON.stringify({ gameId }))
+          await client.publish(
+            timelineChannel,
+            JSON.stringify({ gameId, fromMs })
+          )
       )
     },
     exists: async gameId =>

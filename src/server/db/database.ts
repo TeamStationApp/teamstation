@@ -1123,7 +1123,7 @@ export interface EventRsvpsTable {
 /** One write to a game's board that was not TeamStation scoring. */
 export interface ScoreboardLogTable {
   /** Explicit positive speeds; measurementOnly marks an older snapshot that
-   * is retained for radar matching but excluded from the board timeline. */
+   * is retained for its readings, independent of its superseded board snapshot. */
   radar: Json
   game_id: string
   /** The Redis write's version for the game. */

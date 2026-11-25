@@ -843,8 +843,11 @@ describe('the scoreboard hub', function () {
       a.client.sendCommand(['CLIENT', 'KILL', 'ID', id ?? '']),
       a.store.announceTimeline(gameId)
     ])
-    await heard(probe, joined + 1)
-    expect(probe.messages.at(-1)).deep.equals({ type: 'changed' })
+    await until('the missed notice invalidates the whole timeline', () =>
+      probe.messages
+        .slice(joined)
+        .some(message => message.type === 'changed' && message.fromMs === 0)
+    )
   })
 
   it('closes the sockets of a game whose board has expired', async function () {

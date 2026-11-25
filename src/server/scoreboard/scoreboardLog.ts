@@ -82,8 +82,14 @@ export async function logScoreboard(
       .limit(1)
       .executeTakeFirst()
     if (newest != null) {
-      if (radar == null && newest.version >= row.version) return 'skipped'
       if (
+        row.cause !== 'reset' &&
+        radar == null &&
+        newest.version >= row.version
+      )
+        return 'skipped'
+      if (
+        row.cause !== 'reset' &&
         radar == null &&
         isDeepStrictEqual(
           // Written by this function, from the slot.
@@ -109,7 +115,7 @@ export async function logScoreboard(
             : {
                 ...radar,
                 // These snapshots were historically skipped. Retain their
-                // measurements without changing the cached board timeline.
+                // measurements without replaying the accompanying snapshot.
                 ...(newest != null && newest.version > row.version
                   ? { measurementOnly: true }
                   : {})

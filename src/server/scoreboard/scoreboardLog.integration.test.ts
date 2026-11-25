@@ -247,6 +247,153 @@ describe('the scoreboard log', function () {
     expect(found[2].publisher.state.pitchSpeed).equals(88)
   })
 
+  it('carries a timed exit reading across workers, updates and reconnects, and reconstructs it on the video clock', async () => {
+    const origin = await startWorker()
+    const viewerWorker = await startWorker()
+    const gameId = await newGame()
+    const phone = await publisher(origin, gameId)
+    const board = connect(`${viewerWorker.url}/${gameId}/socket`)
+    const timeline = connect(
+      `${viewerWorker.url}/${gameId}/socket?timeline=1`,
+      runner
+    )
+    await Promise.all([board.opened, timeline.opened])
+    await until('initial board', () => board.messages.length > 0)
+    const t0 = clock
+    const sequence = [
+      { after: 0, packet: { exitVelocity: 55 }, onset: 0, latest: 0, mph: 55 },
+      {
+        after: 250,
+        packet: { exitVelocity: 56 },
+        onset: 0,
+        latest: 250,
+        mph: 56
+      },
+      {
+        after: 3000,
+        packet: { exitVelocity: 56 },
+        onset: 0,
+        latest: 3000,
+        mph: 56
+      },
+      {
+        after: 4500,
+        packet: { pitchSpeed: 70 },
+        onset: 0,
+        latest: 3000,
+        mph: 56
+      },
+      {
+        after: 8001,
+        packet: { exitVelocity: 77 },
+        onset: 8001,
+        latest: 8001,
+        mph: 77
+      }
+    ]
+    const proof = []
+    for (const { after, packet, onset, latest, mph } of sequence) {
+      clock = t0 + after
+      const count = board.messages.length
+      send(phone, packet)
+      await until('updated viewer', () => board.messages.length > count)
+      await rowCount(gameId, proof.length + 1)
+      const { exitReading, serverNow } = board.messages.at(-1)
+      const reading = { mph, startedAt: t0 + onset, receivedAt: t0 + latest }
+      expect(exitReading).deep.equals(reading)
+      expect(serverNow).equals(clock)
+      const historical = (await computeBoardTimeline(db, gameId))!.steps.at(-1)!
+      expect(historical.state.exitReading).deep.equals(reading)
+      expect(historical.state).not.to.have.property('serverNow')
+      proof.push({
+        publisher: packet,
+        viewer: { exitReading, serverNow },
+        historical: {
+          at: historical.at,
+          exitReading: historical.state.exitReading
+        }
+      })
+    }
+    await until('radar correction notice', () =>
+      timeline.messages.some(n => n.fromMs === t0 + 8001)
+    )
+    clock += 10_000
+    const reconnect = connect(`${viewerWorker.url}/${gameId}/socket`)
+    await until('reconnected board', () => reconnect.messages.length > 0)
+    expect(reconnect.messages[0]).includes({ serverNow: clock })
+    expect(reconnect.messages[0].exitReading).deep.equals(
+      proof.at(-1)!.viewer.exitReading
+    )
+    const controls = await dashboard(origin, gameId)
+    send(controls, { type: 'reset' })
+    await rowCount(gameId, sequence.length + 1)
+    await until(
+      'reset viewer',
+      () => board.messages.at(-1)?.exitReading == null
+    )
+    expect(
+      (await computeBoardTimeline(db, gameId))!.steps.at(-1)!.state
+    ).not.to.have.property('exitReading')
+    if (process.env.SCOREBOARD_EXIT_PROOF === '1') {
+      for (const exchange of proof) console.log(JSON.stringify(exchange))
+    }
+  })
+
+  it('invalidates cached playback when an earlier exit arrives without replacing newer board snapshots', async () => {
+    const gameId = await newGame()
+    const cache = makeBoardTimelineCache(2)
+    const row = {
+      gameId,
+      cause: 'publisher' as const,
+      actorId: null,
+      overrides: NO_OVERRIDES
+    }
+    await logScoreboard(db, {
+      ...row,
+      version: 3,
+      at: clock + 2000,
+      publisher: {
+        state: { balls: 2, exitVelocity: 88 },
+        receivedAt: clock + 2000
+      },
+      radar: { exitVelocity: 88 }
+    })
+    const before = await cache.get(db, gameId)
+    await logScoreboard(db, {
+      ...row,
+      version: 1,
+      at: clock + 1000,
+      publisher: {
+        state: { balls: 1, exitVelocity: 77 },
+        receivedAt: clock + 1000
+      },
+      radar: { exitVelocity: 77 }
+    })
+    const after = await cache.get(db, gameId)
+    expect(after?.version).not.equals(before?.version)
+    expect(after?.steps.map(s => s.state.balls)).deep.equals([0, 2])
+    expect(after?.steps.map(s => s.state.exitReading)).deep.equals([
+      { mph: 77, startedAt: clock + 1000, receivedAt: clock + 1000 },
+      { mph: 88, startedAt: clock + 1000, receivedAt: clock + 2000 }
+    ])
+    expect(after).deep.equals(await computeBoardTimeline(db, gameId))
+    await logScoreboard(db, {
+      ...row,
+      cause: 'reset',
+      publisher: undefined,
+      version: 2,
+      at: clock + 1500
+    })
+    const reset = await cache.get(db, gameId)
+    expect(reset?.version).not.equals(after?.version)
+    expect(reset?.steps.map(s => s.state.exitReading)).deep.equals([
+      { mph: 77, startedAt: clock + 1000, receivedAt: clock + 1000 },
+      undefined,
+      { mph: 88, startedAt: clock + 2000, receivedAt: clock + 2000 }
+    ])
+    expect(reset).deep.equals(await computeBoardTimeline(db, gameId))
+  })
+
   it('persists a late WebSocket radar reading on the current scored pitch', async function () {
     const context = await addScorableTeams(db, {
       home: 'Comets',
