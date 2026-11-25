@@ -242,6 +242,21 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     })
 
+    it('describes TeamStation before any script runs, the policy still right after the charset', function () {
+      const html = readFileSync(join(once, 'index.html'), 'utf8')
+      const sentence =
+        'TeamStation is where a team keeps its games, scores, and video.'
+      expect(html).contains(`<meta name="description" content="${sentence}" />`)
+      // In the body: in the head a <noscript> may hold only link, style and meta.
+      const body = html.slice(html.indexOf('<body>')).replace(/\s+/g, ' ')
+      expect(body).contains(
+        `<body> <noscript>${sentence}</noscript> <div id="root"></div>`
+      )
+      expect(html).matches(
+        /<meta charset="utf-8" \/>\n\s*<meta http-equiv="Content-Security-Policy" /
+      )
+    })
+
     it('hashes every script tag with its file’s sha384', function () {
       const html = readFileSync(join(once, 'index.html'), 'utf8')
       const tags = [
