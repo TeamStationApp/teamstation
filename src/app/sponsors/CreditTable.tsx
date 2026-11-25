@@ -298,7 +298,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     columnGap: theme.rem(0.5)
   },
   itemColumn: { flex: 1, minWidth: 0 },
-  usedColumn: { width: theme.rem(4) },
+  usedColumn: { width: theme.rem(4.75) },
   remainingColumn: { width: theme.rem(4.75) },
   actionColumn: { width: theme.rem(5.5) },
   item: {

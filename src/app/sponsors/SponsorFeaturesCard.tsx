@@ -21,14 +21,17 @@ export function SponsorFeaturesCard({
       <SectionHeader title="Sponsors" />
       <View style={styles.wrap}>
         <ListCard>
-          <ListRow
-            testID="sponsor-features-row"
-            title="Sponsor features"
-            subtitle="Video logos, video reels and sponsored Schedule rows"
-            subtitleNumberOfLines={0}
-            emblemIcon="star"
-            onPress={onOpen}
-          />
+          {/* Room for the pill above the row, so it never meets the chevron. */}
+          <View style={styles.underPill}>
+            <ListRow
+              testID="sponsor-features-row"
+              title="Sponsor features"
+              subtitle="Video logos, video reels and sponsored Schedule rows"
+              subtitleNumberOfLines={0}
+              emblemIcon="star"
+              onPress={onOpen}
+            />
+          </View>
         </ListCard>
         <View style={styles.pill}>
           <PremiumPill />
@@ -41,6 +44,7 @@ export function SponsorFeaturesCard({
 const getStyles = cacheStyles((theme: Theme) => ({
   section: { gap: theme.rem(0.75) },
   wrap: { position: 'relative' },
+  underPill: { paddingTop: theme.rem(1) },
   // In the row's upper-right corner, as far from the top as from the
   // right, and clear above the chevron.
   pill: {
