@@ -17,13 +17,13 @@ import {
   rtmpUrl,
   SIGN_IN_AS,
   soakAccounts,
+  soakAndroidApp,
   soakParts,
   type SoakPartsDeps,
   soakServerConfig,
   soakSettings,
   xctraceSampler
 } from './soakWiring'
-import type { StreamingWorld } from './streamingSession'
 import { awaitable, fakeDevice, fixture } from './surfaces/fakes.test'
 import type { SoakSurfaceDriver } from './surfaces/surface'
 
@@ -429,17 +429,13 @@ function partsRig(): {
     world: {
       gameId: 'g1',
       streams: [{ label: 'Synthetic', id: 's3', videoId: 'v3', key: 'key-s' }],
-      accounts: {}
+      accounts: {
+        owner: { email: 'owner@example.test' },
+        viewer: { email: 'viewer@example.test' }
+      }
     },
-    emails: { owner: 'o@example.test', viewer: 'v@example.test' },
-    links: gameLinks(HANDLE.origin, 'g1'),
-    stack: { api: HANDLE.api, serverLog: '/log' },
-    ownerToken: 'o',
-    link: (who: string) => async () => `tok-${who}`,
-    close: async () => {
-      log.push('world closed')
-    }
-  } as unknown as StreamingWorld
+    links: gameLinks(HANDLE.origin, 'g1')
+  } as unknown as Awaited<ReturnType<SoakPartsDeps['openWorld']>>
   const device = (role: string): unknown =>
     awaitable(
       fakeDevice({
@@ -464,13 +460,17 @@ function partsRig(): {
       },
       saveShot: name => name
     }),
-    tvKit: () => ({ tv, remote: async () => '' }),
-    signInTv: async () => {
+    tvKit: () => ({
+      tv,
+      remote: async () => '',
+      signOut: async () => undefined
+    }),
+    signInTv: async (_remote, _signOut, _owner, openPairing) => {
+      await openPairing()
       log.push('tv signed in')
-      return true
     },
-    signInApp: async (_device, _app, link) => {
-      log.push(`signed in ${await link()}`)
+    signIn: async (_device, account) => {
+      log.push(`signed in ${account.email}`)
     },
     recordSessions: async (_world, file) => {
       log.push(`sessions ${file}`)
@@ -484,6 +484,22 @@ describe('building the soak parts', function () {
     seed: 'seed-1',
     layout: 'compressed'
   } as unknown as SoakSchedule
+
+  it('selects the Android test package and its scheme for a side-by-side install', function () {
+    expect(soakAndroidApp({})).deep.equals({
+      id: 'app.teamstation.develop',
+      scheme: 'teamstation-develop'
+    })
+    expect(
+      soakAndroidApp({
+        SOAK_ANDROID_APP_ID: 'app.example.test',
+        SOAK_ANDROID_SCHEME: 'stream-test'
+      })
+    ).deep.equals({ id: 'app.example.test', scheme: 'stream-test' })
+    expect(() =>
+      soakAndroidApp({ SOAK_ANDROID_APP_ID: 'invalid package' })
+    ).throws('Invalid Android')
+  })
 
   it('signs every surface in and gives the run its surfaces, publishers and samplers', async function () {
     const before = process.env.SOAK_TV_MEMORY
@@ -535,15 +551,18 @@ describe('building the soak parts', function () {
         schedule: { seed: 'seed-1', layout: 'compressed' }
       })
       expect(r.log.filter(line => line.startsWith('signed in'))).deep.equals([
-        'signed in tok-owner',
-        'signed in tok-owner',
-        'signed in tok-viewer',
-        'signed in tok-viewer',
-        'signed in tok-viewer'
+        'signed in owner@example.test',
+        'signed in owner@example.test',
+        'signed in viewer@example.test',
+        'signed in viewer@example.test',
+        'signed in viewer@example.test',
+        'signed in viewer@example.test',
+        'signed in viewer@example.test'
       ])
       expect(r.log).includes(
-        'iphone opens https://streamtest.example.test//signin/tok-viewer'
+        `iphone opens ${new URL('/sign-in', HANDLE.origin).href}`
       )
+      expect(r.log).includes('open publisherA ios')
       expect(r.log).includes('tv signed in')
       expect(r.log).includes(`sessions ${join(r.dir, 'sessions.json')}`)
       const urlFile = join(tmpdir(), `soak-rtmp-${process.pid}`)
@@ -551,7 +570,7 @@ describe('building the soak parts', function () {
         'rtmp://203.0.113.7:1935/live/key-s'
       )
       await cleanup()
-      expect(r.log.slice(-2)).deep.equals(['world closed', 'browser closed'])
+      expect(r.log.at(-1)).equals('browser closed')
       expect(existsSync(urlFile)).equals(false)
     } finally {
       if (before == null) delete process.env.SOAK_TV_MEMORY
@@ -572,7 +591,7 @@ describe('building the soak parts', function () {
       (error: unknown) => (error as Error).message
     )
     expect(message).equals('the TV is still signing in after 8 looks')
-    expect(r.log.slice(-2)).deep.equals(['browser closed', 'world closed'])
+    expect(r.log.at(-1)).equals('browser closed')
     expect(existsSync(join(tmpdir(), `soak-rtmp-${process.pid}`))).equals(false)
   })
 

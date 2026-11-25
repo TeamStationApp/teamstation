@@ -367,6 +367,30 @@ describe('the soak fixture', function () {
     expect(rows.some(row => row[0] === 'scope_roles')).equals(false)
   })
 
+  it('creates password accounts for both soak roles on every fresh run', async function () {
+    const { deps, calls } = fakeDeps('earlier-owner', 'earlier-viewer')
+    const input = {
+      db: fakeDb().db,
+      mailbox: 'qa@example.test',
+      sessionSecret: 'test',
+      live: LIVE,
+      freshAccounts: true
+    }
+    for (const nonce of ['first', 'second']) {
+      const { accounts } = await seedSoakFixture({ ...input, nonce }, deps)
+      for (const role of ['owner', 'viewer']) {
+        expect(accounts[role].email).equals(
+          `qa+${WORLD}-${role}-${nonce}@example.test`
+        )
+        expect(accounts[role].password.length).greaterThan(0)
+      }
+    }
+    expect(calls.filter(call => call[0] === 'find')).deep.equals([])
+    expect(
+      parseArgs(['--mailbox', input.mailbox, '--fresh-accounts'])
+    ).deep.equals({ mailbox: input.mailbox, freshAccounts: true })
+  })
+
   it('makes the stack its owner once, and every later run reuses it', async function () {
     const first = fakeDeps()
     const made = await seedSoakFixture(

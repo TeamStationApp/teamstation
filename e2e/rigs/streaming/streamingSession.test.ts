@@ -306,6 +306,27 @@ describe('the device kit', function () {
     ])
   })
 
+  it('opens a game in the leased develop app through the hub', async function () {
+    const { ctx } = context()
+    const { device, calls } = fakeDevice()
+    ctx.device = () => 'phone@hub'
+    ctx.attach = async () => awaitable(device)
+    const kit = deviceKit(ctx, SETTINGS, {
+      run: async () => {
+        throw new Error('Unexpected host device command')
+      },
+      write: () => {},
+      log: () => {},
+      settleMs: 0
+    })
+    await kit.attachIos('iphone')
+    await kit.openIn('iphone', 'ios')('teamstation://games/test?tab=watch')
+    expect(calls).deep.include([
+      'openLink',
+      { link: 'teamstation-develop://games/test?tab=watch' }
+    ])
+  })
+
   it('hands a link to the develop app alone on each platform, and saves screenshots', async function () {
     const { ctx, dir } = context()
     const ran: Array<[string, string[]]> = []

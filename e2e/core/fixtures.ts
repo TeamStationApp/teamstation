@@ -140,17 +140,18 @@ async function visible(
  */
 async function typeCredentials(
   device: any,
-  account: Pick<FixtureAccount, 'email' | 'password'>
+  account: Pick<FixtureAccount, 'email' | 'password'>,
+  signedInText: string
 ): Promise<void> {
   await typeInto(device, 'E-mail address', account.email)
   await typeInto(device, 'Password', account.password)
   // iOS submits from the password field's Go key. Android leaves the keyboard
   // over the button, so it is dismissed and the button is tapped. Hiding the
   // keyboard on iOS sends Return, which submits that same field.
-  if (await visible(device, 'TeamStation menu', 2000)) return
+  if (await visible(device, signedInText, 2000)) return
   if (typeof device.hideKeyboard === 'function') {
     await device.hideKeyboard()
-    if (await visible(device, 'TeamStation menu', 2000)) return
+    if (await visible(device, signedInText, 2000)) return
   }
   await device.tapOn({ text: 'Sign in' })
 }
@@ -158,19 +159,20 @@ async function typeCredentials(
 /** The real password form, on any surface. */
 export async function signInWithPassword(
   device: any,
-  account: Pick<FixtureAccount, 'email' | 'password'>
+  account: Pick<FixtureAccount, 'email' | 'password'>,
+  signedInText = 'TeamStation menu'
 ): Promise<void> {
   await device.assertVisible({ text: 'Use a password instead', timeout: 30000 })
   await device.tapOn({ text: 'Use a password instead' })
   // The home screen's mark is only there once the password was accepted.
   // The first two tries cover a key the phone keyboard dropped; the last one reports it.
   for (let attempt = 1; attempt <= 3; attempt++) {
-    await typeCredentials(device, account)
+    await typeCredentials(device, account, signedInText)
     if (attempt === 3) {
-      await device.assertVisible({ text: 'TeamStation menu', timeout: 20000 })
+      await device.assertVisible({ text: signedInText, timeout: 20000 })
       return
     }
-    if (await visible(device, 'TeamStation menu', 8000)) return
+    if (await visible(device, signedInText, 8000)) return
   }
 }
 

@@ -144,7 +144,7 @@ export class TvSurface implements SoakSurfaceDriver {
   }
 
   /** Moves the focus to the element with this label, by the remote's arrows, and selects it. */
-  async focusAndSelect(label: string): Promise<void> {
+  async focusAndSelect(label: string, rowFirst = false): Promise<void> {
     let elements = await this.dump()
     for (let move = 0; move <= (this.options.maxMoves ?? 12); move++) {
       // The control itself first, the angle's tile only when there is no such control.
@@ -166,8 +166,13 @@ export class TvSurface implements SoakSurfaceDriver {
       if (focused != null) {
         const [tx, ty] = centreOf(target.bounds!)
         const [fx, fy] = centreOf(focused.bounds!)
+        // The home screen's header is a separate focus row. A horizontal
+        // press on Watch Game cannot enter it, whatever the distance to it.
+        const separateRows =
+          Math.abs(ty - fy) >=
+          (target.bounds!.height + focused.bounds!.height) / 2
         direction =
-          Math.abs(tx - fx) >= Math.abs(ty - fy)
+          !(rowFirst && separateRows) && Math.abs(tx - fx) >= Math.abs(ty - fy)
             ? tx > fx
               ? 'right'
               : 'left'

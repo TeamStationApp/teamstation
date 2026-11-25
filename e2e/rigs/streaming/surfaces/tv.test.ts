@@ -115,6 +115,30 @@ describe('the TV surface', function () {
     return { surface, runs }
   }
 
+  it('enters the header row before moving across it to sign out', async function () {
+    const nodes = [
+      "Button, 0x1, {{40, 400}, {100, 50}}, label: 'Watch Game'",
+      "Button, 0x2, {{800, 30}, {100, 50}}, label: 'Search'",
+      "Button, 0x3, {{1000, 30}, {100, 50}}, label: 'Sign out'"
+    ]
+    let index = 0
+    const { surface, runs } = tv({
+      dump: () => {
+        const selected = index++
+        return nodes
+          .map((line, i) => (i === selected ? line + ', Focused' : line))
+          .join('\n')
+      }
+    })
+    await surface.focusAndSelect('Sign out', true)
+    expect(runs).deep.equals([
+      ['dump'],
+      ['up', 'wait:0.5', 'dump'],
+      ['right', 'wait:0.5', 'dump'],
+      ['select']
+    ])
+  })
+
   it('probes tiles from two NDI captures and the dump', async function () {
     const { surface } = tv()
     const probe = await surface.probe()

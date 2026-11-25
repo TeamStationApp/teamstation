@@ -127,6 +127,7 @@ export interface SoakFixtureInput {
   nonce?: string
   /** The synthetic cameras to seed, by label; the soak's one `Synthetic` when omitted. */
   syntheticAngles?: string[]
+  freshAccounts?: boolean
 }
 
 export async function seedSoakFixture(
@@ -136,8 +137,20 @@ export async function seedSoakFixture(
   const { db } = input
   const nonce = input.nonce ?? deps.makeNonce()
   const now = input.now?.() ?? new Date()
-  const owner = await stackAccount(input, deps, 'owner', OWNER)
-  const viewer = await stackAccount(input, deps, 'viewer', VIEWER)
+  const account = async (
+    role: string,
+    person: Person
+  ): Promise<FixtureAccount> =>
+    input.freshAccounts === true
+      ? await deps.createAccount(
+          { db, mailbox: input.mailbox, nonce },
+          WORLD,
+          role,
+          person
+        )
+      : await stackAccount(input, deps, role, person)
+  const owner = await account('owner', OWNER)
+  const viewer = await account('viewer', VIEWER)
   const home = await deps.createTeam(
     db,
     { name: `Soak Hosts ${nonce}`, externalIds: [] },
@@ -298,6 +311,7 @@ export interface RunSoakFixture {
   makeDatabase: (url: string) => Kysely<Database>
   deps?: SoakFixtureDeps
   syntheticAngles?: string[]
+  freshAccounts?: boolean
 }
 
 /** Seeds the world into the database at `databaseUrl`, and always lets go of it. */
@@ -320,6 +334,7 @@ export async function runSoakFixture(
         mailbox: options.mailbox,
         sessionSecret: options.sessionSecret,
         live: options.live,
+        freshAccounts: options.freshAccounts,
         ...(options.syntheticAngles == null
           ? {}
           : { syntheticAngles: options.syntheticAngles })
@@ -334,6 +349,7 @@ export async function runSoakFixture(
 export function parseArgs(argv: string[]): {
   mailbox: string
   syntheticAngles?: string[]
+  freshAccounts?: boolean
 } {
   const at = argv.indexOf('--mailbox')
   const mailbox = at < 0 ? undefined : argv[at + 1]
@@ -343,12 +359,19 @@ export function parseArgs(argv: string[]): {
     )
   }
   const synthetic = argv.indexOf('--synthetic')
-  if (synthetic < 0) return { mailbox }
+  const accounts = argv.includes('--fresh-accounts')
+    ? { freshAccounts: true }
+    : {}
+  if (synthetic < 0) return { mailbox, ...accounts }
   const list = argv[synthetic + 1]
   if (list == null || list.startsWith('--')) {
     throw new Error('--synthetic takes a comma-separated list of labels')
   }
-  return { mailbox, syntheticAngles: syntheticLabels(list.split(',')) }
+  return {
+    mailbox,
+    ...accounts,
+    syntheticAngles: syntheticLabels(list.split(','))
+  }
 }
 
 interface ServerConfigLike {
@@ -368,7 +391,7 @@ export async function runCli(
   out: Pick<Console, 'log' | 'error'> = console
 ): Promise<number> {
   try {
-    const { mailbox, syntheticAngles } = parseArgs(argv)
+    const { mailbox, syntheticAngles, freshAccounts } = parseArgs(argv)
     const { config, makeDatabase } = load()
     if (!config.testSettings) {
       throw new Error(
@@ -381,6 +404,7 @@ export async function runCli(
       sessionSecret: config.sessionSecret,
       live: config.live,
       makeDatabase,
+      freshAccounts,
       ...(syntheticAngles == null ? {} : { syntheticAngles })
     })
     out.log(JSON.stringify(manifest))

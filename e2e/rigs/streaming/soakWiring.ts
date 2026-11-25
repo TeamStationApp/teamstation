@@ -12,22 +12,20 @@ import { sampleChrome } from './samplers/chromeProcess'
 import { sampleDroplet } from './samplers/droplet'
 import type { Exec } from './samplers/sample'
 import { exportTrace, recordArgs, samplesFromExport } from './samplers/xctrace'
+import { pairSoakTv, signInSoakSurface } from './soakPassword'
 import type { MemorySample } from './soakRecords'
 import type { SoakParts, SoakSampler } from './soakRun'
 import type { SoakSchedule } from './soakSchedule'
-import { signInApp } from './soakSignIn'
 import {
   ANDROID_MAX_HOLD_MS,
   DEVELOP_APP,
   type DeviceKit,
   deviceKit,
   exec,
-  openWorld,
   recordSessions,
   rtmpUrl,
+  seedStreamingWorld,
   SIGN_IN_AS,
-  signInTv,
-  type StreamingWorld,
   tvKit
 } from './streamingSession'
 import { ChromeSurface } from './surfaces/chrome'
@@ -50,6 +48,22 @@ export {
   soakSettings,
   TV_APP
 } from './streamingSession'
+
+/** A separately installed Android test build can declare its own link scheme. */
+export function soakAndroidApp(env: NodeJS.ProcessEnv): {
+  id: string
+  scheme: string
+} {
+  const id = env.SOAK_ANDROID_APP_ID ?? DEVELOP_APP
+  const scheme = env.SOAK_ANDROID_SCHEME ?? 'teamstation-develop'
+  if (
+    !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(id) ||
+    !/^[a-z][a-z0-9+.-]*$/.test(scheme)
+  ) {
+    throw new Error('Invalid Android soak application id or link scheme')
+  }
+  return { id, scheme }
+}
 
 export const APP_PROCESS = 'TeamStation Develop'
 export const TV_PROCESS = 'TeamStationTV'
@@ -181,14 +195,18 @@ export function xctraceSampler(
   }
 }
 
-export function adbSampler(name: string, serial: string): SoakSampler {
+export function adbSampler(
+  name: string,
+  serial: string,
+  appId = DEVELOP_APP
+): SoakSampler {
   return {
     name: `${name}-meminfo`,
     sample: async now =>
       await sampleMeminfo(exec, {
         device: name,
         serial,
-        package: DEVELOP_APP,
+        package: appId,
         now: () => now
       })
   }
@@ -258,32 +276,41 @@ export interface SoakRunInputs {
 /**
  * Seeds the soak's world on the attached stack, signs every surface in, and
  * gives `runSoak` its parts. `cleanup` stops what this made outside the run:
- * the log mirror and the synthetic camera's URL file.
+ * the browser and the synthetic camera's URL file.
  */
 /** What `soakParts` reaches outside this process; the real ones unless a test stands in. */
+type SoakWorld = Awaited<ReturnType<typeof seedStreamingWorld>>
+
 export interface SoakPartsDeps {
   openWorld: (
-    options: Parameters<typeof openWorld>[0]
-  ) => Promise<StreamingWorld>
-  deviceKit: (
-    ctx: E2eContext,
-    settings: StreamingWorld['settings']
-  ) => DeviceKit
+    options: Parameters<typeof seedStreamingWorld>[0]
+  ) => Promise<SoakWorld>
+  deviceKit: (ctx: E2eContext, settings: SoakWorld['settings']) => DeviceKit
   tvKit: (
     ctx: E2eContext,
-    settings: StreamingWorld['settings']
-  ) => { tv: SoakSurfaceDriver; remote: TvRemote }
-  signInTv: typeof signInTv
-  signInApp: typeof signInApp
-  recordSessions: (world: StreamingWorld, file: string) => Promise<void>
+    settings: SoakWorld['settings']
+  ) => { tv: SoakSurfaceDriver; remote: TvRemote; signOut: () => Promise<void> }
+  signInTv: typeof pairSoakTv
+  signIn: typeof signInSoakSurface
+  recordSessions: (world: SoakWorld, file: string) => Promise<void>
 }
 
 export const realSoakPartsDeps: SoakPartsDeps = {
-  openWorld: async options => await openWorld(options),
-  deviceKit: (ctx, settings) => deviceKit(ctx, settings),
-  tvKit: (ctx, settings) => tvKit(ctx, settings),
-  signInTv,
-  signInApp,
+  openWorld: async options =>
+    await seedStreamingWorld({ ...options, freshAccounts: true }),
+  deviceKit: (ctx, settings) =>
+    deviceKit(ctx, settings, undefined, soakAndroidApp(process.env)),
+  tvKit: (ctx, settings) => {
+    const kit = tvKit(ctx, settings)
+    return {
+      ...kit,
+      signOut: async () => {
+        await kit.tv.focusAndSelect('Sign out', true)
+      }
+    }
+  },
+  signInTv: pairSoakTv,
+  signIn: signInSoakSurface,
   recordSessions: async (world, file) => {
     await recordSessions(world, file)
   }
@@ -298,7 +325,8 @@ export async function soakParts(
   const urlFile = join(tmpdir(), `soak-rtmp-${process.pid}`)
   let closeWeb: (() => Promise<void>) | undefined
   try {
-    const { handle, settings, world, links, link } = opened
+    const { handle, settings, world, links } = opened
+    const androidId = soakAndroidApp(process.env).id
     // Before any device: a stack with no publisher droplet has no cameras.
     const publisher = requirePublisher(handle)
     const { attachIos, attachAndroid, openIn, saveShot } = deps.deviceKit(
@@ -311,32 +339,35 @@ export async function soakParts(
     const iphone = await attachIos('iphone')
     const android = await attachAndroid('android')
     const ipad = await attachIos('ipad')
-    for (const [role, device, platform] of [
-      ['publisherA', publisherA, 'ios'],
-      ['publisherB', publisherB, 'android'],
-      ['iphone', iphone, 'ios'],
-      ['android', android, 'android'],
-      ['ipad', ipad, 'ios']
+    for (const [role, device, appId] of [
+      ['publisherA', publisherA, DEVELOP_APP],
+      ['publisherB', publisherB, androidId],
+      ['iphone', iphone, DEVELOP_APP],
+      ['android', android, androidId],
+      ['ipad', ipad, DEVELOP_APP]
     ] as const) {
-      await deps.signInApp(device, DEVELOP_APP, link(SIGN_IN_AS[role]), {
-        openIn: openIn(role, platform)
-      })
+      await device.launchApp({ appId, stopApp: true })
+      await deps.signIn(
+        device,
+        world.accounts[SIGN_IN_AS[role]],
+        role === 'android' || role === 'publisherB'
+      )
     }
 
     const web = await ctx.browser({ width: 1440, height: 900 }, { h264: true })
     closeWeb = async () => {
       await web.close()
     }
-    await web.m.openLink({
-      link: `${handle.origin}/signin/${await link(SIGN_IN_AS.chrome)()}`
-    })
-    // Safari keeps its own sign-in: opened once here, before minute 0.
-    await iphone.openLink({
-      link: `${handle.origin}/signin/${await link(SIGN_IN_AS['iphone-safari'])()}`
-    })
+    const signInUrl = new URL('/sign-in', handle.origin).href
+    await web.m.openLink({ link: signInUrl })
+    await deps.signIn(web.m, world.accounts[SIGN_IN_AS.chrome])
+    await iphone.openLink({ link: signInUrl })
+    await deps.signIn(iphone, world.accounts[SIGN_IN_AS['iphone-safari']])
 
-    const { tv, remote } = deps.tvKit(ctx, settings)
-    await deps.signInTv(remote, opened)
+    const { tv, remote, signOut } = deps.tvKit(ctx, settings)
+    await deps.signInTv(remote, signOut, publisherA, async () => {
+      await openIn('publisherA', 'ios')('teamstation-develop://account/tv')
+    })
     await deps.recordSessions(opened, ctx.artifact('sessions.json'))
 
     const app = new NativeAppSurface({
@@ -389,7 +420,7 @@ export async function soakParts(
         android: new NativeAppSurface({
           name: 'android',
           device: android,
-          appId: DEVELOP_APP,
+          appId: androidId,
           gameLink: links.app,
           openIn: openIn('android', 'android'),
           saveShot,
@@ -423,7 +454,7 @@ export async function soakParts(
         }),
         publisherB: new PhonePublisher({
           device: publisherB,
-          appId: DEVELOP_APP,
+          appId: androidId,
           gameLink: links.app,
           angle: 'PhoneB',
           openIn: openIn('publisherB', 'android')
@@ -472,8 +503,8 @@ export async function soakParts(
                 appName: TV_PROCESS
               })
             ]),
-        adbSampler('publisherB', ctx.device('publisherB')),
-        adbSampler('android', ctx.device('android')),
+        adbSampler('publisherB', ctx.device('publisherB'), androidId),
+        adbSampler('android', ctx.device('android'), androidId),
         chromeSampler(browserCdp, pageCdp),
         dropletSampler(handle)
       ],
@@ -489,7 +520,6 @@ export async function soakParts(
       parts,
       cleanup: async () => {
         rmSync(urlFile, { force: true })
-        await opened.close()
         await web.close()
       }
     }
@@ -497,7 +527,6 @@ export async function soakParts(
     // Parts that never came together let go of what they had made so far.
     rmSync(urlFile, { force: true })
     await closeWeb?.().catch(() => undefined)
-    await opened.close().catch(() => undefined)
     throw error
   }
 }
