@@ -12,5 +12,11 @@ export function ChatComposerBand({
   style,
   ...rest
 }: ChatComposerBandProps): React.ReactElement {
-  return <View {...rest} style={[style, { bottom: viewport.composerBottom }]} />
+  return (
+    <View
+      {...rest}
+      dataSet={{ offlineBannerDock: 'true' }}
+      style={[style, { bottom: viewport.composerBottom }]}
+    />
+  )
 }

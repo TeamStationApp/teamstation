@@ -15,6 +15,7 @@
 - changed: On the web, Coach Game keeps a refused lineup or rostered change and holds it in "edits not sent", as the phone does
 - changed: The web build writes brotli and gzip copies of its scripts, styles and WebAssembly for the server to send, about a quarter of the bytes on a first visit
 - fixed: The chat message field follows the phone keyboard during a drag. Changes to draft height, reply and edit controls, and the desktop message menu animate smoothly.
+- fixed: The chat composer and navigation move smoothly when the offline banner appears or clears.
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 - fixed: A ball scored on the web just before browser Back is no longer lost

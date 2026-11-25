@@ -87,7 +87,10 @@ import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { HeldEditsSheet } from './components/HeldEditsSheet'
 import { ModalPresenceProvider } from './components/modalPresence'
-import { OfflineBanner } from './components/OfflineBanner'
+import {
+  OfflineBanner,
+  useOfflineBannerHeight
+} from './components/OfflineBanner'
 import { useSidebarWidth } from './components/sidebarLayout'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
@@ -990,7 +993,11 @@ function Shell(props: AppProps): React.ReactElement {
           setHeldOpen(true)
         }
       : undefined
-  const [bannerHeight, setBannerHeight] = useState(0)
+  const {
+    height: bannerHeight,
+    shell: bannerShell,
+    report: setBannerHeight
+  } = useOfflineBannerHeight()
   useEffect(() => {
     if (!phoneOffline) setCreateRefused(false)
   }, [phoneOffline])
@@ -4285,8 +4292,6 @@ function Shell(props: AppProps): React.ReactElement {
       />
     </TessFrame>
   )
-  const bannerShown = bannerText != null || createRefused
-  const bottomBanner = bannerShown ? bannerHeight : 0
   // The offline banner is the last chrome: the bottom strip, on the safe-area
   // inset, under the floating capsule, which sits on top of it. A wide window
   // has no capsule, and the banner still sits on the inset, beside the
@@ -4305,7 +4310,7 @@ function Shell(props: AppProps): React.ReactElement {
           chatActive={top?.name === 'conversation' || tab === 'chat'}
           onSelect={selectTab}
           dots={{ chat: chatOn && hasUnread(chatList) }}
-          bannerHeight={bottomBanner}
+          bannerHeight={bannerHeight}
         />
       )}
       <OfflineBanner
@@ -4317,7 +4322,7 @@ function Shell(props: AppProps): React.ReactElement {
         text={bannerText}
         refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
         onOpenHeld={openHeld}
-        onLayout={setBannerHeight}
+        onPresentedHeight={setBannerHeight}
       />
     </>
   )
@@ -4378,7 +4383,10 @@ function Shell(props: AppProps): React.ReactElement {
             <TessOverlayProvider active={tessColumn}>
               {/* The person's topics reach the pane and Tess's layer beside it. */}
               <UserTopicProvider socket={gameSocket}>
-                <View style={[styles.app, tessColumn && styles.split]}>
+                <View
+                  ref={bannerShell}
+                  style={[styles.app, tessColumn && styles.split]}
+                >
                   <View
                     key="pane"
                     style={styles.pane}
@@ -4435,7 +4443,7 @@ function Shell(props: AppProps): React.ReactElement {
                           navigationHeight={
                             isWide || sidebarWidth > 0 ? 0 : navigationHeight
                           }
-                          bannerHeight={bottomBanner}
+                          bannerHeight={bannerHeight}
                           onHandoff={setHandoff}
                           onHandoffHeight={setHandoffHeight}
                           onBackOverride={setBack}
@@ -4454,7 +4462,7 @@ function Shell(props: AppProps): React.ReactElement {
                   banner in it, is not drawn: nothing to clear. */}
                   <SuccessToast
                     notice={successNotice}
-                    bannerHeight={immersiveTop ? 0 : bottomBanner}
+                    bannerHeight={immersiveTop ? 0 : bannerHeight}
                   />
                   {chatOn && <DeviceApprovalPrompt />}
                   <ChatAgeHost
