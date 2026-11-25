@@ -4,7 +4,7 @@
 
 - added: Scorers can end a live game during any play, see what will go in the scorebook, and undo the final after reopening the game
 - changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
-- added: Radar exit velocity wipes across the batter’s stats for five seconds and follows the play during replay
+- added: Radar exit velocity wipes across the batter’s stats for five seconds and follows the play during replay. On TS Director’s own stream output the wipe moves in steps; OBS and the web player draw it smoothly
 - added: Chat senders can include a removable link preview. Recipients see its encrypted copy, and reporting the message shares the original content while keeping the preview private.
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.
