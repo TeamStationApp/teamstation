@@ -80,19 +80,42 @@ const asReadRequest = asObject({
 })
 export type ReadPushRequest = ReturnType<typeof asReadRequest>
 
+/**
+ * A League management notice recorded for these league admins (an umpire
+ * notice), to push to their devices with "Notify for league management" on.
+ * Unlike the others it carries what it says: the notice is written in the
+ * API's transaction, and this is queued once that commits.
+ */
+const asLeagueRequest = asObject({
+  v: asLiteral(1),
+  t: asLiteral('league'),
+  /** Who to tell; on a later try, only those a failure alone kept it from. */
+  u: asArray(asString),
+  title: asString,
+  body: asString,
+  /** `teamstation://umpires/<leagueId>?view=league&game=<gameId>`. */
+  url: asString,
+  /** `event:league:<notice id>`: one notification a notice. */
+  tag: asString,
+  attempt: asNumber
+})
+export type LeaguePushRequest = ReturnType<typeof asLeagueRequest>
+
 export type PushRequest =
-  ChatPushRequest | ReminderPushRequest | ReadPushRequest
+  ChatPushRequest | ReminderPushRequest | ReadPushRequest | LeaguePushRequest
 
 /** A request as it is queued; `v` and `attempt` are filled in. */
 export type NewPushRequest =
   | Omit<ChatPushRequest, 'v' | 'attempt' | 'to' | 'due'>
   | Omit<ReminderPushRequest, 'v' | 'attempt'>
   | Omit<ReadPushRequest, 'v' | 'attempt' | 'devices'>
+  | Omit<LeaguePushRequest, 'v' | 'attempt'>
 
 export const asPushRequest: Cleaner<PushRequest> = asEither(
   asChatRequest,
   asReminderRequest,
-  asReadRequest
+  asReadRequest,
+  asLeagueRequest
 )
 
 /** A request's first try. */
@@ -127,8 +150,8 @@ export type PushOutcome =
   | { status: 'done' }
   /**
    * It failed, wholly or for some of the people it was for. `unreached`
-   * narrows a chat request's next try to those people, and `devices` a
-   * read's to those registrations.
+   * narrows a chat or league request's next try to those people, and
+   * `devices` a read's to those registrations.
    */
   | {
       status: 'failed'
@@ -156,9 +179,11 @@ export function afterFailure(
   const retry: PushRequest =
     request.t === 'chat' && outcome.unreached != null
       ? { ...request, attempt, to: outcome.unreached }
-      : request.t === 'read' && outcome.devices != null
-        ? { ...request, attempt, devices: outcome.devices }
-        : { ...request, attempt }
+      : request.t === 'league' && outcome.unreached != null
+        ? { ...request, attempt, u: outcome.unreached }
+        : request.t === 'read' && outcome.devices != null
+          ? { ...request, attempt, devices: outcome.devices }
+          : { ...request, attempt }
   return { retry, at: now + delay }
 }
 

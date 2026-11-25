@@ -137,6 +137,71 @@ async function choose(label: string): Promise<void> {
   })
 }
 describe('the event page’s automatic and explicit sections', () => {
+  it('opens a game umpire’s league card in the league the block names, and none without it', async () => {
+    const block = {
+      positions: [
+        {
+          slot: 'type:1',
+          typeId: 'type',
+          typeName: 'Plate',
+          ordinal: 1,
+          required: true,
+          person: {
+            userId: 'ump',
+            name: 'Mike T',
+            avatarUrl: null,
+            openable: true
+          }
+        }
+      ]
+    }
+    const opened: unknown[] = []
+    const onOpenPerson = (
+      group: { kind: 'league'; id: string },
+      userId: string,
+      name: string
+    ): void => {
+      opened.push([group, userId, name])
+    }
+    const row = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>(
+        '[data-testid="umpire-person-ump"] [role="button"]'
+      )
+    const named = fixture()
+    named.client.game = async () => ({
+      ...named.game,
+      umpires: { ...block, leagueId: 'lea_1' }
+    })
+    await render({ client: named.client, gameId: 'g1', onOpenPerson })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(row()).not.equals(null)
+    await act(async () => {
+      row()!.click()
+      await Promise.resolve()
+    })
+    expect(opened).deep.equals([
+      [{ kind: 'league', id: 'lea_1' }, 'ump', 'Mike T']
+    ])
+    await act(async () => root?.unmount())
+    document.body.replaceChildren()
+    // A game the phone stored before the league was sent: plain rows.
+    const stored = fixture()
+    stored.client.game = async () => ({
+      ...stored.game,
+      umpires: { ...block, leagueId: undefined }
+    })
+    await render({ client: stored.client, gameId: 'g1', onOpenPerson })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(
+      document.querySelector('[data-testid="umpire-person-ump"]')
+    ).not.equals(null)
+    expect(row()).equals(null)
+  })
+
   it('keeps hero button dimensions fixed as capabilities change and opens DJ separately', async () => {
     const { client, game } = fixture()
     let dj = 0

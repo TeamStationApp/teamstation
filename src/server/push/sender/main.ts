@@ -16,12 +16,13 @@ import { pushSettings, pushTransports } from '../config'
 import { PushQueue, pushQueueClient, type QueueEntry } from '../queue'
 import {
   afterFailure,
+  type LeaguePushRequest,
   pauseAfter,
   type PushOutcome,
   type PushRequest
 } from '../requests'
-import { remindOf } from '../rsvpReminders'
-import type { PushReport, PushTransports } from '../send'
+import { reminderMessage, remindOf } from '../rsvpReminders'
+import { type PushReport, type PushTransports, sendPush } from '../send'
 
 /** How many entries one read takes. */
 const READ_COUNT = 16
@@ -132,12 +133,52 @@ function cleared(report: ReadReport | null): Handled {
   }
 }
 
+/** How long a League management notice is kept for a device that is off. */
+const LEAGUE_NOTICE_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Pushes a League management notice to its admins' live devices with
+ * "Notify for league management" on, as the event payload an RSVP reminder
+ * is (`t: 'event'`, tagged `event:league:<id>`), so every app and the service
+ * worker show it and open its `url` as they do a reminder's, and Android
+ * posts it in its Events channel. Kept for a day by the push services.
+ */
+async function pushLeagueNotice(
+  request: LeaguePushRequest,
+  deps: SenderDeps
+): Promise<PushReport> {
+  const now = deps.clock()
+  const until = new Date(now.getTime() + LEAGUE_NOTICE_TTL_MS)
+  return await sendPush(
+    deps.db,
+    request.u,
+    'league_management',
+    to =>
+      reminderMessage(
+        to,
+        {
+          t: 'event',
+          u: to.userId,
+          title: request.title,
+          body: request.body,
+          url: request.url,
+          tag: request.tag
+        },
+        until,
+        now
+      ),
+    deps.transports,
+    deps.log
+  )
+}
+
 /**
  * Does what one request asks: wakes a conversation's members' devices for a
  * post (`wakeChat`), marking on `queue` whom it reached; takes a read
  * conversation's notifications down from its reader's other devices
- * (`clearRead`); or reminds of an event start (`remindOf`). Work that
- * throws, or that left somebody unreached, has failed.
+ * (`clearRead`); pushes a League management notice (`pushLeagueNotice`); or
+ * reminds of an event start (`remindOf`). Work that throws, or that left
+ * somebody unreached, has failed.
  */
 export async function handleRequest(
   request: PushRequest,
@@ -164,6 +205,14 @@ export async function handleRequest(
           }
         })
       )
+    if (request.t === 'league') {
+      const report = await pushLeagueNotice(request, deps)
+      if (report.sent > 0)
+        deps.log(
+          `push sender: sent a League management notice ${request.tag} to ${report.sent} device(s)`
+        )
+      return handled(report)
+    }
     if (request.t === 'read')
       return cleared(
         await clearRead(deps.db, request, {

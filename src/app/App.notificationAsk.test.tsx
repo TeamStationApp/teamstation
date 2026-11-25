@@ -134,6 +134,7 @@ describe('the app’s ask about notifications', function () {
         avatarUrl: null
       } as unknown as Awaited<ReturnType<TeamStationClient['dmCandidates']>>[0]
     ]
+    proto.dmReach = async () => 'direct'
     proto.createDm = async () =>
       ({
         id: 'cnv_exact',
@@ -223,7 +224,7 @@ describe('the app’s ask about notifications', function () {
     expect(ask()).equals(null)
   })
 
-  it('on Continue turns both switches on and asks the browser', async function () {
+  it('on Continue turns all three switches on and asks the browser', async function () {
     await open('/')
     await settle(() => {
       navTab('Chat').click()
@@ -236,7 +237,8 @@ describe('the app’s ask about notifications', function () {
     expect(asked).equals(1)
     expect(JSON.parse(kept(switchesKey(ME)) ?? '{}')).deep.equals({
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
   })
 
@@ -346,7 +348,7 @@ describe('the app’s ask about notifications', function () {
     expect(ask(), 'after the age sheet').not.equals(null)
   })
 
-  it('turns both switches on quietly where notifications are allowed already', async function () {
+  it('turns all three switches on quietly where notifications are allowed already', async function () {
     global.Notification = {
       permission: 'granted',
       requestPermission: async () => 'granted'
@@ -359,7 +361,8 @@ describe('the app’s ask about notifications', function () {
     expect(kept(askedKey(ME))).not.equals(null)
     expect(JSON.parse(kept(switchesKey(ME)) ?? '{}')).deep.equals({
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
   })
 })

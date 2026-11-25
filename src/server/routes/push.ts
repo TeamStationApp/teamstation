@@ -11,6 +11,7 @@ import { type Request, Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
+import { CHAT_KINDS_HEADER, readChatKinds } from '../../common/chatKinds'
 import { forbidden, notFound, unauthorized } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { isMachine } from '../auth/sessions'
@@ -99,15 +100,18 @@ const asRegistrationBody = asObject({
   platform: asLiteral('ios', 'android', 'web'),
   address: asUnknown,
   environment: asOptional(asLiteral('production', 'development'), 'production'),
-  // This device's own switches, as its Account shows them; off unless said.
+  // This device's own switches, as its Account shows them; off unless said,
+  // but League management, which an app from before it never sends, is on.
   messages: asOptional(asBoolean, false),
-  rsvpEvents: asOptional(asBoolean, false)
+  rsvpEvents: asOptional(asBoolean, false),
+  leagueManagement: asOptional(asBoolean, true)
 })
 
-/** A change to either of a device's switches; one left out keeps its value. */
+/** A change to any of a device's switches; one left out keeps its value. */
 const asSwitchesBody = asObject({
   messages: asOptional(asBoolean),
-  rsvpEvents: asOptional(asBoolean)
+  rsvpEvents: asOptional(asBoolean),
+  leagueManagement: asOptional(asBoolean)
 })
 
 /**
@@ -135,18 +139,21 @@ function sessionCaller(req: Request): { userId: string; sessionId: string } {
  * - `GET /push/web-key`: the VAPID public key a browser subscribes with; 404
  *   while Web Push is off.
  * - `POST /me/push-registrations { platform, address, environment, messages,
- *   rsvpEvents }`: this device's token or subscription, bound to this
- *   session, with this device's own two switches. The same address posted
+ *   rsvpEvents, leagueManagement }`: this device's token or subscription,
+ *   bound to this session, with this device's own three switches
+ *   (`leagueManagement` on when left out). The same address posted
  *   again, by anyone, moves to the posting session with the switches it
  *   posts, and is sent to again if a push service had refused it. A person
  *   keeps the `MAX_REGISTRATIONS_PER_USER` they posted most recently.
- * - `PATCH /me/push-registrations/:id { messages?, rsvpEvents? }`: this
+ * - `PATCH /me/push-registrations/:id { messages?, rsvpEvents?,
+ *   leagueManagement? }`: this
  *   session's own registration's switches, when one changes on the device.
  * - `DELETE /me/push-registrations/:id`: this session's own registration,
  *   at sign-out.
  *
- * Chat wakes go only to registrations with `messages` on, and RSVP reminders
- * only to those with `rsvp_events` on: the switches are each device's, not
+ * Chat wakes go only to registrations with `messages` on, RSVP reminders
+ * only to those with `rsvp_events` on, and League management notices only to
+ * those with `league_management` on: the switches are each device's, not
  * the account's. A read's clear goes to every live one of the reader's but
  * the reading session's, whatever its switches, since it takes down only
  * what a wake already showed.
@@ -181,6 +188,8 @@ export function pushRoutes(
         body.address
       )
       const now = new Date()
+      // The newer chat kinds this app reads, whose wakes it can open.
+      const chatKinds = readChatKinds(req.get(CHAT_KINDS_HEADER))
       const row = await db.transaction().execute(async trx => {
         const posted = await trx
           .insertInto('push_registrations')
@@ -194,6 +203,8 @@ export function pushRoutes(
             environment: body.environment,
             messages: body.messages,
             rsvp_events: body.rsvpEvents,
+            league_management: body.leagueManagement,
+            chat_kinds: chatKinds,
             created_at: now,
             seen_at: now,
             rejected_at: null
@@ -206,6 +217,8 @@ export function pushRoutes(
               environment: body.environment,
               messages: body.messages,
               rsvp_events: body.rsvpEvents,
+              league_management: body.leagueManagement,
+              chat_kinds: chatKinds,
               seen_at: now,
               rejected_at: null
             })
@@ -241,7 +254,8 @@ export function pushRoutes(
           platform: body.platform,
           environment: body.environment,
           messages: body.messages,
-          rsvpEvents: body.rsvpEvents
+          rsvpEvents: body.rsvpEvents,
+          leagueManagement: body.leagueManagement
         }
       })
       res.json({ id: row.id })
@@ -253,19 +267,23 @@ export function pushRoutes(
     withAsync(async (req, res) => {
       const caller = sessionCaller(req)
       const id = String(req.params.id)
-      const { messages, rsvpEvents } = cleanBody(asSwitchesBody, req.body)
+      const { messages, rsvpEvents, leagueManagement } = cleanBody(
+        asSwitchesBody,
+        req.body
+      )
       // Only the registration this session made: a device changes its own
       // switches, never another device's.
       const row = await db
         .updateTable('push_registrations')
         .set(eb => ({
           messages: messages ?? eb.ref('messages'),
-          rsvp_events: rsvpEvents ?? eb.ref('rsvp_events')
+          rsvp_events: rsvpEvents ?? eb.ref('rsvp_events'),
+          league_management: leagueManagement ?? eb.ref('league_management')
         }))
         .where('id', '=', id)
         .where('user_id', '=', caller.userId)
         .where('session_id', '=', caller.sessionId)
-        .returning(['id', 'messages', 'rsvp_events'])
+        .returning(['id', 'messages', 'rsvp_events', 'league_management'])
         .executeTakeFirst()
       if (row == null) {
         skipAudit(res.locals)
@@ -274,12 +292,17 @@ export function pushRoutes(
       setAudit(res.locals, {
         entityType: 'pushRegistration',
         entityId: id,
-        after: { messages: row.messages, rsvpEvents: row.rsvp_events }
+        after: {
+          messages: row.messages,
+          rsvpEvents: row.rsvp_events,
+          leagueManagement: row.league_management
+        }
       })
       res.json({
         id: row.id,
         messages: row.messages,
-        rsvpEvents: row.rsvp_events
+        rsvpEvents: row.rsvp_events,
+        leagueManagement: row.league_management
       })
     })
   )

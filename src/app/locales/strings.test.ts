@@ -27,6 +27,93 @@ describe('locales', function () {
     expect(enUs).not.to.have.any.keys('chat_follow_team', 'chat_members_title')
   })
 
+  it('names the umpire schedule’s Division column, sorts and Save sort', function () {
+    expect(enUs.umpire_division).equals('Division')
+    expect(
+      sprintf(enUs.umpire_sort_by_named, 'Date', enUs.umpire_sort_oldest)
+    ).equals('Sort by Date, oldest to newest')
+    expect(
+      sprintf(enUs.umpire_sort_then_named, 'Season', enUs.umpire_sort_a_z)
+    ).equals('Then by Season, A to Z')
+    expect(enUs.umpire_sort_add_named).equals('Add a second sort')
+    expect(enUs.umpire_sort_remove).equals('Remove sort')
+    expect([
+      enUs.umpire_sort_title_first,
+      enUs.umpire_sort_title_second
+    ]).deep.equals(['Sort by', 'Then by'])
+    expect(enUs.umpire_save_sort).equals('Save sort')
+    expect(enUs.umpire_save_sort_named).equals(
+      'Save this sort as the league default'
+    )
+  })
+
+  it('names the requirements screen’s season order controls', function () {
+    expect([
+      enUs.umpire_season_priority_sort,
+      enUs.umpire_season_priority_cancel,
+      enUs.umpire_season_priority_save
+    ]).deep.equals(['Sort', 'Cancel', 'Save'])
+    expect(enUs.umpire_season_priority_sort_named).equals('Sort seasons')
+    expect(enUs.umpire_season_priority_cancel_named).equals(
+      'Cancel sorting seasons'
+    )
+    expect(enUs.umpire_season_priority_save_named).equals(
+      'Save the season order'
+    )
+    expect(
+      sprintf(enUs.umpire_season_priority_drag_named, 'Fall Minors')
+    ).equals('Drag Fall Minors')
+    expect(
+      sprintf(enUs.umpire_season_priority_move_named, 'Fall Minors')
+    ).equals('Reorder Fall Minors')
+  })
+
+  it('names the three notification switches in Account', function () {
+    expect(enUs.account_notifications_messages).equals(
+      'Notify for direct messages and mentions'
+    )
+    expect(enUs.account_notifications_rsvp_events).equals(
+      'Notify for RSVPed events'
+    )
+    expect(enUs.account_notifications_league_management).equals(
+      'Notify for league management'
+    )
+  })
+
+  it('names Send me notifications, its screen and the umpire notices', function () {
+    expect(enUs.umpire_send_me_notifications).equals('Send me notifications')
+    expect(enUs.umpire_send_me_notifications_detail).equals(
+      'Receive in-app and push notifications for updates to the umpire schedule'
+    )
+    expect(enUs.umpire_notifications_title).equals(
+      'Umpire Management Notifications'
+    )
+    expect([
+      enUs.umpire_notifications_missing_slots,
+      enUs.umpire_notifications_days,
+      enUs.umpire_notifications_sign_ups,
+      enUs.umpire_notifications_withdrawals
+    ]).deep.equals([
+      'Send notifications for missing slots',
+      'Number of days prior to send notification',
+      'Receive notifications when umpires sign up',
+      'Receive notifications when umpires withdraw'
+    ])
+    expect(sprintf(enUs.umpire_notifications_days_named, 7)).equals(
+      'Number of days prior: 7'
+    )
+    expect(enUs.umpire_notifications_days_range).equals('Choose 1 to 30 days')
+    expect(enUs.umpire_notifications_days_done).equals('Done')
+    expect(enUs.umpire_notifications_cannot_save).equals(
+      'Your notifications could not be saved. Try again.'
+    )
+    expect([
+      enUs.umpire_notice_missing_slots,
+      enUs.umpire_notice_sign_up,
+      enUs.umpire_notice_withdraw
+    ]).deep.equals(['Missing umpires', 'Umpire signed up', 'Umpire withdrew'])
+  })
+
   it('merges a translation over the master', function () {
     selectLocale({ login_title: 'Iniciar sesión' })
     expect(lstrings.login_title).equals('Iniciar sesión')

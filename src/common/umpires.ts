@@ -1,3 +1,5 @@
+import type { UmpireSortKey } from './umpireSort'
+
 export interface UmpireLevel {
   id: string
   name: string
@@ -25,7 +27,33 @@ export interface UmpirePosition {
 export interface UmpireSettings {
   management: boolean
   credits: boolean
+  /**
+   * The umpire schedule's league default sort; null when none is saved (Date
+   * 1→9, then Season A→Z); absent from a server that predates it.
+   */
+  sort?: UmpireSortKey[] | null
 }
+/**
+ * One league admin's own Umpire Management Notifications for a league: the
+ * daily digest of games within `daysBefore` days still missing a required
+ * umpire, and notices of umpires signing up and withdrawing.
+ */
+export interface UmpireNotificationSettings {
+  missingSlots: boolean
+  /** The digest's window in calendar days, `UMPIRE_NOTICE_DAYS`. */
+  daysBefore: number
+  signUps: boolean
+  withdrawals: boolean
+}
+/** What an admin who never chose has: everything off, a 7-day window. */
+export const DEFAULT_UMPIRE_NOTIFICATIONS: UmpireNotificationSettings = {
+  missingSlots: false,
+  daysBefore: 7,
+  signUps: false,
+  withdrawals: false
+}
+/** The digest's window, in calendar days. */
+export const UMPIRE_NOTICE_DAYS = { min: 1, max: 30 } as const
 export interface UmpireRequirement {
   levelId: string
   levelName: string
@@ -40,6 +68,21 @@ export interface UmpireSeason {
   /** The league's signed picture, drawn when the season has none. */
   leaguePictureUrl: string | null
   requirement: UmpireRequirement | null
+  /** Its position in the league's season order, 1 first; null for none. */
+  priority?: number | null
+}
+/**
+ * A person's saved umpire availability filter for one league: the levels,
+ * the weekdays (0 is Monday … 6 is Sunday) and the `from`/`to` time-of-day
+ * range, read in the time zone it was written in. No levels or days means
+ * every one; no range means any time.
+ */
+export interface UmpireAvailability {
+  levels: string[]
+  days: number[]
+  from: string | null
+  to: string | null
+  timezone: string
 }
 export interface UmpirePerson {
   id: string
@@ -47,6 +90,11 @@ export interface UmpirePerson {
   avatarUrl: string | null
   affiliations: string
   certifications: UmpireCertification[]
+  /**
+   * The person's saved filter for the league, on an admin's list; null when
+   * none is saved.
+   */
+  umpireAvailability?: UmpireAvailability | null
 }
 export const UMPIRE_HINTS = [
   'majors',

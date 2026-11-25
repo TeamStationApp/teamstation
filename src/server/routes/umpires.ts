@@ -2,10 +2,16 @@ import { type Request, Router } from 'express'
 import type { Kysely, Transaction } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
+import type { UmpirePerson } from '../../common/umpires'
 import {
   UMPIRE_LEADERBOARD_MAX_PAGE,
   type UmpireLeaderboardQuery
 } from '../../common/umpireSchedule'
+import {
+  parseUmpireSortArray,
+  storedUmpireSort,
+  umpireSortError
+} from '../../common/umpireSort'
 import { visibleScopes } from '../access'
 import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
@@ -16,18 +22,41 @@ import { requireGroupAdmin } from '../groups/rights'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import type { PushEnqueuer } from '../push/queue'
 import { noteScopeChange } from '../socket/syncRevision'
 import * as admin from '../umpires/admin'
 import { deleteSlot, leaderboard, saveSlot } from '../umpires/assignments'
+import {
+  availabilityPasses,
+  type AvailabilityQuery,
+  commitmentWindow,
+  type MatchedAt,
+  matchedAt,
+  parseAvailabilityQuery,
+  readAvailability,
+  requireOwnAvailability,
+  saveAvailability,
+  umpireCommitments
+} from '../umpires/availability'
 import {
   addNoteType,
   noteTypes,
   removeNoteType,
   saveNote
 } from '../umpires/notes'
+import {
+  type LeagueNoticePush,
+  noticeSettings,
+  noticeSettingsChange,
+  recordSignUp,
+  recordWithdrawal,
+  saveNoticeSettings
+} from '../umpires/notices'
+import { queryInteger } from '../umpires/queryInteger'
 import { savePeople } from '../umpires/savePeople'
 import {
   parseUmpireFilters,
+  parseUmpireSortQuery,
   schedule,
   umpireLeagues,
   umpireSchedulePage
@@ -62,14 +91,13 @@ function leaderboardQueryOf(
     value: unknown,
     least: number,
     most: number
-  ): number | undefined => {
-    if (value == null) return undefined
-    const number =
-      typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN
-    if (!Number.isSafeInteger(number) || number < least || number > most)
-      throw badRequest(`Supply one ${name} from ${least} to ${most}`)
-    return number
-  }
+  ): number | undefined =>
+    queryInteger(
+      value,
+      least,
+      most,
+      `Supply one ${name} from ${least} to ${most}`
+    )
   return {
     order: order ?? undefined,
     limit: whole('limit', limit, 1, UMPIRE_LEADERBOARD_MAX_PAGE),
@@ -77,9 +105,19 @@ function leaderboardQueryOf(
   }
 }
 
+/**
+ * `umpireRoutes`' options: `push` queues a League management notice's push
+ * once the write that recorded it commits. Without it notices are recorded
+ * and nothing is pushed.
+ */
+export interface UmpireRouteOptions {
+  push?: Pick<PushEnqueuer, 'add'>
+}
+
 export function umpireRoutes(
   db: Kysely<Database>,
-  media?: MediaContext
+  media?: MediaContext,
+  options: UmpireRouteOptions = {}
 ): Router {
   const router = Router()
   router.get(
@@ -93,11 +131,12 @@ export function umpireRoutes(
         .selectFrom('leagues')
         .select([
           'umpire_management as management',
-          'umpire_credits as credits'
+          'umpire_credits as credits',
+          'umpire_sort as sort'
         ])
         .where('id', '=', leagueId)
         .executeTakeFirstOrThrow()
-      res.json(row)
+      res.json({ ...row, sort: storedUmpireSort(row.sort) })
     })
   )
   router.put(
@@ -111,7 +150,11 @@ export function umpireRoutes(
       if (body == null || typeof body !== 'object' || Array.isArray(body))
         throw badRequest('Supply umpire settings')
       for (const key of Object.keys(body)) {
-        if (
+        if (key === 'sort') {
+          // null is the built-in default; [] the empty sort.
+          if (body.sort !== null && parseUmpireSortArray(body.sort) == null)
+            throw badRequest(umpireSortError('body'))
+        } else if (
           !['management', 'credits'].includes(key) ||
           typeof body[key] !== 'boolean'
         )
@@ -128,16 +171,52 @@ export function umpireRoutes(
           .executeTakeFirstOrThrow()
         const management = body.management ?? row.umpire_management
         const credits = body.credits ?? row.umpire_credits
+        // A save without `sort` leaves the stored one as it is, even one this
+        // build cannot wholly read (a newer build's key after a rollback), and
+        // answers it as this build reads it.
+        const sort =
+          body.sort === undefined
+            ? storedUmpireSort(row.umpire_sort)
+            : parseUmpireSortArray(body.sort)
         await trx
           .updateTable('leagues')
-          .set({ umpire_management: management, umpire_credits: credits })
+          .set({
+            umpire_management: management,
+            umpire_credits: credits,
+            ...(body.sort === undefined ? {} : { umpire_sort: sort })
+          })
           .where('id', '=', leagueId)
           .execute()
         if (management !== row.umpire_management)
           await noteLeagueGames(trx, leagueId)
-        return { management, credits }
+        return { management, credits, sort }
       })
       res.json(settings)
+    })
+  )
+
+  router.get(
+    '/leagues/:leagueId/umpire-notifications',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json(await noticeSettings(db, req.actor, String(req.params.leagueId)))
+    })
+  )
+  router.put(
+    '/leagues/:leagueId/umpire-notifications',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      const change = noticeSettingsChange(req.body)
+      res.json(
+        await atomic(db, async trx => {
+          await lockKeys(trx, ['creation:parent-graph', `umpires:${leagueId}`])
+          return await saveNoticeSettings(trx, actor, leagueId, change)
+        })
+      )
     })
   )
 
@@ -261,6 +340,33 @@ export function umpireRoutes(
       await admin.applyRequirements(trx, league, req.body, now())
     }
   )
+  // The league's season order, written whole: the requirements screen's
+  // seasons first to last. The league's other seasons lose their position,
+  // so a season of the list that ended since it was read is left out of it.
+  manage(
+    'put',
+    '/leagues/:leagueId/umpire-season-priority',
+    async (trx, league, req) => {
+      const refused = badRequest(
+        'Choose this league’s current and upcoming seasons'
+      )
+      const ids: unknown = req.body?.seasonIds
+      if (
+        !Array.isArray(ids) ||
+        ids.length > 500 ||
+        new Set(ids).size !== ids.length ||
+        ids.some(id => typeof id !== 'string')
+      )
+        throw refused
+      const { current, ended } = await admin.leagueSeasons(trx, league, now())
+      if ((ids as string[]).some(id => !current.has(id) && !ended.has(id)))
+        throw refused
+      const kept = (ids as string[]).filter(id => current.has(id))
+      if (kept.length === 0) throw refused
+      await admin.savePriority(trx, league, kept)
+      return { seasons: await admin.requirements(trx, league, now(), media) }
+    }
+  )
   manage(
     'get',
     '/leagues/:leagueId/umpire-candidates',
@@ -279,8 +385,16 @@ export function umpireRoutes(
       }
     }
   )
-  manage('get', '/leagues/:leagueId/umpires', async (trx, league, req) => ({
-    people: await admin.people(
+  // The league's umpires, each carrying their saved filter for the league;
+  // the availability parameters, when given, keep only the people it leaves
+  // in. GET and PUT answer through it, so both answer one shape.
+  const umpireList = async (
+    trx: Kysely<Database>,
+    league: string,
+    req: Request,
+    query: AvailabilityQuery | undefined
+  ): Promise<{ people: UmpirePerson[]; matchedAt?: MatchedAt[] }> => {
+    const { people, accounts } = await admin.peopleWithAccounts(
       trx,
       league,
       undefined,
@@ -288,19 +402,62 @@ export function umpireRoutes(
       readerOf(req.actor),
       await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
     )
-  }))
+    // The list already resolved each person's merged accounts.
+    const saved = await readAvailability(
+      trx,
+      league,
+      people.map(person => person.id),
+      accounts
+    )
+    return {
+      people: people
+        .map(person => ({
+          ...person,
+          umpireAvailability: saved.get(person.id) ?? null
+        }))
+        .filter(
+          person =>
+            query == null ||
+            availabilityPasses(person.umpireAvailability, query)
+        ),
+      ...(query?.at != null && 'start' in query.at
+        ? {
+            matchedAt: await matchedAt(
+              trx,
+              league,
+              query.at.start,
+              saved.values()
+            )
+          }
+        : {})
+    }
+  }
+  manage(
+    'get',
+    '/leagues/:leagueId/umpires',
+    async (trx, league, req) =>
+      await umpireList(trx, league, req, parseAvailabilityQuery(req.query))
+  )
+  manage(
+    'get',
+    '/leagues/:leagueId/umpires/:userId/commitments',
+    async (trx, league, req) => {
+      const window = commitmentWindow(req.query.from, req.query.to)
+      return {
+        commitments: await umpireCommitments(
+          trx,
+          req.actor!,
+          league,
+          String(req.params.userId),
+          window.from,
+          window.to
+        )
+      }
+    }
+  )
   manage('put', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     await savePeople(trx, league, req.actor!.userId, req.body)
-    return {
-      people: await admin.people(
-        trx,
-        league,
-        undefined,
-        media,
-        readerOf(req.actor),
-        await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
-      )
-    }
+    return await umpireList(trx, league, req, undefined)
   })
   manage('post', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     if (typeof req.body?.userId !== 'string')
@@ -322,6 +479,52 @@ export function umpireRoutes(
     }
   )
 
+  // The signed-in person's own saved filter for a league, for whoever may
+  // open its umpire schedule; anybody else is answered 404.
+  router.get(
+    '/leagues/:leagueId/me/umpire-availability',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      await requireOwnAvailability(db, actor, leagueId)
+      const saved = await readAvailability(db, leagueId, [actor.userId])
+      res.json({ availability: saved.get(actor.userId) ?? null })
+    })
+  )
+  router.put(
+    '/leagues/:leagueId/me/umpire-availability',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const leagueId = String(req.params.leagueId)
+      const body = req.body
+      if (
+        body == null ||
+        typeof body !== 'object' ||
+        Array.isArray(body) ||
+        !('availability' in body)
+      )
+        throw badRequest('Choose a valid filter.')
+      const availability = await atomic(db, async trx => {
+        await lockKeys(trx, [
+          'creation:parent-graph',
+          `umpires:${leagueId}`,
+          'users.closeInto'
+        ])
+        await requireOwnAvailability(trx, actor, leagueId)
+        return await saveAvailability(
+          trx,
+          leagueId,
+          actor.userId,
+          body.availability
+        )
+      })
+      res.json({ availability })
+    })
+  )
   router.get(
     '/me/umpire-leagues',
     requireActor,
@@ -340,6 +543,7 @@ export function umpireRoutes(
         throw badRequest('Choose umpire, league or schedule view')
       const leagueId = String(req.params.leagueId)
       const filters = parseUmpireFilters(req.query)
+      const sort = parseUmpireSortQuery(req.query)
       const page = parseUmpirePageQuery(req.query)
       if (page.paged) {
         if (view === 'league')
@@ -352,7 +556,8 @@ export function umpireRoutes(
             view,
             filters,
             page,
-            readerOf(req.actor)
+            readerOf(req.actor),
+            sort
           )
         )
         return
@@ -364,7 +569,8 @@ export function umpireRoutes(
           leagueId,
           view,
           filters,
-          readerOf(req.actor)
+          readerOf(req.actor),
+          sort
         )
       )
     })
@@ -377,19 +583,31 @@ export function umpireRoutes(
       withAsync(async (req, res) => {
         const actor = req.actor
         if (actor == null) throw unauthorized()
-        await atomic(db, async trx => {
+        const pushed = await atomic(db, async trx => {
           await lockKeys(trx, ['creation:parent-graph', 'users.closeInto'])
+          let notice: LeagueNoticePush[] = []
           if (method === 'post')
-            await saveSlot(trx, actor, String(req.params.gameId), req.body)
-          else
-            await deleteSlot(
+            notice = await recordSignUp(
+              trx,
+              await saveSlot(trx, actor, String(req.params.gameId), req.body)
+            )
+          else {
+            const removed = await deleteSlot(
               trx,
               actor,
               String(req.params.gameId),
               req.body?.slot
             )
+            if (removed.withdrawal)
+              notice = await recordWithdrawal(trx, removed)
+          }
           noteScopeChange(trx, { gameId: String(req.params.gameId) })
+          return notice
         })
+        // Only once the notice is written, and not waited on: `add` never
+        // throws, so a queue outage drops the push and keeps the answer.
+        for (const request of pushed)
+          options.push?.add(request).catch(() => undefined)
         res.json({ ok: true })
       })
     )

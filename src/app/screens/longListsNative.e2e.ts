@@ -3,6 +3,12 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import {
+  turnWheel,
+  wheelAt,
+  type WheelNode,
+  wheelValue
+} from '../../../e2e/rigs/iosWheel'
 import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   LONG_LISTS_SHAPE,
@@ -39,6 +45,12 @@ interface Device {
   inputText: (options: { text: string }) => Promise<unknown>
   setOrientation: (options: { orientation: string }) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
+  dragAndDrop: (options: {
+    from: { point: string }
+    to: { point: string }
+    holdDuration: number
+    duration: number
+  }) => Promise<unknown>
   detach: () => Promise<unknown>
 }
 
@@ -99,12 +111,49 @@ const MOST_BELOW_PILLS = 110
 /** The screen's width, and where a row is clear of the tab bar. */
 const PHONE_WIDTH = 402
 const LOWEST_ROW = 700
-const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12'
+const ALL_CASES = 'E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13,E14,E15'
+/** The umpire schedule's second sort wheel under Date: Season and Certification. */
+const THEN_BY = [
+  'Season · A to Z',
+  'Season · Z to A',
+  'Season · league order',
+  'Season · league reversed',
+  'Certification · A to Z',
+  'Certification · Z to A'
+]
 
 function required(name: string): string {
   const value = process.env[name]
   if (value == null || value === '') throw new Error(`Supply ${name}`)
   return value
+}
+
+/**
+ * A session of the fixture's person (101) for the API, from a second
+ * e-mailed link, as `signIn` signs the phone in: a case sends it as a bearer
+ * header to read what the phone saved.
+ */
+async function apiSession(manifest: Manifest): Promise<string> {
+  const asked = await fetch(`${manifest.apiBaseUrl}/auth/email-code`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: manifest.email })
+  })
+  assert.equal(asked.status, 202)
+  const answer = await fetch(
+    `${manifest.origin}${manifest.signInLinkRoute}?email=${encodeURIComponent(manifest.email)}`
+  )
+  assert.ok(answer.ok, 'apiSession: no sign-in mail')
+  const { link } = (await answer.json()) as { link?: string }
+  const token = link?.split('/signin/')[1]
+  assert.ok(token != null && token !== '', `apiSession: no link in ${link}`)
+  const verified = await fetch(`${manifest.apiBaseUrl}/auth/link/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token })
+  })
+  assert.equal(verified.status, 200, 'apiSession: the link signs in')
+  return ((await verified.json()) as { token: string }).token
 }
 
 async function main(): Promise<void> {
@@ -217,6 +266,12 @@ async function main(): Promise<void> {
   }
   const shot = async (name: string): Promise<void> => {
     await writeFile(join(artifacts, name), await m.screenshot())
+  }
+  /** A proving artifact, under its own name in TS_UMPIRE_PROOF when set. */
+  const proof = async (name: string): Promise<void> => {
+    const dir = process.env.TS_UMPIRE_PROOF ?? artifacts
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, name), await m.screenshot())
   }
   const signIn = async (): Promise<void> => {
     await m.launchApp({ appId: APP_ID, stopApp: true })
@@ -1343,6 +1398,496 @@ async function main(): Promise<void> {
         'E12: Sign Up is back'
       )
       await note('E12: removed')
+    },
+    E13: async () => {
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const middle = (node: ViewNode): number =>
+        node.bounds!.y + node.bounds!.height / 2
+      /**
+       * Up to the filter row above the table, which opens on its next game
+       * far down: a tap on the status bar scrolls the page to its top, and a
+       * drag down after it if the rows read above moved it.
+       */
+      const toRow = async (): Promise<ViewNode[]> => {
+        for (let turn = 0; turn < 12; turn++) {
+          const nodes = await settled()
+          const row = byId(nodes, 'umpire-sort-1')
+          if (row != null && row.bounds!.y >= 0 && row.bounds!.y < LOWEST_ROW)
+            return nodes
+          if (turn % 3 === 0) await m.tapOnPoint({ point: '50%, 1%' })
+          else
+            await m.swipe({ start: '50%, 30%', end: '50%, 85%', duration: 200 })
+          await pause(1200)
+        }
+        throw new Error('E13: never reached the filter row')
+      }
+      /** Taps a node of the tree by its test id, at its middle. */
+      const tapId = async (id: string): Promise<void> => {
+        if (/^umpire-sort-(1|2|add)$/.test(id)) await toRow()
+        let found: ViewNode | undefined
+        for (let read = 0; read < 10 && found == null; read++) {
+          found = byId(await all(), id)
+          if (found == null) await pause(500)
+        }
+        assert.ok(found?.bounds != null, `E13: no ${id}`)
+        const { x, y, width, height } = found.bounds
+        await m.tapOnPoint({
+          point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+        })
+        await pause(900)
+      }
+      const scheduleReads = async (): Promise<string[]> =>
+        (await phoneNetwork())
+          .filter(path => path.includes('/umpire-schedule?'))
+          .map(path => decodeURIComponent(path))
+
+      // 1. Filters, then the Date and Season sorts, on one line; Division
+      //    after Date in the sticky header.
+      await m.openLink({
+        link: `teamstation://umpires/${manifest.leagueId}`
+      })
+      await visible('Umpire')
+      await pause(1500)
+      const opened = await toRow()
+      const first = byId(opened, 'umpire-sort-1')
+      const second = byId(opened, 'umpire-sort-2')
+      assert.ok(first != null && second != null, 'E13: both sort pills')
+      assert.equal(byId(opened, 'umpire-sort-add'), undefined)
+      // A labelled control reads as its label in the tree.
+      const filter = opened.find(
+        node =>
+          (node.text === 'Schedule filters' ||
+            node.text?.startsWith('Filter') === true) &&
+          node.bounds != null
+      )
+      assert.ok(filter != null, 'E13: the filter button')
+      for (const pill of [first, second])
+        assert.ok(
+          Math.abs(middle(pill) - middle(filter)) <= PINNED_SLACK,
+          `E13: ${pill.id} at ${middle(pill)}, the filter at ${middle(filter)}`
+        )
+      assert.ok(first.bounds!.x > filter.bounds!.x, 'E13: sorts after Filters')
+      assert.ok(second.bounds!.x > first.bounds!.x, 'E13: Season after Date')
+      const division = opened.find(
+        node => node.text === 'Division' && node.bounds != null
+      )
+      assert.ok(division != null, 'E13: a Division heading')
+      // The heading, not the Date sort pill: the Date nearest Division's line.
+      const dates = opened.filter(
+        node => node.text === 'Date' && node.bounds != null
+      )
+      const date = dates.sort(
+        (a, b) =>
+          Math.abs(middle(a) - middle(division)) -
+          Math.abs(middle(b) - middle(division))
+      )[0]
+      assert.ok(date != null, 'E13: a Date heading')
+      assert.ok(
+        division.bounds!.x > date.bounds!.x &&
+          Math.abs(middle(division) - middle(date)) <= PINNED_SLACK,
+        `E13: Division follows Date in the header: ${JSON.stringify([...dates.map(d => d.bounds), division.bounds])}`
+      )
+      await shot(`${platform}-umpire-sort-row.png`)
+      await note(
+        'E13: Filters, Date and Season on one line; Division after Date'
+      )
+
+      // 2. The second pill slides up "Then by", a wheel, Done, Remove sort
+      //    and Cancel.
+      await tapId('umpire-sort-2')
+      await visible('Then by')
+      const sheet = await settled()
+      for (const id of [
+        'umpire-sort-done',
+        'umpire-sort-remove',
+        'umpire-sort-cancel'
+      ])
+        assert.ok(byId(sheet, id) != null, `E13: ${id} on the sheet`)
+      const wheel = await wheelAt(m as unknown as Parameters<typeof wheelAt>[0])
+      assert.ok(
+        (wheel.text ?? '').startsWith(THEN_BY[0]),
+        `E13: the wheel reads ${wheel.text}`
+      )
+      await proof('schedule-sort-sheet-ios.png')
+      await note(
+        'E13: the sort sheet: Then by, the wheel, Done, Remove sort, Cancel'
+      )
+
+      // 3. Turned a row at a time to Certification A→Z, and Done.
+      const before = (await scheduleReads()).length
+      await turnWheel(
+        m as unknown as Parameters<typeof turnWheel>[0],
+        async (): Promise<WheelNode> =>
+          await wheelAt(m as unknown as Parameters<typeof wheelAt>[0]),
+        'Certification · A to Z',
+        THEN_BY
+      )
+      await tapId('umpire-sort-done')
+      const chosen = await settled()
+      assert.equal(byId(chosen, 'umpire-sort-done'), undefined, 'E13: closed')
+      const readsCertification = (nodes: ViewNode[]): boolean =>
+        nodes.some(
+          node =>
+            (node.text === 'Certification' ||
+              node.text === 'Then by Certification, A to Z') &&
+            node.bounds != null
+        )
+      assert.ok(
+        readsCertification(chosen),
+        'E13: the second pill reads Certification'
+      )
+      let reads: string[] = []
+      for (let wait = 0; wait < 20; wait++) {
+        reads = (await scheduleReads()).slice(before)
+        if (reads.some(path => path.includes('sort=date,certification'))) break
+        await pause(500)
+      }
+      assert.ok(
+        reads.some(path => path.includes('sort=date,certification')),
+        `E13: a read with sort=date,certification, not ${reads.join(' ')}`
+      )
+      await shot(`${platform}-umpire-sort-chosen.png`)
+      await note(`E13: Certification A→Z chosen; read ${reads.at(-1)}`)
+
+      // 4. Cancel changes nothing; Remove sort brings back + Sort.
+      await tapId('umpire-sort-2')
+      await visible('Then by')
+      await tapId('umpire-sort-cancel')
+      const kept = await settled()
+      assert.equal(byId(kept, 'umpire-sort-cancel'), undefined)
+      assert.ok(readsCertification(kept), 'E13: Cancel keeps Certification')
+      await tapId('umpire-sort-2')
+      await visible('Then by')
+      await tapId('umpire-sort-remove')
+      const removed = await settled()
+      assert.ok(byId(removed, 'umpire-sort-add') != null, 'E13: + Sort is back')
+      assert.equal(byId(removed, 'umpire-sort-2'), undefined)
+      await shot(`${platform}-umpire-sort-removed.png`)
+      await note('E13: Cancel kept the sort; Remove sort brought back + Sort')
+    },
+    E14: async () => {
+      const league = manifest.leagueId
+      const requirementsLink = `teamstation://groups/league/${league}/umpire-requirements`
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const named = (nodes: ViewNode[], text: string): ViewNode | undefined =>
+        nodes
+          .filter(node => node.text === text && node.bounds != null)
+          .sort((a, b) => a.bounds!.y - b.bounds!.y)[0]
+      const centre = (node: ViewNode): string =>
+        `${Math.round(node.bounds!.x + node.bounds!.width / 2)},${Math.round(node.bounds!.y + node.bounds!.height / 2)}`
+      /** The two seasons, top to bottom, as the screen shows them. */
+      const order = async (): Promise<string[]> => {
+        const nodes = await settled()
+        const regular = named(nodes, 'Demo Regular')
+        const playoffs = named(nodes, 'Demo Playoffs')
+        assert.ok(regular != null && playoffs != null, 'E14: both seasons')
+        return regular.bounds!.y < playoffs.bounds!.y
+          ? ['Demo Regular', 'Demo Playoffs']
+          : ['Demo Playoffs', 'Demo Regular']
+      }
+      const tapId = async (id: string): Promise<void> => {
+        let found: ViewNode | undefined
+        for (let read = 0; read < 10 && found == null; read++) {
+          found = byId(await all(), id)
+          if (found == null) await pause(500)
+        }
+        assert.ok(found != null, `E14: no ${id}`)
+        await m.tapOnPoint({ point: centre(found) })
+        await pause(900)
+      }
+      /** The grips' labels: a text node can show twice in the tree. */
+      const grips = (nodes: ViewNode[]): string[] => [
+        ...new Set(
+          nodes
+            .filter(
+              node =>
+                node.text?.startsWith('Drag Demo ') === true &&
+                node.bounds != null
+            )
+            .map(node => node.text!)
+        )
+      ]
+      /** Into reorder mode: Sort, then a grip by each season. */
+      const reorder = async (): Promise<ViewNode[]> => {
+        await tapId('season-priority-sort')
+        for (let read = 0; read < 10; read++) {
+          const nodes = await settled()
+          if (grips(nodes).length === 2) return nodes
+          await pause(500)
+        }
+        throw new Error('E14: no grips after Sort')
+      }
+      /** Demo Regular, by its grip, onto the top edge of the first row. */
+      const dragRegularUp = async (): Promise<void> => {
+        const nodes = await settled()
+        const grip = nodes.find(
+          node => node.text === 'Drag Demo Regular' && node.bounds != null
+        )
+        const rows = nodes
+          .filter(
+            node =>
+              node.id?.startsWith('season-priority-row-') === true &&
+              node.bounds != null
+          )
+          .sort((a, b) => a.bounds!.y - b.bounds!.y)
+        assert.ok(grip != null && rows.length === 2, 'E14: a grip and rows')
+        const top = rows[0].bounds!
+        await m.dragAndDrop({
+          from: { point: centre(grip) },
+          to: {
+            point: `${Math.round(top.x + top.width / 2)},${Math.round(top.y + 4)}`
+          },
+          holdDuration: 1000,
+          duration: 1500
+        })
+        await pause(1200)
+      }
+      const session = await apiSession(manifest)
+      const apiLog: string[] = []
+      /** The season of the schedule's top row under Season 1→9. */
+      const topSeason = async (): Promise<string> => {
+        const path = `/leagues/${league}/umpire-schedule?sort=seasonPriority&paged=1&limit=1`
+        const answer = await fetch(`${manifest.apiBaseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${session}` }
+        })
+        const text = await answer.text()
+        apiLog.push(`$ GET /api/v1${path}`, `${answer.status}`, text, '')
+        assert.equal(answer.status, 200, text)
+        // A paged answer holds its rows in `items`.
+        const body = JSON.parse(text) as {
+          items: Array<{ id: string; seasonName: string }>
+        }
+        assert.ok(body.items.length > 0, 'E14: a top row')
+        return body.items[0].seasonName
+      }
+      const writeApiLog = async (): Promise<void> => {
+        await writeFile(
+          join(artifacts, 'requirements-priority-ios.log'),
+          apiLog.join('\n')
+        )
+      }
+
+      // 1. Sort at the list's upper right; reorder mode shows grips, a red
+      //    Cancel and Save, and no checkbox. The list reads by name.
+      await m.openLink({ link: requirementsLink })
+      await visible('Set Umpire Requirements')
+      await visible('Demo Regular')
+      const read = await order()
+      assert.deepEqual(read, ['Demo Playoffs', 'Demo Regular'])
+      const before = await topSeason()
+      assert.equal(before, 'Demo Playoffs', 'E14: Season 1→9 reads by name')
+      const opened = await settled()
+      const sort = byId(opened, 'season-priority-sort')
+      const list = byId(opened, 'season-priority-list')
+      assert.ok(sort != null && list != null, 'E14: Sort and the list')
+      assert.ok(
+        sort.bounds!.y + sort.bounds!.height <= list.bounds!.y + 1,
+        'E14: Sort above the list'
+      )
+      assert.ok(
+        Math.abs(
+          sort.bounds!.x +
+            sort.bounds!.width -
+            (list.bounds!.x + list.bounds!.width)
+        ) <= 4,
+        'E14: Sort at the right'
+      )
+      const reordering = await reorder()
+      assert.equal(
+        byId(reordering, 'season-priority-sort')?.text,
+        'Cancel sorting seasons',
+        'E14: Sort reads Cancel'
+      )
+      assert.ok(byId(reordering, 'season-priority-save') != null, 'E14: Save')
+      assert.equal(
+        reordering.some(node => node.text?.startsWith('Select Demo') === true),
+        false,
+        'E14: no checkbox in reorder mode'
+      )
+      await proof('requirements-reorder-ios.png')
+      await note('E14: Sort shows the grips, Cancel and Save')
+
+      // 2. A touch drag of Demo Regular above Demo Playoffs, then Cancel.
+      await dragRegularUp()
+      assert.deepEqual(
+        await order(),
+        ['Demo Regular', 'Demo Playoffs'],
+        'E14: the drag moved Demo Regular up'
+      )
+      await tapId('season-priority-sort')
+      assert.equal(grips(await settled()).length, 0, 'E14: Cancel left')
+      assert.deepEqual(await order(), read, 'E14: Cancel restored the order')
+      await proof('requirements-cancel-ios.png')
+      await note('E14: a drag and Cancel restored the order read')
+
+      // 3. The drag again, and Save.
+      await reorder()
+      await dragRegularUp()
+      assert.deepEqual(await order(), ['Demo Regular', 'Demo Playoffs'])
+      await tapId('season-priority-save')
+      for (let wait = 0; wait < 20; wait++) {
+        if (grips(await all()).length === 0) break
+        await pause(500)
+      }
+      const saved = await order()
+      assert.deepEqual(saved, ['Demo Regular', 'Demo Playoffs'])
+      assert.notDeepEqual(saved, read, 'E14: the saved order is not the read')
+      await proof('requirements-reordered-ios.png')
+      await m.openLink({ link: requirementsLink })
+      await visible('Demo Regular')
+      await pause(1500)
+      assert.deepEqual(
+        await order(),
+        ['Demo Regular', 'Demo Playoffs'],
+        'E14: the server keeps the order'
+      )
+      await note('E14: a drag and Save stored Demo Regular first')
+
+      // 4. Season 1→9 follows it.
+      const after = await topSeason()
+      await writeApiLog()
+      assert.equal(after, 'Demo Regular', 'E14: Season 1→9 follows the order')
+      assert.notEqual(after, before)
+      await m.openLink({
+        link: `teamstation://umpires/${league}?sort=seasonPriority`
+      })
+      await visible('Division', 30000)
+      await note(`E14: the schedule's top row went from ${before} to ${after}`)
+    },
+    E15: async () => {
+      const league = manifest.leagueId
+      const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
+        nodes.find(node => node.id === id && node.bounds != null)
+      const centre = (node: ViewNode): string =>
+        `${Math.round(node.bounds!.x + node.bounds!.width / 2)},${Math.round(node.bounds!.y + node.bounds!.height / 2)}`
+      const session = await apiSession(manifest)
+      const apiLog: string[] = []
+      /** 101's own Umpire Management Notifications for League A. */
+      const saved = async (): Promise<{
+        missingSlots: boolean
+        daysBefore: number
+      }> => {
+        const path = `/leagues/${league}/umpire-notifications`
+        const answer = await fetch(`${manifest.apiBaseUrl}${path}`, {
+          headers: { Authorization: `Bearer ${session}` }
+        })
+        const text = await answer.text()
+        apiLog.push(`$ GET /api/v1${path}`, `${answer.status}`, text, '')
+        assert.equal(answer.status, 200, text)
+        return JSON.parse(text) as { missingSlots: boolean; daysBefore: number }
+      }
+      const until = async <T>(
+        what: string,
+        read: () => Promise<T | undefined>
+      ): Promise<T> => {
+        for (let wait = 0; wait < 30; wait++) {
+          const found = await read()
+          if (found !== undefined) return found
+          await pause(500)
+        }
+        throw new Error(`E15: never ${what}`)
+      }
+      /** A node by its test id, scrolled up until it is above the tab bar. */
+      const reach = async (id: string): Promise<ViewNode> => {
+        for (let turn = 0; turn < 12; turn++) {
+          const found = byId(await settled(), id)
+          // Its middle, where it is tapped, clear of the tab bar: the
+          // card's last row may sit lower at the page's end.
+          if (
+            found != null &&
+            found.bounds!.y > 0 &&
+            found.bounds!.y + found.bounds!.height / 2 < LOWEST_ROW
+          )
+            return found
+          await m.swipe({ start: '50%, 70%', end: '50%, 40%', duration: 400 })
+          await pause(900)
+        }
+        throw new Error(`E15: never reached ${id}`)
+      }
+
+      // 1. The Umpire Management card's last row opens the screen.
+      await m.openLink({
+        link: `teamstation://groups/league/${league}/settings`
+      })
+      // The settings open at their top; the umpire card is further down, under
+      // whatever sections precede it (SafeSport among them), and reach scrolls
+      // to its last row.
+      await visible('League Management', 30000)
+      const send = await reach('umpire-send-me-notifications')
+      const credits = (await settled()).find(
+        node => node.text === 'Enable Team Credits' && node.bounds != null
+      )
+      assert.ok(
+        credits == null || credits.bounds!.y < send.bounds!.y,
+        'E15: Send me notifications is under Enable Team Credits'
+      )
+      await m.tapOnPoint({ point: centre(send) })
+      await visible('Umpire Management Notifications', 30000)
+      await note('E15: Send me notifications opened its screen')
+
+      // 2. Missing slots on: the ask, Continue, and the system's Allow.
+      const missing = await reach('umpire-notifications-missingSlots')
+      const { x, y, width, height } = missing.bounds!
+      // Its switch is at the row's right edge.
+      await m.tapOnPoint({
+        point: `${Math.round(x + width - 40)},${Math.round(y + height / 2)}`
+      })
+      await m.assertVisible({ id: 'notification-ask-continue', timeout: 15000 })
+      const sheet = (await all()).map(node => node.text ?? '').join('\n')
+      assert.ok(
+        sheet.includes(
+          "TeamStation would like to send you notifications for events you've RSVP'd to and for direct messages from other users"
+        ),
+        'E15: the ask with its existing words'
+      )
+      await shot(`${platform}-umpire-notifications-ask.png`)
+      await m.tapOn({ id: 'notification-ask-continue', timeout: 10000 })
+      await m.tapOn({ text: 'Allow', timeout: 15000 })
+      await pause(1500)
+      const on = await until('saved missing slots on', async () => {
+        const now = await saved()
+        return now.missingSlots ? now : undefined
+      })
+      assert.equal(on.daysBefore, 7)
+      await note('E15: missing slots on, after the ask and the system’s Allow')
+
+      // 3. Days opens a wheel at 7, turned to 3, and Done saves it.
+      const days = await reach('umpire-notifications-days')
+      await m.tapOnPoint({ point: centre(days) })
+      await visible('Done', 15000)
+      const options = Array.from({ length: 30 }, (unused, i) => String(i + 1))
+      const wheel = await wheelAt(m as unknown as Parameters<typeof wheelAt>[0])
+      assert.equal(wheelValue(wheel, options), '7', `E15: ${wheel.text}`)
+      await proof('umpire-notifications-wheel-ios.png')
+      await turnWheel(
+        m as unknown as Parameters<typeof turnWheel>[0],
+        async (): Promise<WheelNode> =>
+          await wheelAt(m as unknown as Parameters<typeof wheelAt>[0]),
+        '3',
+        options
+      )
+      await m.tapOn({ text: 'Done', timeout: 10000 })
+      await pause(1200)
+      const three = await until('the row reading 3', async () =>
+        byId(await settled(), 'umpire-notifications-days')?.text ===
+        'Number of days prior: 3'
+          ? true
+          : undefined
+      )
+      assert.ok(three)
+      const after = await until('saved 3 days', async () => {
+        const now = await saved()
+        return now.daysBefore === 3 ? now : undefined
+      })
+      assert.equal(after.missingSlots, true)
+      await writeFile(
+        join(artifacts, 'umpire-notifications-ios.log'),
+        apiLog.join('\n')
+      )
+      await shot(`${platform}-umpire-notifications-days.png`)
+      await note('E15: Days turned to 3 on the wheel and saved')
     }
   }
 

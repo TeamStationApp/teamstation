@@ -26,9 +26,11 @@ export { DELETED_NAME }
  * every play, highlight, lineup, scoreboard and notification that names the
  * person reads from this row, since none of them keeps a copy; its
  * addresses, password, picture, bats and throws, walk-up songs, family links,
- * roles, follows, tags, notifications and Tess conversation go; and it is
- * marked deleted, which keeps it disabled for good: no sign-in, no lifted
- * suspension and no import gives it a way in, a role or a family link again.
+ * roles, follows, tags, notifications, saved umpire availability, umpire
+ * notification settings and Tess
+ * conversation go; and it is marked deleted, which keeps it disabled for
+ * good: no sign-in, no lifted suspension and no import gives it a way in, a
+ * role or a family link again.
  * Its import ids and RSVPs stay, with its plays and stats, so a later import
  * of a game it played in still credits the deleted row rather than making a
  * second person.
@@ -183,6 +185,16 @@ export async function deleteAccount(
     await trx.deleteFrom('user_tags').where('user_id', 'in', userIds).execute()
     await trx
       .deleteFrom('notification_receipts')
+      .where('user_id', 'in', userIds)
+      .execute()
+    // The days, hours and time zone they said they could umpire, per league.
+    await trx
+      .deleteFrom('umpire_availability')
+      .where('user_id', 'in', userIds)
+      .execute()
+    // The umpire notices they chose for themselves, per league.
+    await trx
+      .deleteFrom('league_umpire_notifications')
       .where('user_id', 'in', userIds)
       .execute()
     // Every device's push address, with its switches, and which events they

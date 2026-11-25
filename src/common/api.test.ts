@@ -8,12 +8,14 @@ import { asAccountSettings } from './accountSettings'
 import {
   asAccountAffiliations,
   asChatBlock,
+  asChatKind,
   asGameDetail,
   asHighlight,
   asLiveNow,
   asLiveStream,
   asManagePage,
   asPage,
+  asPersonProfile,
   asPlayerDetail,
   asPlayerHighlight,
   asPlayerStats,
@@ -567,24 +569,57 @@ describe('api client', function () {
         JSON.stringify(registration)
       ]
     ])
+    // League management goes with the others when the device says it.
+    const third = stubFetch(200, { id: 'psh_2' })
+    await client(third).registerPush({
+      ...registration,
+      leagueManagement: false
+    })
+    expect(JSON.parse(String(third.calls[0].body))).deep.include({
+      leagueManagement: false
+    })
     // A switch changed on the device changes the registration, by its id.
     const patched = stubFetch(200, {
       id: 'psh/1',
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: false
     })
     expect(
-      await client(patched).updatePush('psh/1', { rsvpEvents: true })
-    ).deep.equals({ messages: true, rsvpEvents: true })
+      await client(patched).updatePush('psh/1', {
+        rsvpEvents: true,
+        leagueManagement: false
+      })
+    ).deep.equals({ messages: true, rsvpEvents: true, leagueManagement: false })
     expect(
       patched.calls.map(call => [call.method, call.url, call.body])
     ).deep.equals([
       [
         'PATCH',
         'http://example.com/api/v1/me/push-registrations/psh%2F1',
-        JSON.stringify({ rsvpEvents: true })
+        JSON.stringify({ rsvpEvents: true, leagueManagement: false })
       ]
     ])
+    // A server from before League management answers two: it is on there.
+    expect(
+      await client(
+        stubFetch(200, { id: 'psh/1', messages: false, rsvpEvents: true })
+      ).updatePush('psh/1', { messages: false })
+    ).deep.equals({ messages: false, rsvpEvents: true, leagueManagement: true })
+    let unclean: unknown
+    await client(
+      stubFetch(200, {
+        id: 'psh/1',
+        messages: false,
+        rsvpEvents: true,
+        leagueManagement: 'yes'
+      })
+    )
+      .updatePush('psh/1', { messages: false })
+      .catch((error: unknown) => {
+        unclean = error
+      })
+    expect(unclean).not.equals(undefined)
     // Sign-out deletes it again, by its id.
     const deleted = stubFetch(200, {})
     await client(deleted).unregisterPush('psh/1')
@@ -673,7 +708,8 @@ describe('api client', function () {
     expect(await client.registerPush(registration)).equals('psh_1')
     expect(await client.updatePush('psh_1', { rsvpEvents: true })).deep.equals({
       messages: true,
-      rsvpEvents: true
+      rsvpEvents: true,
+      leagueManagement: true
     })
     await client.unregisterPush('psh_1')
     expect(client.offline).equals(true)
@@ -1889,6 +1925,32 @@ describe('api client', function () {
       }
     ])
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
+    // It names the newer chat kinds it reads, and a kind it does not know,
+    // from a newer server still, is left out rather than failing the list.
+    expect(list.calls[0].headers['x-teamstation-chat-kinds']).equals(
+      'leagueUmpires'
+    )
+    const newer = client([
+      { ...chat, id: 'cnv_new', kind: 'leagueReferees' },
+      { ...chat, id: 'cnv_umpires', kind: 'leagueUmpires' },
+      chat
+    ])
+    expect(
+      (await newer.client.chatConversations()).map(item => item.id)
+    ).deep.equals(['cnv_umpires', 'cnv_1'])
+    // A malformed row of a known kind still fails.
+    expect(
+      await client([{ ...chat, unread: 'one' }])
+        .client.chatConversations()
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+    // And so does a missing or malformed kind: a broken answer, not a newer one.
+    for (const kind of [null, undefined, 7])
+      expect(
+        await client([{ ...chat, kind }])
+          .client.chatConversations()
+          .catch((error: unknown) => error)
+      ).instanceOf(Error)
 
     // A coach reads Hank Conger in full; the public label rides beside it.
     const member = {
@@ -1970,6 +2032,54 @@ describe('api client', function () {
     expect(candidates.calls[1].url).equals(
       `http://x/api/v1/chat/dm-candidates?q=&userId=${encodeURIComponent(person.userId)}`
     )
+
+    const reachOf = client({ reach: 'proxies' })
+    expect(await reachOf.client.dmReach(person.userId)).equals('proxies')
+    expect(reachOf.calls[0].url).equals(
+      `http://x/api/v1/chat/dm-reach?userId=${encodeURIComponent(person.userId)}`
+    )
+    expect(await client({ reach: null }).client.dmReach(person.userId)).equals(
+      null
+    )
+    expect(
+      await client({ reach: 'maybe' })
+        .client.dmReach('x')
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
+    const proxies = client({
+      player: { userId: person.userId, shortName: 'Riley Rookie' },
+      kind: 'guardians',
+      people: [person]
+    })
+    // An older server says nothing of why: no account, as it always meant.
+    expect(await proxies.client.dmProxies(person.userId)).deep.equals({
+      player: { userId: person.userId, shortName: 'Riley Rookie' },
+      kind: 'guardians',
+      why: 'noAccount',
+      people: [{ ...person, affiliations: '' }]
+    })
+    expect(
+      (
+        await client({
+          player: { userId: person.userId, shortName: 'Riley Rookie' },
+          kind: 'guardians',
+          why: 'tooYoung',
+          people: []
+        }).client.dmProxies(person.userId)
+      ).why
+    ).equals('tooYoung')
+    expect(proxies.calls[0].url).equals(
+      `http://x/api/v1/chat/dm-proxies?userId=${encodeURIComponent(person.userId)}`
+    )
+    expect(
+      await client({
+        player: { userId: person.userId, shortName: 'R' },
+        kind: 'parents',
+        people: []
+      })
+        .client.dmProxies('x')
+        .catch((error: unknown) => error)
+    ).instanceOf(Error)
 
     const adult = {
       userId: userIdOfGumbo(7),
@@ -2502,6 +2612,17 @@ describe('api client', function () {
     }
     const listed = client([report])
     expect(await listed.client.chatReports()).deep.equals([report])
+    // A report from a chat of a kind this build does not know is left out.
+    expect(
+      await client([
+        {
+          ...report,
+          id: 'crp_new',
+          conversation: { ...report.conversation, kind: 'leagueReferees' }
+        },
+        report
+      ]).client.chatReports()
+    ).deep.equals([report])
     await listed.client.chatReports(true)
     expect(listed.calls.map(call => call.url)).deep.equals([
       'http://x/api/v1/admin/chat/reports',
@@ -2941,13 +3062,302 @@ describe('api client', function () {
     expect(answer.positions[0].optionalHeader).equals('Optional')
     await client.umpireSchedulePage('l/1', 'view=schedule', { cursor: 'a+b' })
     await client.umpireSchedulePage('l/1')
+    // A notice opens the schedule on its game.
+    await client.umpireSchedulePage('l/1', 'view=schedule', {
+      around: 'gam_one'
+    })
     expect(
       calls.map(call => call.url.replace('http://x/api/v1', ''))
     ).deep.equals([
       '/leagues/l%2F1/umpire-schedule?view=schedule&days=0&days=4&paged=1&around=next&limit=9',
       '/leagues/l%2F1/umpire-schedule?view=schedule&paged=1&cursor=a%2Bb',
-      '/leagues/l%2F1/umpire-schedule?paged=1'
+      '/leagues/l%2F1/umpire-schedule?paged=1',
+      '/leagues/l%2F1/umpire-schedule?view=schedule&paged=1&around=gam_one'
     ])
+  })
+
+  it('reads and changes the caller’s own Umpire Management Notifications', async function () {
+    const calls: Call[] = []
+    const answer = {
+      missingSlots: true,
+      daysBefore: 3,
+      signUps: false,
+      withdrawals: true
+    }
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, answer, calls).fetch
+    })
+    expect(await client.umpireNotifications('l/1')).deep.equals(answer)
+    expect(
+      await client.setUmpireNotifications('l/1', { daysBefore: 3 })
+    ).deep.equals(answer)
+    expect(
+      calls.map(call => [
+        call.method,
+        call.url.replace('http://x/api/v1', ''),
+        call.body
+      ])
+    ).deep.equals([
+      ['GET', '/leagues/l%2F1/umpire-notifications', undefined],
+      [
+        'PUT',
+        '/leagues/l%2F1/umpire-notifications',
+        JSON.stringify({ daysBefore: 3 })
+      ]
+    ])
+    let refused: unknown
+    await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { ...answer, daysBefore: '3' }).fetch
+    })
+      .umpireNotifications('l/1')
+      .catch((error: unknown) => {
+        refused = error
+      })
+    expect(refused).not.equals(undefined)
+  })
+
+  it('saves the schedule’s default sort and the league’s season order', async function () {
+    const calls: Call[] = []
+    const settings = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        { management: true, credits: false, sort: ['-certification'] },
+        calls
+      ).fetch
+    })
+    expect(
+      await settings.setUmpireSettings('l/1', { sort: ['-certification'] })
+    ).deep.equals({
+      management: true,
+      credits: false,
+      sort: ['-certification']
+    })
+    await settings.setUmpireSettings('l/1', { sort: null })
+    const season = {
+      id: 'sea_1',
+      name: 'Demo Spring',
+      logoUrl: null,
+      leagueId: 'l/1',
+      leaguePictureUrl: null,
+      requirement: null
+    }
+    const priority = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        {
+          seasons: [
+            { ...season, priority: 1 },
+            { ...season, id: 'sea_2', priority: null }
+          ]
+        },
+        calls
+      ).fetch
+    })
+    const ordered = await priority.setUmpireSeasonPriority('l/1', [
+      'sea_1',
+      'sea_2'
+    ])
+    expect(ordered.map(one => [one.id, one.priority])).deep.equals([
+      ['sea_1', 1],
+      ['sea_2', null]
+    ])
+    expect(
+      calls.map(call => [
+        call.method,
+        call.url.replace('http://x/api/v1', ''),
+        call.body
+      ])
+    ).deep.equals([
+      [
+        'PUT',
+        '/leagues/l%2F1/umpire-settings',
+        JSON.stringify({ sort: ['-certification'] })
+      ],
+      ['PUT', '/leagues/l%2F1/umpire-settings', JSON.stringify({ sort: null })],
+      [
+        'PUT',
+        '/leagues/l%2F1/umpire-season-priority',
+        JSON.stringify({ seasonIds: ['sea_1', 'sea_2'] })
+      ]
+    ])
+    const refused = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { seasons: [{ ...season, priority: 'one' }] }).fetch
+    })
+    let failure: unknown
+    await refused
+      .setUmpireSeasonPriority('l/1', ['sea_1'])
+      .catch((error: unknown) => {
+        failure = error
+      })
+    expect(failure).not.equals(undefined)
+  })
+
+  it('reads, saves and queries umpire availability, and reads commitments', async function () {
+    const availability = {
+      levels: ['ulv_1'],
+      days: [0, 4],
+      from: '17:00',
+      to: '22:00',
+      timezone: 'America/Chicago'
+    }
+    const person = {
+      id: 'usr_1',
+      name: 'Mookie B',
+      avatarUrl: null,
+      affiliations: '',
+      certifications: []
+    }
+    const calls: Call[] = []
+    const answer = stubFetch(200, { availability }, calls)
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: answer.fetch
+    })
+    expect(await client.umpireAvailability('l/1')).deep.equals(availability)
+    expect(
+      await client.saveUmpireAvailability('l/1', availability)
+    ).deep.equals(availability)
+    const cleared = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { availability: null }, calls).fetch
+    })
+    expect(await cleared.saveUmpireAvailability('l/1', null)).equals(null)
+    const people = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        {
+          people: [
+            { ...person, umpireAvailability: availability },
+            { ...person, id: 'usr_2', umpireAvailability: null },
+            { ...person, id: 'usr_3' }
+          ]
+        },
+        calls
+      ).fetch
+    })
+    const listed = await people.umpirePeople('l/1', undefined, {
+      availableAt: '2027-04-13T01:30:00.000Z',
+      durationMinutes: 120,
+      level: 'ulv_1',
+      strict: true
+    })
+    expect(listed.map(one => one.umpireAvailability)).deep.equals([
+      availability,
+      null,
+      undefined
+    ])
+    await people.umpirePeople('l/1', undefined, { day: 0, time: '18:00' })
+    await people.umpirePeople('l/1')
+    // Candidates take no availability parameters.
+    await people.umpirePeople('l/1', 'ma', { day: 0, time: '18:00' })
+    const commitment = {
+      gameId: 'gam_1',
+      leagueId: 'l/1',
+      startAt: '2027-04-13T01:30:00.000Z',
+      endAt: '2027-04-13T04:30:00.000Z',
+      home: 'Demo Rockets',
+      away: 'Demo Comets',
+      role: 'umpire',
+      slot: 'uty_plate:1'
+    }
+    const reads = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(
+        200,
+        {
+          commitments: [
+            commitment,
+            { ...commitment, role: 'player', slot: undefined }
+          ]
+        },
+        calls
+      ).fetch
+    })
+    const held = await reads.umpireCommitments(
+      'l/1',
+      'usr/1',
+      '2027-04-12T00:00:00Z',
+      '2027-04-14T00:00:00Z'
+    )
+    expect(held.map(one => [one.role, one.slot])).deep.equals([
+      ['umpire', 'uty_plate:1'],
+      ['player', undefined]
+    ])
+    expect(
+      calls.map(call => [
+        call.method,
+        call.url.replace('http://x/api/v1', ''),
+        call.body
+      ])
+    ).deep.equals([
+      ['GET', '/leagues/l%2F1/me/umpire-availability', undefined],
+      [
+        'PUT',
+        '/leagues/l%2F1/me/umpire-availability',
+        JSON.stringify({ availability })
+      ],
+      [
+        'PUT',
+        '/leagues/l%2F1/me/umpire-availability',
+        JSON.stringify({ availability: null })
+      ],
+      [
+        'GET',
+        '/leagues/l%2F1/umpires?availableAt=2027-04-13T01%3A30%3A00.000Z&durationMinutes=120&level=ulv_1&strict=true',
+        undefined
+      ],
+      ['GET', '/leagues/l%2F1/umpires?day=0&time=18%3A00', undefined],
+      ['GET', '/leagues/l%2F1/umpires', undefined],
+      ['GET', '/leagues/l%2F1/umpire-candidates?q=ma', undefined],
+      [
+        'GET',
+        '/leagues/l%2F1/umpires/usr%2F1/commitments?from=2027-04-12T00%3A00%3A00Z&to=2027-04-14T00%3A00%3A00Z',
+        undefined
+      ]
+    ])
+    expect(() =>
+      asPersonProfile({
+        context: { kind: 'league', id: 'l', name: 'Demo League' },
+        person: {
+          userId: userIdOfGumbo(7),
+          shortName: 'Mookie B',
+          fullName: null,
+          avatarUrl: null,
+          canHoldRoles: true
+        },
+        guardianOf: [],
+        sections: [],
+        viewer: { manages: false, admin: false },
+        umpireAvailability: { ...availability, days: 'Monday' }
+      })
+    ).throws()
+  })
+
+  it('reads umpireAvailability on a profile only when the server sends it', function () {
+    const profile = {
+      context: { kind: 'league', id: 'l', name: 'Demo League' },
+      person: {
+        userId: userIdOfGumbo(7),
+        shortName: 'Mookie B',
+        fullName: null,
+        avatarUrl: null,
+        canHoldRoles: true
+      },
+      guardianOf: [],
+      sections: [],
+      viewer: { manages: false, admin: false }
+    }
+    expect(asPersonProfile(profile).umpireAvailability).equals(undefined)
+    expect(
+      asPersonProfile({ ...profile, umpireAvailability: null })
+        .umpireAvailability
+    ).equals(null)
   })
 
   it('cleans a page and refuses a bare array as one', function () {
@@ -5081,6 +5491,32 @@ describe('a person’s tile, coloured by their id alone', function () {
     expect(person).deep.include({ userId: ripken, name: 'Cal Ripken' })
   })
 
+  it('keeps the umpire block’s league when it is sent, and cleans a stored game without it', function () {
+    const block = {
+      positions: [
+        {
+          slot: 'type:1',
+          typeId: 'type',
+          typeName: 'Plate',
+          ordinal: 1,
+          required: true,
+          person: null
+        }
+      ]
+    }
+    expect(
+      asGameDetail({
+        ...minimalGameDetail,
+        umpires: { ...block, leagueId: 'lea_1' }
+      }).umpires?.leagueId
+    ).equals('lea_1')
+    const stored = asGameDetail({ ...minimalGameDetail, umpires: block })
+    expect(stored.umpires?.leagueId).equals(undefined)
+    expect(() =>
+      asGameDetail({ ...minimalGameDetail, umpires: { ...block, leagueId: 7 } })
+    ).throws()
+  })
+
   it('gives public staff their id, which picks their colour, and none from an older server', function () {
     const detail = (staff: unknown[]): ReturnType<typeof asGroupDetail> =>
       asGroupDetail({ ...minimalGroupDetail, staff })
@@ -5408,5 +5844,11 @@ describe('the request deadline', function () {
       await sender.send('POST', '/leagues/l1/schedule-previews', { weeks: 1 })
     ).deep.equals({ ok: true })
     expect(sender.offline).equals(false)
+  })
+
+  it('reads a league umpire chat’s kind, and refuses a kind it does not know', function () {
+    expect(asChatKind('leagueUmpires')).equals('leagueUmpires')
+    expect(asChatKind('leagueOrg')).equals('leagueOrg')
+    expect(() => asChatKind('leagueReferees')).throws()
   })
 })

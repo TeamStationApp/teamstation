@@ -226,7 +226,9 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       aria-label={props.label}
       aria-disabled={props.disabled}
       aria-roledescription={
-        props.onReorder == null ? undefined : 'draggable lineup row'
+        props.onReorder == null
+          ? undefined
+          : (props.roleDescription ?? 'draggable lineup row')
       }
       aria-description={
         grab == null
@@ -396,7 +398,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       )}
       {(hover === 'before' || hover === 'after') && (
         <div
-          aria-label="Lineup insertion point"
+          aria-label={props.insertionLabel ?? 'Lineup insertion point'}
           style={{
             position: 'absolute',
             pointerEvents: 'none',

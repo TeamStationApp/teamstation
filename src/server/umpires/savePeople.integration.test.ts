@@ -217,7 +217,12 @@ describe('atomic umpire draft saves', function () {
         (section: { editable: boolean }) => !section.editable
       )
     ).equals(true)
-    expect((await profile(f.leagueA, 104)).status).equals(404)
+    // A player accepted into League A reads the umpire's league card alone.
+    const card = await profile(f.leagueA, 104)
+    expect(card.status).equals(200)
+    const cardBody = await card.json()
+    expect(cardBody.sections).deep.equals([])
+    expect(cardBody.guardianOf).deep.equals([])
     expect((await profile(f.leagueB, 102)).status).equals(404)
     expect(
       (await save({ changes: [{ userId: alias, before: empty, after: both }] }))

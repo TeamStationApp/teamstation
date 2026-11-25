@@ -1,5 +1,6 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
+import { NEWER_CHAT_KINDS } from '../../common/chatKinds'
 import {
   chatTag,
   type ChatWake,
@@ -210,6 +211,32 @@ async function senderNames(
       formatForReader([{ person, format: 'full' }]).get(person.id) ??
       person.displayName
   }
+}
+
+/**
+ * The registrations whose app can open a chat of `kind`: every one for the
+ * kinds every build reads, and for a newer kind only those whose app named
+ * it when it registered. An older build does not list such a chat, so its
+ * wake would open nothing.
+ */
+export async function openableBy<T extends { id: string }>(
+  db: Kysely<Database>,
+  registrations: T[],
+  kind: string
+): Promise<T[]> {
+  if (!NEWER_CHAT_KINDS.includes(kind) || registrations.length === 0)
+    return registrations
+  const reading = new Set(
+    (
+      await db
+        .selectFrom('push_registrations')
+        .select('id')
+        .where('id', '=', anyOf(registrations.map(to => to.id)))
+        .where(sql<boolean>`${kind} = any(chat_kinds)`)
+        .execute()
+    ).map(row => row.id)
+  )
+  return registrations.filter(to => reading.has(to.id))
 }
 
 /** The conversation a message is in, as `wakesFor` titles it. */
@@ -443,11 +470,13 @@ export async function chatWakes(
     const members = await recipientsOf(db, conversationId, message.senderUserId)
     const wanted =
       only == null ? members : members.filter(id => only.includes(id))
-    const [live, conversation] = await Promise.all([
+    const [registered, conversation] = await Promise.all([
       liveRegistrations(db, wanted, 'messages'),
       wanted.length === 0 ? null : conversationOf(db, conversationId)
     ])
-    if (conversation == null || live.length === 0) return emptyReport()
+    if (conversation == null) return emptyReport()
+    const live = await openableBy(db, registered, conversation.kind)
+    if (live.length === 0) return emptyReport()
     const dm = conversation.kind === 'dm'
     // Somebody with no age on file reads no chat: a generic wake for a DM,
     // and none for a group message, which could not tell a mention.

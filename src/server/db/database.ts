@@ -99,6 +99,8 @@ export interface LeaguesTable {
   player_name_privacy: Generated<string | null>
   umpire_management: Generated<boolean>
   umpire_credits: Generated<boolean>
+  /** The umpire schedule's default sort keys; null for the built-in one (129). */
+  umpire_sort: string[] | null
   id: string
   locality: Json | null
   /**
@@ -623,6 +625,10 @@ export interface PushRegistrationsTable {
   messages: Generated<boolean>
   /** This device's "Notify for RSVPed events". */
   rsvp_events: Generated<boolean>
+  /** The newer chat kinds the registering app reads (127): their wakes come here. */
+  chat_kinds: Generated<string[]>
+  /** This device's "Notify for league management" (130), on unless turned off. */
+  league_management: Generated<boolean>
   created_at: Generated<Date>
   seen_at: Generated<Date>
   /**
@@ -1149,6 +1155,18 @@ export interface LeagueUmpiresTable {
   granted_by: string
   granted_at: Generated<Date>
 }
+/** A person's saved umpire availability filter for a league (128). */
+export interface UmpireAvailabilityTable {
+  user_id: string
+  league_id: string
+  levels: Generated<string[]>
+  /** 0 is Monday … 6 is Sunday. */
+  days: Generated<number[]>
+  from_time: string | null
+  to_time: string | null
+  timezone: string
+  updated_at: Generated<Date>
+}
 export interface UmpireLevelsTable {
   id: string
   league_id: string
@@ -1158,6 +1176,22 @@ export interface UmpireLevelsTable {
 export interface SeasonUmpireRequirementsTable {
   season_id: string
   level_id: string
+}
+/** A season's position in its league's season order, 1 first (129). */
+export interface SeasonUmpirePrioritiesTable {
+  season_id: string
+  position: number
+}
+/** One league admin's own umpire notices for a league (130); none is all off. */
+export interface LeagueUmpireNotificationsTable {
+  league_id: string
+  user_id: string
+  missing_slots: Generated<boolean>
+  /** The digest's window, 1–30 calendar days. */
+  days_before: Generated<number>
+  sign_ups: Generated<boolean>
+  withdrawals: Generated<boolean>
+  updated_at: Generated<Date>
 }
 export interface UmpireCertificationsTable {
   user_id: string
@@ -1431,6 +1465,7 @@ export type ChatKind =
   | 'seasonAllStaff'
   | 'seasonAnnouncements'
   | 'leagueOrg'
+  | 'leagueUmpires'
   | 'dm'
 
 /** A device holding chat keys, bound to the session it signed in with. */
@@ -1710,8 +1745,11 @@ export interface Database {
   }
   umpire_levels: UmpireLevelsTable
   season_umpire_requirements: SeasonUmpireRequirementsTable
+  season_umpire_priorities: SeasonUmpirePrioritiesTable
+  league_umpire_notifications: LeagueUmpireNotificationsTable
   umpire_certifications: UmpireCertificationsTable
   umpire_assignments: UmpireAssignmentsTable
+  umpire_availability: UmpireAvailabilityTable
   game_guest_details: {
     game_id: string
     user_id: string

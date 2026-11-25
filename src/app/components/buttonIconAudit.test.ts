@@ -150,6 +150,24 @@ describe('button icon placement source audit', function () {
     scan('')
     expect(failures).deep.equals([])
   })
+  it('places the umpire sort buttons’ + and Remove sort icons, and the requirements screen’s, through ButtonIcon', function () {
+    for (const file of [
+      'umpires/UmpireSortControls.tsx',
+      'components/PillTabs.tsx',
+      'components/HeaderMenu.tsx',
+      'umpires/UmpireRequirementsScreen.tsx'
+    ]) {
+      const text = readFileSync(join('src/app', file), 'utf8')
+      expect(unplaced(file, text), file).deep.equals([])
+      expect(text, file).not.match(/<Icon\b/)
+    }
+    const controls = readFileSync(
+      'src/app/umpires/UmpireSortControls.tsx',
+      'utf8'
+    )
+    expect(controls).match(/<ButtonIcon name="add"/)
+    expect(controls).match(/<ButtonIcon\s+name="close"/)
+  })
   it('classifies individual symbols on both path conventions without a per-file quota', function () {
     for (const file of ['tess/TessChat.tsx', 'tess\\TessChat.tsx']) {
       expect(

@@ -9,6 +9,7 @@ import {
   safeNext,
   withoutTab
 } from './routes'
+import { screenIdentity } from './screenIdentity'
 
 /** Every route survives being written down and read back. */
 const roundTrip = (route: Route): Route => {
@@ -17,6 +18,134 @@ const roundTrip = (route: Route): Route => {
 }
 
 describe('addresses', function () {
+  it('carries a saved filter’s time zone through the umpire schedule’s address', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      priorSeasons: 'true',
+      days: '0,1,2,3,4',
+      from: '17:00',
+      to: '23:59',
+      timezone: 'America/Los_Angeles'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=umpire&priorSeasons=true&days=0%2C1%2C2%2C3%2C4&from=17%3A00&to=23%3A59&timezone=America%2FLos_Angeles'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(
+      parseRoute('/umpires/lea_demo', 'timezone=America%2FChicago')
+    ).deep.equals({
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      timezone: 'America/Chicago'
+    })
+    expect(
+      routePath({ name: 'umpireSchedule', id: 'lea_demo', days: '5' })
+    ).equals('/umpires/lea_demo?days=5')
+  })
+  it('carries the umpire schedule’s sort for the visit through its address, none included', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'league',
+      sort: 'date,-season'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=league&sort=date%2C-season'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    const none = { ...route, sort: 'none' } as const
+    expect(routePath(none)).equals(
+      '/umpires/lea_demo?pill=schedule&view=league&sort=none'
+    )
+    expect(roundTrip(none)).deep.equals(none)
+    // What a hand-edited link holds is carried as it is; the screen reads it.
+    expect(parseRoute('/umpires/lea_demo', 'sort=bogus,season')).deep.equals({
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      sort: 'bogus,season'
+    })
+    expect(
+      routePath({
+        name: 'umpireSchedule',
+        id: 'lea_demo',
+        filter: 'none',
+        sort: 'certification'
+      })
+    ).equals('/umpires/lea_demo?filter=none&sort=certification')
+  })
+  it('opens Umpire Management Notifications from its address, a screen of its league', () => {
+    const route = { name: 'umpireNotifications', id: 'lea_demo' } as const
+    expect(routePath(route)).equals(
+      '/groups/league/lea_demo/umpire-notifications'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(screenIdentity(route)).equals(
+      screenIdentity({ name: 'umpireNotifications', id: 'lea_demo' })
+    )
+    expect(screenIdentity(route)).not.equals(
+      screenIdentity({ name: 'umpireNotifications', id: 'lea_other' })
+    )
+  })
+  it('carries the game the umpire schedule opens on through its address', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'league',
+      game: 'gam_demo'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=league&game=gam_demo'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(
+      routePath({ name: 'umpireSchedule', id: 'lea_demo', game: 'gam_demo' })
+    ).equals('/umpires/lea_demo?game=gam_demo')
+  })
+  it('keeps the umpire schedule’s game only when it is a game id, so a bad one opens on the next game (2.harness-review.2)', () => {
+    for (const bad of ['abc', 'gam_', 'lea_demo', 'gam_a b', ''])
+      expect(
+        parseRoute(
+          '/umpires/lea_demo',
+          `?view=league&game=${encodeURIComponent(bad)}`
+        )
+      ).deep.equals({
+        name: 'umpireSchedule',
+        id: 'lea_demo',
+        pill: 'schedule',
+        view: 'league'
+      })
+    expect(
+      parseRoute('/umpires/lea_demo', '?view=league&game=gam_Ab-9_x')
+    ).deep.include({ game: 'gam_Ab-9_x' })
+  })
+  it('carries the umpire schedule’s chosen no-filter through its address, and nothing else for filter (6.harness-review.3)', () => {
+    const route = {
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire',
+      filter: 'none'
+    } as const
+    expect(routePath(route)).equals(
+      '/umpires/lea_demo?pill=schedule&view=umpire&filter=none'
+    )
+    expect(roundTrip(route)).deep.equals(route)
+    expect(parseRoute('/umpires/lea_demo', 'filter=all')).deep.equals({
+      name: 'umpireSchedule',
+      id: 'lea_demo',
+      pill: 'schedule',
+      view: 'umpire'
+    })
+  })
   it('writes and reads User Management, its tabs and another person’s account', () => {
     expect(routePath({ name: 'userManagement' })).equals('/node/users')
     expect(routePath({ name: 'userManagement', tab: 'logins' })).equals(

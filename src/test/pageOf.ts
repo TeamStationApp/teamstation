@@ -3,6 +3,7 @@ import type {
   GamesPageQuery,
   ListCounts,
   Page,
+  UmpirePageAsk,
   UmpireSchedulePage
 } from '../common/api'
 import { initialUmpireGame, nextGameIndex } from '../common/nextGame'
@@ -131,15 +132,20 @@ export function pageOfGames<T extends ListedGame>(
 
 /**
  * A fake of `umpireSchedulePage`: `schedule` as the server cuts it, its games
- * in the order they stand, with the whole list's columns on every page.
+ * in the order they stand, with the whole list's columns on every page. A
+ * game id `around` opens on that game where it is listed, as `next` does
+ * where it is not.
  */
 export function pageOfUmpireSchedule(
   schedule: UmpireSchedule,
-  query: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+  query: UmpirePageAsk = {}
 ): UmpireSchedulePage {
   const { games, ...head } = schedule
   const anchor =
-    query.around == null ? undefined : initialUmpireGame(games, Date.now())
+    query.around == null
+      ? undefined
+      : (games.find(game => game.id === query.around) ??
+        initialUmpireGame(games, Date.now()))
   const page = pageOf(
     games,
     query,

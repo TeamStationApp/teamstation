@@ -547,6 +547,7 @@ async function moveAndClose(
   await keepSignIns(db, closing, keeping)
   await moveFollows(db, closing, keeping)
   await moveReminders(db, closing, keeping)
+  await moveUmpireNotifications(db, closing, keeping)
   await keepTheFullerName(db, closing, keeping)
   // Keys never move between user ids: the closed row's sessions and chat
   // devices are revoked, and the survivor takes its place in its open DMs.
@@ -690,6 +691,29 @@ async function moveReminders(
     on conflict do nothing`.execute(db)
   await db
     .deleteFrom('push_reminders_sent')
+    .where('user_id', '=', closing)
+    .execute()
+}
+
+/**
+ * The closing row's Umpire Management Notifications go to the survivor,
+ * league by league; where the survivor chose their own for a league, theirs
+ * stay and the closing row's go.
+ */
+async function moveUmpireNotifications(
+  db: Kysely<Database>,
+  closing: string,
+  keeping: string
+): Promise<void> {
+  await sql`insert into league_umpire_notifications
+      (league_id, user_id, missing_slots, days_before, sign_ups, withdrawals,
+       updated_at)
+    select league_id, ${keeping}, missing_slots, days_before, sign_ups,
+           withdrawals, updated_at
+      from league_umpire_notifications where user_id = ${closing}
+    on conflict do nothing`.execute(db)
+  await db
+    .deleteFrom('league_umpire_notifications')
     .where('user_id', '=', closing)
     .execute()
 }

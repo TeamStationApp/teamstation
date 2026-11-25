@@ -18,6 +18,56 @@ it('cleans every umpire client response and persists each management action', as
     expect(
       (await client.setUmpireSettings(f.leagueA, { credits: false })).credits
     ).equals(false)
+    expect((await client.umpireSettings(f.leagueA)).sort).equals(null)
+    expect(
+      await client.setUmpireSettings(f.leagueA, {
+        sort: ['seasonPriority', '-date']
+      })
+    ).deep.equals({
+      management: true,
+      credits: false,
+      sort: ['seasonPriority', '-date']
+    })
+    expect(
+      (await client.umpireSchedule(f.leagueA, 'view=schedule')).sort
+    ).deep.equals(['seasonPriority', '-date'])
+    expect(
+      (await client.umpireSchedule(f.leagueA, 'view=schedule&sort=none')).sort
+    ).deep.equals([])
+    expect(
+      (await client.setUmpireSettings(f.leagueA, { sort: null })).sort
+    ).equals(null)
+    // The admin's own Umpire Management Notifications.
+    expect(await client.umpireNotifications(f.leagueA)).deep.equals({
+      missingSlots: false,
+      daysBefore: 7,
+      signUps: false,
+      withdrawals: false
+    })
+    expect(
+      await client.setUmpireNotifications(f.leagueA, {
+        missingSlots: true,
+        daysBefore: 12
+      })
+    ).deep.equals({
+      missingSlots: true,
+      daysBefore: 12,
+      signUps: false,
+      withdrawals: false
+    })
+    expect((await client.umpireNotifications(f.leagueA)).daysBefore).equals(12)
+    const refused = await client
+      .setUmpireNotifications(f.leagueA, { daysBefore: 31 })
+      .catch((error: unknown) => error)
+    expect(refused).property('status', 400)
+    const ordered = await client.setUmpireSeasonPriority(f.leagueA, [
+      f.seasonA,
+      f.playoffs
+    ])
+    expect(ordered.map(s => [s.id, s.priority])).deep.equals([
+      [f.seasonA, 1],
+      [f.playoffs, 2]
+    ])
     const level = await client.addUmpireLevel(f.leagueA, 'minors')
     expect((await client.umpireLevels(f.leagueA)).length).equals(2)
     const seasons = await client.umpireRequirements(f.leagueA)

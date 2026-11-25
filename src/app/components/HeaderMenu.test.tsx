@@ -13,6 +13,7 @@ import {
   unmount
 } from '../../test/tessTestKit'
 import { ChatOverlayHost, ChatOverlayPortal } from '../chat/ChatOverlayHost'
+import { tsBallpark } from '../theme/tsBallpark'
 import {
   HeaderMenu,
   headerMenuPosition,
@@ -20,6 +21,12 @@ import {
 } from './HeaderMenu'
 
 const LABEL = 'Open the menu'
+
+/** A `#rrggbb` color as the DOM writes it back. */
+function hexToRgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+  return `rgb(${r}, ${g}, ${b})`
+}
 
 function menu(props: Partial<HeaderMenuProps> = {}): React.ReactElement {
   return (
@@ -56,6 +63,32 @@ async function openMenu(): Promise<void> {
 }
 
 const panel = (): HTMLElement | null => byTestId('header-menu-panel')
+
+/**
+ * Puts back the window's and the page's sizes as they were, own properties
+ * and all: a size left defined here is read by every suite after this one in
+ * the same process.
+ */
+function keepSizes(): () => void {
+  const held = (
+    [
+      [window, 'innerWidth'],
+      [window, 'innerHeight'],
+      [document.documentElement, 'clientWidth'],
+      [document.documentElement, 'clientHeight']
+    ] as const
+  ).map(([target, key]) => ({
+    target,
+    key,
+    descriptor: Object.getOwnPropertyDescriptor(target, key)
+  }))
+  return () => {
+    for (const { target, key, descriptor } of held)
+      if (descriptor == null) Reflect.deleteProperty(target, key)
+      else Object.defineProperty(target, key, descriptor)
+    window.dispatchEvent(new window.Event('resize'))
+  }
+}
 
 describe('HeaderMenu', () => {
   afterEach(unmount)
@@ -131,6 +164,7 @@ describe('HeaderMenu', () => {
   })
 
   it('closes when the window changes size', async () => {
+    const restore = keepSizes()
     const width = window.innerWidth
     const setWidth = (value: number): void => {
       Object.defineProperty(window, 'innerWidth', {
@@ -153,12 +187,12 @@ describe('HeaderMenu', () => {
       await settle()
       expect(panel()).equals(null)
     } finally {
-      setWidth(width)
-      window.dispatchEvent(new window.Event('resize'))
+      restore()
     }
   })
 
   it('stays open when only the height changes, as a keyboard does', async () => {
+    const restore = keepSizes()
     const height = window.innerHeight
     const setHeight = (value: number): void => {
       Object.defineProperty(window, 'innerHeight', {
@@ -181,8 +215,7 @@ describe('HeaderMenu', () => {
       await settle()
       expect(panel()).not.equals(null)
     } finally {
-      setHeight(height)
-      window.dispatchEvent(new window.Event('resize'))
+      restore()
     }
   })
 
@@ -421,7 +454,7 @@ describe('HeaderMenu', () => {
   })
 
   it('fits a short window, with its rows scrolling', async () => {
-    const height = window.innerHeight
+    const restore = keepSizes()
     const setHeight = (value: number): void => {
       Object.defineProperty(window, 'innerHeight', {
         value,
@@ -441,9 +474,71 @@ describe('HeaderMenu', () => {
       expect(panel()!.style.maxHeight).matches(/^\d+px$/)
       expect(parseInt(panel()!.style.maxHeight, 10)).lessThan(200)
     } finally {
-      setHeight(height)
-      window.dispatchEvent(new window.Event('resize'))
+      restore()
     }
+  })
+
+  it('puts its test id on its button, and none without one', async () => {
+    await render(menu({ testID: 'menu-trigger' }))
+    expect(byTestId('menu-trigger')).equals(byLabel(LABEL))
+    await unmount()
+    document.body.replaceChildren()
+    await render(menu())
+    expect(byLabel(LABEL).getAttribute('data-testid')).equals(null)
+  })
+
+  it('marks a selected row with a radio mark and draws a destructive row in the danger colour, plain rows as before', async () => {
+    await render(
+      menu({
+        items: [
+          {
+            label: 'Chosen',
+            icon: null,
+            selected: true,
+            onPress: () => undefined
+          },
+          {
+            label: 'Other',
+            icon: null,
+            selected: false,
+            onPress: () => undefined
+          },
+          {
+            label: 'Remove',
+            icon: null,
+            destructive: true,
+            onPress: () => undefined
+          },
+          { label: 'Plain', icon: null, onPress: () => undefined }
+        ]
+      })
+    )
+    await openMenu()
+    const words = (label: string): HTMLElement =>
+      [...byLabel(label).querySelectorAll<HTMLElement>('[dir="auto"]')].find(
+        node => node.textContent === label
+      )!
+    // A choice row is a radio that says whether it is the chosen one; a plain
+    // row stays a button and says nothing of being chosen.
+    expect(byLabel('Chosen').getAttribute('role')).equals('radio')
+    expect(byLabel('Chosen').getAttribute('aria-checked')).equals('true')
+    expect(byLabel('Other').getAttribute('role')).equals('radio')
+    expect(byLabel('Other').getAttribute('aria-checked')).equals('false')
+    expect(byLabel('Plain').getAttribute('role')).equals('button')
+    expect(byLabel('Plain').getAttribute('aria-checked')).equals(null)
+    expect(byLabel('Chosen').getAttribute('aria-selected')).equals(null)
+    // At the row's end: a ring on both marked rows, its dot in the selected
+    // one's only, and nothing after a plain row's words.
+    const mark = (label: string): Element => byLabel(label).lastElementChild!
+    expect(mark('Chosen').querySelectorAll('div')).length(2)
+    expect(mark('Other').querySelectorAll('div')).length(1)
+    expect(mark('Plain').textContent).equals('Plain')
+    const danger = hexToRgb(tsBallpark.dangerColor)
+    expect(getComputedStyle(words('Remove')).color).equals(danger)
+    expect(getComputedStyle(words('Plain')).color).not.equals(danger)
+    expect(getComputedStyle(words('Plain')).color).equals(
+      getComputedStyle(words('Chosen')).color
+    )
   })
 
   it('draws the panel as glass over a shadow', async () => {

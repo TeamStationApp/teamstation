@@ -16,7 +16,7 @@ import {
 } from '../../test/PagedListStandIn'
 import { pageOfUmpireSchedule } from '../../test/pageOf'
 import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
-import type { UmpireScheduleRoute } from '../navigation/routes'
+import { parseRoute, type UmpireScheduleRoute } from '../navigation/routes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { UmpireScheduleScreen } from './UmpireScheduleScreen'
 
@@ -245,8 +245,10 @@ describe('umpire schedule pages', () => {
     })
     const columns = umpireColumns(f.schedule.types, f.schedule.games)
     expect(columns.length).greaterThan(2)
-    const custom = Math.max(160, 1200 / (7 + columns.length + 1))
-    const expected = 6 * 136 + columns.length * 107 + custom + 93
+    // Seven fixed columns: Date, Division, Home and Away team, Venue, Field
+    // and Notes.
+    const custom = Math.max(160, 1200 / (8 + columns.length + 1))
+    const expected = 7 * 136 + columns.length * 107 + custom + 93
     expect(listProps().width).equals(expected)
     const header = document.querySelector(
       '[data-testid="umpire-table-header-scroll"]'
@@ -257,7 +259,7 @@ describe('umpire schedule pages', () => {
     expect(
       document.querySelector(`[data-testid="umpire-game-${cells}"]`)!
         .childElementCount
-    ).equals(6 + columns.length + 1 + 1)
+    ).equals(7 + columns.length + 1 + 1)
     await act(async () => {
       reachEnd()
     })
@@ -270,7 +272,7 @@ describe('umpire schedule pages', () => {
     expect(
       document.querySelector('[data-testid="umpire-game-game-100"]')!
         .childElementCount
-    ).equals(6 + columns.length + 1 + 1)
+    ).equals(7 + columns.length + 1 + 1)
   })
 
   it('measures its date column on a sample, not on the rows it holds', async () => {
@@ -310,6 +312,58 @@ describe('umpire schedule pages', () => {
       measure('umpire-sticky-stack', 1200, 120, 0)
     })
     expect(asked).deep.equals([504, 544])
+  })
+
+  it('opens on a notice’s game, and lets the route forget it once the reader moves the page', async () => {
+    const f = world(0)
+    const routes: UmpireScheduleRoute[] = []
+    function Harness(): React.ReactElement {
+      const [route, setRoute] = useState<UmpireScheduleRoute>({
+        ...ROUTE,
+        view: 'league',
+        game: 'game-80'
+      })
+      return (
+        <UmpireScheduleScreen
+          client={f.client}
+          route={route}
+          leagues={[]}
+          onRoute={next => {
+            routes.push(next)
+            setRoute(next)
+          }}
+        />
+      )
+    }
+    await mount(<Harness />)
+    expect(f.reads[0].page).deep.equals({ around: 'game-80' })
+    expect(listProps().anchorKey).equals('game-80')
+    const { node } = pageScroller()
+    await act(async () => {
+      node.dispatchEvent(new window.Event('wheel'))
+    })
+    expect(routes).deep.equals([{ ...ROUTE, view: 'league' }])
+    // Moving it again asks nothing more of the route.
+    await act(async () => {
+      node.dispatchEvent(new window.Event('wheel'))
+    })
+    expect(routes).length(1)
+    expect(f.reads).length(1)
+  })
+
+  it('opens on the next game when the address’s game is not a game id (2.harness-review.2)', async () => {
+    const f = world(0)
+    const route = parseRoute('/umpires/demo', '?view=league&game=abc')
+    expect(route.name).equals('umpireSchedule')
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={route as UmpireScheduleRoute}
+        leagues={[]}
+        onRoute={() => {}}
+      />
+    )
+    expect(f.reads[0].page).deep.equals({ around: 'next' })
   })
 
   it('draws its mounted rows again only for what they show', async () => {
@@ -691,5 +745,104 @@ describe('umpire schedule pages', () => {
       late?.()
     })
     expect(rowIds()).length(50)
+  })
+
+  describe('the umpire chat pill', () => {
+    const chatPill = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="umpire-chat"]')
+    const tab = (name: string): HTMLElement =>
+      [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+        n => n.textContent === name
+      )!
+
+    it('sits right after Leaderboard, the same pill as the tabs, and opens the chat', async () => {
+      const f = world()
+      const opened: Array<{ id: string; title: string }> = []
+      await mount(
+        <UmpireScheduleScreen
+          client={f.client}
+          route={ROUTE}
+          leagues={[]}
+          onRoute={() => undefined}
+          umpireChat={{ id: 'cnv_umpires', title: 'QPLL Umpires' }}
+          onOpenChat={chat => {
+            opened.push(chat)
+          }}
+        />
+      )
+      const pill = chatPill()!
+      expect(pill.getAttribute('aria-label')).equals('Open the umpire chat')
+      expect(pill.textContent).equals('Umpire chat')
+      // In the tabs' row, after their strip, which keeps to its pills' width.
+      const strip = tab('Leaderboard').closest('[role="tablist"]')!
+      // The pill, in a margin of its own, is the row's next item.
+      expect(strip.nextElementSibling).equals(pill.parentElement)
+      expect(getComputedStyle(pill.parentElement!).marginLeft).equals('4px')
+      expect(getComputedStyle(strip.parentElement!).flexWrap).equals('wrap')
+      expect(getComputedStyle(strip).flexGrow).equals('0')
+      // The same pill as the tabs: the same shell inside.
+      const shell = (n: HTMLElement): string =>
+        n.querySelector<HTMLElement>('[data-testid="settings-pill-tab"]')!
+          .className
+      expect(shell(pill)).equals(shell(tab('Leaderboard')))
+      await act(async () => {
+        pill.click()
+      })
+      expect(opened).deep.equals([{ id: 'cnv_umpires', title: 'QPLL Umpires' }])
+    })
+
+    it('is not there for somebody outside the chat, and the tabs still switch', async () => {
+      const f = world()
+      const routes: UmpireScheduleRoute[] = []
+      await mount(
+        <UmpireScheduleScreen
+          client={f.client}
+          route={ROUTE}
+          leagues={[]}
+          onRoute={route => {
+            routes.push(route)
+          }}
+          onOpenChat={() => undefined}
+        />
+      )
+      expect(chatPill()).equals(null)
+      const strip = tab('Leaderboard').closest('[role="tablist"]')!
+      expect(getComputedStyle(strip).flexGrow).not.equals('0')
+      await act(async () => {
+        tab('Leaderboard').click()
+      })
+      expect(routes.at(-1)?.pill).equals('leaderboard')
+    })
+
+    it('reads the reader’s chats again when it opens and when the league changes, once a league is named', async () => {
+      const f = world()
+      let asked = 0
+      const screen = (id: string): React.ReactElement => (
+        <UmpireScheduleScreen
+          client={f.client}
+          route={{ ...ROUTE, id }}
+          leagues={[]}
+          onRoute={() => undefined}
+          onRefreshChats={() => {
+            asked++
+          }}
+        />
+      )
+      // Before the leagues arrive the id is empty: nothing to read for yet.
+      await mount(screen(''))
+      expect(asked).equals(0)
+      await act(async () => {
+        root!.render(<ThemeProvider>{screen('demo')}</ThemeProvider>)
+      })
+      expect(asked).equals(1)
+      await act(async () => {
+        root!.render(<ThemeProvider>{screen('demo')}</ThemeProvider>)
+      })
+      expect(asked).equals(1)
+      await act(async () => {
+        root!.render(<ThemeProvider>{screen('other')}</ThemeProvider>)
+      })
+      expect(asked).equals(2)
+    })
   })
 })

@@ -45,7 +45,9 @@ phone keeps to find them again offline.
 - **Repeat a parameter for several values:** `?season=a&season=b`.
 - **Leaving a parameter out keeps the collection's existing answer.** Adding
   a parameter never changes what a caller that does not send it gets. A new
-  field in each item is allowed; a changed or missing one is not.
+  field in each item is allowed; a changed or missing one is not. The umpire
+  schedule's default order is the one deliberate exception (see **Umpire
+  schedule sort**).
 - **Declare every parameter, with its default, in the route's OpenAPI
   entry.** A parameter that needs another, or a value it does not take,
   answers 400 with a message that says which.
@@ -54,7 +56,8 @@ phone keeps to find them again offline.
 
 A long list answers a page at a time when the caller asks with `paged=1`.
 Leaving `paged` out keeps the bare array, in the order it always had, so the
-Director and scoreboard clients decode what they did.
+Director and scoreboard clients decode what they did (the umpire schedule's
+order is the exception **Umpire schedule sort** gives).
 
 `GET /events`, `GET /teams/:teamId/games` and
 `GET /leagues/:leagueId/umpire-schedule` take these, and all share one shape,
@@ -150,6 +153,9 @@ umpire management return false. This metadata never expands game visibility.
 Older responses may omit the flag; clients treat omission as false. Game detail
 umpire positions include an optional nullable `person.avatarUrl` alongside the
 canonical `userId` and abbreviated `name`.
+The umpire block also carries `leagueId`, sent only to a reader accepted into
+that league, and each `person` carries `openable`: whether the reader may open
+that umpire's league profile (absent means they may not).
 
 ## Game LIVE state
 
@@ -208,6 +214,18 @@ team, or the one team for a practice/other event. Canonical merged identities
 are deduplicated and disabled people are excluded. Saves recheck the same
 policy; an old reply cannot keep a removed player eligible.
 
+## Messaging a person
+
+`GET /chat/dm-reach?userId=<id>` answers `{ reach }`: `direct` when the viewer
+may start a DM with that person, `proxies` when that person is a player who
+cannot use chat (no account, or under 13) and the viewer may message somebody
+for them instead, and null otherwise. `GET /chat/dm-proxies?userId=<id>` names
+those people, `{ player, kind, people, why }`: their guardians and adult family
+(`guardians`), or, with none the viewer can reach, their teams' staff
+(`coaches`), and `why` (`noAccount` or `tooYoung`); 404 when there is nobody.
+Both apply the same DM rules as `GET /chat/dm-candidates`, and, like every chat
+read, are refused to somebody with no age on file or under 13.
+
 ## Chat age confirmation
 
 Chat is for people 13 and older. `GET /me/account/chat-age` answers whether
@@ -228,7 +246,144 @@ and asks first otherwise. The chat routes do not read it.
 
 ## Umpire schedule timezones
 
-`GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query parameter. Clients send their local IANA timezone for row and conflict dates and weekday/time filtering. Invalid zones return400. When omitted, each game's stored timezone is used. Stored ISO instants and conflict intervals are unchanged.
+`GET /leagues/:leagueId/umpire-schedule` accepts an optional `timezone` query
+parameter. Clients send their local IANA timezone; row dates and conflict lines
+are always written in it. An optional `filterTimezone` names the zone the
+`days`, `from` and `to` filter is matched in, such as a saved filter's own, so
+"weeknights after 5 in Chicago" stays that on a phone in another zone while the
+rows stay in the phone's zone. Without `filterTimezone` the filter is matched in
+`timezone`, and without either, each game's stored timezone is used for both.
+Invalid zones return 400. Stored ISO instants and conflict intervals are
+unchanged.
+
+## Umpire schedule sort
+
+`GET /leagues/:leagueId/umpire-schedule` takes `sort`: up to two keys of
+different fields joined by a comma, first first. The keys are `date` (the
+calendar day in the zone the schedule is shown in), `season` (the season's
+name), `seasonPriority` (the league's season order, with seasons that have none
+after those that have one, by name, both ways) and `certification` (the season's
+required umpire level), each with an optional leading `-` for the other
+direction. `season` and `seasonPriority` are one field. Names compare naturally
+and without case ("U8" before "U10"). The date, start time and game id break
+every tie, newest first under `-date` and oldest first otherwise. `sort=none` is
+the empty sort, those tie-breakers alone. Anything else is a 400.
+
+Without `sort` the league's default applies, which an administrator saves as
+`sort` on `PUT /leagues/:leagueId/umpire-settings` (a JSON array: `[]` for the
+empty sort, `null` to go back to none saved); with none saved, `date,season`.
+A save that leaves `sort` out keeps the stored default as it is.
+
+Every answer names the sort its rows are in as `sort`, and the league default as
+`settings.sort` (null when none is saved). The unpaged answer and `view=league`
+are sorted too.
+
+This changes what a caller that sends no `sort` gets, paged or not: the rows
+used to run by start time across the league, and with no default saved they
+now run by calendar day, then season name, then start time. It is the one
+place the rule that leaving a parameter out keeps a collection's answer yields,
+on purpose: the schedule is a table read a day at a time, and its default
+(issue #348) groups each day's games by division unless the league saves
+another, for every reader, the app included. A caller that needs the old
+order sends `sort=none`, which is start-time order when the games share a zone.
+
+A page's cursor carries the sort it was read in and the boundary row's keys, so
+a walk stays in its sort when the league default changes meanwhile, and still
+places the next page if the boundary row is gone. An explicit `sort` that
+disagrees with the cursor's is a 400, as `order` is on the other lists.
+Cursors given before the schedule was sorted (the start-time cursor the other
+schedules still use) are refused with 400 `cursor is not a cursor this list
+gave`, so a client reading across that deploy starts again from the first page.
+`around=next` still opens on the first game under way or still to start in time
+order, and cuts the page around that game's place in the sort. The umpire
+schedule's `around` also takes a game id (`around=gam_…`): the page opens on
+that game's place in the sort, and names it in `anchorId`, when the game is
+listed, and as `around=next` does when it is not (filtered out, or gone). That
+is how an umpire notice opens the schedule on its game. Anything else is a 400
+`around must be next or a game id`; it still needs `paged` and does not take
+`cursor`. The other lists' `around` stays `next` alone. Season priorities
+are read live, so a priority saved between two reads can repeat or skip a row at
+a page boundary, as on the leaderboard.
+
+The season order itself is `PUT /leagues/:leagueId/umpire-season-priority` with
+`{ seasonIds }`, the league's current and upcoming seasons first to last
+(a season of the league that has ended since the list was read is left out,
+since its position is cleared anyway; another league's season is a 400), and it
+answers the seasons as `GET …/umpire-requirements` does, each with its
+`priority`. It is a path of its own rather than a parameter, because it is not a
+filter or a search of an existing collection: it writes a league setting whole,
+one position per season, and clears the position of the league's other seasons.
+A season created later has none, so it sorts last.
+
+## Umpire Management Notifications
+
+`GET` and `PUT /leagues/:leagueId/umpire-notifications` read and change the
+caller's own settings for a league they administer (`canAdminister`: a league
+or site administrator), never anyone else's:
+
+```ts
+interface UmpireNotificationSettings {
+  missingSlots: boolean // the daily digest, off by default
+  daysBefore: number // its window, 1 to 30 calendar days, 7 by default
+  signUps: boolean // umpire sign-ups, off by default
+  withdrawals: boolean // umpire withdrawals, off by default
+}
+```
+
+They are a path of their own, not fields of `umpire-settings`, because they are
+each admin's for themselves, where `umpire-settings` is the league's one
+setting every admin shares. Settings never changed read as the defaults. `PUT`
+takes any of the four and keeps the rest; `daysBefore` that is not a whole
+number from 1 to 30, or a toggle that is not a boolean, is a 400. Someone who is
+no longer an admin is refused with 403, and their settings are kept for when
+they are one again. Settings are read and saved whatever the league's umpire
+management; notices are recorded only while it is on. Both are in the `umpire`
+API-key family.
+
+- **The digest** (`umpireMissingSlots`) is recorded once a day for each admin
+  with `missingSlots` on, at 10:00 in the league's zone: its locality's
+  `timezone` (the city chosen for the league), or `America/Los_Angeles` when it
+  has none or the zone is not one `Intl` knows. It lists every game of the
+  league within `daysBefore` calendar days (counted in the game's own zone,
+  `games.timezone`, as the umpire schedule dates it, today included) that has
+  not started, is not withdrawn, final or cancelled, and still has an empty
+  required position; optional positions never count. Each game is dated in
+  that zone too. A day with none sends nothing. It is one notice for each
+  admin, league and day, however many nodes sweep (every 10 minutes, so a node
+  that was down at 10:00 records the day's on its next sweep), and it repeats
+  daily until the games are filled or start. It is in the notifications'
+  default list (`hasPending`) until dismissed; the next day's dismisses it, and
+  so does the first sweep that finds none of its games still missing an
+  umpire, that day's included. Turning `missingSlots` off dismisses it; turned
+  back on the same day, it takes effect from the next day's digest.
+- **Sign-ups** (`umpireSignUp`) and **withdrawals** (`umpireWithdraw`) are
+  recorded when an umpire, or their guardian, signs up for a slot or removes
+  their own assignment, for the admins with `signUps` or `withdrawals` on, less
+  whoever acted. An admin removing someone else's assignment notifies nobody.
+  They date the game in its own zone, as the digest does. They are History
+  from the start.
+
+Nothing is recorded while the league does not manage umpires, nor for anyone
+who is no longer its admin. Each notice carries `leagueId` and `gameId` (the
+digest's first game), and opens the league's umpire schedule on that game.
+
+Each notice is also pushed to the admin's devices whose third switch,
+`leagueManagement` on `POST /me/push-registrations` and
+`PATCH /me/push-registrations/:id`, is on. It is on unless a device turns it
+off: a registration that leaves it out (an app from before it) has it on, and
+every registration that existed before it has it on. The push is the event
+payload an RSVP reminder sends (`t: 'event'`), tagged `event:league:<id>`,
+whose `url` is `teamstation://umpires/<leagueId>?view=league&game=<gameId>`.
+
+## Umpire commitments
+
+`GET /leagues/:leagueId/umpires/:userId/commitments?from=…&to=…` is a new path,
+not a filter, because no collection holds what it answers: one person's
+umpiring assignments and the games they play in (as a rostered player or a
+guest, not where they are unrostered), across every league the caller
+administers, merged into one list of commitments within a window. Neither
+`/events` nor the umpire schedule is that list; both answer games, not one
+umpire's holds on their time, and the schedule is a single league's.
 
 ## Pending video publication
 

@@ -13,7 +13,7 @@ import {
 } from '../../common/umpireSchedule'
 import { hardUmpireConflict, umpireEnd } from '../../common/umpireTime'
 import { onePerson } from '../admin/people'
-import type { Actor } from '../auth/sessions'
+import { type Actor, isMachine } from '../auth/sessions'
 import { now } from '../clock'
 import type {
   Database,
@@ -28,12 +28,13 @@ import { type Reader, readerOf } from '../users/readerNames'
 import { people } from './admin'
 import {
   readerUmpireNames,
+  umpireFamily,
   type UmpireIdentity,
   umpireIdentity,
   umpireInterval,
   umpireIsPlaying
 } from './context'
-import { schedule, umpireAccess } from './schedule'
+import { schedule, umpireAcceptance, umpireAccess } from './schedule'
 import { types } from './types'
 
 export async function gameLeague(
@@ -49,12 +50,25 @@ export async function gameLeague(
   if (game?.league_id == null) throw notFound('No league game')
   return game.league_id
 }
+/**
+ * What a slot's sign-up or removal was, for its notices
+ * (`recordSignUp`, `recordWithdrawal`).
+ */
+export interface SlotChange {
+  leagueId: string
+  gameId: string
+  slot: string
+  /** Whose assignment it is. */
+  umpireId: string
+  /** Who acted, each of their ids. */
+  actorIds: string[]
+}
 export async function saveSlot(
   db: Transaction<Database>,
   actor: Actor,
   gameId: string,
   body: { slot?: unknown; userId?: unknown; creditTeamId?: unknown }
-): Promise<void> {
+): Promise<SlotChange> {
   if (
     typeof body?.slot !== 'string' ||
     typeof body.userId !== 'string' ||
@@ -95,13 +109,25 @@ export async function saveSlot(
       credit_team_id: credit
     })
     .execute()
+  return {
+    leagueId: league,
+    gameId,
+    slot: body.slot,
+    umpireId: person.userId,
+    actorIds: [...new Set([state.viewerId, actor.userId])]
+  }
 }
+/**
+ * Removes a slot's assignment. A withdrawal is its umpire, or whoever signed
+ * them up (a guardian), taking it back: an administrator removing someone
+ * else's is not one, and tells nobody.
+ */
 export async function deleteSlot(
   db: Transaction<Database>,
   actor: Actor,
   gameId: string,
   slot: unknown
-): Promise<void> {
+): Promise<SlotChange & { withdrawal: boolean }> {
   if (typeof slot !== 'string') throw badRequest('Choose a slot')
   const league = await gameLeague(db, gameId)
   const admin = await canAdminister(db, actor, { kind: 'league', id: league })
@@ -113,19 +139,29 @@ export async function deleteSlot(
     .where('slot', '=', slot)
     .executeTakeFirst()
   if (assignment == null) throw notFound('No assignment in this slot')
-  if (!admin) {
+  // The ids as stored settle most removals; merges are walked only when
+  // they differ, to find the same person under another row.
+  let personId = actor.userId
+  let holderId = assignment.user_id
+  let withdrawal =
+    actor.userId === assignment.user_id ||
+    actor.userId === assignment.assigned_by
+  if (!withdrawal) {
     const person = await onePerson(db, actor.userId)
     const holder = await onePerson(db, assignment.user_id)
     const author = await onePerson(db, assignment.assigned_by)
+    personId = person.userId
+    holderId = holder.userId
+    withdrawal =
+      person.userId === holder.userId || person.userId === author.userId
+  }
+  if (!admin) {
     const game = await db
       .selectFrom('games')
       .select('start_at')
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    if (
-      (person.userId !== holder.userId && person.userId !== author.userId) ||
-      now() >= new Date(game.start_at).getTime() - 15 * 60000
-    )
+    if (!withdrawal || now() >= new Date(game.start_at).getTime() - 15 * 60000)
       throw forbidden('Only an administrator can remove this assignment now')
   }
   await db
@@ -133,6 +169,14 @@ export async function deleteSlot(
     .where('game_id', '=', gameId)
     .where('slot', '=', slot)
     .execute()
+  return {
+    leagueId: league,
+    gameId,
+    slot,
+    umpireId: holderId,
+    actorIds: [...new Set([personId, actor.userId])],
+    withdrawal
+  }
 }
 export async function recheckUmpireAssignments(
   db: Transaction<Database>,
@@ -288,13 +332,16 @@ async function recheckAgainst(
 }
 /**
  * A game's umpire positions and who holds each, named in full to a `reader`
- * who may read them in full and short otherwise.
+ * who may read them in full and short otherwise. The league's id comes with
+ * it only for a `viewer` accepted into the league, who may open its umpires'
+ * league cards.
  */
 export async function gameUmpires(
   db: Kysely<Database>,
   gameId: string,
   media?: MediaContext,
-  reader?: Reader
+  reader?: Reader,
+  viewer?: Actor
 ): Promise<UmpireGameBlock | null> {
   const row = await db
     .selectFrom('games')
@@ -330,7 +377,12 @@ export async function gameUmpires(
     .execute()
   const slots = new Map<
     string,
-    { userId: string; name: string; avatarUrl: string | null }
+    {
+      userId: string
+      name: string
+      avatarUrl: string | null
+      openable?: true
+    }
   >()
   // Each holder's account, avatar included, read together.
   const holders = await Promise.all(
@@ -341,16 +393,55 @@ export async function gameUmpires(
     reader,
     holders.map(p => p.named)
   )
+  // Only somebody who still umpires for the league has a card to open: a
+  // revoked umpire keeps their slots on finished games. Asked first, as it
+  // is cheaper than who the reader is.
+  const umpiring = new Set(
+    held.length > 0 && viewer != null && !isMachine(viewer)
+      ? (
+          await db
+            .selectFrom('league_umpires')
+            .select('user_id')
+            .where('league_id', '=', row.league_id)
+            .where(
+              'user_id',
+              'in',
+              holders.flatMap(p => p.userIds)
+            )
+            .execute()
+        ).map(r => r.user_id)
+      : []
+  )
+  // A machine reader opens no cards, and may not ask who administers what;
+  // with nobody umpiring in a slot there is no card to open.
+  const opens =
+    umpiring.size > 0 &&
+    viewer != null &&
+    // Membership usually accepts; administration is asked only after.
+    ((await umpireAcceptance(
+      db,
+      row.league_id,
+      await umpireFamily(db, viewer.userId),
+      false
+    )) ||
+      (await canAdminister(db, viewer, { kind: 'league', id: row.league_id })))
   for (const [i, assignment] of held.entries()) {
     const p = holders[i]
     slots.set(assignment.slot, {
       userId: p.userId,
       name: names.get(p.userId) ?? p.name,
-      avatarUrl: media == null ? null : imageUrl(media.space, p.avatarPath)
+      avatarUrl: media == null ? null : imageUrl(media.space, p.avatarPath),
+      ...(opens && p.userIds.some(id => umpiring.has(id))
+        ? { openable: true as const }
+        : {})
     })
   }
   return {
-    positions: positions.map(p => ({ ...p, person: slots.get(p.slot) ?? null }))
+    positions: positions.map(p => ({
+      ...p,
+      person: slots.get(p.slot) ?? null
+    })),
+    ...(opens ? { leagueId: row.league_id } : {})
   }
 }
 interface LeaderboardCounts {

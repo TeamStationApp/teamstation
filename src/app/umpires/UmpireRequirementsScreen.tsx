@@ -1,5 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming
+} from 'react-native-reanimated'
 
 import type { TeamStationClient } from '../../common/api'
 import type {
@@ -19,13 +24,73 @@ import {
 import { Badge } from '../components/Badge'
 import { PickerDialog } from '../components/PickerDialog'
 import { useSceneReveals } from '../components/sceneShown'
+import { useMotionPreference } from '../components/useMotionPreference'
 import { Wheel } from '../components/Wheel'
+import { lstrings, sprintf } from '../locales/strings'
+import { RosterDrag, RosterDragGroup, RosterGrip } from '../scoring/RosterDrag'
+import { useTheme } from '../theme/ThemeContext'
 import {
   UmpireError,
   UmpireHeading,
   useUmpireStyles,
   useUmpireWork
 } from './shared'
+
+/** The grip column's width once it has slid in. */
+const GRIP_WIDTH = 36
+
+/**
+ * `list` with the season at `from` put at insertion point `to`, counted in
+ * the list as it stands (0 before the first, `length` after the last).
+ */
+export function moveSeason<T>(list: T[], from: number, to: number): T[] {
+  if (from < 0 || from >= list.length) return list
+  const next = list.slice()
+  const [season] = next.splice(from, 1)
+  const at = Math.max(0, Math.min(next.length, to > from ? to - 1 : to))
+  next.splice(at, 0, season)
+  return next
+}
+
+/**
+ * A season's drag handle, left of its icon in reorder mode. It slides in
+ * from no width and fades in, or is simply there under Reduce Motion.
+ */
+function SeasonGrip({
+  label,
+  color,
+  reduced
+}: {
+  label: string
+  color: string
+  reduced: boolean
+}): React.ReactElement {
+  const shown = useSharedValue(reduced ? 1 : 0)
+  useEffect(() => {
+    shown.value = reduced ? 1 : withTiming(1, { duration: 200 })
+  }, [reduced, shown])
+  const style = useAnimatedStyle(() => ({
+    width: GRIP_WIDTH * shown.value,
+    opacity: shown.value
+  }))
+  return (
+    <Animated.View
+      style={[
+        {
+          alignSelf: 'stretch',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          paddingLeft: 16,
+          paddingVertical: 10
+        },
+        style
+      ]}
+    >
+      <RosterGrip label={label} color={color} />
+    </Animated.View>
+  )
+}
+
 export function UmpireRequirementsScreen({
   client,
   league,
@@ -40,8 +105,12 @@ export function UmpireRequirementsScreen({
   onApplied: () => void
 }): React.ReactElement {
   const s = useUmpireStyles()
+  const theme = useTheme()
+  const reduced = useMotionPreference()
   const { error, busy, run, live } = useUmpireWork(league)
   const [seasons, setSeasons] = useState<UmpireSeason[]>([])
+  // Reorder mode's working copy of the season order, or none outside it.
+  const [order, setOrder] = useState<UmpireSeason[]>()
   const [levels, setLevels] = useState<UmpireLevel[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [levelId, setLevelId] = useState('')
@@ -73,6 +142,8 @@ export function UmpireRequirementsScreen({
       ])
       if (live()) {
         setSeasons(ss)
+        // A list read again leaves reorder mode with the order read.
+        setOrder(undefined)
         setLevels(ls)
         setTypes(ts)
         const existing = ss.find(s => s.id === firstSeasonId)?.requirement
@@ -91,6 +162,114 @@ export function UmpireRequirementsScreen({
     })
   }, [client, league, live, run, firstSeasonId, reveals])
   const editing = seasonIds != null
+  const reordering = order != null
+  const sortable = !editing && seasons.length >= 2
+  const shownSeasons =
+    order ?? seasons.filter(season => !editing || seasonIds.includes(season.id))
+  const seasonRow = (season: UmpireSeason, index: number): React.ReactNode => {
+    const row = (
+      <ListRow
+        title={season.name}
+        group={{
+          kind: 'season',
+          id: season.id,
+          leagueId: season.leagueId,
+          name: season.name,
+          uri: season.logoUrl,
+          leagueUri: season.leaguePictureUrl
+        }}
+        detailContent={
+          <View style={s.row} testID={`season-requirements-${season.id}`}>
+            {season.requirement == null ? (
+              <Text style={s.hint}>No requirements</Text>
+            ) : (
+              <>
+                <Badge wrap label={season.requirement.levelName} />
+                {season.requirement.types.map(c => (
+                  <Badge
+                    key={c.typeId}
+                    wrap
+                    label={`${types.find(t => t.id === c.typeId)?.name ?? 'Type'}: ${c.required} required, ${c.optional} optional`}
+                  />
+                ))}
+              </>
+            )}
+          </View>
+        }
+        end={
+          editing || reordering ? undefined : (
+            <Checkbox
+              hideLabel
+              label={`Select ${season.name}`}
+              checked={selected.includes(season.id)}
+              onPress={() => {
+                setSelected(ids =>
+                  ids.includes(season.id)
+                    ? ids.filter(id => id !== season.id)
+                    : [...ids, season.id]
+                )
+              }}
+            />
+          )
+        }
+      />
+    )
+    if (!reordering) return <View key={season.id}>{row}</View>
+    return (
+      <RosterDrag
+        key={season.id}
+        playerId={index + 1}
+        targetId={`season-${index}`}
+        label={sprintf(lstrings.umpire_season_priority_move_named, season.name)}
+        roleDescription={lstrings.umpire_season_priority_row}
+        insertionLabel={lstrings.umpire_season_priority_insertion}
+        insertion="row"
+        immediate
+        immediateMouseDrag
+        onDropPlayer={(id, edge) => {
+          setOrder(held =>
+            held == null
+              ? held
+              : moveSeason(held, id - 1, index + (edge === 'after' ? 1 : 0))
+          )
+        }}
+        onReorder={delta => {
+          setOrder(held =>
+            held == null
+              ? held
+              : moveSeason(
+                  held,
+                  index,
+                  delta > 0 ? index + delta + 1 : index + delta
+                )
+          )
+        }}
+      >
+        <View
+          testID={`season-priority-row-${season.id}`}
+          style={{
+            flexDirection: 'row',
+            backgroundColor: theme.cardBackgroundColor
+          }}
+        >
+          <SeasonGrip
+            label={sprintf(
+              lstrings.umpire_season_priority_drag_named,
+              season.name
+            )}
+            color={theme.secondaryTextColor}
+            reduced={reduced}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>{row}</View>
+        </View>
+      </RosterDrag>
+    )
+  }
+  const list = (
+    <ListCard testID="season-priority-list">
+      {shownSeasons.map(seasonRow)}
+    </ListCard>
+  )
   return (
     <Screen>
       <View style={s.page}>
@@ -100,7 +279,39 @@ export function UmpireRequirementsScreen({
             : 'Set Umpire Requirements'}
         </UmpireHeading>
         {!editing && (
-          <Text style={s.text}>Select seasons to apply umpire needs.</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: theme.rem(0.5)
+            }}
+          >
+            <Text style={[s.text, { flex: 1 }]}>
+              Select seasons to apply umpire needs.
+            </Text>
+            {sortable && (
+              <Button
+                kind="text"
+                compact
+                label={
+                  reordering
+                    ? lstrings.umpire_season_priority_cancel
+                    : lstrings.umpire_season_priority_sort
+                }
+                accessibilityLabel={
+                  reordering
+                    ? lstrings.umpire_season_priority_cancel_named
+                    : lstrings.umpire_season_priority_sort_named
+                }
+                textColor={reordering ? theme.dangerColor : '#1565C0'}
+                disabled={busy}
+                testID="season-priority-sort"
+                onPress={() => {
+                  setOrder(reordering ? undefined : seasons)
+                }}
+              />
+            )}
+          </View>
         )}
         {editing && (
           <>
@@ -159,63 +370,27 @@ export function UmpireRequirementsScreen({
             />
           </>
         )}
-        <ListCard>
-          {seasons
-            .filter(season => !editing || seasonIds.includes(season.id))
-            .map(season => (
-              <View key={season.id}>
-                <ListRow
-                  title={season.name}
-                  group={{
-                    kind: 'season',
-                    id: season.id,
-                    leagueId: season.leagueId,
-                    name: season.name,
-                    uri: season.logoUrl,
-                    leagueUri: season.leaguePictureUrl
-                  }}
-                  detailContent={
-                    <View
-                      style={s.row}
-                      testID={`season-requirements-${season.id}`}
-                    >
-                      {season.requirement == null ? (
-                        <Text style={s.hint}>No requirements</Text>
-                      ) : (
-                        <>
-                          <Badge wrap label={season.requirement.levelName} />
-                          {season.requirement.types.map(c => (
-                            <Badge
-                              key={c.typeId}
-                              wrap
-                              label={`${types.find(t => t.id === c.typeId)?.name ?? 'Type'}: ${c.required} required, ${c.optional} optional`}
-                            />
-                          ))}
-                        </>
-                      )}
-                    </View>
-                  }
-                  end={
-                    editing ? undefined : (
-                      <Checkbox
-                        hideLabel
-                        label={`Select ${season.name}`}
-                        checked={selected.includes(season.id)}
-                        onPress={() => {
-                          setSelected(ids =>
-                            ids.includes(season.id)
-                              ? ids.filter(id => id !== season.id)
-                              : [...ids, season.id]
-                          )
-                        }}
-                      />
-                    )
-                  }
-                />
-              </View>
-            ))}
-        </ListCard>
-        {!editing && selected.length > 0 && (
+        {reordering ? <RosterDragGroup>{list}</RosterDragGroup> : list}
+        {reordering && (
+          <Button
+            label={lstrings.umpire_season_priority_save}
+            accessibilityLabel={lstrings.umpire_season_priority_save_named}
+            disabled={busy}
+            testID="season-priority-save"
+            style={{ alignSelf: 'flex-start' }}
+            onPress={() => {
+              const ids = order.map(season => season.id)
+              run(async () => {
+                const saved = await client.setUmpireSeasonPriority(league, ids)
+                if (live()) {
+                  setSeasons(saved)
+                  setOrder(undefined)
+                }
+              })
+            }}
+          />
+        )}
+        {!editing && !reordering && selected.length > 0 && (
           <TextWidthButton
             label="Next"
             color="#1565C0"

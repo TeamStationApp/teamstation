@@ -364,7 +364,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   /**
    * Any change the person makes here is their answer: the app's own ask
    * (`startAsk`) never comes to them on this device after it, and never
-   * changes their switches itself.
+   * changes their switches itself, but for a League management ask, which
+   * turns on League management alone.
    */
   const decided = (): void => {
     writeAsked(me).catch(() => undefined)
@@ -949,6 +950,13 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                   value={switches.rsvpEvents}
                   onChange={rsvpEvents => {
                     notify({ rsvpEvents }, rsvpEvents)
+                  }}
+                />
+                <SettingToggleRow
+                  label={lstrings.account_notifications_league_management}
+                  value={switches.leagueManagement}
+                  onChange={leagueManagement => {
+                    notify({ leagueManagement }, leagueManagement)
                   }}
                 />
               </ListCard>

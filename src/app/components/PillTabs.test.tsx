@@ -2,11 +2,12 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { View } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { ContentInsetContext, useContentInset } from './contentInset'
-import { PillTabs } from './PillTabs'
+import { PillButton, PillFace, PillTabs } from './PillTabs'
 import { Screen } from './Screen'
 
 let root: Root | undefined
@@ -89,6 +90,27 @@ describe('PillTabs', function () {
     expect(getComputedStyle(content).paddingLeft).equals(
       `${tsBallpark.rem(tsBallpark.spaceXsRem)}px`
     )
+  })
+
+  it('takes a style of its own after its bleed, and is unchanged without one', async function () {
+    const margins = async (style?: { flexGrow: number }): Promise<string[]> => {
+      const container = await render(
+        <ContentInsetContext.Provider value={{ left: 16, right: 20 }}>
+          <PillTabs
+            tabs={TABS}
+            selected="past"
+            onSelect={() => undefined}
+            style={style}
+          />
+        </ContentInsetContext.Provider>
+      )
+      const { list } = strip(container)
+      const read = getComputedStyle(list)
+      return [read.marginLeft, read.marginRight, read.flexGrow]
+    }
+    const plain = await margins()
+    expect(plain.slice(0, 2)).deep.equals(['-16px', '-20px'])
+    expect(await margins({ flexGrow: 0 })).deep.equals(['-16px', '-20px', '0'])
   })
 
   it('draws dense strips with smaller gaps and unchanged label clearance', async function () {
@@ -208,6 +230,62 @@ describe('PillTabs', function () {
     expect(live?.textContent).equals('Live')
     expect(getComputedStyle(dots[0]).backgroundColor).equals(
       hexToRgb(tsBallpark.liveColor)
+    )
+  })
+
+  it('draws a pill’s icon before its label inside the pill, at the same height, and a pill without one as before', async function () {
+    const container = await render(
+      <>
+        <PillButton
+          label="With icon"
+          testID="with-icon"
+          icon={<View testID="the-icon" style={{ width: 16, height: 16 }} />}
+        />
+        <PillButton label="Without" testID="without" />
+      </>
+    )
+    const withIcon = container.querySelector<HTMLElement>(
+      '[data-testid="with-icon"]'
+    )!
+    const without = container.querySelector<HTMLElement>(
+      '[data-testid="without"]'
+    )!
+    const face = withIcon.querySelector<HTMLElement>(
+      '[data-testid="settings-pill-tab"]'
+    )!
+    const icon = face.querySelector('[data-testid="the-icon"]')!
+    // Inside the pill, before the label.
+    expect(icon.parentElement).equals(face)
+    expect(face.firstElementChild).equals(icon)
+    expect(face.lastElementChild!.textContent).equals('With icon')
+    const plain = without.querySelector<HTMLElement>(
+      '[data-testid="settings-pill-tab"]'
+    )!
+    expect(plain.childElementCount).equals(1)
+    expect(plain.textContent).equals('Without')
+    for (const key of ['height', 'minHeight', 'paddingLeft'] as const)
+      expect(getComputedStyle(face)[key]).equals(getComputedStyle(plain)[key])
+    expect(getComputedStyle(face).height).equals(`${tsBallpark.rem(2.25)}px`)
+    // A 48-point target, unless the pill reaches past itself instead.
+    expect(getComputedStyle(without).minHeight).equals(`${tsBallpark.rem(3)}px`)
+  })
+
+  it('draws a pill with a hit slop only as tall as the pill, and its face alone', async function () {
+    const container = await render(
+      <>
+        <PillButton label="Flush" testID="flush" hitSlop={6} />
+        <PillFace label="Face" selected={false} />
+      </>
+    )
+    const flush = container.querySelector<HTMLElement>('[data-testid="flush"]')!
+    expect(getComputedStyle(flush).minHeight).equals('0px')
+    const faces = container.querySelectorAll<HTMLElement>(
+      '[data-testid="settings-pill-tab"]'
+    )
+    expect(faces).length(2)
+    expect(faces[1].closest('[role="button"]')).equals(null)
+    expect(getComputedStyle(faces[1]).backgroundColor).equals(
+      hexToRgb(tsBallpark.pillBackground)
     )
   })
 

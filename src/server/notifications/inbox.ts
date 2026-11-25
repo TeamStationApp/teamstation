@@ -12,10 +12,12 @@ import {
   CHAT_DEVICE_APPROVAL,
   type GuardianTerms,
   isSchedulingNews,
+  isUmpireNotice,
   LOCAL_COPY_EXPIRING,
   type Notification,
   type PlayerAddTerms,
-  RECORDING_UPLOAD
+  RECORDING_UPLOAD,
+  UMPIRE_MISSING_SLOTS
 } from '../../common/notifications'
 import type { Role } from '../../common/roles'
 import { adminScopes, guardedRows, guardiansOf, roleScopes } from '../access'
@@ -41,6 +43,11 @@ import {
 } from '../groups/requests'
 import { canScheduleFor, currentActor } from '../groups/rights'
 import { heldAt } from '../invites/grants'
+import {
+  isSlotNotice,
+  type SlotNoticeMetadata,
+  slotNoticeText
+} from '../umpires/notices'
 import { shortNamesOf, userNames } from '../users/nameBook'
 import { fullNamesFor, type Reader, readerOf } from '../users/readerNames'
 import { survivorsOf } from '../users/survivors'
@@ -70,7 +77,10 @@ interface PageNames {
   people: ReadonlyMap<string, string>
   /** Each group a grant names, by `kind:id` (`groupNames`). */
   groups: ReadonlyMap<string, string>
-  /** The short name of each player a removal notice names, by user id. */
+  /**
+   * The short name of each player a removal notice names, and of each umpire
+   * a sign-up or withdrawal names, by user id.
+   */
   players: ReadonlyMap<string, string>
   /**
    * Whom of the players the page's notices and requests name, and their
@@ -150,6 +160,17 @@ async function informationFor(
     title = said.title
     description = said.description
   }
+  // An umpire who signed up or withdrew is named as they are now, as this
+  // reader may read them.
+  if (isSlotNotice(event.source_type)) {
+    const slot = event.metadata as SlotNoticeMetadata
+    if (slot.umpireId != null)
+      title = slotNoticeText(
+        event.source_type,
+        names.players.get(slot.umpireId) ?? '',
+        slot
+      )
+  }
   // A reminder waits on its owner until they dismiss it or the upload lands,
   // which settles it the same way. So does the warning that a copy expires.
   const reminder = isReminderType(event.source_type)
@@ -187,9 +208,16 @@ async function informationFor(
   // they dismiss it; there is nothing to do but read it.
   const removal =
     event.source_type === PLAYER_ADD_REJECTED && receipt?.dismissed_at == null
+  // So is the day's missing-umpires digest to the admin it lists games for;
+  // the next day's sweep settles it, with a new digest or with none
+  // (`recordUmpireDigests`).
+  const digest =
+    event.source_type === UMPIRE_MISSING_SLOTS && receipt?.dismissed_at == null
   const row: Listed = {
-    // A removal waits until dismissed, with nothing to do but read it.
-    news: removal,
+    // A removal or a digest waits until dismissed, with nothing to do but
+    // read it. `pendingInformationWhere` (`pending.ts`) lists them too, for
+    // Pending's read and the bell: change both together.
+    news: removal || digest,
     id: event.id,
     requestId: link == null ? event.id : event.source_id,
     type: event.source_type,
@@ -208,6 +236,13 @@ async function informationFor(
     ...(reminder
       ? { gameId: metadata.gameId, liveStreamId: metadata.liveStreamId }
       : {}),
+    ...(isUmpireNotice(event.source_type)
+      ? Object.fromEntries(
+          (['leagueId', 'gameId'] as const)
+            .filter(key => metadata[key] != null)
+            .map(key => [key, metadata[key]])
+        )
+      : {}),
     ...(isSchedulingNews(event.source_type)
       ? Object.fromEntries(
           (['gameId', 'venueId', 'leagueId', 'seasonId', 'teamId'] as const)
@@ -223,8 +258,9 @@ async function informationFor(
  * What a page of notices names, in one read of `users` and one of each kind
  * of group: the actor of every grant and of every claim a person decided,
  * the sender of every request, and the group of every grant; and in one more
- * read of `users`, the player of every removal notice, in full for a reader
- * who may read them in full. Whom the reader reads in full is found once for
+ * read of `users`, the player of every removal notice and the umpire of
+ * every sign-up and withdrawal, in full for a reader who may read them in
+ * full. Whom the reader reads in full is found once for
  * every player the page names, requests' players among them, so no notice
  * asks again.
  */
@@ -251,7 +287,10 @@ async function pageNames(
   const removed = events.flatMap(event =>
     event.source_type === PLAYER_ADD_REJECTED
       ? [(event.metadata as PlayerRemovedMetadata).userId]
-      : []
+      : isSlotNotice(event.source_type) &&
+          (event.metadata as Partial<SlotNoticeMetadata>).umpireId != null
+        ? [(event.metadata as SlotNoticeMetadata).umpireId]
+        : []
   )
   // A notice and a player add name a merged player as his survivor (as
   // `shortNamesOf` does): ask of both. A guardian request names him as he is.
@@ -341,8 +380,9 @@ function compareRows(
 
 /**
  * Whether a notification waits on this person: a request they can answer, or
- * an upload reminder they have not dismissed. These are Pending, and light
- * the bell. A grant or a scheduling notice is accepted when it is recorded,
+ * an upload reminder, removal or missing-umpires digest they have not
+ * dismissed. These are Pending, and light the bell. A grant, a scheduling
+ * notice or an umpire sign-up or withdrawal is accepted when it is recorded,
  * so it is History from the start.
  */
 export function isPendingRow(row: Listed): boolean {
@@ -768,9 +808,9 @@ export async function inbox(
   const { fresh, rows } = await candidateRequests(db, actor, clock)
   const found = await rows.orderBy('sent_at', 'asc').orderBy('id').execute()
   // History lists every piece of information; the other tabs read only
-  // undismissed upload reminders, which wait in Pending and light the bell.
-  // Grants and scheduling notices are History from the moment they are
-  // recorded.
+  // undismissed upload reminders, removals and missing-umpires digests, which
+  // wait in Pending and light the bell. Grants, scheduling notices and umpire
+  // sign-ups and withdrawals are History from the moment they are recorded.
   const information = await db
     .selectFrom('notification_events')
     .selectAll()

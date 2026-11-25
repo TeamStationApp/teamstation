@@ -141,9 +141,13 @@ import { migration124PushNotifications } from './124pushNotifications'
 import { migration125SolverLimit } from './125solverLimit'
 import { migration126GroupCoordinates } from './126groupCoordinates'
 import { migration127AgeBands } from './127ageBands'
+import { migration127LeagueUmpireChat } from './127leagueUmpireChat'
 import { migration128ChatHiddenHistory } from './128chatHiddenHistory'
+import { migration128UmpireAvailability } from './128umpireAvailability'
 import { migration129DropChatAgeConfirmations } from './129dropChatAgeConfirmations'
+import { migration129UmpireSort } from './129umpireSort'
 import { migration130RefreshNotices } from './130refreshNotices'
+import { migration130UmpireNotifications } from './130umpireNotifications'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -289,7 +293,11 @@ export const migrations: Migration[] = [
   migration125SolverLimit,
   migration126GroupCoordinates,
   migration127AgeBands,
+  migration127LeagueUmpireChat,
   migration128ChatHiddenHistory,
+  migration128UmpireAvailability,
   migration129DropChatAgeConfirmations,
-  migration130RefreshNotices
+  migration129UmpireSort,
+  migration130RefreshNotices,
+  migration130UmpireNotifications
 ]

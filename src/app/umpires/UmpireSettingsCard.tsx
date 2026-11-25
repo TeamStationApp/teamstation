@@ -5,6 +5,7 @@ import type { TeamStationClient } from '../../common/api'
 import type { UmpireSettings } from '../../common/umpires'
 import { ListCard, ListRow, SectionHeader } from '../components'
 import { useSceneReveals } from '../components/sceneShown'
+import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { UmpireError, useUmpireWork } from './shared'
 export type UmpireSettingsDestination =
@@ -14,6 +15,7 @@ export type UmpireSettingsDestination =
   | 'umpireLevels'
   | 'umpireRequirements'
   | 'umpireSchedule'
+  | 'umpireNotifications'
 export function UmpireSettingsCard({
   client,
   league,
@@ -136,6 +138,16 @@ export function UmpireSettingsCard({
               }}
             />
           }
+        />
+        {/* Each admin's own, so open before the league manages umpires. */}
+        <ListRow
+          title={lstrings.umpire_send_me_notifications}
+          subtitle={lstrings.umpire_send_me_notifications_detail}
+          subtitleNumberOfLines={0}
+          testID="umpire-send-me-notifications"
+          onPress={() => {
+            onOpen('umpireNotifications')
+          }}
         />
       </ListCard>
       <UmpireError error={error} />

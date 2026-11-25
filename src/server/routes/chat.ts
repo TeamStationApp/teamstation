@@ -2,19 +2,24 @@ import { asArray, asBoolean, asObject, asOptional } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
+import { CHAT_KINDS_HEADER, unreadChatKinds } from '../../common/chatKinds'
 import { notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userId'
 import { visibleScopes } from '../access'
+import type { Actor } from '../auth/sessions'
 import { blocksFor, setBlock } from '../chat/blocks'
 import {
   addDmMembers,
   createDm,
   dmCandidateIds,
+  dmProxies,
+  dmReach,
   includedAdultIds,
   leaveDm
 } from '../chat/dms'
 import { chatAgeRequired, chatCaller } from '../chat/keys'
 import {
+  type ChatNamed,
   chatNames,
   chatPeople,
   chatPeopleOf,
@@ -102,15 +107,19 @@ export function chatRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
+      // A build from before a kind would fail its whole list on it.
+      const unread = unreadChatKinds(req.get(CHAT_KINDS_HEADER))
       res.json(
-        await conversationsFor(
-          db,
-          media,
-          actor.userId,
-          actor.isAdmin,
-          clock(),
-          readerOf(actor)
-        )
+        (
+          await conversationsFor(
+            db,
+            media,
+            actor.userId,
+            actor.isAdmin,
+            clock(),
+            readerOf(actor)
+          )
+        ).filter(chat => !unread.has(chat.kind))
       )
     })
   )
@@ -244,23 +253,90 @@ export function chatRoutes(
         .filter(person => nameMatches(person.names, query))
         .sort((a, b) => a.shortName.localeCompare(b.shortName))
         .slice(0, MAX_CANDIDATES)
-      const people = await chatPeopleOf(db, media.space, kept, {
-        reader: readerOf(actor),
-        scopes: await visibleScopes(db, actor.userId, actor.isAdmin)
+      res.json(await pickerPeople(actor, kept))
+    })
+  )
+
+  /**
+   * People a picker lists, in the order given, as the reader may see them:
+   * `{ userId, shortName, compactName?, avatarUrl, affiliations }`.
+   */
+  const pickerPeople = async (
+    actor: Actor,
+    kept: ChatNamed[]
+  ): Promise<
+    Array<{
+      userId: string
+      shortName: string
+      compactName?: string
+      avatarUrl: string | null
+      affiliations: string
+    }>
+  > => {
+    const people = await chatPeopleOf(db, media.space, kept, {
+      reader: readerOf(actor),
+      scopes: await visibleScopes(db, actor.userId, actor.isAdmin)
+    })
+    return kept
+      .map(person => people.get(person.userId)!)
+      .map(person => ({
+        userId: person.userId,
+        shortName: person.shortName,
+        ...(person.compactName == null
+          ? {}
+          : { compactName: person.compactName }),
+        avatarUrl: person.avatarUrl,
+        affiliations: person.affiliations
+      }))
+  }
+
+  /** The person a `userId` query names, merged accounts resolved, or 404. */
+  const queried = async (value: unknown): Promise<string> => {
+    if (typeof value !== 'string' || value === '') throw notFound()
+    const canonical = (await survivors(db, [value])).get(value)
+    if (canonical == null) throw notFound()
+    return canonical
+  }
+
+  router.get(
+    '/chat/dm-reach',
+    requireActor,
+    ageGate,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const target = await queried(req.query.userId)
+      res.json({ reach: await dmReach(db, actor.userId, target, clock()) })
+    })
+  )
+
+  router.get(
+    '/chat/dm-proxies',
+    requireActor,
+    ageGate,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const player = await queried(req.query.userId)
+      const proxies = await dmProxies(db, actor.userId, player, clock())
+      if (proxies == null) throw notFound('No one to message for this player')
+      const reader = readerOf(actor)
+      const named = await chatNames(db, [player, ...proxies.ids], reader)
+      const kept = proxies.ids
+        .flatMap(id => {
+          const person = named.get(id)
+          return person == null ? [] : [person]
+        })
+        .sort((a, b) => a.shortName.localeCompare(b.shortName))
+      res.json({
+        player: {
+          userId: player,
+          shortName: named.get(player)?.shortName ?? ''
+        },
+        kind: proxies.kind,
+        why: proxies.why,
+        people: await pickerPeople(actor, kept)
       })
-      res.json(
-        kept
-          .map(person => people.get(person.userId)!)
-          .map(person => ({
-            userId: person.userId,
-            shortName: person.shortName,
-            ...(person.compactName == null
-              ? {}
-              : { compactName: person.compactName }),
-            avatarUrl: person.avatarUrl,
-            affiliations: person.affiliations
-          }))
-      )
     })
   )
 

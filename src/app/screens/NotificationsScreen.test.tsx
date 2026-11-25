@@ -1362,3 +1362,172 @@ describe('notifications a page at a time', function () {
     expect(text()).not.includes('You were signed out')
   })
 })
+
+describe('umpire notices', function () {
+  // The Shell reads the account's chat age on mount: confirmed here.
+  confirmedChatAgeHooks()
+  const notice = (
+    type: string,
+    title: string,
+    description: string
+  ): Notification => ({
+    ...invitation,
+    id: `evt_${type}`,
+    requestId: `evt_${type}`,
+    type,
+    title,
+    description,
+    status: 'accepted',
+    canAct: false,
+    canReject: false,
+    rejectUntil: null,
+    leagueId: 'lea_demo',
+    gameId: 'gam_00000000000000000001'
+  })
+  const digest = notice(
+    'umpireMissingSlots',
+    '2 games still need umpires',
+    [
+      'Demo Hawks vs Demo Eagles · Mar 2, 4:00 pm · Fall Minors · Field 1 — Plate (1 day out)',
+      'Demo Owls vs Demo Jays · Mar 2, 6:00 pm · Fall Minors · Field 2 — Plate and Base (1 day out)'
+    ].join('\n')
+  )
+  const signUp = notice(
+    'umpireSignUp',
+    'Jordan Ray signed up as Plate for Demo Hawks vs Demo Eagles, Mar 2 4:00 pm',
+    ''
+  )
+  const withdrawal = notice(
+    'umpireWithdraw',
+    'Jordan Ray withdrew from Plate for Demo Hawks vs Demo Eagles, Mar 2 4:00 pm',
+    ''
+  )
+
+  it('keeps the digest in Pending with its games, opens it on a tap, and Dismiss settles it', async function () {
+    const dismissed: string[] = []
+    const viewed: string[] = []
+    const opened: Notification[] = []
+    const client = {
+      notifications: async () => ({
+        items: [digest],
+        hasPending: true,
+        nextCursor: null
+      }),
+      viewNotification: async (id: string) => {
+        viewed.push(id)
+      },
+      dismissNotification: async (id: string) => {
+        dismissed.push(id)
+      }
+    } as unknown as TeamStationClient
+    let dots = 0
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={() => {
+          throw new Error('an umpire notice has no detail')
+        }}
+        onOpenTarget={item => {
+          opened.push(item)
+        }}
+        onDismissed={() => {
+          dots++
+        }}
+      />
+    )
+    expect(text()).includes(digest.title)
+    for (const line of digest.description.split('\n'))
+      expect(text()).includes(line)
+    expect(text()).includes('Missing umpires')
+    await press(digest.title)
+    expect(opened).deep.equals([digest])
+    expect(viewed).deep.equals(['evt_umpireMissingSlots'])
+    await press(`Dismiss ${digest.title}`)
+    expect(dismissed).deep.equals(['evt_umpireMissingSlots'])
+    expect(dots).equals(1)
+    expect(text()).not.includes(digest.title)
+  })
+
+  it('lists sign-ups and withdrawals in History, each opening the schedule on its game', async function () {
+    const opened: string[] = []
+    const client = {
+      notifications: async ({ history }: { history?: boolean }) => ({
+        items: history === true ? [signUp, withdrawal, digest] : [],
+        hasPending: false,
+        nextCursor: null
+      }),
+      viewNotification: async () => undefined
+    } as unknown as TeamStationClient
+    await mount(
+      <NotificationsScreen
+        client={client}
+        onOpen={() => {
+          throw new Error('an umpire notice has no detail')
+        }}
+        onOpenTarget={item => {
+          opened.push(item.type)
+        }}
+      />
+    )
+    await press('History')
+    expect(text()).includes(signUp.title)
+    expect(text()).includes('Umpire signed up')
+    expect(text()).includes(withdrawal.title)
+    expect(text()).includes('Umpire withdrew')
+    // A sign-up's title says it all: no empty line under it.
+    const row = document.querySelector(
+      '[data-testid="notification-row-evt_umpireSignUp"]'
+    )!
+    expect(
+      [...row.querySelectorAll('[dir="auto"]')].filter(
+        node => node.textContent === ''
+      )
+    ).length(0)
+    // A digest read in History is a row like the others, with no Dismiss.
+    expect(text()).includes('Missing umpires')
+    expect(text()).not.includes('Dismiss')
+    await press(signUp.title)
+    await press(withdrawal.title)
+    await press(digest.title)
+    expect(opened).deep.equals([
+      'umpireSignUp',
+      'umpireWithdraw',
+      'umpireMissingSlots'
+    ])
+  })
+
+  it('opens the league’s umpire schedule on the notice’s game, in the app', async function () {
+    globalThis.fetch = async input => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+      const path = url.split('?')[0]
+      const data = path.endsWith('/auth/me')
+        ? { id: userIdOfGumbo(106), displayName: 'Tim Raines', isAdmin: false }
+        : path.endsWith('/me/roles')
+          ? { teams: {}, guardianOf: [] }
+          : path.endsWith('/me/notifications/summary')
+            ? { hasPending: true }
+            : path.endsWith('/me/notifications')
+              ? { items: [digest], hasPending: true, nextCursor: null }
+              : {}
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    showRoute(parseRoute('/notifications', ''), true)
+    await mount(<App />)
+    await act(async () => {
+      await delay(50)
+    })
+    await press(digest.title)
+    expect(window.location.pathname).equals('/umpires/lea_demo')
+    expect(
+      Object.fromEntries(new URLSearchParams(window.location.search))
+    ).includes({ view: 'league', game: 'gam_00000000000000000001' })
+  })
+})

@@ -30,6 +30,7 @@ import type {
 import { asTeamSummary } from '../common/api'
 import { GameSocket, type ScreenScope } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
+import { isUmpireNotice } from '../common/notifications'
 import { managesRoster } from '../common/roles'
 import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
@@ -66,7 +67,11 @@ import {
 import { DeviceApprovals } from './chat/deviceApprovals'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { releaseChat } from './chat/engine/links'
-import { entityChats, entityPreviewLoader } from './chat/entityChats'
+import {
+  entityChats,
+  entityPreviewLoader,
+  umpireChatOf
+} from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
@@ -271,6 +276,7 @@ import {
 } from './theme/ThemeContext'
 import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
+import { UmpireNotificationsScreen } from './umpires/UmpireNotificationsScreen'
 import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
 import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
 import { useUmpireLeaveGuard } from './umpires/useUmpireLeaveGuard'
@@ -1286,6 +1292,9 @@ function Shell(props: AppProps): React.ReactElement {
       unsubscribe()
     }
   }, [chatEngine])
+  /** The umpire schedule's league: the route's, or the reader's first. */
+  const umpireLeagueOf = (id: string): string =>
+    id === '' ? (umpireLeagues[0]?.id ?? '') : id
   const chatsOf = (kind: GroupRef['kind'], id: string): ChatLink[] =>
     entityChats(chatList, { kind, id })
   const loadChatPreviews = useMemo(() => {
@@ -3163,10 +3172,7 @@ function Shell(props: AppProps): React.ReactElement {
         key={top.id}
         client={client}
         onBeforeLeave={registerUmpireLeave}
-        route={{
-          ...top,
-          id: top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
-        }}
+        route={{ ...top, id: umpireLeagueOf(top.id) }}
         leagues={umpireLeagues}
         onOpenTeam={teamId => {
           push({
@@ -3183,14 +3189,32 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'info' })
         }}
         onOpenPerson={(userId, name) => {
-          const leagueId = top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
+          const leagueId = umpireLeagueOf(top.id)
           if (leagueId !== '')
             openPerson({ kind: 'league', id: leagueId }, userId, name)
         }}
+        umpireChat={umpireChatOf(chatList, umpireLeagueOf(top.id))}
+        onOpenChat={chatEngine == null ? undefined : openChat}
+        onRefreshChats={
+          chatEngine == null
+            ? undefined
+            : () => {
+                // The engine's conversations event updates the list, as the
+                // engine it came from stays the one signed in.
+                chatEngine.refresh().catch(() => undefined)
+              }
+        }
         onRoute={route => {
+          // A route opened with no league keeps none while it shows the one
+          // it opened on: its id names the screen's scene, and a changed id
+          // would remount the screen and read its saved filter again.
+          const kept =
+            top.id === '' && route.id === umpireLeagueOf(top.id)
+              ? { ...route, id: top.id }
+              : route
           writeTop(current => ({
             ...current,
-            [tab]: [...current[tab].slice(0, -1), route]
+            [tab]: [...current[tab].slice(0, -1), kept]
           }))
         }}
       />
@@ -3220,6 +3244,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'umpireLevels' ? (
       <UmpireLevelsScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'umpireNotifications' ? (
+      <UmpireNotificationsScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'umpireRequirements' ||
       top.name === 'umpireRequirementEdit' ? (
       <UmpireRequirementsScreen
@@ -3449,7 +3475,17 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'notification', id })
         }}
         onOpenTarget={notice => {
-          if (notice.venueId != null)
+          // An umpire notice names a game too, but opens the league's umpire
+          // schedule on it.
+          if (isUmpireNotice(notice.type)) {
+            if (notice.leagueId != null)
+              push({
+                name: 'umpireSchedule',
+                id: notice.leagueId,
+                view: 'league',
+                ...(notice.gameId == null ? {} : { game: notice.gameId })
+              })
+          } else if (notice.venueId != null)
             push({ name: 'venue', venueId: notice.venueId })
           else if (notice.gameId != null)
             push({
@@ -3945,6 +3981,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
@@ -4037,6 +4074,7 @@ function Shell(props: AppProps): React.ReactElement {
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
+        onOpenPerson={openPerson}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}

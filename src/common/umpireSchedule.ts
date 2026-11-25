@@ -1,9 +1,11 @@
+import { idPrefixes } from './idPrefixes'
 import type {
   UmpireLevel,
   UmpirePosition,
   UmpireSettings,
   UmpireType
 } from './umpires'
+import type { UmpireSortKey } from './umpireSort'
 
 export interface UmpireAssignment {
   userId: string
@@ -59,6 +61,16 @@ export interface UmpireGameRow {
  * after a sign-up, not a page at a time.
  */
 export const UMPIRE_PAGE_MOST = 500
+/**
+ * The pattern of a game id the schedule's `around` may name, as
+ * `makeId('game')` makes them, its prefix from `idPrefixes`.
+ */
+export const UMPIRE_AROUND_GAME = `^${idPrefixes.game}_[A-Za-z0-9_-]{1,64}$`
+const aroundGame = new RegExp(UMPIRE_AROUND_GAME)
+/** Whether `around` may name this game: one of the ids `makeId('game')` makes. */
+export function isAroundGame(value: string): boolean {
+  return aroundGame.test(value)
+}
 export interface UmpireSchedule {
   settings: UmpireSettings
   levels: UmpireLevel[]
@@ -69,6 +81,8 @@ export interface UmpireSchedule {
   viewerId: string
   isAdmin: boolean
   view: 'umpire' | 'league' | 'schedule'
+  /** The sort the rows are in; absent from a server that predates it. */
+  sort?: UmpireSortKey[]
 }
 /** A column of the table, and the note under its heading. */
 export interface UmpireColumn extends UmpirePosition {
@@ -116,9 +130,21 @@ export interface UmpireLeague {
 export interface UmpireGameBlock {
   positions: Array<
     UmpirePosition & {
-      person: { userId: string; name: string; avatarUrl?: string | null } | null
+      person: {
+        userId: string
+        name: string
+        avatarUrl?: string | null
+        /** Their league card opens for this reader (they still umpire there). */
+        openable?: boolean
+      } | null
     }
   >
+  /**
+   * The game's league, sent only to a reader accepted into it, who may open
+   * its umpires' league cards; absent for anybody else, and from a game the
+   * phone stored before it was sent.
+   */
+  leagueId?: string
 }
 export interface UmpireRank {
   userId: string

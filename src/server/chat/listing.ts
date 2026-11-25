@@ -41,7 +41,9 @@ import { scopeIdentities, scopeKey, scopesOf, titlesOf } from './titles'
  * - **Moderators** may delete anyone's message: in team chats whoever holds
  *   `admin` or `coach` on the team (`hasRole`, inherited roles and site
  *   administrators included); in season chats the season staff; in
- *   `leagueOrg` the league's direct administrators; in a DM nobody.
+ *   `leagueOrg` and `leagueUmpires` the league's direct administrators; in
+ *   a DM nobody. Every route checks membership first, so in the umpire chat
+ *   only an administrator who is one of its umpires moderates.
  * - **Approvers** approve history for a member whose identity was reset:
  *   the moderators in `teamMembers`, `teamFans` and `seasonAnnouncements`,
  *   and any member in every other kind.
@@ -820,6 +822,9 @@ async function labelsOf(
         .execute(),
       row => ROLE_WORDS[row.role] ?? 'League'
     )
+    // In the umpire chat everyone is an umpire, and says so.
+    if (conversation.kind === 'leagueUmpires')
+      for (const id of memberIds) add(id, 'Umpire')
   } else {
     // "Player" is a label, whatever the age; who stands by a minor is worked
     // out by age, as the DM rules do.

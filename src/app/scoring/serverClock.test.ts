@@ -129,6 +129,30 @@ describe('the scoring clock (U43)', function () {
     expect(waits).length(0)
   })
 
+  it('asks for no further reading once stopped mid-measurement', async function () {
+    const answers: Array<(now: number) => void> = []
+    const clock = new ServerClock(
+      async () =>
+        await new Promise<number>(resolve => {
+          answers.push(resolve)
+        }),
+      memory(),
+      { local: () => DEVICE, whenBack: () => () => undefined }
+    )
+    const stop = clock.keepTime()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(answers).length(1)
+    answers[0](DEVICE + 1500)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(answers).length(2)
+    stop()
+    answers[1](DEVICE + 1500)
+    for (let i = 0; i < 5; i++)
+      await new Promise(resolve => setTimeout(resolve, 0))
+    expect(answers, 'no reading asked for after stop').length(2)
+    expect(clock.offset).equals(1500)
+  })
+
   it('waits for the platform to come back by default', function () {
     const stop = new ServerClock(ahead, memory()).keepTime()
     stop()

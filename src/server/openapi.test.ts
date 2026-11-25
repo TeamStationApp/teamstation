@@ -9,6 +9,7 @@ import {
   PITCH_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
+import { idPrefixes, makeId } from '../common/ids'
 import { ROLE_FLAGS, ROLES } from '../common/roles'
 import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
 import { routesOf } from '../test/routeTable'
@@ -515,6 +516,176 @@ describe('the API document', function () {
       'around',
       'limit'
     ])
+  })
+
+  it('documents the umpire schedule’s sort, the league default and the season order', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const scheduleRead = paths['/leagues/{leagueId}/umpire-schedule'].get
+    const sort = scheduleRead.parameters.find(
+      (parameter: { name: string }) => parameter.name === 'sort'
+    )
+    expect(sort.in).equals('query')
+    for (const words of [
+      'seasonPriority',
+      'certification',
+      '`none`',
+      'date,season'
+    ])
+      expect(sort.description).includes(words)
+    expect(
+      scheduleRead.parameters.find(
+        (parameter: { name: string }) => parameter.name === 'cursor'
+      ).description
+    ).includes('carries the sort')
+    expect(scheduleRead.responses[200].description).includes('settings.sort')
+    const settings = paths['/leagues/{leagueId}/umpire-settings']
+    const saved =
+      settings.put.requestBody.content['application/json'].schema.properties
+        .sort
+    expect(saved.type).deep.equals(['array', 'null'])
+    expect(saved.maxItems).equals(2)
+    expect(saved.items.enum).includes.members(['-date', 'seasonPriority'])
+    expect(saved.description).includes('`[]` is the empty sort')
+    expect(settings.get.summary).includes('default sort')
+    const priority = paths['/leagues/{leagueId}/umpire-season-priority']
+    expect(Object.keys(priority)).deep.equals(['put'])
+    expect(
+      priority.put.requestBody.content['application/json'].schema
+    ).deep.include({ required: ['seasonIds'] })
+    expect(priority.put.security).deep.equals([{ bearer: [] }])
+    expect(priority.put.description).includes('positions 1…N')
+    expect(
+      paths['/leagues/{leagueId}/umpire-requirements'].get.description
+    ).includes('`priority`')
+  })
+
+  it('documents an admin’s own Umpire Management Notifications, a notice’s game as `around`, and League management', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const notices = paths['/leagues/{leagueId}/umpire-notifications']
+    expect(Object.keys(notices).sort()).deep.equals(['get', 'put'])
+    const answer = notices.get.responses[200].content['application/json'].schema
+    expect(answer.required).deep.equals([
+      'missingSlots',
+      'daysBefore',
+      'signUps',
+      'withdrawals'
+    ])
+    expect(answer.properties.daysBefore).deep.include({
+      type: 'integer',
+      minimum: 1,
+      maximum: 30
+    })
+    expect(answer.properties.missingSlots.description).includes('10:00')
+    // The window is counted as `digestGames` counts it, and docs/api.md says.
+    expect(answer.properties.daysBefore.description).includes(
+      'counted in each game’s own zone (`games.timezone`), as the umpire schedule dates it'
+    )
+    expect(answer.properties.daysBefore.description).not.includes('season')
+    expect(notices.get.description).includes('`leagueManagement`')
+    expect(notices.put.security).deep.equals([{ bearer: [] }])
+    expect(
+      notices.put.requestBody.content['application/json'].schema.required
+    ).equals(undefined)
+    const around = paths[
+      '/leagues/{leagueId}/umpire-schedule'
+    ].get.parameters.find(
+      (parameter: { name: string }) => parameter.name === 'around'
+    )
+    expect(around.description).includes('A game id opens it on that game')
+    expect(new RegExp(around.schema.pattern).test('gam_one')).equals(true)
+    expect(new RegExp(around.schema.pattern).test('next')).equals(true)
+    expect(new RegExp(around.schema.pattern).test('bogus')).equals(false)
+    // The game prefix comes from `idPrefixes`, as the server checks it.
+    expect(around.schema.pattern).equals(
+      `^(next|${idPrefixes.game}_[A-Za-z0-9_-]{1,64})$`
+    )
+    expect(new RegExp(around.schema.pattern).test(makeId('game'))).equals(true)
+    expect(new RegExp(around.schema.pattern).test(makeId('league'))).equals(
+      false
+    )
+    const registration = paths['/me/push-registrations'].post
+    expect(
+      registration.requestBody.content['application/json'].schema.properties
+        .leagueManagement
+    ).deep.include({ type: 'boolean', default: true })
+    expect(registration.description).includes('League management notices')
+    const patched = paths['/me/push-registrations/{id}'].patch
+    expect(
+      patched.responses[200].content['application/json'].schema.required
+    ).includes('leagueManagement')
+    const inbox = paths['/me/notifications'].get.description
+    for (const words of [
+      'umpireMissingSlots',
+      'umpireSignUp',
+      'umpireWithdraw'
+    ])
+      expect(inbox).includes(words)
+  })
+
+  it('documents umpire availability: saving your own, querying the list by it, and an umpire’s commitments', function () {
+    const document = openApiDocument('0.0.0') as any
+    const paths = document.paths as Record<string, any>
+    const mine = paths['/leagues/{leagueId}/me/umpire-availability']
+    expect(Object.keys(mine).sort()).deep.equals(['get', 'put'])
+    const availability =
+      mine.put.requestBody.content['application/json'].schema.properties
+        .availability
+    expect(availability.type).deep.equals(['object', 'null'])
+    expect(availability.required).deep.equals([
+      'levels',
+      'days',
+      'from',
+      'to',
+      'timezone'
+    ])
+    expect(availability.description).includes('0 is Monday')
+    const list = paths['/leagues/{leagueId}/umpires'].get
+    const parameters = new Map(
+      list.parameters.map((parameter: { name: string }) => [
+        parameter.name,
+        parameter
+      ])
+    )
+    expect([...parameters.keys()]).deep.equals([
+      'leagueId',
+      'availableAt',
+      'durationMinutes',
+      'day',
+      'time',
+      'level',
+      'strict'
+    ])
+    expect((parameters.get('day') as any).description).includes('0 is Monday')
+    // day and time are wall-clock in each umpire's zone; a game is availableAt.
+    for (const name of ['day', 'time'])
+      expect((parameters.get(name) as any).description).match(
+        /own saved zone.*use `availableAt`/
+      )
+    expect(list.description).includes('For a game, pass `availableAt`')
+    expect(list.description).includes('umpireAvailability')
+    expect(list.description).includes('unless `strict`')
+    expect(list.description).includes('on the start')
+    // PUT answers the list in GET's shape.
+    expect(
+      paths['/leagues/{leagueId}/umpires'].put.responses[200].description
+    ).includes('umpireAvailability')
+    const commitments =
+      paths['/leagues/{leagueId}/umpires/{userId}/commitments'].get
+    expect(
+      commitments.parameters.map(
+        (parameter: { name: string }) => parameter.name
+      )
+    ).deep.equals(['leagueId', 'userId', 'from', 'to'])
+    expect(commitments.description).includes('31 days')
+    const profile = document.components.schemas.PersonProfile
+    expect(profile.properties.umpireAvailability.type).deep.equals([
+      'object',
+      'null'
+    ])
+    expect(profile.required).not.includes('umpireAvailability')
+    expect(paths['/leagues/{id}/people/{userId}'].get.description).includes(
+      'umpireAvailability'
+    )
   })
 
   it('lists every role flag, the assistant included, wherever roles are named', function () {

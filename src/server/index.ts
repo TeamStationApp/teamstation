@@ -166,6 +166,7 @@ import {
 import { stopWorker } from './stopWorker'
 import { rosterCacheOn, startRosterBumpPrune } from './teams/rosterCore'
 import { loopbackOrigin } from './tess/loopback'
+import { startUmpireDigests } from './umpires/notices'
 
 /**
  * What is actually running, not just what the package says.
@@ -524,6 +525,7 @@ function jobsOn(
       startLocalCopyWarnings(db)
     },
     startRsvpReminders: () => startRsvpReminders(db),
+    startUmpireDigests: () => startUmpireDigests(db, pushEnqueuer(), logError),
     startChatAttachmentPurge: () => {
       startChatAttachmentPurge(db)
     },
@@ -858,7 +860,7 @@ function runWorker(): void {
       onGameWritten: scoreboard.onGameWritten
     })
   )
-  app.use('/api/v1', umpireRoutes(db, mediaContext))
+  app.use('/api/v1', umpireRoutes(db, mediaContext, { push: pushQueue }))
   app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', guardianRoutes(db, { sendInvite, publicUrl }))
   app.use('/api/v1', followRoutes(db, mediaContext))

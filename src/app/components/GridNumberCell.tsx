@@ -180,6 +180,7 @@ export function GridNumberCell({
   style,
   textStyle,
   editing,
+  disabled = false,
   onOpen
 }: {
   /** "<Season> <column's spoken label>", which the number follows. */
@@ -192,6 +193,8 @@ export function GridNumberCell({
   editing?: React.ComponentProps<typeof TextInput> & {
     ref: React.Ref<Input>
   }
+  /** A cell that cannot be opened, as its row is off. */
+  disabled?: boolean
   onOpen: () => void
 }): React.ReactElement {
   const hold = useWideTableHold()
@@ -236,6 +239,8 @@ export function GridNumberCell({
       accessibilityRole="button"
       accessibilityLabel={`${label}: ${value}`}
       testID={testID}
+      disabled={disabled}
+      accessibilityState={{ disabled }}
       style={({ pressed }) => [style, pressed && { opacity: 0.6 }]}
       onLayout={place}
       onPress={onOpen}

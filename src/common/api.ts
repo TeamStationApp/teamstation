@@ -28,6 +28,7 @@ import {
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
 import { asLiteral } from './asLiteral'
 import { asChatBoxCursor } from './chatHistory'
+import { CHAT_KINDS_HEADER, NEWER_CHAT_KINDS } from './chatKinds'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import {
   type ApiError,
@@ -205,23 +206,30 @@ import {
   type TvPlatform
 } from './tvLogin'
 import {
+  asOptionalUmpireAvailability,
+  asUmpireAvailabilityAnswer,
   asUmpireColumn,
+  asUmpireCommitments,
   asUmpireGameRow,
   asUmpireLeaderboard,
   asUmpireLeagues,
   asUmpireLevel,
   asUmpireLevels,
+  asUmpireNotificationSettings,
   asUmpirePeople,
   asUmpireSchedule,
   asUmpireScheduleHead,
   asUmpireSeasons,
   asUmpireSettings,
-  asUmpireTypes
+  asUmpireTypes,
+  withoutAbsentAvailability
 } from './umpireCleaners'
 import type { UmpireEdit } from './umpireEdits'
 import type {
+  UmpireAvailability,
   UmpireCertification,
   UmpireLevel,
+  UmpireNotificationSettings,
   UmpirePerson,
   UmpireSeason,
   UmpireSettings,
@@ -236,6 +244,7 @@ import type {
   UmpireLeague,
   UmpireSchedule
 } from './umpireSchedule'
+import type { UmpireSortKey } from './umpireSort'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
 import {
@@ -401,9 +410,42 @@ export const asChatKind = asLiteral(
   'seasonAllStaff',
   'seasonAnnouncements',
   'leagueOrg',
+  'leagueUmpires',
   'dm'
 )
 export type ChatKindName = ReturnType<typeof asChatKind>
+
+/**
+ * A list of rows that each name a chat kind, keeping only the rows of kinds
+ * this build reads: a kind from a newer server is left out, never a failure
+ * of the whole list.
+ */
+function ofKnownKinds<T>(
+  cleaner: (raw: unknown) => T,
+  kindOf: (row: Record<string, unknown>) => unknown
+): (raw: unknown) => T[] {
+  const known = (kind: string): boolean => {
+    try {
+      asChatKind(kind)
+      return true
+    } catch {
+      return false
+    }
+  }
+  return raw =>
+    asArray(asUnknown)(raw)
+      .filter(row => {
+        const kind = kindOf(
+          typeof row === 'object' && row != null
+            ? (row as Record<string, unknown>)
+            : {}
+        )
+        // Only a kind this build has never heard of; a missing or malformed
+        // one fails in the cleaner, as a broken answer should.
+        return typeof kind !== 'string' || known(kind)
+      })
+      .map(cleaner)
+}
 
 /**
  * Somebody else who was in a DM with the caller, for its name: a current
@@ -558,6 +600,26 @@ export type ChatPerson = Omit<
   compactName?: string
 }
 export const asChatPerson: Cleaner<ChatPerson> = cleanChatPerson
+
+/**
+ * How a reader can message somebody: a DM with them (`direct`), or, for a
+ * player who cannot sign in, through their guardians or coaches (`proxies`).
+ */
+export type MessageReach = 'direct' | 'proxies'
+
+/** Whom to message for a player who cannot sign in (`GET /chat/dm-proxies`). */
+export const asDmProxies = asObject({
+  player: asObject({ userId: asUserId, shortName: asString }),
+  kind: asLiteral('guardians', 'coaches'),
+  /** No account to sign in with, or one, under 13; an older server says neither. */
+  why: asOptional(asLiteral('noAccount', 'tooYoung'), 'noAccount'),
+  people: asArray(asChatPerson)
+})
+export type DmProxies = ReturnType<typeof asDmProxies>
+
+const asDmReach = asObject({
+  reach: asEither(asLiteral(null), asLiteral('direct', 'proxies'))
+})
 
 export const asChatBlock = asObject({
   userId: asUserId,
@@ -1118,12 +1180,14 @@ export const asGameDetail = withEventMetadata(
                 asObject({
                   userId: asString,
                   name: asString,
-                  avatarUrl: asOptional(asNullable(asString))
+                  avatarUrl: asOptional(asNullable(asString)),
+                  openable: asOptional(asBoolean)
                 }),
                 asLiteral(null)
               )
             })
-          )
+          ),
+          leagueId: asOptional(asString)
         }),
         asLiteral(null)
       ),
@@ -2250,6 +2314,17 @@ export interface GamesPageQuery {
   limit?: number
 }
 
+/**
+ * How a page of the umpire schedule opens: on the next game (`next`) or on
+ * one game by its id (the next game when that game is not listed), or from
+ * a cursor of the same read.
+ */
+export interface UmpirePageAsk {
+  around?: 'next' | string
+  cursor?: string
+  limit?: number
+}
+
 /** The read of a league's, season's or team's page. */
 export function groupPath(ref: GroupRef): string {
   const collection =
@@ -2907,42 +2982,70 @@ export type ProfileSection = Omit<
  * people list: who they are, the players they are a guardian of there, and
  * what they hold at that level and the ones above it.
  */
-export const asPersonProfile = asObject({
-  context: asObject({ kind: asPeopleLevel, id: asString, name: asString }),
-  person: asObject({
-    userId: asUserId,
-    shortName: asString,
-    /** Their whole name, for a viewer who may read it; otherwise null. */
-    fullName: asNullable(asString),
-    avatarUrl: asNullable(asString),
-    /** Whether they can hold a role: an account that signs in. */
-    canHoldRoles: asBoolean
-  }),
-  /** The players they guard who play at this level, each with a team. */
-  guardianOf: asArray(
-    asObject({
+export const asPersonProfile = withoutAbsentAvailability(
+  asObject({
+    context: asObject({ kind: asPeopleLevel, id: asString, name: asString }),
+    person: asObject({
       userId: asUserId,
       shortName: asString,
+      /** Their whole name, for a viewer who may read it; otherwise null. */
+      fullName: asNullable(asString),
       avatarUrl: asNullable(asString),
-      teamId: asString
-    })
-  ),
-  sections: asArray(asProfileSection),
-  viewer: asObject({
-    /** An administrator, coach or assistant of the level: the role switches. */
-    manages: asBoolean,
-    /** An administrator of it: the Admin row too. */
-    admin: asBoolean,
+      /** Whether they can hold a role: an account that signs in. */
+      canHoldRoles: asBoolean
+    }),
+    /** The players they guard who play at this level, each with a team. */
+    guardianOf: asArray(
+      asObject({
+        userId: asUserId,
+        shortName: asString,
+        avatarUrl: asNullable(asString),
+        teamId: asString
+      })
+    ),
+    sections: asArray(asProfileSection),
+    viewer: asObject({
+      /** An administrator, coach or assistant of the level: the role switches. */
+      manages: asBoolean,
+      /** An administrator of it: the Admin row too. */
+      admin: asBoolean,
+      /**
+       * The signed-in person, including a merged id of theirs. Absent means no.
+       */
+      self: asOptional(asBoolean, false)
+    }),
     /**
-     * The signed-in person, including a merged id of theirs. Absent means no.
+     * On a league profile, the person's saved umpire availability filter for
+     * the league (null when none is saved), for the person themselves and the
+     * league's admins while the person holds its umpire role. Absent for
+     * everyone else and on team and season profiles.
      */
-    self: asOptional(asBoolean, false)
+    umpireAvailability: asOptionalUmpireAvailability
   })
-})
+)
+/** Narrows a league's umpire list by saved availability filters. */
+export interface UmpireAvailabilityQuery {
+  /** An ISO time the game starts. */
+  availableAt?: string
+  durationMinutes?: number
+  /** 0 is Monday … 6 is Sunday; goes with `time`. */
+  day?: number
+  /** `HH:mm`; goes with `day`. */
+  time?: string
+  level?: string
+  /** People with no saved filter are left out. */
+  strict?: boolean
+}
+export type UmpireCommitment = ReturnType<
+  typeof asUmpireCommitments
+>['commitments'][number]
 export type PersonProfile = Omit<
   ReturnType<typeof asPersonProfile>,
-  'sections'
-> & { sections: ProfileSection[] }
+  'sections' | 'umpireAvailability'
+> & {
+  sections: ProfileSection[]
+  umpireAvailability?: UmpireAvailability | null
+}
 
 /** A season's or league's people, and what this viewer may do with them. */
 export const asLevelPeople = asObject({
@@ -3802,14 +3905,22 @@ class TimedOut extends DeadlinePassed {
   }
 }
 
-/** A device's own two notification switches, as its Account shows them. */
+/** A device's own three notification switches, as its Account shows them. */
 export interface PushSwitches {
   messages: boolean
   rsvpEvents: boolean
+  /** "Notify for league management": League management notices. */
+  leagueManagement: boolean
 }
 
-/** `POST /me/push-registrations`: one device's push address and switches. */
-export interface PushRegistration extends PushSwitches {
+/**
+ * `POST /me/push-registrations`: one device's push address and switches.
+ * `leagueManagement` left out is on.
+ */
+export interface PushRegistration
+  extends
+    Omit<PushSwitches, 'leagueManagement'>,
+    Partial<Pick<PushSwitches, 'leagueManagement'>> {
   platform: 'ios' | 'android' | 'web'
   /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
   address: string
@@ -4309,9 +4420,41 @@ export class TeamStationClient {
     )
   }
 
+  /** The caller's own Umpire Management Notifications for a league they administer. */
+  async umpireNotifications(
+    league: string
+  ): Promise<UmpireNotificationSettings> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(league)}/umpire-notifications`,
+      asUmpireNotificationSettings
+    )
+  }
+
+  /**
+   * Changes the caller's own Umpire Management Notifications for a league
+   * they administer; a field left out keeps its value. Answers them all.
+   */
+  async setUmpireNotifications(
+    league: string,
+    change: Partial<UmpireNotificationSettings>
+  ): Promise<UmpireNotificationSettings> {
+    return await this.request(
+      'PUT',
+      `/leagues/${encodeURIComponent(league)}/umpire-notifications`,
+      asUmpireNotificationSettings,
+      change
+    )
+  }
+
+  /** `sort` null goes back to the built-in default; `[]` is the empty sort. */
   async setUmpireSettings(
     league: string,
-    settings: { management?: boolean; credits?: boolean }
+    settings: {
+      management?: boolean
+      credits?: boolean
+      sort?: UmpireSortKey[] | null
+    }
   ): Promise<UmpireSettings> {
     return await this.request(
       'PUT',
@@ -4426,6 +4569,24 @@ export class TeamStationClient {
     ).seasons
   }
 
+  /**
+   * Saves the league's season order: `seasonIds`, current and upcoming
+   * seasons first to last. The league's other seasons lose their position.
+   */
+  async setUmpireSeasonPriority(
+    league: string,
+    seasonIds: string[]
+  ): Promise<UmpireSeason[]> {
+    return (
+      await this.request(
+        'PUT',
+        `/leagues/${encodeURIComponent(league)}/umpire-season-priority`,
+        asUmpireSeasons,
+        { seasonIds }
+      )
+    ).seasons
+  }
+
   async setUmpireRequirements(
     league: string,
     requirement: {
@@ -4442,14 +4603,73 @@ export class TeamStationClient {
     )
   }
 
-  async umpirePeople(league: string, query?: string): Promise<UmpirePerson[]> {
+  /**
+   * The league's umpires (admin only), or with `query` the people who could
+   * be made one. `availability` narrows the umpire list by their saved
+   * filters; it is ignored with `query`, whose candidates have none.
+   */
+  async umpirePeople(
+    league: string,
+    query?: string,
+    availability?: UmpireAvailabilityQuery
+  ): Promise<UmpirePerson[]> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(availability ?? {}))
+      if (value != null) params.set(key, String(value))
+    const search = params.toString() === '' ? '' : `?${params.toString()}`
     return (
       await this.request(
         'GET',
-        `/leagues/${encodeURIComponent(league)}/${query == null ? 'umpires' : `umpire-candidates?q=${encodeURIComponent(query)}`}`,
+        `/leagues/${encodeURIComponent(league)}/${query == null ? `umpires${search}` : `umpire-candidates?q=${encodeURIComponent(query)}`}`,
         asUmpirePeople
       )
     ).people
+  }
+
+  /** The signed-in person's saved umpire availability filter for a league. */
+  async umpireAvailability(league: string): Promise<UmpireAvailability | null> {
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/me/umpire-availability`,
+        asUmpireAvailabilityAnswer
+      )
+    ).availability
+  }
+
+  /** Saves the person's filter for a league; null clears it. */
+  async saveUmpireAvailability(
+    league: string,
+    availability: UmpireAvailability | null
+  ): Promise<UmpireAvailability | null> {
+    return (
+      await this.request(
+        'PUT',
+        `/leagues/${encodeURIComponent(league)}/me/umpire-availability`,
+        asUmpireAvailabilityAnswer,
+        { availability }
+      )
+    ).availability
+  }
+
+  /**
+   * An umpire's games from `from` to `to` (ISO times, at most 31 days
+   * apart), in the leagues the caller administers (admin only).
+   */
+  async umpireCommitments(
+    league: string,
+    userId: string,
+    from: string,
+    to: string
+  ): Promise<UmpireCommitment[]> {
+    const params = new URLSearchParams({ from, to })
+    return (
+      await this.request(
+        'GET',
+        `/leagues/${encodeURIComponent(league)}/umpires/${encodeURIComponent(userId)}/commitments?${params.toString()}`,
+        asUmpireCommitments
+      )
+    ).commitments
   }
 
   async saveUmpires(
@@ -4514,7 +4734,7 @@ export class TeamStationClient {
   async umpireSchedulePage(
     league: string,
     query = '',
-    page: Pick<GamesPageQuery, 'around' | 'cursor' | 'limit'> = {}
+    page: UmpirePageAsk = {}
   ): Promise<UmpireSchedulePage> {
     const params = umpireScheduleParams(query)
     params.set('paged', '1')
@@ -4841,14 +5061,19 @@ export class TeamStationClient {
     id: string,
     change: Partial<PushSwitches>
   ): Promise<PushSwitches> {
-    const { messages, rsvpEvents } = await this.request(
+    const { messages, rsvpEvents, leagueManagement } = await this.request(
       'PATCH',
       `/me/push-registrations/${encodeURIComponent(id)}`,
-      asObject({ messages: asBoolean, rsvpEvents: asBoolean }),
+      asObject({
+        messages: asBoolean,
+        rsvpEvents: asBoolean,
+        // A server from before League management has it on for every device.
+        leagueManagement: asOptional(asBoolean, true)
+      }),
       change,
       { deadline: true, keepsOffline: true }
     )
-    return { messages, rsvpEvents }
+    return { messages, rsvpEvents, leagueManagement }
   }
 
   /**
@@ -7451,7 +7676,7 @@ export class TeamStationClient {
     return await this.request(
       'GET',
       '/chat/conversations',
-      asArray(asChatConversation)
+      ofKnownKinds(asChatConversation, row => row.kind)
     )
   }
 
@@ -7520,6 +7745,29 @@ export class TeamStationClient {
       'GET',
       `/chat/dm-candidates?q=${encodeURIComponent(query)}${userId == null ? '' : `&userId=${encodeURIComponent(userId)}`}`,
       asArray(asChatPerson)
+    )
+  }
+
+  /**
+   * How the signed-in person can message `userId`: `direct`, `proxies` (a
+   * player who cannot sign in, through their guardians or coaches), or null.
+   */
+  async dmReach(userId: string): Promise<MessageReach | null> {
+    return (
+      await this.request(
+        'GET',
+        `/chat/dm-reach?userId=${encodeURIComponent(userId)}`,
+        asDmReach
+      )
+    ).reach
+  }
+
+  /** Whom the signed-in person may message for a player who cannot sign in. */
+  async dmProxies(userId: string): Promise<DmProxies> {
+    return await this.request(
+      'GET',
+      `/chat/dm-proxies?userId=${encodeURIComponent(userId)}`,
+      asDmProxies
     )
   }
 
@@ -7934,7 +8182,10 @@ export class TeamStationClient {
     return await this.request(
       'GET',
       `/admin/chat/reports${open ? '?open=true' : ''}`,
-      asArray(asChatReport)
+      ofKnownKinds(
+        asChatReport,
+        row => (row.conversation as { kind?: unknown } | undefined)?.kind
+      )
     )
   }
 
@@ -8648,7 +8899,8 @@ export class TeamStationClient {
     const headers: Record<string, string> = {
       ...options.headers,
       accept: 'application/json',
-      [SCORING_FEATURE_HEADER]: SCORING_FEATURES
+      [SCORING_FEATURE_HEADER]: SCORING_FEATURES,
+      [CHAT_KINDS_HEADER]: NEWER_CHAT_KINDS.join(',')
     }
     // Bytes (an attachment's part) go as they are; anything else as JSON.
     const bytes = body instanceof Uint8Array ? body : undefined

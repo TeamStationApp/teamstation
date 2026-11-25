@@ -42,7 +42,52 @@ const read: PushRequest = {
   devices: undefined
 }
 
+const league: PushRequest = {
+  v: 1,
+  t: 'league',
+  u: ['usr_admin', 'usr_other'],
+  title: 'Demo League',
+  body: '2 games still need umpires',
+  url: 'teamstation://umpires/lea_one?view=league&game=gam_one',
+  tag: 'event:league:aud_one',
+  attempt: 1
+}
+
 describe('push requests', function () {
+  it('makes a first try of a League management notice, and reads it back', function () {
+    const { v, attempt, ...asked } = league
+    expect(firstTry(asked)).deep.equals(league)
+    expect(requestOf(JSON.stringify(league))).deep.equals({ request: league })
+    for (const bad of [
+      { ...league, u: 'usr_admin' },
+      { ...league, title: undefined },
+      { ...league, tag: 7 }
+    ])
+      expect(requestOf(JSON.stringify(bad)))
+        .to.have.property('malformed')
+        .match(/^the request cannot be read: TypeError/)
+  })
+
+  it('narrows a League management retry to the admins left unreached, or tries them all', function () {
+    expect(
+      afterFailure(
+        league,
+        { error: '1 unreached', unreached: ['usr_other'] },
+        0
+      )
+    ).deep.equals({
+      retry: { ...league, attempt: 2, u: ['usr_other'] },
+      at: 5000
+    })
+    expect(afterFailure(league, { error: 'down' }, 0)).deep.equals({
+      retry: { ...league, attempt: 2 },
+      at: 5000
+    })
+    expect(
+      afterFailure({ ...league, attempt: MAX_ATTEMPTS }, { error: 'down' }, 0)
+    ).deep.equals({ dead: 'gave up after 5 attempts: down' })
+  })
+
   it('makes a first try of what the API queues', function () {
     expect(
       firstTry({ t: 'chat', c: 'cnv_one', seq: 7, sender: 'usr_one' })

@@ -9,6 +9,7 @@ it('round-trips every management screen and preserves schedule filters in the UR
     { name: 'umpireNoteTypes', id: 'demo' },
     { name: 'umpireTypes', id: 'demo' },
     { name: 'umpireRequirements', id: 'demo' },
+    { name: 'umpireNotifications', id: 'demo' },
     {
       name: 'umpireRequirementEdit',
       id: 'demo',
@@ -24,6 +25,13 @@ it('round-trips every management screen and preserves schedule filters in the UR
       days: '0,6',
       from: '09:00',
       to: '18:00'
+    },
+    {
+      name: 'umpireSchedule',
+      id: 'demo',
+      pill: 'schedule',
+      view: 'league',
+      game: 'gam_one'
     }
   ]
   for (const route of routes) {

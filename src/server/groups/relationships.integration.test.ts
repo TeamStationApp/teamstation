@@ -9,6 +9,7 @@ import {
   groupFixture
 } from '../../test/groupFixtures'
 import { roleScopes, visibleScopes } from '../access'
+import { requirements } from '../umpires/admin'
 import { applyParents, previewParents } from './relationships'
 
 describe('management parents independent of competition and games', function () {
@@ -293,5 +294,66 @@ describe('management parents independent of competition and games', function () 
     expect(await f.h.db.selectFrom('games').selectAll().execute()).deep.equals(
       games
     )
+  })
+  it('drops a moved season’s place in its old league’s season order', async () => {
+    await f.h.db
+      .insertInto('season_umpire_priorities')
+      .values([
+        { season_id: f.seasonA, position: 1 },
+        { season_id: f.playoffs, position: 2 },
+        { season_id: f.seasonB, position: 1 }
+      ])
+      .execute()
+    const move = async (from: string, to: string): Promise<void> => {
+      const children = [
+        { kind: 'team' as const, id: f.teamA },
+        { kind: 'season' as const, id: f.seasonA }
+      ]
+      await applyParents(
+        f.h.db,
+        [actor(101), actor(102)],
+        await previewParents(
+          f.h.db,
+          asParentActions([
+            ...children.map(child => ({
+              operation: 'detach',
+              child,
+              parent: { kind: 'league', id: from }
+            })),
+            ...children.map(child => ({
+              operation: 'attach',
+              child,
+              parent: { kind: 'league', id: to }
+            }))
+          ])
+        )
+      )
+    }
+    try {
+      await move(f.leagueA, f.leagueB)
+      expect(
+        await f.h.db
+          .selectFrom('season_umpire_priorities')
+          .select(['season_id', 'position'])
+          .orderBy('position')
+          .execute()
+      ).deep.equals([
+        { season_id: f.seasonB, position: 1 },
+        { season_id: f.playoffs, position: 2 }
+      ])
+      // League B lists it after its own season, with no priority.
+      expect(
+        (await requirements(f.h.db, f.leagueB, Date.now())).map(season => [
+          season.id,
+          season.priority
+        ])
+      ).deep.equals([
+        [f.seasonB, 1],
+        [f.seasonA, null]
+      ])
+    } finally {
+      await move(f.leagueB, f.leagueA)
+      await f.h.db.deleteFrom('season_umpire_priorities').execute()
+    }
   })
 })

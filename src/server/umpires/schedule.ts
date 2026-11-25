@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely } from 'kysely'
 
 import type { UmpireSchedulePage } from '../../common/api'
 import { badRequest, forbidden, notFound } from '../../common/errors'
@@ -12,25 +12,36 @@ import {
   type UmpireSchedule
 } from '../../common/umpireSchedule'
 import {
+  DEFAULT_UMPIRE_SORT,
+  parseUmpireSort,
+  sameUmpireSort,
+  storedUmpireSort,
+  umpireRowOrder,
+  umpireSortError,
+  type UmpireSortKey,
+  type UmpireSortRow,
+  umpireSortText
+} from '../../common/umpireSort'
+import {
   hardUmpireConflict,
+  localDate,
   softUmpireConflict,
   umpireCloseness,
   umpireDate,
   umpireEnd,
   umpireFilterError,
   type UmpireFilters,
-  umpireTimeMatches,
-  umpireWindowsOverlap
+  umpireTimeMatches
 } from '../../common/umpireTime'
 import { type OnePerson, onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { now } from '../clock'
-import type { Database, SeasonsTable } from '../db/database'
-import type { ParsedEventList } from '../events/eventListQuery'
+import type { Database } from '../db/database'
+import type { UmpirePageQuery } from '../events/eventListQuery'
 import { canAdminister, requireGroupAdmin } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { inListOrder, pageAround, pageOfHeld } from '../schedule/scheduleCursor'
+import { inListOrder } from '../schedule/scheduleCursor'
 import type { Reader } from '../users/readerNames'
 import { levels } from './admin'
 import { umpireAffiliations } from './affiliations'
@@ -43,6 +54,7 @@ import {
   umpireIsPlaying
 } from './context'
 import { noteTypes } from './notes'
+import { umpirePageAround, umpirePageOfHeld } from './scheduleOrder'
 import { types } from './types'
 
 export async function umpireLeagues(
@@ -90,35 +102,128 @@ export async function umpireAccess(
     return true
   if (view !== 'umpire' && view !== 'schedule')
     throw badRequest('Choose umpire, league or schedule view')
-  const person = await onePerson(db, actor.userId)
+  if ((await leagueUmpire(db, leagueId, actor.userId)) == null)
+    throw forbidden('Not an umpire for this league')
+  return await canAdminister(db, actor, { kind: 'league', id: leagueId })
+}
+/**
+ * The person `userId` is, through every merged account, when one of those
+ * accounts holds the league's umpire role; null when none does. The one
+ * role check `umpireAccess` and the availability reads share.
+ */
+export async function leagueUmpire(
+  db: Kysely<Database>,
+  leagueId: string,
+  userId: string
+): Promise<OnePerson | null> {
+  const person = await onePerson(db, userId)
   const role = await db
     .selectFrom('league_umpires')
     .select('user_id')
     .where('league_id', '=', leagueId)
     .where('user_id', 'in', person.userIds)
     .executeTakeFirst()
-  if (role == null) throw forbidden('Not an umpire for this league')
-  return await canAdminister(db, actor, { kind: 'league', id: leagueId })
-}
-export async function involvedSeasons(
-  db: Kysely<Database>,
-  leagueId: string,
-  family: UmpireIdentity[]
-): Promise<Array<Selectable<SeasonsTable>>> {
-  const teams = [...new Set(family.flatMap(p => p.teamIds))]
-  if (teams.length === 0) return []
-  return await db
-    .selectFrom('seasons')
-    .innerJoin('season_teams as st', 'st.season_id', 'seasons.id')
-    .selectAll('seasons')
-    .where('seasons.league_id', '=', leagueId)
-    .where('st.team_id', 'in', teams)
-    .distinct()
-    .execute()
+  return role == null ? null : person
 }
 /**
- * The league's umpire schedule as `actor` sees it. The people it names are
- * short, except those a `reader` (passed by a read alone) may read in full.
+ * Whether the viewer (`family[0]`, through any of its merged accounts) is
+ * accepted into the league at any level, which puts every one of the league's
+ * games in their umpire schedule: they administer it (`leagueAdmin`), are a
+ * member of it or of one of its seasons, hold any role on it, on one of its
+ * seasons or on a team active in one of its seasons, belong in any role to
+ * such a team, or anyone in the family plays on one (a guardian's child). A
+ * team whose `season_teams` row is inactive counts for none of these, and a
+ * follower is never accepted.
+ */
+export async function umpireAcceptance(
+  db: Kysely<Database>,
+  leagueId: string,
+  family: UmpireIdentity[],
+  leagueAdmin: boolean
+): Promise<boolean> {
+  if (leagueAdmin) return true
+  const viewer = family[0].userIds
+  // A disabled child gives their guardian nothing, as they give no choice.
+  const players = [
+    ...new Set(
+      family.filter((p, i) => i === 0 || p.active).flatMap(p => p.teamIds)
+    )
+  ]
+  const { accepted } = await db
+    .selectNoFrom(eb => {
+      const activeTeams = eb
+        .selectFrom('season_teams as st')
+        .innerJoin('seasons as s', 's.id', 'st.season_id')
+        .select('st.team_id')
+        .where('s.league_id', '=', leagueId)
+        .where('st.active', '=', true)
+      return eb
+        .or([
+          eb.exists(
+            eb
+              .selectFrom('league_members')
+              .select('id')
+              .where('league_id', '=', leagueId)
+              .where('user_id', 'in', viewer)
+          ),
+          eb.exists(
+            eb
+              .selectFrom('season_members as m')
+              .innerJoin('seasons as s', 's.id', 'm.season_id')
+              .select('m.id')
+              .where('s.league_id', '=', leagueId)
+              .where('m.user_id', 'in', viewer)
+          ),
+          eb.exists(
+            eb
+              .selectFrom('scope_roles as r')
+              .select('r.id')
+              .where('r.user_id', 'in', viewer)
+              .where(rb =>
+                rb.or([
+                  rb.and([
+                    rb('r.scope_type', '=', 'league'),
+                    rb('r.scope_id', '=', leagueId)
+                  ]),
+                  rb.and([
+                    rb('r.scope_type', '=', 'season'),
+                    rb(
+                      'r.scope_id',
+                      'in',
+                      rb
+                        .selectFrom('seasons')
+                        .select('id')
+                        .where('league_id', '=', leagueId)
+                    )
+                  ]),
+                  rb.and([
+                    rb('r.scope_type', '=', 'team'),
+                    rb('r.scope_id', 'in', activeTeams)
+                  ])
+                ])
+              )
+          ),
+          eb.exists(
+            eb
+              .selectFrom('memberships')
+              .select('id')
+              .where('user_id', 'in', viewer)
+              .where('team_id', 'in', activeTeams)
+          ),
+          ...(players.length === 0
+            ? []
+            : [eb.exists(activeTeams.where('st.team_id', 'in', players))])
+        ])
+        .as('accepted')
+    })
+    .executeTakeFirstOrThrow()
+  return accepted === true
+}
+/**
+ * The league's umpire schedule as `actor` sees it, its rows in `sort`, else
+ * the league's default sort, else Date 1→9 then Season A→Z. The people it
+ * names are short, except those a `reader` (passed by a read alone) may read
+ * in full.
  */
 export async function schedule(
   db: Kysely<Database>,
@@ -126,8 +231,23 @@ export async function schedule(
   leagueId: string,
   view: 'umpire' | 'league' | 'schedule',
   filters: UmpireFilters,
-  reader?: Reader
+  reader?: Reader,
+  sort?: UmpireSortKey[]
 ): Promise<UmpireSchedule> {
+  return (
+    await sortedSchedule(db, actor, leagueId, view, filters, reader, sort)
+  ).schedule
+}
+/** `schedule`, with each row's sort keys, which its pages are cut by. */
+async function sortedSchedule(
+  db: Kysely<Database>,
+  actor: Actor,
+  leagueId: string,
+  view: 'umpire' | 'league' | 'schedule',
+  filters: UmpireFilters,
+  reader: Reader | undefined,
+  sort: UmpireSortKey[] | undefined
+): Promise<{ schedule: UmpireSchedule; keys: Map<string, UmpireSortRow> }> {
   const isAdmin = await umpireAccess(db, actor, leagueId, view)
   if (filters.priorSeasons != null && view !== 'schedule')
     throw badRequest('priorSeasons requires schedule view')
@@ -136,11 +256,12 @@ export async function schedule(
   const error = umpireFilterError(filters)
   if (error != null) throw badRequest(error)
   const family = await umpireFamily(db, actor.userId)
-  const involved = await involvedSeasons(db, leagueId, family)
-  const windows = involved.map(s => ({
-    start: calendarDateText(s.starts_on)!,
-    end: calendarDateText(s.ends_on)!
-  }))
+  // Acceptance is league-wide: every game of the league, past or upcoming,
+  // is in the accepted viewer's window, and none is in anyone else's.
+  const inWindow = await umpireAcceptance(db, leagueId, family, isAdmin)
+  // A viewer the window keeps from every game reads none of them.
+  const seesNone =
+    !inWindow && (view === 'umpire' || (view === 'schedule' && !isAdmin))
   const catalog = await types(db, leagueId)
   const notesCatalog = await noteTypes(db, leagueId)
   const notes = await db
@@ -157,6 +278,7 @@ export async function schedule(
     .selectFrom('seasons')
     .innerJoin('season_umpire_requirements as r', 'r.season_id', 'seasons.id')
     .innerJoin('umpire_levels as l', 'l.id', 'r.level_id')
+    .leftJoin('season_umpire_priorities as p', 'p.season_id', 'seasons.id')
     .select([
       'seasons.id',
       'seasons.name',
@@ -164,23 +286,28 @@ export async function schedule(
       'seasons.ends_on',
       'seasons.timezone',
       'r.level_id',
-      'l.name as level_name'
+      'l.name as level_name',
+      'p.position as priority'
     ])
     .where('seasons.league_id', '=', leagueId)
     .execute()
   const league = await db
     .selectFrom('leagues')
-    .select(['umpire_management', 'umpire_credits'])
+    .select(['umpire_management', 'umpire_credits', 'umpire_sort'])
     .where('id', '=', leagueId)
     .executeTakeFirstOrThrow()
-  const games = await db
-    .selectFrom('games')
-    .selectAll()
-    .where('status', '!=', 'cancelled')
-    .where('withdrawn_at', 'is', null)
-    .orderBy('start_at')
-    .orderBy('id')
-    .execute()
+  const leagueSort = storedUmpireSort(league.umpire_sort)
+  const applied = sort ?? leagueSort ?? DEFAULT_UMPIRE_SORT
+  const games = seesNone
+    ? []
+    : await db
+        .selectFrom('games')
+        .selectAll()
+        .where('status', '!=', 'cancelled')
+        .where('withdrawn_at', 'is', null)
+        .orderBy('start_at')
+        .orderBy('id')
+        .execute()
   const fieldIds = [
     ...new Set(
       games.flatMap(game => (game.field_id == null ? [] : [game.field_id]))
@@ -195,10 +322,9 @@ export async function schedule(
       .execute()
     for (const field of fields) fieldNames.set(field.id, field.name)
   }
-  const assignments = await db
-    .selectFrom('umpire_assignments')
-    .selectAll()
-    .execute()
+  const assignments = seesNone
+    ? []
+    : await db.selectFrom('umpire_assignments').selectAll().execute()
   const byGame = new Map<string, typeof assignments>()
   const byPerson = new Map<string, Set<string>>()
   for (const assignment of assignments) {
@@ -279,6 +405,7 @@ export async function schedule(
   }
   const affiliations = await umpireAffiliations(db, leagueId)
   const rows: UmpireGameRow[] = []
+  const keys = new Map<string, UmpireSortRow>()
   const instant = now()
   const current = await db
     .selectFrom('seasons')
@@ -323,19 +450,6 @@ export async function schedule(
         }))
     )
     if (positions.length === 0) continue
-    const past =
-      new Date(game.start_at).getTime() < instant &&
-      game.status !== 'inProgress'
-    const inWindow = past
-      ? involved.some(s => s.id === season.id)
-      : windows.some(w =>
-          umpireWindowsOverlap(w, {
-            start: calendarDateText(season.starts_on)!,
-            end: calendarDateText(season.ends_on)!
-          })
-        )
-    if ((view === 'umpire' || (view === 'schedule' && !isAdmin)) && !inWindow)
-      continue
     if (
       view === 'schedule' &&
       filters.priorSeasons !== true &&
@@ -352,7 +466,7 @@ export async function schedule(
     if (
       !umpireTimeMatches(
         interval.startAt,
-        filters.timezone ?? game.timezone,
+        filters.filterTimezone ?? filters.timezone ?? game.timezone,
         filters
       )
     )
@@ -449,9 +563,11 @@ export async function schedule(
           c => p.userIds.includes(c.user_id) && c.level_id === season.level_id
         )
         const { playing, umpiring } = availability.get(p.userId)!
+        // Rows reach here only inside the viewer's window, so only the
+        // umpire role is left to check.
         const outsideSchedule =
           view === 'schedule' &&
-          (!inWindow || !roles.some(r => family[0].userIds.includes(r.user_id)))
+          !roles.some(r => family[0].userIds.includes(r.user_id))
         const reason = outsideSchedule
           ? 'outside your umpire schedule'
           : playing
@@ -473,7 +589,18 @@ export async function schedule(
         return { userId: p.userId, name: p.name, reason }
       })
     rows.push(row)
+    keys.set(row.id, {
+      id: row.id,
+      start,
+      day: localDate(start, filters.timezone ?? game.timezone),
+      seasonId: season.id,
+      seasonName: season.name,
+      seasonPriority: season.priority,
+      levelName: season.level_name
+    })
   }
+  const order = umpireRowOrder(applied)
+  rows.sort((a, b) => order(keys.get(a.id)!, keys.get(b.id)!))
   const names = await readerUmpireNames(
     db,
     reader,
@@ -492,27 +619,35 @@ export async function schedule(
         row.choices[slot] = choices.map(named)
     }
   return {
-    settings: {
-      management: league.umpire_management,
-      credits: league.umpire_credits
+    schedule: {
+      settings: {
+        management: league.umpire_management,
+        credits: league.umpire_credits,
+        sort: leagueSort
+      },
+      levels: await levels(db, leagueId),
+      types: catalog,
+      noteTypes: notesCatalog,
+      games: rows,
+      creditTeams,
+      viewerId: family[0].userId,
+      isAdmin,
+      view,
+      sort: applied
     },
-    levels: await levels(db, leagueId),
-    types: catalog,
-    noteTypes: notesCatalog,
-    games: rows,
-    creditTeams,
-    viewerId: family[0].userId,
-    isAdmin,
-    view
+    keys
   }
 }
 /**
- * `schedule` a page at a time, soonest first.
+ * `schedule` a page at a time, in its sort.
  *
  * A row's conflicts and choices weigh every game against every other, and
  * `positions` are the whole filtered list's, so each page reads the schedule
  * whole and cuts its rows from it, whose decoding and drawing is what a page
- * saves. `around` opens on the row the table opens on.
+ * saves. A cursor carries the sort it was read in, which an explicit `sort`
+ * must match. `around` opens on the row the table opens on, at its place in
+ * the sorted list: the game it names when that game is listed, else the
+ * first under way or still to start in time order.
  */
 export async function umpireSchedulePage(
   db: Kysely<Database>,
@@ -520,30 +655,64 @@ export async function umpireSchedulePage(
   leagueId: string,
   view: 'umpire' | 'schedule',
   filters: UmpireFilters,
-  ask: Pick<ParsedEventList, 'cursor' | 'around' | 'limit'>,
-  reader?: Reader
+  ask: Pick<UmpirePageQuery, 'cursor' | 'around' | 'limit'>,
+  reader?: Reader,
+  sort?: UmpireSortKey[]
 ): Promise<UmpireSchedulePage> {
-  const { games, ...head } = await schedule(
+  const cursor = ask.cursor
+  if (cursor != null && sort != null && !sameUmpireSort(sort, cursor.sort))
+    throw badRequest(
+      `sort must be ${umpireSortText(cursor.sort)} with this cursor`
+    )
+  const { schedule: whole, keys } = await sortedSchedule(
     db,
     actor,
     leagueId,
     view,
     filters,
-    reader
+    reader,
+    cursor?.sort ?? sort
   )
-  const rows = inListOrder(games, 'asc')
+  const { games: rows, ...head } = whole
+  const applied = head.sort!
+  const key = (row: UmpireGameRow): UmpireSortRow => keys.get(row.id)!
   // `paged` always has one.
   const limit = ask.limit!
-  const opening = ask.around ? initialUmpireGame(rows, now()) : undefined
+  // A notice's game opens the page where it is listed; a game not listed
+  // (filtered out, or gone) opens it as `next` does.
+  const asked =
+    ask.around?.game == null
+      ? undefined
+      : rows.find(row => row.id === ask.around!.game)
+  const opening =
+    ask.around == null
+      ? undefined
+      : (asked ?? initialUmpireGame(inListOrder(rows, 'asc'), now()))
   return {
     ...head,
-    ...(ask.around
-      ? pageAround(rows, Math.max(0, rows.indexOf(opening!)), limit)
-      : pageOfHeld(rows, 'asc', limit, ask.cursor)),
+    ...(ask.around != null
+      ? umpirePageAround(
+          rows,
+          Math.max(0, rows.indexOf(opening!)),
+          limit,
+          applied,
+          key
+        )
+      : umpirePageOfHeld(rows, limit, applied, key, cursor)),
     anchorId: opening?.id ?? null,
     counts: null,
-    positions: umpireColumns(head.types, games)
+    positions: umpireColumns(head.types, rows)
   }
+}
+/** The `sort` a schedule read asks for; undefined when it asks for none. */
+export function parseUmpireSortQuery(
+  query: Record<string, unknown>
+): UmpireSortKey[] | undefined {
+  const value = query.sort
+  if (value === undefined || value === '') return undefined
+  const sort = typeof value === 'string' ? parseUmpireSort(value) : null
+  if (sort == null) throw badRequest(umpireSortError('query'))
+  return sort
 }
 export function parseUmpireFilters(
   query: Record<string, unknown>
@@ -573,6 +742,9 @@ export function parseUmpireFilters(
       ? {}
       : { priorSeasons: query.priorSeasons === 'true' }),
     ...(query.timezone == null ? {} : { timezone: time('timezone') }),
+    ...(query.filterTimezone == null
+      ? {}
+      : { filterTimezone: time('filterTimezone') }),
     levels: list('levels'),
     days: list('days').map(Number),
     from: time('from'),

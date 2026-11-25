@@ -205,7 +205,7 @@ export interface PushDevice {
 export interface TokenDevice extends PushDevice {
   /**
    * Registers `address`, a new push token, in its turn, with the switches
-   * stored for `userId` then: both off when it is not known.
+   * stored for `userId` then: all off when it is not known.
    */
   tokenChanged: (
     client: PushClient,
@@ -251,7 +251,10 @@ export interface PushDeviceOptions {
 const sameSwitches = (
   a: NotificationSwitches,
   b: NotificationSwitches
-): boolean => a.messages === b.messages && a.rsvpEvents === b.rsvpEvents
+): boolean =>
+  a.messages === b.messages &&
+  a.rsvpEvents === b.rsvpEvents &&
+  a.leagueManagement === b.leagueManagement
 
 /**
  * A device's notifications, the same on every platform but for what

@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/unbound-method -- The season order tests swap an AccessibilityInfo function and put it back. */
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { AccessibilityInfo } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
 import type {
@@ -24,7 +26,10 @@ import {
   umpireNameWidth
 } from './LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './UmpireLevelsScreen'
-import { UmpireRequirementsScreen } from './UmpireRequirementsScreen'
+import {
+  moveSeason,
+  UmpireRequirementsScreen
+} from './UmpireRequirementsScreen'
 import { UmpireSettingsCard } from './UmpireSettingsCard'
 describe('management.test.tsx', () => {
   let root: Root | undefined
@@ -668,6 +673,40 @@ describe('management.test.tsx', () => {
     await press('Enable umpire management')
     expect(settings.credits).equals(true)
   })
+  it('ends with Send me notifications, under Enable Team Credits, open with management off', async () => {
+    const f = fixture()
+    f.client.umpireSettings = async () => ({
+      management: false,
+      credits: false
+    })
+    const opened: string[] = []
+    await mount(
+      <UmpireSettingsCard
+        client={f.client}
+        league="demo"
+        onOpen={n => opened.push(n)}
+      />
+    )
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label]')
+    ].map(n => n.getAttribute('aria-label'))
+    const credits = rows.indexOf('Enable Team Credits')
+    const send = rows.indexOf(
+      'Send me notifications, Receive in-app and push notifications for updates to the umpire schedule'
+    )
+    expect(credits).greaterThan(-1)
+    expect(send).greaterThan(credits)
+    expect(rows.slice(send + 1)).deep.equals([])
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="umpire-send-me-notifications"]'
+    )!
+    expect(row.getAttribute('aria-disabled')).not.equals('true')
+    await act(async () => {
+      row.click()
+    })
+    expect(opened).deep.equals(['umpireNotifications'])
+  })
+
   it('keeps requirements disabled for an enabled league with no levels', async () => {
     const f = fixture()
     f.levels.length = 0
@@ -781,5 +820,328 @@ describe('management.test.tsx', () => {
     await press('Save and open profile')
     expect(opened).deep.equals(['one', 'one'])
     expect(f.changes.length).equals(1)
+  })
+
+  describe('the league’s season order', () => {
+    const reduceMotion = AccessibilityInfo.isReduceMotionEnabled
+    afterEach(() => {
+      AccessibilityInfo.isReduceMotionEnabled = reduceMotion
+    })
+    function season(id: string, name: string): UmpireSeason {
+      return {
+        id,
+        name,
+        logoUrl: null,
+        leagueId: 'lea_demo',
+        leaguePictureUrl: null,
+        requirement: null,
+        priority: null
+      }
+    }
+    /** Three seasons, and every order saved. */
+    async function threeSeasons(
+      motion: 'reduced' | 'full' = 'reduced'
+    ): Promise<{ f: ReturnType<typeof fixture>; saves: string[][] }> {
+      AccessibilityInfo.isReduceMotionEnabled = async () => motion === 'reduced'
+      const f = fixture()
+      f.seasons.push(season('summer', 'Summer'), season('fall', 'Fall'))
+      const saves: string[][] = []
+      f.client.setUmpireSeasonPriority = async (_league, ids) => {
+        saves.push(ids)
+        const saved = ids.map((id, i) => ({
+          ...f.seasons.find(s => s.id === id)!,
+          priority: i + 1
+        }))
+        f.seasons.splice(0, f.seasons.length, ...saved)
+        return saved
+      }
+      await mount(
+        <CoverableScene>
+          <UmpireRequirementsScreen
+            client={f.client}
+            league="demo"
+            onNext={() => undefined}
+            onApplied={() => undefined}
+          />
+        </CoverableScene>
+      )
+      return { f, saves }
+    }
+    function names(): string[] {
+      return [
+        ...document.querySelectorAll('[data-testid^="season-requirements-"]')
+      ].map(n => n.parentElement!.firstElementChild!.textContent!)
+    }
+    function sortButton(): HTMLElement {
+      return document.querySelector<HTMLElement>(
+        '[data-testid="season-priority-sort"]'
+      )!
+    }
+    async function sort(): Promise<void> {
+      await act(async () => {
+        sortButton().click()
+      })
+    }
+    async function key(node: HTMLElement, name: string): Promise<void> {
+      await act(async () => {
+        node.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key: name, bubbles: true })
+        )
+      })
+    }
+    function row(index: number): HTMLElement {
+      return document.querySelector<HTMLElement>(
+        `[data-roster-target="season-${index}"]`
+      )!
+    }
+    it('puts a season at an insertion point, counted in the list as it stands', () => {
+      expect(moveSeason(['a', 'b', 'c'], 1, 0)).deep.equals(['b', 'a', 'c'])
+      expect(moveSeason(['a', 'b', 'c'], 0, 3)).deep.equals(['b', 'c', 'a'])
+      expect(moveSeason(['a', 'b', 'c'], 0, 2)).deep.equals(['b', 'a', 'c'])
+      expect(moveSeason(['a', 'b', 'c'], 2, -4)).deep.equals(['c', 'a', 'b'])
+      expect(moveSeason(['a', 'b', 'c'], 1, 9)).deep.equals(['a', 'c', 'b'])
+      const list = ['a']
+      expect(moveSeason(list, 3, 0)).equals(list)
+    })
+    it('offers Sort on a list of two or more seasons, not on one nor on the edit', async () => {
+      const f = fixture()
+      await mount(
+        <UmpireRequirementsScreen
+          client={f.client}
+          league="demo"
+          onNext={() => undefined}
+          onApplied={() => undefined}
+        />
+      )
+      expect(sortButton()).equals(null)
+      f.seasons.push(season('summer', 'Summer'))
+      await mount(
+        <UmpireRequirementsScreen
+          client={f.client}
+          league="demo"
+          onNext={() => undefined}
+          onApplied={() => undefined}
+        />
+      )
+      expect(sortButton().getAttribute('aria-label')).equals('Sort seasons')
+      expect(sortButton().textContent).equals('Sort')
+      // At the list's upper right: after the line above the list, before it.
+      const text = document.body.textContent!
+      expect(text.indexOf('Select seasons to apply umpire needs.')).lessThan(
+        text.indexOf('Sort')
+      )
+      expect(text.indexOf('Sort')).lessThan(text.indexOf('Spring'))
+      await mount(
+        <UmpireRequirementsScreen
+          client={f.client}
+          league="demo"
+          seasonIds={['spring', 'summer']}
+          onNext={() => undefined}
+          onApplied={() => undefined}
+        />
+      )
+      expect(document.body.textContent).contains('Summer')
+      expect(sortButton()).equals(null)
+    })
+    it('shows grips, a red Cancel and Save, and hides the checkboxes and Next', async () => {
+      await threeSeasons()
+      await press('Select Spring')
+      expect(document.body.textContent).contains('Next')
+      expect(document.querySelectorAll('[data-roster-grip]')).length(0)
+      await sort()
+      expect(document.querySelectorAll('[data-roster-grip]')).length(3)
+      for (const name of ['Spring', 'Summer', 'Fall']) {
+        expect(target(`Drag ${name}`).textContent).equals('≡')
+        expect(target(`Reorder ${name}`).getAttribute('role')).equals('group')
+        // A screen reader is told it moves a season, not a lineup row.
+        expect(
+          target(`Reorder ${name}`).getAttribute('aria-roledescription')
+        ).equals('draggable season row')
+      }
+      expect(document.querySelector('[aria-label^="Select "]')).equals(null)
+      expect(document.body.textContent).not.contains('Next')
+      expect(sortButton().textContent).equals('Cancel')
+      expect(sortButton().getAttribute('aria-label')).equals(
+        'Cancel sorting seasons'
+      )
+      const cancel = [...sortButton().querySelectorAll('div')].find(
+        n => n.textContent === 'Cancel' && n.children.length === 0
+      )!
+      expect(getComputedStyle(cancel).color).equals('rgb(186, 26, 26)')
+      const save = document.querySelector<HTMLElement>(
+        '[data-testid="season-priority-save"]'
+      )!
+      expect(save.textContent).equals('Save')
+      expect(save.getAttribute('aria-label')).equals('Save the season order')
+      expect(getComputedStyle(save).alignSelf).equals('flex-start')
+      // Below the list.
+      expect(
+        save.compareDocumentPosition(row(2)) &
+          window.Node.DOCUMENT_POSITION_PRECEDING
+      ).not.equals(0)
+      // Cancel leaves reorder mode with what was ticked still ticked.
+      await sort()
+      expect(document.querySelectorAll('[data-roster-grip]')).length(0)
+      expect(target('Select Spring').getAttribute('aria-checked')).equals(
+        'true'
+      )
+      expect(document.body.textContent).contains('Next')
+    })
+    it('slides the grips in when motion is not reduced', async () => {
+      await threeSeasons('full')
+      await sort()
+      expect(document.querySelectorAll('[data-roster-grip]')).length(3)
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      })
+      expect(target('Drag Spring').textContent).equals('≡')
+    })
+    it('moves a season with the keyboard: Space, an arrow, Enter', async () => {
+      const { saves } = await threeSeasons()
+      await sort()
+      await key(row(2), ' ')
+      await key(row(2), 'ArrowUp')
+      await key(row(2), 'Enter')
+      expect(names()).deep.equals(['Spring', 'Fall', 'Summer'])
+      await key(row(0), ' ')
+      await key(row(0), 'ArrowDown')
+      await key(row(0), 'ArrowDown')
+      await key(row(0), 'Enter')
+      expect(names()).deep.equals(['Fall', 'Summer', 'Spring'])
+      await press('Save the season order')
+      expect(saves).deep.equals([['fall', 'summer', 'spring']])
+    })
+    it('drops a dragged season before or after a row', async () => {
+      const { saves } = await threeSeasons()
+      await sort()
+      const box = (index: number): DOMRect => {
+        const rect = { x: 0, y: index * 60, width: 300, height: 56 }
+        return {
+          ...rect,
+          top: rect.y,
+          left: rect.x,
+          right: rect.x + rect.width,
+          bottom: rect.y + rect.height,
+          toJSON: () => rect
+        }
+      }
+      const place = (): void => {
+        for (let i = 0; i < 3; i++) row(i).getBoundingClientRect = () => box(i)
+      }
+      const pointer = async (
+        node: Element,
+        type: string,
+        at: { x: number; y: number }
+      ): Promise<void> => {
+        const event = new window.MouseEvent(type, {
+          bubbles: true,
+          clientX: at.x,
+          clientY: at.y,
+          button: 0
+        })
+        Object.defineProperties(event, {
+          pointerType: { value: 'mouse' },
+          pointerId: { value: 1 }
+        })
+        await act(async () => {
+          node.dispatchEvent(event)
+          await new Promise(resolve => setTimeout(resolve, 20))
+        })
+      }
+      const drag = async (
+        from: number,
+        to: { x: number; y: number },
+        hovering?: () => void
+      ): Promise<void> => {
+        place()
+        const node = row(from)
+        const start = { x: 20, y: from * 60 + 28 }
+        await pointer(node, 'pointerdown', start)
+        await pointer(node, 'pointermove', { x: 20, y: start.y + 12 })
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 200))
+        })
+        await pointer(node, 'pointermove', to)
+        if (hovering != null) {
+          // Long enough for the row to show where a drop would go.
+          await act(async () => {
+            await new Promise(resolve => setTimeout(resolve, 120))
+          })
+          hovering()
+        }
+        await pointer(node, 'pointerup', to)
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 200))
+        })
+      }
+      // Fall, the last, onto the top of the first row: first.
+      // The insertion line is a season's, not a lineup's.
+      let insertions: Array<string | null> = []
+      await drag(2, { x: 20, y: 4 }, () => {
+        insertions = [
+          ...document.querySelectorAll('[aria-label$="insertion point"]')
+        ].map(n => n.getAttribute('aria-label'))
+      })
+      expect(insertions).deep.equals(['Season insertion point'])
+      expect(names()).deep.equals(['Fall', 'Spring', 'Summer'])
+      // Fall again, onto the lower half of the last row, which has risen
+      // into the lifted card's place: last.
+      await drag(0, { x: 20, y: 100 })
+      expect(names()).deep.equals(['Spring', 'Summer', 'Fall'])
+      await press('Save the season order')
+      expect(saves).deep.equals([['spring', 'summer', 'fall']])
+    })
+    it('saves the working order and shows the order the server answers', async () => {
+      const { f, saves } = await threeSeasons()
+      f.client.setUmpireSeasonPriority = async (_league, ids) => {
+        saves.push(ids)
+        // The server's answer, whatever was asked, is what the list shows.
+        return [season('fall', 'Fall'), season('spring', 'Spring')]
+      }
+      await sort()
+      await key(row(2), ' ')
+      await key(row(2), 'ArrowUp')
+      await key(row(2), 'Enter')
+      await press('Save the season order')
+      expect(saves).deep.equals([['spring', 'fall', 'summer']])
+      expect(names()).deep.equals(['Fall', 'Spring'])
+      expect(document.querySelectorAll('[data-roster-grip]')).length(0)
+      expect(sortButton().textContent).equals('Sort')
+    })
+    it('shows a failed save and stays in reorder mode', async () => {
+      const { f } = await threeSeasons()
+      f.client.setUmpireSeasonPriority = async () => {
+        throw new Error('Only league admins can do that')
+      }
+      await sort()
+      await press('Save the season order')
+      expect(document.body.textContent).contains(
+        'Only league admins can do that'
+      )
+      expect(document.querySelectorAll('[data-roster-grip]')).length(3)
+    })
+    it('restores the order read on Cancel, and saves nothing', async () => {
+      const { saves } = await threeSeasons()
+      await sort()
+      await key(row(0), ' ')
+      await key(row(0), 'ArrowDown')
+      await key(row(0), 'Enter')
+      expect(names()).deep.equals(['Summer', 'Spring', 'Fall'])
+      await press('Cancel sorting seasons')
+      expect(names()).deep.equals(['Spring', 'Summer', 'Fall'])
+      expect(saves).deep.equals([])
+      // Sort again starts from the order read, not the one cancelled.
+      await sort()
+      expect(names()).deep.equals(['Spring', 'Summer', 'Fall'])
+    })
+    it('leaves reorder mode when the list is read again on coming back', async () => {
+      await threeSeasons()
+      await sort()
+      expect(document.querySelectorAll('[data-roster-grip]')).length(3)
+      await coverAndReveal()
+      expect(document.querySelectorAll('[data-roster-grip]')).length(0)
+      expect(sortButton().textContent).equals('Sort')
+      expect(names()).deep.equals(['Spring', 'Summer', 'Fall'])
+    })
   })
 })

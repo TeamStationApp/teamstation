@@ -1,5 +1,12 @@
 import React from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import {
+  Pressable,
+  ScrollView,
+  type StyleProp,
+  Text,
+  View,
+  type ViewStyle
+} from 'react-native'
 
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -48,6 +55,11 @@ export interface PillTabsProps<Id extends string = string> {
    * with `small` pills, two rows' targets meet at the midpoint between them.
    */
   stacked?: boolean
+  /**
+   * The strip's own style, after its bleed: `{ flexGrow: 0 }` keeps it to
+   * its pills' width in a row beside something else.
+   */
+  style?: StyleProp<ViewStyle>
 }
 
 /**
@@ -131,7 +143,7 @@ export function PillTabs<Id extends string = string>(
       showsHorizontalScrollIndicator={false}
       accessibilityRole="tablist"
       accessibilityLabel={props.accessibilityLabel}
-      style={reach?.strip}
+      style={[reach?.strip, props.style]}
       contentContainerStyle={[
         styles.scrollContent,
         stacked && styles.scrollStacked,
@@ -141,6 +153,78 @@ export function PillTabs<Id extends string = string>(
       {row}
     </ScrollView>
   )
+}
+
+export interface PillFaceProps {
+  label: string
+  badge?: string
+  live?: boolean
+  selected?: boolean
+  size?: 'regular' | 'compact' | 'small'
+  dense?: boolean
+  /** Drawn before the label, inside the pill: a `ButtonIcon` or a vector. */
+  icon?: React.ReactNode
+}
+
+/**
+ * What a pill draws, without its target: `PillButton` wraps it in its own
+ * pressable, and a `HeaderMenu` can wrap it as its trigger's face.
+ */
+export function PillFace({
+  label,
+  badge,
+  live = false,
+  selected = true,
+  size = 'compact',
+  dense = false,
+  icon
+}: PillFaceProps): React.ReactElement {
+  const styles = getStyles(useTheme())
+  const compact = size === 'compact'
+  const small = size === 'small'
+  return (
+    <View
+      testID="settings-pill-tab"
+      style={[
+        styles.pill,
+        compact && styles.pillCompact,
+        small && styles.pillSmall,
+        dense && styles.pillDense,
+        selected ? styles.pillActive : styles.pillIdle
+      ]}
+    >
+      {live && <View testID="pill-live-dot" style={styles.liveDot} />}
+      {icon}
+      <Text
+        selectable={false}
+        numberOfLines={1}
+        style={[
+          styles.label,
+          compact && styles.labelCompact,
+          small && styles.labelSmall,
+          selected ? styles.labelActive : styles.labelIdle
+        ]}
+      >
+        {label}
+      </Text>
+      {badge != null && (
+        <Text
+          style={[
+            styles.badge,
+            selected ? styles.labelActive : styles.badgeIdle
+          ]}
+        >
+          {badge}
+        </Text>
+      )}
+    </View>
+  )
+}
+
+/** The colour a pill's label takes, for an icon drawn beside it. */
+export function usePillLabelColor(selected = true): string {
+  const theme = useTheme()
+  return selected ? theme.pillActiveTextColor : theme.pillTextColor
 }
 
 /** The shared pill used by camera-angle tabs and standalone actions. */
@@ -154,21 +238,24 @@ export function PillButton({
   role = 'button',
   onPress,
   disabled = false,
-  accessibilityLabel = label
-}: {
-  label: string
-  badge?: string
-  live?: boolean
-  selected?: boolean
-  size?: 'regular' | 'compact' | 'small'
-  dense?: boolean
+  accessibilityLabel = label,
+  testID,
+  icon,
+  hitSlop
+}: PillFaceProps & {
   role?: 'tab' | 'button'
   onPress?: () => void
   disabled?: boolean
   accessibilityLabel?: string
+  /** The pressable's own test id, for a pill that stands alone. */
+  testID?: string
+  /**
+   * Draws the target only as tall as the pill, reaching this many points past
+   * it, for a pill in a row of shorter buttons that must not grow the row.
+   */
+  hitSlop?: number
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const compact = size === 'compact'
   const small = size === 'small'
   return (
     <Pressable
@@ -180,47 +267,25 @@ export function PillButton({
       accessibilityLabel={accessibilityLabel}
       disabled={disabled}
       onPress={onPress}
+      testID={testID}
+      hitSlop={hitSlop}
       style={({ pressed }) => [
         styles.target,
         small && styles.targetSmall,
+        hitSlop != null && styles.targetFlush,
         pressed && !selected && styles.targetPressed,
         disabled && styles.disabled
       ]}
     >
-      <View
-        testID="settings-pill-tab"
-        style={[
-          styles.pill,
-          compact && styles.pillCompact,
-          small && styles.pillSmall,
-          dense && styles.pillDense,
-          selected ? styles.pillActive : styles.pillIdle
-        ]}
-      >
-        {live && <View testID="pill-live-dot" style={styles.liveDot} />}
-        <Text
-          selectable={false}
-          numberOfLines={1}
-          style={[
-            styles.label,
-            compact && styles.labelCompact,
-            small && styles.labelSmall,
-            selected ? styles.labelActive : styles.labelIdle
-          ]}
-        >
-          {label}
-        </Text>
-        {badge != null && (
-          <Text
-            style={[
-              styles.badge,
-              selected ? styles.labelActive : styles.badgeIdle
-            ]}
-          >
-            {badge}
-          </Text>
-        )}
-      </View>
+      <PillFace
+        label={label}
+        badge={badge}
+        live={live}
+        selected={selected}
+        size={size}
+        dense={dense}
+        icon={icon}
+      />
     </Pressable>
   )
 }
@@ -268,6 +333,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   targetSmall: {
     minHeight: theme.rem(2.75),
     paddingHorizontal: theme.rem(0.25)
+  },
+  // As tall as the pill; the target reaches past it by its hit slop instead.
+  targetFlush: {
+    minHeight: 0
   },
   disabled: {
     opacity: 0.5

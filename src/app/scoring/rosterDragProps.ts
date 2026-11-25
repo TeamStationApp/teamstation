@@ -22,6 +22,16 @@ export interface RosterDragProps {
   onTap?: () => void
   onReorder?: (delta: number) => void
   insertion?: 'row' | 'end'
+  /**
+   * What a screen reader calls a reorderable card on the web, in place of
+   * "draggable lineup row", for a list that is not a lineup.
+   */
+  roleDescription?: string
+  /**
+   * What a screen reader calls the insertion line, in place of "Lineup
+   * insertion point".
+   */
+  insertionLabel?: string
   onDropPlayer?: (id: number, edge?: 'before' | 'after') => void
   children: React.ReactNode
 }

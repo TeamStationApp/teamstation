@@ -8,7 +8,10 @@ import * as notices from '../../common/notifications'
 import {
   CHAT_DEVICE_APPROVAL,
   LOCAL_COPY_EXPIRING,
-  RECORDING_UPLOAD
+  RECORDING_UPLOAD,
+  UMPIRE_MISSING_SLOTS,
+  UMPIRE_SIGN_UP,
+  UMPIRE_WITHDRAW
 } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
@@ -164,12 +167,16 @@ describe('the bell answers what the inbox answers, without building it', functio
     await bells()
   })
 
-  it('lights for an upload reminder, a copy expiring and a rejected add until dismissed, and never for a grant', async () => {
+  it('lights for an upload reminder, a copy expiring, a rejected add and a missing-umpires digest until dismissed, and never for a grant or an umpire sign-up or withdrawal', async () => {
     const reminder = await information(RECORDING_UPLOAD, 103)
     const copy = await information(LOCAL_COPY_EXPIRING, 104)
     const rejected = await information(PLAYER_ADD_REJECTED, 106)
+    const digest = await information(UMPIRE_MISSING_SLOTS, 101)
     await information('grant', 102)
+    await information(UMPIRE_SIGN_UP, 102)
+    await information(UMPIRE_WITHDRAW, 102)
     expect(await bells()).deep.include({
+      101: true,
       102: false,
       103: true,
       104: true,
@@ -181,7 +188,13 @@ describe('the bell answers what the inbox answers, without building it', functio
     await dismiss(reminder, 103)
     await dismiss(copy, 104)
     await dismiss(rejected, 106)
-    expect(await bells()).deep.include({ 103: false, 104: false, 106: false })
+    await dismiss(digest, 101)
+    expect(await bells()).deep.include({
+      101: false,
+      103: false,
+      104: false,
+      106: false
+    })
   })
 
   it('lights for a device asking to be approved until it is approved, declined, revoked or expired, and names its expiry', async () => {

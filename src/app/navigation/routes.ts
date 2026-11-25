@@ -1,5 +1,6 @@
 import { safeNext } from '../../common/signInReturn'
 import { isTvServerOrigin } from '../../common/tvLogin'
+import { isAroundGame } from '../../common/umpireSchedule'
 import { asUserId, userIdOfGumbo } from '../../common/userId'
 import { chatBenchPath } from '../dev/chatBenchPath'
 
@@ -36,6 +37,23 @@ export interface UmpireScheduleRoute {
   days?: string
   from?: string
   to?: string
+  /** The zone a saved filter's days and times are read in; else the device's. */
+  timezone?: string
+  /**
+   * The person chose no filter here, so their saved filter is not put back
+   * over it when the schedule is drawn again from this route.
+   */
+  filter?: 'none'
+  /**
+   * The schedule's sort for this visit, its keys joined by commas (`none` for
+   * the empty sort); else the league default. Read leniently by the screen.
+   */
+  sort?: string
+  /**
+   * The game the schedule opens on, as a notice names it; the next game when
+   * it is not listed. Kept until the reader moves the page.
+   */
+  game?: string
 }
 export const USER_MANAGEMENT_TABS = ['logins', 'sessions', 'users'] as const
 export type UserManagementTab = (typeof USER_MANAGEMENT_TABS)[number]
@@ -47,6 +65,7 @@ export type CreationRoute =
         | 'umpireTypes'
         | 'umpireLevels'
         | 'umpireRequirements'
+        | 'umpireNotifications'
       id: string
     }
   | { name: 'umpireRequirementEdit'; id: string; seasonIds: string[] }
@@ -127,6 +146,7 @@ export function isCreationRoute(route: {
     'umpireLevels',
     'umpireRequirements',
     'umpireRequirementEdit',
+    'umpireNotifications',
     'umpireSchedule',
     'nodeAdministration',
     'userManagement',
@@ -389,6 +409,8 @@ export function parseRoute(path: string, search = ''): Route {
             seasonIds: (query.get('seasons') ?? '').split(',').filter(Boolean)
           }
         : { name: 'umpireRequirements', id }
+    if (parts[3] === 'umpire-notifications')
+      return { name: 'umpireNotifications', id }
   }
   if (parts[0] === 'umpires') {
     const id = decodeURIComponent(parts[1] ?? '')
@@ -400,11 +422,17 @@ export function parseRoute(path: string, search = ''): Route {
       ...(query.get('priorSeasons') === 'true'
         ? { priorSeasons: 'true' as const }
         : {}),
+      ...(query.get('filter') === 'none' ? { filter: 'none' as const } : {}),
       ...Object.fromEntries(
-        ['levels', 'days', 'from', 'to'].flatMap(key =>
+        ['levels', 'days', 'from', 'to', 'timezone', 'sort'].flatMap(key =>
           query.has(key) ? [[key, query.get(key)!]] : []
         )
-      )
+      ),
+      // Only a game id: anything else opens on the next game, as `around`
+      // would answer 400 for it.
+      ...(isAroundGame(query.get('game') ?? '')
+        ? { game: query.get('game')! }
+        : {})
     }
   }
 
@@ -799,6 +827,8 @@ export function routePath(route: Route): string {
       return `/groups/league/${encodeURIComponent(route.id)}/umpire-requirements`
     case 'umpireRequirementEdit':
       return `/groups/league/${encodeURIComponent(route.id)}/umpire-requirements/edit?seasons=${encodeURIComponent(route.seasonIds.join(','))}`
+    case 'umpireNotifications':
+      return `/groups/league/${encodeURIComponent(route.id)}/umpire-notifications`
     case 'umpireSchedule': {
       const query = new URLSearchParams()
       for (const key of [
@@ -808,7 +838,11 @@ export function routePath(route: Route): string {
         'levels',
         'days',
         'from',
-        'to'
+        'to',
+        'timezone',
+        'filter',
+        'sort',
+        'game'
       ] as const)
         if (route[key] != null) query.set(key, route[key])
       return `/umpires/${encodeURIComponent(route.id)}${query.size === 0 ? '' : '?' + query.toString()}`

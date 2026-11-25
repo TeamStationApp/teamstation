@@ -16,7 +16,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   answerAsk,
   type AskDevice,
-  type AskQuestion,
+  type AskStart,
   startAsk
 } from './notificationAsk'
 import type { NotificationAskState } from './notificationAskContext'
@@ -24,7 +24,8 @@ import type { NotificationAskState } from './notificationAskContext'
 /** The question on show, for whom, and how far it has got. */
 interface Showing {
   userId: string
-  question: AskQuestion
+  /** The question, and whether it is this device's first ask of them. */
+  start: AskStart
   /** Continue could not open the settings: where to allow them instead. */
   hint: boolean
   busy: boolean
@@ -48,9 +49,11 @@ export interface NotificationAskHostProps {
  * messaging one also waits for chat's own gates (the age sheet agreed to,
  * this device's approvals read and none waiting to be answered) with a chat
  * surface on show, and is dropped when chat stays locked to this person or
- * they leave chat first. Allowed already, it turns both switches on with no
- * question; asked already, or on a device that cannot notify, it does
- * nothing. A question waits again if a modal came up while it was being
+ * they leave chat first. A League management request starts as an RSVP one
+ * does, but past the asked record (`again`). Allowed already, it turns the
+ * switches on with no question (all three on a first ask, only League
+ * management on a League management ask after one); asked already (but for
+ * League management), or on a device that cannot notify, it does nothing. A question waits again if a modal came up while it was being
  * worked out, and once up it claims the screen: any other modal waits for it
  * to go. A different person signed in takes down the question, and anything
  * still under way for the last one.
@@ -128,7 +131,9 @@ export function NotificationAskHost(
     showing == null &&
     !starting &&
     open === 0 &&
-    (pending.has('rsvp') || (messaging && chatReady))
+    (pending.has('rsvp') ||
+      pending.has('leagueManagement') ||
+      (messaging && chatReady))
   useEffect(() => {
     if (!ready) return
     const user = userId
@@ -137,9 +142,10 @@ export function NotificationAskHost(
     const reasons = [...pending]
     settle()
     setStarting(true)
-    startAsk(device, client, user, { storage })
-      .then(question => {
-        if (question == null || turn !== signIn.current) return
+    const again = reasons.includes('leagueManagement')
+    startAsk(device, client, user, { storage, again })
+      .then(start => {
+        if (start == null || turn !== signIn.current) return
         // A modal came up (read from the count itself, which may be ahead
         // of the last render), or chat's gates closed, while it was worked
         // out: it waits for its moment again. Chat's waits only while the
@@ -147,12 +153,15 @@ export function NotificationAskHost(
         const stayed = chatLeft.current === left
         const clear =
           presence.open() === 0 &&
-          (reasons.includes('rsvp') || (stayed && now.current.chatReady))
+          (reasons.includes('rsvp') ||
+            again ||
+            (stayed && now.current.chatReady))
         if (clear) {
-          setShowing({ userId: user, question, hint: false, busy: false })
+          setShowing({ userId: user, start, hint: false, busy: false })
           return
         }
         if (reasons.includes('rsvp')) request('rsvp')
+        if (again) request('leagueManagement')
         if (reasons.includes('messaging') && stayed && now.current.chatShown) {
           sawChat.current = true
           request('messaging')
@@ -177,21 +186,14 @@ export function NotificationAskHost(
     update(() => undefined)
   }
   const answer = (choice: 'notNow' | 'continue'): void => {
-    const { question } = showing
-    const answered = answerAsk(
-      device,
-      client,
-      showing.userId,
-      question,
-      choice,
-      {
-        storage,
-        openSettings
-      }
-    )
+    const { start } = showing
+    const answered = answerAsk(device, client, showing.userId, start, choice, {
+      storage,
+      openSettings
+    })
     // The system's question, or the way to settings, goes on over the
     // screen, not the sheet; only the web's hint keeps it up.
-    if (choice === 'notNow' || question === 'prompt') {
+    if (choice === 'notNow' || start.question === 'prompt') {
       close()
       answered.catch(() => undefined)
       return

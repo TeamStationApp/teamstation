@@ -71,6 +71,15 @@ describe("Tess's deny list", function () {
     expect(refused('GET', '/me/roles')).equals(false)
     expect(refused('GET', '/authors')).equals(false)
     expect(refused('GET', '/me/buildsx')).equals(false)
+    // Umpire availability is the person's own, read and saved (confirmed)
+    // like any other route; an admin's queries and commitments are reads.
+    for (const [method, path] of [
+      ['GET', '/leagues/lea_1/me/umpire-availability'],
+      ['PUT', '/leagues/lea_1/me/umpire-availability'],
+      ['GET', '/leagues/lea_1/umpires'],
+      ['GET', '/leagues/lea_1/umpires/usr_1/commitments']
+    ] as const)
+      expect(refused(method, path), `${method} ${path}`).equals(false)
   })
 
   it('refuses a path outside /api/v1, a URL, .. and other tricks', function () {
@@ -143,6 +152,9 @@ describe("Tess's deny list", function () {
     expect(refused('POST', '/teams/tem_1/players')).equals(false)
     expect(refused('PUT', '/teams/tem_1/players/usr_1/settings')).equals(false)
     expect(refused('PUT', '/leagues/lea_1/umpire-settings')).equals(false)
+    // An admin's own umpire notices: read, and changed with their confirmation.
+    expect(refused('GET', '/leagues/lea_1/umpire-notifications')).equals(false)
+    expect(refused('PUT', '/leagues/lea_1/umpire-notifications')).equals(false)
     expect(refused('PUT', '/games/gam_1/field')).equals(false)
   })
 

@@ -3,7 +3,8 @@ import type { ExpressionBuilder, ExpressionWrapper, SqlBool } from 'kysely'
 import {
   CHAT_DEVICE_APPROVAL,
   LOCAL_COPY_EXPIRING,
-  RECORDING_UPLOAD
+  RECORDING_UPLOAD,
+  UMPIRE_MISSING_SLOTS
 } from '../../common/notifications'
 import type { Database } from '../db/database'
 
@@ -13,9 +14,12 @@ export const PLAYER_ADD_REJECTED = 'playerAddRejected'
 /**
  * The information that waits on this person, Pending and lighting the bell:
  * a device of theirs asking to be approved, unanswered and unexpired, and an
- * upload reminder or a rejected add they have not dismissed. A grant or a
- * scheduling notice is History from the moment it is recorded. The inbox
- * lists these and the badge asks whether any is there, by this one clause.
+ * upload reminder, a rejected add or a missing-umpires digest they have not
+ * dismissed. A grant, a scheduling notice or an umpire sign-up or withdrawal
+ * is History from the moment it is recorded. The inbox lists these and the
+ * badge asks whether any is there, by this one clause. `informationFor`
+ * (`inbox.ts`) also files a rejected add and a digest under Pending until
+ * dismissed: a new type that waits until dismissed may need both.
  */
 export function pendingInformationWhere(
   eb: ExpressionBuilder<Database, 'notification_events'>,
@@ -46,7 +50,8 @@ export function pendingInformationWhere(
       eb('source_type', 'in', [
         RECORDING_UPLOAD,
         LOCAL_COPY_EXPIRING,
-        PLAYER_ADD_REJECTED
+        PLAYER_ADD_REJECTED,
+        UMPIRE_MISSING_SLOTS
       ]),
       eb.not(
         eb.exists(

@@ -144,7 +144,11 @@ function depsFor(
     chatIdentity: async identityId => await opened.fetchIdentity(identityId),
     webPushKey: async () => null,
     registerPush: async () => 'reg-1',
-    updatePush: async () => ({ messages: false, rsvpEvents: false })
+    updatePush: async () => ({
+      messages: false,
+      rsvpEvents: false,
+      leagueManagement: true
+    })
   }
   return {
     loadToken: async () => 'session-token',

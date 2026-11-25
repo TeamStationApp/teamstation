@@ -157,6 +157,27 @@ describe('what an API key may call', function () {
     expect(keyNeeds('DELETE', '/leagues/lea_1/umpire-types/uty_1')).equals(
       'umpire:write'
     )
+    // Umpire availability and commitments are in the umpire family.
+    expect(keyNeeds('GET', '/leagues/lea_1/me/umpire-availability')).equals(
+      'umpire:read'
+    )
+    expect(keyNeeds('PUT', '/leagues/lea_1/me/umpire-availability')).equals(
+      'umpire:write'
+    )
+    expect(keyNeeds('GET', '/leagues/lea_1/umpires/usr_1/commitments')).equals(
+      'umpire:read'
+    )
+    // So is the league's season order.
+    expect(keyNeeds('PUT', '/leagues/lea_1/umpire-season-priority')).equals(
+      'umpire:write'
+    )
+    // And an admin's own Umpire Management Notifications.
+    expect(keyNeeds('GET', '/leagues/lea_1/umpire-notifications')).equals(
+      'umpire:read'
+    )
+    expect(keyNeeds('PUT', '/leagues/lea_1/umpire-notifications')).equals(
+      'umpire:write'
+    )
   })
 
   it('matches as Express does: any case, one trailing slash, one segment a parameter', function () {

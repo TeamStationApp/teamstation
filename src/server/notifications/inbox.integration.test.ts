@@ -298,4 +298,114 @@ describe('the inbox names people as they are now', function () {
       ]
     ])
   })
+
+  it('lists umpire notices with their league and game: a digest in Pending until dismissed or replaced, sign-ups and withdrawals in History', async () => {
+    const reader = userIdOfGumbo(103)
+    const at = new Date('2027-04-10T14:00:00Z')
+    const notice = (
+      type: string,
+      sourceId: string,
+      revision: number,
+      gameId: string
+    ): {
+      id: string
+      source_type: string
+      source_id: string
+      revision: number
+      actor_id: string | null
+      metadata: Record<string, string>
+      recorded_recipients: string[]
+      created_at: Date
+    } => ({
+      id: makeId('audit'),
+      source_type: type,
+      source_id: sourceId,
+      revision,
+      actor_id: null,
+      metadata: {
+        title: `${type} ${revision}`,
+        description: `about ${gameId}`,
+        leagueId: f.leagueA,
+        gameId
+      },
+      recorded_recipients: [reader],
+      created_at: at
+    })
+    const digest = `${f.leagueA}:${reader}`
+    const yesterday = notice('umpireMissingSlots', digest, 20270409, 'gam_a')
+    const today = notice('umpireMissingSlots', digest, 20270410, 'gam_b')
+    const signUp = notice('umpireSignUp', 'aud_sign', 1, 'gam_c')
+    const withdraw = notice('umpireWithdraw', 'aud_withdraw', 1, 'gam_d')
+    signUp.source_id = signUp.id
+    withdraw.source_id = withdraw.id
+    await f.h.db
+      .insertInto('notification_events')
+      .values([yesterday, today, signUp, withdraw])
+      .execute()
+    // Today's digest settled yesterday's.
+    await f.h.db
+      .insertInto('notification_receipts')
+      .values({
+        event_id: yesterday.id,
+        user_id: reader,
+        viewed_at: at,
+        dismissed_at: at
+      })
+      .execute()
+    const page = async (
+      query = ''
+    ): Promise<{ items: Notification[]; hasPending: boolean }> => {
+      const response = await f.h.request(
+        'GET',
+        `/me/notifications${query}`,
+        undefined,
+        103
+      )
+      expect(response.status).equals(200)
+      return (await response.json()) as {
+        items: Notification[]
+        hasPending: boolean
+      }
+    }
+    const pending = await page()
+    expect(pending.hasPending).equals(true)
+    expect(pending.items.map(item => item.id)).deep.equals([today.id])
+    expect(pending.items[0]).deep.include({
+      type: 'umpireMissingSlots',
+      status: 'accepted',
+      canAct: false,
+      leagueId: f.leagueA,
+      gameId: 'gam_b'
+    })
+    const listed = (await history(103)).filter(item =>
+      item.type.startsWith('umpire')
+    )
+    expect(
+      listed.map(item => [item.id, item.leagueId, item.gameId])
+    ).to.have.deep.members([
+      [yesterday.id, f.leagueA, 'gam_a'],
+      [signUp.id, f.leagueA, 'gam_c'],
+      [withdraw.id, f.leagueA, 'gam_d']
+    ])
+    expect(await detail(signUp.id, 103)).deep.include({
+      title: 'umpireSignUp 1',
+      leagueId: f.leagueA,
+      gameId: 'gam_c'
+    })
+    // Dismissed, it goes to History, and nothing is pending.
+    expect(
+      (
+        await f.h.request(
+          'PUT',
+          `/me/notifications/${today.id}/dismissed`,
+          undefined,
+          103
+        )
+      ).status
+    ).equals(204)
+    const after = await page()
+    expect(after.items).deep.equals([])
+    expect(after.hasPending).equals(false)
+    expect((await history(103)).some(item => item.id === today.id)).equals(true)
+  })
 })
