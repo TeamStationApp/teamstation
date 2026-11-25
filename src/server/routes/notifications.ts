@@ -8,10 +8,12 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import {
   dismissNotification,
+  hasPendingNotifications,
   inbox,
   markViewed,
   notificationDetail
 } from '../notifications/inbox'
+import { publishUserNotice } from '../socket/userNotices'
 
 export function notificationRoutes(
   db: Kysely<Database>,
@@ -54,9 +56,26 @@ export function notificationRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      res.json({
-        hasPending: (await inbox(db, req.actor, {}, clock)).hasPending
+      // A client that has gone stops the walk.
+      const gone = new AbortController()
+      res.on('close', () => {
+        if (!res.writableFinished) gone.abort()
       })
+      const { hasPending, nextExpiry } = await hasPendingNotifications(
+        db,
+        req.actor,
+        clock,
+        gone.signal
+      )
+      // When an item runs out with nothing written, the socket says so.
+      if (nextExpiry != null)
+        await publishUserNotice(
+          db,
+          [req.actor.userId],
+          'badge',
+          new Date(nextExpiry)
+        )
+      res.json({ hasPending })
     })
   )
   router.get(

@@ -73,7 +73,7 @@ import { useSceneReveals, useSceneShown } from '../components/sceneShown'
 import { useScreenBottom } from '../components/Screen'
 import { TabPages } from '../components/TabPages'
 import { usePinnedTabs } from '../components/usePinnedTabs'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
@@ -122,12 +122,13 @@ import {
   MAPPING_WAIT_MS,
   type WallMapping
 } from '../player/wallMapping'
+import { HeldGameNotice } from '../scoring/HeldGameNotice'
 import type { GameRecording } from '../stream/gameRecording'
 import { playById } from '../stream/playById'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
 import { StoredFirst } from '../sync/storedFirst'
-import { usePhoneOffline } from '../sync/useOffline'
+import { useHeldGameControl, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
@@ -502,6 +503,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         return
       setGame(found)
+      // The video playing takes its fresh entry: a camera that ended reads
+      // as no longer live, and a start the phone corrected is the one an
+      // angle switch maps through.
+      setVideo(current => {
+        if (current == null) return current
+        const listed = found.videos.find(item => item.id === current.id)
+        return listed == null || sameVideos([current], [listed])
+          ? current
+          : listed
+      })
       const projection = JSON.stringify([
         found.id,
         found.homeTeamId,
@@ -618,7 +629,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // not a new game.
   const readLatest = useRef(readGame)
   readLatest.current = readGame
-  useForegroundRefresh(readGame)
+  useNoticedRead(readGame)
   useEffect(() => {
     if (game == null) return
     if (game.eventKind === 'event') setTab('info')
@@ -769,6 +780,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
   /** A phone whose requests are not leaving it: no playback will come. */
   const offline = usePhoneOffline(client)
+  /**
+   * The edits the server stopped for this game, which freeze the page to
+   * the phone's copy, and the way out. Once the hold is gone, from here or
+   * from the banner's list, the page reads the server's copy, once: this is
+   * the only read a clear makes. Another game's page starts afresh.
+   */
+  const heldGame = useHeldGameControl(client, gameId)
+  const isHeld = heldGame != null
+  const wasHeld = useRef({ gameId, held: isHeld })
+  useEffect(() => {
+    const was = wasHeld.current
+    if (was.gameId === gameId && was.held && !isHeld)
+      readLatest.current().catch(() => undefined)
+    wasHeld.current = { gameId, held: isHeld }
+  }, [gameId, isHeld])
   /**
    * Which video the current playback URL belongs to.
    *
@@ -2154,7 +2180,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
     )
 
-  const scoreboard =
+  const heroCard =
     game.eventKind === 'event' ? (
       <Card testID="event-hero" style={styles.eventHero}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -2223,6 +2249,29 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         onOpenHomeTeam={openSide(game.homeTeamId)}
         actions={actionButtons}
       />
+    )
+  // A held game says so above its hero, as the Score and Coach screens do.
+  const scoreboard =
+    heldGame == null ? (
+      heroCard
+    ) : (
+      <View style={styles.heldHead}>
+        <HeldGameNotice
+          held={heldGame}
+          testID="heldGameNotice"
+          // Its hold going re-reads the game (above).
+          onSettled={() => undefined}
+        >
+          <Text
+            accessibilityRole="alert"
+            testID="heldGameMessage"
+            style={styles.heldMessage}
+          >
+            {heldGame.text}
+          </Text>
+        </HeldGameNotice>
+        {heroCard}
+      </View>
     )
 
   const pills = gameTabs({
@@ -2944,6 +2993,13 @@ export function timecode(seconds: number): string {
 
 const getStyles = cacheStyles((theme: Theme) =>
   StyleSheet.create({
+    heldHead: { gap: theme.rem(0.5) },
+    heldMessage: {
+      color: theme.dangerColor,
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(0.875),
+      textAlign: 'center'
+    },
     centre: {
       flex: 1,
       alignItems: 'center',

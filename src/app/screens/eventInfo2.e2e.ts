@@ -1430,9 +1430,9 @@ async function main(): Promise<void> {
       ]
     })
     assert.equal(scoring.status, 200, await scoring.text())
-    await m.evalBrowserScript({
-      script: `window.dispatchEvent(new Event('focus'))`
-    })
+    // Opened again, it reads the play: this harness has no socket for the
+    // notice that moves an open page (GameScreen.eventInfo.test.tsx).
+    await m.openBrowser({ url: f.h.origin + `/games/${gameId}` })
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
       timeout: 15000

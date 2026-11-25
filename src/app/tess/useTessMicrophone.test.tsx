@@ -401,25 +401,24 @@ describe("Tess's microphone", function () {
     expect(levels).has.length(2)
   })
 
-  it('shows the button once the server says it dictates, asking again until it answers', async function () {
-    const clock = manualClock(1000)
+  it('shows the button once the server says it dictates, asking again once the network is back', async function () {
     let asked = 0
-    try {
-      const { seen } = await mount({
-        health: async (): Promise<Health> => {
-          asked += 1
-          if (asked === 1) throw new Error('offline')
-          return await dictatingHealth()
-        }
-      })
-      expect(seen.mic?.available).equals(false)
-      await clock.advance(1000)
-      await settle()
-      expect(asked).equals(2)
-      expect(seen.mic?.available).equals(true)
-    } finally {
-      clock.restore()
-    }
+    const { seen } = await mount({
+      health: async (): Promise<Health> => {
+        asked += 1
+        if (asked === 1) throw new Error('offline')
+        return await dictatingHealth()
+      }
+    })
+    expect(seen.mic?.available).equals(false)
+    await settle()
+    expect(asked, 'nothing on a timer').equals(1)
+    await act(async () => {
+      window.dispatchEvent(new window.Event('online'))
+    })
+    await settle()
+    expect(asked).equals(2)
+    expect(seen.mic?.available).equals(true)
   })
 
   it(`records while Space is held ${SPACE_HOLD_MS} ms, and only then`, async function () {

@@ -14,8 +14,8 @@ import {
 import { ActionList } from '../components/ActionRow'
 import { CancelAction } from '../components/CancelAction'
 import { Modal } from '../components/Modal'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { NodeSettingsCard } from './NodeSettingsCard'
 
@@ -101,7 +101,7 @@ export function NodeAdministrationScreen({
     },
     [client, query, begin]
   )
-  useForegroundRefresh(load)
+  useNoticedRead(load)
   const change = async (
     account: NodeAccount,
     isNodeAdmin: boolean

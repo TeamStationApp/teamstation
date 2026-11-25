@@ -2,41 +2,28 @@ import { useEffect, useRef } from 'react'
 
 import type { GameLiveStreams, VideoSummary } from '../../common/api'
 
-/** How often a game's videos are asked for again while a camera is live. */
-export const VIDEO_LIST_REFRESH_MS = 10_000
-
 /**
  * Keeps a game's list of videos current while a camera on it is live.
  *
- * The list is read once, when the page opens. A camera that goes live after
- * that is a video the page has never heard of: it said "No videos." beside a
- * cameras panel reading "Live now", and an angle that joined later never
- * reached the angle pills or the multi-camera view, until a reload.
- *
- * So while any of the game's videos is live, or the cameras panel has seen a
- * camera publishing (`publishing`, the video ids it is publishing to), the list
- * is asked for again every `VIDEO_LIST_REFRESH_MS`; and a publishing video the
- * list does not hold yet is asked for at once. A game nothing is live on asks
- * nothing.
+ * The list is read once, when the page opens, and again on the game's own
+ * notices (the event scope), which a camera going live, a recording landing
+ * or an angle joining all send. A camera the cameras panel sees publishing
+ * (`publishing`, the video ids it is publishing to) to a video the list does
+ * not hold yet is asked for at once, once; and a page covered while a camera
+ * was live asks once again when it is shown. Nothing is asked on a timer.
  */
 export function useVideoListRefresh(options: {
   /** The list the page holds, or undefined while it is still loading. */
   videos: VideoSummary[] | undefined
   publishing: string[]
   refresh: () => void
-  everyMs?: number
   /**
    * Whether the page is on show: covered by a screen opened from it, it asks
    * nothing, and asks once again when it is shown.
    */
   active?: boolean
 }): void {
-  const {
-    videos,
-    publishing,
-    everyMs = VIDEO_LIST_REFRESH_MS,
-    active = true
-  } = options
+  const { videos, publishing, active = true } = options
   const refresh = useRef(options.refresh)
   refresh.current = options.refresh
 
@@ -61,16 +48,9 @@ export function useVideoListRefresh(options: {
       hidden.current = true
       return
     }
-    if (!anyLive) return
-    if (hidden.current) refresh.current()
+    if (anyLive && hidden.current) refresh.current()
     hidden.current = false
-    const timer = setInterval(() => {
-      refresh.current()
-    }, everyMs)
-    return () => {
-      clearInterval(timer)
-    }
-  }, [anyLive, everyMs, active])
+  }, [anyLive, active])
 }
 
 /**

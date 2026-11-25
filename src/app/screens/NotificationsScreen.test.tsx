@@ -9,6 +9,7 @@ import type { Notification } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
@@ -17,6 +18,8 @@ import {
   NotificationDetailScreen,
   NotificationsScreen
 } from './NotificationsScreen'
+
+const notices = new ScreenNotices()
 
 /**
  * Guardian invitations and requests in the inbox. The server words both, so
@@ -43,7 +46,11 @@ async function mount(element: React.ReactElement): Promise<void> {
   document.body.append(host)
   root = createRoot(host)
   await act(async () => {
-    root!.render(<ThemeProvider>{element}</ThemeProvider>)
+    root!.render(
+      <ThemeProvider>
+        <NoticesProvider notices={notices}>{element}</NoticesProvider>
+      </ThemeProvider>
+    )
     await delay(20)
   })
 }
@@ -1043,7 +1050,7 @@ describe('notifications a page at a time', function () {
     pending.splice(5, 0, reminderAt(5))
     reads.length = 0
     await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
+      notices.notifyNow()
       await delay(20)
     })
     // The held rows read again, from the first page.
@@ -1111,13 +1118,15 @@ describe('notifications a page at a time', function () {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <NotificationsScreen
-            client={client}
-            onOpen={() => undefined}
-            onDecided={() => {
-              decided++
-            }}
-          />
+          <NoticesProvider notices={notices}>
+            <NotificationsScreen
+              client={client}
+              onOpen={() => undefined}
+              onDecided={() => {
+                decided++
+              }}
+            />
+          </NoticesProvider>
         </ThemeProvider>
       )
     })
@@ -1242,7 +1251,7 @@ describe('notifications a page at a time', function () {
     )
     fail = true
     await act(async () => {
-      window.dispatchEvent(new window.Event('focus'))
+      notices.notifyNow()
       await delay(20)
     })
     expect(text()).includes('The inbox went away')

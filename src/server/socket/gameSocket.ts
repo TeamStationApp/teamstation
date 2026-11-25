@@ -12,16 +12,22 @@ import {
   MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
   minimumProtocolOf,
   type ScreenScopeName,
-  TYPING_INTERVAL_MS
+  TYPING_INTERVAL_MS,
+  type UserTopic
 } from '../../common/gameSocket'
 import { usesOverrideSlots } from '../../common/scoring/actions'
 import {
   canSeeGame,
+  canSeeTeam,
+  explicitRoleTeams,
   type GameScope,
+  nonMemberTeam,
+  roleScopesForUsers,
   type VisibleScopes,
   visibleScopes,
   visibleScopesForUsers
 } from '../access'
+import { onePerson } from '../admin/people'
 import {
   type Actor,
   actorForToken,
@@ -33,8 +39,10 @@ import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
 import { type Database, isConnectionUnavailable } from '../db/database'
+import { requestAnswerers } from '../notifications/inbox'
 import { ageBandOfUser } from '../users/age'
 import { claimUpgrade, leaveUpgrade } from './bindUpgrades'
+import { BoundaryTimers } from './boundaries'
 import {
   ChatFanout,
   type ChatFanoutOptions,
@@ -52,6 +60,7 @@ import {
 } from './screenScope'
 import { RESYNC_SPREAD_MS, SCREEN_NOTICE_SPREAD_MS, spread } from './spread'
 import type { ScreenScopePayload } from './syncRevision'
+import { UserNoticeListener, type UserNoticePayload } from './userNotices'
 
 /** The one path the socket answers on. */
 export const SOCKET_PATH = '/socket'
@@ -181,19 +190,50 @@ const asScopeRequest = asEither(
     protocol: asOptional(asNumber)
   }),
   asObject({
+    type: asLiteral('subscribe'),
+    scope: asLiteral('team'),
+    teamId: asString,
+    id: asString,
+    protocol: asOptional(asNumber)
+  }),
+  asObject({
+    type: asLiteral('subscribe'),
+    scope: asLiteral('group'),
+    kind: asLiteral('season', 'league', 'node'),
+    groupId: asString,
+    id: asString,
+    protocol: asOptional(asNumber)
+  }),
+  asObject({
     type: asLiteral('unsubscribe'),
-    scope: asLiteral('home', 'schedule', 'event'),
+    scope: asLiteral('home', 'schedule', 'event', 'team', 'group'),
     gameId: asOptional(asString),
+    teamId: asOptional(asString),
+    groupId: asOptional(asString),
     id: asString
   })
 )
 type ScopeRequest = ReturnType<typeof asScopeRequest>
+
+/** A user topic's frame: read only from an object with a `topic`. */
+const asTopicRequest = asObject({
+  type: asLiteral('subscribe', 'unsubscribe'),
+  topic: asLiteral('badge', 'offlineSet', 'tess'),
+  id: asString,
+  protocol: asOptional(asNumber)
+})
+type TopicRequest = ReturnType<typeof asTopicRequest>
 
 /** The screen scope a socket holds. */
 interface HeldScreen {
   scope: ScreenScopeName
   /** For an event. */
   gameId?: string
+  /** For a team. */
+  teamId?: string
+  /** For a group: a season, a league or a node. */
+  kind?: 'season' | 'league' | 'node'
+  groupId?: string
 }
 
 /** One open socket: who it is, what it has subscribed to, and its health. */
@@ -237,6 +277,12 @@ interface Connection {
   chat: ChatSubscriber | undefined
   /** When this socket last sent a typing hint that was looked at. */
   typedAt: number
+  /** The user topics this socket holds. */
+  topics: Set<UserTopic>
+  /** Topic notices still to be sent within their window. */
+  topicsDue: Set<UserTopic>
+  /** The teams this person was given the scorekeeper role on, once read. */
+  scorerTeams: Promise<Set<string>> | undefined
 }
 
 /** Each frame's bytes, for as long as somebody still holds the frame. */
@@ -404,6 +450,35 @@ export function attachGameSocket(
     }
   })
   const chat = new ChatFanout({ ...options.chat, db, feed, resyncSpreadMs })
+  const boundaries = new BoundaryTimers(clock)
+  const userNotices = new UserNoticeListener({
+    feed,
+    deliver: async payload => {
+      await deliverUserNotice(payload)
+    },
+    // Notices went unheard: each socket reads each of its topics once.
+    onResync: () => {
+      const due = [...connections].filter(
+        connection => connection.topics.size > 0
+      )
+      spread(
+        'user resync',
+        due,
+        resyncSpreadMs,
+        connection => {
+          if (connection.topics.size > 0)
+            reply(connection, {
+              type: 'userResync',
+              topics: [...connection.topics]
+            })
+        },
+        spreadTimers
+      )
+    },
+    log: message => {
+      log(`user notices: ${message}`)
+    }
+  })
 
   /** Whether this socket's copy of its person's scopes is still good. */
   const scopesFresh = (connection: Connection): boolean =>
@@ -648,6 +723,44 @@ export function attachGameSocket(
       }
       screen = { scope: 'event', gameId }
     }
+    if (request.scope === 'team') {
+      const { teamId } = request
+      // Whoever may read the page: a member's, or the non-member view
+      // anyone signed in has of a team.
+      const scopes = await scopesOf(connection)
+      if (
+        !canSeeTeam(scopes, teamId) &&
+        !(await nonMemberTeam(db, connection.actor, scopes, teamId))
+      ) {
+        refuse(connection, 'notFound', 'No such team', request.id)
+        return
+      }
+      screen = { scope: 'team', teamId }
+    }
+    if (request.scope === 'group') {
+      const { kind, groupId } = request
+      // A season's or a league's page is public (`GET /seasons/:id`): any
+      // that exists may be followed.
+      const seen =
+        kind === 'season'
+          ? await db
+              .selectFrom('seasons')
+              .select('id')
+              .where('id', '=', groupId)
+              .executeTakeFirst()
+          : kind === 'league'
+            ? await db
+                .selectFrom('leagues')
+                .select('id')
+                .where('id', '=', groupId)
+                .executeTakeFirst()
+            : undefined
+      if (seen == null) {
+        refuse(connection, 'notFound', 'No such group', request.id)
+        return
+      }
+      screen = { scope: 'group', kind, groupId }
+    }
     if (!connections.has(connection)) return
     connection.screen = screen
     reply(connection, {
@@ -665,7 +778,9 @@ export function attachGameSocket(
     const held = connection.screen
     if (
       held?.scope === request.scope &&
-      (request.gameId == null || held.gameId === request.gameId)
+      (request.gameId == null || held.gameId === request.gameId) &&
+      (request.teamId == null || held.teamId === request.teamId) &&
+      (request.groupId == null || held.groupId === request.groupId)
     )
       connection.screen = undefined
     reply(connection, {
@@ -700,6 +815,209 @@ export function attachGameSocket(
     await run
   }
 
+  /** The sockets on this worker that hold a person's topic. */
+  const holdersOf = (userId: string, topic: UserTopic): Connection[] =>
+    [...connections].filter(
+      connection =>
+        connection.actor.userId === userId && connection.topics.has(topic)
+    )
+
+  /**
+   * Tells a socket its topic changed, once within the notice window
+   * however many notices arrive in it, at its own moment.
+   */
+  const tellTopic = (connection: Connection, topic: UserTopic): void => {
+    if (connection.topicsDue.has(topic)) return
+    connection.topicsDue.add(topic)
+    spread(
+      'user notice',
+      [connection],
+      screenNoticeSpreadMs,
+      () => {
+        connection.topicsDue.delete(topic)
+        if (connections.has(connection) && connection.topics.has(topic))
+          reply(connection, { type: 'userChanged', topic })
+      },
+      spreadTimers
+    )
+  }
+
+  /** The teams a socket's person was given the scorekeeper role on. */
+  const scorerTeamsOf = async (
+    connection: Connection
+  ): Promise<Set<string>> => {
+    connection.scorerTeams ??= onePerson(db, connection.actor.userId).then(
+      async person => await explicitRoleTeams(db, person.userIds, 'scorekeeper')
+    )
+    try {
+      return await connection.scorerTeams
+    } catch (error) {
+      connection.scorerTeams = undefined
+      throw error
+    }
+  }
+
+  /**
+   * A moment named for a topic nobody on this worker holds yet, kept until
+   * it passes: the read that published it can reach the server before the
+   * socket that subscribes the topic does, and that socket arms it then.
+   */
+  const unheldMoments = new Map<string, number>()
+
+  /** Arms a person's moment for a topic, or keeps it until one is held. */
+  const armMoment = (userId: string, topic: UserTopic, at: number): void => {
+    const key = `${userId}:${topic}`
+    if (holdersOf(userId, topic).length === 0) {
+      const kept = unheldMoments.get(key)
+      if (kept != null && kept <= at) return
+      unheldMoments.set(key, at)
+      boundaries.arm(`unheld:${key}`, at, () => unheldMoments.delete(key))
+      return
+    }
+    // Two phones of one person can name different moments: the soonest is
+    // told, and each names its own again once it has read.
+    boundaries.armEarliest(key, at, () => {
+      for (const connection of holdersOf(userId, topic))
+        tellTopic(connection, topic)
+    })
+  }
+
+  /**
+   * A user notice: a moment armed for the people it names, or a change
+   * told to the sockets it concerns. A person named by id is told; a
+   * request's sides reach whoever sees the scopes they ask; a game's or a
+   * link's teams reach those given the scorekeeper role on them.
+   */
+  const deliverUserNotice = async (
+    payload: UserNoticePayload
+  ): Promise<void> => {
+    const topic = payload.t
+    if (payload.at != null) {
+      const at = Date.parse(payload.at)
+      if (!Number.isFinite(at)) return
+      for (const userId of payload.u ?? []) armMoment(userId, topic, at)
+      return
+    }
+    const named = new Set(payload.u ?? [])
+    const sides = [...(payload.s ?? [])]
+    // A request also reaches the people it names beyond its sides' staff.
+    if (payload.r != null && connections.size > 0) {
+      const more = await requestAnswerers(db, payload.r)
+      for (const userId of more.userIds) named.add(userId)
+      for (const seasonId of more.seasonIds) sides.push(['season', seasonId])
+    }
+    // Roles carried down may have moved: every scorer's teams are read again,
+    // and whoever held the team before is told as well as whoever holds it now.
+    const before = new Map<Connection, Promise<Set<string>> | undefined>()
+    if (topic === 'offlineSet' && payload.l === true)
+      for (const connection of connections) {
+        before.set(connection, connection.scorerTeams)
+        connection.scorerTeams = undefined
+      }
+    const holding = [...connections].filter(connection =>
+      connection.topics.has(topic)
+    )
+    for (const connection of holding)
+      if (named.has(connection.actor.userId)) {
+        if (topic === 'offlineSet') connection.scorerTeams = undefined
+        tellTopic(connection, topic)
+      }
+    const rest = holding.filter(
+      connection => !named.has(connection.actor.userId)
+    )
+    if (sides.length > 0 && rest.length > 0) {
+      // A request reaches whoever may answer it: the staff of its sides (a
+      // team's admins and coaches, or the admins of the team that keeps an
+      // external one; a season's or a league's admins), a person it names,
+      // and every site admin. Not everybody who can see a side: a member's
+      // bell reads nothing for a request they cannot answer.
+      const teamSides = sides
+        .filter(([kind]) => kind === 'team')
+        .map(([, id]) => id)
+      const custodians =
+        teamSides.length === 0
+          ? []
+          : await db
+              .selectFrom('teams')
+              .select(['custodian_type', 'custodian_id'])
+              .where('id', 'in', teamSides)
+              .where('custodian_type', 'is not', null)
+              .execute()
+      const roles = await roleScopesForUsers(db, [
+        ...new Set(rest.map(connection => connection.actor.userId))
+      ])
+      for (const connection of rest) {
+        const held = roles.get(connection.actor.userId)
+        if (
+          connection.actor.isAdmin ||
+          held?.isAdmin === true ||
+          sides.some(([kind, id]) =>
+            kind === 'user'
+              ? id === connection.actor.userId
+              : held != null &&
+                (kind === 'team'
+                  ? held.admin.teamIds.has(id) ||
+                    held.coach.teamIds.has(id) ||
+                    held.assistant.teamIds.has(id)
+                  : kind === 'season'
+                    ? held.admin.seasonIds.has(id)
+                    : held.admin.leagueIds.has(id))
+          ) ||
+          (held != null &&
+            custodians.some(({ custodian_type: kind, custodian_id: id }) =>
+              id == null
+                ? false
+                : kind === 'team'
+                  ? held.admin.teamIds.has(id)
+                  : kind === 'season'
+                    ? held.admin.seasonIds.has(id)
+                    : held.admin.leagueIds.has(id)
+            ))
+        )
+          tellTopic(connection, topic)
+      }
+    }
+    const teams = payload.g ?? []
+    if (teams.length > 0 && topic === 'offlineSet')
+      await Promise.all(
+        rest.map(async connection => {
+          const given = await scorerTeamsOf(connection)
+          const held = await (before.get(connection) ?? undefined)?.catch(
+            () => undefined
+          )
+          if (teams.some(team => given.has(team) || held?.has(team) === true))
+            tellTopic(connection, topic)
+        })
+      )
+  }
+
+  /** Holds or lets go of one of the person's topics on this socket. */
+  const topicRequest = (
+    connection: Connection,
+    request: TopicRequest
+  ): void => {
+    const { topic, id } = request
+    if (request.type === 'subscribe') {
+      connection.topics.add(topic)
+      reply(connection, { type: 'subscribed', topic, id })
+      // Read now, so a link that later takes a team away knows who held it.
+      if (topic === 'offlineSet')
+        scorerTeamsOf(connection).catch(() => undefined)
+      const key = `${connection.actor.userId}:${topic}`
+      const kept = unheldMoments.get(key)
+      if (kept != null) {
+        unheldMoments.delete(key)
+        boundaries.drop(`unheld:${key}`)
+        armMoment(connection.actor.userId, topic, kept)
+      }
+      return
+    }
+    connection.topics.delete(topic)
+    if (holdersOf(connection.actor.userId, topic).length === 0)
+      boundaries.drop(`${connection.actor.userId}:${topic}`)
+    reply(connection, { type: 'unsubscribed', topic, id })
+  }
+
   /**
    * Tells each socket whose screen a committed write concerns. A game goes
    * to its event's sockets, and to home and schedule, wherever the person
@@ -726,7 +1044,16 @@ export function attachGameSocket(
       const frame: GameSocketReply = {
         type: 'changed',
         scope: screen.scope,
-        ...(screen.scope === 'event' || gameOnly ? { gameId } : {}),
+        ...(screen.scope === 'event' ||
+        screen.scope === 'team' ||
+        screen.scope === 'group' ||
+        gameOnly
+          ? gameId == null
+            ? {}
+            : { gameId }
+          : {}),
+        ...(screen.teamId == null ? {} : { teamId: screen.teamId }),
+        ...(screen.groupId == null ? {} : { groupId: screen.groupId }),
         // A post's own: its play frames already read the game's screen.
         ...(payload.byPost === true ? { byPost: true } : {})
       }
@@ -765,6 +1092,7 @@ export function attachGameSocket(
     readScopesOf(
       holding
         .filter(({ connection, screen }) => {
+          if (screen.scope === 'team' || screen.scope === 'group') return false
           if (gameId != null)
             return (
               game != null &&
@@ -776,10 +1104,58 @@ export function attachGameSocket(
         })
         .map(({ connection }) => connection)
     )
+    // A league's group screens hear what reaches one of its seasons.
+    const seasonsAsked = [
+      ...new Set(
+        [game?.seasonId, seasonId].filter((id): id is string => id != null)
+      )
+    ]
+    const leagueOf = new Map<string, string>()
+    if (
+      seasonsAsked.length > 0 &&
+      holding.some(({ screen }) => screen.kind === 'league')
+    )
+      for (const row of await db
+        .selectFrom('seasons')
+        .select(['id', 'league_id'])
+        .where('id', 'in', seasonsAsked)
+        .execute())
+        if (row.league_id != null) leagueOf.set(row.id, row.league_id)
     const unread: Connection[] = []
     await Promise.all(
       holding.map(async ({ connection, screen }) => {
         try {
+          // A team's or a season's page shows no play: a post that changed
+          // what they show (a final score) names their teams and season too.
+          if (
+            (screen.scope === 'team' || screen.scope === 'group') &&
+            gameOnly &&
+            payload.byPost === true
+          )
+            return
+          if (screen.scope === 'team') {
+            if (
+              teamId === screen.teamId ||
+              (game != null &&
+                (game.homeTeamId === screen.teamId ||
+                  game.awayTeamId === screen.teamId))
+            )
+              tell(connection, screen)
+            return
+          }
+          if (screen.scope === 'group') {
+            const seasons = [game?.seasonId, seasonId].filter(
+              (id): id is string => id != null
+            )
+            if (
+              screen.kind === 'season'
+                ? seasons.includes(screen.groupId!)
+                : screen.kind === 'league' &&
+                  seasons.some(id => leagueOf.get(id) === screen.groupId)
+            )
+              tell(connection, screen)
+            return
+          }
           if (gameId != null) {
             if (screen.scope === 'event' && screen.gameId !== gameId) return
             // A game gone since: only the sockets that had it open are told.
@@ -857,6 +1233,10 @@ export function attachGameSocket(
       const raw: unknown = JSON.parse(rawText(data))
       const named = (raw as { id?: unknown } | null)?.id
       id = typeof named === 'string' ? named : undefined
+      if (typeof raw === 'object' && raw != null && 'topic' in raw) {
+        topicRequest(connection, asTopicRequest(raw))
+        return
+      }
       request =
         typeof raw === 'object' && raw != null && 'scope' in raw
           ? asScopeRequest(raw)
@@ -1001,6 +1381,12 @@ export function attachGameSocket(
       screenResyncDue: false,
       subscriber: {
         send: message => {
+          // A team document's change is new in protocol 6.
+          if (
+            (message.kind === 'roster' || message.kind === 'defaultLineup') &&
+            (connection.gameProtocols.get(message.gameId) ?? 0) < 6
+          )
+            return
           // Older scorers must reread through the protocol-gated HTTP resource;
           // never deliver newer action documents directly in a socket frame.
           if (
@@ -1043,7 +1429,10 @@ export function attachGameSocket(
         }
       },
       chat: undefined,
-      typedAt: Number.NEGATIVE_INFINITY
+      typedAt: Number.NEGATIVE_INFINITY,
+      topics: new Set(),
+      topicsDue: new Set(),
+      scorerTeams: undefined
     }
     // Chat frames only for a session whose person may read chat (an age
     // band of 13 to 17 or adult, read at the upgrade). The app reconnects
@@ -1070,6 +1459,10 @@ export function attachGameSocket(
     ws.on('close', () => {
       connections.delete(connection)
       connection.screen = undefined
+      for (const topic of connection.topics)
+        if (holdersOf(connection.actor.userId, topic).length === 0)
+          boundaries.drop(`${connection.actor.userId}:${topic}`)
+      connection.topics.clear()
       if (connection.chat != null) chat.remove(connection.chat)
       for (const gameId of connection.games)
         fanout.unwatch(gameId, connection.subscriber)
@@ -1178,6 +1571,9 @@ export function attachGameSocket(
         connection.ws.close(1001, 'The server is restarting')
       await fanout.close()
       await screenScopes.close()
+      userNotices.close()
+      boundaries.clear()
+      unheldMoments.clear()
       await chat.close()
       if (options.feed == null) await feed.close()
       await new Promise<void>(resolve => {

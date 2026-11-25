@@ -18,12 +18,11 @@ import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { FakeSearchServer } from '../test/fakeSearchSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { pageOf, pageOfGames } from '../test/pageOf'
-import { manualClock, windowSize } from '../test/tessTestKit'
+import { windowSize } from '../test/tessTestKit'
 import { App, screenTitle } from './App'
 import { ChatListNavigationCapture } from './chat/chatWorkspaceModel'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
 import { gameFixture } from './scoring/isUnscoredGame.test'
-import { TESS_HEALTH_RETRY_MS } from './tess/useTessAvailable'
 import webMusic from './walkup/walkUpMusic'
 
 /**
@@ -98,6 +97,7 @@ describe("Tess in the app's shell", () => {
   let signedIn: boolean
   let sent: Array<{ text: string; screen?: TessScreen }>
   let restoreWindow: (() => Promise<void>) | undefined
+  let sockets: ReturnType<typeof fakeSockets>
   const originalSocket = globalThis.WebSocket
   const dj = webMusic.djSupported
 
@@ -107,7 +107,8 @@ describe("Tess in the app's shell", () => {
     healthAnswers = [health(true)]
     signedIn = true
     sent = []
-    globalThis.WebSocket = fakeSockets().Impl as unknown as typeof WebSocket
+    sockets = fakeSockets()
+    globalThis.WebSocket = sockets.Impl as unknown as typeof WebSocket
     Object.defineProperty(globalThis, 'location', {
       configurable: true,
       value: window.location
@@ -248,18 +249,17 @@ describe("Tess in the app's shell", () => {
   }
 
   describe('availability', () => {
-    it('offers no Tess while health fails, and offers her once a retry says tess: true', async () => {
+    it('offers no Tess while health fails, and offers her once the network is back and a retry says tess: true', async () => {
       healthAnswers = [new Error('offline'), health(true)]
-      const clock = manualClock(TESS_HEALTH_RETRY_MS)
-      try {
-        await open(1280)
-        expect(await offersTess(), 'not while health fails').equals(false)
-        await clock.advance(TESS_HEALTH_RETRY_MS)
-        await settle(30)
-        expect(await offersTess(), 'after the retry').equals(true)
-      } finally {
-        clock.restore()
-      }
+      await open(1280)
+      expect(await offersTess(), 'not while health fails').equals(false)
+      await settle(100)
+      expect(await offersTess(), 'nothing on a timer').equals(false)
+      await act(async () => {
+        window.dispatchEvent(new window.Event('online'))
+      })
+      await settle(30)
+      expect(await offersTess(), 'after the retry').equals(true)
     })
 
     it('offers no Tess when the server says tess: false, or says nothing', async () => {
@@ -294,6 +294,45 @@ describe("Tess in the app's shell", () => {
       expect(byTestId('navigation-sidebar')).equals(null)
       expect(button('Ask Tess')).equals(null)
     })
+  })
+
+  it("subscribes Tess's topic on the person's socket, and reads her answer on its notice", async () => {
+    const api = TeamStationClient.prototype
+    const load = api.tess.bind(api)
+    let loads = 0
+    // She is still answering when the chat opens, and done on the next read.
+    api.tess = async () => {
+      loads += 1
+      return { ...(await load()), answering: loads === 1 }
+    }
+    await open(1280)
+    // The chat is a layer beside the pane, not inside it: the person's
+    // topics must reach it too.
+    for (const socket of sockets.sockets)
+      await act(async () => {
+        socket.open()
+      })
+    await openTess()
+    expect(loads, 'read once on opening').equals(1)
+    const subscribed = sockets.sockets.flatMap(socket =>
+      (socket.messages() as Array<Record<string, unknown>>)
+        .filter(frame => frame.type === 'subscribe' && frame.topic === 'tess')
+        .map(frame => ({ socket, id: frame.id }))
+    )
+    expect(subscribed, 'the tess topic').length(1)
+    const [{ socket, id }] = subscribed
+    await act(async () => {
+      socket.receive({ type: 'subscribed', topic: 'tess', id })
+    })
+    await settle(30)
+    expect(loads, 'a first subscribe reads nothing more').equals(1)
+    await act(async () => {
+      socket.receive({ type: 'userChanged', topic: 'tess' })
+    })
+    await settle(60)
+    expect(loads, 'her notice reads the conversation').equals(2)
+    await settle(200)
+    expect(loads, 'done: nothing more, and no timer').equals(2)
   })
 
   describe('narrow, at 1024', () => {

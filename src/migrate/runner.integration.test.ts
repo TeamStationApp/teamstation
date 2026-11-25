@@ -119,8 +119,11 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the dropped chat age columns, the hidden chat history, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the refresh notices, the dropped chat age columns, the hidden chat history, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '130refreshNotices'
+    ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '129dropChatAgeConfirmations'
     ])
@@ -297,7 +300,9 @@ describe('migrations', function () {
       ).rows.map(row => row.column_name)
     // Every migration run: the age bands replaced them.
     expect(await chatAgeColumns()).deep.equals([])
-    expect(await migrateDown(pool, migrations, 1)).deep.equals([
+    // The refresh notices, after it, go first.
+    expect(await migrateDown(pool, migrations, 2)).deep.equals([
+      '130refreshNotices',
       '129dropChatAgeConfirmations'
     ])
     expect(await chatAgeColumns()).deep.equals([
@@ -322,12 +327,12 @@ describe('migrations', function () {
     expect(refused).equals(3)
     await pool.query('delete from users where id = $1', [userIdOfGumbo(703)])
     expect(
-      await migrateDown(pool, migrations, afterCoach.length - 1)
+      await migrateDown(pool, migrations, afterCoach.length - 2)
     ).deep.equals(
       afterCoach
         .map(item => item.name)
         .reverse()
-        .slice(1)
+        .slice(2)
     )
     expect(await schemaSnapshot(pool)).deep.equals(before)
     await migrateUp(pool, migrations)
@@ -700,7 +705,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '126groupCoordinates',
           '127ageBands',
           '128chatHiddenHistory',
-          '129dropChatAgeConfirmations'
+          '129dropChatAgeConfirmations',
+          '130refreshNotices'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

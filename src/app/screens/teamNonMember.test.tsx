@@ -17,11 +17,14 @@ import { asEventInfo } from '../../common/eventInfo'
 import { asGameScheduling } from '../../common/gameApprovals'
 import { userIdOfGumbo } from '../../common/userId'
 import { pageOfGames } from '../../test/pageOf'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { GameScreen } from './GameScreen'
 import { TeamScreen } from './TeamScreen'
+
+const notices = new ScreenNotices()
 
 /**
  * Somebody signed in who is not a member of a team, following it or not: the
@@ -80,7 +83,9 @@ async function render(element: React.ReactElement): Promise<void> {
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <GestureHandlerRootView>{element}</GestureHandlerRootView>
+        <NoticesProvider notices={notices}>
+          <GestureHandlerRootView>{element}</GestureHandlerRootView>
+        </NoticesProvider>
       </ThemeProvider>
     )
     await delay(10)
@@ -523,7 +528,9 @@ describe('a non-member’s game page', function () {
       await act(async () => {
         root!.render(
           <ThemeProvider>
-            <GestureHandlerRootView>{screen(state)}</GestureHandlerRootView>
+            <NoticesProvider notices={notices}>
+              <GestureHandlerRootView>{screen(state)}</GestureHandlerRootView>
+            </NoticesProvider>
           </ThemeProvider>
         )
         await delay(10)
@@ -630,9 +637,11 @@ describe('a non-member’s game page', function () {
       await act(async () => {
         root!.render(
           <ThemeProvider>
-            <GestureHandlerRootView>
-              {screen(signedIn, tab)}
-            </GestureHandlerRootView>
+            <NoticesProvider notices={notices}>
+              <GestureHandlerRootView>
+                {screen(signedIn, tab)}
+              </GestureHandlerRootView>
+            </NoticesProvider>
           </ThemeProvider>
         )
         await delay(30)
@@ -799,7 +808,11 @@ describe('a non-member’s game page', function () {
       await act(async () => {
         root!.render(
           <ThemeProvider>
-            <GestureHandlerRootView>{screen(signedIn)}</GestureHandlerRootView>
+            <NoticesProvider notices={notices}>
+              <GestureHandlerRootView>
+                {screen(signedIn)}
+              </GestureHandlerRootView>
+            </NoticesProvider>
           </ThemeProvider>
         )
         await delay(30)
@@ -830,7 +843,7 @@ describe('a non-member’s game page', function () {
       // authenticated permissions endpoint is appropriate for the guest.
       if (!signedIn) game.eventKind = 'event'
       await act(async () => {
-        window.dispatchEvent(new window.Event('focus'))
+        notices.notifyNow()
         await delay(30)
       })
       expect(reads).greaterThan(previousReads)

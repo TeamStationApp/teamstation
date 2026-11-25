@@ -261,6 +261,11 @@ export interface CacheTransaction {
     cursor: string,
     prefer?: string
   ) => Promise<string | undefined>
+  /**
+   * The name each of `teamIds` has as a side of a stored schedule game, of
+   * any shape, for those a stored game names.
+   */
+  scheduleTeamNames: (teamIds: string[]) => Promise<Record<string, string>>
 }
 
 /** The cache as the client uses it. */
@@ -798,6 +803,38 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
         )
       ).map(row => String(row.window))
       return prefer != null && windows.includes(prefer) ? prefer : windows[0]
+    },
+    scheduleTeamNames: async teamIds => {
+      const names: Record<string, string> = {}
+      const wanted = [...new Set(teamIds)]
+      for (let at = 0; at < wanted.length; at += SQL_CHUNK) {
+        const chunk = wanted.slice(at, at + SQL_CHUNK)
+        const marks = chunk.map(() => '?').join(', ')
+        for (const row of await tx.execute(
+          `SELECT
+             json_extract(body, '$.homeTeamId') AS home_id,
+             json_extract(body, '$.homeTeamName') AS home_name,
+             json_extract(body, '$.awayTeamId') AS away_id,
+             json_extract(body, '$.awayTeamName') AS away_name
+           FROM schedule_games
+           WHERE json_valid(body)
+             AND (json_extract(body, '$.homeTeamId') IN (${marks})
+               OR json_extract(body, '$.awayTeamId') IN (${marks}))`,
+          [...chunk, ...chunk]
+        ))
+          for (const [id, name] of [
+            [row.home_id, row.home_name],
+            [row.away_id, row.away_name]
+          ])
+            if (
+              typeof id === 'string' &&
+              typeof name === 'string' &&
+              name !== '' &&
+              chunk.includes(id)
+            )
+              names[id] ??= name
+      }
+      return names
     }
   }
 }

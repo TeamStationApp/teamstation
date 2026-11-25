@@ -26,7 +26,7 @@ import {
 } from './chatViews.test.helpers'
 import { ChatWorkspace } from './ChatWorkspace'
 import { ChatDraftOwner, newChatWorkspaceState } from './chatWorkspaceModel'
-import { ConversationScreen } from './ConversationScreen'
+import { ConversationScreen, OPEN_TRIES } from './ConversationScreen'
 import type { ConversationView } from './engine/engine'
 import type { ChatEngineListener } from './engine/store'
 import { MentionPicker } from './MentionPicker'
@@ -3102,4 +3102,41 @@ describe('terminal older pin with late measured pinned clearance', function () {
       ).at.most(3)
     })
   }
+})
+
+describe('a chat that could not be opened', function () {
+  it('opens on the engine’s word after its timed tries are spent', async function () {
+    const state = fixture(view({ messages: [message({ seq: 1 })] }))
+    let tries = 0
+    let refuse = true
+    const opened = state.engine.view('cnv_1')!
+    state.setOpen(async () => {
+      tries += 1
+      if (refuse) throw new Error('offline')
+      return opened
+    })
+    // The timed tries, quickly.
+    const realInterval = globalThis.setInterval
+    globalThis.setInterval = ((run: () => void) =>
+      realInterval(run, 1)) as typeof setInterval
+    try {
+      await render(screen(state.engine))
+      await act(async () => {
+        await wait(150)
+      })
+      expect(tries, 'every timed try, and no more').equals(OPEN_TRIES)
+      refuse = false
+      await act(async () => {
+        state.update(opened)
+        await wait()
+      })
+      expect(tries, 'the engine’s word tries again').equals(OPEN_TRIES + 1)
+      await act(async () => {
+        await wait(50)
+      })
+      expect(tries, 'opened: nothing more').equals(OPEN_TRIES + 1)
+    } finally {
+      globalThis.setInterval = realInterval
+    }
+  })
 })

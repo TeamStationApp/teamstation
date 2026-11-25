@@ -11,8 +11,12 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { distributionSettings } from '../nodeSettings'
 import { activeHuman } from '../oauth/provider'
+import { offlineScoringManifest } from '../scoring/offlineManifest'
+import { publishUserNotice } from '../socket/userNotices'
 import { accountAffiliationsOf } from '../users/accountAffiliations'
 import { readerOf } from '../users/readerNames'
+import { eventListItems } from './eventList'
+import { scheduleOf } from './seasons'
 
 /**
  * What the signed-in person may do, for the few buttons no other answer
@@ -108,6 +112,50 @@ export function meRoutes(
             readerOf(actor)
           )
         )
+    })
+  )
+
+  // The games this phone keeps to score with no signal, at most three, each
+  // with the schedule row it lists the game by. `held` names the games the
+  // phone holds now, so one under way stays held.
+  router.get(
+    '/me/offline-scoring',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const held =
+        typeof req.query.held === 'string' && req.query.held !== ''
+          ? req.query.held.split(',').slice(0, 3)
+          : []
+      const manifest = await offlineScoringManifest(db, actor, held)
+      // When the choice next changes with nothing written, the socket says so.
+      if (manifest.nextBoundary != null)
+        await publishUserNotice(
+          db,
+          [actor.userId],
+          'offlineSet',
+          new Date(manifest.nextBoundary)
+        )
+      const rows =
+        manifest.games.length === 0
+          ? []
+          : await eventListItems(
+              db,
+              media,
+              await scheduleOf(db, media, {
+                gameIds: manifest.games.map(game => game.id),
+                gamesOnly: true
+              })
+            )
+      const rowOf = new Map(rows.map(row => [row.id, row]))
+      res.set('Cache-Control', 'no-store').json({
+        ...manifest,
+        games: manifest.games.map(game => ({
+          ...game,
+          schedule: rowOf.get(game.id) ?? null
+        }))
+      })
     })
   )
 

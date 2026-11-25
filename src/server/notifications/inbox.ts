@@ -1,4 +1,10 @@
-import { type Kysely, type RawBuilder, type Selectable, sql } from 'kysely'
+import {
+  type Kysely,
+  type RawBuilder,
+  type Selectable,
+  type SelectQueryBuilder,
+  sql
+} from 'kysely'
 
 import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
@@ -12,10 +18,14 @@ import {
   RECORDING_UPLOAD
 } from '../../common/notifications'
 import type { Role } from '../../common/roles'
-import { adminScopes, guardedRows, roleScopes } from '../access'
+import { adminScopes, guardedRows, guardiansOf, roleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
-import type { Database, NotificationEventsTable } from '../db/database'
+import type {
+  Database,
+  GroupRequestsTable,
+  NotificationEventsTable
+} from '../db/database'
 import {
   mayAnswerPlayerAdd,
   rejoinedSince,
@@ -34,6 +44,7 @@ import { heldAt } from '../invites/grants'
 import { shortNamesOf, userNames } from '../users/nameBook'
 import { fullNamesFor, type Reader, readerOf } from '../users/readerNames'
 import { survivorsOf } from '../users/survivors'
+import { pendingInformationWhere, PLAYER_ADD_REJECTED } from './pending'
 import {
   grantInformation,
   type PlayerRemovedMetadata,
@@ -334,12 +345,11 @@ function compareRows(
  * the bell. A grant or a scheduling notice is accepted when it is recorded,
  * so it is History from the start.
  */
-function isNews(row: Listed): boolean {
+export function isPendingRow(row: Listed): boolean {
   return row.canAct || row.news
 }
 
-/** The notice a team's roster managers get when a player's side rejected an add. */
-export const PLAYER_ADD_REJECTED = 'playerAddRejected'
+export { PLAYER_ADD_REJECTED }
 
 /**
  * A request as this person's notification, or null when it is not theirs.
@@ -559,21 +569,23 @@ function rowsOfPlayers(teamIds: string[]): RawBuilder<string> {
   )`
 }
 
-/** SQL selects candidate requests; live side checks govern disclosure and the pending dot. */
-export async function inbox(
+/**
+ * The requests that may be this person's notifications, as one query: SQL
+ * selects the candidates, and `notificationFor`'s live side checks decide
+ * what each discloses and whether it lights the bell. The inbox and the
+ * badge read the same candidates.
+ */
+export async function candidateRequests(
   db: Kysely<Database>,
   actor: Actor,
-  options: {
-    history?: boolean
-    sent?: boolean
-    cursor?: string
-    limit?: number
-  } = {},
-  clock: Clock = realClock
+  clock: Clock
 ): Promise<{
-  items: Notification[]
-  hasPending: boolean
-  nextCursor: string | null
+  fresh: Actor
+  rows: SelectQueryBuilder<
+    Database,
+    'group_requests',
+    Selectable<GroupRequestsTable>
+  >
 }> {
   const fresh = await currentActor(db, actor)
   const scopes = await adminScopes(db, fresh.userId, fresh.isAdmin)
@@ -734,6 +746,26 @@ export async function inbox(
       ])
     )
   }
+  return { fresh, rows }
+}
+
+/** SQL selects candidate requests; live side checks govern disclosure and the pending dot. */
+export async function inbox(
+  db: Kysely<Database>,
+  actor: Actor,
+  options: {
+    history?: boolean
+    sent?: boolean
+    cursor?: string
+    limit?: number
+  } = {},
+  clock: Clock = realClock
+): Promise<{
+  items: Notification[]
+  hasPending: boolean
+  nextCursor: string | null
+}> {
+  const { fresh, rows } = await candidateRequests(db, actor, clock)
   const found = await rows.orderBy('sent_at', 'asc').orderBy('id').execute()
   // History lists every piece of information; the other tabs read only
   // undismissed upload reminders, which wait in Pending and light the bell.
@@ -744,50 +776,7 @@ export async function inbox(
     .selectAll()
     .where('source_type', '!=', 'groupRequest')
     .$if(options.history !== true, query =>
-      query.where(eb =>
-        eb.or([
-          eb.and([
-            eb('source_type', '=', CHAT_DEVICE_APPROVAL),
-            eb.exists(
-              eb
-                .selectFrom('chat_links')
-                .innerJoin(
-                  'chat_devices',
-                  'chat_devices.id',
-                  'chat_links.new_device_id'
-                )
-                .select('chat_links.id')
-                .whereRef('chat_links.id', '=', 'notification_events.source_id')
-                .where('chat_links.user_id', '=', fresh.userId)
-                .where('chat_links.box', 'is', null)
-                .where('chat_links.declined_at', 'is', null)
-                .where('chat_links.expires_at', '>', clock.now())
-                .where('chat_devices.revoked_at', 'is', null)
-            )
-          ]),
-          eb.and([
-            eb('source_type', 'in', [
-              RECORDING_UPLOAD,
-              LOCAL_COPY_EXPIRING,
-              PLAYER_ADD_REJECTED
-            ]),
-            eb.not(
-              eb.exists(
-                eb
-                  .selectFrom('notification_receipts')
-                  .select('notification_receipts.event_id')
-                  .whereRef(
-                    'notification_receipts.event_id',
-                    '=',
-                    'notification_events.id'
-                  )
-                  .where('notification_receipts.user_id', '=', fresh.userId)
-                  .where('notification_receipts.dismissed_at', 'is not', null)
-              )
-            )
-          ])
-        ])
-      )
+      query.where(eb => pendingInformationWhere(eb, fresh.userId, clock.now()))
     )
     .where(eb =>
       eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
@@ -816,13 +805,13 @@ export async function inbox(
       { rank: rankOf(b), sentAt: b.sentAt, requestId: b.requestId }
     )
   )
-  const hasPending = projected.some(isNews)
+  const hasPending = projected.some(isPendingRow)
   let visible = projected.filter(row =>
     options.history === true
-      ? row.status !== 'pending' && !isNews(row)
+      ? row.status !== 'pending' && !isPendingRow(row)
       : options.sent === true
         ? row.canWithdraw
-        : isNews(row)
+        : isPendingRow(row)
   )
   if (options.cursor != null) {
     // The last row of the page before, rank and all, so a page that ended
@@ -952,4 +941,236 @@ export async function dismissNotification(
         .doUpdateSet({ viewed_at: now, dismissed_at: now })
     )
     .execute()
+}
+
+/** What the bell shows, and when it may change with nothing written. */
+export interface PendingAnswer {
+  hasPending: boolean
+  /** The next time a pending item expires, or null. */
+  nextExpiry: string | null
+}
+
+/**
+ * Who may answer one request beyond its sides' staff, as `candidateRequests`
+ * finds it for each of them: the owner of a verified address a side names,
+ * everybody it was already recorded for, a player's guardians (and the player
+ * of a player add), and, for a game, the admins of its season (`seasonIds`,
+ * answered as a season side). For the bell's notice, read once per request.
+ */
+export async function requestAnswerers(
+  db: Kysely<Database>,
+  requestId: string
+): Promise<{ userIds: string[]; seasonIds: string[] }> {
+  const request = await db
+    .selectFrom('group_requests')
+    .select(['kind', 'terms'])
+    .where('id', '=', requestId)
+    .executeTakeFirst()
+  if (request == null) return { userIds: [], seasonIds: [] }
+  const terms = (
+    typeof request.terms === 'string'
+      ? JSON.parse(request.terms)
+      : request.terms
+  ) as {
+    playerUserId?: unknown
+    userId?: unknown
+    game?: { seasonId?: unknown }
+  } | null
+  const addresses = (
+    await db
+      .selectFrom('group_request_sides')
+      .select('scope_id')
+      .where('request_id', '=', requestId)
+      .where('scope_type', '=', 'user')
+      .where('scope_id', 'like', 'email:%')
+      .execute()
+  ).map(side => side.scope_id.slice('email:'.length).toLowerCase())
+  const owners =
+    addresses.length === 0
+      ? []
+      : await db
+          .selectFrom('user_emails')
+          .select('user_id')
+          .where('verified_at', 'is not', null)
+          .where(sql<string>`lower(email)`, 'in', addresses)
+          .execute()
+  const recorded = await db
+    .selectFrom('notification_events')
+    .select('recorded_recipients')
+    .where('source_type', '=', 'groupRequest')
+    .where('source_id', '=', requestId)
+    .execute()
+  const player =
+    request.kind === 'guardian'
+      ? terms?.playerUserId
+      : request.kind === 'playerAdd'
+        ? terms?.userId
+        : undefined
+  const players = typeof player === 'string' ? [player] : []
+  const guardians = players.length === 0 ? [] : await guardiansOf(db, players)
+  const season = request.kind === 'game' ? terms?.game?.seasonId : undefined
+  return {
+    userIds: [
+      ...new Set([
+        ...owners.map(row => String(row.user_id)),
+        ...recorded.flatMap(row => row.recorded_recipients.map(String)),
+        ...guardians,
+        ...(request.kind === 'playerAdd' ? players : [])
+      ])
+    ],
+    seasonIds: typeof season === 'string' ? [season] : []
+  }
+}
+
+/** A read for one person, and who still waits on it. */
+interface SharedRead {
+  answer: Promise<PendingAnswer>
+  stop: AbortController
+  waiting: number
+  /** Whether it has begun reading: a caller arriving later waits for the next. */
+  readonly begun: boolean
+}
+
+/**
+ * Each person's read under way, and the one that starts once it ends, which
+ * every caller arriving meanwhile shares: so no caller is answered by a read
+ * that began before it asked, and there are at most two reads a person.
+ */
+const pendingReads = new Map<
+  string,
+  { current: SharedRead; next?: SharedRead }
+>()
+
+/**
+ * Whether anything waits on this person, as `inbox(...).hasPending` answers
+ * it, without building the inbox: pending information first, by the same
+ * clause, then the inbox's own candidate requests, each projected by
+ * `notificationFor`, until one is news. Nothing is named, sorted or paged.
+ * `nextExpiry` is the soonest a device approval or a candidate request still
+ * pending runs out, read whether or not something already waits. Callers
+ * asking for the same person at once share a read that began after they
+ * asked (`pendingReads`), which stops between requests once every caller's
+ * `signal` has aborted.
+ */
+export async function hasPendingNotifications(
+  db: Kysely<Database>,
+  actor: Actor,
+  clock: Clock = realClock,
+  signal?: AbortSignal
+): Promise<PendingAnswer> {
+  const key = actor.userId
+  /** A read that begins once `after` has settled, if it is given. */
+  const startRead = (after?: Promise<unknown>): SharedRead => {
+    const stop = new AbortController()
+    const at = { begun: false }
+    // Callers in the same turn share it: it reads from the next one on.
+    const begin = async (): Promise<PendingAnswer> => {
+      await Promise.resolve()
+      at.begun = true
+      return await pendingNow(db, actor, clock, stop.signal)
+    }
+    const read: SharedRead = {
+      stop,
+      waiting: 0,
+      get begun() {
+        return at.begun
+      },
+      answer:
+        after == null
+          ? begin()
+          : after.then(
+              async () => await begin(),
+              async () => await begin()
+            )
+    }
+    const done = (): void => {
+      const slot = pendingReads.get(key)
+      if (slot?.current !== read) return
+      if (slot.next == null) pendingReads.delete(key)
+      else pendingReads.set(key, { current: slot.next })
+    }
+    read.answer.then(done, done)
+    return read
+  }
+  let slot = pendingReads.get(key)
+  let shared: SharedRead
+  if (slot == null) {
+    shared = startRead()
+    pendingReads.set(key, { current: shared })
+  } else if (!slot.current.begun && !slot.current.stop.signal.aborted)
+    shared = slot.current
+  else if (slot.next != null && !slot.next.stop.signal.aborted)
+    shared = slot.next
+  else {
+    // The read under way began before this caller asked, or every caller
+    // left it: this one waits for the next, which starts when it ends.
+    shared = startRead(slot.current.answer)
+    slot = { current: slot.current, next: shared }
+    pendingReads.set(key, slot)
+  }
+  const read = shared
+  read.waiting++
+  let left = false
+  const leave = (): void => {
+    if (left) return
+    left = true
+    read.waiting--
+    if (read.waiting === 0) read.stop.abort()
+  }
+  if (signal?.aborted === true) leave()
+  else signal?.addEventListener('abort', leave, { once: true })
+  try {
+    return await read.answer
+  } finally {
+    signal?.removeEventListener('abort', leave)
+  }
+}
+
+async function pendingNow(
+  db: Kysely<Database>,
+  actor: Actor,
+  clock: Clock,
+  signal: AbortSignal
+): Promise<PendingAnswer> {
+  const now = clock.now()
+  const { fresh, rows } = await candidateRequests(db, actor, clock)
+  const information = await db
+    .selectFrom('notification_events')
+    .leftJoin('chat_links', join =>
+      join
+        .onRef('chat_links.id', '=', 'notification_events.source_id')
+        .on('notification_events.source_type', '=', CHAT_DEVICE_APPROVAL)
+    )
+    .select([
+      sql<number>`count(*)::int`.as('waiting'),
+      sql<Date | null>`min(chat_links.expires_at)`.as('expiry')
+    ])
+    .where('notification_events.source_type', '!=', 'groupRequest')
+    .where(eb => pendingInformationWhere(eb, fresh.userId, now))
+    .where(eb =>
+      eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
+    )
+    .executeTakeFirstOrThrow()
+  const requestExpiry = await rows
+    .clearSelect()
+    .select(sql<Date | null>`min(expires_at)`.as('expiry'))
+    .where('status', '=', 'pending')
+    .where('expires_at', '>', now)
+    .executeTakeFirstOrThrow()
+  const expiries = [information.expiry, requestExpiry.expiry]
+    .filter((at): at is Date => at != null)
+    .map(at => new Date(at).getTime())
+  const nextExpiry =
+    expiries.length === 0 ? null : new Date(Math.min(...expiries)).toISOString()
+  if (information.waiting > 0) return { hasPending: true, nextExpiry }
+  const found = await rows.orderBy('sent_at', 'asc').orderBy('id').execute()
+  const none = new Map<string, string>()
+  const nobody = new Set<string>()
+  for (const request of found) {
+    if (signal.aborted) break
+    const row = await notificationFor(db, fresh, request, clock, none, nobody)
+    if (row != null && isPendingRow(row))
+      return { hasPending: true, nextExpiry }
+  }
+  return { hasPending: false, nextExpiry }
 }

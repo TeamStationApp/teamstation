@@ -11,6 +11,7 @@ import { candidate } from '../../test/fakeCandidateClient'
 import { measureBoxes } from '../../test/measureBoxes'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { scoringSession } from '../../test/scoringSession'
+import { testCachingClient } from '../../test/testCachingClient'
 import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
 import { draftOfLocalPlayer, rosterPlayerBody } from './playerDraft'
@@ -116,7 +117,7 @@ async function mount(
   onStoreWrite?: () => void
 ): Promise<void> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
-  const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  const client = testCachingClient()
   mountedClient = client
   client.game = async () => gameFixture
   client.roster = async () => []
@@ -260,7 +261,7 @@ describe('scoring slide-up sheets', function () {
     const guestUser = userIdOfGumbo(id)
     const calls: string[] = []
     const renames: unknown[] = []
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => ({
       ...gameFixture,
       guestPlayers: {
@@ -353,7 +354,7 @@ describe('scoring slide-up sheets', function () {
     // The game as it opened lists no guest: another device adds him after.
     let added = false
     let reads = 0
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => {
       if (added) reads++
       return {
@@ -523,7 +524,7 @@ describe('scoring slide-up sheets', function () {
   it('opens the rosters at once while the game is still being read again (U39)', async function () {
     HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
     const session = scoringSession(gameFixture)
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => gameFixture
     client.roster = async () => []
     client.myRoles = async () => ({

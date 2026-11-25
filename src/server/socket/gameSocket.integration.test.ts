@@ -1005,7 +1005,7 @@ describe('the game socket (U14)', function () {
 
     it('subscribes protocol 3 and 5, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
       // Only a save of plays needs 5: an app of protocol 3 still follows.
-      expect(GAME_SOCKET_PROTOCOL).equals(5)
+      expect(GAME_SOCKET_PROTOCOL).equals(6)
       const watcher = await listen(VIEWER)
       watcher.send({ type: 'subscribe', gameId: scored, id: 'w1', protocol: 3 })
       expect(
@@ -1223,10 +1223,13 @@ describe('the game socket (U14)', function () {
       quiet.send({ type: 'unsubscribe', gameId: scored, id: 'q1' })
       await quiet.next(frame => frame.type === 'unsubscribed')
 
-      // The first pitch begins the game, and the lineups appear with it.
+      // The first pitch begins the game, and the lineups appear with it; it
+      // keeps both sides' starting lineups as their defaults.
       let from = listener.frames.length
       await apply(ball)
       expect(await settled(listener, from)).deep.equals([
+        'defaultLineup',
+        'defaultLineup',
         'game',
         'lineups',
         'playEdits'

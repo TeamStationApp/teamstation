@@ -10,13 +10,12 @@ import type {
 } from '../scoring/dictationTypes'
 import { useSpaceToTalk } from '../scoring/spaceToTalk'
 import { useDictation } from '../scoring/useDictation'
+import { whenBack } from '../sync/whenBack'
 
 /** A press held this long records until it is let go; a shorter one is a tap. */
 export const PUSH_TO_TALK_MS = 500
 /** How long Space is held before Tess records. */
 export const SPACE_HOLD_MS = 500
-/** How soon a failed health check is asked again; the button waits for one. */
-const HEALTH_RETRY_MS = 1000
 
 /**
  * Closed (nothing open), opening (the microphone and the socket starting
@@ -155,7 +154,8 @@ export function useTessMicrophone(
 
   useEffect(() => {
     let live = true
-    let timer: ReturnType<typeof setTimeout> | undefined
+    let waiting: (() => void) | undefined
+    // A failed check is asked again once the network or the app comes back.
     const ask = (): void => {
       health().then(
         reply => {
@@ -165,14 +165,14 @@ export function useTessMicrophone(
         },
         () => {
           if (!live) return
-          timer = setTimeout(ask, HEALTH_RETRY_MS)
+          waiting = whenBack(ask)
         }
       )
     }
     ask()
     return () => {
       live = false
-      clearTimeout(timer)
+      waiting?.()
     }
   }, [health])
 

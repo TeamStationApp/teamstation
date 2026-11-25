@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
-import { openDocumentCache } from './cache'
 import {
   cacheFileName,
   type CacheTransaction,
@@ -566,29 +565,6 @@ describe('the phone document cache', function () {
     )
     expect(await again.read('events.g1')).property('serverDigest', 'd1')
     await again.close()
-  })
-
-  it('keeps nothing on the web', async function () {
-    const web = await openDocumentCache('usr_1', '/api/v1')
-    const document = { body: '[]', revision: '1', serverDigest: null }
-    expect(await web.store('home.teams', document)).deep.equals({
-      ...document,
-      pending: false
-    })
-    expect(await web.storeServer('home.teams', document)).deep.equals({
-      ...document,
-      pending: false
-    })
-    expect(await web.read('home.teams')).equals(undefined)
-    let refused: unknown
-    try {
-      await web.atomically(async () => undefined)
-    } catch (error) {
-      refused = error
-    }
-    expect(refused).property('message').equals('The web keeps no outbox')
-    await web.close()
-    await web.destroy()
   })
 
   it('queues, updates and removes writes, and records players made on the phone', async function () {

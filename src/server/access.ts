@@ -830,6 +830,35 @@ export async function planTeams(
   )
 }
 
+/**
+ * The teams where this person was given `role` as such: on the team, on a
+ * season it belongs to or on its league, carried down. As `planTeams` reads
+ * the coach flag, nothing an administrator holds counts: not the flags
+ * `admin` implies, not a team's owner or manager, and not a site
+ * administrator. The rows merged into this person count as theirs; a
+ * disabled account holds nothing.
+ */
+export async function explicitRoleTeams(
+  db: Kysely<Database>,
+  userIds: readonly string[],
+  role: Role
+): Promise<Set<string>> {
+  const open = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', anyOf(userIds))
+    .where('disabled_at', 'is', null)
+    .execute()
+  if (open.length === 0) return new Set()
+  const directs = await directRolesOfEach(
+    db,
+    open.map(row => row.id)
+  )
+  const given = [...directs.values()].map(roles => roles[role])
+  await inheritSets(db, given)
+  return new Set(given.flatMap(set => [...set.teamIds]))
+}
+
 /** Scorekeepers can edit player settings and view full names because they
  * may be the only person responsible for maintaining the team roster.
  * This intentional roster-management exception must survive broader

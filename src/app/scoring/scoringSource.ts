@@ -14,10 +14,7 @@ import {
   type ScoringAction,
   usesOverrideSlots
 } from '../../common/scoring/actions'
-import {
-  sameScoringMutation,
-  type ScoringMutation
-} from '../../common/scoring/scoringMutation'
+import { gameRosterEntries } from '../../common/scoring/rosterAvailability'
 import {
   type EventStore,
   sameAction,
@@ -27,6 +24,7 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import { appearedIn, reconcileRoster } from '../../common/scoring/startingSetup'
+import type { Side } from '../../common/scoring/state'
 import { withNames } from '../../common/scoring/storedNames'
 import { deviceStorage } from '../platform/deviceStorage'
 import {
@@ -56,9 +54,9 @@ export interface ScoringSource {
    */
   keepTime?: () => () => void
   /**
-   * Opens the game. `held`, on the web after a swap of its own the server
-   * has not answered: opened on the swapped copy the screen holds, never
-   * read, and its saves sent once the swap is. `storedFirst`, for the
+   * Opens the game. `held`, after a swap of its own: opened on the swapped
+   * documents the queue wrote, never read, its saves queued behind the
+   * swap. `storedFirst`, for the
    * scoring screen alone: the defaults and the first read of the plays are
    * the phone's stored ones; every other caller reads the server.
    * `offlineFirst`, for Coach Game: those two reads are the phone's stored
@@ -69,33 +67,20 @@ export interface ScoringSource {
     away: RosterEntry[],
     home: RosterEntry[],
     held?: HeldOpening,
-    options?: { storedFirst?: boolean; offlineFirst?: boolean }
+    options?: OpenOptions
   ) => Promise<ScoringSession>
 }
 
 /**
  * A game opened from the copy a swap of this screen's own left, read from
- * nothing: on the web the one still out (`WebWrites.held`), on a phone the
- * documents its queue wrote swapped (`CachingClient.queueSwap`).
+ * nothing: the documents the queue wrote swapped (`CachingClient.queueSwap`),
+ * whose saves it sends behind the swap.
  */
 export interface HeldOpening {
   /** The plays as the swap leaves them, its lineups digest the swap's own. */
   events: StoredGame
   /** Both teams' default lineups, by the new sides. */
   defaults: DefaultLineups
-  /**
-   * The web's: settles once the server took the swap, with the lineups
-   * digest its answer gave the new sides (none from an older server);
-   * rejects once it refused it. A phone's queue sends each save behind the
-   * swap itself.
-   */
-  landed?: Promise<string | undefined>
-  /**
-   * The web's: the accepted scoring its swap was sent on, once `landed`
-   * settled. A save built on the base the swapped copy opened with is
-   * sent on this instead, as the changes ahead of the swap advanced it.
-   */
-  scoringBase?: () => ScoringMutation | null | undefined
 }
 
 function context(
@@ -113,6 +98,34 @@ function context(
   }
 }
 
+/** How the scoring screen, or Coach Game, opens a game. */
+export interface OpenOptions {
+  storedFirst?: boolean
+  offlineFirst?: boolean
+  /**
+   * The scoring screen's open (#358): the defaults are what the device
+   * stored, or none at once, the server asked behind. (The plays are read
+   * stored-first: with none stored, the server is read, the one wait.)
+   */
+  storedOrNothing?: { gameId: string; waitMs?: number }
+  /**
+   * The sides whose roster the device did not have: reconciled against the
+   * players their records field until the roster is read.
+   */
+  standInSides?: Side[]
+  /** Both teams' default lineups, when the screen has just read them. */
+  defaults?: DefaultLineups
+}
+
+/**
+ * How long the scoring screen's open waits for a read the device has
+ * nothing stored for (the roles, a roster, a default lineup): on a working
+ * connection its answer comes first, and a new game starts from it; a
+ * stalled server costs no more than this, and a refusal (a team whose
+ * default this reader may not see) nothing (#358).
+ */
+export const DEFAULT_LINEUP_WAIT_MS = 1500
+
 /**
  * Both teams' default lineups. A default that fails to load is none, so the
  * side starts from its roster. `storedFirst`, for the scoring screen as it
@@ -122,12 +135,29 @@ export async function defaultsOf(
   client: TeamStationClient,
   game: GameDetail,
   storedFirst = false,
-  offlineFirst = false
+  offlineFirst = false,
+  /**
+   * The scoring screen's open: what is stored or, with nothing stored, the
+   * server's answer if it comes within a moment, else none.
+   */
+  storedOrNothing?: { gameId: string; waitMs?: number }
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> => {
     try {
-      return (await client.defaultLineup(teamId, { storedFirst, offlineFirst }))
-        .lineup
+      return (
+        await client.defaultLineup(teamId, {
+          storedFirst,
+          offlineFirst,
+          ...(storedOrNothing == null
+            ? {}
+            : {
+                storedOrNothing: {
+                  waitMs: DEFAULT_LINEUP_WAIT_MS,
+                  ...storedOrNothing
+                }
+              })
+        })
+      ).lineup
     } catch {
       return null
     }
@@ -314,11 +344,13 @@ export class ServerScoringSource implements ScoringSource {
     away: RosterEntry[],
     home: RosterEntry[],
     opening?: HeldOpening,
-    options?: { storedFirst?: boolean; offlineFirst?: boolean }
+    options?: OpenOptions
   ): Promise<ScoringSession> {
     const client = this.client
     const storedFirst = options?.storedFirst === true
     const offlineFirst = options?.offlineFirst === true
+    const alone = options?.storedOrNothing
+    const standIn = new Set(options?.standInSides ?? [])
     let currentGame = game
     let rosters = { away, home }
     let first = true
@@ -327,7 +359,8 @@ export class ServerScoringSource implements ScoringSource {
     // every read it waits on is the phone's stored one, when it has one.
     const defaults =
       opening?.defaults ??
-      (await defaultsOf(client, game, storedFirst, offlineFirst))
+      options?.defaults ??
+      (await defaultsOf(client, game, storedFirst, offlineFirst, alone))
     // The context for the game's teams as last read, rebuilt only when they
     // change: every read gives the one its teams call for, whether or not
     // the session keeps that read.
@@ -345,6 +378,8 @@ export class ServerScoringSource implements ScoringSource {
             client.roster(game.homeTeamId)
           ])
           rosters = { away, home }
+          // Both rosters are read now: no side stands in any longer.
+          standIn.clear()
         }
         const later = !first
         if (later) await readTeams(await client.game(gameId))
@@ -391,37 +426,8 @@ export class ServerScoringSource implements ScoringSource {
           }
         return { ...stored, context: held.context }
       },
-      save: async (gameId, change, handoff) => {
-        if (opening?.landed == null)
-          return await client.saveGameEvents(gameId, change, handoff)
-        // Behind the swap, as a phone's queue sends it; built on the swap's
-        // own lineups digest, it names the one the swap's answer gave the new
-        // sides, so lineups another device saved since are refused as stale.
-        // An older server answers none: it is read again.
-        const swapped = await opening.landed
-        // Built on the accepted scoring the swapped copy opened with, it
-        // names what the session's changes ahead of the swap left: the
-        // first accepted timeline is the session's own, not a stale base.
-        const sentBase = opening.scoringBase?.()
-        const based =
-          sentBase !== undefined &&
-          change.scoringBase !== undefined &&
-          sameScoringMutation(
-            change.scoringBase,
-            opening.events.scoringMutation ?? null
-          )
-            ? { ...change, scoringBase: sentBase }
-            : change
-        if (based.lineupsBase !== opening.events.lineupsDigest)
-          return await client.saveGameEvents(gameId, based)
-        const { lineupsBase: _swapped, ...rest } = based
-        const lineupsDigest =
-          swapped ?? (await client.gameEvents(gameId)).lineupsDigest
-        return await client.saveGameEvents(
-          gameId,
-          lineupsDigest == null ? rest : { ...rest, lineupsBase: lineupsDigest }
-        )
-      }
+      save: async (gameId, change, handoff) =>
+        await client.saveGameEvents(gameId, change, handoff)
     }
     const session = await ScoringSession.open(store, game.id, held.context, {
       requireCurrentSetup: true,
@@ -430,7 +436,19 @@ export class ServerScoringSource implements ScoringSource {
         reconcileRoster(
           setup,
           teamsOf(currentGame),
-          rosters,
+          // A side whose roster the phone did not have keeps the players
+          // its records field: an empty roster would take them out of the
+          // lineup and off the field.
+          standIn.size === 0
+            ? rosters
+            : {
+                away: standIn.has('away')
+                  ? gameRosterEntries(state, 'away', false)
+                  : rosters.away,
+                home: standIn.has('home')
+                  ? gameRosterEntries(state, 'home', false)
+                  : rosters.home
+              },
           currentGame.guestPlayers,
           currentGame.unrostered,
           appearedIn(state)

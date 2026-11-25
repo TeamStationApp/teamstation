@@ -48,6 +48,7 @@ import {
   lineupsKey,
   rosterKey
 } from './documentKeys'
+import { EDITS_PLACE } from './editsPlace'
 import {
   appliedEvents,
   appliedLineups,
@@ -445,9 +446,21 @@ function backgroundOnly(call: QueuedCall): boolean {
 /** The row id of a player's create: what a write naming him waits for. */
 const createRowId = (localId: number): string => `player-${localId}`
 
+/**
+ * The direct sends a swap or a tag behind them wrote onto the documents
+ * (`written`, with the phone's answer to each) or found written as they were
+ * sent (`builtOn`).
+ */
+interface WrittenAhead {
+  written: Array<{ rowId: string; answer: unknown }>
+  builtOn: string[]
+}
+
 /** Why a write waits for good: a player it names was given up on. */
-export const LOST_PLAYER_MESSAGE =
-  'A player this names was not saved, and was taken off this phone.'
+export const LOST_PLAYER_MESSAGE = `A player this names was not saved, and was taken ${EDITS_PLACE.takenOff}.`
+
+/** Why a swap or tag cannot be queued: the game is not stored here yet. */
+export const GAME_NOT_STORED_MESSAGE = `This game is not ${EDITS_PLACE.stored} yet. Try again in a moment.`
 
 const localIdOfRow = (id: string): number | undefined => {
   const match = /^player-(\d+)$/.exec(id)
@@ -490,9 +503,18 @@ export interface OutboxSummary {
    * other sides, or another play generation, than the phone's.
    */
   swaps?: Record<string, number>
+  /**
+   * Direct sends on their way: written onto the documents and not yet
+   * answered, so not in `count` or on the banner. Absent when there are
+   * none. On the web, closing the tab now loses them.
+   */
+  inFlight?: number
 }
 
 export type OutboxListener = (summary: OutboxSummary) => void
+
+/** What a discard came to (`Outbox.discardOutcome`). */
+export type DiscardOutcome = 'inflight' | 'arrived' | 'pending'
 
 /**
  * Something a queued write came to that its screen should say, once it is
@@ -1100,6 +1122,13 @@ export class Outbox {
    * answer to each, as a queued write's would be.
    */
   private readonly ahead = new Map<string, { answer: unknown }>()
+  /**
+   * Of those, the scoring saves written onto the documents as they were
+   * sent, before anything was queued behind them, so a stored read shows a
+   * play whose save is on its way (#358). A refusal of one is undone and
+   * thrown, as for any direct send: the session acts on it.
+   */
+  private readonly aheadAtSend = new Set<string>()
   /** The number of the phone's last queued tag (`nextLocalTagRevision`). */
   private lastTagRevision = 0
 
@@ -1233,17 +1262,27 @@ export class Outbox {
    * chain with a row in flight is left as it is.
    */
   async discard(chain: string): Promise<boolean> {
+    return (await this.discardOutcome(chain)) === 'arrived'
+  }
+
+  /**
+   * `discard`, answering what it came to: `inflight` when a row of the
+   * chain was on its way and nothing was dropped; `arrived` when the rows
+   * went and the server's copy came back; `pending` when they went and it
+   * did not.
+   */
+  async discardOutcome(chain: string): Promise<DiscardOutcome> {
     const store = await this.options.store()
-    if (store == null) return true
+    if (store == null) return 'arrived'
     const reads = await store.atomically(async tx => {
       const rows = await tx.outbox()
       const own = rows.filter(row => row.chain === chain)
       if (own.some(row => row.state === 'inflight')) return undefined
       return await this.drop(tx, droppedWith(rows, chain))
     })
-    if (reads == null) return false
+    if (reads == null) return 'inflight'
     this.notify()
-    return await this.reread(reads)
+    return (await this.reread(reads)) ? 'arrived' : 'pending'
   }
 
   /**
@@ -1573,12 +1612,14 @@ export class Outbox {
   /** The queue as it stands. */
   async summary(): Promise<OutboxSummary> {
     const store = await this.options.store()
-    const { rows, made } =
+    const { rows, inFlight, made } =
       store == null
-        ? { rows: [], made: new Set<number>() }
+        ? { rows: [], inFlight: 0, made: new Set<number>() }
         : await store.atomically(async tx => ({
             // A direct send in flight is not yet a write the phone holds.
             rows: (await tx.outbox()).filter(row => !this.direct.has(row.id)),
+            inFlight: (await tx.outbox()).filter(row => this.direct.has(row.id))
+              .length,
             made: new Set(
               (await tx.localPlayers())
                 .filter(player => player.serverId != null)
@@ -1597,7 +1638,8 @@ export class Outbox {
       count: rows.length,
       chains: {},
       games: {},
-      teams: {}
+      teams: {},
+      ...(inFlight > 0 ? { inFlight } : {})
     }
     for (const row of rows) {
       summary.chains[row.chain] = (summary.chains[row.chain] ?? 0) + 1
@@ -1719,6 +1761,20 @@ export class Outbox {
         const leaseUntil = this.options.now() + LEASE_MS
         await tx.update(row.id, { state: 'inflight', leaseUntil })
         this.direct.add(row.id)
+        // A play or a lineup on its way is on the phone's documents now, as
+        // a queued one would be, so the screen opened again shows it. One
+        // the documents cannot take is sent as before, written nothing.
+        if (call.kind === 'events' || call.kind === 'lineups') {
+          try {
+            const written = await this.optimistic(tx, callOfRow(row))
+            if (written != null) {
+              this.ahead.set(row.id, { answer: written.answer })
+              this.aheadAtSend.add(row.id)
+            }
+          } catch {
+            // Sent as before.
+          }
+        }
         let settle!: () => void
         this.directSends.set(
           chain,
@@ -1736,6 +1792,8 @@ export class Outbox {
     } catch {
       if (reserving != null) {
         this.direct.delete(reserving.rowId)
+        this.ahead.delete(reserving.rowId)
+        this.aheadAtSend.delete(reserving.rowId)
         this.directSends.delete(chain)
         reserving.settle()
       }
@@ -1774,6 +1832,8 @@ export class Outbox {
     }
     // Its row holds its place: what is queued from here on goes behind it.
     handoff?.taken()
+    // On its way: the web's leave warning counts it (`inFlight`).
+    this.notify()
     try {
       return await this.sendReserved(
         store,
@@ -1786,6 +1846,7 @@ export class Outbox {
       )
     } finally {
       done()
+      this.notify()
     }
   }
 
@@ -1832,16 +1893,38 @@ export class Outbox {
     } catch (error: unknown) {
       // Aborted at `giveUp`'s deadline: let go, however the request ended.
       if (request.signal.aborted) released = true
+      // Written onto the documents as it was sent, and refused: undone, and
+      // thrown below as any direct send's refusal is, for the session to
+      // rebase, take the game as replaced, or say why. Sent again later
+      // (no signal, too old to save), it stays the queue's, as below.
+      let undo = false
+      if (this.aheadAtSend.has(row.id)) {
+        const outcome = released
+          ? { kind: 'retry' }
+          : request.signal.aborted
+            ? { kind: 'retry' }
+            : outcomeOf(error, call)
+        if (outcome.kind !== 'retry' && !isUpdateRequired(error)) {
+          undo = true
+          this.ahead.delete(row.id)
+          this.aheadAtSend.delete(row.id)
+        }
+      }
       // A swap or a tag behind it was written after it onto the phone's
       // documents: it is the queue's now, as a queued write is.
       const ahead = this.ahead.get(row.id)
       if (ahead != null) {
+        // Written as it was sent, and let go: kept for `giveUp` as any
+        // direct send let go is.
+        if (released && sent != null && this.aheadAtSend.has(row.id))
+          this.keepReleased(key, chain, sent)
         try {
           return await this.queuedAhead(store, call, row, body, error, ahead, {
             released
           })
         } finally {
           this.ahead.delete(row.id)
+          this.aheadAtSend.delete(row.id)
           this.direct.delete(row.id)
         }
       }
@@ -1851,6 +1934,7 @@ export class Outbox {
       if (!released && !update && !isRetryable(error, call)) {
         await store
           .atomically(async tx => {
+            if (undo) await this.undoAhead(tx, call, row)
             await tx.remove(row.id)
           })
           .catch(() => undefined)
@@ -1860,20 +1944,7 @@ export class Outbox {
       }
       // Let go by the session, it is no sign of the network; its request is
       // still out, and whether the server took it is kept for `giveUp`.
-      if (released && sent != null)
-        this.released.set(key, {
-          chain,
-          // Let go with its request out: a refusal says the server did not
-          // take it; any other failure (no answer, no signal) says nothing,
-          // and the give-up counts it unsure (`undefined`).
-          kept: sent.then(
-            taken => (taken as Json | null)?.superseded !== true,
-            (failed: unknown) =>
-              failed instanceof HttpError && failed.code !== 'offline'
-                ? false
-                : undefined
-          )
-        })
+      if (released && sent != null) this.keepReleased(key, chain, sent)
       if (update) this.outdated.add(chain)
       else if (!released)
         this.failed(
@@ -1924,6 +1995,7 @@ export class Outbox {
       })
     } finally {
       this.ahead.delete(row.id)
+      this.aheadAtSend.delete(row.id)
       this.direct.delete(row.id)
     }
     // Answered and stored: a give-up waits no more for this send, only
@@ -1984,6 +2056,100 @@ export class Outbox {
   }
 
   /**
+   * A direct send the session let go with its request still out: whether
+   * the server took it, for `giveUp` to count. A refusal says it did not;
+   * any other failure (no answer, no signal) says nothing, and the give-up
+   * counts it unsure (`undefined`).
+   */
+  private keepReleased(
+    key: string,
+    chain: string,
+    sent: Promise<unknown>
+  ): void {
+    this.released.set(key, {
+      chain,
+      kept: sent.then(
+        taken => (taken as Json | null)?.superseded !== true,
+        (failed: unknown) =>
+          failed instanceof HttpError && failed.code !== 'offline'
+            ? false
+            : undefined
+      )
+    })
+  }
+
+  /**
+   * Takes back a direct send written onto the documents as it was sent and
+   * then refused: each document it wrote is the server's copy again, with
+   * what is still queued behind it written over that, or forgotten when the
+   * phone kept no server copy of it.
+   */
+  private async undoAhead(
+    tx: CacheTransaction,
+    call: QueuedCall,
+    row: OutboxRow
+  ): Promise<void> {
+    if (call.kind !== 'events' && call.kind !== 'lineups') return
+    const key = ownKey(call)
+    const held = await tx.read(key)
+    if (held == null) return
+    // A write of its chain queued behind it that writes this document holds
+    // the copy, with its plays, until it lands, as a give-up keeps it; with
+    // none, it is read again. A row that cannot be read is taken to write it.
+    const writesKey = (other: OutboxRow): boolean => {
+      try {
+        return documentsOf(callOfRow(other)).some(doc => doc.key === key)
+      } catch {
+        return true
+      }
+    }
+    const heldBehind = (await tx.outbox()).some(
+      other =>
+        other.id !== row.id && other.chain === row.chain && writesKey(other)
+    )
+    /** Unheld first: `forget` keeps a document a queued write holds. */
+    const reread = async (): Promise<void> => {
+      if (heldBehind) return
+      if (held.pending) await tx.write(key, { ...held, pending: false })
+      await tx.forget(key)
+    }
+    if (held.serverBody == null) {
+      await reread()
+      return
+    }
+    let behind: OutboxRow[]
+    let document: ReturnType<typeof parsed>
+    try {
+      behind = (await tx.outbox()).filter(
+        other =>
+          other.id !== row.id &&
+          other.chain === row.chain &&
+          documentsOf(callOfRow(other)).some(doc => doc.key === key)
+      )
+      document = parsed(held.serverBody)
+      for (const other of behind)
+        document = await this.reapplied(
+          tx,
+          callOfRow(other),
+          key,
+          document,
+          parsed(other.body)
+        )
+    } catch (error) {
+      // A copy that cannot be rebuilt is let be, so the refused write
+      // still goes: left in flight, it would be sent again.
+      console.warn('Could not undo a refused write on the stored copy:', error)
+      await reread()
+      return
+    }
+    await tx.write(key, {
+      ...held,
+      body: JSON.stringify(document),
+      pending: behind.length > 0
+    })
+  }
+
+  /**
    * Before a swap or a tag is queued behind a write of its game still in
    * flight (a direct send, whose row holds its place), that write goes onto
    * the phone's documents as the phone would answer it, so the swap
@@ -1994,20 +2160,38 @@ export class Outbox {
   private async writeAhead(
     tx: CacheTransaction,
     call: QueuedCall
-  ): Promise<void> {
+  ): Promise<WrittenAhead> {
     const chain = chainOf(call)
+    const ahead: WrittenAhead = { written: [], builtOn: [] }
     for (const row of await tx.outbox()) {
-      if (
-        row.chain !== chain ||
-        !this.direct.has(row.id) ||
-        this.ahead.has(row.id)
-      )
+      if (row.chain !== chain || !this.direct.has(row.id)) continue
+      // Written as it was sent: the swap or the tag is built on it now.
+      if (this.ahead.has(row.id)) {
+        ahead.builtOn.push(row.id)
         continue
+      }
       const direct = callOfRow(row)
       if (direct.kind !== 'events' && direct.kind !== 'lineups') continue
       const written = await this.optimistic(tx, direct)
-      if (written != null) this.ahead.set(row.id, { answer: written.answer })
+      if (written != null)
+        ahead.written.push({ rowId: row.id, answer: written.answer })
     }
+    return ahead
+  }
+
+  /**
+   * What `writeAhead` wrote, recorded once nothing in its transaction can
+   * throw: a transaction rolled back leaves each send as it was. With
+   * nothing queued behind them (`queued` false), the sends it wrote are
+   * built on by nothing, so a refusal undoes them as one written at send.
+   */
+  private tookAhead(ahead: WrittenAhead, queued: boolean): void {
+    for (const { rowId, answer } of ahead.written) {
+      this.ahead.set(rowId, { answer })
+      if (!queued) this.aheadAtSend.add(rowId)
+    }
+    if (queued)
+      for (const rowId of ahead.builtOn) this.aheadAtSend.delete(rowId)
   }
 
   /** Writes `call` onto the documents and queues it, in one transaction. */
@@ -2034,10 +2218,7 @@ export class Outbox {
     if (answer === undefined)
       throw cause instanceof Error
         ? cause
-        : new HttpError(
-            'unavailable',
-            'This game is not on the phone yet. Try again in a moment.'
-          )
+        : new HttpError('unavailable', GAME_NOT_STORED_MESSAGE)
     this.idle = false
     this.notify()
     this.wake()
@@ -2092,11 +2273,16 @@ export class Outbox {
         }
       }
     }
-    if (alwaysQueued(call)) await this.writeAhead(tx, call)
+    const ahead = alwaysQueued(call)
+      ? await this.writeAhead(tx, call)
+      : { written: [], builtOn: [] }
     const rows = await tx.outbox()
     const dependsOn = await this.dependencies(tx, rows, call.body)
     const written = await this.optimistic(tx, call)
-    if (written == null) return undefined
+    if (written == null) {
+      this.tookAhead(ahead, false)
+      return undefined
+    }
     const log = logOf(call)
     // A game's newest log holds every earlier one: only it is kept.
     if (log != null)
@@ -2122,6 +2308,7 @@ export class Outbox {
       log,
       ...(replaces == null ? {} : { seq: replaces.seq })
     })
+    this.tookAhead(ahead, true)
     return written.answer
   }
 
@@ -2635,8 +2822,24 @@ export class Outbox {
       teamId: call.teamId,
       body: JSON.stringify(entry)
     })
+    // Only the whole names kept (a scoring screen read those): the roster
+    // every other screen reads is theirs without them, so the new player is
+    // listed there too until his create lands.
+    const plainOf = (body: string): string =>
+      JSON.stringify(listOf(body).map(plainEntry))
+    const shownPlain: StoredDocument | undefined =
+      plain ??
+      (full == null
+        ? undefined
+        : {
+            ...full,
+            body: plainOf(full.body),
+            serverDigest: null,
+            serverBody:
+              full.serverBody == null ? null : plainOf(full.serverBody)
+          })
     for (const [key, document, shown] of [
-      [rosterKey(call.teamId), plain, plainEntry(entry)],
+      [rosterKey(call.teamId), shownPlain, plainEntry(entry)],
       [fullRosterKey(call.teamId), full, entry]
     ] as const)
       if (document != null)

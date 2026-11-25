@@ -36,8 +36,8 @@ import {
 } from '../components'
 import { CreationCard } from '../components/CreationCard'
 import { useSceneShown } from '../components/sceneShown'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { loggedFetch, playbackOutcome } from '../player/playbackFetchLog'
 import { HOME_GUARDED, HOME_LISTS, HOME_RECENT } from '../sync/documentKeys'
@@ -165,7 +165,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   }, [client, beginRecent, inWindow])
   // Each of Home's three loads waits for the home scope's acknowledgement,
   // and reads again, through its own gate, on that scope's notices.
-  useForegroundRefresh(useScreenScope(refreshRecent, client, paintRecent))
+  useNoticedRead(useScreenScope(refreshRecent, client, paintRecent))
 
   /**
    * The recent game's own video, so the card moves rather than sitting there.
@@ -235,9 +235,9 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
    * in an hour.
    */
   const beginLook = useLatestRequest()
-  // The live list is asked every half minute while the page is open: only
-  // its first answer, a change in how many games are live, or a slow answer
-  // is worth a log line, so an idle page does not log for ever.
+  // The live list is asked when the page opens and on each of the home
+  // scope's notices: only its first answer, a change in how many games are
+  // live, or a slow answer is worth a log line.
   const liveCountSaid = useRef<number | undefined>(undefined)
   const look = useCallback(async (): Promise<void> => {
     const current = beginLook()
@@ -267,7 +267,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       // The URL carries a token minted for this request, so asking again for
       // the game already playing would hand the player a different address for
       // the same stream — and it would tear the stream down and start it
-      // again, every half minute, in front of somebody watching.
+      // again, on every notice, in front of somebody watching.
       if (playing.current === first.videoId) return
       const playback = await loggedFetch(
         { kind: 'playback', surface: 'card', videoId: first.videoId },
@@ -287,20 +287,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   // pulled twice. Its first look still runs, and Back picks both up again.
   const shown = useSceneShown()
   const looked = useRef(false)
+  // A game starting while somebody has the page open is a notice of that
+  // game to the home scope, which reads the live list again.
   useEffect(() => {
     if (!shown && looked.current) return
     looked.current = true
     lookLive().catch(() => undefined)
-    if (!shown) return
-    // A game starts while somebody has the page open — which is the whole
-    // point of a live block — so it is looked at again on a slow timer rather
-    // than only when the screen is opened.
-    const timer = setInterval(() => {
-      lookLive().catch(() => undefined)
-    }, 30_000)
-    return () => {
-      clearInterval(timer)
-    }
   }, [lookLive, shown])
 
   // Whether Home can open a player or a group at all, not which function

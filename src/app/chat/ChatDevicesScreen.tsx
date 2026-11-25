@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { ChatDevice, ChatPendingLink } from '../../common/api'
+import type { GameSocket } from '../../common/gameSocket'
 import {
   Button,
   Card,
@@ -10,6 +11,7 @@ import {
   Screen,
   SectionHeader
 } from '../components'
+import { useUserTopic } from '../hooks/useUserTopic'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -29,9 +31,6 @@ import { keyStore } from './keyStore'
 import { LinkDeviceScreen } from './LinkDeviceScreen'
 import { thisDevice } from './thisDevice'
 
-/** How often the list is read again while it is open. */
-export const DEVICES_POLL_MS = 3000
-
 export interface ChatDevicesScreenProps {
   client: ChatKeysClient
   userId: string
@@ -39,7 +38,10 @@ export interface ChatDevicesScreenProps {
   store?: ChatKeyStore
   /** How this device names itself; read from the platform by default. */
   device?: { name: string; platform: 'web' | 'ios' | 'android' }
+  /** How often a link with no socket asks whether it was approved. */
   pollMs?: number
+  /** The person's socket, whose chat hints answer a link; none polls. */
+  socket?: Pick<GameSocket, 'onChat'>
 }
 
 interface Listing {
@@ -73,7 +75,6 @@ export function ChatDevicesScreen(
 function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
   const { client, userId } = props
   const store = props.store ?? keyStore
-  const pollMs = props.pollMs ?? DEVICES_POLL_MS
   const styles = getStyles(useTheme())
   const approvals = useDeviceApprovals()
   const setup = useRef({
@@ -120,8 +121,14 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
     return { devices, links }
   }, [client])
 
-  // The list, and again every few seconds while it is open, so a new
-  // device's request shows up without a reload.
+  // The list, and again as the approvals change (the socket's chat hints)
+  // and on the person's bell (a device asking to be approved rings it), so a
+  // new device's request shows up without a reload.
+  const [rung, setRung] = useState(0)
+  const ring = useCallback(async (): Promise<void> => {
+    setRung(value => value + 1)
+  }, [])
+  useUserTopic('badge', ring, undefined, { readNow: false })
   useEffect(() => {
     if (record == null) return
     let live = true
@@ -140,12 +147,10 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
         })
     }
     read()
-    const timer = setInterval(read, pollMs)
     return () => {
       live = false
-      clearInterval(timer)
     }
-  }, [load, pollMs, record, approvals.state.revision])
+  }, [load, record, approvals.state.revision, rung])
 
   const act = (key: string, work: () => Promise<void>): void => {
     setBusy(key)
@@ -170,6 +175,7 @@ function ChatDevices(props: ChatDevicesScreenProps): React.ReactElement {
         store={store}
         device={setup.device}
         pollMs={props.pollMs}
+        socket={props.socket}
         onDone={() => {
           setLinking(false)
           setRound(current => current + 1)

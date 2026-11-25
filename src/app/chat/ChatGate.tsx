@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Text } from 'react-native'
 
+import type { GameSocket } from '../../common/gameSocket'
 import { Button, Screen } from '../components'
 import { useShowsModal } from '../components/modalPresence'
 import { lstrings } from '../locales/strings'
@@ -22,6 +23,8 @@ export interface ChatGateProps {
   store?: ChatKeyStore
   device?: { name: string; platform: 'web' | 'ios' | 'android' }
   pollMs?: number
+  /** The person's socket, whose chat hints answer a link; none polls. */
+  socket?: Pick<GameSocket, 'onChat'>
   /** Told why chat did not start, each time it does not (`chatStartLog`). */
   onFailure?: (error: unknown) => void
   children: React.ReactNode
@@ -98,6 +101,7 @@ export function ChatGate(props: ChatGateProps): React.ReactElement {
         store={props.store}
         device={props.device}
         pollMs={props.pollMs}
+        socket={props.socket}
         onDone={() => {
           setRound(current => current + 1)
         }}

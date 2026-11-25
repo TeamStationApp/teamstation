@@ -60,6 +60,9 @@ export const PLACEHOLDER_TEAMS = 'placeholder.teams'
 /** How many placeholder teams that document keeps. */
 export const PLACEHOLDERS_KEPT = 500
 
+/** The games the phone keeps to score with no signal (`OfflineScoringSet`). */
+export const OFFLINE_SET = 'offline.set'
+
 /** The team a search of `GET /users?forTeam=` is for, or none. */
 export function candidatesTeamOf(path: string): string | undefined {
   if (!path.startsWith('/users?')) return undefined
@@ -134,6 +137,8 @@ const NETWORK_ONLY: RegExp[] = [
   // A stored live list would offer a stream the phone cannot play.
   /^\/live(\/|$)/,
   /^\/me\/(builds|api-keys)(\/|$)/,
+  // Which games to keep is asked anew; the games themselves are stored.
+  /^\/me\/offline-scoring$/,
   // The address expires, and the stream does not play offline.
   /^\/videos\/[^/]+\/(playback|wall-timeline)$/,
   /^\/games\/[^/]+\/scoreboard-timeline$/,

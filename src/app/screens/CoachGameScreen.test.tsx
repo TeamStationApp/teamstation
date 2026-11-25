@@ -1549,7 +1549,7 @@ describe('Coach Game (U25)', function () {
     expect(held.saved).has.length(0)
   })
 
-  it('retries a failed coach play refresh without another notice', async function () {
+  it('retries a failed coach play refresh once the network is back, without another notice', async function () {
     const held = server()
     const changes = new FakeChanges()
     await coach(held, { socket: changes })
@@ -1560,6 +1560,10 @@ describe('Coach Game (U25)', function () {
       return await original(gameId)
     }
     await changes.change('playEdits')
+    await waitFor(() => attempts === 1, 'the failed play read')
+    await act(async () => {
+      window.dispatchEvent(new window.Event('online'))
+    })
     await waitFor(() => attempts === 2, 'the failed play read to retry')
     expect(node('Save Rosters')).not.equals(null)
   })

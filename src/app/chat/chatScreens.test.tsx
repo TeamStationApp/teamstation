@@ -20,6 +20,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { CHAT_USER, FakeKeys, MemoryStore } from '../../test/chatKeysFake'
 import { FakeSearchServer } from '../../test/fakeSearchSocket'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { windowSize } from '../../test/tessTestKit'
 import { App } from '../App'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -54,6 +55,8 @@ import { LINK_POLL_MS, LinkDeviceScreen } from './LinkDeviceScreen'
 import { browserName, thisDevice } from './thisDevice'
 import { thisDevice as phoneDevice } from './thisDevice.native'
 
+const notices = new ScreenNotices()
+
 /**
  * U11, the screens: Chat devices, Link this device, and the account
  * screen's row and sign-out, against a stand-in for the key routes that
@@ -81,7 +84,11 @@ async function render(element: React.ReactElement): Promise<void> {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root!.render(<ThemeProvider>{element}</ThemeProvider>)
+    root!.render(
+      <ThemeProvider>
+        <NoticesProvider notices={notices}>{element}</NoticesProvider>
+      </ThemeProvider>
+    )
     await delay(20)
   })
 }
@@ -89,7 +96,11 @@ async function render(element: React.ReactElement): Promise<void> {
 /** Renders again in the same place, so a screen there is kept. */
 async function rerender(element: React.ReactElement): Promise<void> {
   await act(async () => {
-    root!.render(<ThemeProvider>{element}</ThemeProvider>)
+    root!.render(
+      <ThemeProvider>
+        <NoticesProvider notices={notices}>{element}</NoticesProvider>
+      </ThemeProvider>
+    )
     await delay(20)
   })
 }
@@ -107,6 +118,9 @@ async function until(
 ): Promise<void> {
   for (let i = 0; i < Math.ceil(timeoutMs / 20); i++) {
     if (check()) return
+    // What the fake server changed reaches the screens as the person's
+    // bell would say it.
+    await notices.ring()
     await settle(20)
   }
   throw new Error(`Timed out waiting for ${what}`)
@@ -992,6 +1006,42 @@ describe('Chat devices', function () {
       b64(fake.identity!.keys.secretKey)
     )
     expect(linked.puks).length(1)
+  })
+
+  it('waits on the socket’s link hint, never a timer, to see the code answered', async function () {
+    const fake = new FakeKeys()
+    fake.withOtherDevice('Pixel 10')
+    const store = new MemoryStore()
+    let hint: ((event: ChatSocketEvent) => void) | undefined
+    await render(
+      <ChatDevicesScreen
+        client={fake.client()}
+        userId={USER}
+        store={store}
+        device={DEVICE}
+        pollMs={40}
+        socket={{
+          onChat: listener => {
+            hint = listener
+            return () => {
+              hint = undefined
+            }
+          }
+        }}
+      />
+    )
+    await until('the code', () => text().includes('Link this device'))
+    const asked = fake.calls.filter(call => call === 'chatLink').length
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(
+      fake.calls.filter(call => call === 'chatLink').length,
+      'no read on a timer'
+    ).equals(asked)
+    fake.approve(store.record().pendingLinkId!)
+    await act(async () => {
+      hint?.({ type: 'chatUser', kind: 'link' })
+    })
+    await until('the list', () => text().includes('YOUR DEVICES'))
   })
 })
 

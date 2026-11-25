@@ -19,13 +19,13 @@ import {
 } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
-import {
-  type InviteInfo,
-  type MyRoles,
-  type SeasonSummary,
-  type Session,
+import type {
+  InviteInfo,
+  MyRoles,
+  SeasonSummary,
+  Session,
   TeamStationClient,
-  type TeamSummary
+  TeamSummary
 } from '../common/api'
 import { asTeamSummary } from '../common/api'
 import { GameSocket, type ScreenScope } from '../common/gameSocket'
@@ -84,6 +84,7 @@ import { AppSidebar } from './components/AppSidebar'
 import { PictureDirectoriesContext } from './components/CachedPicture'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
+import { HeldEditsSheet } from './components/HeldEditsSheet'
 import { ModalPresenceProvider } from './components/modalPresence'
 import { OfflineBanner } from './components/OfflineBanner'
 import { useSidebarWidth } from './components/sidebarLayout'
@@ -96,8 +97,8 @@ import {
   SearchSocketFactoryContext
 } from './hooks/searchSocketFactory'
 import { useForegroundEntry } from './hooks/useForegroundEntry'
-import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
+import { UserTopicProvider, useUserTopic } from './hooks/useUserTopic'
 import { lstrings, sprintf } from './locales/strings'
 import { routeOfUrl } from './navigation/deepLink'
 import {
@@ -235,21 +236,23 @@ import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
+import { openDocumentCache } from './sync/cache'
 import {
   CachingClient,
   OFFLINE_CREATE_MESSAGE,
   type OpenDocumentCache
 } from './sync/cachingClient'
-import type { HeldChain } from './sync/outbox'
 import { watchReachability } from './sync/reachability'
 import { leaveStalledConnections } from './sync/stalledConnections'
 import { timedRequest } from './sync/timedRequests'
 import {
-  heldTeamText,
+  heldEdits,
   offlineBannerText,
   unsentLossText,
+  useHeldNames,
   useOutboxSummary,
-  usePhoneOffline
+  usePhoneOffline,
+  useUnsentEditsWarning
 } from './sync/useOffline'
 import { TessDivider } from './tess/TessDivider'
 import { usePaneAtLeast, useTessWide, useTessWidth } from './tess/tessLayout'
@@ -318,9 +321,10 @@ export interface AppProps {
    */
   forgetSessionCookie?: () => Promise<void>
   /**
-   * Opens a person's document cache. Given (on the phone), the client keeps
-   * the documents it can show offline; the web keeps none and is not given
-   * one.
+   * Opens a person's document cache, where the client keeps the documents
+   * it can show offline and the outbox of edits still to send. By default
+   * `./sync/cache`'s: the phone's SQLite file (`cache.native.ts`), or on
+   * the web an in-memory database of the tab's own (`cache.ts`).
    */
   documentCache?: OpenDocumentCache
   /** Makes the Search tab's socket; a test passes one that opens none. */
@@ -521,36 +525,37 @@ function Shell(props: AppProps): React.ReactElement {
     setBackOverride(() => handler)
   }, [])
 
-  const { initialToken, onToken, onUser, documentCache, forgetSessionCookie } =
-    props
+  const {
+    initialToken,
+    onToken,
+    onUser,
+    documentCache = openDocumentCache,
+    forgetSessionCookie
+  } = props
   /** The phone's cookie jar lets go of the session, whatever else answers. */
   const forgetCookie = async (): Promise<void> => {
     await forgetSessionCookie?.().catch(() => undefined)
   }
   // One client for as long as the app runs, kept across sign-out and the next
-  // sign-in. On the phone it keeps documents, in a file opened only once a
-  // user id is known.
+  // sign-in. It keeps documents and queues edits, in a cache opened only
+  // once a user id is known: a file on the phone, memory on the web.
   const client = useMemo(
     () =>
-      documentCache == null
-        ? new TeamStationClient({
-            baseUrl: apiBaseUrl,
-            token: initialToken,
-            passwordKdf,
-            deviceModel: signInDeviceModel()
-          })
-        : new CachingClient({
-            baseUrl: apiBaseUrl,
-            token: initialToken,
-            passwordKdf,
-            deviceModel: signInDeviceModel(),
-            openCache: documentCache,
-            onDeadlineMissed: leaveStalledConnections,
-            ...(timedRequest == null ? {} : { timedRequest })
-          }),
+      new CachingClient({
+        baseUrl: apiBaseUrl,
+        token: initialToken,
+        passwordKdf,
+        deviceModel: signInDeviceModel(),
+        openCache: documentCache,
+        onDeadlineMissed: leaveStalledConnections,
+        ...(timedRequest == null ? {} : { timedRequest })
+      }),
     [apiBaseUrl, initialToken, documentCache]
   )
   const caching = client instanceof CachingClient ? client : undefined
+  // Only the phone's shell gives the App a cache that outlives it: a tab
+  // keeps nothing past its own life, and keeps no games to score offline.
+  const keepsDocuments = props.documentCache != null
   useEffect(() => {
     client.analyticsApp = analytics?.app
     client.captureAnalytics =
@@ -643,7 +648,6 @@ function Shell(props: AppProps): React.ReactElement {
         setHasPending(false)
     }
   }, [client, notificationUser])
-  useForegroundRefresh(refreshNotifications)
   // A device already allowed to notify registers again for each session it
   // is signed in with, at start and after a sign-in, with the switches it
   // keeps for this person, so the server knows where to wake them.
@@ -960,25 +964,31 @@ function Shell(props: AppProps): React.ReactElement {
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
   useResumePendingUploads(client, signedInAs)
-  // The phone's banner: the last request could not leave the device, and
-  // what its queue holds. The web's client is never offline here.
+  // The offline banner: the last request could not leave the device, and
+  // what its queue holds, on the phone and the web alike. The page warns
+  // before it unloads while the queue holds an edit.
   const phoneOffline = usePhoneOffline(client)
   const outbox = useOutboxSummary(client, signedInAs)
+  useUnsentEditsWarning(outbox)
   const bannerText =
     signedInAs == null ? undefined : offlineBannerText(phoneOffline, outbox)
   const [createRefused, setCreateRefused] = useState(false)
-  // A team whose new players the server refused: no screen of its own says
-  // so, and the banner offers what can be done.
-  const [askingTeam, setAskingTeam] = useState<
-    { id: string; state: HeldChain['state'] } | undefined
-  >()
-  const heldTeams = Object.entries(outbox?.teams ?? {}).map(([id, held]) => ({
-    key: id,
-    text: heldTeamText(held),
-    onPress: () => {
-      setAskingTeam({ id, state: held.state })
-    }
-  }))
+  // What the server stopped, games and teams: the banner opens the list
+  // online only. Offline its line counts what waits, holds included, as it
+  // always has: the list's Try Again cannot reach the server, and Use
+  // Server's Copy would delete the phone's edits with no copy to read back.
+  const held = useMemo(() => heldEdits(outbox), [outbox])
+  const [heldOpen, setHeldOpen] = useState(false)
+  const heldNames = useHeldNames(client, held, heldOpen)
+  const closeHeld = useCallback(() => {
+    setHeldOpen(false)
+  }, [])
+  const openHeld =
+    held.length > 0 && !phoneOffline
+      ? () => {
+          setHeldOpen(true)
+        }
+      : undefined
   const [bannerHeight, setBannerHeight] = useState(0)
   useEffect(() => {
     if (!phoneOffline) setCreateRefused(false)
@@ -1068,8 +1078,8 @@ function Shell(props: AppProps): React.ReactElement {
   /**
    * A session the phone opened on its stored user, because the server could
    * not say who it was (no signal, a restart), is asked about again once the
-   * server answers: the first request that leaves the device, the app coming
-   * to the front, and every half minute until it is settled.
+   * server answers: the first request that leaves the device, and the socket
+   * connecting again.
    */
   useEffect(() => {
     if (caching == null || signedInAs == null) return
@@ -1100,58 +1110,53 @@ function Shell(props: AppProps): React.ReactElement {
     const stop = client.subscribeOffline(offline => {
       if (!offline) confirm()
     })
-    const timer = setInterval(confirm, SESSION_CONFIRM_MS)
-    const foreground = AppState.addEventListener('change', state => {
-      if (state === 'active') confirm()
+    const connected = gameSocket?.onStatus(open => {
+      if (open) confirm()
     })
     return () => {
       live = false
       stop()
-      clearInterval(timer)
-      foreground.remove()
+      connected?.()
     }
-  }, [caching, client, signedInAs, sessionRefusedOnPhone])
+  }, [caching, client, signedInAs, sessionRefusedOnPhone, gameSocket])
   useEffect(() => {
     gameSocket?.setToken(client.token)
   }, [client, gameSocket, session])
-  /**
-   * What the phone needs offline, read after the first Home load of a
-   * sign-in, each time the app comes back to the front, and when the server
-   * answers again after no signal. Home reading again on a notice (every
-   * play of a game somebody is scoring) does not read it all ahead again. It
-   * never holds a screen up.
-   */
-  const prefetchDocuments = useCallback((): void => {
-    if (signedInAs != null) caching?.prefetch().catch(() => undefined)
-  }, [caching, signedInAs])
-  const prefetchedFor = useRef<string | undefined>(undefined)
-  const prefetchAfterHome = useCallback((): void => {
-    if (signedInAs == null || prefetchedFor.current === signedInAs) return
-    prefetchedFor.current = signedInAs
-    prefetchDocuments()
-  }, [signedInAs, prefetchDocuments])
   useEffect(() => {
     if (caching == null || signedInAs == null) return
     const subscription = AppState.addEventListener('change', state => {
-      // The queue sends nothing from the background, and coming back to the
-      // front sends it before the reads.
-      caching.setActive(state === 'active')
-      if (state === 'active' && !caching.offline) prefetchDocuments()
+      // The phone's queue sends nothing from the background, and coming
+      // back to the front sends it before the reads. A hidden tab keeps
+      // sending: its queue is only in this tab's memory, which the browser
+      // may discard while the tab is hidden.
+      caching.setActive(Platform.OS === 'web' || state === 'active')
+      if (state === 'active' && !caching.offline) caching.wakeOutbox(true)
     })
-    // The network back only wakes the queue; its next send finds out.
+    // The network back only wakes the queue; its next send finds out. No
+    // read follows: each screen reads what it shows on its own notices.
     const unwatch = watchReachability(() => {
       caching.wakeOutbox(true)
     })
     // A request that leaves the device again, after none could.
     const reconnected = caching.subscribeOffline(offline => {
-      if (!offline) prefetchDocuments()
+      if (!offline) caching.wakeOutbox(true)
     })
     return () => {
       subscription.remove()
       unwatch()
       reconnected()
     }
-  }, [caching, signedInAs, prefetchDocuments])
+  }, [caching, signedInAs])
+  // The phone keeps the games its person may score with no signal, for as
+  // long as they are signed in.
+  useEffect(() => {
+    if (!keepsDocuments || caching == null || gameSocket == null) return
+    if (signedInAs == null) return
+    const set = caching.startOfflineSet(gameSocket)
+    return () => {
+      set.stop()
+    }
+  }, [keepsDocuments, caching, gameSocket, signedInAs])
   /**
    * The chat engine, for as long as somebody is signed in. It hears the
    * socket's chat hints from the start, so they arrive on every screen; it
@@ -1224,10 +1229,16 @@ function Shell(props: AppProps): React.ReactElement {
       deviceApprovals?.stop()
     }
   }, [deviceApprovals])
-  const refreshApprovals = useCallback(async () => {
-    await deviceApprovals?.refresh()
-  }, [deviceApprovals])
-  useForegroundRefresh(refreshApprovals)
+  // The bell and the device approvals read once now, and again on the
+  // person's `badge` notices: a request, a receipt, a device asking to be
+  // approved, its expiry.
+  const refreshBell = useCallback(async () => {
+    await Promise.all([
+      refreshNotifications(),
+      deviceApprovals?.refresh() ?? Promise.resolve()
+    ])
+  }, [refreshNotifications, deviceApprovals])
+  useUserTopic('badge', refreshBell, gameSocket)
   useEffect(() => {
     let revision = deviceApprovals?.snapshot().revision
     return deviceApprovals?.subscribe(() => {
@@ -2381,6 +2392,7 @@ function Shell(props: AppProps): React.ReactElement {
               client={client}
               userId={signedIn.user.id}
               onFailure={reportChatStart}
+              socket={gameSocket}
             >
               {screen}
             </ChatGate>
@@ -2818,7 +2830,6 @@ function Shell(props: AppProps): React.ReactElement {
           }}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
-          onLoaded={prefetchAfterHome}
           onOpenUmpireSchedule={
             umpireLeagues.length === 0
               ? undefined
@@ -3587,7 +3598,11 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'chatDevices' ? (
       locked(signedIn => (
         <ChatCoreGate onUnavailable={reportChatCore}>
-          <ChatDevicesScreen client={client} userId={signedIn.user.id} />
+          <ChatDevicesScreen
+            client={client}
+            userId={signedIn.user.id}
+            socket={gameSocket}
+          />
         </ChatCoreGate>
       ))
     ) : top.name === 'chatReports' ? (
@@ -3600,6 +3615,7 @@ function Shell(props: AppProps): React.ReactElement {
           <LinkDeviceScreen
             client={client}
             userId={signedIn.user.id}
+            socket={gameSocket}
             onDone={() => {
               // Linked or reset: the devices list takes this screen's place,
               // so Back does not return to a finished link.
@@ -4260,8 +4276,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     </TessFrame>
   )
-  const bannerShown =
-    bannerText != null || createRefused || heldTeams.length > 0
+  const bannerShown = bannerText != null || createRefused
   const bottomBanner = bannerShown ? bannerHeight : 0
   // The offline banner is the last chrome: the bottom strip, on the safe-area
   // inset, under the floating capsule, which sits on top of it. A wide window
@@ -4292,7 +4307,7 @@ function Shell(props: AppProps): React.ReactElement {
         ]}
         text={bannerText}
         refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-        held={heldTeams}
+        onOpenHeld={openHeld}
         onLayout={setBannerHeight}
       />
     </>
@@ -4352,143 +4367,137 @@ function Shell(props: AppProps): React.ReactElement {
         <DeviceApprovalContext.Provider value={deviceApprovals}>
           <ChatOverlayHost>
             <TessOverlayProvider active={tessColumn}>
-              <View style={[styles.app, tessColumn && styles.split]}>
-                <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-                  <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
-                    <ScreenScopeProvider
-                      socket={gameSocket}
-                      scope={visibleScope}
+              {/* The person's topics reach the pane and Tess's layer beside it. */}
+              <UserTopicProvider socket={gameSocket}>
+                <View style={[styles.app, tessColumn && styles.split]}>
+                  <View
+                    key="pane"
+                    style={styles.pane}
+                    {...coveredBy(tessLayer)}
+                  >
+                    <PaneBesideTess
+                      open={tessColumn}
+                      sidebarWidth={sidebarWidth}
                     >
-                      <StackNavigator
-                        sidebarWidth={sidebarWidth}
-                        sidebar={
-                          sidebarWidth > 0 ? (
-                            <AppSidebar
-                              account={account}
-                              notifications={notifications}
-                              nodeAdministration={nodeAdministration}
-                              selected={tab}
-                              onSelect={selectTab}
-                              unread={chatOn && hasUnread(chatList)}
-                              apiBaseUrl={apiBaseUrl}
-                              buildsClient={
-                                session == null ? undefined : client
-                              }
-                              isAdmin={isAdmin}
-                            />
-                          ) : undefined
-                        }
-                        top={topScene}
-                        retained={retainedScene}
-                        // The field preview is one scene, with nothing beneath.
-                        renderBelow={() =>
-                          props.fieldPreview !== true && stack.length > 0
-                            ? sceneOf(stack.length - 2)
-                            : undefined
-                        }
-                        chrome={chrome}
-                        onForget={key => sceneVisits.current.delete(key)}
-                        onSwipeBack={swipeBack ? popFromDrag : undefined}
-                        intent={navigationIntent}
-                        // Not under Tess's layer: there Back closes the chat
-                        // (`useTessBack`), and must not drag away the screen it
-                        // covers.
-                        predictiveBack={
-                          predictiveBack && !tessLayer && !headerMenuOpen
-                        }
-                        predictiveBackNow={predictiveBackNow}
-                        popPending={popPending}
-                        headerHeight={headerHeight}
-                        navigationHeight={
-                          isWide || sidebarWidth > 0 ? 0 : navigationHeight
-                        }
-                        bannerHeight={bottomBanner}
-                        onHandoff={setHandoff}
-                        onHandoffHeight={setHandoffHeight}
-                        onBackOverride={setBack}
-                      />
-                    </ScreenScopeProvider>
-                    <View
-                      pointerEvents="box-none"
-                      style={[styles.paneOverlay, { left: sidebarWidth }]}
-                    >
-                      <TessOverlayHost />
-                    </View>
-                  </PaneBesideTess>
-                </View>
-                {tessPanel}
-                {/* Over an immersive scene (the scorer) the chrome, and the
+                      <ScreenScopeProvider
+                        socket={gameSocket}
+                        scope={visibleScope}
+                      >
+                        <StackNavigator
+                          sidebarWidth={sidebarWidth}
+                          sidebar={
+                            sidebarWidth > 0 ? (
+                              <AppSidebar
+                                account={account}
+                                notifications={notifications}
+                                nodeAdministration={nodeAdministration}
+                                selected={tab}
+                                onSelect={selectTab}
+                                unread={chatOn && hasUnread(chatList)}
+                                apiBaseUrl={apiBaseUrl}
+                                buildsClient={
+                                  session == null ? undefined : client
+                                }
+                                isAdmin={isAdmin}
+                              />
+                            ) : undefined
+                          }
+                          top={topScene}
+                          retained={retainedScene}
+                          // The field preview is one scene, with nothing beneath.
+                          renderBelow={() =>
+                            props.fieldPreview !== true && stack.length > 0
+                              ? sceneOf(stack.length - 2)
+                              : undefined
+                          }
+                          chrome={chrome}
+                          onForget={key => sceneVisits.current.delete(key)}
+                          onSwipeBack={swipeBack ? popFromDrag : undefined}
+                          intent={navigationIntent}
+                          // Not under Tess's layer: there Back closes the chat
+                          // (`useTessBack`), and must not drag away the screen it
+                          // covers.
+                          predictiveBack={
+                            predictiveBack && !tessLayer && !headerMenuOpen
+                          }
+                          predictiveBackNow={predictiveBackNow}
+                          popPending={popPending}
+                          headerHeight={headerHeight}
+                          navigationHeight={
+                            isWide || sidebarWidth > 0 ? 0 : navigationHeight
+                          }
+                          bannerHeight={bottomBanner}
+                          onHandoff={setHandoff}
+                          onHandoffHeight={setHandoffHeight}
+                          onBackOverride={setBack}
+                        />
+                      </ScreenScopeProvider>
+                      <View
+                        pointerEvents="box-none"
+                        style={[styles.paneOverlay, { left: sidebarWidth }]}
+                      >
+                        <TessOverlayHost />
+                      </View>
+                    </PaneBesideTess>
+                  </View>
+                  {tessPanel}
+                  {/* Over an immersive scene (the scorer) the chrome, and the
                   banner in it, is not drawn: nothing to clear. */}
-                <SuccessToast
-                  notice={successNotice}
-                  bannerHeight={immersiveTop ? 0 : bottomBanner}
-                />
-                {chatOn && <DeviceApprovalPrompt />}
-                <ChatAgeHost
-                  state={chatAge}
-                  topKey={topKey}
-                  chatSurface={isChatSurface(tab, top?.name)}
-                  onLeaveChat={declineChat}
-                />
-                <NotificationAskHost
-                  state={notificationAsk}
-                  client={client}
-                  userId={signedInAs}
-                  chatShown={isChatSurface(tab, top?.name)}
-                />
-                {confirmingSignOut && (
-                  <ChoiceSheet
-                    title="Sign Out?"
-                    choices={[
-                      {
-                        label: 'Sign Out',
-                        detail: unsentLossText(outbox?.count ?? 0),
-                        destructive: true,
-                        onPress: signOutNow
-                      }
-                    ]}
-                    onClose={() => {
-                      setConfirmingSignOut(false)
-                    }}
+                  <SuccessToast
+                    notice={successNotice}
+                    bannerHeight={immersiveTop ? 0 : bottomBanner}
                   />
-                )}
-                {askingTeam != null && caching != null && (
-                  <ChoiceSheet
-                    title="Player Not Saved"
-                    choices={[
-                      ...(askingTeam.state === 'dead'
-                        ? [
-                            {
-                              label: 'Try Again',
-                              onPress: () => {
-                                caching
-                                  .retryTeam(askingTeam.id)
-                                  .catch(() => undefined)
-                              }
-                            }
-                          ]
-                        : []),
-                      {
-                        label: "Use Server's Copy",
-                        detail:
-                          "Takes the player off this phone and shows the team's roster as the server has it.",
-                        destructive: true,
-                        onPress: () => {
-                          caching.discardTeam(askingTeam.id).catch(() => false)
+                  {chatOn && <DeviceApprovalPrompt />}
+                  <ChatAgeHost
+                    state={chatAge}
+                    topKey={topKey}
+                    chatSurface={isChatSurface(tab, top?.name)}
+                    onLeaveChat={declineChat}
+                  />
+                  <NotificationAskHost
+                    state={notificationAsk}
+                    client={client}
+                    userId={signedInAs}
+                    chatShown={isChatSurface(tab, top?.name)}
+                  />
+                  {confirmingSignOut && (
+                    <ChoiceSheet
+                      title="Sign Out?"
+                      choices={[
+                        {
+                          label: 'Sign Out',
+                          detail: unsentLossText(outbox?.count ?? 0),
+                          destructive: true,
+                          onPress: signOutNow
                         }
-                      }
-                    ]}
-                    onClose={() => {
-                      setAskingTeam(undefined)
-                    }}
-                  />
-                )}
-                {updateRequired && (
-                  <UpdateRequiredNotice
-                    onReload={Platform.OS === 'web' ? reloadPage : undefined}
-                  />
-                )}
-              </View>
+                      ]}
+                      onClose={() => {
+                        setConfirmingSignOut(false)
+                      }}
+                    />
+                  )}
+                  {heldOpen && caching != null && (
+                    <HeldEditsSheet
+                      edits={held}
+                      names={heldNames}
+                      actions={{
+                        retry: async edit => {
+                          if (edit.kind === 'game')
+                            await caching.retryGame(edit.id)
+                          else await caching.retryTeam(edit.id)
+                        },
+                        discard: async edit => await caching.discardHeld(edit)
+                      }}
+                      onClose={closeHeld}
+                    />
+                  )}
+                  {updateRequired && (
+                    <UpdateRequiredNotice
+                      onReload={Platform.OS === 'web' ? reloadPage : undefined}
+                    />
+                  )}
+                </View>
+              </UserTopicProvider>
             </TessOverlayProvider>
           </ChatOverlayHost>
         </DeviceApprovalContext.Provider>
@@ -4520,9 +4529,6 @@ function reloadPage(): void {
   globalThis.location?.reload()
 }
 
-/** How often a session opened on the stored user is asked about again. */
-export const SESSION_CONFIRM_MS = 30_000
-
 /**
  * Whether `next` is the form for something only the server makes: a team, a
  * season, a league, or a new game or event. Editing a game that exists is
@@ -4547,7 +4553,8 @@ export function screenScopeOf(
 ): ScreenScope | undefined {
   if (top == null) {
     if (tab === 'home') return { scope: 'home' }
-    if (tab === 'schedule') return { scope: 'schedule' }
+    // Videos lists the same games, and hears the same notices.
+    if (tab === 'schedule' || tab === 'videos') return { scope: 'schedule' }
     return undefined
   }
   switch (top.name) {
@@ -4558,6 +4565,14 @@ export function screenScopeOf(
     case 'djGame':
       // Where there is no DJ Game, its address is the game's page.
       return djSupported ? undefined : { scope: 'event', gameId: top.gameId }
+    case 'team':
+      return { scope: 'team', teamId: top.team.id }
+    case 'season':
+      return { scope: 'group', kind: 'season', id: top.season.id }
+    case 'group':
+      return top.kind === 'team'
+        ? { scope: 'team', teamId: top.id }
+        : { scope: 'group', kind: top.kind, id: top.id }
     default:
       return undefined
   }

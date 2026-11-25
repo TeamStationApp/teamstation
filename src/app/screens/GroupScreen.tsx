@@ -15,8 +15,9 @@ import {
 import type { TabCorrection } from '../chat/AgeGate'
 import type { ChatLink } from '../chat/ChatLinks'
 import { Button, Screen } from '../components'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useNoticedRead } from '../hooks/useNoticedRead'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { StoredFirst } from '../sync/storedFirst'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
@@ -208,7 +209,7 @@ function GroupContent({
       )
     }
   }, [client, kind, id, begin])
-  useForegroundRefresh(load)
+  useNoticedRead(useScreenScope(load, client))
   if (detail == null)
     return (
       <Screen>

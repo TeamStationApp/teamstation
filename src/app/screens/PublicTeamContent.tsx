@@ -15,8 +15,9 @@ import {
 import { PagedList } from '../components/PagedList'
 import { PagedListEmpty, PagedListEnd } from '../components/PagedListEnd'
 import { PersonRow } from '../components/PeopleList'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { type PagedRows, usePagedList } from '../hooks/usePagedList'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { shortDate, shortTime } from './format'
@@ -169,7 +170,7 @@ function usePublicGames(
         cursor == null ? query : { ...query, cursor }
       )
   })
-  useForegroundRefresh(list.refresh)
+  useNoticedRead(useScreenScope(list.refresh, client))
   return list
 }
 

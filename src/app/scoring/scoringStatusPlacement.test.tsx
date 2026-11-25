@@ -24,7 +24,8 @@ import {
 import {
   SCORING_OFFLINE_BAND,
   scoringOfflineFrame,
-  scoringStatusFrame
+  scoringStatusFrame,
+  WEB_CORNER_CLEAR
 } from './scoringStatusPlacement'
 
 /** An iPhone 15 Pro held upright: the island and the home indicator. */
@@ -120,16 +121,19 @@ describe('the offline line’s band at the top', function () {
         '#123456'
       ).paddingTop
     ).equals(FIELD_EDGE_GAP)
-    // The web's line keeps its place above the board, with no fill.
+    // The web's line keeps its place above the board, with no fill, clear
+    // of the speaker and ☰ on either side, and may wrap rather than cover
+    // them in a phone's browser.
     expect(scoringOfflineFrame(false, IPHONE, '#123456')).deep.equals({
       position: 'absolute',
       top: FIELD_EDGE_GAP,
-      left: 0,
-      right: 0,
-      height: SCORING_OFFLINE_BAND,
+      left: WEB_CORNER_CLEAR,
+      right: WEB_CORNER_CLEAR,
+      minHeight: SCORING_OFFLINE_BAND,
       alignItems: 'center',
       justifyContent: 'center'
     })
+    expect(WEB_CORNER_CLEAR).equals(64)
   })
 
   it('moves the header row down by the band, on a phone and on the web', function () {

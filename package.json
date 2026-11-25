@@ -142,6 +142,9 @@
     "coverage.userIds": "node scripts/user-id-coverage.mjs",
     "coverage.playerLayouts": "node scripts/player-layouts-coverage.mjs",
     "coverage.statsTables": "node scripts/stats-tables-coverage.mjs",
+    "coverage.heldEdits": "node scripts/held-edits-coverage.mjs",
+    "coverage.webOutbox": "node scripts/web-outbox-coverage.mjs",
+    "test.wasmCache": "node scripts/wasm-cache-tests.mjs",
     "coverage.tess": "node scripts/tess-coverage.mjs",
     "test.playerNative": "node scripts/build-player-native-tests.mjs",
     "coverage.umpires": "node scripts/umpire-coverage.mjs",
@@ -161,6 +164,7 @@
     "coverage.splash": "node scripts/splash-coverage.mjs"
   },
   "dependencies": {
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
     "@op-engineering/op-sqlite": "^18.2.5",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-clipboard/clipboard": "^1.16.3",

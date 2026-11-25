@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import { afterEach, beforeEach, describe, it } from 'mocha'
+import { afterEach, before, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -11,14 +11,20 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import { ScoringSession } from '../../common/scoring/session'
+import type { Side } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
-import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import {
   fieldServer,
   memoryStorage,
   SERVER_GUMBO
 } from '../../test/offlineFieldServer'
+import { prepareOffline } from '../../test/offlineSetTesting'
 import { scoringSession } from '../../test/scoringSession'
+import {
+  sql,
+  testSqliteExecutor,
+  testSqliteReady
+} from '../../test/testSqliteExecutor'
 import { TRY_AGAIN, USE_SERVER_COPY } from '../scoring/HeldGameNotice'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import type { GameChanges } from '../scoring/rosterLive'
@@ -28,9 +34,21 @@ import { ServerClock } from '../scoring/serverClock'
 import { CoachGameScreen } from '../screens/CoachGameScreen'
 import { GameScreen } from '../screens/GameScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
+import {
+  cacheFileName,
+  type DocumentStore,
+  openCacheStore,
+  type SqlExecutor
+} from './cacheStore'
 import { CachingClient } from './cachingClient'
-import { eventsKey, fullRosterKey, lineupsKey, rosterKey } from './documentKeys'
+import {
+  documentKeyOf,
+  eventsKey,
+  fullRosterKey,
+  lineupsKey,
+  OFFLINE_SET,
+  rosterKey
+} from './documentKeys'
 import {
   NEWER_LINEUP_MESSAGE,
   type OutboxNotice,
@@ -144,7 +162,9 @@ function dictateTo(
 
 describe('scoring an upcoming game on the phone with no signal (S6)', function () {
   let dir: string
-  let executors: Array<ReturnType<typeof nodeSqliteExecutor>>
+  let executors: SqlExecutor[]
+
+  before(testSqliteReady)
 
   beforeEach(function () {
     dir = mkdtempSync(join(tmpdir(), 'teamstation-field-'))
@@ -158,7 +178,13 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     root = undefined
     document.body.replaceChildren()
     HTMLCanvasElement.prototype.getContext = getContext
-    for (const executor of executors) await executor.close()
+    // A test that opens another account has closed its file already.
+    for (const executor of executors)
+      try {
+        await executor.close()
+      } catch {
+        // Closed by the client already.
+      }
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -169,8 +195,10 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
   ): Promise<{
     client: CachingClient
     net: ReturnType<typeof fieldServer>
-    rows: () => Array<Record<string, unknown>>
-    document: (key: string) => { body: unknown; pending: number } | undefined
+    rows: () => Promise<Array<Record<string, unknown>>>
+    document: (
+      key: string
+    ) => Promise<{ body: unknown; pending: number } | undefined>
   }> {
     // The game as the last scorer left it: one pitch in.
     const started = memoryStore()
@@ -186,7 +214,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       userId: string,
       apiBaseUrl: string
     ): Promise<DocumentStore> => {
-      const executor = nodeSqliteExecutor(
+      const executor = testSqliteExecutor(
         join(
           dir,
           cacheFileName(
@@ -207,17 +235,18 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       outbox: { setTimer: () => 0, clearTimer: () => undefined }
     })
     client.openFor('usr_scorer')
-    await client.prefetch()
-    const db = (): ReturnType<typeof nodeSqliteExecutor>['db'] =>
-      executors.at(-1)!.db
+    await prepareOffline(client)
     return {
       client,
       net,
-      rows: () => db().prepare('SELECT * FROM outbox ORDER BY seq').all(),
-      document: key => {
-        const row = db()
-          .prepare('SELECT body, pending FROM documents WHERE key = ?')
-          .get(key) as { body: string; pending: number } | undefined
+      rows: async () =>
+        await sql(executors.at(-1)!, 'SELECT * FROM outbox ORDER BY seq'),
+      document: async key => {
+        const [row] = (await sql(
+          executors.at(-1)!,
+          'SELECT body, pending FROM documents WHERE key = ?',
+          [key]
+        )) as Array<{ body: string; pending: number }>
         return row == null
           ? undefined
           : { body: JSON.parse(row.body), pending: row.pending }
@@ -253,6 +282,46 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await settle(50)
   }
 
+  it('keeps its choice across a restart, lets an earlier build’s read-ahead go once, and holds a game opened twice until both close', async function () {
+    const { client, document: stored } = await preparedPhone()
+    const file = executors.at(-1)!
+    // What an earlier build read ahead: every game it listed, one not chosen.
+    const near = documentKeyOf('/events?when=all&lookbackHours=6')!
+    const old = documentKeyOf('/games/g-old')!
+    for (const [key, body] of [
+      [near, JSON.stringify([{ id: 'g-old' }, { id: 'g1' }])],
+      [old, JSON.stringify({ id: 'g-old' })]
+    ])
+      await sql(
+        file,
+        'INSERT OR REPLACE INTO documents (key, body, revision, pending) VALUES (?, ?, ?, 0)',
+        [key, body, '0']
+      )
+    // The kept state as that build left it: never upgraded.
+    const kept = (await stored(OFFLINE_SET))!.body as Record<string, unknown>
+    await sql(file, 'UPDATE documents SET body = ? WHERE key = ?', [
+      JSON.stringify({ ...kept, upgraded: false }),
+      OFFLINE_SET
+    ])
+    const set = await prepareOffline(client)
+    expect(client.offlineGames).equals(set)
+    expect(await stored(old), 'the game not chosen').equals(undefined)
+    expect(await stored('game.g1'), 'the chosen game').not.equals(undefined)
+    expect(
+      ((await stored(OFFLINE_SET))!.body as { upgraded: boolean }).upgraded
+    ).equals(true)
+    // Opened twice, the game is held until the second closes too.
+    const first = client.holdGame('g1')
+    const second = client.holdGame('g1')
+    second()
+    second()
+    first()
+    first()
+    // Another account's file: the set goes with the account it was for.
+    client.openFor('usr_other')
+    expect(client.offlineGames, 'stopped for another account').equals(undefined)
+  })
+
   it('opens the game, adds a named player, puts him in the lineup and records a play, all from the phone, then sends them once', async function () {
     const { client, net, rows, document: stored } = await preparedPhone()
     for (const key of [
@@ -265,7 +334,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       rosterKey('home'),
       'defaultLineup.away'
     ])
-      expect(stored(key), key).not.equals(undefined)
+      expect(await stored(key), key).not.equals(undefined)
 
     // No signal from here on.
     net.offline = true
@@ -296,24 +365,24 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
 
     // The phone holds the player, the lineup with him in it, and the play.
     const local = (
-      stored(fullRosterKey('away'))!.body as Array<{
+      (await stored(fullRosterKey('away')))!.body as Array<{
         gumboId: number
         shortName: string
       }>
     ).find(entry => entry.shortName === 'Mookie B')
     expect(local, 'on the roster the phone shows').not.equals(undefined)
     expect(
-      (stored(rosterKey('away'))!.body as Array<{ gumboId: number }>).some(
-        entry => entry.gumboId === local!.gumboId
-      )
+      (
+        (await stored(rosterKey('away')))!.body as Array<{ gumboId: number }>
+      ).some(entry => entry.gumboId === local!.gumboId)
     ).equals(true)
-    const events = stored(eventsKey('g1'))!
+    const events = (await stored(eventsKey('g1')))!
     expect(events.pending).equals(1)
     expect(JSON.stringify(events.body)).includes(String(local!.gumboId))
     // The phone's copy names its players, him too; what it will send names
     // nobody, and keeps their names beside it.
     expect(JSON.stringify(events.body)).includes('Mookie B')
-    const queued = rows()
+    const queued = await rows()
     for (const row of queued.slice(1)) {
       expect(String(row.body)).not.includes('Mookie')
       expect(String(row.body)).not.includes('"fullName"')
@@ -336,7 +405,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await act(async () => {
       await client.drainOutbox()
     })
-    expect(rows()).deep.equals([])
+    expect(await rows()).deep.equals([])
     const sent = net.posts.slice(before)
     expect(sent.map(post => post.path)).deep.equals([
       '/teams/away/roster-players',
@@ -359,7 +428,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     ).text()
     expect(served).includes(String(SERVER_GUMBO))
     expect(served).not.includes(String(local!.gumboId))
-    expect(stored(eventsKey('g1'))!.pending).equals(0)
+    expect((await stored(eventsKey('g1')))!.pending).equals(0)
   })
 
   it('puts the offline line at the top over a field moved under it, says nothing of a tap, and Saving… only while the queue goes out', async function () {
@@ -367,14 +436,17 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     net.offline = true
     await open(client)
     expect(status()).equals(OFFLINE_BANNER)
-    // At the top, one line, in the web's place above the board: nothing
-    // moves for it there (a phone makes a band, `scoringStatusPlacement`).
+    // At the top, in the web's place above the board, clear of the speaker
+    // and ☰: nothing moves for it there (a phone makes a band,
+    // `scoringStatusPlacement`).
     const line = document.querySelector<HTMLElement>(
       '[aria-label="Save status"]'
     )!
     const frame = line.parentElement!.parentElement!
     expect(frame.style.top).equals('8px')
-    expect(frame.style.height).equals('28px')
+    expect(frame.style.minHeight).equals('28px')
+    expect(frame.style.left).equals('64px')
+    expect(frame.style.right).equals('64px')
     const moved = (): boolean =>
       [...document.querySelectorAll<HTMLElement>('div')].some(node =>
         node.style.transform.includes('translateY(28px)')
@@ -386,16 +458,16 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await settle(50)
     expect(status()).equals(OFFLINE_BANNER)
     expect(document.body.textContent).not.includes('Saving…')
-    expect(rows().filter(row => row.chain === 'game:g1').length).greaterThan(0)
+    expect(
+      (await rows()).filter(row => row.chain === 'game:g1').length
+    ).greaterThan(0)
 
     // Another game's write the server refused, held on this phone.
-    executors
-      .at(-1)!
-      .db.prepare(
-        `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path, body, depends_on, state, attempts, lease_until, game_id, message)
+    await sql(
+      executors.at(-1)!,
+      `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path, body, depends_on, state, attempts, lease_until, game_id, message)
          VALUES ('other', 'other-key', 0, 'game:g2', 'POST', '/games/g2/events', '{}', '[]', 'dead', 1, NULL, 'g2', 'Refused')`
-      )
-      .run()
+    )
 
     // Back online, with this game's plays answered only when let go.
     let release: () => void = () => undefined
@@ -421,9 +493,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await client.drainOutbox()
     })
     await settle(50)
-    expect(rows().filter(row => row.chain === 'game:g1')).deep.equals([])
+    expect((await rows()).filter(row => row.chain === 'game:g1')).deep.equals(
+      []
+    )
     // g2's refused write is still on the phone; it keeps nothing busy here.
-    expect(rows().some(row => row.chain === 'game:g2')).equals(true)
+    expect((await rows()).some(row => row.chain === 'game:g2')).equals(true)
     expect(hasLabel('Save status')).equals(false)
     expect(moved()).equals(false)
   })
@@ -446,7 +520,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     const message = (): string | null | undefined =>
       document.querySelector('[data-testid="heldGameMessage"]')?.textContent
     expect(message()).equals(PARKED_GAME_MESSAGE)
-    expect(rows().map(row => row.state)).deep.equals(['parked'])
+    expect((await rows()).map(row => row.state)).deep.equals(['parked'])
 
     // Opening the choice, and cancelling it, changes nothing.
     await click('Unsent changes')
@@ -457,15 +531,75 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     ).equals(true)
     await click('Cancel')
     expect(hasLabel(USE_SERVER_COPY)).equals(false)
-    expect(rows()).length(1)
+    expect(await rows()).length(1)
 
     await click('Unsent changes')
     await click(USE_SERVER_COPY)
     await settle(100)
-    expect(rows()).deep.equals([])
-    expect(stored(eventsKey('g1'))!.pending).equals(0)
+    expect(await rows()).deep.equals([])
+    expect((await stored(eventsKey('g1')))!.pending).equals(0)
     expect(message()).equals(undefined)
     // The server's copy: the one ball it had.
+    expect(document.body.textContent).includes('1 balls')
+  })
+
+  it("opens the game again when its held edits are given up from the banner's list while a page is over the scorer", async function () {
+    const { client, net, rows } = await preparedPhone()
+    net.offline = true
+    const source = new ServerScoringSource(
+      client,
+      new ServerClock(async () => await client.serverTime(), memoryStorage())
+    )
+    let cover: (covered: boolean) => void = () => undefined
+    const Host = (): React.ReactElement => {
+      const [covered, setCovered] = React.useState(false)
+      cover = setCovered
+      return (
+        <ThemeProvider>
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            userId="usr_scorer"
+            source={source}
+            active={!covered}
+            onExit={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(<Host />)
+    })
+    await settle(50)
+    await click('Ball')
+    await settle(50)
+    expect(document.body.textContent).includes('2 balls')
+    net.offline = false
+    net.stale = true
+    client.wakeOutbox(true)
+    await act(async () => {
+      await client.drainOutbox()
+    })
+    await settle(50)
+    expect((await rows()).map(row => row.state)).deep.equals(['parked'])
+    // A player's page opened from the scorer covers it, and the banner's
+    // list gives the game's edits up there, not the scorer's own notice.
+    await act(async () => {
+      cover(true)
+    })
+    await act(async () => {
+      expect(await client.discardGame('g1')).equals(true)
+    })
+    await settle(100)
+    await act(async () => {
+      cover(false)
+    })
+    await settle(100)
+    expect(await rows()).deep.equals([])
+    // Back on the scorer: the server's copy, the one ball it had.
     expect(document.body.textContent).includes('1 balls')
   })
 
@@ -610,10 +744,10 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await click('Save Rosters')
     await settle(50)
     expect(net.posts.length, 'nothing left the phone').equals(before)
-    expect(rows().map(row => [row.chain, row.path])).deep.equals([
+    expect((await rows()).map(row => [row.chain, row.path])).deep.equals([
       ['game:g1', '/games/g1/lineups']
     ])
-    expect(stored(lineupsKey('g1'))!.pending).equals(1)
+    expect((await stored(lineupsKey('g1')))!.pending).equals(1)
     expect(document.body.textContent).not.includes('could not')
 
     net.offline = false
@@ -621,7 +755,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await act(async () => {
       await client.drainOutbox()
     })
-    expect(rows()).deep.equals([])
+    expect(await rows()).deep.equals([])
     const sent = net.posts.slice(before)
     expect(sent.map(post => post.path)).deep.equals(['/games/g1/lineups'])
     expect(sent[0].body.base).equals('lineups-1')
@@ -674,7 +808,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         document.body.textContent ?? ''
       ).includes('Assign a pitcher')
       expect(net.posts.length, 'nothing has landed').equals(before)
-      expect(rows().length).greaterThan(0)
+      expect((await rows()).length).greaterThan(0)
       if (network === 'held') {
         release()
         net.hold = undefined
@@ -684,7 +818,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await client.drainOutbox()
       })
       await settle(50)
-      expect(rows()).deep.equals([])
+      expect(await rows()).deep.equals([])
       expect(net.posts.slice(before).map(post => post.path)[0]).equals(
         '/teams/away/roster-players'
       )
@@ -740,9 +874,13 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         .item(1)
         .getAttribute('aria-label')
     ).equals(moved)
-    expect(rows().map(row => row.path)).deep.equals(['/games/g1/lineups'])
-    expect(stored(lineupsKey('g1'))!.pending).equals(1)
-    const body = JSON.parse(String(rows()[0].body)) as { changedAt?: string }
+    expect((await rows()).map(row => row.path)).deep.equals([
+      '/games/g1/lineups'
+    ])
+    expect((await stored(lineupsKey('g1')))!.pending).equals(1)
+    const body = JSON.parse(String((await rows())[0].body)) as {
+      changedAt?: string
+    }
     expect(Number.isNaN(Date.parse(body.changedAt ?? ''))).equals(false)
     release()
     net.hold = undefined
@@ -751,7 +889,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await client.drainOutbox()
     })
     await settle(50)
-    expect(rows()).deep.equals([])
+    expect(await rows()).deep.equals([])
   })
   it('says on Coach Game when another device changed the lineup later, and shows theirs (newer)', async function () {
     const { client, net, rows } = await preparedPhone()
@@ -795,7 +933,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await client.drainOutbox()
     })
     await settle(100)
-    expect(rows()).deep.equals([])
+    expect(await rows()).deep.equals([])
     expect(document.body.textContent).includes(NEWER_LINEUP_MESSAGE)
   })
 
@@ -830,7 +968,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     net.offline = true
     await click('Called Strike')
     await settle(80)
-    expect(rows()).has.length.greaterThan(0)
+    expect(await rows()).has.length.greaterThan(0)
     expect(document.body.textContent).includes('1 balls 1 strikes')
     // Reconnect reads can still see the optimistic document. No peer write
     // or reload follows the rejection; the landing must wake the screen.
@@ -844,7 +982,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await client.drainOutbox()
     })
     await settle(100)
-    expect(rows()).has.length(0)
+    expect(await rows()).has.length(0)
     expect(document.body.textContent).includes('1 balls 0 strikes')
   })
 
@@ -857,7 +995,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await click('More')
         await click('Batter Out — Other')
         await settle(80)
-        expect(rows()).has.length.greaterThan(0)
+        expect(await rows()).has.length.greaterThan(0)
         if (rename !== false)
           await act(async () => {
             await client.renameGuestPlayer(
@@ -888,7 +1026,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
           await client.drainOutbox()
         })
         await settle(100)
-        expect(rows()).has.length(0)
+        expect(await rows()).has.length(0)
         expect(document.body.textContent).includes('1 balls 0 strikes')
         expect(
           document
@@ -911,7 +1049,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await click('Called Strike')
     await settle(80)
     const rejected = (
-      JSON.parse(rows()[0].body as string) as {
+      JSON.parse((await rows())[0].body as string) as {
         scoringMutation: ScoringMutation
       }
     ).scoringMutation
@@ -1004,6 +1142,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         nodes.item(nodes.length - 1)?.getAttribute('aria-disabled') === 'true'
       )
     }
+    /** Waits up to `ms` for the scoring board's count. */
+    const boardWithin = async (ms: number): Promise<void> => {
+      const end = Date.now() + ms
+      while (Date.now() < end && !/\d balls/.test(text())) await settle(50)
+    }
     const homeOf = (): string | undefined =>
       /Owls \d+ · Hawks \d+|Hawks \d+ · Owls \d+/.exec(text())?.[0]
 
@@ -1049,7 +1192,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       expect(text()).includes('1 balls')
       // Nothing reached the server; all of it is queued, in order.
       expect(net.writes.length).equals(before)
-      const queued = rows()
+      const queued = await rows()
       expect(queued.length).greaterThan(3)
       release()
       client.wakeOutbox(true)
@@ -1057,10 +1200,200 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await client.drainOutbox()
       })
       await settle(50)
-      expect(rows()).deep.equals([])
+      expect(await rows()).deep.equals([])
       expect(net.writes.slice(before)).deep.equals(
         queued.map(row => `${String(row.method)} ${String(row.path)}`)
       )
+    })
+
+    it('opens again at once, with every request held, though the opponent’s default lineup was never stored (#358)', async function () {
+      // The opponent is a team this person may not see: its default lineup
+      // is refused (the server's 404, here a 403), and the phone forgets
+      // what it stored of it.
+      const { client, net } = await preparedPhone(3000)
+      net.refused.set('/teams/away/default-lineup', 403)
+      await open(client)
+      expect(text()).includes('1 balls')
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.replaceChildren()
+      const release = holdAll(net)
+      const started = Date.now()
+      await open(client)
+      // What has nothing stored is waited for a moment at most
+      // (DEFAULT_LINEUP_WAIT_MS), never for the deadlines.
+      await boardWithin(3000)
+      expect(text(), 'opened from the phone, not after the deadlines').includes(
+        '1 balls'
+      )
+      expect(Date.now() - started).lessThan(3000)
+      release()
+    })
+
+    it('keeps a side’s lineup when its roster is not on the phone, opening at once with every request held (#358)', async function () {
+      const { client, net, document: stored } = await preparedPhone(3000)
+      const awayOrder = (): number[] =>
+        (
+          panelProps(
+            document.body.firstElementChild as HTMLElement,
+            'ScoringPanel'
+          ) as { game: ScoringSession }
+        ).game.state.liveData.boxscore.teams.away.battingOrder
+      const reopen = async (): Promise<void> => {
+        await act(async () => {
+          root?.unmount()
+        })
+        document.body.replaceChildren()
+        await open(client)
+      }
+      await open(client)
+      const order = awayOrder()
+      expect(order.length).greaterThan(0)
+      // The away team's rosters are refused from here: the reads behind the
+      // next open, and the next read ahead, forget what the phone stored.
+      net.refused.set('/teams/away/roster', 403)
+      net.refused.set('/teams/away/roster?includeFullNames=true', 403)
+      await reopen()
+      // A refused read forgets what the phone stored.
+      await client.roster('away').catch(() => undefined)
+      await client
+        .roster('away', { includeFullNames: true })
+        .catch(() => undefined)
+      await settle(100)
+      expect(await stored(rosterKey('away')), 'not on the phone').equals(
+        undefined
+      )
+      expect(await stored(fullRosterKey('away'))).equals(undefined)
+      const release = holdAll(net)
+      const started = Date.now()
+      await reopen()
+      await boardWithin(3000)
+      expect(text()).includes('1 balls')
+      expect(Date.now() - started).lessThan(3000)
+      expect(awayOrder(), 'the lineup its records hold').deep.equals(order)
+      release()
+    })
+
+    it('opens a swap of the screen’s own with a stand-in side on its new side (2.harness-review.2)', async function () {
+      const { client, net } = await preparedPhone(3000)
+      const reopen = async (): Promise<void> => {
+        await act(async () => {
+          root?.unmount()
+        })
+        document.body.replaceChildren()
+        await open(client)
+      }
+      await open(client)
+      // The away team's roster is not on the phone from here.
+      net.refused.set('/teams/away/roster', 403)
+      net.refused.set('/teams/away/roster?includeFullNames=true', 403)
+      await reopen()
+      // A refused read forgets what the phone stored.
+      await client.roster('away').catch(() => undefined)
+      await client
+        .roster('away', { includeFullNames: true })
+        .catch(() => undefined)
+      await settle(100)
+      const release = holdAll(net)
+      const opens: Array<Side[] | undefined> = []
+      const sourceOpen = Object.getOwnPropertyDescriptor(
+        ServerScoringSource.prototype,
+        'open'
+      )!
+      const original = sourceOpen.value as ServerScoringSource['open']
+      ServerScoringSource.prototype.open = async function (
+        this: ServerScoringSource,
+        ...args: Parameters<ServerScoringSource['open']>
+      ) {
+        opens.push(args[4]?.standInSides)
+        return await original.apply(this, args)
+      }
+      try {
+        await reopen()
+        await boardWithin(3000)
+        await click('Open scoring menu')
+        await click('Swap Home and Away')
+        await settle()
+        await click(
+          hasLabel('Confirm Swap') ? 'Confirm Swap' : 'Reset and Swap'
+        )
+        await settle(100)
+        expect(homeOf()).equals('Hawks 0 · Owls 0')
+      } finally {
+        Object.defineProperty(ServerScoringSource.prototype, 'open', sourceOpen)
+        release()
+      }
+      // Opened on its records at away, then, swapped, at home.
+      expect(opens).deep.equals([['away'], ['home']])
+    })
+
+    it('shows a pitch whose save is on its way when scoring opens again (#358)', async function () {
+      const { client, net } = await preparedPhone()
+      await open(client)
+      expect(text()).includes('1 balls')
+      let answer: () => void = () => undefined
+      net.holdPlays = new Promise<void>(resolve => {
+        answer = resolve
+      })
+      await click('Ball')
+      expect(text()).includes('2 balls')
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.replaceChildren()
+      await open(client)
+      expect(text(), 'the pitch on its way').includes('2 balls')
+      await click('Called Strike')
+      expect(text()).includes('1 strikes')
+      net.holdPlays = undefined
+      answer()
+      await act(async () => {
+        await client.drainOutbox()
+      })
+      await settle(50)
+      expect(text()).includes('2 balls')
+      expect(text()).includes('1 strikes')
+    })
+
+    /** A phone that has never opened g1: nothing of it stored. */
+    async function neverStored(
+      requestDeadlineMs?: number
+    ): Promise<Awaited<ReturnType<typeof preparedPhone>>> {
+      const phone = await preparedPhone(requestDeadlineMs)
+      await sql(executors.at(-1)!, 'DELETE FROM documents')
+      return phone
+    }
+    const loading = (): boolean =>
+      document.querySelector('[aria-label="Loading game"]') != null
+
+    it('reads a game never stored on this phone first: Loading game while the server is held, then the board once it answers (#358)', async function () {
+      const { client, net } = await neverStored(3000)
+      const release = holdAll(net)
+      await open(client)
+      await settle(100)
+      expect(loading(), 'the one allowed wait').equals(true)
+      expect(text()).not.includes('balls')
+      release()
+      await boardWithin(3000)
+      expect(text()).includes('1 balls')
+    })
+
+    it('says "Unable to load scoring." with Retry for a game never stored on this phone, offline (#358)', async function () {
+      const { client, net } = await neverStored()
+      net.offline = true
+      const started = Date.now()
+      await open(client)
+      const end = Date.now() + 3000
+      while (Date.now() < end && !text().includes('Unable to load scoring.'))
+        await settle(50)
+      expect(text()).includes('Unable to load scoring.')
+      expect(Date.now() - started, 'no deadline waited').lessThan(3000)
+      expect(hasLabel('Retry loading scoring')).equals(true)
+      net.offline = false
+      await click('Retry loading scoring')
+      await boardWithin(3000)
+      expect(text()).includes('1 balls')
     })
 
     it('closes Confirm Swap at once, shows the exchanged sides and takes the next pitch, and sends the pitches and the swap in order once let go', async function () {
@@ -1097,7 +1430,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await click('Ball')
       await settle(50)
       expect(net.writes.length).equals(before)
-      const queued = rows().map(row => String(row.path))
+      const queued = (await rows()).map(row => String(row.path))
       expect(queued.filter(path => path.endsWith('/swap-sides'))).length(2)
       release()
       client.wakeOutbox(true)
@@ -1105,7 +1438,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await client.drainOutbox()
       })
       await settle(100)
-      expect(rows()).deep.equals([])
+      expect(await rows()).deep.equals([])
       // In the order they were entered, each swap behind the plays before it.
       expect(net.writes.slice(before)).deep.equals(
         queued.map(path => `POST ${path}`)
@@ -1338,7 +1671,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       const hawks = [10, 11, 12, 13, 14, 15, 16, 17, 18]
       expect(lineups()).deep.equals({ batter: 1, away: owls, home: hawks })
       // The phone holds the plays as the API carries them: by side.
-      const held = stored(eventsKey('g1'))!.body as {
+      const held = (await stored(eventsKey('g1')))!.body as {
         currentPlay: { teamStation: { version: number } }
       }
       expect(held.currentPlay.teamStation.version).equals(2)
@@ -1444,7 +1777,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       expect(homeOf()).equals('Hawks 0 · Owls 0')
       expect(text()).not.includes('1 balls')
       expect(
-        rows().map(row => `${String(row.method)} ${String(row.path)}`)
+        (await rows()).map(row => `${String(row.method)} ${String(row.path)}`)
       ).deep.equals(['POST /games/g1/swap-sides'])
       const server = await drained(client, net, release)
       expect(server).deep.equals({
@@ -1465,7 +1798,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await settle(100)
       expect(homeOf()).equals('Hawks 0 · Owls 0')
       expect(
-        rows().map(row => `${String(row.method)} ${String(row.path)}`)
+        (await rows()).map(row => `${String(row.method)} ${String(row.path)}`)
       ).deep.equals(['POST /games/g1/events', 'POST /games/g1/swap-sides'])
       // The reset the scorer confirmed takes the pitch with the rest.
       const server = await drained(client, net, release)
@@ -1494,7 +1827,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       expect(homeOf()).equals('Hawks 0 · Owls 0')
       expect(text()).includes('1 balls')
       expect(
-        rows().map(row => `${String(row.method)} ${String(row.path)}`)
+        (await rows()).map(row => `${String(row.method)} ${String(row.path)}`)
       ).deep.equals(['POST /games/g1/swap-sides', 'POST /games/g1/events'])
       const server = await drained(client, net, release)
       expect(server).deep.equals({
@@ -1528,7 +1861,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await click('Save tag')
       expect(hasLabel('New tag')).equals(false)
       await settle(50)
-      expect(rows().map(row => String(row.method))).includes('PUT')
+      expect((await rows()).map(row => String(row.method))).includes('PUT')
       expect(net.writes).deep.equals([])
       // Let go, the server refuses the tag: the game is held, and says so.
       net.refuseTags = true
@@ -1538,7 +1871,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await client.drainOutbox()
       })
       await settle(50)
-      expect(rows().map(row => [row.method, row.state])).deep.equals([
+      expect((await rows()).map(row => [row.method, row.state])).deep.equals([
         ['PUT', 'dead']
       ])
       expect(
@@ -1644,13 +1977,15 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
           letGo()
         }
       }
-      const states = (rows: () => Array<Record<string, unknown>>): string[][] =>
-        rows().map(row => [String(row.path), String(row.state)])
+      const states = async (
+        rows: () => Promise<Array<Record<string, unknown>>>
+      ): Promise<string[][]> =>
+        (await rows()).map(row => [String(row.path), String(row.state)])
       /** A pitch scored, its post out to the server and its answer held. */
       async function pitchOut(
         client: CachingClient,
         net: ReturnType<typeof fieldServer>,
-        rows: () => Array<Record<string, unknown>>
+        rows: () => Promise<Array<Record<string, unknown>>>
       ): Promise<() => void> {
         const letGo = holdPlays(net)
         await click('Ball')
@@ -1658,7 +1993,9 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         expect(text()).includes('2 balls')
         // Sent at once, as develop sends a write with nothing ahead of it: its
         // row holds the game's place until the server answers.
-        expect(states(rows)).deep.equals([['/games/g1/events', 'inflight']])
+        expect(await states(rows)).deep.equals([
+          ['/games/g1/events', 'inflight']
+        ])
         expect(net.writes).deep.equals(['POST /games/g1/events'])
         return letGo
       }
@@ -1766,7 +2103,9 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
             await settle(100)
             // The pitch out is answered first: the game is not opened again,
             // and nothing is given up, before.
-            expect(states(rows)).deep.equals([['/games/g1/events', 'inflight']])
+            expect(await states(rows)).deep.equals([
+              ['/games/g1/events', 'inflight']
+            ])
             expect(text()).not.includes('swapped')
             expect(homeOf()).equals('Owls 0 · Hawks 0')
             await act(async () => {
@@ -1779,7 +2118,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
             // or on the plays the reset deleted.
             letGo()
             await settle(200)
-            expect(rows()).deep.equals([])
+            expect(await rows()).deep.equals([])
             // Both pitches were of the at-bat on screen: one change.
             expect(text()).includes(
               reset
@@ -1809,7 +2148,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await open(client)
         const letGo = await pitchOut(client, net, rows)
         expect(await confirmSwap(), 'ms to the exchanged sides').lessThan(1000)
-        expect(states(rows)).deep.equals([
+        expect(await states(rows)).deep.equals([
           ['/games/g1/events', 'inflight'],
           ['/games/g1/swap-sides', 'pending']
         ])
@@ -1825,7 +2164,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
           await client.drainOutbox()
         })
         await settle(50)
-        expect(rows()).deep.equals([])
+        expect(await rows()).deep.equals([])
         expect(net.writes).deep.equals([
           'POST /games/g1/events',
           'POST /games/g1/swap-sides'
@@ -1844,7 +2183,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         expect(text()).includes('1 strikes')
         expect(await confirmSwap(), 'ms to the exchanged sides').lessThan(1000)
         // The first, let go, is sent again from the queue under its key.
-        expect(states(rows)).deep.equals([
+        expect(await states(rows)).deep.equals([
           ['/games/g1/events', 'inflight'],
           ['/games/g1/events', 'pending'],
           ['/games/g1/swap-sides', 'pending']
@@ -1856,7 +2195,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
           await client.drainOutbox()
         })
         await settle(50)
-        expect(rows()).deep.equals([])
+        expect(await rows()).deep.equals([])
         expect(net.writes.at(-1)).equals('POST /games/g1/swap-sides')
         expect(
           net.writes
@@ -1879,7 +2218,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         })
         await settle(50)
         // The pitch the server refused holds the game, the swap behind it.
-        expect(states(rows)).deep.equals([
+        expect(await states(rows)).deep.equals([
           ['/games/g1/events', 'dead'],
           ['/games/g1/swap-sides', 'pending']
         ])
@@ -1961,7 +2300,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await settle(100)
         expect(Date.now() - tapped, 'ms to the queued tag').lessThan(1000)
         expect(
-          rows().map(row => [String(row.method), String(row.state)])
+          (await rows()).map(row => [String(row.method), String(row.state)])
         ).deep.equals([
           ['POST', 'inflight'],
           ['PUT', 'pending']
@@ -1974,7 +2313,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
           await client.drainOutbox()
         })
         await settle(50)
-        expect(rows()).deep.equals([])
+        expect(await rows()).deep.equals([])
         expect(net.writes.at(-1)).match(/^PUT \/games\/g1\/tags\//)
       })
     })

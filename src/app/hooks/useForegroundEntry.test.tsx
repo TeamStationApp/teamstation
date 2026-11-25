@@ -5,13 +5,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AppState, type AppStateStatus } from 'react-native'
 
 import { useForegroundEntry } from './useForegroundEntry'
-import { useForegroundRefresh } from './useForegroundRefresh'
+import { useNoticedRead } from './useNoticedRead'
 
 /**
  * What runs at start, after a sign-in and on coming to the foreground (the
- * question for notifications, the permission Account shows), against
- * `useForegroundRefresh`'s thirty-second tick: `AppState` and the interval
- * are stand-ins this test drives.
+ * question for notifications, the permission Account shows), beside
+ * `useNoticedRead`, which reads at start only: `AppState` and any
+ * thirty-second interval are stand-ins this test drives.
  */
 let root: Root | undefined
 let listeners: Array<(state: AppStateStatus) => void> = []
@@ -47,7 +47,7 @@ function Probe({
   refresh?: () => Promise<void>
 }): null {
   useForegroundEntry(action)
-  useForegroundRefresh(refresh ?? noop)
+  useNoticedRead(refresh ?? noop)
   return null
 }
 const noop = async (): Promise<void> => undefined
@@ -109,7 +109,7 @@ describe('useForegroundEntry', function () {
     restore()
   })
 
-  it('runs at start and on coming to the foreground, never on the thirty-second tick', async () => {
+  it('runs at start and on coming to the foreground, never on a tick; a noticed read reads at start only', async () => {
     let asked = 0
     let refreshed = 0
     const action = async (): Promise<void> => {
@@ -121,10 +121,10 @@ describe('useForegroundEntry', function () {
     await show(action, refresh)
     expect(asked).equals(1)
     expect(refreshed).equals(1)
-    // The tick reads what refreshes, and asks nothing.
+    // Nothing ticks: neither reads again.
     await tick()
     await tick()
-    expect(refreshed).equals(3)
+    expect(refreshed).equals(1)
     expect(asked).equals(1)
     // A change that is not a return to the foreground asks nothing either.
     await become('active')
@@ -134,6 +134,7 @@ describe('useForegroundEntry', function () {
     expect(asked).equals(1)
     await become('active')
     expect(asked).equals(2)
+    expect(refreshed, 'the foreground reads nothing noticed').equals(1)
     await tick()
     expect(asked).equals(2)
   })

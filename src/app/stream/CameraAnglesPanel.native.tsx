@@ -13,6 +13,8 @@ import { HttpError } from '../../common/errors'
 import { observeUpload } from '../../common/observability/upload'
 import { SectionHeader } from '../components/SectionHeader'
 import { phoneStreamActions } from '../components/streamActions'
+import { useScreenScope } from '../hooks/useScreenScope'
+import { useUserTopic } from '../hooks/useUserTopic'
 import { lstrings, sprintf } from '../locales/strings'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -55,9 +57,6 @@ import { StreamPill } from './StreamPill'
 import { useLocalCopies } from './useLocalCopies'
 import type { AppStateLike } from './useResumePendingUploads'
 import { VideoDetailsSheet } from './VideoDetailsSheet'
-
-/** How often the game's cameras are read again while the panel is up. */
-export const ANGLES_POLL_MS = 5000
 
 /**
  * How long a camera's row may take to make its camera and open its app. Nothing
@@ -328,24 +327,28 @@ function SignedInCameraAnglesPanel(
     step != null ||
     nextStep != null ||
     sheet != null
-  // Every five seconds while the panel is up: what this person may do, and for
-  // somebody who films, the cameras and this phone's takes, so a camera another
-  // phone starts appears and a finished upload's row goes. A first read that
-  // failed is read again too, as nothing else brings the camera area back.
-  const polls =
+  // While the panel is up: what this person may do, and for somebody who
+  // films, the cameras and this phone's takes, read again on the game's
+  // notices (a camera another phone starts, a recording landing) and the
+  // person's bell (a role to film, a request answered), once each. A first
+  // read that failed is read again on the next of them.
+  const watches =
     canFilm ||
     access?.requested === true ||
     (access === null && accessUnread && client.token != null)
+  const latest = useRef({ watches, canFilm, readAccess, refresh })
+  latest.current = { watches, canFilm, readAccess, refresh }
+  const readAgain = useCallback(async (): Promise<void> => {
+    const now = latest.current
+    if (!now.watches) return
+    now.readAccess()
+    if (now.canFilm) now.refresh()
+  }, [])
+  const scoped = useScreenScope(readAgain, client)
   useEffect(() => {
-    if (!polls) return
-    const timer = setInterval(() => {
-      readAccess()
-      if (canFilm) refresh()
-    }, ANGLES_POLL_MS)
-    return () => {
-      clearInterval(timer)
-    }
-  }, [polls, canFilm, readAccess, refresh])
+    scoped().catch(() => undefined)
+  }, [scoped])
+  useUserTopic('badge', readAgain, undefined, { readNow: false })
 
   useEffect(
     () =>

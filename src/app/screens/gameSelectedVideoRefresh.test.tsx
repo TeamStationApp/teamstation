@@ -11,10 +11,15 @@ import {
   TeamStationClient,
   type VideoSummary
 } from '../../common/api'
+import type { ScreenScope } from '../../common/gameSocket'
+import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { type ManualClock, manualClock } from '../../test/tessTestKit'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameScreen } from './GameScreen'
+
+const notices = new ScreenNotices()
+const EVENT: ScreenScope = { scope: 'event', gameId: 'g1' }
 
 /**
  * A page left open on a live video takes that video's fresh entry each time
@@ -78,7 +83,7 @@ async function page(
   after: VideoSummary[],
   onMoment?: (videoId: string, atSec: number) => void
 ): Promise<{
-  change: () => void
+  change: () => Promise<void>
   readsAfter: () => number
   playbackAsks: () => number
 }> {
@@ -107,22 +112,26 @@ async function page(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <GestureHandlerRootView>
-          <GameScreen
-            signedIn
-            client={client}
-            gameId="g1"
-            initialTab="watch"
-            onMoment={onMoment}
-          />
-        </GestureHandlerRootView>
+        <NoticesProvider notices={notices} scope={EVENT}>
+          <GestureHandlerRootView>
+            <GameScreen
+              signedIn
+              client={client}
+              gameId="g1"
+              initialTab="watch"
+              onMoment={onMoment}
+            />
+          </GestureHandlerRootView>
+        </NoticesProvider>
       </ThemeProvider>
     )
   })
   await wait(20)
   return {
-    change: () => {
+    // The server changed the game's videos, and its scope says so.
+    change: async () => {
       changed = true
+      await notices.changed({ gameId: 'g1' })
     },
     readsAfter: () => readsAfter,
     playbackAsks: () => playbackAsks
@@ -139,7 +148,7 @@ async function wait(ms: number): Promise<void> {
   })
 }
 
-/** Waits for `done`, past one refresh of the list on a loaded machine. */
+/** Waits for `done`, past one read of the list on a loaded machine. */
 async function until(done: () => boolean, ms = 20000): Promise<void> {
   for (const end = Date.now() + ms; !done();) {
     expect(Date.now() < end, 'in time').equals(true)
@@ -168,7 +177,7 @@ describe('the video a game page is playing, as its list refreshes', function () 
     )
     await until(() => document.querySelector('video') != null)
     expect(livePill()).not.equals(null)
-    change()
+    await change()
     await until(() => readsAfter() >= 1)
     await wait(100)
     expect(livePill()).equals(null)
@@ -197,7 +206,7 @@ describe('the video a game page is playing, as its list refreshes', function () 
       (videoId, atSec) => moments.push([videoId, atSec])
     )
     await until(() => document.querySelector('video') != null)
-    change()
+    await change()
     await until(() => readsAfter() >= 1)
     await wait(100)
     const tab = [

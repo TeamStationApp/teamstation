@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { killApp, refuseUnreachable, styleScript } from '../faults/apply'
 import { FAULTS } from '../faults/catalogue'
+import { openMobileBrowser } from '../rigs/mobileWeb'
 import {
   Checkpoints,
   type CheckpointTarget,
@@ -481,6 +482,12 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         })
         return device
       },
+      mobileBrowser: async (role, url) =>
+        await openMobileBrowser(
+          surface,
+          async attachOptions => await ctx.attach(role, attachOptions),
+          url
+        ),
       watch: (device, info) => {
         watch(device, info)
       },

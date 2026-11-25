@@ -3,9 +3,14 @@ import { expect } from 'chai'
 import { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { CachingClient, OFFLINE_CREATE_MESSAGE } from './cachingClient'
+import { EDITS_PLACE } from './editsPlace'
 import {
   DEAD_GAME_FALLBACK,
   editCount,
+  heldEditKey,
+  heldEditRetries,
+  heldEdits,
+  heldEditText,
   heldGameText,
   OFFLINE_BANNER,
   offlineBannerText,
@@ -54,6 +59,64 @@ describe('what the phone says offline', function () {
     ).equals('Not sent: That inning is closed.')
     expect(heldGameText({ state: 'dead', message: null })).equals(
       `Not sent: ${DEAD_GAME_FALLBACK}`
+    )
+  })
+
+  it('lists every held game, then every held team, each in id order', function () {
+    expect(heldEdits(undefined)).deep.equals([])
+    expect(heldEdits(queue(0))).deep.equals([])
+    const dead = { state: 'dead' as const, message: 'No' }
+    const listed = heldEdits({
+      count: 4,
+      chains: {},
+      games: { g2: dead, g1: { state: 'parked', message: 'stale' } },
+      teams: { t9: dead, t1: dead }
+    })
+    expect(listed.map(heldEditKey)).deep.equals([
+      'game:g1',
+      'game:g2',
+      'team:t1',
+      'team:t9'
+    ])
+  })
+
+  it('offers Try Again for every held game, and for a team only once refused', function () {
+    const held = (
+      state: 'dead' | 'parked'
+    ): { state: 'dead' | 'parked'; message: null } => ({ state, message: null })
+    expect(
+      heldEditRetries({ kind: 'game', id: 'g1', held: held('dead') })
+    ).equals(true)
+    expect(
+      heldEditRetries({ kind: 'game', id: 'g1', held: held('parked') })
+    ).equals(true)
+    expect(
+      heldEditRetries({ kind: 'team', id: 't1', held: held('dead') })
+    ).equals(true)
+    expect(
+      heldEditRetries({ kind: 'team', id: 't1', held: held('parked') })
+    ).equals(false)
+  })
+
+  it("says what each held queue is in the server's words", function () {
+    const game = (held: Parameters<typeof heldGameText>[0]): string =>
+      heldEditText({ kind: 'game', id: 'g1', held: held! })
+    expect(game({ state: 'dead', message: 'That inning is closed.' })).equals(
+      'Not sent: That inning is closed.'
+    )
+    expect(game({ state: 'parked', message: 'stale' })).equals(
+      PARKED_GAME_MESSAGE
+    )
+    expect(
+      game({ state: 'parked', message: 'Only staff', cause: 'player' })
+    ).equals('Not sent: Only staff')
+    const team = (message: string | null): string =>
+      heldEditText({ kind: 'team', id: 't1', held: { state: 'dead', message } })
+    expect(team('Only staff')).equals(
+      `A player added ${EDITS_PLACE.on} was not saved: Only staff`
+    )
+    expect(team(null)).equals(
+      `A player added ${EDITS_PLACE.on} was not saved: ${DEAD_GAME_FALLBACK}`
     )
   })
 

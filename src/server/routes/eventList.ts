@@ -85,7 +85,8 @@ function scoreboardAway(error: unknown): boolean {
   return error instanceof Error && error.name === 'ScoreboardUnavailable'
 }
 
-async function withDirectorFields(
+/** Schedule rows as `GET /events` lists them, with their streams' state. */
+export async function eventListItems(
   db: Kysely<Database>,
   media: MediaContext,
   rows: ScheduleRow[]
@@ -171,7 +172,7 @@ export function eventListRoutes(
           })
           .slice(filter.offset, filter.offset + filter.limit)
         res.json(
-          (await withDirectorFields(db, media, listed)).map(game => {
+          (await eventListItems(db, media, listed)).map(game => {
             const video = metadata.get(game.id)!
             return {
               ...game,
@@ -242,7 +243,7 @@ export function eventListRoutes(
         )
         res.json({
           ...page,
-          items: await withDirectorFields(db, media, page.items)
+          items: await eventListItems(db, media, page.items)
         })
         return
       }
@@ -270,7 +271,7 @@ export function eventListRoutes(
         }
       }
 
-      res.json(await withDirectorFields(db, media, listed))
+      res.json(await eventListItems(db, media, listed))
     })
   )
 

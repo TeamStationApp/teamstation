@@ -750,6 +750,178 @@
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
     {
+      "id": "app-shell/refresh/socket#badge-parity",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
+      "id": "app-shell/refresh/socket#failed-connection",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
+      "id": "app-shell/refresh/socket#incident-320",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
+      "id": "app-shell/refresh/socket#spectator-idle",
+      "title": "Reads follow the socket’s notices, never a timer",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/hooks/useNoticedRead.ts",
+        "src/app/hooks/useUserTopic.tsx",
+        "src/app/hooks/useScreenScope.tsx",
+        "src/app/sync/whenBack.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/common/gameSocket.ts",
+        "src/server/socket/gameSocket.ts",
+        "src/server/socket/userNotices.ts",
+        "src/server/notifications/pending.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [
+        "socket-drop"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/refresh/socket",
+      "file": "e2e/tests/app-shell/refresh/socket.e2e.ts"
+    },
+    {
       "id": "app-shell/search/keyboard-dock#rides-keyboard",
       "title": "Search’s dock rides the keyboard up and down on a phone, with its location pills above the field",
       "kind": "e2e",
@@ -4090,6 +4262,290 @@
       "file": "e2e/tests/platform/node-admin/jev-key.e2e.ts"
     },
     {
+      "id": "platform/offline/held-edits#clear-from-banner",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#clear-from-game",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#clear-from-team",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#offline-scoring",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/held-edits#refused-state",
+      "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/useOffline.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/components/OfflineBanner.tsx",
+        "src/app/components/HeldEditsSheet.tsx",
+        "src/app/scoring/HeldGameNotice.tsx",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/held-edits",
+      "file": "e2e/tests/platform/offline/held-edits.e2e.ts"
+    },
+    {
+      "id": "platform/offline/in-flight-save#reopen-gone",
+      "title": "A pitch still being saved when the scorer leaves is on the board when scoring opens again, and reaches the server in order",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/outbox.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/common/scoring/session.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/offline/in-flight-save",
+      "file": "e2e/tests/platform/offline/in-flight-save.e2e.ts"
+    },
+    {
       "id": "platform/push/browser#dms-mentions-reminders",
       "title": "A browser's notification switches are its own, a DM, a mention and an RSVPed event's reminder notify it and nothing else does, and a tap opens what it is about",
       "kind": "e2e",
@@ -4185,6 +4641,555 @@
       "manual": false,
       "spec": "platform/push/phone",
       "file": "e2e/tests/platform/push/phone.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#chat",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#game-page",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#offline-scoring",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#schedule",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#scoring-swap",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#season",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#sign-in",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#team-roster",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
+    },
+    {
+      "id": "platform/web/main-flows#video",
+      "title": "The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/App.tsx",
+        "src/app/sync/cache.ts",
+        "src/app/sync/wasmSqliteExecutor.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/app/sync/outbox.ts",
+        "src/app/scoring/ScoringScreen.tsx",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "streaming",
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/web/main-flows",
+      "file": "e2e/tests/platform/web/main-flows.e2e.ts"
     },
     {
       "id": "playback/recordings/director-take-finish#real-take",
@@ -5060,6 +6065,147 @@
       "manual": false,
       "spec": "scoring/game-plan/share-print",
       "file": "e2e/tests/scoring/game-plan/share-print.e2e.ts"
+    },
+    {
+      "id": "scoring/offline/eligible#cold-offline-open",
+      "title": "A phone keeps its nearest three scorable games ready offline",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/offlineSet.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/server/scoring/offlineManifest.ts",
+        "src/server/routes/me.ts",
+        "src/server/socket/userNotices.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices",
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/offline/eligible",
+      "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
+    },
+    {
+      "id": "scoring/offline/eligible#nearest-three",
+      "title": "A phone keeps its nearest three scorable games ready offline",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/offlineSet.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/server/scoring/offlineManifest.ts",
+        "src/server/routes/me.ts",
+        "src/server/socket/userNotices.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices",
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/offline/eligible",
+      "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
+    },
+    {
+      "id": "scoring/offline/eligible#spectator-zero",
+      "title": "A phone keeps its nearest three scorable games ready offline",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sync/offlineSet.ts",
+        "src/app/sync/cachingClient.ts",
+        "src/server/scoring/offlineManifest.ts",
+        "src/server/routes/me.ts",
+        "src/server/socket/userNotices.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "refresh-notices",
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/offline/eligible",
+      "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
     },
     {
       "id": "streaming/basic/four-synthetic#scrub",

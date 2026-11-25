@@ -62,6 +62,8 @@ export type GameChangePayload =
   | { game: string; kind: 'plans'; teamId: string; inning: number }
   | PlayEditsNotice
   | { team: string; kind: 'walkUpSong'; userId: string }
+  /** A team's roster or default lineup changed (a database trigger says so). */
+  | { team: string; kind: 'roster' | 'defaultLineup' }
 
 /**
  * A worker from before `playEdits` sends `{ game, kind: 'plays' }`, which
@@ -106,6 +108,10 @@ export const asGameChangePayload = asEither(
     team: asString,
     kind: asLiteral('walkUpSong'),
     userId: asUserId
+  }),
+  asObject({
+    team: asString,
+    kind: asLiteral('roster', 'defaultLineup')
   })
 )
 

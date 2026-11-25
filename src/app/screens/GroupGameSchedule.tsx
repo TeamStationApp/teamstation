@@ -5,7 +5,8 @@ import type { TeamStationClient } from '../../common/api'
 import type { GameScheduleProposal } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { Button, Card, SectionHeader } from '../components'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export function GroupGameSchedule({
@@ -49,7 +50,7 @@ export function GroupGameSchedule({
       )
     }
   }, [client, kind, id])
-  useForegroundRefresh(load)
+  useNoticedRead(useScreenScope(load, client))
   const remove = async (requestId: string): Promise<void> => {
     try {
       await client.deleteDeclinedGame(requestId, { kind, id })
@@ -149,7 +150,7 @@ export function GameSchedulingControls({
       setTeams([])
     }
   }, [client, gameId])
-  useForegroundRefresh(load)
+  useNoticedRead(useScreenScope(load, client))
   const withdraw = async (): Promise<void> => {
     if (confirmation == null || busy) return
     setBusy(true)

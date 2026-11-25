@@ -48,6 +48,12 @@ export function scoringStatusFrame(native: boolean, insets: Insets): ViewStyle {
   }
 }
 
+/**
+ * How far in from either side the web's offline line keeps: the speaker and
+ * ☰, each 48 wide at `FIELD_EDGE_GAP` from its edge, and a gap.
+ */
+export const WEB_CORNER_CLEAR = FIELD_EDGE_GAP + 48 + FIELD_EDGE_GAP
+
 /** How tall the band across the top is while the offline line sits in it. */
 export const SCORING_OFFLINE_BAND = 28
 
@@ -60,7 +66,9 @@ export const SCORING_OFFLINE_BAND = 28
  * leaves. On the web the line keeps its place 8 from the top, between the
  * speaker and ☰ and above the board, and nothing moves: the web's field is
  * framed from the window's width, so a shorter canvas would only push home
- * plate under the deck.
+ * plate under the deck. It keeps clear of both buttons (`WEB_CORNER_CLEAR`),
+ * wrapping onto a second line in a phone's browser rather than drawing over
+ * them.
  */
 export function scoringOfflineFrame(
   native: boolean,
@@ -71,9 +79,9 @@ export function scoringOfflineFrame(
     return {
       position: 'absolute',
       top: FIELD_EDGE_GAP,
-      left: 0,
-      right: 0,
-      height: SCORING_OFFLINE_BAND,
+      left: WEB_CORNER_CLEAR,
+      right: WEB_CORNER_CLEAR,
+      minHeight: SCORING_OFFLINE_BAND,
       alignItems: 'center',
       justifyContent: 'center'
     }

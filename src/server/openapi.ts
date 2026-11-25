@@ -4365,6 +4365,81 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/me/offline-scoring': {
+        get: {
+          summary: 'The games this phone keeps to score with no signal',
+          description:
+            'At most three games, across every team, on either side of which ' +
+            'the caller was given the scorekeeper role as such (on the team, ' +
+            'its season or its league; administering a team gives none), ' +
+            'that the caller may see and score in full and that start within ' +
+            'the next 96 hours, soonest first, ties by id. A game named in ' +
+            '`held` that has started stays while under six hours past its ' +
+            'start and not final or cancelled; a started game is never newly ' +
+            'chosen. Each game carries its schedule row. `nextBoundary` is ' +
+            'when the choice next changes with no write; `digest` is its ' +
+            'validator.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'held',
+              in: 'query',
+              required: false,
+              description: 'The game ids the phone holds now, comma separated',
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'The chosen games',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['games', 'nextBoundary', 'digest'],
+                    properties: {
+                      games: {
+                        type: 'array',
+                        maxItems: 3,
+                        items: {
+                          type: 'object',
+                          required: [
+                            'id',
+                            'startAt',
+                            'homeTeamId',
+                            'awayTeamId',
+                            'started',
+                            'schedule'
+                          ],
+                          properties: {
+                            id: { type: 'string' },
+                            startAt: { type: 'string', format: 'date-time' },
+                            homeTeamId: { type: 'string' },
+                            awayTeamId: { type: 'string' },
+                            started: { type: 'boolean' },
+                            schedule: {
+                              type: 'object',
+                              nullable: true,
+                              description: 'The game as `GET /events` lists it'
+                            }
+                          }
+                        }
+                      },
+                      nextBoundary: {
+                        type: 'string',
+                        format: 'date-time',
+                        nullable: true
+                      },
+                      digest: { type: 'string' }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse
+          }
+        }
+      },
       '/me/affiliations': {
         get: {
           summary:

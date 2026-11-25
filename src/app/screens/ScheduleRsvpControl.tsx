@@ -10,7 +10,8 @@ import {
 import { PersonEmblem } from '../components'
 import { RSVP_COLORS } from '../components/eventRsvpPosition'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   eventReplyRows,
@@ -109,7 +110,12 @@ export function ScheduleRsvpControl({
       // Keep the entry available: the modal offers an explicit load retry.
     }
   }, [client, game, teamId, open])
-  useForegroundRefresh(refresh)
+  // A row reads on its own game's notices, or on one that names no game.
+  useNoticedRead(
+    useScreenScope(refresh, client, undefined, {
+      passes: notice => notice.gameId != null && notice.gameId !== game.id
+    })
+  )
   const upcoming = canScheduleRsvp(game, now)
   const responded = rows.some(row => row.response != null)
   return (

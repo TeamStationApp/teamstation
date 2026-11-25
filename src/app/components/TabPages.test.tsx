@@ -10,7 +10,7 @@ import {
   installFrameClock,
   translationOf
 } from '../../test/frameClock'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { Screen } from './Screen'
 import {
@@ -429,7 +429,7 @@ describe('tab pages', function () {
     it('reads nothing on a kept page until it is chosen again', async function () {
       const reads = new Map<string, number>()
       function Reading(props: { name: string }): React.ReactElement {
-        useForegroundRefresh(async () => {
+        useNoticedRead(async () => {
           reads.set(props.name, (reads.get(props.name) ?? 0) + 1)
         })
         return <Text>{props.name}</Text>
@@ -444,11 +444,11 @@ describe('tab pages', function () {
       await render(reading('past', 1))
       await advance(PAGE_MS + 32)
       expect(reads.get('past')).equals(1)
-      // Back to the app: the page on show reads, the kept one does not.
+      // Back to the app: neither reads; what changes comes as a notice.
       await act(async () => {
         window.dispatchEvent(new window.Event('focus'))
       })
-      expect(reads.get('past')).equals(2)
+      expect(reads.get('past')).equals(1)
       expect(reads.get('upcoming')).equals(1)
       // Chosen again, it reads once.
       await render(reading('upcoming', 0))

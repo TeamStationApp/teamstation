@@ -20,7 +20,8 @@ const BODY =
 /** The game subscribes the app sent on one socket. */
 function gameSubscribes(socket: FakeSocket): Array<Record<string, unknown>> {
   return (socket.messages() as Array<Record<string, unknown>>).filter(
-    frame => frame.type === 'subscribe' && !('scope' in frame)
+    frame =>
+      frame.type === 'subscribe' && !('scope' in frame) && !('topic' in frame)
   )
 }
 

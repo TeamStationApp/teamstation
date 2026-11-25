@@ -1,30 +1,24 @@
-import { asArray, asString, type Cleaner } from 'cleaners'
+import { asArray, asObject, asString, type Cleaner } from 'cleaners'
 
 import {
   asGameDetail,
-  asHomeLists,
-  asMyRoles,
   asPage,
   asRosterEntry,
   asSeasonGame,
   asStoredGameAnswer,
   type ClientOptions,
-  eventInfoPath,
   type GameDetail,
-  type HomeLists,
   IDEMPOTENCY_HEADER,
-  type MyRoles,
   type Page,
   type RequestOptions,
   type RosterCandidate,
-  type SeasonGame,
   type StoredChange,
   storedGameOfEvents,
   type SwapSidesAnswer,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { managesRoster } from '../../common/roles'
+import type { GameSocket } from '../../common/gameSocket'
 import type { StoredGame } from '../../common/scoring/session'
 import type { SwapDocumentsEffect } from '../../common/scoring/swapDocuments'
 import {
@@ -32,6 +26,7 @@ import {
   olderSaveFoldsAlike,
   rebuildGameEvents
 } from '../scoring/scoringSource'
+import { matchupLines, matchupTitle } from '../screens/format'
 import { deleteDocumentCaches } from './cache'
 import {
   type CacheTransaction,
@@ -50,13 +45,21 @@ import {
   fallbackKeyOf,
   foundWords,
   gameKey,
-  HOME_LISTS,
+  HOME_TEAMS,
+  OFFLINE_SET,
   PLACEHOLDER_TEAMS,
   PLACEHOLDERS_KEPT
 } from './documentKeys'
 import { type PictureDirectories, pictureDirectories } from './imageCache'
 import {
+  OfflineScoringSet,
+  type OfflineSetHost,
+  type OfflineSetState
+} from './offlineSet'
+import {
   confirmedPlays,
+  type DiscardOutcome,
+  GAME_NOT_STORED_MESSAGE,
   type GivenUp,
   Outbox,
   type OutboxListener,
@@ -75,6 +78,7 @@ import {
   WHOLE_LIST,
   windowName
 } from './scheduleReads'
+import { whenBack } from './whenBack'
 
 /** One person's file, open or opening. */
 interface Opened {
@@ -116,29 +120,18 @@ export const REFRESH_TRIES = 4
  */
 export const OFFLINE_CREATE_MESSAGE = "Available when you're back online."
 
-/** How many prefetch reads are out at once. */
-export const PREFETCH_CONCURRENCY = 4
-
 /**
- * The games read ahead beside the upcoming ones: every game from this many
- * hours ago on, scored or not. Upcoming is a game with no score whose start
- * is still ahead, so neither the game under way at the field nor one scored
- * before its start is one.
+ * The list an earlier build read ahead every game it named from: its stored
+ * copy names the games whose documents the offline set lets go of once.
  */
-export const PREFETCH_STARTED_HOURS = 6
+const LEGACY_NEAR_PATH = '/events?when=all&lookbackHours=6'
 
-/** That read: `when=all` with a look-back is every game from then on. */
-export const PREFETCH_NEAR_PATH = `/events?when=all&lookbackHours=${PREFETCH_STARTED_HOURS}`
-
-/**
- * How far ahead a game's page and plans are read ahead: the games the phone
- * may be at with no signal, not the rest of the season.
- */
-export const PREFETCH_DETAIL_HOURS = 48
-
-const HOUR_MS = 3_600_000
+/** The socket the offline set follows its games and its topic on. */
+export type OfflineSetSocket = Pick<GameSocket, 'subscribe' | 'onUserChanged'>
 
 const asRaw: Cleaner<unknown> = raw => raw
+/** A stored team list's entry, for its name alone. */
+const asNamedTeam = asObject({ id: asString, name: asString })
 
 /** A page as the server sends one, before its items are cleaned. */
 type RawPage = Omit<Page<unknown>, 'counts'> & { counts: unknown }
@@ -338,7 +331,6 @@ export class CachingClient extends TeamStationClient {
   private readonly cacheCleanups = new Map<string, Promise<void>>()
   private opened: Opened | undefined
 
-  private prefetching: Promise<void> | undefined
   /**
    * The stored answers whose read behind them did not reach the server,
    * by document: read again when the signal comes back, or after
@@ -569,10 +561,7 @@ export class CachingClient extends TeamStationClient {
       typeof sides.homeTeamId !== 'string' ||
       typeof sides.awayTeamId !== 'string'
     )
-      throw new HttpError(
-        'unavailable',
-        'This game is not on the phone yet. Try again in a moment.'
-      )
+      throw new HttpError('unavailable', GAME_NOT_STORED_MESSAGE)
     // A reset names the plays it confirmed losing: the digest and
     // generation of the server's last answer. The queue puts the ones the
     // writes ahead of it answered in their place when it sends; these go
@@ -640,9 +629,79 @@ export class CachingClient extends TeamStationClient {
     return await this.outbox.discard(`team:${teamId}`)
   }
 
+  /**
+   * Gives up a held game's or team's edits as `discardGame` and
+   * `discardTeam` do, answering what that came to: nothing dropped because
+   * part of it was on its way, or dropped with the server's copy back, or
+   * dropped without it.
+   */
+  async discardHeld(edit: {
+    kind: 'game' | 'team'
+    id: string
+  }): Promise<DiscardOutcome> {
+    return await this.outbox.discardOutcome(`${edit.kind}:${edit.id}`)
+  }
+
   /** Sends a team's refused players again. */
   async retryTeam(teamId: string): Promise<void> {
     await this.outbox.retry(`team:${teamId}`)
+  }
+
+  /**
+   * The names of held games and teams, by `game:<id>` and `team:<id>`, from
+   * the phone's own documents and never the network: a game by its stored
+   * matchup; a team by the person's stored team list, else as a side of a
+   * held game, else as a side of any game a stored schedule holds (an
+   * opponent whose new player was never put in a lineup). One the phone
+   * cannot name is left out.
+   */
+  async heldNames(
+    edits: ReadonlyArray<{ kind: 'game' | 'team'; id: string }>
+  ): Promise<Record<string, string>> {
+    const names: Record<string, string> = {}
+    const sides = new Map<string, string>()
+    const games = edits.filter(edit => edit.kind === 'game')
+    const teamIds = edits
+      .filter(edit => edit.kind === 'team')
+      .map(edit => edit.id)
+    const [details, teams] = await Promise.all([
+      Promise.all(
+        games.map(
+          async edit => await this.cached(gameKey(edit.id), asGameDetail)
+        )
+      ),
+      teamIds.length === 0
+        ? []
+        : this.cached(HOME_TEAMS, asArray(asNamedTeam)).then(
+            listed => listed ?? []
+          )
+    ])
+    games.forEach((edit, index) => {
+      const game = details[index]
+      if (game == null) return
+      names[`game:${edit.id}`] = matchupTitle(matchupLines(game))
+      sides.set(game.homeTeamId, game.homeTeamName)
+      sides.set(game.awayTeamId, game.awayTeamName)
+    })
+    const unnamed: string[] = []
+    for (const id of teamIds) {
+      const name = teams.find(team => team.id === id)?.name ?? sides.get(id)
+      if (name != null) names[`team:${id}`] = name
+      else unnamed.push(id)
+    }
+    if (unnamed.length > 0) {
+      const opened = this.owned
+      const scheduled =
+        opened == null
+          ? undefined
+          : await this.inStore(
+              opened.store,
+              async tx => await tx.scheduleTeamNames(unnamed)
+            )
+      for (const [id, name] of Object.entries(scheduled ?? {}))
+        names[`team:${id}`] = name
+    }
+    return names
   }
 
   /** Whether the app is in front; the queue sends nothing behind it. */
@@ -712,6 +771,7 @@ export class CachingClient extends TeamStationClient {
     }
     this.outbox.reset()
     this.forgetUnrefreshed()
+    this.stopOfflineSet()
     this.pictureFiles.open(userId)
     const previous = this.opened
     // Capture only cleanup already pending. A later sign-out may itself
@@ -745,6 +805,7 @@ export class CachingClient extends TeamStationClient {
     this.ownerToken = undefined
     this.outbox.reset()
     this.forgetUnrefreshed()
+    this.stopOfflineSet()
     const pictures = opened?.userId ?? this.pictureFiles.userId
     if (pictures == null) return
     await this.cleanupCache(pictures, async () => {
@@ -772,6 +833,180 @@ export class CachingClient extends TeamStationClient {
     })
   }
 
+  /** Scoring screens open now, by game: the offline set lets go of none. */
+  private readonly openGames = new Map<string, number>()
+
+  /** The games kept to score with no signal, once the phone's shell starts it. */
+  private offlineSet: OfflineScoringSet | undefined
+
+  /**
+   * Holds a game open while a scoring screen shows it: the offline set keeps
+   * its documents and leaves its changes to the screen. Returns the release.
+   */
+  holdGame(gameId: string): () => void {
+    this.openGames.set(gameId, (this.openGames.get(gameId) ?? 0) + 1)
+    let held = true
+    return () => {
+      if (!held) return
+      held = false
+      const left = (this.openGames.get(gameId) ?? 1) - 1
+      if (left <= 0) this.openGames.delete(gameId)
+      else this.openGames.set(gameId, left)
+    }
+  }
+
+  /** The offline set, while one runs. */
+  get offlineGames(): OfflineScoringSet | undefined {
+    return this.offlineSet
+  }
+
+  /**
+   * Starts keeping the games the server chooses for this person to score
+   * with no signal, on the file open now, in place of any set already
+   * running. The phone's shell starts it once signed in; a sign-out, a
+   * refused session or another account stops it.
+   */
+  startOfflineSet(socket: OfflineSetSocket): OfflineScoringSet {
+    this.stopOfflineSet()
+    // The file open when the set first reads: a later one is another
+    // account's, and nothing more is read or stored for this set.
+    let opened: Opened | undefined
+    const current = (): Opened => {
+      const now = this.owned
+      opened ??= now
+      if (now == null || now !== opened)
+        throw new HttpError('offline', 'Another account is signed in')
+      return now
+    }
+    const inOpened = async <R>(
+      work: (tx: CacheTransaction) => Promise<R>
+    ): Promise<R | undefined> => await this.inStore(current().store, work)
+    const host: OfflineSetHost = {
+      manifest: async held => {
+        current()
+        return await this.offlineScoring(held)
+      },
+      read: async path => {
+        current()
+        return await this.request('GET', path, asRaw)
+      },
+      roles: async () => {
+        current()
+        return await this.myRoles()
+      },
+      forget: async paths => {
+        await inOpened(async tx => {
+          for (const path of paths) {
+            const key = documentKeyOf(path)
+            if (key != null) await tx.forget(key)
+          }
+        })
+      },
+      storedGames: async () =>
+        (await inOpened(async tx => {
+          const ids = new Set<string>()
+          const near = await tx.read(documentKeyOf(LEGACY_NEAR_PATH) ?? '')
+          try {
+            if (near != null)
+              for (const game of asArray(asObject({ id: asString }))(
+                JSON.parse(near.body)
+              ))
+                ids.add(game.id)
+          } catch {
+            // A copy that does not read names nothing.
+          }
+          for (const page of await tx.schedulePages(ME_SCOPE, [
+            windowName({ when: 'upcoming' }),
+            windowName({ when: 'past' })
+          ]))
+            for (const id of page.gameIds) ids.add(id)
+          return [...ids]
+        })) ?? [],
+      keepSchedule: async (games, window) => {
+        // A placeholder opponent they list has no roster to wait for.
+        await this.keepPlaceholders(games, current().store)
+        const read = scheduleReadOf(`/events?paged=1&when=${window}`)
+        if (read == null) return
+        await inOpened(async tx => {
+          const pages = await tx.schedulePages(read.scope, [read.window])
+          const page = pages.find(one => one.cursor === read.cursor) ?? {
+            scope: read.scope,
+            window: read.window,
+            cursor: read.cursor,
+            gameIds: [],
+            meta: {
+              nextCursor: null,
+              prevCursor: null,
+              anchorId: null,
+              counts: null
+            }
+          }
+          const rows = await tx.scheduleRows(read.shape, page.gameIds)
+          const startOf = new Map<string, number>()
+          for (const row of rows)
+            try {
+              startOf.set(
+                row.id,
+                Date.parse(asSeasonGame(JSON.parse(row.body)).startAt ?? '')
+              )
+            } catch {
+              // A row that does not read keeps its place.
+            }
+          for (const game of games)
+            startOf.set(game.id, Date.parse(game.startAt ?? ''))
+          const ids = [
+            ...new Set([...page.gameIds, ...games.map(game => game.id)])
+          ]
+          const order = (id: string): number => {
+            const at = startOf.get(id)
+            return at == null || Number.isNaN(at) ? Infinity : at
+          }
+          const sorted =
+            window === 'past'
+              ? ids.sort((a, b) => order(b) - order(a))
+              : ids.sort((a, b) => order(a) - order(b))
+          await tx.writeSchedule(
+            read.shape,
+            { ...page, gameIds: sorted },
+            games.map(game => ({ id: game.id, body: JSON.stringify(game) }))
+          )
+        })
+      },
+      loadState: async () =>
+        await inOpened(async tx => {
+          const kept = await tx.read(OFFLINE_SET)
+          if (kept == null) return undefined
+          try {
+            return JSON.parse(kept.body) as OfflineSetState
+          } catch {
+            return undefined
+          }
+        }),
+      saveState: async state => {
+        await inOpened(async tx => {
+          await tx.write(OFFLINE_SET, {
+            body: JSON.stringify(state),
+            revision: '0',
+            serverDigest: null,
+            pending: false
+          })
+        })
+      },
+      heldOpen: gameId => this.openGames.has(gameId),
+      subscribeGame: (gameId, listener) => socket.subscribe(gameId, listener),
+      onTopic: (topic, listener) => socket.onUserChanged(topic, listener),
+      whenBack
+    }
+    this.offlineSet = new OfflineScoringSet(host)
+    return this.offlineSet
+  }
+
+  /** Stops the offline set, keeping what it stored. */
+  private stopOfflineSet(): void {
+    this.offlineSet?.stop()
+    this.offlineSet = undefined
+  }
+
   /**
    * The server refused the session: closes the person's file and keeps it,
    * and leaves none open. Nothing in it is read or sent until `openFor`
@@ -783,6 +1018,7 @@ export class CachingClient extends TeamStationClient {
     this.ownerToken = undefined
     this.outbox.reset()
     this.forgetUnrefreshed()
+    this.stopOfflineSet()
     this.pictureFiles.close()
     await this.closeQuietly(opened?.store)
   }
@@ -886,29 +1122,6 @@ export class CachingClient extends TeamStationClient {
     return raw
   }
 
-  /**
-   * Reads into the cache what the phone needs to open, score and coach a
-   * game with no signal, beside what Home stored: the person's roles, every
-   * team's roster (whole names only where they manage it), and for each
-   * game that starts from `PREFETCH_STARTED_HOURS` ago on, upcoming or
-   * not: the game, and unless it was called off both sides' rosters, its
-   * lineups, its plays and each side's default lineup; for one starting
-   * within `PREFETCH_DETAIL_HOURS`, its event information (the game page's
-   * first tab) and, for a game, its plans (Coach Game); and for a game
-   * begun, its box score.
-   * Also the first pages of Schedule's Upcoming and Past, so that they paint
-   * without having been opened, and a game that has started is listed. Four at a time; a read that fails
-   * is left for the next time. One prefetch runs at a time, and none while
-   * offline.
-   */
-  async prefetch(): Promise<void> {
-    if (this.owned == null || this.offline) return
-    this.prefetching ??= this.prefetchOnce().finally(() => {
-      this.prefetching = undefined
-    })
-    await this.prefetching
-  }
-
   protected override async request<T>(
     method: string,
     path: string,
@@ -959,6 +1172,107 @@ export class CachingClient extends TeamStationClient {
     // at once, where waiting out its deadline first kept the screen on its
     // spinner for as many deadlines as it reads. The network is still asked, behind it,
     // and its answer brings the phone back online.
+    // The scoring screen as it opens waits on the network for nothing: what
+    // the phone stored, or nothing at once, with the server asked behind.
+    const alone = options?.storedOrNothing
+    if (alone != null && key != null && opened != null) {
+      const { storedOrNothing: _alone, ...rest } = options ?? {}
+      const shown = await this.readFrom(opened.store, key)
+      if (shown != null) {
+        let value: { cleaned: T } | undefined
+        try {
+          value = { cleaned: cleaner(JSON.parse(shown.body)) }
+        } catch {
+          // A document this version cannot read is no document.
+        }
+        if (value != null) {
+          this.refreshStored(opened, key, path, shown.body, rest).catch(
+            () => undefined
+          )
+          return value.cleaned
+        }
+      }
+      // Nothing stored: the server is asked, and waited for a moment at
+      // most; once its answer is stored, the screen hears of it.
+      let waited = true
+      let decide: () => void = () => undefined
+      const decided = new Promise<void>(resolve => {
+        decide = resolve
+      })
+      // The server's own answer: no stored stand-in for it (a plain roster
+      // for a full-name one) is taken as the answer.
+      const asked = this.request(method, path, asRaw, body, {
+        ...rest,
+        fromServer: true
+      })
+      asked
+        .then(async () => {
+          // Told only of an answer the open did not wait for and take.
+          await decided
+          if (!waited || this.owned !== opened) return
+          const now = await this.readFrom(opened.store, key)
+          if (now == null) return
+          // Only an answer the screen can read is news.
+          cleaner(JSON.parse(now.body))
+          this.tellStored(alone.gameId, 'details')
+        })
+        .catch(() => undefined)
+      asked.catch((error: unknown) => {
+        // No signal, or the server refusing for now: asked again once it
+        // can be, as a stored read is, and the screens told once it is
+        // stored (nothing was shown, so any answer is news).
+        if (
+          this.owned !== opened ||
+          !(isOffline(error) || refusedForNow(error))
+        )
+          return
+        this.unrefreshed.set(key, {
+          opened,
+          path,
+          shown: '',
+          options: rest,
+          refused: refusedForNow(error) ? 1 : 0
+        })
+        if (refusedForNow(error) && !this.offline) this.refreshLater()
+      })
+      const waitMs = alone.waitMs ?? 0
+      if (waitMs > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const answer = await Promise.race([
+          asked.then(
+            raw => ({ raw }),
+            (error: unknown) => ({ error })
+          ),
+          new Promise<undefined>(resolve => {
+            timer = setTimeout(() => {
+              resolve(undefined)
+            }, waitMs)
+          })
+        ])
+        clearTimeout(timer)
+        if (answer != null && 'raw' in answer) {
+          // Answered in time: what it opens on, nothing to tell later.
+          waited = false
+          decide()
+          return cleaner(answer.raw)
+        }
+        // Refused in time: the server's word, as a read that waits gets it,
+        // so a refused full-name roster falls back as it always has. No
+        // signal, or a server that cannot answer now, is nothing stored.
+        if (
+          answer != null &&
+          answer.error instanceof HttpError &&
+          !isOffline(answer.error) &&
+          !refusedForNow(answer.error)
+        ) {
+          waited = false
+          decide()
+          throw answer.error
+        }
+      }
+      decide()
+      throw new HttpError('notStored', 'Not on this device yet.')
+    }
     const offlineFirst = options?.offlineFirst === true && this.offline
     if (
       key != null &&
@@ -1272,12 +1586,19 @@ export class CachingClient extends TeamStationClient {
     )
       return
     const gameId = gameOfPath(path)
+    // Roles, rosters and default lineups are no one game's.
+    this.tellStored(gameId, gameId == null ? 'details' : 'game')
+  }
+
+  /**
+   * Tells the screens reading `gameId` (every screen, with none) that a
+   * stored read changed, or keeps it for the screen still opening.
+   */
+  private tellStored(gameId: string | undefined, change: StoredChange): void {
     const told =
       gameId == null
         ? [...this.storedListeners.values()].flatMap(set => [...set])
         : [...(this.storedListeners.get(gameId) ?? [])]
-    // Roles, rosters and default lineups are no one game's.
-    const change: StoredChange = gameId == null ? 'details' : 'game'
     if (told.length === 0) {
       // Kept for the screen that is still opening on what it showed.
       if (gameId == null) this.missedDetails = true
@@ -1286,113 +1607,6 @@ export class CachingClient extends TeamStationClient {
       return
     }
     for (const listener of told) listener(change)
-  }
-
-  private async prefetchOnce(): Promise<void> {
-    // Push before pull: what is queued goes first, so the reads find it.
-    // The server answers, so a wait that no signal began is over.
-    this.outbox.wake(true)
-    await this.outbox.drain()
-    const read = async <T>(
-      path: string,
-      cleaner: Cleaner<T>
-    ): Promise<T | undefined> => {
-      try {
-        return await this.request('GET', path, cleaner)
-      } catch {
-        return undefined
-      }
-    }
-    const [roles, lists, fetched] = await Promise.all([
-      read<MyRoles>('/me/roles', asMyRoles),
-      this.cached<HomeLists>(HOME_LISTS, asHomeLists),
-      // Every game from the look-back on, upcoming or not: these choose
-      // what is stored for scoring.
-      read<SeasonGame[]>(PREFETCH_NEAR_PATH, asArray(asSeasonGame)),
-      read('/events?paged=1&when=upcoming', asPage(asSeasonGame)),
-      // Past's first page, where a game is listed once it has started: so
-      // the game under way is there to tap with no signal.
-      read('/events?paged=1&when=past', asPage(asSeasonGame))
-    ])
-    const now = Date.now()
-    const since = now - PREFETCH_STARTED_HOURS * HOUR_MS
-    // The games last stored stand in for a list that would not load: the
-    // list's own copy, cut to the look-back again, else Upcoming's.
-    const stored = await this.cached<SeasonGame[]>(
-      PREFETCH_NEAR_PATH,
-      asArray(asSeasonGame)
-    )
-    if (fetched != null) await this.keepPlaceholders(fetched)
-    const games =
-      fetched ??
-      stored?.filter(
-        game => game.startAt == null || Date.parse(game.startAt) >= since
-      ) ??
-      (
-        await this.scheduleGames(
-          ME_SCOPE,
-          windowName({ when: 'upcoming' }),
-          asSeasonGame
-        )
-      ).items
-
-    const paths = new Set<string>()
-    const team = (teamId: string): void => {
-      const id = encodeURIComponent(teamId)
-      paths.add(`/teams/${id}/roster`)
-      if (managesRoster(roles, teamId))
-        paths.add(`/teams/${id}/roster?includeFullNames=true`)
-    }
-    for (const summary of lists?.teams ?? []) team(summary.id)
-    for (const game of games) {
-      const id = encodeURIComponent(game.id)
-      paths.add(`/games/${id}`)
-      const startMs = game.startAt == null ? NaN : Date.parse(game.startAt)
-      const soon =
-        Number.isNaN(startMs) ||
-        startMs <= now + PREFETCH_DETAIL_HOURS * HOUR_MS
-      // A game called off opens on its page and its information (where the
-      // call-off is), and nothing more.
-      if (game.status === 'cancelled') {
-        if (soon) paths.add(eventInfoPath(game.id))
-        continue
-      }
-      paths.add(`/games/${id}/lineups`)
-      paths.add(`/games/${id}/events`)
-      // The game page opens on Info, and Coach Game reads the plans; the
-      // server answers each person the sides they may plan.
-      if (soon) {
-        paths.add(eventInfoPath(game.id))
-        if (game.eventKind !== 'event') paths.add(`/games/${id}/plans`)
-      }
-      // A game not begun has an empty box score, which Coach Game shows
-      // without one; an event that is not a game has none.
-      if (
-        game.eventKind !== 'event' &&
-        (game.homeScore != null || game.awayScore != null || startMs <= now)
-      )
-        paths.add(`/games/${id}/box-score`)
-      for (const [teamId, external] of [
-        [game.homeTeamId, game.homeTeamExternal],
-        [game.awayTeamId, game.awayTeamExternal]
-      ] as const) {
-        // A placeholder opponent has no roster of its own.
-        if (external) continue
-        team(teamId)
-        paths.add(`/teams/${encodeURIComponent(teamId)}/default-lineup`)
-      }
-    }
-
-    const queue = [...paths]
-    const worker = async (): Promise<void> => {
-      for (let path = queue.shift(); path != null; path = queue.shift())
-        await read(path, asRaw)
-    }
-    await Promise.all(
-      Array.from({ length: PREFETCH_CONCURRENCY }, async () => {
-        await worker()
-      })
-    )
   }
 
   /**

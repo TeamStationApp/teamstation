@@ -1,0 +1,321 @@
+// The coverage gate for the web's queued writes: the web runs the phone's
+// CachingClient and outbox on an in-memory SQLite database, and the scoring
+// screen leaves, comes back and swaps on it as the phone does (#358, #333).
+// Every changed runtime line of `src/**/*.ts(x)` since TS_COVERAGE_BASE is
+// measured, each file and the total, at 90%.
+//
+//   TS_COVERAGE_BASE=$(git merge-base origin/paul/fixScoring HEAD) \
+//     npm run coverage.webOutbox
+//
+// It works as `scripts/held-edits-coverage.mjs` does: the `.test.ts` suites
+// in `tsSuites` run together under mocha, and the `.test.tsx` suites in
+// `appSuites` are each bundled alone, as the web build resolves them. Any
+// failing suite fails the run, so it is also the work's test command. A
+// changed file no suite loaded fails.
+//
+// Test tooling (`scripts/**`, `src/test/**`), tests, end-to-end files and
+// type declarations are not measured.
+//
+// TS_COVERAGE_GREP runs only the cases whose titles match it, in every
+// suite, as mocha's `--grep` does, for a quick look at a few cases; a suite's
+// `skip` still leaves its cases out. Its coverage figure is of those cases
+// alone, so the gate is the run without it.
+import { spawnSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import ts from 'typescript'
+
+import { bundleAppSuite } from './appSuiteBundle.mjs'
+
+const minimum = 90
+
+/** The `.test.ts` suites, run together under mocha. */
+const tsSuites = [
+  // The cache's SQL and outbox, on node:sqlite (M2).
+  'src/app/sync/cacheStore.test.ts',
+  // What the shell says of the queue, and the network watch that wakes it (M3).
+  'src/app/sync/useOffline.test.ts',
+  'src/app/sync/reachability.test.ts',
+  'src/app/sync/editsPlace.test.ts',
+  // The scoring source on the queue's swapped documents (M4).
+  'src/app/scoring/scoringSource.test.ts',
+  // A save on its way written ahead; reads that wait on nothing (M5).
+  'src/app/sync/outbox.test.ts',
+  'src/app/sync/cachingClient.test.ts'
+]
+
+/**
+ * The `.test.tsx` suites, each bundled alone. `skip` names the cases left
+ * out because, bundled alone, they fail on the branch's base as well: they
+ * lean on their bundle neighbours under `npm test`, which still runs them.
+ * `env` is set for that suite's own mocha process (`TS_TEST_SQLITE: 'wasm'`
+ * runs it on the web's SQLite WASM).
+ */
+const appSuites = [
+  // Leaving and coming back to scoring.
+  {
+    path: 'src/app/scoring/scoringShell.test.tsx',
+    skip: 'returns Schedule to its (upcoming|past) list after exiting scoring twice|clears Videos after scoring exit'
+  },
+  // The screen's opens, swaps and their unload warnings.
+  {
+    path: 'src/app/scoring/scoringSession.test.tsx',
+    skip: 'on a phone, opens the sheet again to say why a swap could not be queued'
+  },
+  { path: 'src/app/scoring/eventTags.test.tsx' },
+  // Scoring with no signal, on the queue the web now shares.
+  { path: 'src/app/sync/offlineScoring.test.tsx' },
+  // The web's executor and cache, on SQLite WASM (M2).
+  {
+    path: 'src/app/sync/wasmSqliteExecutor.test.ts',
+    env: { TS_TEST_SQLITE: 'wasm' }
+  },
+  { path: 'src/app/sync/cache.test.ts', env: { TS_TEST_SQLITE: 'wasm' } },
+  // The web's App on its in-memory cache, its banners and leave warning (M3).
+  { path: 'src/app/App.webCache.test.tsx' },
+  { path: 'src/app/App.offlineBanner.test.tsx' },
+  { path: 'src/app/sync/useUnsentEditsWarning.test.tsx' },
+  // Scoring on the queued client, the web's as the phone's (M4).
+  { path: 'src/app/scoring/scoringSheets.test.tsx' },
+  { path: 'src/app/scoring/rosterDictation.test.tsx' },
+  { path: 'src/app/scoring/visibleLineup.test.tsx' },
+  { path: 'src/app/scoring/scoringScreenField.test.tsx' },
+  { path: 'src/app/scoring/fielderGrab.test.tsx' }
+]
+const only = process.env.TS_COVERAGE_GREP
+
+const base = process.env.TS_COVERAGE_BASE
+if (base == null)
+  throw new Error('Set TS_COVERAGE_BASE to the branch base (git merge-base)')
+const report = resolve('coverage/webOutbox')
+const temp = resolve(report, 'tmp')
+rmSync(resolve(report, 'tmp'), { recursive: true, force: true })
+rmSync(resolve(report, 'coverage-final.json'), { force: true })
+mkdirSync(temp, { recursive: true })
+const bundles = resolve('lib/webOutbox-tests')
+rmSync(bundles, { recursive: true, force: true })
+mkdirSync(bundles, { recursive: true })
+
+const failedSuites = []
+function run(command, args, extraEnv = {}) {
+  console.log('$', command, ...args)
+  const result = spawnSync(command, args, {
+    stdio: 'inherit',
+    env: { ...process.env, ...extraEnv }
+  })
+  if (result.status !== 0) failedSuites.push(`${command} ${args.join(' ')}`)
+}
+function git(args) {
+  const result = spawnSync('git', args, { encoding: 'utf8' })
+  if (result.status !== 0) throw new Error(result.stderr)
+  return result.stdout
+}
+const lines = text => text.split('\n').filter(line => line !== '')
+
+// Type declarations and forwarding exports have no executable source lines.
+function hasExecutableSource(path) {
+  const source = ts.createSourceFile(
+    path,
+    readFileSync(path, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  )
+  return source.statements.some(
+    statement =>
+      !ts.isInterfaceDeclaration(statement) &&
+      !ts.isTypeAliasDeclaration(statement) &&
+      !ts.isExportDeclaration(statement) &&
+      !(
+        ts.isImportDeclaration(statement) &&
+        statement.importClause?.isTypeOnly === true
+      )
+  )
+}
+const eligible = path =>
+  /^src\/.+\.tsx?$/.test(path) &&
+  existsSync(path) &&
+  !path.endsWith('.d.ts') &&
+  !/\.(test|spec|e2e|integration)\./.test(path) &&
+  !path.startsWith('src/test/') &&
+  hasExecutableSource(path)
+
+const changed = lines(git(['diff', '--name-only', '--diff-filter=d', base]))
+const untracked = lines(git(['ls-files', '--others', '--exclude-standard']))
+const paths = [...new Set([...changed, ...untracked])].filter(eligible).sort()
+
+for (const [index, suite] of appSuites.entries())
+  await bundleAppSuite({
+    path: suite.path,
+    outfile: resolve(bundles, `${index}.cjs`),
+    sourcefile: `web-outbox-test-${index}.ts`
+  })
+
+const mocha = 'node_modules/.bin/mocha'
+const setup = ['-r', 'sucrase/register', '-r', './src/test/scoringDomSetup.cjs']
+if (tsSuites.length > 0)
+  run(
+    mocha,
+    [
+      ...setup,
+      '--timeout',
+      '60000',
+      '--exit',
+      '--extension',
+      'ts',
+      ...tsSuites.flatMap(spec => ['--spec', spec])
+    ],
+    { NODE_V8_COVERAGE: temp }
+  )
+for (const [index, suite] of appSuites.entries()) {
+  console.log(`\n${suite.path}`)
+  run(
+    mocha,
+    [
+      ...setup,
+      '--timeout',
+      '60000',
+      '--exit',
+      ...(only != null
+        ? [
+            '--grep',
+            suite.skip == null ? only : `^(?!.*(?:${suite.skip})).*(?:${only})`
+          ]
+        : suite.skip == null
+          ? []
+          : ['--grep', suite.skip, '--invert']),
+      resolve(bundles, `${index}.cjs`)
+    ],
+    {
+      NODE_V8_COVERAGE: temp,
+      ...suite.env
+    }
+  )
+}
+
+// Bundled sources are file URLs in the recorded source maps; c8 wants paths.
+for (const file of readdirSync(temp)) {
+  const location = resolve(temp, file)
+  const data = JSON.parse(readFileSync(location, 'utf8'))
+  for (const map of Object.values(data['source-map-cache'] ?? {}))
+    if (map.data?.sources != null)
+      map.data.sources = map.data.sources.map(source =>
+        source.startsWith('file://') ? fileURLToPath(source) : source
+      )
+  writeFileSync(location, JSON.stringify(data))
+}
+
+const require = createRequire(import.meta.url)
+const { createCoverageMap } = require('istanbul-lib-coverage')
+let map = createCoverageMap({})
+if (paths.length > 0) {
+  run('node_modules/.bin/c8', [
+    'report',
+    '--temp-directory',
+    temp,
+    '--reporter=json',
+    '--reports-dir',
+    report,
+    '--exclude-after-remap',
+    ...paths.flatMap(path => ['--include', path]),
+    '--exclude',
+    '**/*.test.*',
+    '--exclude',
+    '**/*.spec.*',
+    '--exclude',
+    '**/*.e2e.*',
+    '--exclude',
+    'src/test/**'
+  ])
+  map = createCoverageMap(
+    JSON.parse(readFileSync(resolve(report, 'coverage-final.json'), 'utf8'))
+  )
+}
+writeFileSync(
+  resolve(report, 'coverage-final.json'),
+  JSON.stringify(map.toJSON())
+)
+
+const {
+  changedLines,
+  istanbulCounts,
+  lineReportFromCounts
+} = require('./changed-line-coverage.cjs')
+let diff =
+  paths.length > 0 ? git(['diff', '--unified=0', base, '--', ...paths]) : ''
+for (const path of untracked.filter(path => paths.includes(path))) {
+  const source = readFileSync(path, 'utf8').split('\n')
+  const count = source.length - 1
+  diff += `\ndiff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${count} @@\n`
+  diff +=
+    source
+      .slice(0, count)
+      .map(line => '+' + line)
+      .join('\n') + '\n'
+}
+const counts = {}
+for (const path of paths)
+  if (map.files().includes(resolve(path)))
+    counts[path] = istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
+const result = lineReportFromCounts(
+  changedLines(diff),
+  counts,
+  path => paths.includes(path),
+  { min: minimum }
+)
+writeFileSync(
+  resolve(report, 'changed-lines.json'),
+  JSON.stringify(result, null, 2)
+)
+
+// One row per changed file with changed runtime lines.
+const rows = Object.entries(result.files)
+  .map(([path, file]) => {
+    const total = file.covered.length + file.uncovered.length
+    return {
+      path,
+      covered: file.covered.length,
+      total,
+      percent: total === 0 ? 100 : (100 * file.covered.length) / total,
+      uncovered: file.uncovered.sort((a, b) => a - b)
+    }
+  })
+  .filter(row => row.total > 0)
+const width = Math.max(4, ...rows.map(row => row.path.length))
+console.log(
+  `\n${'File'.padEnd(width)}      Lines      %  Uncovered changed lines`
+)
+for (const row of rows)
+  console.log(
+    `${row.path.padEnd(width)}  ${`${row.covered}/${row.total}`.padStart(9)}  ${row.percent.toFixed(1).padStart(5)}  ${row.uncovered.join(', ')}`
+  )
+for (const path of result.missing)
+  console.log(`${path.padEnd(width)}  never loaded by any suite`)
+
+const short = rows.filter(row => row.percent < minimum)
+const failures = [
+  ...failedSuites.map(suite => `failed: ${suite}`),
+  ...short.map(row => `${row.path} is at ${row.percent.toFixed(1)}%`),
+  ...result.missing.map(path => `${path} was never loaded`),
+  ...(result.total > 0 && result.percent < minimum
+    ? [`the total is at ${result.percent.toFixed(2)}%`]
+    : [])
+]
+const summary =
+  result.total === 0
+    ? `Web outbox coverage: no changed runtime lines since ${base}`
+    : `Web outbox changed runtime coverage: ${result.percent.toFixed(2)}% (${result.covered}/${result.total} lines) over ${rows.length} files, base ${base}`
+if (failures.length > 0) {
+  console.error(`\n${summary}\nBelow ${minimum}%: ${failures.join('; ')}`)
+  process.exit(1)
+}
+console.log(`\n${summary}`)

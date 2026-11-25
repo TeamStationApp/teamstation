@@ -22,7 +22,8 @@ import { EventMap } from '../components/EventMap'
 import { RSVP_COLORS } from '../components/eventRsvpPosition'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
 import { SegmentedPill } from '../components/SegmentedPill'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useNoticedRead } from '../hooks/useNoticedRead'
+import { useScreenScope } from '../hooks/useScreenScope'
 import {
   copyEventAddress,
   openEventDirections,
@@ -88,6 +89,8 @@ export function EventInfoTab({
   }, [])
   /** The read whose answer `info` holds, stored or the server's. */
   const shownRead = useRef<string | undefined>(undefined)
+  /** The read whose stored copy has been asked for, so it is asked once. */
+  const paintedRead = useRef<string | undefined>(undefined)
   const refresh = useCallback(async (): Promise<void> => {
     const request = ++generation.current
     const current = (): boolean =>
@@ -98,7 +101,8 @@ export function EventInfoTab({
     // over.
     const path = eventInfoPath(eventId, selectedTeam)
     const stored = new StoredFirst()
-    if (shownRead.current !== path)
+    if (shownRead.current !== path && paintedRead.current !== path) {
+      paintedRead.current = path
       stored
         .paint(
           client,
@@ -111,6 +115,7 @@ export function EventInfoTab({
           current
         )
         .catch(() => undefined)
+    }
     try {
       const found = await client.eventInfo(eventId, selectedTeam)
       stored.answered()
@@ -129,7 +134,24 @@ export function EventInfoTab({
         )
     }
   }, [client, eventId, selectedTeam, onLoaded])
-  useForegroundRefresh(refresh)
+  // What the phone stored paints at once, before the scope is acknowledged.
+  const paint = useCallback(async (): Promise<void> => {
+    const path = eventInfoPath(eventId, selectedTeam)
+    if (shownRead.current === path || paintedRead.current === path) return
+    paintedRead.current = path
+    // Until an answer for this read is shown: then the stored copy is late.
+    await new StoredFirst().paint(
+      client,
+      path,
+      asEventInfo,
+      value => {
+        shownRead.current = path
+        setInfo(value)
+      },
+      () => live.current && shownRead.current !== path
+    )
+  }, [client, eventId, selectedTeam])
+  useNoticedRead(useScreenScope(refresh, client, paint))
   const address =
     info?.address?.trim() !== '' && info?.address != null
       ? info.address

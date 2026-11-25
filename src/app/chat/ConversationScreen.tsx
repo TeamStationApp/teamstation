@@ -148,7 +148,10 @@ function readableNow(): boolean {
   return readDocumentActive() && inForeground()
 }
 
-/** How often a chat not open yet is tried again, and how many times. */
+/**
+ * How often a chat not open yet is tried again on a timer, and how many
+ * times: past them, only the engine's notices try it.
+ */
 export const OPEN_RETRY_MS = 2000
 export const OPEN_TRIES = 8
 
@@ -1912,7 +1915,12 @@ export function ConversationScreen(
       }
     })
     tryOpen()
-    const timer = setInterval(tryOpen, OPEN_RETRY_MS)
+    // The timed tries stop after `OPEN_TRIES`; the engine's own word that
+    // the chat or the list changed always tries again.
+    const timer = setInterval(() => {
+      if (tries >= OPEN_TRIES) clearInterval(timer)
+      else tryOpen()
+    }, OPEN_RETRY_MS)
     return () => {
       live = false
       if (readingVisit.current === visit) readingVisit.current = {}

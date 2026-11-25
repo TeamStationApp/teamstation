@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   type GameLineupsResponse,
   REQUEST_DEADLINE_MS,
-  TeamStationClient
+  type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { PlanCell } from '../../common/gamePlan'
@@ -29,6 +29,7 @@ import {
 import { dictatingHealth, FakeDictationSocket } from '../../test/dictationFakes'
 import { PLAN_SWAPPED } from '../../test/scoringPlans'
 import { scoringRoster } from '../../test/scoringSession'
+import { testCachingClient } from '../../test/testCachingClient'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import { lstrings } from '../locales/strings'
 import { CachingClient } from '../sync/cachingClient'
@@ -267,7 +268,7 @@ async function scoring(
     }
   }
   const digest = { value: 'd1' }
-  const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  const client = testCachingClient()
   if (options.dictation === true) client.health = dictatingHealth
   client.game = async () => gameFixture
   client.roster = async teamId =>
@@ -480,7 +481,7 @@ describe('the scoring screen on the game socket', function () {
     ])
   })
 
-  it('retries a failed remote read without waiting for another pitch', async function () {
+  it('retries a failed remote read once the network is back, without waiting for another pitch', async function () {
     const { changes, other, store } = await scoring()
     const peer = await other()
     peer.apply({ type: 'pitch', call: 'B' })
@@ -497,6 +498,13 @@ describe('the scoring screen on the game socket', function () {
     await changes.plays()
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    await settle()
+    expect(document.body.textContent, 'nothing on a timer').not.includes(
+      '1 balls 0 strikes'
+    )
+    await act(async () => {
+      window.dispatchEvent(new window.Event('online'))
     })
     await settle()
     expect(document.body.textContent).includes('1 balls 0 strikes')
@@ -1960,7 +1968,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
     const queued = options.phone
     const client: TeamStationClient =
       queued == null
-        ? new TeamStationClient({ baseUrl: '/api/v1' })
+        ? testCachingClient()
         : Object.assign(
             new CachingClient({
               baseUrl: '/api/v1',

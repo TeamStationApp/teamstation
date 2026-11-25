@@ -26,7 +26,12 @@ import type {
   TessScreen,
   TessStreamEvent
 } from './tessTypes'
-import { ANSWERING_POLL_MS, type TessChatState, useTess } from './useTess'
+import {
+  ANSWERING_POLL_MS,
+  AnswerWaiter,
+  type TessChatState,
+  useTess
+} from './useTess'
 
 let clock: ManualClock | undefined
 
@@ -2156,5 +2161,73 @@ describe('useTess and the chat', function () {
       expect(sentTexts(api)).deep.equals(['First', 'A, now'])
       expect(queuedTexts()).deep.equals([])
     })
+  })
+})
+
+describe('what the chat waits on while Tess answers', function () {
+  const waited = async (
+    waiter: AnswerWaiter,
+    hear: () => void
+  ): Promise<boolean> => {
+    let done = false
+    const wait = waiter.wait().then(() => {
+      done = true
+    })
+    hear()
+    await Promise.race([wait, new Promise(resolve => setTimeout(resolve, 5))])
+    return done
+  }
+
+  it('waits for the tess notice once the topic is held, and once in each outage', async function () {
+    const waiter = new AnswerWaiter()
+    waiter.heard({ type: 'subscribed', afterGap: false })
+    expect(waiter.held).equals(true)
+    expect(
+      await waited(waiter, () => {
+        waiter.heard({ type: 'changed' })
+      })
+    ).equals(true)
+    expect(
+      await waited(waiter, () => {
+        waiter.heard({ type: 'unreachable', outage: 1 })
+      }),
+      'the first word of an outage'
+    ).equals(true)
+    expect(
+      await waited(waiter, () => {
+        waiter.heard({ type: 'unreachable', outage: 1 })
+      }),
+      'the same outage again'
+    ).equals(false)
+    waiter.release()
+    expect(
+      await waited(waiter, () => {
+        waiter.heard({ type: 'subscribed', afterGap: true })
+      }),
+      'back after a gap'
+    ).equals(true)
+    waiter.heard({ type: 'unsupported' })
+    expect(waiter.held, 'an older server').equals(false)
+  })
+
+  it('ends the next wait at once for a notice heard between a read and its wait', async function () {
+    const waiter = new AnswerWaiter()
+    waiter.heard({ type: 'subscribed', afterGap: false })
+    waiter.heard({ type: 'changed' })
+    expect(await waited(waiter, () => undefined), 'the missed notice').equals(
+      true
+    )
+    expect(await waited(waiter, () => undefined), 'taken once').equals(false)
+    waiter.release()
+  })
+
+  it('ends a wait begun before the topic was held on the notice that follows', async function () {
+    const waiter = new AnswerWaiter()
+    expect(
+      await waited(waiter, () => {
+        waiter.heard({ type: 'subscribed', afterGap: false })
+        waiter.heard({ type: 'changed' })
+      })
+    ).equals(true)
   })
 })

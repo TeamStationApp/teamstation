@@ -3599,6 +3599,16 @@ export interface RequestOptions {
    */
   offlineFirst?: boolean
   /**
+   * What the device stored for the read, at once, or `notStored` at once
+   * when it stored nothing; the server is asked behind it either way, and
+   * its answer stored. For the scoring screen as it opens, which waits on
+   * the network for nothing (#358). Once an answer is stored for a read
+   * that had none, the `onStoredChanged` listeners of `gameId` are told
+   * `'details'`. With `waitMs`, nothing stored waits that long for the
+   * server's answer first. A client that stores nothing reads the server.
+   */
+  storedOrNothing?: { gameId: string; waitMs?: number }
+  /**
    * The server's answer, or the failure: never the phone's stored copy in
    * place of an answer that did not come. For the phone's read behind a
    * stored answer, which must know whether the server was reached.
@@ -3697,16 +3707,20 @@ export const UPLOAD_BODY_CHARS = 64 * 1024
  */
 export type StoredChange = 'game' | 'details'
 
-/** How a read takes `storedFirst` or `offlineFirst`, for the screens that ask for one. */
+/** How a read takes `storedFirst`, `offlineFirst` or `storedOrNothing`, for the screens that ask for one. */
 export interface ReadOptions {
   storedFirst?: boolean
   offlineFirst?: boolean
+  storedOrNothing?: { gameId: string; waitMs?: number }
 }
 
 function readOptions(options: ReadOptions | undefined): RequestOptions {
   return {
     ...(options?.storedFirst === true ? { storedFirst: true } : {}),
-    ...(options?.offlineFirst === true ? { offlineFirst: true } : {})
+    ...(options?.offlineFirst === true ? { offlineFirst: true } : {}),
+    ...(options?.storedOrNothing == null
+      ? {}
+      : { storedOrNothing: options.storedOrNothing })
   }
 }
 
@@ -5728,12 +5742,60 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * The games this phone keeps to score with no signal: at most three, as the
+   * server chooses them, each with its schedule row. `held` names the games
+   * the phone keeps now, so one under way stays kept.
+   */
+  async offlineScoring(held: string[] = []): Promise<{
+    games: Array<{
+      id: string
+      startAt: string
+      homeTeamId: string
+      awayTeamId: string
+      started: boolean
+      schedule: SeasonGame | null
+    }>
+    nextBoundary: string | null
+    digest: string
+  }> {
+    const query =
+      held.length === 0
+        ? ''
+        : `?held=${held.map(id => encodeURIComponent(id)).join(',')}`
+    return await this.request(
+      'GET',
+      `/me/offline-scoring${query}`,
+      asObject({
+        games: asArray(
+          asObject({
+            id: asString,
+            startAt: asString,
+            homeTeamId: asString,
+            awayTeamId: asString,
+            started: asBoolean,
+            schedule: asNullable(asSeasonGame)
+          })
+        ),
+        nextBoundary: asNullable(asString),
+        digest: asString
+      })
+    )
+  }
+
+  /**
+   * Whether anything waits in Notifications. It never changes the client's
+   * `offline` (`keepsOffline`): the bell is one small read, and a slow
+   * answer to it says nothing about the rest of the app's requests.
+   */
   async hasNotifications(): Promise<boolean> {
     return (
       await this.request(
         'GET',
         '/me/notifications/summary',
-        asObject({ hasPending: asBoolean })
+        asObject({ hasPending: asBoolean }),
+        undefined,
+        { keepsOffline: true }
       )
     ).hasPending
   }

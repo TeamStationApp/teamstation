@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url'
 // socket, their notices, and the phone's cache and outbox. One mocha process
 // runs the suites those changes can reach, server and app together, under
 // NODE_V8_COVERAGE. The gate reads `git merge-base origin/master HEAD` to
-// HEAD, so it runs after the milestone is committed.
+// HEAD, or `TS_COVERAGE_BASE` to HEAD for a branch stacked on another, so it
+// runs after the milestone is committed. `TS_COVERAGE_MIN` raises the bar.
 const temp = resolve('coverage/sync/tmp')
 rmSync(resolve('coverage/sync'), { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
@@ -94,14 +95,19 @@ const SPECS = [
   'src/server/routes/pictures.integration.test.ts',
   // The development request recorder the device scenario reads.
   'src/server/dev/requestRecorder.test.ts',
-  // Scoring that never waits: the swap answered from the documents, and
-  // the web screen's writes sent behind it.
+  // Scoring that never waits: the swap answered from the documents.
   'src/common/scoring/swapDocuments.test.ts',
-  'src/app/scoring/webWrites.test.ts',
   'src/app/scoring/scoringSource.test.ts',
   // The swap's answer names the new sides' lineups digest.
   'src/server/routes/gameApprovals.integration.test.ts',
-  'src/app/sync/**/*.test.ts'
+  'src/app/sync/**/*.test.ts',
+  // Reads on notices: the badge's Pending predicate, the offline manifest,
+  // the person's topics and their one-shot boundaries.
+  'src/server/notifications/pending.integration.test.ts',
+  'src/server/scoring/offlineManifest.integration.test.ts',
+  'src/server/socket/userNotices.integration.test.ts',
+  'src/server/socket/boundaries.test.ts',
+  'src/common/scoring/scoringEntry.test.ts'
 ].filter(spec => spec.includes('*') || existsSync(spec))
 
 const postgres = spawnSync('node', ['src/migrate/requirePostgres18.js'], {
@@ -176,6 +182,12 @@ const check = spawnSync(
   'node',
   [
     'scripts/changed-line-check.cjs',
+    ...(process.env.TS_COVERAGE_BASE == null
+      ? []
+      : ['--base', process.env.TS_COVERAGE_BASE]),
+    ...(process.env.TS_COVERAGE_MIN == null
+      ? []
+      : ['--min', process.env.TS_COVERAGE_MIN]),
     '--coverage',
     'coverage/sync/coverage-final.json',
     '--ext',

@@ -11,6 +11,7 @@ export type FeedChannel =
   | 'game_stats'
   | 'feed_probe'
   | 'live_changes'
+  | 'user_notices'
 
 /** The same, for what has to hear them all. */
 export const FEED_CHANNELS: readonly FeedChannel[] = [
@@ -20,7 +21,8 @@ export const FEED_CHANNELS: readonly FeedChannel[] = [
   'chat_dirty',
   'game_stats',
   'feed_probe',
-  'live_changes'
+  'live_changes',
+  'user_notices'
 ]
 
 export interface FeedHandlers {

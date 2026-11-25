@@ -157,7 +157,7 @@ export function deckDetailTop(
 const TICK_MS = 100
 /** How often a fading rewind notice is drawn. */
 const FADE_FRAME_MS = 33
-/** While the socket is down, how often a live replay reads the game. */
+/** How often a live replay with no socket (signed out) reads the game. */
 export const POLL_MS = 5000
 
 /** The app's game socket, as a live replay uses it. */
@@ -186,7 +186,7 @@ export interface GameReplayScreenProps {
   onNotReplayable: () => void
   /** The app's one game socket, which a live replay follows. */
   socket?: ReplaySocket
-  /** How often to read the game while the socket is down. POLL_MS. */
+  /** How often to read the game with no socket. POLL_MS. */
   pollMs?: number
   /** The replay's clock; the screen's own in a test. */
   clock?: () => number
@@ -1000,31 +1000,33 @@ function useLiveGame(
       unsubscribe()
     }
   }, [mode, socket, gameId, read, over])
+  /** Reads the game's plays and status: the replay ends once it is final. */
+  const readAll = useCallback((): void => {
+    read().catch(() => undefined)
+    client
+      .game(gameId)
+      .then(async game => {
+        if (game.status === 'final') await over()
+      })
+      .catch(() => undefined)
+  }, [read, over, client, gameId])
+  // The socket going down, or the game refused after a failure, reads the
+  // game once for that outage; the socket's next `subscribed` reads again.
+  const healthy = useRef<boolean | undefined>(undefined)
   useEffect(() => {
-    if (mode !== 'live' || gameOver) return
-    if (socket != null && connected && !refused) return
-    const timer = setInterval(() => {
-      read().catch(() => undefined)
-      client
-        .game(gameId)
-        .then(async game => {
-          if (game.status === 'final') await over()
-        })
-        .catch(() => undefined)
-    }, pollMs)
+    if (mode !== 'live' || gameOver || socket == null) return
+    const now = connected && !refused
+    const was = healthy.current
+    healthy.current = now
+    if (was === true && !now) readAll()
+  }, [mode, gameOver, socket, connected, refused, readAll])
+  // A viewer signed out has no socket to hear the game by: a live replay
+  // they watch reads it every `pollMs` until it is over.
+  useEffect(() => {
+    if (mode !== 'live' || gameOver || socket != null) return
+    const timer = setInterval(readAll, pollMs)
     return () => {
       clearInterval(timer)
     }
-  }, [
-    mode,
-    gameOver,
-    socket,
-    connected,
-    refused,
-    read,
-    over,
-    client,
-    gameId,
-    pollMs
-  ])
+  }, [mode, gameOver, socket, readAll, pollMs])
 }

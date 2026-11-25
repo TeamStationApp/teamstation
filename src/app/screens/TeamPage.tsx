@@ -9,8 +9,9 @@ import {
 } from '../../common/api'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { Button, Screen } from '../components'
-import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useNoticedRead } from '../hooks/useNoticedRead'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { StoredFirst } from '../sync/storedFirst'
 import { useTheme } from '../theme/ThemeContext'
 import { TeamScreen, type TeamScreenProps } from './TeamScreen'
@@ -106,7 +107,7 @@ export function TeamPage({
       })
     }
   }, [client, id, begin])
-  useForegroundRefresh(load)
+  useNoticedRead(useScreenScope(load, client))
   if (detail == null)
     return (
       <Screen>

@@ -806,7 +806,7 @@ describe('the dictation control', function () {
     ).to.have.length(1)
   })
 
-  it('shows the button once a failed health check succeeds', async function () {
+  it('shows the button once a failed health check succeeds, asked again when the network is back', async function () {
     this.timeout(5000)
     let calls = 0
     const h = harness(fresh(), {
@@ -820,6 +820,11 @@ describe('the dictation control', function () {
     expect(find('Dictation')).equals(null)
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    expect(find('Dictation'), 'nothing on a timer').equals(null)
+    await act(async () => {
+      window.dispatchEvent(new window.Event('online'))
+      await new Promise(resolve => setTimeout(resolve, 20))
     })
     expect(find('Dictation')).not.equal(null)
   })

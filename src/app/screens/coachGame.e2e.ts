@@ -122,6 +122,14 @@ async function tokenOf(fixture: LineupFixture, who: Person): Promise<string> {
   return token
 }
 
+/** The API as the fixture's head coach, to read what the server holds. */
+async function coachClient(fixture: LineupFixture): Promise<TeamStationClient> {
+  return new TeamStationClient({
+    baseUrl: API,
+    token: await tokenOf(fixture, 'headCoach')
+  })
+}
+
 /**
  * Scores into the game as the scorekeeper's session does, through the API:
  * the game opens on the teams' default lineups, as the scoring screen's.
@@ -313,6 +321,33 @@ class Browser {
       },
       { timeout: 15000 },
       names
+    )
+  }
+
+  /**
+   * Back to the game's page in the app (a page load would empty the tab's
+   * copy, and its queue with it): the banner says an edit is not sent, its
+   * sheet gives the server's `message`, and Use Server's Copy clears it.
+   */
+  async heldThenServerCopy(message: string): Promise<void> {
+    await this.page.evaluate(() => {
+      history.back()
+    })
+    await this.page.waitForFunction(
+      `(document.querySelector('[data-testid="offlineBannerText"]') || {}).textContent === '1 edit not sent'`,
+      { timeout: 30000 }
+    )
+    await this.tap('Edits not sent')
+    await this.page.waitForSelector('[data-testid="heldEditsSheet"]')
+    await this.page.waitForFunction(
+      message => document.body.innerText.includes(message),
+      { timeout: 15000 },
+      message
+    )
+    await this.page.locator('[aria-label^="Use Server\'s Copy"]').click()
+    await this.page.waitForFunction(
+      () => document.querySelector('[data-testid="offlineBannerText"]') == null,
+      { timeout: 20000 }
     )
   }
 
@@ -551,14 +586,20 @@ describe('Coach Game', function () {
     await coach.tap('Roster', 'tab')
     const pendingSelector = `[data-testid="Rostered ${pending.players.home[0].userId}"]`
     await coach.session.m.tapOn({ css: pendingSelector })
-    await coach.page.waitForFunction(() =>
-      String(document.body.textContent).includes(
-        'Finish the current play first'
-      )
+    // Refused mid-play, the change is kept and held, as on the phone: the
+    // web's queue sends it behind the screen (Intake 9 of #358).
+    await coach.page.waitForFunction(
+      () =>
+        String(document.body.textContent).includes(
+          'Finish the current play first'
+        ),
+      { timeout: 30000 }
     )
     expect(
       await coach.page.$eval(`${pendingSelector} input`, input => input.checked)
-    ).equals(true)
+    ).equals(false)
+    expect((await client.game(pending.gameId)).unrostered.home).deep.equals([])
+    await coach.heldThenServerCopy('Finish the current play first')
     expect((await client.game(pending.gameId)).unrostered.home).deep.equals([])
   })
 
@@ -1027,15 +1068,28 @@ describe('Coach Game', function () {
     await coach.page.waitForSelector('[data-roster-target="lineup-0"]')
     await coach.dragAfter(0, 2)
     const staged = await coach.lineup()
+    const before = (
+      await (await coachClient(fixture)).gameLineups(fixture.gameId)
+    ).home.current
     await coach.tapEnabled('Save Rosters')
     await coach.page.waitForFunction(
       () =>
         String(document.body.textContent).includes(
           'Finish the current play first'
         ),
-      { timeout: 15000 }
+      { timeout: 30000 }
     )
+    // Kept as saved on the screen, and held for the coach to send again or
+    // drop, as on the phone (Intake 9 of #358); the server's is unchanged.
     expect(await coach.lineup()).deep.equals(staged)
-    expect(await coach.saveDisabled()).equals(false)
+    expect(
+      (await (await coachClient(fixture)).gameLineups(fixture.gameId)).home
+        .current
+    ).deep.equals(before)
+    await coach.heldThenServerCopy('Finish the current play first')
+    expect(
+      (await (await coachClient(fixture)).gameLineups(fixture.gameId)).home
+        .current
+    ).deep.equals(before)
   })
 })

@@ -3,21 +3,30 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import { afterEach, beforeEach, describe, it } from 'mocha'
+import { afterEach, before, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { ScoringSession } from '../../common/scoring/session'
-import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { fieldServer, memoryStorage } from '../../test/offlineFieldServer'
+import { prepareOffline } from '../../test/offlineSetTesting'
 import { listProps } from '../../test/PagedListStandIn'
 import { scoringSession } from '../../test/scoringSession'
+import {
+  sql,
+  testSqliteExecutor,
+  testSqliteReady
+} from '../../test/testSqliteExecutor'
 import { lstrings } from '../locales/strings'
 import { ScoreGameScreen } from '../scoreboard/ScoreGameScreen'
 import { CoachGameScreen } from '../screens/CoachGameScreen'
 import { GameScreen } from '../screens/GameScreen'
 import { GamesFeedScreen } from '../screens/GamesFeedScreen'
-import { cacheFileName, openCacheStore } from '../sync/cacheStore'
+import {
+  cacheFileName,
+  openCacheStore,
+  type SqlExecutor
+} from '../sync/cacheStore'
 import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
@@ -44,8 +53,10 @@ async function settle(ms = 50): Promise<void> {
  */
 describe('a game under way, read ahead and opened with no signal', function () {
   let dir: string
-  let executors: Array<ReturnType<typeof nodeSqliteExecutor>>
+  let executors: SqlExecutor[]
   let root: Root | undefined
+
+  before(testSqliteReady)
 
   beforeEach(function () {
     dir = mkdtempSync(join(tmpdir(), 'teamstation-underway-'))
@@ -89,7 +100,7 @@ describe('a game under way, read ahead and opened with no signal', function () {
       token: 'token-1',
       fetch: net.fetch,
       openCache: async (userId, apiBaseUrl) => {
-        const executor = nodeSqliteExecutor(
+        const executor = testSqliteExecutor(
           join(
             dir,
             cacheFileName(
@@ -105,11 +116,15 @@ describe('a game under way, read ahead and opened with no signal', function () {
       refreshRetryMs: 100
     })
     client.openFor('usr_scorer')
-    if (prefetch) await client.prefetch()
+    if (prefetch) await prepareOffline(client)
     // Nothing read, nothing opened: nothing stored.
+    const last = executors.at(-1)
     const stored = (
-      (executors.at(-1)?.db.prepare('SELECT key FROM documents').all() ??
-        []) as Array<{ key: string }>
+      (last == null
+        ? []
+        : await sql(last, 'SELECT key FROM documents')) as Array<{
+        key: string
+      }>
     ).map(row => row.key)
     net.offline = true
     return { client, net, stored }

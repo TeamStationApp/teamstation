@@ -50,8 +50,8 @@ describe('app layout', function () {
     // exactly the bug this file exists for.
     // The pane around it may carry props of its own (what the narrow Tess
     // layer hides it with), never a condition.
-    expect(source).match(/<View key="pane" style={styles\.pane}[\s>]/)
-    expect(source).not.match(/&&\s*\(?\s*<View key="pane"/)
+    expect(source).match(/<View\s+key="pane"\s+style={styles\.pane}[\s>]/)
+    expect(source).not.match(/&&\s*\(?\s*<View\s+key="pane"/)
     expect(source).match(/<ScreenScopeProvider[^>]*>\s*<StackNavigator\b/)
   })
 

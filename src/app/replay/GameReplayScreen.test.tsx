@@ -2071,7 +2071,7 @@ describe('the replay screen', function () {
       expect(game.reads()).equals(3)
     })
 
-    it('reads the game every few seconds while the socket is down or refused', async function () {
+    it('reads the game once when the socket goes down or the game is refused, and nothing on a timer', async function () {
       resize(402, 874)
       const socket = new FakeSocket()
       const game = await following(socket, 60)
@@ -2079,7 +2079,7 @@ describe('the replay screen', function () {
       expect(game.reads()).equals(0)
       await socket.status(false)
       await wait(200)
-      expect(game.reads()).greaterThan(1)
+      expect(game.reads(), 'once for the outage').equals(1)
       await socket.status(true)
       await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
       const back = game.reads()
@@ -2100,7 +2100,7 @@ describe('the replay screen', function () {
         message: ''
       })
       await wait(200)
-      expect(game.reads()).greaterThan(back)
+      expect(game.reads()).equals(back + 1)
     })
 
     it('ends on the final score when the game is over', async function () {

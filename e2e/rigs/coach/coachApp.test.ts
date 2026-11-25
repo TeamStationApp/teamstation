@@ -1,7 +1,14 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { type CoachApp, type Found, literal, scrollTo } from './coachApp'
+import {
+  type CoachApp,
+  type Found,
+  literal,
+  scrollTo,
+  serverKeptOnHubPhone,
+  teamPath
+} from './coachApp'
 
 /** An app whose sheet moves up `step` points for each swipe it is given. */
 function sheetApp(options: { web?: boolean; shareAt: number; step: number }): {
@@ -43,12 +50,39 @@ function sheetApp(options: { web?: boolean; shareAt: number; step: number }): {
       heroActions: async () => [],
       window: async () => ({ x: 0, y: 0, width: 402, height: 874 }),
       openGame: async () => {},
-      openCoach: async () => {}
+      openCoach: async () => {},
+      openTeam: async () => {}
     }
   }
 }
 
 describe('the game plan rig', function () {
+  it('sends a hub iPhone the server link, waits for the app in front on its sign-in page, then launches it fresh', async function () {
+    const steps: string[] = []
+    const m = {
+      stopApp: async () => steps.push('stop'),
+      openLink: async (o: { link: string }) => steps.push(`link ${o.link}`),
+      tapOn: async (o: { text: string }) => steps.push(`tap ${o.text}`),
+      launchApp: async (o: { stopApp?: boolean }) =>
+        steps.push(`launch stop=${String(o.stopApp)}`),
+      extendedWaitUntil: async (o: { visible: { text: string } }) =>
+        steps.push(`wait ${o.visible.text}`)
+    }
+    await serverKeptOnHubPhone(m, 'udid@hub', 'https://e2e-02.teamstation.app')
+    expect(steps).deep.equals([
+      'stop',
+      'link teamstation-develop://server?origin=https%3A%2F%2Fe2e-02.teamstation.app',
+      'tap Open',
+      'wait Sign in to TeamStation',
+      'launch stop=true'
+    ])
+  })
+
+  it("opens a team at its own page's address", function () {
+    expect(teamPath('tem_home')).equals('/teams/tem_home')
+    expect(teamPath('a b')).equals('/teams/a%20b')
+  })
+
   it('matches a line literally, whatever it holds', function () {
     expect(literal('Inning 1 is missing: 3B, LF (and RF).')).equals(
       'Inning 1 is missing: 3B, LF \\(and RF\\)\\.'

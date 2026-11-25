@@ -13,6 +13,8 @@ import { Button } from '../components/Button'
 import { useSceneShown } from '../components/sceneShown'
 import { SectionHeader } from '../components/SectionHeader'
 import { phoneStreamActions } from '../components/streamActions'
+import { useScreenScope } from '../hooks/useScreenScope'
+import { useUserTopic } from '../hooks/useUserTopic'
 import { lstrings, sprintf } from '../locales/strings'
 import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -101,32 +103,24 @@ export function CameraAnglesPanel({
   useEffect(() => {
     if (!shown || signedIn !== true) return
     mounted.current = true
-    let polling = false
-    const poll = (): void => {
-      if (document.hidden || polling) return
-      polling = true
-      refresh()
-        .finally(() => {
-          polling = false
-        })
-        .catch(() => undefined)
-    }
-    poll()
-    const timer = setInterval(() => {
-      if (watchChanges.current) poll()
-    }, 5000)
-    const visible = (): void => {
-      if (!document.hidden) refresh().catch(() => undefined)
-    }
-    document.addEventListener('visibilitychange', visible)
+    // The first read is the scope's (`scoped` below).
     return () => {
       mounted.current = false
       revision.current++
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', visible)
       launch.current?.abort()
     }
   }, [shown, signedIn, refresh])
+  // A camera starting or stopping on the game is its event scope's notice; a
+  // role to film given or taken, and a request to film answered, ring the
+  // person's bell. Each reads again once; nothing reads on a timer.
+  const scoped = useScreenScope(refresh, client)
+  useEffect(() => {
+    if (shown && signedIn === true) scoped().catch(() => undefined)
+  }, [shown, signedIn, scoped])
+  const onBell = useCallback(async (): Promise<void> => {
+    if (shown && signedIn === true && watchChanges.current) await refresh()
+  }, [shown, signedIn, refresh])
+  useUserTopic('badge', onBell, undefined, { readNow: false })
 
   usePublishingReport(streams, onPublishing)
   const close = (): void => {

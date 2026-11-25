@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asRosterEntry, TeamStationClient } from '../../common/api'
+import { asRosterEntry } from '../../common/api'
 import {
   promptContext,
   type ScoringAction,
@@ -29,6 +29,7 @@ import {
 import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
+import { testCachingClient } from '../../test/testCachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { CreateRosterPlayer } from './createDictatedPlayers'
 import { useDictationControls } from './DictationButton'
@@ -890,7 +891,7 @@ describe('a substitution said on the scoring screen', function () {
       actions?: ScoringAction[]
     ) => Promise<void>
   }> {
-    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const client = testCachingClient()
     client.game = async () => gameFixture
     client.roster = async () => []
     client.health = dictatingHealth

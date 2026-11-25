@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import vm from 'node:vm'
+import { brotliDecompressSync, gunzipSync } from 'node:zlib'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
@@ -192,6 +193,10 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       // And the HiGHS module and worker the scheduler's replace.
       writeFileSync(join(once, 'highs-0123456789abcdef.wasm'), 'old')
       writeFileSync(join(once, 'highs-worker-ABCDEFGH.js'), 'old')
+      // An earlier deploy's SQLite module, with its encoded copies.
+      writeFileSync(join(once, 'sqlite3-0123456789abcdef.wasm'), 'old')
+      writeFileSync(join(once, 'sqlite3-0123456789abcdef.wasm.br'), 'old')
+      writeFileSync(join(once, 'sqlite3-0123456789abcdef.wasm.gz'), 'old')
       await run(process.execPath, ['src/build.mjs'], {
         cwd: root,
         env: {
@@ -422,6 +427,47 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(html).contains(`src="/${bundle}"`)
     })
 
+    it('ships the SQLite module under its hash, the bundle naming it, and prunes an earlier one', function () {
+      const files = readdirSync(once)
+      const modules = files.filter(name =>
+        /^sqlite3-[0-9a-f]{16}\.wasm$/.test(name)
+      )
+      expect(modules).has.length(1)
+      const bytes = readFileSync(join(once, modules[0]))
+      expect(modules[0]).equals(
+        `sqlite3-${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}.wasm`
+      )
+      const app = files.find(name => /^app-[A-Z0-9]+\.js$/i.test(name))
+      expect(readFileSync(join(once, String(app)), 'utf8')).includes(
+        `/${modules[0]}`
+      )
+      expect(
+        files.filter(name => name.startsWith('sqlite3-0123456789abcdef'))
+      ).deep.equals([])
+    })
+
+    it('writes a brotli and a gzip copy of every JS, CSS and WASM file, each its original’s bytes', function () {
+      const files = readdirSync(once)
+      const originals = files.filter(name => /\.(?:js|css|wasm)$/.test(name))
+      expect(originals.length).greaterThan(5)
+      for (const name of originals) {
+        const bytes = readFileSync(join(once, name))
+        expect(
+          brotliDecompressSync(readFileSync(join(once, `${name}.br`))).equals(
+            bytes
+          ),
+          `${name}.br`
+        ).equals(true)
+        expect(
+          gunzipSync(readFileSync(join(once, `${name}.gz`))).equals(bytes),
+          `${name}.gz`
+        ).equals(true)
+      }
+      // No copy of anything else, and none left of a file that is gone.
+      for (const name of files.filter(name => /\.(?:br|gz)$/.test(name)))
+        expect(originals, name).includes(name.replace(/\.(?:br|gz)$/, ''))
+    })
+
     it('ships the notifications’ service worker under its own name, with the bundle’s module', function () {
       // A service worker is registered by its URL, so `sw.js` is never hashed.
       const worker = readFileSync(join(once, 'sw.js'), 'utf8')
@@ -432,6 +478,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(worker).contains(integrityOf(readFileSync(join(once, module))))
       expect(readdirSync(once).filter(name => /^sw\b/.test(name))).deep.equals([
         'sw.js',
+        'sw.js.br',
+        'sw.js.gz',
         'sw.js.map'
       ])
       // `pushDevice.ts` registers it from the page, which the policy allows.
