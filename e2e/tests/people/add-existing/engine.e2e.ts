@@ -59,6 +59,11 @@ export default searchSpec({
         link: `${ctx.stack.origin}/groups/team/${world.ids.team}/settings`
       })
       await m.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+      // On a phone-sized viewport the bottom navigation can cover this row.
+      await m.scrollUntilVisible({
+        element: { text: 'Add Player' },
+        centerElement: true
+      })
       await m.tapOn({ text: 'Add Player', timeout: 15000 })
       await m.assertVisible({ css: byLabel(SEARCH_PLAYERS), timeout: 15000 })
       // A player of the same season.
