@@ -121,8 +121,12 @@ reviewed it for what follows and fixed what you found.
 
 ## UI rules
 
-Before adding or changing a screen, read [docs/ui-rules.md](docs/ui-rules.md). A picker of more
-choices than fit on one line is a list of rows, never pills, and stacked Cancel actions are centered, using blue beneath a red destructive primary and red otherwise.
+Before adding or changing a screen, read [docs/ui-rules.md](docs/ui-rules.md).
+For every screen you edit, follow [Animated screen-state transitions](docs/ui-rules.md#animated-screen-state-transitions).
+Test its existing transitions in both directions and commit any repairs before the primary feature change.
+
+A picker of more choices than fit on one line is a list of rows, never pills, and stacked Cancel
+actions are centered, using blue beneath a red destructive primary and red otherwise.
 Pill labels stay on their straight run, with horizontal padding of at least half
 the explicit shell height; see the pill rule in that document.
 A search field floats at the bottom of its screen and rises above the keyboard when
