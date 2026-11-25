@@ -16,6 +16,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from 'react-native'
 import Reanimated, {
@@ -148,6 +149,13 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const web = Platform.OS === 'web'
+  const { fontScale } = useWindowDimensions()
+  const lineHeight = theme.rem(1.25)
+  // Native text scales with accessibility settings, while Yoga's height
+  // constraints stay in points. Keep room for the scaled lines and the caret.
+  const scale = web ? 1 : Math.max(1, fontScale)
+  const minHeight = theme.rem(2.75) - 2 + lineHeight * (scale - 1)
+  const inputBounds = { minHeight, maxHeight: (theme.rem(8) - 2) * scale }
   const emoji = web && picker === 'emoji'
   const choosing = picker === 'attachments'
   const takes = enabled && props.asleep !== true
@@ -564,6 +572,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           testID="chat-composer-field"
           style={[
             styles.field,
+            Platform.OS === 'ios' && styles.measuredField,
             props.sources.length > 0 && styles.afterToggle,
             !enabled && styles.inputOff
           ]}
@@ -576,7 +585,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
               accessible={false}
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
-              style={[styles.input, styles.measureText]}
+              style={[styles.input, inputBounds, styles.measureText]}
             >
               {text + '\u200b'}
             </Text>
@@ -639,11 +648,12 @@ export function Composer(props: ComposerProps): React.ReactElement {
             placeholderTextColor={theme.placeholderTextColor}
             style={[
               styles.input,
+              inputBounds,
               Platform.OS === 'ios' && StyleSheet.absoluteFill,
               Platform.OS === 'ios' && styles.iosTextInsets,
               // iOS keeps a multiline field at its old height when a send
               // clears the draft from outside; an empty field is one line.
-              Platform.OS === 'ios' && text === '' && styles.inputEmpty
+              Platform.OS === 'ios' && text === '' && { height: minHeight }
             ]}
           />
           {web && (
@@ -766,11 +776,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   pressed: {
     opacity: 0.6
   },
+  measuredField: { flexDirection: 'column' },
   input: {
     flex: 1,
     minWidth: 0,
-    minHeight: theme.rem(2.75) - 2,
-    maxHeight: theme.rem(8) - 2,
     lineHeight: theme.rem(1.25),
     textAlignVertical: 'center',
     includeFontPadding: false,
@@ -781,14 +790,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     paddingHorizontal: theme.rem(0.875),
     paddingVertical: theme.rem(0.75) - 1
   },
-  measureText: { opacity: 0 },
-  // UITextView measures a taller first line than the browser textarea.
-  // Leave that line and both borders within the adjacent 2.75rem control.
-  iosTextInsets: {
-    paddingVertical: theme.rem(0.625) - 1
+  measureText: {
+    alignSelf: 'stretch',
+    flex: 0,
+    opacity: 0,
+    pointerEvents: 'none'
   },
-  inputEmpty: {
-    height: theme.rem(2.75) - 2
+  // UITextView draws a 22-point caret one point above its top text inset
+  // at the default font size. In the 42-point interior this leaves ten
+  // points either side, without changing the space available for the draft.
+  iosTextInsets: {
+    paddingTop: theme.rem(0.75) - 1,
+    paddingBottom: theme.rem(0.5) - 1
   },
   inputOff: {
     backgroundColor: theme.inactiveBackgroundColor
