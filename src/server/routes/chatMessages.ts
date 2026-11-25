@@ -86,7 +86,9 @@ const asEnvelope = asObject({
 
 /**
  * A message envelope: `targetIds` on the two delete kinds and nowhere else,
- * `attachmentIds` on posts only, neither repeating an id.
+ * `attachmentIds` on posts only, neither repeating an id. A post or an edit
+ * may name its link preview's thumbnail as `previewAttachmentId`, which is
+ * stored with the message's other attachments.
  */
 const asMessageBody: Cleaner<MessageBody> = raw => {
   const body = asEnvelope(raw)
