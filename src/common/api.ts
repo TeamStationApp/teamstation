@@ -5315,7 +5315,10 @@ export class TeamStationClient {
     )
   }
 
-  async signInWithPassword(email: string, password: string): Promise<Session> {
+  protected async passwordProof(
+    email: string,
+    password: string
+  ): Promise<string> {
     const derive = this.requirePasswordKdf()
     const parameters = await this.request(
       'POST',
@@ -5323,7 +5326,11 @@ export class TeamStationClient {
       raw => asArgonParameters(raw),
       { email }
     )
-    const clientHash = asClientHash(await derive(password, parameters))
+    return asClientHash(await derive(password, parameters))
+  }
+
+  async signInWithPassword(email: string, password: string): Promise<Session> {
+    const clientHash = await this.passwordProof(email, password)
     const session = await this.request('POST', '/auth/password', asSession, {
       email,
       clientHash,

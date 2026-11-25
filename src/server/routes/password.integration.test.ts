@@ -18,6 +18,8 @@ import {
   readPasswordRecord
 } from '../auth/passwords'
 
+import { authRoutes } from './auth'
+
 const legacy = '$2b$11$legacy-fixture-not-a-live-password'
 const proof = 'ab'.repeat(32)
 const body = (): {
@@ -31,7 +33,16 @@ describe('password hashing and email-reset HTTP protocol', function () {
   this.timeout(60000)
   let h: AccountHarness
   before(async () => {
-    h = await accountHarness()
+    h = await accountHarness(undefined, (app, { db, space, sendCode }) => {
+      app.use(
+        '/api/v1/development',
+        authRoutes(db, {
+          publicUrl: 'https://develop.teamstation.app',
+          space,
+          sendCode
+        })
+      )
+    })
   })
   after(async () => {
     await h?.close()
@@ -83,6 +94,88 @@ describe('password hashing and email-reset HTTP protocol', function () {
     }
     throw new Error('Password authorization did not start')
   }
+  it('limits link login to development and verifies both accounts before issuing a cookie', async () => {
+    const actor = userIdOfGumbo(102)
+    const target = userIdOfGumbo(101)
+    const credentials = { email: 'alex@example.com', clientHash: proof }
+    const path = '/development/auth/password/link'
+    const rows = async () =>
+      (await h.db.selectFrom('auth_sessions').select('id').execute()).length
+    const originalRows = await rows()
+    await h.db
+      .updateTable('users')
+      .set({
+        password_hash: await createPasswordRecord(
+          proof,
+          testPasswordParameters,
+          target
+        )
+      })
+      .where('id', '=', target)
+      .execute()
+    const disabled = await h.request(
+      'POST',
+      '/auth/password/link',
+      credentials,
+      null
+    )
+    expect(disabled.status).equals(404)
+    expect(disabled.headers.get('cache-control')).equals('no-store')
+    const refused = await h.request(
+      'POST',
+      path,
+      { ...credentials, clientHash: '00'.repeat(32) },
+      102
+    )
+    expect(refused.status).equals(401)
+    const mismatch = await h.request('POST', path, credentials, 102)
+    expect(mismatch.status).equals(409)
+    expect(mismatch.headers.has('set-cookie')).equals(false)
+    const { details } = (await mismatch.json()) as {
+      details: {
+        reason: string
+        confirmation: { currentId: string; targetId: string }
+      }
+    }
+    expect(details.reason).equals('confirmAccountSwitch')
+    const confirmation = { currentId: actor, targetId: target }
+    expect(details.confirmation).deep.equals(confirmation)
+    for (const [currentId, targetId, user] of [
+      [target, target, 102],
+      [actor, actor, 102],
+      [actor, target, null],
+      [actor, target, 101]
+    ] as const) {
+      const stale = await h.request(
+        'POST',
+        path,
+        { ...credentials, confirmation: { currentId, targetId } },
+        user
+      )
+      expect(stale.status).equals(409)
+      expect(stale.headers.has('set-cookie')).equals(false)
+    }
+    expect(await rows()).equals(originalRows)
+    await h.resetLimits()
+    for (const [user, decision] of [
+      [102, confirmation],
+      [null, undefined],
+      [101, undefined]
+    ] as const) {
+      const signed = await h.request(
+        'POST',
+        path,
+        { ...credentials, confirmation: decision },
+        user
+      )
+      expect(signed.status).equals(200)
+      expect(signed.headers.has('set-cookie')).equals(true)
+      expect(
+        ((await signed.json()) as { user: { id: string } }).user.id
+      ).equals(target)
+    }
+    expect(await rows()).equals(originalRows + 3)
+  })
   it('releases database locks during password hashing and rejects a superseded credential', async () => {
     await h.db
       .updateTable('users')

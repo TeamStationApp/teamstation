@@ -208,7 +208,7 @@ if (serve) {
 
 const options = {
   ...webSettings,
-  entryPoints: ['src/app/web/boot.ts'],
+  entryPoints: ['src/app/web/index.tsx'],
   // A content hash in the name, for production only. Without it the bundle is
   // always `/app.js`, and a browser that has cached one has no way to learn
   // there is a newer one — Paul's phone loaded the page twice after a fix was

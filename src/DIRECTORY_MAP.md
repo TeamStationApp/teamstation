@@ -2,7 +2,7 @@
 
 Paths are relative to src/. Use the narrowest outline, definition lookup, search or read. The index contains shipped text; tests and fixtures are searchable with includeTests.
 
-Entry points: `server/index.ts` (HTTP), `server/ingest/run.ts` (ingest), `logServer/main.ts` (logs), `app/App.tsx` (app), `app/web/boot.ts` (web), `app/native/index.tsx` (native).
+Entry points: `server/index.ts` (HTTP), `server/ingest/run.ts` (ingest), `logServer/main.ts` (logs), `app/App.tsx` (app), `app/web/index.tsx` (web), `app/native/index.tsx` (native).
 API contract/client: `common/api.ts`; OpenAPI: `server/openapi.ts`; HTTP boundaries: `server/routes/` (domain logic in sibling server folders).
 Navigation/deep links: `app/navigation/`; screens: `app/screens/`; shared UI: `app/components/`, `app/hooks/`, `app/theme/`; platform adapters: `app/platform/`.
 Database types/connections: `server/db/`; schema changes: `migrate/cli.ts`, `migrate/migrations/`.

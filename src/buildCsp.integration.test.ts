@@ -242,6 +242,21 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     })
 
+    it('omits the development password-link handler from ordinary web builds', function () {
+      const app = readdirSync(once).find(name =>
+        /^app-[A-Z0-9]+\.js$/.test(name)
+      )
+      expect(app, 'built web entry').to.be.a('string')
+      const js = readFileSync(join(once, app!), 'utf8')
+      expect(js).not.to.include('/auth/password/link')
+      const map = JSON.parse(readFileSync(join(once, app! + '.map'), 'utf8'))
+      expect(
+        map.sources.some((file: string) =>
+          file.endsWith('/app/web/passwordLogin.ts')
+        )
+      ).to.equal(false)
+    })
+
     it('hashes every script tag with its file’s sha384', function () {
       const html = readFileSync(join(once, 'index.html'), 'utf8')
       const tags = [

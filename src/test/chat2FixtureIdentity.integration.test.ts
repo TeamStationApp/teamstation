@@ -381,7 +381,7 @@ describe('committed chat harness and application provenance', () => {
  */
 function applicationFiles(root: string): string[] {
   const entries = [
-    'src/app/web/boot.ts',
+    'src/app/web/index.tsx',
     'src/app/platform/passwordWorker.ts',
     'index.js',
     'src/server/index.ts',
