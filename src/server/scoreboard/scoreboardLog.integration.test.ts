@@ -434,6 +434,32 @@ describe('the scoreboard log', function () {
     expect(reset).deep.equals(await computeBoardTimeline(db, gameId))
   })
 
+  it('ends playback on the newest board when two writers log versions and times in opposite orders', async () => {
+    const gameId = await newGame()
+    const row = {
+      gameId,
+      cause: 'publisher' as const,
+      actorId: null,
+      overrides: NO_OVERRIDES
+    }
+    // The second script to run took its time first: the higher version has
+    // the earlier time.
+    await logScoreboard(db, {
+      ...row,
+      version: 10,
+      at: clock + 2000,
+      publisher: { state: { balls: 1 }, receivedAt: clock + 2000 }
+    })
+    await logScoreboard(db, {
+      ...row,
+      version: 11,
+      at: clock + 1000,
+      publisher: { state: { balls: 2 }, receivedAt: clock + 1000 }
+    })
+    const timeline = await computeBoardTimeline(db, gameId)
+    expect(timeline?.steps.at(-1)?.state.balls).equals(2)
+  })
+
   it('persists a late WebSocket radar reading on the current scored pitch', async function () {
     const context = await addScorableTeams(db, {
       home: 'Comets',

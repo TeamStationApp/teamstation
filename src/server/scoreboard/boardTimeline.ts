@@ -134,7 +134,7 @@ export async function computeBoardTimeline(
         : await contextOf(trx, gameId, game, stored)
     const rows = await trx
       .selectFrom('scoreboard_log')
-      .select(['at', 'publisher', 'overrides', 'cause', 'radar'])
+      .select(['at', 'version', 'publisher', 'overrides', 'cause', 'radar'])
       .where('game_id', '=', gameId)
       // A late pitch alone does not change the board. An explicit exit
       // reading always participates in the batter-row timeline.
@@ -219,6 +219,7 @@ export async function computeBoardTimeline(
 
   const logged = read.rows.map(row => ({
     at: msOf(row.at) ?? 0,
+    version: row.version,
     reset: row.cause === 'reset',
     measurementOnly:
       (row.radar as { measurementOnly?: boolean } | null)?.measurementOnly ===
@@ -265,7 +266,14 @@ export async function computeBoardTimeline(
       if (entry.reset) exitReading = undefined
       if (entry.exitMph != null)
         exitReading = nextExitReading(exitReading, entry.exitMph, entry.at)
-      if (!entry.measurementOnly) row = entry
+      // Rows are taken in time order for the readings, but two workers
+      // racing can log the newer board (the higher version) with the earlier
+      // time: the board shown is the newest written so far, as live showed.
+      if (
+        !entry.measurementOnly &&
+        (row == null || entry.version > row.version)
+      )
+        row = entry
     }
     const { final } = composeScoreboard({
       baseline: {
