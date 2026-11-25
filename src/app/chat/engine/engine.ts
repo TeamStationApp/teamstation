@@ -276,6 +276,21 @@ function newest(
 /** Who holds a chat when the caller names nobody. */
 const SOLE_HOLDER = {}
 
+/** Opened preview thumbnails kept, at most 96 KiB each. */
+const THUMBNAIL_CACHE = 32
+
+/** Every field the opened bytes were checked against. */
+const thumbnailKey = (ref: AttachmentRef): string =>
+  JSON.stringify([
+    ref.id,
+    ref.digest,
+    ref.key,
+    ref.size,
+    ref.contentType,
+    ref.width,
+    ref.height
+  ])
+
 export class ChatEngine {
   /** Where the device stands; `idle` until `start()`. */
   status: 'idle' | Enrolment['state'] = 'idle'
@@ -1444,11 +1459,43 @@ export class ChatEngine {
     this.memory.emit({ type: 'conversation', conversationId })
   }
 
+  /** Opened thumbnails, least recently shown first, for one block revision. */
+  private readonly thumbnails = new Map<string, Uint8Array>()
+  private thumbnailRevision = -1
+
+  private rememberThumbnail(
+    ref: AttachmentRef,
+    bytes: Uint8Array,
+    revision: number
+  ): void {
+    if (revision !== this.thumbnailRevision) {
+      this.thumbnails.clear()
+      this.thumbnailRevision = revision
+    }
+    const key = thumbnailKey(ref)
+    this.thumbnails.delete(key)
+    this.thumbnails.set(key, bytes)
+    if (this.thumbnails.size > THUMBNAIL_CACHE)
+      this.thumbnails.delete(this.thumbnails.keys().next().value!)
+  }
+
   async uploadPreviewThumbnail(
     conversationId: string,
     file: OutgoingFile
   ): Promise<AttachmentRef> {
-    return await uploadAttachment(this.ctx, conversationId, file)
+    const revision = this.memory.blockRevision
+    const ref = await uploadAttachment(this.ctx, conversationId, file)
+    // The draft card shows the bytes just sealed without downloading them,
+    // when they would pass the checks a download is opened with.
+    const actual = rasterDimensions(file.bytes)
+    if (
+      isPreviewThumbnail(ref) &&
+      actual?.mime === ref.contentType &&
+      actual.width === ref.width &&
+      actual.height === ref.height
+    )
+      this.rememberThumbnail(ref, file.bytes, revision)
+    return ref
   }
 
   readonly openPreviewThumbnail = async (
@@ -1458,6 +1505,14 @@ export class ChatEngine {
     const revision = this.memory.blockRevision
     if (!isPreviewThumbnail(ref))
       throw new ChatEngineError('attachment', 'Invalid preview image')
+    const cached =
+      revision === this.thumbnailRevision
+        ? this.thumbnails.get(thumbnailKey(ref))
+        : undefined
+    if (cached != null && this.live) {
+      this.rememberThumbnail(ref, cached, revision)
+      return cached
+    }
     const info = await this.ctx.client.chatAttachment(ref.id)
     if (
       !info.completed ||
@@ -1481,6 +1536,7 @@ export class ChatEngine {
       actual.height !== ref.height
     )
       throw new ChatEngineError('attachment', 'Invalid preview image')
+    this.rememberThumbnail(ref, bytes, revision)
     return bytes
   }
 

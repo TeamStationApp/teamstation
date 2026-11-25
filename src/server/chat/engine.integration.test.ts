@@ -2238,9 +2238,25 @@ describe('the chat engine (U12)', function () {
     expect(received.body).equals(body)
     expect(received.attachments).deep.equals([])
     expect(received.preview).deep.equals(preview)
+    const lookups: string[] = []
+    for (const who of [author, reader]) {
+      const lookup = who.client.chatAttachment.bind(who.client)
+      who.client.chatAttachment = async id => {
+        lookups.push(who.who + ':' + id)
+        return await lookup(id)
+      }
+    }
+    expect(await author.engine.openPreviewThumbnail(thumbnail)).deep.equals(
+      bytes
+    )
+    expect(lookups).deep.equals([])
     expect(
       await reader.engine.openPreviewThumbnail(received.preview!.thumbnail!)
     ).deep.equals(bytes)
+    expect(
+      await reader.engine.openPreviewThumbnail(received.preview!.thumbnail!)
+    ).deep.equals(bytes)
+    expect(lookups).deep.equals(['B:' + thumbnail.id])
     for (const modified of [
       { ...thumbnail, size: 96 * 1024 + 1 },
       { ...thumbnail, size: thumbnail.size + 1 },
