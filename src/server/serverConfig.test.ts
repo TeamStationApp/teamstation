@@ -10,6 +10,17 @@ import {
 import { requestDatabaseUrl, tessSettings } from './serverConfig'
 import { asServerConfig } from './serverConfigSchema'
 
+describe('API rate limit mode', () => {
+  it('starts in observe and requires an explicitly supported mode', () => {
+    expect(asServerConfig({}).apiRateLimitMode).equals('observe')
+    for (const mode of ['off', 'observe', 'enforce'])
+      expect(
+        asServerConfig({ apiRateLimitMode: mode }).apiRateLimitMode
+      ).equals(mode)
+    expect(() => asServerConfig({ apiRateLimitMode: 'enabled' })).throws()
+  })
+})
+
 const readOnlySource = {
   endpoint: 'https://shared.example-ts.test',
   region: 'example-region',
