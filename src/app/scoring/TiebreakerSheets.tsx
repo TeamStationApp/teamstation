@@ -4,9 +4,10 @@ import { Pressable, Text, View } from 'react-native'
 import { ButtonIcon } from '../components/ButtonIcon'
 import type { BaseProjection } from '../field/fieldTypes'
 import { defensiveRosterLabel, defensiveRosterName } from './currentSetup'
+import { ScoringDecisionSheet } from './EndGameConfirmation'
 import { RosterSelector } from './RosterSelector'
 import { ScoringPlayerCard } from './ScoringPlayerCard'
-import { ScoringError, ScoringSheet } from './ScoringSheet'
+import { ScoringError } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 import type { ScoringSessionState } from './scoringTypes'
 import { recentRunnerIds } from './tiebreaker'
@@ -40,7 +41,7 @@ export function TiebreakerSetupSheet({
     paddingVertical: 10
   }
   return (
-    <ScoringSheet title="Place a Runner (Tiebreaker)" onClose={onClose}>
+    <ScoringDecisionSheet title="Place a Runner (Tiebreaker)" onClose={onClose}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Place runner on base"
@@ -66,7 +67,7 @@ export function TiebreakerSetupSheet({
         <Text style={text}>Set Outs</Text>
       </View>
       <ScoringError message={problem} />
-    </ScoringSheet>
+    </ScoringDecisionSheet>
   )
 }
 
@@ -86,7 +87,10 @@ export function RunnerRosterSheet({
   const theme = useScoringSheetTheme()
   const candidates = recentRunnerIds(session)
   return (
-    <ScoringSheet title={`Select Runner for ${base}B`} onClose={onClose}>
+    <ScoringDecisionSheet
+      title={`Select Runner for ${base}B`}
+      onClose={onClose}
+    >
       <View style={{ gap: 12 }}>
         <Text
           accessibilityRole="header"
@@ -122,7 +126,7 @@ export function RunnerRosterSheet({
           })}
         </View>
       </View>
-    </ScoringSheet>
+    </ScoringDecisionSheet>
   )
 }
 

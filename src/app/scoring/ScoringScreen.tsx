@@ -113,6 +113,7 @@ import {
   rosterReply
 } from './dictatedRoster'
 import { useDictationControls } from './DictationButton'
+import { EndGameConfirmation, EndGameContext } from './EndGameConfirmation'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { EventTagEditor } from './EventTagEditor'
 import { guestRenames, sendGuestRenames } from './guestRenames'
@@ -1203,6 +1204,23 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   )
 }
 
+/** End Game has exactly one inverse, including when that leaves a batted ball awaiting its result. */
+function undoSavedScoring(
+  game: GameSession,
+  authorship?: ScoringMutation
+): SavedUndone['undone'] {
+  const wasFinal = game.state.final
+  let undone = game.undo(authorship)
+  if (!wasFinal)
+    while (
+      undone.problems.length === 0 &&
+      (awaitingResult(game.state) || actsOnOpening(game.state))
+    )
+      undone = game.undo(authorship)
+  if (undone.problems.length > 0) return undefined
+  return { session: game.state, log: [...game.actions], following: wasFinal }
+}
+
 function statusOf(game: GameSession): SaveStatus {
   return {
     pending: game.pending,
@@ -1532,6 +1550,9 @@ function ScoringPanel(props: {
   )
   const state = model.scoring
   const openedLog = useRef(state.log)
+  const [openingChangedLog] = useState(
+    () => !sameActions(state.log, props.game.actions)
+  )
   const refreshedLog = useRef<readonly ScoringAction[] | undefined>(undefined)
   const [status, setStatus] = useState(() => statusOf(props.game))
   // On the phone a save offline is queued and answered at once, so the
@@ -1707,19 +1728,9 @@ function ScoringPanel(props: {
       return
     takingBack.current = model.savedUndone
     props.game.sync(state.log, [], false, model.authorship ?? null)
-    let undone = props.game.undo(model.authorship)
-    while (
-      undone.problems.length === 0 &&
-      (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
-    )
-      undone = props.game.undo(model.authorship)
     dispatch({
       type: 'SAVED_UNDONE',
-      ...(undone.problems.length === 0
-        ? {
-            undone: { session: props.game.state, log: [...props.game.actions] }
-          }
-        : {})
+      undone: undoSavedScoring(props.game, model.authorship)
     })
   }, [
     props.game,
@@ -2026,8 +2037,7 @@ function ScoringPanel(props: {
   const tiebreaker = useTiebreakerSetup(
     state,
     actionsAllowed &&
-      !menu &&
-      sheet == null &&
+      (sheet == null || sheet === 'game') &&
       !defensiveOpen &&
       !outcomeMenu &&
       !historyActive &&
@@ -2310,18 +2320,9 @@ function ScoringPanel(props: {
     // Scored before this screen opened: the game steps back one action, and
     // on past any step the screen cannot rest on, as an Undo tap does.
     props.game.sync(state.log)
-    let undone = props.game.undo()
-    while (
-      undone.problems.length === 0 &&
-      (awaitingResult(props.game.state) || actsOnOpening(props.game.state))
-    )
-      undone = props.game.undo()
-    if (undone.problems.length > 0) return null
-    dispatch({
-      type: 'RESET',
-      session: props.game.state,
-      log: [...props.game.actions]
-    })
+    const undone = undoSavedScoring(props.game)
+    if (undone == null) return null
+    dispatch({ type: 'RESET', ...undone })
     return {
       removed: state.log.slice(props.game.actions.length),
       before: props.game.state
@@ -3353,7 +3354,40 @@ function ScoringPanel(props: {
     tiebreaker.mode === 'bases' || typeof tiebreaker.mode === 'number'
       ? players.filter(player => player.team !== 'defense')
       : players
-  return (
+  // Opening can remove a pitch for redrawing or close a decided award.
+  // Ending before the next edit files the play exactly as it was stored.
+  const endingStoredPlay = state.log === openedLog.current && openingChangedLog
+  const confirmEndGame = (): void => {
+    if (props.game.readOnly || props.game.state.final || session.final) return
+    if (endingStoredPlay)
+      dispatch({
+        type: 'RESET',
+        session: props.game.state,
+        log: [...props.game.actions],
+        following: true
+      })
+    dispatch({ type: 'END_GAME' })
+    closeSheet()
+  }
+  // The sheets read the element from context: it changes only with what it
+  // shows, and confirms with this render's handler.
+  const confirmEndGameRef = useRef(confirmEndGame)
+  confirmEndGameRef.current = confirmEndGame
+  const endGameSession = endingStoredPlay ? props.game.state : session
+  const endGameDisabled = status.readOnly || session.final
+  const endGameConfirmation = useMemo(
+    () => (
+      <EndGameConfirmation
+        session={endGameSession}
+        disabled={endGameDisabled}
+        onConfirm={() => {
+          confirmEndGameRef.current()
+        }}
+      />
+    ),
+    [endGameSession, endGameDisabled]
+  )
+  const field = (
     <BaseballScreen
       remoteUpdates={
         props.persistent
@@ -3710,7 +3744,7 @@ function ScoringPanel(props: {
       onMenuButton={setMenuButton}
       sound={{ on: sound, onToggle: toggleSound }}
       onMenu={() => {
-        if (fingerDown.current || tiebreaker.active) return
+        if (fingerDown.current) return
         pauseClock()
         setOutcomeMenu(false)
         setMenu(value => !value)
@@ -3893,7 +3927,7 @@ function ScoringPanel(props: {
           problem={tiebreaker.problem}
         />
       )}
-      {tiebreaker.mode === 'bases' && (
+      {tiebreaker.mode === 'bases' && !menu && sheet == null && (
         <TiebreakerBases
           projection={baseProjection}
           occupied={baseIds(session)}
@@ -4019,18 +4053,12 @@ function ScoringPanel(props: {
                 }
                 disabled={
                   // Read-only leaves only leaving and settings.
+                  (tiebreaker.active && index !== 6) ||
                   (status.readOnly && [2, 3, 4, 5, 6].includes(index)) ||
                   (index === 5
                     ? !swappable || swapRefusal() != null
                     : index === 6
-                      ? !(
-                          state.phase === 'ready' ||
-                          state.phase === 'awaitingBatter'
-                        ) ||
-                        state.presentation != null ||
-                        state.moreDraft != null ||
-                        state.session.final ||
-                        props.game.atBatOpen
+                      ? session.final
                       : index === 3
                         ? state.phase !== 'ready' ||
                           state.presentation != null ||
@@ -4289,27 +4317,7 @@ function ScoringPanel(props: {
               />
             </View>
           )}
-          {sheet === 'game' && (
-            <>
-              <Text
-                style={{
-                  color: theme.scoringSurface.text,
-                  fontFamily: theme.regularTextFont
-                }}
-              >
-                End the game at {session.gameData.teams.away.name}{' '}
-                {line.teams.away.runs}, {session.gameData.teams.home.name}{' '}
-                {line.teams.home.runs}? Undo takes it back.
-              </Text>
-              <ScoringButton
-                label="Confirm End Game"
-                onPress={() => {
-                  dispatch({ type: 'END_GAME' })
-                  closeSheet()
-                }}
-              />
-            </>
-          )}
+          {sheet === 'game' && endGameConfirmation}
           {sheet === 'half' && (
             <View testID="Scoring confirmation" style={{ gap: 12 }}>
               <Text
@@ -4497,6 +4505,13 @@ function ScoringPanel(props: {
         />
       )}
     </BaseballScreen>
+  )
+  return (
+    <EndGameContext.Provider
+      value={status.readOnly || session.final ? null : endGameConfirmation}
+    >
+      {field}
+    </EndGameContext.Provider>
   )
 }
 

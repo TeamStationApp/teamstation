@@ -318,6 +318,9 @@ export class ReelBuilder {
     action: ScoringAction,
     rest: readonly ScoringAction[]
   ): void {
+    // A stale step after End Game has no batter to animate. The engine
+    // will refuse it, which lets a following replay snap to the final score.
+    if (given.session.final) return
     // An action that closes a finished play first finds the closed game:
     // the next at-bat's batter, count and runners.
     const state = closesFirst(action)

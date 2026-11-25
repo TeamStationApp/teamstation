@@ -6,6 +6,7 @@ import { CancelAction } from '../components/CancelAction'
 import type { BaseProjection } from '../field/fieldTypes'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import { ScoringDecisionSheet } from './EndGameConfirmation'
 import { choiceDecisionFrame, homeDecisionFrame } from './runnerControlLayout'
 import {
   hasCurrentRunnerPitch,
@@ -13,7 +14,7 @@ import {
   runnerReasons
 } from './scoringFlow'
 import { fielderName } from './scoringSelectors'
-import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
+import { ScoringButton, ScoringError } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 export function RunnerControls({
@@ -35,7 +36,7 @@ export function RunnerControls({
     const runner = state.session.gameData.players[choice.choosingPutout]
     const first = Math.max(0, ...choice.runners.map(move => move.putout ?? 0))
     return (
-      <ScoringSheet
+      <ScoringDecisionSheet
         fullScreen
         title={`Who put out ${runner.fullName}?`}
         onClose={() => {
@@ -86,7 +87,7 @@ export function RunnerControls({
             </Pressable>
           )
         })}
-      </ScoringSheet>
+      </ScoringDecisionSheet>
     )
   }
   const choiceRunners =
@@ -147,7 +148,7 @@ export function RunnerControls({
     )
   if (state.phase === 'runnerErrorReuse')
     return (
-      <ScoringSheet
+      <ScoringDecisionSheet
         title="Was this the same error?"
         onClose={() => {
           dispatch({ type: 'RUNNER_CANCEL' })
@@ -167,7 +168,7 @@ export function RunnerControls({
             dispatch({ type: 'RUNNER_ERROR_REUSE', reuse: false })
           }}
         />
-      </ScoringSheet>
+      </ScoringDecisionSheet>
     )
   if (state.phase === 'runnerError' || state.phase === 'runnerPitchType')
     return (
@@ -182,7 +183,7 @@ export function RunnerControls({
     )
   if (state.phase === 'runnerPitch' && action?.reason === 'Passed Ball')
     return (
-      <ScoringSheet
+      <ScoringDecisionSheet
         title="Was the passed ball the previous pitch?"
         onClose={() => {
           dispatch({ type: 'RUNNER_CANCEL' })
@@ -207,11 +208,11 @@ export function RunnerControls({
         {state.session.pending != null && (
           <ScoringError message="Finish the current play before adding another pitch." />
         )}
-      </ScoringSheet>
+      </ScoringDecisionSheet>
     )
   if (state.phase === 'runnerPitch')
     return (
-      <ScoringSheet
+      <ScoringDecisionSheet
         title={action!.reason!}
         onClose={() => {
           dispatch({ type: 'RUNNER_CANCEL' })
@@ -239,11 +240,11 @@ export function RunnerControls({
         {state.session.pending != null && (
           <ScoringError message="Finish the current play before adding another pitch." />
         )}
-      </ScoringSheet>
+      </ScoringDecisionSheet>
     )
   if (state.phase === 'runnerReason')
     return (
-      <ScoringSheet
+      <ScoringDecisionSheet
         title={action?.decision === 'safe' ? 'Runner advance' : 'Runner out'}
         onClose={() => {
           dispatch({ type: 'RUNNER_CANCEL' })
@@ -259,7 +260,7 @@ export function RunnerControls({
             }}
           />
         ))}
-      </ScoringSheet>
+      </ScoringDecisionSheet>
     )
   const home = state.phase === 'homeDecision'
   if (!home && (state.phase !== 'runnerDecision' || action == null)) return null
