@@ -122,7 +122,9 @@ public struct SourceSelectionView: View {
                 .id(selection.id)
             }
           }
-          if environment.cameraListRows.isEmpty {
+          // The scoreboard row is not a source the scan found: with only it listed, the
+          // operator still needs the search state and the Local Network hint.
+          if environment.selections.isEmpty {
             emptyState
           }
         }
