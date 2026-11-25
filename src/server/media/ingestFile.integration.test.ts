@@ -12,6 +12,7 @@ import { makeId } from '../../common/ids'
 import { addGame, addTeam, scratchDatabase } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
 import { startFakeSpace } from '../dev/fakeSpace'
+import { assignGameLogos } from '../sponsors/logos'
 import { ffmpegEncoders, remuxToHls } from './ffmpeg'
 import { ingestVideoFile, probeVideoFile } from './ingestFile'
 import { presignGetUrl } from './presign'
@@ -264,6 +265,131 @@ describe('what has to name an ingested video, in the commit that writes it', fun
       .executeTakeFirst()
     expect(row).equals(undefined)
     expect(await objects(videoId)).deep.equals([])
+  })
+
+  describe('U16 the game’s sponsor logo', function () {
+    const takeOf = async (
+      options: Partial<Parameters<typeof ingestVideoFile>[0]>
+    ): Promise<string> =>
+      (
+        await ingestVideoFile({
+          db: db!,
+          space,
+          ffmpegPath: FFMPEG,
+          file: join(dir, 'take.mp4'),
+          gameId,
+          kind: 'program',
+          title: 'Home Plate',
+          startAt: new Date(),
+          startAtSource: 'manual',
+          ...options
+        })
+      ).videoId
+
+    it('is given once the video is written, from when the recording began', async function () {
+      const leagueId = 'lea_ingest_logo'
+      await db!
+        .insertInto('leagues')
+        .values({ id: leagueId, name: 'American League' })
+        .execute()
+      const home = await db!
+        .selectFrom('games')
+        .select('home_team_id')
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      await db!
+        .updateTable('teams')
+        .set({ league_id: leagueId })
+        .where('id', '=', home.home_team_id)
+        .execute()
+      await db!
+        .insertInto('sponsor_media')
+        .values({
+          id: 'smd_ingest_logo',
+          league_id: leagueId,
+          purpose: 'logo',
+          object_key: `sponsors/${leagueId}/smd_ingest_logo.png`,
+          content_type: 'image/png',
+          bytes: 100,
+          sha256: '0'.repeat(64),
+          width: 480,
+          height: 120,
+          created_by: null
+        })
+        .execute()
+      await db!
+        .insertInto('sponsor_logos')
+        .values({
+          id: 'slg_ingest_logo',
+          league_id: leagueId,
+          media_id: 'smd_ingest_logo',
+          name: 'Logo',
+          allocation: 10,
+          position: 1,
+          accepted_at: new Date(Date.now() - 60_000)
+        })
+        .execute()
+      const asked: Array<{ gameId: string; startedAt: Date; seen: number }> = []
+      const videoId = await takeOf({
+        assignLogos: async (trxDb, game, startedAt) => {
+          // Called after the commit: the video is there to be seen.
+          const seen = await trxDb
+            .selectFrom('videos')
+            .select('id')
+            .where('game_id', '=', game)
+            .execute()
+          asked.push({ gameId: game, startedAt, seen: seen.length })
+          return await assignGameLogos(trxDb, game, startedAt)
+        }
+      })
+      const row = await db!
+        .selectFrom('videos')
+        .select('start_at')
+        .where('id', '=', videoId)
+        .executeTakeFirstOrThrow()
+      expect(asked).to.have.length(1)
+      expect(asked[0].gameId).equals(gameId)
+      expect(asked[0].startedAt.getTime()).equals(
+        new Date(row.start_at!).getTime()
+      )
+      expect(asked[0].seen).greaterThan(0)
+      const placed = await db!
+        .selectFrom('game_sponsor_logos')
+        .select(['league_id', 'logo_id'])
+        .where('game_id', '=', gameId)
+        .execute()
+      expect(placed).deep.equals([
+        { league_id: leagueId, logo_id: 'slg_ingest_logo' }
+      ])
+      // The default, the real one, keeps the logo the game has.
+      await takeOf({})
+      expect(
+        await db!
+          .selectFrom('game_sponsor_logos')
+          .select('logo_id')
+          .where('game_id', '=', gameId)
+          .execute()
+      ).to.have.length(1)
+    })
+
+    it('leaves the recording in when giving the logo fails, and says so', async function () {
+      const said: string[] = []
+      const videoId = await takeOf({
+        assignLogos: async () => {
+          throw new Error('no logos today')
+        },
+        log: message => said.push(message)
+      })
+      const row = await db!
+        .selectFrom('videos')
+        .select('status')
+        .where('id', '=', videoId)
+        .executeTakeFirstOrThrow()
+      expect(row.status).equals('ready')
+      expect(said).deep.equals([
+        `ingest ${videoId}: sponsor logos: Error: no logos today`
+      ])
+    })
   })
 })
 

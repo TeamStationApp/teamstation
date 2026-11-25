@@ -96,6 +96,7 @@ import { markSeek, playbackOf } from '../player/playbackSession'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
 import { SinglePlayerReadout } from '../player/SinglePlayerReadout'
+import { useGameSponsors } from '../player/sponsors/useGameSponsors'
 import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
 import {
@@ -2000,6 +2001,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [chosen])
 
+  // The card's sponsor logo: the game's league's, signed in, kept up to date
+  // while the picture is live.
+  const { sponsors } = useGameSponsors(
+    client,
+    props.signedIn === true ? gameId : null,
+    video?.status === 'live'
+  )
+
   if (error != null) {
     // A heading and a reason, not a full stop on its own. A deep link to a
     // game that has gone is the commonest way to land here, and `Not found.`
@@ -2424,6 +2433,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           height={layout.videoHeight}
           active={!showAngles}
           scoreboard={pictureBoard}
+          sponsors={sponsors}
           playable={playback?.url != null && playable}
           onOpen={
             playback?.url == null || !playable

@@ -199,6 +199,7 @@ import {
 } from './seasonScheduling'
 import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
 import type {
+  GameSponsors,
   SampleVideo,
   SponsoredTextColor,
   SponsorMediaPurpose,
@@ -206,6 +207,7 @@ import type {
   UploadedSponsorMedia
 } from './sponsors/types'
 import {
+  asGameSponsors,
   asSampleVideo,
   asSponsorState,
   asUploadedSponsorMedia
@@ -9072,6 +9074,18 @@ export class TeamStationClient {
       'GET',
       `/leagues/${encodeURIComponent(leagueId)}/sponsors/sample`,
       asSampleVideo
+    )
+  }
+
+  /**
+   * The sponsorship a game's players draw: its league's logo and reels, and
+   * where the node's settings put them.
+   */
+  async gameSponsors(gameId: string): Promise<GameSponsors> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/sponsors`,
+      asGameSponsors
     )
   }
 

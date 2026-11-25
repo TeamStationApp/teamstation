@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
 
+import type { GameSponsors } from '../../common/sponsors/types'
+import { livePillBox, LivePillTop } from '../components/LivePill'
 import { lstrings } from '../locales/strings'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -32,6 +34,8 @@ import {
   type PictureScoreboardProps
 } from './scoreboardOverlay/ScoreboardOverlay'
 import { slowMotion } from './slowMotion'
+import { livePillTop, logoRect } from './sponsors/overlayRects'
+import { SponsorLogoOverlay } from './sponsors/SponsorLogoOverlay'
 import { seekableEndOf, type VideoHandle } from './videoHandle'
 import { ZoneIcons } from './ZoneIcons'
 import { beyondSlop, HOLD_MS, seekBy, STEP_SECONDS } from './zones'
@@ -60,6 +64,12 @@ export interface PlayerSurfaceProps {
    * the picture is in this view. Absent, no board.
    */
   scoreboard?: Omit<PictureScoreboardProps, 'videoRef'>
+  /**
+   * The game's sponsorship (`useGameSponsors`): its logo goes in the
+   * picture's upper right, by the node's single-camera placement, from the
+   * first frame. Absent or null, none.
+   */
+  sponsors?: GameSponsors | null
   /** The top-right square: opens the full-screen player. */
   onOpen?: () => void
   /**
@@ -107,6 +117,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     height,
     active = true,
     scoreboard,
+    sponsors,
     onOpen,
     playable = true,
     muted = true,
@@ -387,9 +398,35 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
       run(state.zone, event.nativeEvent.locationX)
   }
 
+  // A logo over the live pill's corner moves the pill just below it, or
+  // above it when below would leave the picture (`livePillTop`).
+  const logoTile = scoreboard?.picture ?? box
+  const logo = sponsors?.logo
+  const logoBox =
+    logo == null || sponsors == null || !(logoTile.w > 0 && logoTile.h > 0)
+      ? null
+      : logoRect(logoTile, sponsors.overlay.logo.single, {
+          width: logo.width,
+          height: logo.height
+        })
+  const pillTop = livePillTop(
+    width,
+    logoTile,
+    logoBox,
+    livePillBox(theme),
+    theme.rem(theme.spaceSmRem)
+  )
+
   return (
     <View style={[styles.surface, { width, height }]}>
-      {children}
+      <LivePillTop.Provider value={pillTop}>{children}</LivePillTop.Provider>
+      {sponsors != null ? (
+        <SponsorLogoOverlay
+          logo={sponsors.logo}
+          tile={logoTile}
+          placement={sponsors.overlay.logo.single}
+        />
+      ) : null}
       {scoreboard != null && active ? (
         <PictureScoreboard
           {...scoreboard}

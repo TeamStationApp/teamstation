@@ -9,6 +9,8 @@ import React, {
 import { createPortal } from 'react-dom'
 import { Text, View } from 'react-native'
 
+import type { LogoPlacement } from '../../common/nodeSettings'
+import type { GameSponsorLogo } from '../../common/sponsors/types'
 import { webStyle } from '../components/glass'
 import { PaneFrameContext, usePaneFrame } from '../components/useBreakpoint'
 import { lstrings, sprintf } from '../locales/strings'
@@ -41,6 +43,8 @@ import {
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
 import type { Size } from './scoreboardOverlay/overlayLayout'
+import { SponsorLogoOverlay } from './sponsors/SponsorLogoOverlay'
+import { useGameSponsors } from './sponsors/useGameSponsors'
 import { useScreenInsets } from './useScreenInsets'
 import type { WallMapping } from './wallMapping'
 import { ZoneIcons } from './ZoneIcons'
@@ -107,6 +111,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   // The game's board and box score, at the wall time of the master tile's
   // frame, and the angles around them (`playerLayout`).
   const board = useGridBoard(props)
+  // The game's sponsor logo on every tile: upright by the portrait
+  // placement, sideways by the grid's, or the single camera's for one
+  // picture alone.
+  const { sponsors } = useGameSponsors(
+    props.client,
+    props.gameId,
+    props.videos.some(video => video.status === 'live')
+  )
   // Under the rounded corners and the camera while the grid is up: the
   // pictures run to the edges, and the board, the box and the controls keep
   // to what the hardware leaves.
@@ -114,6 +126,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
   const zoomedIndex =
     props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
+  const logoPlacement =
+    sponsors == null
+      ? null
+      : !landscape
+        ? sponsors.overlay.logo.portrait
+        : (zoomedIndex != null && zoomedIndex >= 0) || props.order.length === 1
+          ? sponsors.overlay.logo.single
+          : sponsors.overlay.logo.grid
   const layoutFor = (natural: Size): PlayerLayout =>
     playerLayout({
       screen: { width, height },
@@ -437,6 +457,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           }}
           touchAction={touchAction}
           heard={video.id === mc.heardId}
+          logo={
+            logoPlacement == null || sponsors?.logo == null
+              ? null
+              : { ...sponsors.logo, placement: logoPlacement }
+          }
           armed={mc.armedTile === index}
           onPressStart={(pointerId, x, y) =>
             pressStart(pointerId, paneX(x), paneY(y), index)
@@ -613,6 +638,8 @@ function Tile(props: {
   onPressCancel: (pointerId: number) => void
   onMove: (x: number, y: number) => void
   onDrop: (x: number, y: number) => void
+  /** The game's sponsor logo, drawn in the picture's upper right. */
+  logo?: (GameSponsorLogo & { placement: LogoPlacement }) | null
 }): React.ReactElement {
   const {
     rect,
@@ -817,6 +844,13 @@ function Tile(props: {
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         playsInline
       />
+      {props.logo != null ? (
+        <SponsorLogoOverlay
+          logo={props.logo}
+          tile={{ x: 0, y: 0, w: rect.w, h: rect.h }}
+          placement={props.logo.placement}
+        />
+      ) : null}
       <div
         style={{
           position: 'absolute',

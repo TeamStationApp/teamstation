@@ -9,6 +9,11 @@ import {
   type VideoSummary
 } from '../../common/api'
 import {
+  defaultSponsorSettings,
+  type LogoPlacement
+} from '../../common/nodeSettings'
+import type { GameSponsors } from '../../common/sponsors/types'
+import {
   boardStep,
   layOutBoards,
   OVERLAY_T0,
@@ -24,6 +29,7 @@ import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView as BrowserGrid } from './MultiCamView'
 import { MultiCamView as PhoneGrid } from './MultiCamView.native'
 import { tileBoardRect } from './scoreboardOverlay/overlayLayout'
+import { logoRect } from './sponsors/overlayRects'
 
 /**
  * The phone's grid, bundled for the browser: its own file, drawn with React
@@ -87,6 +93,8 @@ async function grid(options: {
   steps?: Array<ReturnType<typeof boardStep>>
   /** Each angle's player is given an address, rather than waiting for one. */
   playable?: boolean
+  /** The game's sponsorship, read signed in. */
+  sponsors?: GameSponsors
 }): Promise<void> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -101,6 +109,10 @@ async function grid(options: {
     baseUrl: '/api/v1',
     fetch: server.fetch
   })
+  const sponsors = options.sponsors
+  if (sponsors != null) {
+    client.gameSponsors = async () => sponsors
+  }
   client.playback =
     options.playable === true
       ? async videoId => ({
@@ -774,4 +786,86 @@ describe('a press on either grid: a tap, a scrub, a hold that picks a tile up (U
       expect(orders).deep.equals([['b', 'a']])
     })
   }
+})
+
+describe('U19 the sponsor logo on every phone tile', function () {
+  afterEach(unmount)
+
+  const placement = (side: number): LogoPlacement => ({
+    side,
+    top: 0.05,
+    maxWidth: 0.25,
+    maxHeight: 0.25
+  })
+  const sponsored: GameSponsors = {
+    leagueId: 'lea_al',
+    logo: { url: 'https://cdn.example.test/logo.png', width: 480, height: 120 },
+    reels: [],
+    overlay: {
+      logo: {
+        single: placement(0.01),
+        grid: placement(0.02),
+        tv: placement(0.03),
+        portrait: placement(0.04)
+      },
+      reel: defaultSponsorSettings.reel
+    }
+  }
+  const logos = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>('[data-testid="sponsor-logo"]')
+  ]
+  const expectPlaced = (expected: LogoPlacement): void => {
+    const tiles = tileBoxes()
+    const drawn = logos()
+    expect(drawn).length(tiles.length)
+    drawn.forEach((logo, index) => {
+      const rect = logoRect(
+        { x: 0, y: 0, w: tiles[index].w, h: tiles[index].h },
+        expected,
+        { width: 480, height: 120 }
+      )
+      const box = boxOf(logo)
+      expect(box.x).closeTo(rect.x, 0.5)
+      expect(box.y).closeTo(rect.y, 0.5)
+      expect(box.w).closeTo(rect.w, 0.5)
+      expect(box.h).closeTo(rect.h, 0.5)
+      expect(getComputedStyle(logo).pointerEvents).equals('none')
+    })
+  }
+
+  it('draws the portrait placement on each of the stacked tiles, upright', async function () {
+    await grid({
+      Grid: PhoneGrid,
+      width: 402,
+      height: 874,
+      playable: true,
+      sponsors: sponsored
+    })
+    expect(logos()).length(4)
+    expectPlaced(sponsored.overlay.logo.portrait)
+  })
+
+  it('draws the grid placement on each of four tiles, sideways', async function () {
+    await grid({
+      Grid: PhoneGrid,
+      width: 874,
+      height: 402,
+      playable: true,
+      sponsors: sponsored
+    })
+    expect(logos()).length(4)
+    expectPlaced(sponsored.overlay.logo.grid)
+  })
+
+  it('draws none for a game with no logo', async function () {
+    await grid({
+      Grid: PhoneGrid,
+      width: 402,
+      height: 874,
+      playable: true,
+      sponsors: { ...sponsored, leagueId: null, logo: null }
+    })
+    expect(tileBoxes()).length(4)
+    expect(logos()).deep.equals([])
+  })
 })

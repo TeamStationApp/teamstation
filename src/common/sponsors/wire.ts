@@ -13,7 +13,12 @@ import {
 } from 'cleaners'
 
 import { asSponsorOverlay } from '../nodeSettings'
-import type { SampleVideo, SponsorState, UploadedSponsorMedia } from './types'
+import type {
+  GameSponsors,
+  SampleVideo,
+  SponsorState,
+  UploadedSponsorMedia
+} from './types'
 
 const asTextColor = asValue('dark', 'white')
 
@@ -82,3 +87,23 @@ export const asSampleVideo: Cleaner<SampleVideo> = raw => {
   const { videoId } = asObject({ videoId: asString })(raw)
   return { ...common, kind: 'recording', videoId }
 }
+
+export const asGameSponsors: Cleaner<GameSponsors> = asObject({
+  leagueId: asEither(asString, asNull),
+  logo: asEither(
+    asObject({ url: asString, width: asNumber, height: asNumber }),
+    asNull
+  ),
+  reels: asArray(
+    asObject({
+      id: asString,
+      reelId: asString,
+      url: asString,
+      width: asNumber,
+      height: asNumber,
+      startMs: asNumber,
+      durationMs: asNumber
+    })
+  ),
+  overlay: asSponsorOverlay
+})

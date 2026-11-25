@@ -10,6 +10,11 @@ import {
   type VideoSummary
 } from '../../common/api'
 import {
+  defaultSponsorSettings,
+  type LogoPlacement
+} from '../../common/nodeSettings'
+import type { GameSponsors } from '../../common/sponsors/types'
+import {
   boardStep,
   layOutBoards,
   OVERLAY_T0,
@@ -24,6 +29,7 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import { tileRects } from './multiCam/layout'
 import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView } from './MultiCamView'
+import { logoRect } from './sponsors/overlayRects'
 
 let root: Root | undefined
 
@@ -107,6 +113,8 @@ async function grid(options: {
   /** A highlight's end, and what is told when it is reached. */
   endAtMs?: number
   onEndReached?: () => void
+  /** The game's sponsorship, read signed in. */
+  sponsors?: GameSponsors
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -131,6 +139,10 @@ async function grid(options: {
     baseUrl: '/api/v1',
     fetch: server.fetch
   })
+  const sponsors = options.sponsors
+  if (sponsors != null) {
+    client.gameSponsors = async () => sponsors
+  }
   const hold = options.hold
   if (hold != null) {
     const wallTimeline = client.wallTimeline.bind(client)
@@ -999,5 +1011,113 @@ describe('the board over the grid (C3)', function () {
     await grid({ width: 1280, height: 720, gameId: 'g1', steps: [] })
     expect(overlays()).length(0)
     expect(nameShown(tiles()[0])).equals(false)
+  })
+})
+
+describe('U19 the sponsor logo on every tile', function () {
+  afterEach(unmount)
+
+  // A placement of each kind, told apart by its margin.
+  const placed = (side: number): LogoPlacement => ({
+    side,
+    top: 0.05,
+    maxWidth: 0.25,
+    maxHeight: 0.25
+  })
+  const sponsored: GameSponsors = {
+    leagueId: 'lea_al',
+    logo: { url: 'https://cdn.example.test/logo.png', width: 480, height: 120 },
+    reels: [],
+    overlay: {
+      logo: {
+        single: placed(0.01),
+        grid: placed(0.02),
+        tv: placed(0.03),
+        portrait: placed(0.04)
+      },
+      reel: defaultSponsorSettings.reel
+    }
+  }
+  const logos = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>('[data-testid="sponsor-logo"]')
+  ]
+  /** Each tile's logo is where `logoRect` puts it in that tile. */
+  const expectPlaced = (placement: LogoPlacement): void => {
+    const shown = tiles()
+    expect(shown.length).greaterThan(0)
+    for (const tile of shown) {
+      const logo = tile.querySelector<HTMLElement>(
+        '[data-testid="sponsor-logo"]'
+      )!
+      expect(logo, 'a logo on each tile').not.equals(null)
+      const rect = logoRect(
+        { x: 0, y: 0, w: px(tile.style.width), h: px(tile.style.height) },
+        placement,
+        { width: 480, height: 120 }
+      )
+      expect(px(logo.style.left)).closeTo(rect.x, 0.5)
+      expect(px(logo.style.top)).closeTo(rect.y, 0.5)
+      expect(px(logo.style.width)).closeTo(rect.w, 0.5)
+      expect(px(logo.style.height)).closeTo(rect.h, 0.5)
+      expect(getComputedStyle(logo).pointerEvents).equals('none')
+      // Over the picture, under the tile's own press layer.
+      const order = [...tile.children]
+      expect(order.indexOf(logo)).greaterThan(
+        order.indexOf(tile.querySelector('video')!)
+      )
+    }
+  }
+
+  it('draws the grid placement on each of four tiles sideways, under the board', async function () {
+    await grid({
+      width: 1280,
+      height: 720,
+      gameId: 'g1',
+      playable: true,
+      sponsors: sponsored,
+      steps: [boardStep(OVERLAY_T0 + 1000, 1)]
+    })
+    expect(logos()).to.have.length(4)
+    expectPlaced(sponsored.overlay.logo.grid)
+  })
+
+  it('draws the portrait placement on each tile upright', async function () {
+    await grid({
+      width: 390,
+      height: 844,
+      gameId: 'g1',
+      playable: true,
+      sponsors: sponsored
+    })
+    expect(logos()).to.have.length(4)
+    expectPlaced(sponsored.overlay.logo.portrait)
+  })
+
+  it('draws the single-camera placement on one picture alone', async function () {
+    await grid({
+      width: 1280,
+      height: 720,
+      gameId: 'g1',
+      ids: ['a'],
+      playable: true,
+      sponsors: sponsored
+    })
+    expect(logos()).to.have.length(1)
+    expectPlaced(sponsored.overlay.logo.single)
+  })
+
+  it('draws none for a game with no logo, or one with no sponsorship to read', async function () {
+    await grid({
+      width: 1280,
+      height: 720,
+      gameId: 'g1',
+      playable: true,
+      sponsors: { ...sponsored, leagueId: null, logo: null }
+    })
+    expect(tiles().length).greaterThan(0)
+    expect(logos()).deep.equals([])
+    await unmount()
+    await grid({ width: 1280, height: 720, gameId: 'g1', playable: true })
+    expect(logos()).deep.equals([])
   })
 })

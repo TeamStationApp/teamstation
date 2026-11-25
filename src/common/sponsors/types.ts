@@ -106,6 +106,39 @@ export type SampleVideo = (
   | { kind: 'node'; url: string; window: [number, number] }
 ) & { overlay: SponsorOverlay }
 
+/** A sponsor's logo over a game's video: the image and its own size. */
+export interface GameSponsorLogo {
+  url: string
+  width: number
+  height: number
+}
+
+/** One broadcast of a reel on a game's clock. */
+export interface GameSponsorReel {
+  /** The placement (`srp_`). */
+  id: string
+  reelId: string
+  url: string
+  width: number
+  height: number
+  /** When it starts, on the wall clock, in epoch ms. */
+  startMs: number
+  durationMs: number
+}
+
+/**
+ * The sponsorship a game's players draw, as `GET /games/:gameId/sponsors`
+ * answers it: the league whose sponsorship it is, its logo, its reels, and
+ * where the node's settings put them. No league, no logo and no reels when
+ * the game has none.
+ */
+export interface GameSponsors {
+  leagueId: string | null
+  logo: GameSponsorLogo | null
+  reels: GameSponsorReel[]
+  overlay: SponsorOverlay
+}
+
 /** A file the administrator dropped or chose, held as an object URL. */
 export interface PickedFile {
   name: string

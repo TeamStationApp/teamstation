@@ -10,6 +10,7 @@ import {
   scoreboardPrefix,
   type ScoreboardStore
 } from '../scoreboard/scoreboardStore'
+import { LOGO_SETTLE_MS, settleGameLogos } from './logos'
 import { sweepSponsorMedia } from './media'
 
 /** How often uploads nothing used are looked for. */
@@ -27,8 +28,10 @@ export interface SponsorSweepOptions {
 }
 
 /**
- * The sponsor sweeps, run once a node from `startBackgroundJobs`: the hourly
- * sweep of uploads nothing used, on the way up and then every hour. They tell
+ * The sponsor sweeps, run once a node from `startBackgroundJobs`: every
+ * minute the game logos not yet settled are charged or settled free
+ * (`settleGameLogos`), and every hour the uploads nothing used are swept,
+ * each on the way up and then on its period. They tell
  * live players of a change through a scoreboard store of their own, on its
  * own Valkey connection, which is started and not waited for, as a worker's
  * is. Answers how to stop: the timers, and that connection.
@@ -51,6 +54,13 @@ export function startSponsorSweeps(options: SponsorSweepOptions): Stoppable & {
     timer.unref?.()
     timers.push(timer)
   }
+  every(LOGO_SETTLE_MS, async () => {
+    const settled = await settleGameLogos(db, now())
+    if (settled.charged + settled.free > 0)
+      log(
+        `settled ${settled.charged + settled.free} game logo(s), ${settled.charged} charged`
+      )
+  })
   if (spaceConfigured(space))
     every(MEDIA_SWEEP_MS, async () => {
       const gone = await sweepSponsorMedia(db, space, now(), log)

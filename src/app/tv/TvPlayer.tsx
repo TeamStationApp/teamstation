@@ -45,6 +45,8 @@ import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
+import { SponsorLogoOverlay } from '../player/sponsors/SponsorLogoOverlay'
+import { useGameSponsors } from '../player/sponsors/useGameSponsors'
 import { usePictureClock } from '../scoreboard/boardClock'
 import {
   replayBattingLabels,
@@ -151,6 +153,16 @@ export function TvPlayer({
   const scoreScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const scoreOffset = useRef(0)
   const scoreExtent = useRef({ content: 0, viewport: 0 })
+  // The game's sponsor logo on every camera, asked again with the
+  // statistics' refresh: the TV keeps no socket.
+  const { sponsors, refetch: refetchSponsors } = useGameSponsors(
+    client,
+    request.game.id,
+    false,
+    { socket: false }
+  )
+  const refreshSponsors = useRef(refetchSponsors)
+  refreshSponsors.current = refetchSponsors
   const [placement, setPlacement] = useState<ScoreboardOverlay | null>(null)
   useEffect(() => {
     let active = true
@@ -401,6 +413,7 @@ export function TvPlayer({
       )
         timer = setInterval(() => {
           refresh().catch(() => undefined)
+          refreshSponsors.current()
         }, 10000)
     }
     let timer: ReturnType<typeof setInterval> | undefined
@@ -1129,6 +1142,13 @@ export function TvPlayer({
                       setError('The cameras could not play. Try again.')
                   }}
                 />
+                {rect !== undefined && sponsors != null ? (
+                  <SponsorLogoOverlay
+                    logo={sponsors.logo}
+                    tile={{ x: 0, y: 0, w: rect.w, h: rect.h }}
+                    placement={sponsors.overlay.logo.tv}
+                  />
+                ) : null}
                 {(!available || failures.includes(index)) && (
                   <View style={styles.unavailable}>
                     <Text style={styles.copy}>

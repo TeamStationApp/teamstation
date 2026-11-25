@@ -84,3 +84,46 @@ export function boardPlaceSpace(
     h: picture.y + picture.h - y
   }
 }
+
+/** The live pill over a picture: its inset from the corner, and its size. */
+export interface PillBox {
+  inset: number
+  w: number
+  h: number
+}
+
+/**
+ * Where the live pill starts down from the surface's top, when a sponsor's
+ * `logo` is drawn over `picture` on a surface `width` wide; `null` keeps
+ * the pill at its own inset in the upper-right corner. The pill moves only
+ * when the logo covers that spot: then just below the logo if it fits
+ * there inside the picture, else just above it, else it stays put. A node
+ * admin can place the logo anywhere, so a logo low in the picture or far
+ * from the corner leaves the pill where it was.
+ */
+export function livePillTop(
+  width: number,
+  picture: Rect,
+  logo: Rect | null,
+  pill: PillBox,
+  gap: number
+): number | null {
+  if (logo == null) return null
+  const own = {
+    x: width - pill.inset - pill.w,
+    y: pill.inset,
+    w: pill.w,
+    h: pill.h
+  }
+  const covers =
+    logo.x < own.x + own.w + gap &&
+    logo.x + logo.w + gap > own.x &&
+    logo.y < own.y + own.h + gap &&
+    logo.y + logo.h + gap > own.y
+  if (!covers) return null
+  const below = logo.y + logo.h + gap
+  if (below + pill.h <= picture.y + picture.h) return below
+  const above = logo.y - gap - pill.h
+  if (above >= picture.y) return above
+  return null
+}

@@ -174,6 +174,7 @@ const NOUN: Record<CreditKind, CreditNoun> = {
   reel: 'broadcast'
 }
 const TOTAL = { logo: 'logo_credits', reel: 'reel_credits' } as const
+const TURN = { logo: 'logo_turn', reel: 'reel_turn' } as const
 
 function refuse(problem: string | null): void {
   if (problem != null) throw badRequest(problem)
@@ -267,7 +268,9 @@ export async function addCreditRow(
       media_id: media.id,
       name,
       allocation: body.allocation,
-      position: last + 1,
+      // After the last placed too: a deleted row's position is never reused,
+      // so a new row is not taken for one whose turn has passed.
+      position: Math.max(last, credits[TURN[kind]]) + 1,
       accepted_at: now
     }
     if (kind === 'logo')
@@ -314,7 +317,10 @@ export async function setCreditAllocation(
 
 /**
  * Deactivates a row: one with credits used stays, inactive, its allocation
- * still counted; an unused one is deleted, and its allocation returns.
+ * still counted; an unused one is deleted, and its allocation returns. A logo
+ * games are showing whose placements are not settled yet counts as used, as
+ * those games may still charge it: it stays, inactive, and `settleGameLogos`
+ * deletes it once the last of them settles free.
  */
 export async function deactivateCreditRow(
   db: Kysely<Database>,
@@ -330,7 +336,15 @@ export async function deactivateCreditRow(
       .select('used')
       .where('id', '=', id)
       .executeTakeFirstOrThrow()
-    if (row.used === 0)
+    const showing =
+      kind === 'logo' &&
+      (await trx
+        .selectFrom('game_sponsor_logos')
+        .select('game_id')
+        .where('logo_id', '=', id)
+        .where('settled_at', 'is', null)
+        .executeTakeFirst()) != null
+    if (row.used === 0 && !showing)
       await trx.deleteFrom(TABLE[kind]).where('id', '=', id).execute()
     else
       await trx

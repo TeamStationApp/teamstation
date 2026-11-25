@@ -41,6 +41,7 @@ import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
 import type { LiveSettings } from '../serverConfig'
 import { LIVE_LOCAL_TAIL_SEC, LIVE_RESYNC_MS } from '../serverConfigSchema'
 import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
+import { assignGameLogos } from '../sponsors/logos'
 import {
   moveWallPoints,
   RECORDING_DIR,
@@ -203,6 +204,15 @@ export interface LiveControllerOptions {
   tickMs?: number
   /** How long the listing that decides an old video's secret may take. */
   listTimeoutMs?: number
+  /**
+   * Gives the game its sponsor logos once a recording of it has begun:
+   * `assignGameLogos`, unless a test swaps it.
+   */
+  assignLogos?: (
+    db: Kysely<Database>,
+    gameId: string,
+    startedAt: Date
+  ) => Promise<unknown>
 }
 
 interface Tracked {
@@ -1243,7 +1253,7 @@ export async function beganPublishing(
     // Its video is live, and counts on its season's row from now.
     await noteGameFigures(trx, row.gameId)
     if (row.videoId == null) return
-    await trx
+    const video = await trx
       .updateTable('videos')
       .set(eb => ({
         status: 'live',
@@ -1260,14 +1270,25 @@ export async function beganPublishing(
         updated_at: now
       }))
       .where('id', '=', row.videoId)
-      .execute()
-    return true
+      .returning('start_at')
+      .executeTakeFirst()
+    return { startAt: video?.start_at ?? now }
   })
-  if (
-    began === true &&
-    row.videoId != null &&
-    generation === originGeneration
-  ) {
+  // The game's sponsor logos, from when its recording began, once that is
+  // committed. Never in the way of going live: a failure is only said.
+  const logos =
+    began != null && row.gameId != null
+      ? (current.assignLogos ?? assignGameLogos)(
+          db,
+          row.gameId,
+          new Date(began.startAt)
+        ).catch((error: unknown) => {
+          current.log?.(
+            `live: sponsor logos for game ${row.gameId}: ${String(error)}`
+          )
+        })
+      : null
+  if (began != null && row.videoId != null && generation === originGeneration) {
     const videoId = row.videoId
     const spaceSecret = origins.has(videoId)
       ? null
@@ -1278,6 +1299,7 @@ export async function beganPublishing(
     })
     if (origin != null) queueOrigin(videoId, origin)
   }
+  await logos
 }
 
 /**

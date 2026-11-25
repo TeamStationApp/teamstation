@@ -11,6 +11,7 @@ import { makeId } from '../../common/ids'
 import { atomic } from '../db/atomic'
 import type { Database, VideosTable } from '../db/database'
 import { noteGameFigures } from '../socket/syncRevision'
+import { assignGameLogos } from '../sponsors/logos'
 import {
   AAC_PRIMING_SAMPLES,
   MEDIA_PLAYLIST,
@@ -307,6 +308,15 @@ export interface IngestOptions {
    * process stopped in between leaves a video on the game that nothing names.
    */
   onWritten?: (trx: Transaction<Database>, videoId: string) => Promise<void>
+  /**
+   * Gives the game its sponsor logos once the row is written, from when the
+   * recording began: `assignGameLogos`, unless a test swaps it.
+   */
+  assignLogos?: (
+    db: Kysely<Database>,
+    gameId: string,
+    startedAt: Date
+  ) => Promise<unknown>
 }
 
 export interface Ingested {
@@ -333,7 +343,8 @@ export async function ingestVideoFile(
     numCameras = 1,
     onStep,
     log = console.error,
-    onWritten
+    onWritten,
+    assignLogos = assignGameLogos
   } = options
   // Made with the id, before anything is uploaded: the video's objects go
   // under its secret path from the first byte, and the row is written with it.
@@ -474,6 +485,10 @@ export async function ingestVideoFile(
       await forgetTheCopy(space, videoId, spaceSecret)
       throw error
     }
+    // The recording is in whatever this does: a failure is only said.
+    await assignLogos(db, gameId, firstFrameAt).catch((error: unknown) => {
+      log(`ingest ${videoId}: sponsor logos: ${String(error)}`)
+    })
 
     return {
       videoId,

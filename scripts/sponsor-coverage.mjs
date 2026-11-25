@@ -89,7 +89,14 @@ const appSuites = [
   'src/app/sponsors/SponsorFileDrop.native.test.tsx',
   'src/app/sponsors/SponsoredScheduleRow.test.tsx',
   'src/app/screens/GroupSettingsScreen.test.tsx',
-  'src/app/App.sponsors.test.tsx'
+  'src/app/App.sponsors.test.tsx',
+  // The game's sponsorship, read and kept up to date, and its logo on the
+  // card, on every tile of the grids and on every TV camera (M3).
+  'src/app/player/sponsors/useGameSponsors.test.tsx',
+  'src/app/player/PlayerSurface.test.tsx',
+  'src/app/player/MultiCamView.test.tsx',
+  'src/app/player/MultiCamView.native.test.tsx',
+  'src/app/tv/TvPlayer.test.tsx'
 ]
 
 /**
@@ -120,7 +127,12 @@ const integrationSuites = [
   { spec: 'src/server/routes/hlsPlayback.integration.test.ts' },
   { spec: 'src/server/routes/mediaPlaylist.integration.test.ts' },
   // The server's start and stop, with the sweeps and the routes mounted.
-  { spec: 'src/server/serverStart.integration.test.ts' }
+  { spec: 'src/server/serverStart.integration.test.ts' },
+  // A game's logo, from its first recording to its charge, and the calls
+  // that give it: the first publish and an ingest (M3).
+  { spec: 'src/server/sponsors/logos.integration.test.ts' },
+  { spec: 'src/server/live/startController.integration.test.ts' },
+  { spec: 'src/server/media/ingestFile.integration.test.ts' }
 ]
 
 function argument(name) {
@@ -221,20 +233,39 @@ const changed = lines(git(['diff', '--name-only', '--diff-filter=d', base]))
 const untracked = lines(git(['ls-files', '--others', '--exclude-standard']))
 const paths = [...new Set([...changed, ...untracked])].filter(eligible).sort()
 
+/**
+ * The TV's remote reads its events from the test's runtime, as the unit
+ * bundles have it (`scripts/build-scoring-tests.mjs`).
+ */
+function tvRemoteRuntimePlugin() {
+  return {
+    name: 'tv-remote-runtime',
+    setup(build) {
+      build.onLoad({ filter: /app\/tv\/remote\.ts$/ }, args => ({
+        contents: readFileSync(args.path, 'utf8').replace(
+          "import * as ReactNative from 'react-native'",
+          "import * as ReactNative from '../../test/tvRemoteRuntime'"
+        ),
+        loader: 'ts'
+      }))
+    }
+  }
+}
+
 /** Bundles `suite` alone into `outfile`, natively when `native`. */
 async function bundle(suite, outfile, native) {
   console.log(`$ esbuild ${suite} -> ${outfile}`)
   await build({
     ...webSettings,
-    plugins: native
-      ? [
-          ...webSettings.plugins,
-          pagedListStandInPlugin(),
-          sponsorNativePlugin()
-        ]
-      : webSettings.plugins,
+    plugins: [
+      ...webSettings.plugins,
+      tvRemoteRuntimePlugin(),
+      ...(native ? [pagedListStandInPlugin(), sponsorNativePlugin()] : [])
+    ],
     alias: {
       ...webSettings.alias,
+      'react-native/Libraries/Utilities/DevLoadingView':
+        './src/test/tvDevLoadingStub.ts',
       'react-native-webview': './src/test/eventWebViewStub.tsx',
       'react-native-maps': './src/test/eventNativeMapStub.tsx',
       '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts',

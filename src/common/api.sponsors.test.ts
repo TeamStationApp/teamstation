@@ -232,4 +232,46 @@ describe('api client sponsors', () => {
         JSON.stringify(bad)
       ).equals('refused')
   })
+
+  it('reads a game’s sponsorship, with or without a logo, and refuses a broken one', async () => {
+    const sponsored = {
+      leagueId: 'lea_a',
+      logo: {
+        url: 'https://media.example.test/a.png',
+        width: 480,
+        height: 120
+      },
+      reels: [
+        {
+          id: 'srp_a',
+          reelId: 'srl_a',
+          url: 'https://media.example.test/a.mp4',
+          width: 640,
+          height: 360,
+          startMs: 1_800_000_000_000,
+          durationMs: 12_000
+        }
+      ],
+      overlay
+    }
+    const { api, calls } = client(sponsored)
+    expect(await api.gameSponsors('gam a')).deep.equals(sponsored)
+    expect(calls[0].url).equals('/api/v1/games/gam%20a/sponsors')
+    const none = { leagueId: null, logo: null, reels: [], overlay }
+    expect(await client(none).api.gameSponsors('g')).deep.equals(none)
+    for (const bad of [
+      { ...none, logo: { url: 'x' } },
+      { ...none, reels: [{ id: 'srp_a' }] },
+      { ...none, overlay: null }
+    ])
+      expect(
+        await client(bad)
+          .api.gameSponsors('g')
+          .then(
+            () => 'accepted',
+            () => 'refused'
+          ),
+        JSON.stringify(bad)
+      ).equals('refused')
+  })
 })

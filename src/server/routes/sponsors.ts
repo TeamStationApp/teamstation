@@ -8,6 +8,7 @@ import {
   SPONSOR_MEDIA_PURPOSES,
   type SponsorMediaPurpose
 } from '../../common/sponsors/types'
+import { canSeeGame, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { requireGroupAdmin } from '../groups/rights'
@@ -27,6 +28,7 @@ import {
   setCreditAllocation,
   sponsorState
 } from '../sponsors/credits'
+import { gameSponsorsFor } from '../sponsors/logos'
 import { storeSponsorMedia } from '../sponsors/media'
 import {
   addSponsorRow,
@@ -112,6 +114,12 @@ function purposeOf(raw: unknown): SponsorMediaPurpose {
  *   `PATCH /sponsors/rows/:rowId` with any of them, within 24 hours of
  *   placing; `DELETE /sponsors/rows/:rowId`.
  * - `GET /leagues/:leagueId/sponsors/sample` → `SampleVideo`.
+ *
+ * And for anybody who may watch a game's video (the same access as
+ * `GET /videos/:videoId/playback`; 404 otherwise):
+ *
+ * - `GET /games/:gameId/sponsors` → `GameSponsors`, the logo and reels its
+ *   players draw.
  */
 export function sponsorRoutes(
   db: Kysely<Database>,
@@ -309,6 +317,30 @@ export function sponsorRoutes(
           clock().getTime()
         )
       )
+    })
+  )
+
+  router.get(
+    '/games/:gameId/sponsors',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = actorOf(req)
+      const gameId = pathParam(req.params.gameId)
+      const game = await db
+        .selectFrom('games')
+        .select([
+          'home_team_id as homeTeamId',
+          'away_team_id as awayTeamId',
+          'season_id as seasonId'
+        ])
+        .where('id', '=', gameId)
+        .executeTakeFirst()
+      if (
+        game == null ||
+        !canSeeGame(await visibleScopes(db, actor.userId, actor.isAdmin), game)
+      )
+        throw notFound()
+      res.json(await gameSponsorsFor(db, media.space, gameId))
     })
   )
 

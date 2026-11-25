@@ -5657,6 +5657,271 @@
       "file": "e2e/tests/playback/recordings/segmented-seek.e2e.ts"
     },
     {
+      "id": "playback/sponsors/logo#before-accept",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#grid-web",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#no-credits",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#phone-ios-app",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#single-web",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
       "id": "schedule/auto-scheduler/build-modal#limit-accept",
       "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
       "kind": "e2e",

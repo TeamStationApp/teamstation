@@ -13,6 +13,8 @@ import {
 } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
+import type { LogoPlacement } from '../../common/nodeSettings'
+import type { GameSponsorLogo } from '../../common/sponsors/types'
 import { Modal } from '../components/Modal'
 import { lstrings, sprintf } from '../locales/strings'
 import { useVideoAnalytics } from '../observability/useVideoAnalytics'
@@ -47,6 +49,8 @@ import {
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
 import type { Size } from './scoreboardOverlay/overlayLayout'
+import { SponsorLogoOverlay } from './sponsors/SponsorLogoOverlay'
+import { useGameSponsors } from './sponsors/useGameSponsors'
 import { useScreenInsets } from './useScreenInsets'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
@@ -161,9 +165,25 @@ function MultiCamGrid(
   // The board, the box score and the angles around them, the board and the
   // box inside the safe area (`playerLayout`).
   const board = useGridBoard(props)
+  // The game's sponsor logo on every tile: upright by the portrait
+  // placement, sideways by the grid's, or the single camera's for one
+  // picture alone.
+  const { sponsors } = useGameSponsors(
+    props.client,
+    props.gameId,
+    props.videos.some(video => video.status === 'live')
+  )
   const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
   const zoomedIndex =
     props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
+  const logoPlacement =
+    sponsors == null
+      ? null
+      : !landscape
+        ? sponsors.overlay.logo.portrait
+        : (zoomedIndex != null && zoomedIndex >= 0) || props.order.length === 1
+          ? sponsors.overlay.logo.single
+          : sponsors.overlay.logo.grid
   const layoutFor = (natural: Size): PlayerLayout =>
     playerLayout({
       screen: { width, height },
@@ -426,6 +446,11 @@ function MultiCamGrid(
             takeRef={takeElement(video.id)}
             onWallMapping={mc.takeMapping(video.id)}
             heard={video.id === mc.heardId}
+            logo={
+              logoPlacement == null || sponsors?.logo == null
+                ? null
+                : { ...sponsors.logo, placement: logoPlacement }
+            }
           />
         ))}
 
@@ -549,6 +574,8 @@ function Tile(props: {
   /** Where its player says it has no dates of its own (`PlayIntent`). */
   onWallMapping: (mapping: WallMapping | null) => void
   heard: boolean
+  /** The game's sponsor logo, drawn in the picture's upper right. */
+  logo?: (GameSponsorLogo & { placement: LogoPlacement }) | null
 }): React.ReactElement {
   const {
     videoId,
@@ -662,6 +689,13 @@ function Tile(props: {
         // player does: sound with the ring switch on silent.
         primary={heard}
       />
+      {props.logo != null ? (
+        <SponsorLogoOverlay
+          logo={props.logo}
+          tile={{ x: 0, y: 0, w: rect.w, h: rect.h }}
+          placement={props.logo.placement}
+        />
+      ) : null}
       {armed ? <View style={styles.tileArmed} /> : null}
       {parked != null ||
       unavailable ||
