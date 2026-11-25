@@ -55,6 +55,7 @@
 - fixed: Web scorers can record the next pitch after a strikeout even when the field redraws slowly
 - fixed: The chat message field follows the phone keyboard during a drag. Changes to draft height, reply and edit controls, and the desktop message menu animate smoothly.
 - fixed: The chat composer and navigation move smoothly when the offline banner appears or clears.
+- fixed: Chat text and the insertion cursor sit in the middle of the message field, with room for larger system text.
 
 ## 1.4.0 (2026-11-21)
 
