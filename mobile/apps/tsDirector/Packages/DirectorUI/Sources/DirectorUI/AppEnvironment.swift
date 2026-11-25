@@ -4729,7 +4729,8 @@ public final class AppEnvironment {
         linkedControlIndex: selection.linkedControlID.flatMap { control in
           selections.firstIndex { $0.id == control }.map { $0 + 1 }
         },
-        isLinkedControl: SourceSelectionRules.isLinkedControl(selection.id, in: selections)
+        isLinkedControl: SourceSelectionRules.isLinkedControl(selection.id, in: selections),
+        isMonitor: selection.kind == .scoreboard
       )
     }
     let mix = router.audioMixer.currentStatistics

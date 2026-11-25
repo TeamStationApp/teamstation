@@ -96,4 +96,15 @@ struct DebugHUDLinesTests {
     #expect(json.contains("\"programmeComposeMillisecondsAverage\":1.24"))
     #expect(json.contains("\"programmeComposeDelayMilliseconds\":20"))
   }
+
+  @Test("dump-state marks the scoreboard monitor row, so scripts that turn off stray cameras skip it")
+  func monitorSourceSummary() throws {
+    let monitor = SourceSummary(index: 6, name: "Scoreboard", isEnabled: true, usesAudio: false,
+                                inputGain: 1, isPresent: true, sourceIndex: 4, isMonitor: true)
+    let camera = SourceSummary(index: 1, name: "Camera 1", isEnabled: true, usesAudio: true,
+                               inputGain: 1, isPresent: true, sourceIndex: 0)
+    let json = try #require(String(data: try JSONEncoder().encode([monitor, camera]), encoding: .utf8))
+    #expect(json.contains("\"isMonitor\":true"))
+    #expect(json.contains("\"isMonitor\":false"))
+  }
 }

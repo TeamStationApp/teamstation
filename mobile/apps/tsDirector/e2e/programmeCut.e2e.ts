@@ -260,11 +260,17 @@ async function main(): Promise<void> {
     await wait(3)
     // By address, not by place in the list: the iPad may know other cameras, enabled in an earlier
     // session. Those are switched off, so the take has the two on this Mac alone.
-    const listed: Array<{ isEnabled: boolean, endpointHost?: string, advertisedHost?: string }> =
-      JSON.parse(await get(host, '/dump-state')).sources
+    const listed: Array<{
+      isEnabled: boolean
+      isMonitor?: boolean
+      endpointHost?: string
+      advertisedHost?: string
+    }> = JSON.parse(await get(host, '/dump-state')).sources
     const ours = (source: { endpointHost?: string, advertisedHost?: string }): boolean =>
       [source.endpointHost, source.advertisedHost].some(address => address?.split(':')[0] === lan)
     for (const [position, source] of listed.entries()) {
+      // The scoreboard monitor is the operator's, not a camera from an earlier session.
+      if (source.isMonitor === true) continue
       if (ours(source)) await send(`/enable-source?index=${position + 1}&on=true`)
       else if (source.isEnabled) await send(`/enable-source?index=${position + 1}&on=false`)
     }
