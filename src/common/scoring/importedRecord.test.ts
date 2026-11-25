@@ -945,6 +945,8 @@ describe('records for imported plays', function () {
       kind: 'endGame'
     })
     expect(converted.state.final).equals(true)
+    // The final files no open play, so an older reader replays the record.
+    expect(converted.records.get(3)?.liveScoring).equals(undefined)
   })
 
   it('continues from recorded plays, and leaves their records as they are', function () {

@@ -42,6 +42,7 @@ import {
   destination,
   forceOutInRelay,
   Refused,
+  restoreChoice,
   runnerReducer,
   settleRunners,
   throwOutAtFirst
@@ -126,6 +127,7 @@ export function initialScoringState(
         : {}),
       trajectoryAccepted: true
     }
+    restoreChoice(state)
     state.phase = 'runnerMovement'
     settleRunners(state, { advanceAutomatically: options.following !== true })
     // A decided play picked up here waits for the scorer: no countdown
@@ -667,6 +669,23 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       generation: state.generation + 1,
       ...(event.readOnly === true ? { readOnly: true } : {})
     }
+  if (event.type === 'END_GAME')
+    return accepted(state, 'End game', next => {
+      act(next, { type: 'gameFlow', kind: 'endGame' })
+      next.phase = 'ready'
+      next.pendingPlay = null
+      next.presentation = null
+      next.motions = []
+      next.runnerAction = null
+      next.correctionWindow = null
+      next.activeGesture = false
+      next.generation++
+      delete next.runnerDraft
+      delete next.moreDraft
+      delete next.reel
+      delete next.queuedDictation
+      delete next.dictationQuestion
+    })
   if (event.type === 'CELEBRATION_DONE')
     return state.celebration?.id === event.id &&
       state.celebration.generation === event.generation
@@ -812,14 +831,27 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     if (last == null || state.readOnly === true) return state
     const next: ScoringState = {
       ...restoreTo(state, last, state.past.length - 1),
-      presentation: null,
-      celebration: null,
       generation: state.generation + 1
     }
-    delete next.dictation
-    delete next.reel
-    delete next.queuedDictation
-    delete next.dictationQuestion
+    if (state.session.final) {
+      if (next.presentation != null)
+        next.presentation.generation = next.generation
+      if (next.celebration != null)
+        next.celebration.generation = next.generation
+      for (const beat of next.reel ?? []) {
+        if (beat.presentation != null)
+          beat.presentation.generation = next.generation
+        for (const motion of beat.motions) motion.generation = next.generation
+      }
+      next.activeGesture = false
+    } else {
+      next.presentation = null
+      next.celebration = null
+      delete next.dictation
+      delete next.reel
+      delete next.queuedDictation
+      delete next.dictationQuestion
+    }
     for (const motion of next.motions) motion.generation = next.generation
     if (next.correctionWindow != null)
       next.correctionWindow = {
@@ -1022,13 +1054,6 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
           next.phase =
             next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
         })
-  if (event.type === 'END_GAME')
-    return (state.phase !== 'ready' && state.phase !== 'awaitingBatter') ||
-      state.moreDraft != null
-      ? state
-      : accepted(state, 'End game', next => {
-          act(next, { type: 'gameFlow', kind: 'endGame' })
-        })
   if (state.phase !== 'ready') return state
   if (event.type === 'SWITCH_SIDE') {
     if (
@@ -1089,7 +1114,11 @@ export interface ScoringScreenModel {
 /** One tap into the saved game taken back: the game it left, if it could. */
 export interface SavedUndone {
   type: 'SAVED_UNDONE'
-  undone?: { session: ScoringSessionState; log: ScoringState['log'] }
+  undone?: {
+    session: ScoringSessionState
+    log: ScoringState['log']
+    following?: boolean
+  }
 }
 
 export function scoringScreenModel(scoring: ScoringState): ScoringScreenModel {

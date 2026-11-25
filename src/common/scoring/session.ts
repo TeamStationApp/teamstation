@@ -107,6 +107,7 @@ function attributionOf(play: GamePlay): string {
  * brings its session into line with `sync`.
  */
 export { type Applied, applyAction }
+export { endGameFiling } from './apply'
 
 // Prior-play corrections use the same session boundary as other scoring edits.
 export {
@@ -1236,7 +1237,7 @@ export class ScoringSession {
 
   /**
    * The current play holds an action — a pitch, a runner, a lineup change —
-   * so the game cannot end until it is finished or undone. The close that
+   * since the last completed play. The close that
    * finished the last play is logged with this one but is not part of it.
    */
   get atBatOpen(): boolean {
@@ -1436,18 +1437,6 @@ export class ScoringSession {
         problems: [{ code: 'notNow', message: this.refusal }]
       }
     }
-    if (
-      action.type === 'gameFlow' &&
-      action.kind === 'endGame' &&
-      this.atBatOpen &&
-      this.game.pending == null
-    )
-      return {
-        state: this.game,
-        transitions: [],
-        play: this.game.liveData.plays.currentPlay,
-        problems: [{ code: 'notNow', message: 'Finish the at-bat first' }]
-      }
     // The copy shares the finished plays (`copyGame`), and the action is
     // applied to it in place: `applyAction`'s own copy is of the whole game.
     const applied = applyAction(copyGame(this.game), action, {

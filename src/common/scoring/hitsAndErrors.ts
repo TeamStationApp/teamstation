@@ -128,12 +128,15 @@ function classOf(
  * by its type (a batter who reached on one with nobody charged, as an import
  * sends it) counts one. Each error is counted once, from
  * its credit when there is one and from the type only when there is not.
+ * End Game can leave the result's own error unassigned even when another
+ * error was charged earlier in the appearance.
  */
 export function hitsAndErrors(
   events: Array<{
     halfInning: 'top' | 'bottom' | null
     eventType: string
     errorCredits?: number
+    unattributedResultError?: boolean
   }>
 ): {
   hits: { home: number; away: number }
@@ -196,7 +199,10 @@ export function hitsAndErrors(
       else strikeouts.away += 1
     }
     const credited = event.errorCredits ?? 0
-    const charged = credited > 0 ? credited : kind?.stat === 'error' ? 1 : 0
+    const uncredited =
+      kind?.stat === 'error' &&
+      (credited === 0 || event.unattributedResultError === true)
+    const charged = credited + (uncredited ? 1 : 0)
     if (battingIsHome) errors.away += charged
     else errors.home += charged
   }

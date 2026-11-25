@@ -245,25 +245,27 @@ describe('the ball in play and the play begun (U13)', function () {
     ).length(1)
   })
 
-  it('refuses End Game after a pitch, a steal or a lineup change, and allows it on an untouched play', function () {
+  it('files a pitch or a steal on End Game and skips administrative changes', function () {
     const untouched = walk(game())
-    expect(after(untouched, endGame).final).equals(true)
-    const refused = (state: GameState): string =>
-      applyAction(state, endGame).problems[0]?.message
-    expect(refused(after(untouched, ball))).equals('Finish the at-bat first')
-    expect(refused(after(untouched, steal))).equals('Finish the at-bat first')
+    const filed = (state: GameState): string[] =>
+      after(state, endGame).liveData.plays.allPlays.map(
+        play => play.result.eventType
+      )
+    expect(filed(untouched)).deep.equals(['walk'])
+    expect(filed(after(untouched, ball))).deep.equals([
+      'walk',
+      'ts_at_bat_ended'
+    ])
+    expect(filed(after(untouched, steal))).deep.equals([
+      'walk',
+      'stolen_base_2b'
+    ])
     expect(
-      refused(
+      filed(
         after(untouched, { type: 'lineup', kind: 'batterSide', batSide: 'L' })
       )
-    ).equals('Finish the at-bat first')
-    // A substitution alone does not begin the play; any other action does.
-    expect(after(substitution(copyState(untouched)), endGame).final).equals(
-      true
-    )
-    const acted = substitution(copyState(untouched))
-    delete acted.liveData.plays.currentPlay!.playEvents[0].isSubstitution
-    expect(refused(acted)).equals('Finish the at-bat first')
+    ).deep.equals(['walk'])
+    expect(filed(substitution(copyState(untouched)))).deep.equals(['walk'])
   })
 })
 
@@ -307,19 +309,18 @@ describe('the ball in play and the play begun, with the lineup changes the engin
     expect(events(hit)).deep.equals(['X', 'pitching_substitution sub'])
   })
 
-  it('refuses End Game after a lineup change by its flag, never by its event', function () {
+  it('keeps the pitching change and files an appearance only after a pitch', function () {
     const changed = after(relief(), change)
     expect(events(changed)).deep.equals(['pitching_substitution sub'])
-    expect(applyAction(changed, endGame).problems[0]?.message).equals(
-      'Finish the at-bat first'
-    )
-    // Without the flag the substitution alone has not begun the play.
-    const flagless = copyState(changed)
-    delete flagless.liveData.plays.currentPlay!.source.teamstation.lineupChanged
-    expect(after(flagless, endGame).final).equals(true)
-    expect(
-      applyAction(after(flagless, ball), endGame).problems[0]?.message
-    ).equals('Finish the at-bat first')
+    const empty = after(changed, endGame)
+    expect(empty.liveData.plays.allPlays).length(1)
+    expect(empty.liveData.boxscore.teams.home.defense.P).equals(19)
+    const filed = after(changed, ball, endGame).liveData.plays.allPlays
+    expect(filed).length(2)
+    expect(filed[1].playEvents.map(event => event.details.code)).deep.equals([
+      'pitching_substitution',
+      'B'
+    ])
   })
 })
 

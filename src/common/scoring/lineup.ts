@@ -82,6 +82,7 @@ function prunePendingLineupEvents(state: GameState): void {
  * on base the lineup has to change first, and that is what is returned.
  */
 export function startAppearance(state: GameState): GameState['awaitingBatter'] {
+  delete state.beforeRunning
   prunePendingLineupEvents(state)
   const side = battingSide(state)
   const lineup = state.liveData.boxscore.teams[side]

@@ -700,7 +700,7 @@ describe('when each lineup change is announced', function () {
     said?: string[]
     /** Each pitcher's batters faced and outs. */
     pitchers?: Record<number, [number, number]>
-    endGame?: 'allowed' | 'refused'
+    endGame?: { completedPlays: number; awayPitcher?: number }
   }
   const check = (rows: Row[]): void => {
     for (const { row, steps, announced, said, pitchers, endGame } of rows) {
@@ -716,8 +716,17 @@ describe('when each lineup change is announced', function () {
           type: 'gameFlow',
           kind: 'endGame'
         })
-        expect(ended.problems.length > 0, row).equals(endGame === 'refused')
+        expect(ended.problems, row).deep.equals([])
         state = ended.state
+        expect(state.final, row).equals(true)
+        expect(state.liveData.plays.currentPlay, row).equals(null)
+        expect(state.liveData.plays.allPlays, row).to.have.length(
+          endGame.completedPlays
+        )
+        if (endGame.awayPitcher != null)
+          expect(setupOf(state).sides.away.defense.P, row).equals(
+            endGame.awayPitcher
+          )
       }
       const stamp = { setupBefore: setupOf(state), actions }
       const plays = state.liveData.plays.allPlays.map(play =>
@@ -801,7 +810,7 @@ describe('when each lineup change is announced', function () {
         row: 'B3 for the batter, then the game ends',
         steps: [...K, pitches('B'), sub(111, 102), three, settle],
         announced: ['#1[1] offensive_substitution 111 PH 201 102 c=1-0-1'],
-        endGame: 'allowed'
+        endGame: { completedPlays: 2 }
       },
       {
         row: 'B5/B7 for a man on base, who then fields',
@@ -887,7 +896,7 @@ describe('when each lineup change is announced', function () {
         row: 'B11 for the man on deck, and the game ends before he bats',
         steps: [...K, pitches('B'), sub(111, 103), three, settle],
         announced: [],
-        endGame: 'allowed'
+        endGame: { completedPlays: 2 }
       },
       {
         row: 'B13 replaced again in the same play: the one who bats replaces the man who left',
@@ -1115,7 +1124,7 @@ describe('when each lineup change is announced', function () {
         row: 'R6 a DH entrant waiting when the game ends',
         steps: forTheDesignated,
         announced: [],
-        endGame: 'allowed'
+        endGame: { completedPlays: 6 }
       },
       {
         row: 'R7 a starter re-entering for the pinch hitter who batted for him, who fields first',
@@ -1248,8 +1257,9 @@ describe('when each lineup change is announced', function () {
       {
         row: 'F4 at the break, then End Game',
         steps: [...out(3), sub(110, 101)],
-        announced: ['#3[0] pitching_substitution 110 P - - c=0-0-0'],
-        endGame: 'refused'
+        announced: [],
+        pitchers: { 201: [3, 3] },
+        endGame: { completedPlays: 3, awayPitcher: 110 }
       },
       {
         row: 'F7 before the game',

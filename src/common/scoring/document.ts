@@ -33,6 +33,7 @@ import {
   type Point,
   type Position,
   POSITIONS,
+  RUNNER_OUT_EVENT,
   type RunnerCredit,
   type Side,
   type SideLineup,
@@ -1908,18 +1909,15 @@ function documentBody(
 }
 
 /**
- * The play's result put somebody out: an out made on the play itself, or the
- * runner's third out between pitches that ended it. A runner caught stealing
- * earlier in the plate appearance is the play's out (`hasOut`), not its
- * result's.
+ * An out on the play itself counts toward its result. A between-pitch out
+ * counts here only when the appearance was filed as that runner's out.
  */
 function resultIsOut(play: GamePlay): boolean {
-  const last = play.runners.at(-1)
   return (
+    play.result.event === RUNNER_OUT_EVENT ||
     play.runners.some(
       runner => runner.movement.isOut && runner.details.byAction !== true
-    ) ||
-    (last?.details.byAction === true && last.movement.isOut)
+    )
   )
 }
 

@@ -2,7 +2,7 @@ import { type CurrentPlay, type GumboPlay, isRealPlay } from '../gumboPlay'
 import { pitchCode } from '../pitchStrike'
 import type { Destination, ResultType, ScoringAction } from './actions'
 import { applyAction } from './apply'
-import { recordOf, type TeamStationRecord } from './gumbo'
+import { actionForReplay, recordOf, type TeamStationRecord } from './gumbo'
 import { baseIds, freshGame, newSetup, type RosterPlayer } from './lineup'
 import { PITCH_TYPES, type PitchType } from './pitchType'
 import { nextDecision } from './rules'
@@ -732,6 +732,7 @@ class Refusal extends Error {}
 
 /** The game as a play is converted: the actions taken and their times. */
 class Converting {
+  liveScoring?: true
   state: GameState
   readonly taken: Taken[] = []
   readonly notes: string[] = []
@@ -755,6 +756,7 @@ class Converting {
         }: ${applied.problems[0].message}`
       )
     this.state = applied.state
+    if (applied.liveScoring) this.liveScoring = true
     if (time != null) this.time = time
     this.taken.push({ action, time: time ?? this.time })
   }
@@ -1517,7 +1519,8 @@ export function importedRecords(
     const record = recordOf(play, teams)
     if (record != null) {
       lastConverted = null
-      for (const action of record.actions) {
+      for (const storedAction of record.actions) {
+        const action = actionForReplay(record, state, storedAction)
         const applied = applyAction(copyGame(state), action, {
           inPlace: true,
           replay: true
@@ -1545,7 +1548,10 @@ export function importedRecords(
       { type: 'gameFlow', kind: 'endGame' },
       { inPlace: true, replay: true }
     )
-    if (applied.problems.length === 0) {
+    // Every converted play is closed, so the final is filed on its own, as
+    // the previous release ended a game. An ending that would file an open
+    // play needs live scoring, which an older reader cannot replay.
+    if (applied.problems.length === 0 && applied.liveScoring !== true) {
       lastConverted.record.actions.push({ type: 'gameFlow', kind: 'endGame' })
       const times = lastConverted.record.actionTimes
       if (times != null) times.push(times.at(-1)!)
@@ -1664,6 +1670,7 @@ function convertPlay(
   const times = game.taken.map(taken => taken.time)
   const record: TeamStationRecord = {
     version: 2,
+    ...(game.liveScoring ? { liveScoring: true } : {}),
     setupBefore,
     actions: game.taken.map(taken => taken.action),
     ...(times.every((t): t is string => t != null) && times.length > 0

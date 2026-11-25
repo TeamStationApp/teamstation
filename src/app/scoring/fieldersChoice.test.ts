@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import type { ScoringAction } from '../../common/scoring/actions'
+import { mapPlayers, type ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/session'
 import { asGameState } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
@@ -80,6 +80,227 @@ function current(
 }
 
 describe('fielder choice runner calls', function () {
+  it('files only the answered putout on End Game and restores the unanswered runner with one Undo', function () {
+    let state = offered(3)
+    state = step(state, {
+      type: 'CHOICE_DECIDE',
+      id: 7,
+      decision: 'out',
+      generation: state.generation
+    })
+    expect(state.pendingPlay!.fieldersChoice!.choosingPutout).equals(7)
+    const withoutPutout = step(state, { type: 'END_GAME' })
+    expect(withoutPutout.session.liveData.linescore.outs).equals(0)
+    state = choose(state, 7, 'out', 1)
+    const final = step(state, { type: 'END_GAME' })
+    expect(final.log).deep.equals([
+      ...state.log,
+      { type: 'gameFlow', kind: 'endGame' }
+    ])
+    expect(final.session.liveData.linescore.outs).equals(1)
+    const runners = final.session.liveData.plays.allPlays.at(-1)!.runners
+    expect(runners).length(1)
+    expect(runners[0].details.runner.id).equals(7)
+    expect(
+      runners[0].credits.map(credit => [credit.credit, credit.player?.id])
+    ).deep.equals([
+      ['f_assist', 15],
+      ['f_putout', 13]
+    ])
+    const restored = step(final, { type: 'UNDO' })
+    expect(restored.phase).equals('fieldersChoice')
+    expect(restored.pendingPlay!.fieldersChoice).deep.equals(
+      state.pendingPlay!.fieldersChoice
+    )
+    expect(choose(restored, 6, 'safe').session.liveData.linescore.outs).equals(
+      1
+    )
+  })
+  for (const initialOuts of [0, 2])
+    it(`files a confirmed home crossing before a relay out with ${initialOuts} previous outs`, function () {
+      let state = offered(7, initialOuts)
+      state = choose(state, 8, 'safe')
+      state = choose(state, 7, 'out', 1)
+      const final = step(state, { type: 'END_GAME' }).session
+      expect(final.liveData.linescore.teams.away.runs).equals(
+        initialOuts === 2 ? 0 : 1
+      )
+      expect(final.liveData.linescore.outs).equals(initialOuts + 1)
+      expect(
+        final.liveData.plays.allPlays
+          .at(-1)!
+          .runners.map(row => row.details.runner.id)
+      ).deep.equals([8, 7])
+    })
+  for (const initialOuts of [1, 2])
+    for (const first of [8, 7]) {
+      const second = first === 8 ? 7 : 8
+      it(`keeps the confirmed relay order with runner ${first} called out first and ${initialOuts} previous outs`, function () {
+        let state = choose(offered(7, initialOuts), first, 'out', 1)
+        state = choose(state, second, 'out', 2)
+        const partial = step(state, { type: 'END_GAME' })
+        const complete = choose(state, 6, 'safe')
+        const expected = [
+          [first, initialOuts + 1, true, [15, 13]],
+          [second, initialOuts + 2, first === 8, [13, 12]]
+        ].slice(0, 3 - initialOuts)
+        for (const result of [partial, complete]) {
+          expect(
+            current(result).runners.map(row => [
+              row.details.runner.id,
+              row.movement.outNumber,
+              row.movement.forceOut,
+              row.credits.map(credit => credit.player?.id)
+            ])
+          ).deep.equals(expected)
+        }
+      })
+    }
+  for (const scenario of [
+    {
+      label: 'a direct out between two relay putouts',
+      outs: 0,
+      calls: [
+        [8, 'relay', 'out'],
+        [6, 'direct', 'out'],
+        [7, 'relay', 'out']
+      ],
+      expected: [
+        [8, 1, true],
+        [6, 2, true],
+        [7, 3, false]
+      ]
+    },
+    {
+      label: 'a relay advance after a direct out and a tag third out',
+      outs: 1,
+      calls: [
+        [7, 'direct', 'out'],
+        [8, 'relay', 'out'],
+        [6, 'relay', 'safe']
+      ],
+      expected: [
+        [7, 2, true],
+        [8, 3, false]
+      ]
+    },
+    {
+      label: 'a direct advance after a relay third out',
+      outs: 2,
+      calls: [
+        [8, 'relay', 'out'],
+        [6, 'direct', 'safe']
+      ],
+      expected: [[8, 3, true]]
+    }
+  ] as const)
+    it(`files ${scenario.label} in order through End Game and ordinary close after reopening`, function () {
+      const original = offered(7, scenario.outs, [])
+      const route = original.pendingPlay!.fieldersChoice!.route
+      let session = original.session
+      for (const [runner, kind, decision] of scenario.calls) {
+        const to = runner - 4
+        const out = decision === 'out'
+        const action: ScoringAction =
+          kind === 'direct'
+            ? {
+                type: 'runnerMovement',
+                runner,
+                to: (['2B', '3B', 'home'] as const)[to - 2],
+                out,
+                fielders: [15]
+              }
+            : {
+                type: 'fieldingPlay',
+                fielders: [15],
+                locations: route.map(hop => hop.point),
+                choiceCall: {
+                  runner,
+                  to,
+                  ...(out ? { putout: 0 } : {}),
+                  location: BASES[to % 4]
+                }
+              }
+        const applied = applyAction(session, action)
+        expect(applied.problems).deep.equals([])
+        session = applied.state
+      }
+      let reopened = initialScoringState(
+        asGameState(JSON.parse(JSON.stringify(session)))
+      )
+      const partial = step(reopened, { type: 'END_GAME' })
+      if (reopened.phase === 'chooseDefender')
+        reopened = step(reopened, {
+          type: 'DEFENDER',
+          generation: reopened.generation
+        })
+      if (reopened.session.pending != null) {
+        const closed = applyAction(reopened.session, {
+          type: 'gameFlow',
+          kind: 'closePlay'
+        })
+        expect(closed.problems).deep.equals([])
+        reopened = initialScoringState(closed.state)
+      }
+      for (const state of [partial, reopened])
+        expect(
+          current(state)
+            .runners.filter(row => row.details.runner.id !== 1)
+            .map(row => [
+              row.details.runner.id,
+              row.movement.outNumber,
+              row.movement.forceOut
+            ])
+        ).deep.equals(scenario.expected)
+    })
+  it('files safe at third without filing the unanswered trailing runner', function () {
+    const final = step(choose(offered(3), 7, 'safe'), {
+      type: 'END_GAME'
+    }).session
+    expect(baseIds(final)).deep.equals([6, null, 7])
+    expect(
+      final.liveData.plays.allPlays
+        .at(-1)!
+        .runners.map(row => row.details.runner.id)
+    ).deep.equals([7])
+  })
+  it('keeps the credited segment for each answered putout and rejects inconsistent relay calls', function () {
+    const first = choose(offered(7), 8, 'out', 1)
+    const action = first.log.at(-1)!
+    if (action.type !== 'fieldingPlay' || action.choiceCall == null)
+      throw new Error('Expected a saved runner call')
+    expect(mapPlayers(action, id => Number(id) + 100).choiceCall).deep.equals({
+      ...action.choiceCall,
+      runner: 108
+    })
+    const second = {
+      ...action,
+      choiceCall: { ...action.choiceCall, runner: 7, to: 3, putout: 2 }
+    }
+    for (const invalid of [
+      action,
+      { ...second, error: 15 },
+      { ...second, locations: [] },
+      {
+        ...second,
+        choiceCall: { ...second.choiceCall, location: { x: Infinity, z: 0 } }
+      },
+      { ...second, fielders: [15, 12, 13] },
+      { ...second, choiceCall: { ...second.choiceCall, putout: 0 } },
+      { ...second, choiceCall: { ...second.choiceCall, putout: 3 } },
+      { ...second, choiceCall: { ...second.choiceCall, to: 2 } },
+      { ...second, choiceCall: { ...second.choiceCall, runner: 5 } }
+    ])
+      expect(applyAction(first.session, invalid).problems).length(1)
+    const final = step(choose(first, 7, 'out', 2), { type: 'END_GAME' }).session
+    const runners = final.liveData.plays.allPlays.at(-1)!.runners
+    expect(
+      runners.map(row => row.credits.map(credit => credit.player?.id))
+    ).deep.equals([
+      [15, 13],
+      [13, 12]
+    ])
+  })
   for (const [mask, prior] of [
     [5, 6],
     [6, 7],

@@ -959,6 +959,27 @@ describe('the outbox against the server', function () {
     expect((await f.h.request('GET', `/games/${gameId}/events`)).status).equals(
       200
     )
+    // The deployed release advertises deferred lineups only.
+    const previousClient = async (method: 'GET' | 'POST'): Promise<Response> =>
+      await fetch(`${f.h.origin}/api/v1/games/${gameId}/events`, {
+        method,
+        headers: {
+          authorization: `Bearer ${f.h.tokens.get(101)}`,
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+          [SCORING_FEATURE_HEADER]: 'deferred-lineups-v1',
+          'content-type': 'application/json'
+        },
+        ...(method === 'POST'
+          ? {
+              body: JSON.stringify({
+                plays: [],
+                currentPlay: null,
+                mode: 'live',
+                source: { system: 'teamstation' }
+              })
+            }
+          : {})
+      })
     const setup = setupOf(session.state)
     ;[setup.sides.home.defense.P, setup.sides.home.defense.C] = [
       setup.sides.home.defense.C,
@@ -982,6 +1003,7 @@ describe('the outbox against the server', function () {
       (saved.currentPlay as unknown as { teamStation: { version: number } })
         .teamStation.version
     ).equals(4)
+    expect((await previousClient('GET')).status).equals(200)
     const read = await f.h.request('GET', `/games/${gameId}/events`)
     expect(read.status).equals(409)
     expect(((await read.json()) as { message: string }).message).contains(
@@ -1000,6 +1022,25 @@ describe('the outbox against the server', function () {
     expect((await a.client.gameEvents(gameId)).currentPlay).deep.equals(
       saved.currentPlay
     )
+    expect(
+      session.apply({ type: 'gameFlow', kind: 'endGame' }).problems
+    ).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+    const final = await a.client.gameEvents(gameId)
+    expect(final.currentPlay).equals(null)
+    expect(final.plays.at(-1)!.about.atBatIndex).equals(9999)
+    expect(final.plays.at(-1)!.result.awayScore).equals(0)
+    for (const response of [
+      await f.h.request('GET', `/games/${gameId}/events`),
+      await previousClient('GET'),
+      await previousClient('POST')
+    ]) {
+      expect(response.status).equals(409)
+      expect(((await response.json()) as { message: string }).message).contains(
+        'Update TeamStation'
+      )
+    }
     await a.client.sessionRefused()
   })
 

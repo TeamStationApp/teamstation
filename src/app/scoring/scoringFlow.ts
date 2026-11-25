@@ -8,6 +8,7 @@ import {
 } from '../../common/scoring/actions'
 import { revealedSides } from '../../common/scoring/lineupHistory'
 import {
+  callsAfterThirdOut,
   canField,
   closesAutomatically,
   completesHitOffer,
@@ -129,11 +130,13 @@ export function act(
     throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])
   // A roster save names its own confirmation. Any other play first records
   // a lineup the screen is already showing in place of an unseen roster order.
+  // End Game files existing scoring without accepting a new lineup.
   // Stored actions replayed without the current setup (a replay) already
   // hold every lineup their scorer recorded.
   if (
     options.requireCurrentSetup !== false &&
-    (action.type !== 'lineup' || action.kind !== 'roster')
+    (action.type !== 'lineup' || action.kind !== 'roster') &&
+    (action.type !== 'gameFlow' || action.kind !== 'endGame')
   )
     recordSeenLineup(next)
   return applyLogged(next, action, options)
@@ -184,7 +187,8 @@ export function settleRunners(
   const moving = state.motions.some(motion => !motion.complete)
   if (decision === 'resolveBatter') {
     if (game.pending?.outcome === "Fielder's Choice") {
-      if (pending?.fieldersChoice != null) {
+      const choice = pending?.fieldersChoice
+      if (choice?.runners.some(move => move.decision == null) === true) {
         state.phase = moving ? 'runnerMovement' : 'fieldersChoice'
         return
       }
@@ -203,7 +207,14 @@ export function settleRunners(
         origin: 'current',
         returnPhase: 'fieldersChoice'
       }
-      beginDefense(state)
+      if (choice != null) {
+        // A reopened mixed relay can already have a call for every runner.
+        // The scorer can finish the recorded defense and place the batter.
+        state.runnerAction.defensiveRoute = copyState(choice.route)
+        state.runnerAction.thrower = choice.route[0].id
+        state.runnerAction.throwerPoint = choice.route[0].point
+        state.phase = 'chooseDefender'
+      } else beginDefense(state)
       return
     }
     // A dropped third strike asks only whether the batter made first.
@@ -618,6 +629,57 @@ function choiceBatterDestination(state: ScoringState): number | undefined {
   return Math.max(1, batter?.decision === 'safe' ? batter.to : 1)
 }
 
+function offeredChoice(
+  state: ScoringState,
+  route: NonNullable<RunnerAction['defensiveRoute']>
+): NonNullable<NonNullable<ScoringState['pendingPlay']>['fieldersChoice']> {
+  const batterTo = choiceBatterDestination(state)
+  let required = batterTo == null ? 1 : Math.min(4, batterTo + 1)
+  const runners = state.session.pending!.originalBases.flatMap((id, index) => {
+    const previous = state.session.pending!.movements.find(
+      move => move.playerId === id
+    )
+    if (id == null || previous?.decision === 'out') return []
+    const safe = previous?.decision === 'safe' && previous.to > previous.from
+    const to = Math.min(
+      4,
+      Math.max(index + 2, required, safe ? previous.to : 0)
+    )
+    required = Math.min(4, to + 1)
+    return [
+      {
+        playerId: id,
+        from: index + 1,
+        to,
+        decision: safe ? ('safe' as const) : undefined
+      }
+    ]
+  })
+  return {
+    route: copyState(route),
+    runners,
+    calls: runners
+      .filter(move => move.decision != null)
+      .map(move => move.playerId)
+  }
+}
+
+/** Resume the unanswered runner with the recorded calls and their original relay. */
+export function restoreChoice(state: ScoringState): void {
+  const saved = state.session.pending?.answeredChoice
+  if (saved == null || state.pendingPlay == null) return
+  const choice = offeredChoice(state, saved.route)
+  for (const call of saved.calls) {
+    if (call.replaced === true) continue
+    const move = choice.runners.find(runner => runner.playerId === call.runner)!
+    move.to = call.to
+    move.decision = call.putout == null ? 'safe' : 'out'
+    move.putout = call.putout
+    if (!choice.calls.includes(call.runner)) choice.calls.push(call.runner)
+  }
+  state.pendingPlay.fieldersChoice = choice
+}
+
 /** Commit the collected calls in play order, keeping original-base force rules. */
 function commitFieldersChoice(state: ScoringState): void {
   const choice = state.pendingPlay!.fieldersChoice!
@@ -636,12 +698,22 @@ function commitFieldersChoice(state: ScoringState): void {
       fielders: choice.route.map(hop => hop.id),
       locations: choice.route.map(hop => ({ ...hop.point }))
     })
+  // A reopened relay may contain calls made after its third out. They cannot
+  // draft another advance while the controls finish the earlier putout.
+  const afterThirdOut = callsAfterThirdOut(
+    state.session.pending?.answeredChoice?.calls ?? [],
+    state.session.liveData.linescore.outs
+  )
+  const safeRunners = choice.runners
+    .filter(
+      move => move.decision === 'safe' && !afterThirdOut.has(move.playerId)
+    )
+    .sort((a, b) => b.from - a.from)
   // A saved pending destination can block a leading Safe advance. Draft
   // legal calls first, then retry after another runner moves or retires.
   const draftSafes = (): void => {
-    for (const move of [...choice.runners].sort((a, b) => b.from - a.from))
+    for (const move of safeRunners)
       if (
-        move.decision === 'safe' &&
         state.session.pending?.choiceApplied !== true &&
         gameRunnerError(state.session, move) == null
       )
@@ -652,9 +724,7 @@ function commitFieldersChoice(state: ScoringState): void {
         })
   }
   draftSafes()
-  const homes = choice.runners
-    .filter(move => move.to === 4 && move.decision === 'safe')
-    .sort((a, b) => b.from - a.from)
+  const homes = safeRunners.filter(move => move.to === 4)
   if (batterTo === 4)
     homes.push({ playerId: batter, from: 0, to: 4, decision: 'safe' })
   const scoreHome = (through = choice.calls.length): void => {
@@ -735,12 +805,8 @@ function commitFieldersChoice(state: ScoringState): void {
   }
   if (state.session.liveData.linescore.outs < 3) {
     scoreHome()
-    for (const move of [...choice.runners].sort((a, b) => b.from - a.from))
-      if (
-        move.decision === 'safe' &&
-        move.to < 4 &&
-        baseIds(state.session)[move.to - 1] !== move.playerId
-      )
+    for (const move of safeRunners)
+      if (move.to < 4 && baseIds(state.session)[move.to - 1] !== move.playerId)
         moveRunner({
           type: 'runnerMovement',
           runner: move.playerId,
@@ -826,7 +892,20 @@ export function runnerReducer(
         if (event.decision === 'out') move.putout = putout
         delete choice.choosingPutout
         choice.calls.push(event.id)
-        if (choice.runners.some(move => move.decision == null)) return
+        if (choice.runners.some(move => move.decision == null)) {
+          act(next, {
+            type: 'fieldingPlay',
+            fielders: choice.route.map(hop => hop.id),
+            locations: choice.route.map(hop => hop.point),
+            choiceCall: {
+              runner: move.playerId,
+              to: move.to,
+              ...(move.putout == null ? {} : { putout: move.putout }),
+              location: BASES[move.to % 4]
+            }
+          })
+          return
+        }
         commitFieldersChoice(next)
       }
     )
@@ -1142,37 +1221,11 @@ export function runnerReducer(
       return accepted(state, 'Finish fielder’s choice defense', next => {
         const pending = next.pendingPlay!
         const batterTo = choiceBatterDestination(next)
-        let required = batterTo == null ? 1 : Math.min(4, batterTo + 1)
-        const runners = next.session.pending!.originalBases.flatMap(
-          (id, index) => {
-            const previous = next.session.pending!.movements.find(
-              move => move.playerId === id
-            )
-            if (id == null || previous?.decision === 'out') return []
-            const safe =
-              previous?.decision === 'safe' && previous.to > previous.from
-            const to = Math.min(
-              4,
-              Math.max(index + 2, required, safe ? previous.to : 0)
-            )
-            required = Math.min(4, to + 1)
-            return [
-              {
-                playerId: id,
-                from: index + 1,
-                to,
-                decision: safe ? ('safe' as const) : undefined
-              }
-            ]
-          }
-        )
-        pending.fieldersChoice = {
-          route: copyState(next.runnerAction!.defensiveRoute!),
-          runners,
-          calls: runners
-            .filter(move => move.decision != null)
-            .map(move => move.playerId)
-        }
+        const route = next.runnerAction!.defensiveRoute!
+        if (pending.fieldersChoice == null)
+          pending.fieldersChoice = offeredChoice(next, route)
+        else pending.fieldersChoice.route = copyState(route)
+        const { runners } = pending.fieldersChoice
         for (const move of runners)
           enqueue(next, move.playerId, basePath(move.from, move.to))
         if (batterTo != null)

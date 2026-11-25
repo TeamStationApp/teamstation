@@ -11,19 +11,28 @@ import {
   scoringReducer
 } from '../../app/scoring/scoringMachine'
 import { lineupsDigest } from '../../server/events/teamLineups'
+import { eventTypeCounts, gameStatLines } from '../../server/stats/gumboStats'
+import legacyCrossingRunners from '../../test/fixtures/legacyCrossingRunners.json'
+import legacyDroppedThirdStrike from '../../test/fixtures/legacyDroppedThirdStrike.json'
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
 import { asPostedEdits } from '../api'
 import { HttpError, updateRequired } from '../errors'
 import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
-import type { CurrentPlay, GumboPlay } from '../gumboPlay'
+import { asGumboPlay, type CurrentPlay, type GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
 import { PlayFolder } from './document'
-import { storedRecordOf } from './gumbo'
+import { recordOf, storedRecordOf } from './gumbo'
+import { errorCredits, lineScore } from './linescore'
 import { addPlayer } from './lineup'
 import { readLineups } from './lineupHistory'
-import { baseIds, overrideOf, tiebreakerSetupError } from './rules'
+import {
+  baseIds,
+  nextDecision,
+  overrideOf,
+  tiebreakerSetupError
+} from './rules'
 import {
   type EventStore,
   type SaveChange,
@@ -1595,6 +1604,888 @@ describe('a scoring session', function () {
     for (const action of actions)
       expect(session.apply(action).problems, action.type).deep.equals([])
   }
+  describe('ending the game', function () {
+    const end: ScoringAction = { type: 'gameFlow', kind: 'endGame' }
+    const half: ScoringAction = {
+      type: 'gameFlow',
+      kind: 'endHalf',
+      keepAtBat: true
+    }
+    const batted: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      fielder: F.SS
+    }
+
+    async function endAndReopen(
+      session: ScoringSession,
+      store: FakeStore
+    ): Promise<void> {
+      const actions = [...session.actions]
+      const live = copyState(session.state)
+      applyAll(session, [end])
+      expect(session.state.final).equals(true)
+      expect(session.apply(end).problems[0].code).equals('gameOver')
+      await session.flush()
+      expect(store.current).equals(null)
+      const { session: again } = await open(store)
+      expect(again.state.final).equals(true)
+      expect(again.state.liveData.linescore).deep.equals(
+        session.state.liveData.linescore
+      )
+      expect(again.actions).deep.equals([...actions, end])
+      expect(again.state.liveData.plays.allPlays).deep.equals(
+        session.state.liveData.plays.allPlays
+      )
+      expect(again.undo().problems).deep.equals([])
+      expect(again.state.final).equals(false)
+      expect(again.actions).deep.equals(actions)
+      expect(copyState(again.state)).deep.equals(live)
+    }
+
+    it('ends the game after the third out, a roster save, and the next half', async function () {
+      const { session, store } = await open()
+      applyAll(session, [half, ...out, ...out])
+      expect(session.state.liveData.linescore.outs).equals(2)
+      applyAll(session, [strike, strike, strike])
+      const roster: ScoringAction = {
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupOf(session.state),
+        keepSlot: true
+      }
+      applyAll(session, [close, roster, half])
+      expect(recordOf(session.picture().current, TEAMS)!.actions).deep.equals([
+        close,
+        roster,
+        half
+      ])
+      expect(session.atBatOpen).equals(true)
+      const current = session.state.liveData.plays.currentPlay!
+      expect(current.about).includes({ inning: 2, halfInning: 'bottom' })
+      expect(current.runners).deep.equals([])
+      expect(current.playEvents).deep.equals([])
+      expect(baseIds(session.state)).deep.equals([null, null, null])
+      const score = session.state.liveData.linescore.teams
+      expect([score.away.runs, score.home.runs]).deep.equals([0, 0])
+      await session.flush()
+      const completed = [...store.plays.values()]
+      expect(completed).length(3)
+      await endAndReopen(session, store)
+      expect([...store.plays.keys()]).deep.equals([0, 1, 2, 9999])
+      expect([...store.plays.values()].slice(0, 3)).deep.equals(completed)
+      expect(store.plays.get(9999)!.play.result).includes({
+        awayScore: 0,
+        homeScore: 0
+      })
+    })
+
+    it('omits an unresolved batted ball and restores the pitches of both pitchers on Undo', async function () {
+      const { session, store } = await open()
+      applyAll(session, [...out, ball])
+      const setup = setupOf(session.state)
+      const defense = setup.sides.home.defense
+      ;[defense.P, defense.SS] = [defense.SS, defense.P]
+      applyAll(session, [{ type: 'lineup', kind: 'roster', setup }, batted])
+      await endAndReopen(session, store)
+      expect([...store.plays.keys()]).deep.equals([0, 9999])
+      const pitches = session.state.liveData.boxscore.teams.home.pitchCounts
+      expect(pitches[F.P]).equals(3)
+      expect(pitches[F.SS] ?? 0).equals(0)
+    })
+
+    for (const kind of ['steal', 'caught_stealing'] as const) {
+      it(`restores the walked runner to first after omitting ${kind === 'steal' ? 'a steal' : 'a caught stealing'}`, async function () {
+        const { session, store } = await open()
+        applyAll(session, [ball, ball, ball, ball, close])
+        const before = copyState(session.state.liveData.linescore.offense)
+        applyAll(session, [
+          {
+            type: 'baseRunning',
+            kind,
+            runner: 1,
+            to: '2B',
+            fielders: [F.C, F.SS]
+          },
+          batted
+        ])
+        await endAndReopen(session, store)
+        expect(session.state.liveData.linescore.offense).deep.equals(before)
+        expect(session.state.liveData.linescore.outs).equals(0)
+        expect([...store.plays.keys()]).deep.equals([0, 9999])
+      })
+    }
+
+    it('restores the placed runner’s charge when his putout is omitted after a pitching change', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        { type: 'gameFlow', kind: 'placeRunner', runner: 9, base: '2B' },
+        ball,
+        ball,
+        ball,
+        ball,
+        close
+      ])
+      const offense = copyState(session.state.liveData.linescore.offense)
+      expect(offense.reachedOnError?.second).equals(true)
+      const setup = setupOf(session.state)
+      const defense = setup.sides.home.defense
+      ;[defense.P, defense.SS] = [defense.SS, defense.P]
+      applyAll(session, [{ type: 'lineup', kind: 'roster', setup }])
+      const errorless = copyState(
+        session.state.liveData.linescore.errorlessOuts
+      )
+      applyAll(session, [
+        {
+          type: 'baseRunning',
+          kind: 'caught_stealing',
+          runner: 9,
+          to: '3B',
+          fielders: [F.C, F.SS]
+        },
+        batted
+      ])
+      await endAndReopen(session, store)
+      expect(session.state.liveData.linescore.offense).deep.equals(offense)
+      expect(session.state.liveData.linescore.errorlessOuts).deep.equals(
+        errorless
+      )
+    })
+
+    for (const kind of ['runner', 'pinchRunner'] as const) {
+      it(`keeps the ${kind === 'runner' ? 'courtesy' : 'pinch'} runner on first when his advances are omitted`, async function () {
+        const { session, store } = await open()
+        applyAll(session, [
+          {
+            type: 'lineup',
+            kind: 'addPlayer',
+            side: 'away',
+            player: 19,
+            name: 'Away Bench'
+          },
+          ball,
+          ball,
+          ball,
+          ball,
+          close,
+          { type: 'baseRunning', kind: 'steal', runner: 1, to: '2B' },
+          { type: 'lineup', kind, side: 'away', base: '2B', player: 19 },
+          { type: 'baseRunning', kind: 'steal', runner: 19, to: '3B' },
+          batted
+        ])
+        await endAndReopen(session, store)
+        expect(baseIds(session.state)).deep.equals([19, null, null])
+        expect([...store.plays.keys()]).deep.equals([0, 9999])
+      })
+    }
+
+    it('keeps both walked runners when a balk and a subsequent putout are omitted', async function () {
+      const { session, store } = await open()
+      const walk = [ball, ball, ball, ball, close]
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        { type: 'batteryEvent', kind: 'balk' },
+        {
+          type: 'baseRunning',
+          kind: 'caught_stealing',
+          runner: 1,
+          to: 'home',
+          fielders: [F.C]
+        },
+        batted
+      ])
+      expect(baseIds(session.state)).deep.equals([null, 2, null])
+      await endAndReopen(session, store)
+      expect(baseIds(session.state)).deep.equals([2, 1, null])
+      expect(session.state.liveData.linescore.outs).equals(0)
+      expect([...store.plays.keys()]).deep.equals([0, 1, 9999])
+    })
+
+    it('keeps a placed runner on his assigned base and retains his charge when a later advance is omitted', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        { type: 'gameFlow', kind: 'placeRunner', runner: 9, base: '2B' },
+        { type: 'baseRunning', kind: 'steal', runner: 9, to: '3B' },
+        { type: 'gameFlow', kind: 'placeRunner', runner: 8, base: '1B' },
+        batted
+      ])
+      await endAndReopen(session, store)
+      expect(baseIds(session.state)).deep.equals([8, 9, null])
+      expect(
+        session.state.liveData.linescore.offense.reachedOnError
+      ).deep.equals({
+        first: true,
+        second: true,
+        third: false
+      })
+      expect([...store.plays.keys()]).deep.equals([9999])
+    })
+
+    it('honors the overridden outs and bases across omitted runner movements on either side of the override', async function () {
+      const { session, store } = await open()
+      const walk = [ball, ball, ball, ball, close]
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        {
+          type: 'baseRunning',
+          kind: 'caught_stealing',
+          runner: 1,
+          to: '3B',
+          fielders: [F.C, F.SS]
+        },
+        { type: 'gameFlow', kind: 'override', bases: [2, null, 9], outs: 2 },
+        { type: 'baseRunning', kind: 'steal', runner: 2, to: '2B' },
+        batted
+      ])
+      await endAndReopen(session, store)
+      expect(baseIds(session.state)).deep.equals([2, null, 9])
+      expect(session.state.liveData.linescore.outs).equals(2)
+      expect([...store.plays.keys()]).deep.equals([0, 1, 9999])
+    })
+
+    it('keeps the steal of home when the next batted ball is omitted', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        { type: 'result', eventType: 'triple' },
+        close,
+        strike,
+        { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+        ball,
+        batted
+      ])
+      await endAndReopen(session, store)
+      const saved = store.plays.get(1)!.play
+      expect(saved.result).includes({
+        eventType: 'stolen_base_home',
+        awayScore: 1
+      })
+      expect(saved.pitchIndex).deep.equals([])
+      expect(saved.playEvents).length(1)
+      expect(saved.runners).length(1)
+      expect(saved.runners![0].details).includes({
+        eventType: 'stolen_base_home',
+        playIndex: 0
+      })
+      expect(store.plays.get(9999)!.play.result.awayScore).equals(1)
+    })
+
+    it('files pitches as an interrupted at-bat and restores the open count', async function () {
+      const { session, store } = await open()
+      applyAll(session, [ball, strike])
+      await endAndReopen(session, store)
+      const saved = store.plays.get(0)!.play
+      expect(saved.result.eventType).equals('ts_at_bat_ended')
+      expect(eventTypeCounts(saved.result.eventType)?.pa).equals(false)
+      expect(saved.pitchIndex).deep.equals([0, 1])
+      expect(saved.matchup?.batter?.id).equals(1)
+    })
+
+    it('files the recorded runner out with its credits and the open pitches', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        ball,
+        ball,
+        ball,
+        ball,
+        close,
+        strike,
+        {
+          type: 'baseRunning',
+          kind: 'caught_stealing',
+          runner: 1,
+          to: '2B',
+          fielders: [F.C, F.SS]
+        }
+      ])
+      await endAndReopen(session, store)
+      const saved = session.state.liveData.plays.allPlays.at(-1)!
+      expect(saved.result.eventType).equals('caught_stealing_2b')
+      expect(saved.playEvents.filter(event => event.isPitch)).length(1)
+      const putout = saved.runners.find(runner => runner.movement.isOut)!
+      expect(putout.credits.map(credit => credit.credit)).deep.equals([
+        'f_assist',
+        'f_putout'
+      ])
+    })
+
+    for (const [decision, eventType] of [
+      ['batterOut', 'field_out'],
+      ['resolveBatter', 'fielders_choice'],
+      ['errorAttribution', 'field_error'],
+      ['homeDecision', 'triple']
+    ] as const) {
+      it(`files the chosen result with the ${decision} decision unanswered`, async function () {
+        const { session, store } = await open()
+        applyAll(session, [
+          ball,
+          ball,
+          ball,
+          ball,
+          close,
+          batted,
+          { type: 'result', eventType }
+        ])
+        expect(nextDecision(session.state)).equals(decision)
+        const before = session.state.liveData.plays.currentPlay!
+        const outs = session.state.liveData.linescore.outs
+        await endAndReopen(session, store)
+        const saved = session.state.liveData.plays.allPlays.at(-1)!
+        expect(saved.result.eventType).equals(eventType)
+        const filed = store.plays.get(before.about.atBatIndex)!.play
+        expect(filed.result).includes({ eventType, isOut: false })
+        expect(filed.runners).length(before.runners.length)
+        expect(saved.runners).deep.equals(copyState(before.runners))
+        expect(saved.playEvents).deep.equals(copyState(before.playEvents))
+        expect(session.state.liveData.linescore.outs).equals(outs)
+        expect(store.plays.get(9999)!.play.result.awayScore).equals(0)
+      })
+    }
+
+    for (const eventType of ['field_out', 'fielders_choice'] as const)
+      it(`builds stats for a saved ${eventType} with the batter still undecided`, async function () {
+        const { session, store } = await open()
+        const caught = eventType === 'field_out'
+        applyAll(session, [ball, ball, ball, ball, close])
+        if (caught)
+          applyAll(session, [
+            {
+              type: 'baseRunning',
+              kind: 'caught_stealing',
+              runner: 1,
+              to: '2B',
+              fielders: [F.C, F.SS]
+            }
+          ])
+        applyAll(session, [batted, { type: 'result', eventType }])
+        if (!caught)
+          applyAll(session, [{ type: 'runnerMovement', runner: 1, to: '2B' }])
+        await endAndReopen(session, store)
+        const play = store.plays.get(1)!.play
+        expect(play.result).includes({ eventType, isOut: false })
+        expect(play.runners).length(1)
+        const runner = play.runners![0]
+        expect(runner.details?.runner?.id).equals(1)
+        expect(play.about.hasOut).equals(caught)
+        expect(runner.movement).includes(
+          caught ? { isOut: true } : { start: '1B', end: '2B', isOut: false }
+        )
+        expect(baseIds(session.state)).deep.equals([
+          null,
+          caught ? null : 1,
+          null
+        ])
+        const stats = gameStatLines(
+          (await store.load()).plays,
+          { awayTeamId: TEAMS.away.id, homeTeamId: TEAMS.home.id },
+          new Set([1, 2, F.P, F.C, F.SS])
+        )
+        if (stats.kind !== 'lines') throw new Error(stats.detail)
+        const lines = new Map(stats.lines.map(line => [line.gumboId, line]))
+        expect(lines.get(1)).includes({ pa: 1, bb: 1, cs: caught ? 1 : 0 })
+        expect(lines.get(2)).includes({ pa: 1, ab: 1, h: 0 })
+        expect(lines.get(F.P)).includes({
+          pitch_bf: 2,
+          pitch_bb: 1,
+          pitch_outs: caught ? 1 : 0
+        })
+      })
+
+    for (const onFirst of [false, true])
+      it(`files the dropped third strike without the undecided batter on base ${onFirst ? 'after a forced advance' : 'with the bases empty'}`, async function () {
+        const { session, store } = await open()
+        if (onFirst)
+          applyAll(session, [...out, ...out, ball, ball, ball, ball, close])
+        applyAll(session, [
+          strike,
+          strike,
+          { type: 'result', eventType: 'strikeout' }
+        ])
+        const batter = onFirst ? 4 : 1
+        const forced = onFirst ? 3 : null
+        expect(baseIds(session.state)).deep.equals([batter, forced, null])
+        expect(nextDecision(session.state)).equals('resolveBatter')
+
+        await endAndReopen(session, store)
+        const play = store.plays.get(batter - 1)!.play
+        expect(play.result).includes({ eventType: 'strikeout', isOut: false })
+        expect(play.runners!.map(row => row.details?.runner?.id)).deep.equals(
+          forced == null ? [] : [forced]
+        )
+        expect(session.state.liveData.linescore.outs).equals(onFirst ? 2 : 0)
+        expect(baseIds(session.state)).deep.equals([null, forced, null])
+      })
+
+    it('reopens a published final whose trailing runner reached occupied third before the lead runner was called home', async function () {
+      const store = new FakeStore()
+      for (const row of legacyCrossingRunners) {
+        const play = asGumboPlay(row)
+        store.plays.set(play.about.atBatIndex, {
+          id: String(play.about.atBatIndex),
+          play
+        })
+      }
+      const { session } = await open(store)
+      expect(session.readOnly).equals(false)
+      expect(session.state.final).equals(true)
+      expect(session.state.liveData.linescore.teams.away.runs).equals(0)
+      const saved = session.picture().plays
+      expect([...saved.keys()]).deep.equals([0, 1, 2, 9999])
+      for (const [index, row] of store.plays)
+        expect(comparablePlay(saved.get(index))).deep.equals(
+          comparablePlay(row.play)
+        )
+    })
+
+    it('refolds the published 0–0 dropped-third-strike final and retains its old advance through an edit', async function () {
+      // These three rows were scored and folded by the released version 3 writer.
+      const store = new FakeStore()
+      for (const row of legacyDroppedThirdStrike) {
+        const play = asGumboPlay(row)
+        store.plays.set(play.about.atBatIndex, {
+          id: String(play.about.atBatIndex),
+          play
+        })
+      }
+      const { session } = await open(store)
+      expect(session.state.final).equals(true)
+      expect(session.state.liveData.linescore.teams.away.runs).equals(0)
+      for (const [index, row] of store.plays)
+        expect(comparablePlay(session.picture().plays.get(index))).deep.equals(
+          comparablePlay(row.play)
+        )
+      // Retain the runner's historical call and replace the batter's call.
+      for (let i = 0; i < 3; i++)
+        expect(session.undo().problems).deep.equals([])
+      applyAll(session, [
+        { type: 'runnerMovement', runner: 2, to: '1B' },
+        close,
+        end
+      ])
+      await session.flush()
+      expect(storedRecordOf(store.plays.get(1)!.play)!.version).equals(5)
+      const { session: mixed } = await open(store)
+      expect(mixed.state.final).equals(true)
+      expect(mixed.state.liveData.linescore.teams.away.runs).equals(0)
+      expect(mixed.picture().plays.get(9999)!.result.awayScore).equals(0)
+    })
+
+    for (const to of ['3B', 'home'] as const)
+      it(`keeps the confirmed advance to ${to} on a dropped third strike through End Game, Undo and ordinary close`, async function () {
+        const { session, store } = await open()
+        applyAll(session, [
+          { type: 'result', eventType: 'double' },
+          close,
+          strike,
+          strike,
+          { type: 'result', eventType: 'strikeout' },
+          { type: 'runnerMovement', runner: 1, to }
+        ])
+        const home = to === 'home'
+        const runs = home ? 1 : 0
+        const third = home ? null : 1
+        const live = session.state.liveData
+        expect(nextDecision(session.state)).equals('resolveBatter')
+        expect(session.state.homeQueue).deep.equals([])
+        expect(baseIds(session.state)).deep.equals([2, null, third])
+        expect(live.linescore.teams.away.runs).equals(runs)
+        const advances = copyState(live.plays.currentPlay!.runners)
+        expect(advances).length(1)
+        expect(advances[0].details.runner.id).equals(1)
+        expect(advances[0].movement).includes({
+          start: 2,
+          end: home ? 4 : 3,
+          runScored: home
+        })
+
+        await endAndReopen(session, store)
+        expect(baseIds(session.state)).deep.equals([null, null, third])
+        expect(session.state.liveData.plays.allPlays[1].runners).deep.equals(
+          advances
+        )
+        expect(store.plays.get(1)!.play.result.awayScore).equals(runs)
+        expect(store.plays.get(9999)!.play.result.awayScore).equals(runs)
+
+        expect(session.undo().problems).deep.equals([])
+        applyAll(session, [
+          { type: 'runnerMovement', runner: 2, to: '1B' },
+          close
+        ])
+        expect(baseIds(session.state)).deep.equals([2, null, third])
+        const play = session.state.liveData.plays.allPlays[1]
+        expect(play.result.awayScore).equals(runs)
+        expect(play.runners).length(2)
+        expect(play.runners[0]).deep.equals(advances[0])
+        expect(play.runners[1].details.runner.id).equals(2)
+      })
+
+    it('retains the answered relay putout after reopening the final and returns to the unanswered runner on Undo', async function () {
+      const { session, store } = await open()
+      const walk = [ball, ball, ball, ball, close]
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        {
+          type: 'fieldingPlay',
+          fielders: [F.SS, F['3B'], F['2B']],
+          locations: [
+            { x: 1, z: 2 },
+            { x: 3, z: 4 },
+            { x: 5, z: 6 }
+          ],
+          choiceCall: { runner: 1, to: 3, putout: 1, location: { x: 4, z: 5 } }
+        }
+      ])
+      await endAndReopen(session, store)
+      const stored = store.plays.get(2)!.play
+      expect(stored.result.eventType).equals('fielders_choice')
+      expect(stored.about.hasOut).equals(true)
+      expect(stored.runners).length(1)
+      expect(stored.runners![0].details?.runner?.id).equals(1)
+      expect(stored.runners![0].movement).includes({
+        isOut: true,
+        outNumber: 1
+      })
+      const credits = stored.runners![0].credits
+      expect(credits).to.have.length(2)
+      expect(credits).to.have.nested.property('[0].credit', 'f_assist')
+      expect(credits).to.have.nested.property('[0].player.id', F.SS)
+      expect(credits).to.have.nested.property('[1].credit', 'f_putout')
+      expect(credits).to.have.nested.property('[1].player.id', F['3B'])
+      expect(session.state.liveData.linescore.outs).equals(1)
+      expect(baseIds(session.state)).deep.equals([2, null, null])
+      const { session: reopened } = await open(store)
+      expect(reopened.undo().problems).deep.equals([])
+      const screen = initialScoringState(reopened.state, false, {
+        following: true
+      })
+      expect(screen.phase).equals('fieldersChoice')
+      const choice = screen.pendingPlay!.fieldersChoice!
+      expect(choice.calls).deep.equals([1])
+      expect(choice.runners.find(runner => runner.playerId === 1)).includes({
+        decision: 'out',
+        putout: 1
+      })
+      expect(
+        choice.runners.find(runner => runner.playerId === 2)!.decision
+      ).equals(undefined)
+      const completed = scoringReducer(screen, {
+        type: 'CHOICE_DECIDE',
+        id: 2,
+        decision: 'safe',
+        generation: screen.generation
+      })
+      expect(completed.session.liveData.linescore.outs).equals(1)
+    })
+
+    const walk = [ball, ball, ball, ball, close]
+    const relay = {
+      type: 'fieldingPlay' as const,
+      fielders: [F.SS, F['3B'], F['2B']],
+      locations: [
+        { x: 1, z: 2 },
+        { x: 3, z: 4 },
+        { x: 5, z: 6 }
+      ]
+    }
+    const thirdBaseCall: ScoringAction = {
+      ...relay,
+      choiceCall: { runner: 1, to: 3, putout: 1, location: { x: 4, z: 5 } }
+    }
+    for (const finish of ['partial', 'close'] as const)
+      it(`keeps a relay putout and a different runner's advance through ${finish} filing and reopen`, async function () {
+        const { session, store } = await open()
+        applyAll(session, [
+          ...walk,
+          ...walk,
+          batted,
+          { type: 'result', eventType: 'fielders_choice' },
+          thirdBaseCall,
+          { type: 'runnerMovement', runner: 2, to: '2B' }
+        ])
+        const screen = initialScoringState(session.state, false, {
+          following: true
+        })
+        expect(screen.phase).equals('chooseDefender')
+        const resumed = scoringReducer(screen, {
+          type: 'DEFENDER',
+          generation: screen.generation
+        })
+        expect(resumed.session.liveData.linescore.outs).equals(1)
+        expect(baseIds(resumed.session)).deep.equals([3, 2, null])
+        if (finish === 'close')
+          applyAll(session, [
+            { type: 'runnerMovement', runner: 3, to: '1B' },
+            close
+          ])
+        await endAndReopen(session, store)
+        const play = session.state.liveData.plays.allPlays[2]
+        expect(
+          play.runners.map(row => row.details.runner.id).sort((a, b) => a - b)
+        ).deep.equals(finish === 'partial' ? [1, 2] : [1, 2, 3])
+        const lead = play.runners.find(row => row.details.runner.id === 1)!
+        expect(lead.movement).includes({
+          start: 2,
+          end: 3,
+          isOut: true,
+          outNumber: 1
+        })
+        expect(
+          lead.credits.map(credit => [credit.credit, credit.player?.id])
+        ).deep.equals([
+          ['f_assist', F.SS],
+          ['f_putout', F['3B']]
+        ])
+        const trailing = play.runners.find(row => row.details.runner.id === 2)!
+        expect(trailing.movement).includes({ start: 1, end: 2, isOut: false })
+        expect(session.state.liveData.linescore.outs).equals(1)
+        expect(baseIds(session.state)).deep.equals([
+          finish === 'partial' ? null : 3,
+          2,
+          null
+        ])
+      })
+
+    it('files a relay putout before a different runner’s ordinary putout with its force, events and credits', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        thirdBaseCall,
+        {
+          type: 'runnerMovement',
+          runner: 2,
+          to: '2B',
+          out: true,
+          fielders: [F['2B']]
+        }
+      ])
+      await endAndReopen(session, store)
+      const play = session.state.liveData.plays.allPlays[2]
+      expect(
+        play.runners.map(row => [
+          row.details.runner.id,
+          row.movement.outNumber,
+          row.movement.forceOut
+        ])
+      ).deep.equals([
+        [1, 1, true],
+        [2, 2, true]
+      ])
+      expect(
+        play.runners.map(row => row.credits.map(credit => credit.player?.id))
+      ).deep.equals([[F.SS, F['3B']], [F['2B']]])
+      const events = play.playEvents.filter(
+        event => event.details.runnerEntry != null
+      )
+      expect(
+        events.map(event => [
+          event.player.id,
+          event.count.outs,
+          event.details.runnerEntry
+        ])
+      ).deep.equals([
+        [1, 1, 0],
+        [2, 2, 1]
+      ])
+      expect(
+        play.source.teamstation.runnerActions!.map(action => action.runner.id)
+      ).deep.equals([1, 2])
+    })
+
+    it('replaces only the corrected relay call and retains the fielders on the next putout', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        ...walk,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        {
+          ...relay,
+          choiceCall: { runner: 1, to: 4, putout: 1, location: { x: 4, z: 5 } }
+        },
+        {
+          ...relay,
+          choiceCall: { runner: 2, to: 3, putout: 2, location: { x: 6, z: 7 } }
+        },
+        { type: 'runnerMovement', runner: 1, to: 'home' }
+      ])
+      await endAndReopen(session, store)
+      const play = session.state.liveData.plays.allPlays[3]
+      expect(play.runners).length(1)
+      expect(play.runners[0].details.runner.id).equals(2)
+      expect(
+        play.runners[0].credits.map(credit => credit.player?.id)
+      ).deep.equals([F['3B'], F['2B']])
+      expect(session.state.liveData.linescore.outs).equals(1)
+      expect(play.result.awayScore).equals(0)
+    })
+
+    it('retains a confirmed home crossing when a different runner advances', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        ...walk,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        {
+          ...relay,
+          choiceCall: { runner: 1, to: 4, location: { x: 4, z: 5 } }
+        },
+        { type: 'runnerMovement', runner: 2, to: '3B' }
+      ])
+      await endAndReopen(session, store)
+      const play = session.state.liveData.plays.allPlays[3]
+      expect(
+        play.runners.map(row => [row.details.runner.id, row.movement.end])
+      ).deep.equals([
+        [1, 4],
+        [2, 3]
+      ])
+      expect(play.result.awayScore).equals(1)
+      expect(store.plays.get(9999)!.play.result.awayScore).equals(1)
+    })
+
+    it('scores a confirmed home crossing before a different runner makes a tag third out', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        ...out,
+        ...out,
+        ...walk,
+        ...walk,
+        ...walk,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        {
+          ...relay,
+          choiceCall: { runner: 3, to: 4, location: { x: 4, z: 5 } }
+        },
+        {
+          type: 'runnerMovement',
+          runner: 4,
+          to: 'home',
+          out: true,
+          fielders: [F.C]
+        }
+      ])
+      await endAndReopen(session, store)
+      const play = session.state.liveData.plays.allPlays[5]
+      expect(
+        play.runners.map(row => [
+          row.details.runner.id,
+          row.movement.runScored,
+          row.movement.outNumber
+        ])
+      ).deep.equals([
+        [3, true, undefined],
+        [4, false, 3]
+      ])
+      expect(store.plays.get(9999)!.play.result.awayScore).equals(1)
+    })
+
+    it('places the confirmed choice advances while the batter and the crossing at home are undecided', async function () {
+      const { session, store } = await open()
+      const walk = [ball, ball, ball, ball, close]
+      applyAll(session, [
+        ...walk,
+        ...walk,
+        ...walk,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        { type: 'runnerMovement', runner: 1, to: 'home' },
+        { type: 'runnerMovement', runner: 2, to: '3B' },
+        { type: 'runnerMovement', runner: 3, to: '2B' }
+      ])
+      expect(nextDecision(session.state)).equals('resolveBatter')
+      await endAndReopen(session, store)
+      const play = store.plays.get(3)!.play
+      const moves = new Map(
+        play.runners!.map(row => [row.details?.runner?.id, row.movement])
+      )
+      expect(play.runners).length(2)
+      expect(moves.get(2)).includes({ start: '2B', end: '3B' })
+      expect(moves.get(3)).includes({ start: '1B', end: '2B' })
+      expect(baseIds(session.state)).deep.equals([null, 3, 2])
+      expect(play.result.awayScore).equals(0)
+    })
+
+    it('keeps the choice batter’s existing advance once while a runner is headed home', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        { type: 'result', eventType: 'triple' },
+        close,
+        batted,
+        { type: 'result', eventType: 'fielders_choice' },
+        { type: 'runnerMovement', runner: 1, to: 'home' },
+        { type: 'runnerMovement', runner: 2, to: '1B' }
+      ])
+      expect(nextDecision(session.state)).equals('homeDecision')
+      const before = copyState(
+        session.state.liveData.plays.currentPlay!.runners
+      )
+      await endAndReopen(session, store)
+      expect(store.plays.get(1)!.play.runners).length(1)
+      expect(session.state.liveData.plays.allPlays[1].runners).deep.equals(
+        before
+      )
+      expect(baseIds(session.state)).deep.equals([2, null, null])
+    })
+
+    for (const priorError of [false, true])
+      it(`counts the unattributed error in both final linescores ${priorError ? 'with' : 'without'} an earlier charged error`, async function () {
+        const { session, store } = await open()
+        applyAll(session, [ball, ball, ball, ball, close])
+        if (priorError)
+          applyAll(session, [
+            {
+              type: 'runnerMovement',
+              runner: 1,
+              to: '2B',
+              reason: 'Fielding Error',
+              error: F.SS
+            }
+          ])
+        applyAll(session, [
+          batted,
+          { type: 'result', eventType: 'field_error' }
+        ])
+        await endAndReopen(session, store)
+        const play = store.plays.get(1)!.play
+        const credits = priorError ? 1 : 0
+        expect(errorCredits(play)).equals(credits)
+        const totals = session.state.liveData.linescore.teams
+        expect(totals.home.errors).equals(credits + 1)
+        expect(lineScore([play], [], 0, 0).teams.home.errors).equals(
+          totals.home.errors
+        )
+      })
+
+    it('files the decided result once when only close remains', async function () {
+      const { session, store } = await open()
+      applyAll(session, [batted, { type: 'result', eventType: 'single' }])
+      expect(nextDecision(session.state)).equals('close')
+      await endAndReopen(session, store)
+      expect([...store.plays.keys()]).deep.equals([0, 9999])
+      expect(store.plays.get(0)!.play.result.eventType).equals('single')
+    })
+
+    it('files no appearance when only a tiebreaker runner has been placed', async function () {
+      const { session, store } = await open()
+      applyAll(session, [
+        { type: 'gameFlow', kind: 'placeRunner', runner: 9, base: '2B' }
+      ])
+      await endAndReopen(session, store)
+      expect([...store.plays.keys()]).deep.equals([9999])
+    })
+  })
+
   /** Each stored play's lineup changes, by index: `0 pitching_substitution`. */
   const changes = (store: FakeStore): Record<number, string[]> =>
     Object.fromEntries(

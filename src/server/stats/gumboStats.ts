@@ -467,7 +467,15 @@ export function gameStatLines(
         return runner.id === batterId
       })
       if (batterEntry == null) {
-        return missing(atBatIndex, 'runners batter entry')
+        // End Game can file a chosen result before the batter's destination
+        // or putout is known. His matchup still owns the plate appearance.
+        const stamp = play.teamStation
+        if (
+          !isRecord(stamp) ||
+          !isRecord(stamp.detail) ||
+          stamp.detail.partialResult !== true
+        )
+          return missing(atBatIndex, 'runners batter entry')
       }
     }
 

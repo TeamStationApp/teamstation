@@ -264,6 +264,104 @@ describe('folding a play for the server', function () {
     ])
   })
 
+  it('keeps the running events and their credits when End Game omits their pitches', function () {
+    const actions: ScoringAction[] = [
+      { type: 'result', eventType: 'double' },
+      { type: 'gameFlow', kind: 'closePlay' },
+      ball,
+      {
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: 1, to: '3B' }]
+      },
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+      { type: 'ballInPlay', contact: 'swing', launchAngle: 35, fielder: F.CF },
+      { type: 'gameFlow', kind: 'endGame' }
+    ]
+    const { state, plays } = score(game(), actions)
+    const kept = plays[1]
+    expect(kept.pitchIndex).deep.equals([])
+    expect(kept.runners?.map(runner => runner.details?.playIndex)).deep.equals([
+      0, 1
+    ])
+    expect(kept.runners?.[1].details).includes({
+      isScoringEvent: true,
+      earned: true
+    })
+    expect(kept.runners?.[1].details?.responsiblePitcher).deep.equals({
+      id: F.P
+    })
+    expect(credited(kept).map(credit => credit.eventType)).deep.equals([
+      'run',
+      'stolen_base'
+    ])
+    const play = state.liveData.plays.allPlays[1]
+    expect(play.hitData).equals(undefined)
+    expect(play.source.teamstation.contactKind).equals(undefined)
+    expect(play.source.teamstation.runnerActions![0].pitchReference).equals(
+      undefined
+    )
+    expect(plays.at(-1)!.result.awayScore).equals(1)
+  })
+
+  it('files the caught stealing as an out when a later steal of home preserves the interrupted play', function () {
+    const { plays } = score(game(), [
+      { type: 'result', eventType: 'manual_placement', base: '3B' },
+      { type: 'gameFlow', kind: 'closePlay' },
+      { type: 'result', eventType: 'hit_by_pitch' },
+      { type: 'gameFlow', kind: 'closePlay' },
+      {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 2,
+        to: '2B',
+        fielders: [F.C, F.SS]
+      },
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+      { type: 'ballInPlay', contact: 'swing' },
+      { type: 'gameFlow', kind: 'endGame' }
+    ])
+    const running = plays[2]
+    expect(running.result).includes({
+      eventType: 'caught_stealing_2b',
+      isOut: true,
+      awayScore: 1
+    })
+    expect(running.runners).has.length(2)
+    expect(running.runners?.[0].movement).includes({ isOut: true })
+    expect(running.runners?.[1].movement).includes({ isOut: false })
+    expect(running.runners?.[1].details?.isScoringEvent).equals(true)
+  })
+
+  it('drops a runner’s out and a fielding error on a wholly omitted appearance', function () {
+    const { state, plays } = score(game(), [
+      { type: 'result', eventType: 'single' },
+      { type: 'gameFlow', kind: 'closePlay' },
+      {
+        type: 'runnerMovement',
+        runner: 1,
+        to: '2B',
+        reason: 'Fielding Error',
+        error: F.SS
+      },
+      {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 1,
+        to: '3B',
+        fielders: [F.C, F['3B']]
+      },
+      { type: 'ballInPlay', contact: 'swing' },
+      { type: 'gameFlow', kind: 'endGame' }
+    ])
+    expect(plays.map(play => play.result.eventType)).deep.equals([
+      'single',
+      'final_score'
+    ])
+    expect(state.liveData.linescore.teams.home.errors).equals(0)
+    expect(state.liveData.linescore.outs).equals(0)
+  })
+
   it('ends the game with its final score at index 9999', function () {
     const scored = score(game(), [
       { type: 'result', eventType: 'home_run' },
