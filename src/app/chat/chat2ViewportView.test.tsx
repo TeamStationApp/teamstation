@@ -241,6 +241,31 @@ describe('chat measured chrome and explicit focus', function () {
     }
   })
 
+  it('uses settled tablet guide geometry for the readable area and clears it after dismissal', async function () {
+    let current: ReturnType<typeof useChatViewport>
+    function Probe(): React.ReactElement {
+      current = useChatViewport({ composer: 52 })
+      return (
+        <ChatViewport viewport={current}>
+          <span />
+        </ChatViewport>
+      )
+    }
+    await render(<Probe />)
+    await act(async () => {
+      current.onTabletKeyboardRest(427)
+    })
+    expect(current!.softwareKeyboardOpen).equals(true)
+    expect(current!.composerBottom).equals(435)
+    await act(async () => {
+      current.onTabletKeyboardRest(427)
+    })
+    await act(async () => {
+      current.onTabletKeyboardRest(0)
+    })
+    expect(current!.softwareKeyboardOpen).equals(false)
+  })
+
   it('measures the complete phone tab-bar clearance inside the full list scroll frame', async function () {
     const item = chat()
     const node = await render(

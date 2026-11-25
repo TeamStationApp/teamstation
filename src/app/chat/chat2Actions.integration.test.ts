@@ -28,7 +28,9 @@ import {
   androidDismissReference,
   androidImeFrame,
   androidScopedBounds,
+  androidSettingsSwitch,
   bounded,
+  type Chat2HubPhone,
   Chat2UI,
   exactIdAnswer,
   IOS_SIMULATOR_SNAPSHOT_CAP,
@@ -45,7 +47,8 @@ import {
   queryExactVisible,
   readAndroidComposerKeyboard,
   readIosComposerKeyboard,
-  recentPickerPhoto
+  recentPickerPhoto,
+  releaseChat2Phone
 } from '../../../e2e/rigs/chat2Maestro'
 import { userIdOfGumbo } from '../../common/userId'
 import { encodePng } from '../../test/rasterImage'
@@ -8229,6 +8232,7 @@ describe('positive Android IME observations', function () {
     let shots = 0
     Date.now = () => actualNow() + offset
     const actual = model()
+    if (mode === 'slow-hub') Object.assign(actual.ui, { hubClient: {} })
     const hierarchy = actual.ui.device.hierarchy
     let measuredFocus = 0
     actual.ui.device.hierarchy = async () => {
@@ -8251,7 +8255,11 @@ describe('positive Android IME observations', function () {
       screenshot: async ({ signal }: { signal: AbortSignal }) => {
         expect(signal.aborted).equals(false)
         shots += 1
-        offset += ['motion', 'clock-change'].includes(mode) ? 1100 : 100
+        offset += ['motion', 'clock-change'].includes(mode)
+          ? 1100
+          : mode === 'slow-hub'
+            ? 320
+            : 100
         if (mode === 'image-transport')
           throw new Error('Raw image transport disconnected')
         if (mode === 'slow-first' && shots === 1)
@@ -8299,6 +8307,19 @@ describe('positive Android IME observations', function () {
       Date.now = actualNow
     }
   }
+  it('uses the elapsed Hub capture time in the interval between exact, adjacent Android frames', async function () {
+    await adjacentFrames('slow-hub', async actual => {
+      await observeComposerCaptureReady(actual.ui, {
+        focused: true,
+        reply: true
+      })
+      for (const sample of captureObservation(actual.ui).samples) {
+        expect(sample.rawPairStable).equals(true)
+        expect(sample.rawPairStableForMs).at.least(320).and.lessThan(500)
+        expect(sample.rawFrames![0].sha256).equals(sample.rawFrames![1].sha256)
+      }
+    })
+  })
   for (const mode of ['jpeg', 'png'])
     it(
       'pairs exact adjacent raw ' +
@@ -14162,6 +14183,40 @@ describe('iOS observed Settings state', function () {
   })
 })
 
+describe('Android Settings switch observations', function () {
+  const row = (label: string, checked: boolean): string =>
+    '<row clickable="true"><title package="com.android.settings" text="' +
+    label +
+    '"/><toggle checkable="true" checked="' +
+    checked +
+    '"/></row>'
+  it('uses the exact labeled row even when nearby switches have a different value', function () {
+    const raw = Buffer.from(
+      '<screen>' +
+        row('Reduce animations', false) +
+        row('Reduce transparency', true) +
+        '</screen>'
+    )
+    expect(androidSettingsSwitch(raw, 'Reduce animations')).equals(false)
+    expect(androidSettingsSwitch(raw, 'Reduce transparency')).equals(true)
+    expect(() => androidSettingsSwitch(raw, 'Unknown')).throws('unique')
+  })
+  it('rejects duplicate labels and a row without one switch', function () {
+    const raw = Buffer.from(
+      '<screen>' + row('Motion', true) + row('Motion', false) + '</screen>'
+    )
+    expect(() => androidSettingsSwitch(raw, 'Motion')).throws('unique')
+    expect(() =>
+      androidSettingsSwitch(
+        Buffer.from(
+          '<row clickable="true"><title package="com.android.settings" text="Motion"/></row>'
+        ),
+        'Motion'
+      )
+    ).throws('one switch')
+  })
+})
+
 describe('iOS Settings state read until it shows', function () {
   const dirs: string[] = []
   afterEach(() => {
@@ -14535,14 +14590,52 @@ describe('native below-reader attention count', function () {
   })
 })
 
+describe('shared phone cleanup', () => {
+  it('requires acknowledgement from the Hub for the exact held lease', async () => {
+    const id = '00000000@fixture'
+    const device: Chat2HubPhone = {
+      lease: { device: id },
+      release: async () => {
+        device.lease = undefined
+      }
+    }
+    expect(
+      String(await captureFailure(releaseChat2Phone(device, 'other@fixture')))
+    ).contains('must hold')
+    await releaseChat2Phone(device, id)
+    expect(device.lease).equals(undefined)
+  })
+
+  it('keeps a refused or unacknowledged release visible to the run', async () => {
+    const id = '00000000@fixture'
+    const device = {
+      lease: { device: id },
+      release: async () => {
+        throw new Error('Hub unavailable')
+      }
+    }
+    expect(
+      String(await captureFailure(releaseChat2Phone(device, id)))
+    ).contains('Hub unavailable')
+    expect(
+      String(
+        await captureFailure(
+          releaseChat2Phone({ ...device, release: async () => {} }, id)
+        )
+      )
+    ).contains('not acknowledged')
+  })
+})
+
 describe('password sign-in submission', function () {
-  for (const surface of ['ios', 'web-wide'])
+  for (const surface of ['ios', 'android', 'web-wide'])
     it(`fills and submits once more after a wrong-credentials notice only on iOS (${surface})`, async () => {
       const calls: string[] = []
       let wrongShown = 0
       const ui = Object.assign(Object.create(Chat2UI.prototype), {
         surface,
-        native: surface === 'ios',
+        native: surface !== 'web-wide',
+        fixture: { devices: { android: { physical: true } } },
         steps: [],
         visible: async (selector: { text?: string }) => {
           if (selector.text === '^Password$') return true
@@ -14562,6 +14655,9 @@ describe('password sign-in submission', function () {
         iosRead: async () => ({ value: 'qa@example.test' }),
         device: {
           assertVisible: async () => {},
+          hideKeyboard: async () => {
+            calls.push('hide email keyboard')
+          },
           pressKey: async () => {
             calls.push('enter')
           }
@@ -14573,10 +14669,11 @@ describe('password sign-in submission', function () {
       })
       const fill = [
         'tap E-mail address',
-        'tap E-mail address',
+        ...(surface === 'android' ? [] : ['tap E-mail address']),
         'type email',
+        ...(surface === 'android' ? ['hide email keyboard'] : []),
         'tap Password',
-        'tap Password',
+        ...(surface === 'android' ? [] : ['tap Password']),
         'type password',
         'enter'
       ]

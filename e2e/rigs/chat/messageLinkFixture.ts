@@ -36,7 +36,7 @@ interface Provider {
 
 interface Destination {
   origin: string
-  port: number
+  port?: number
   close: () => void
 }
 
@@ -54,6 +54,8 @@ export interface ChatLinkFixture {
   datedCaptionId?: string
   /** The runner interface a physical phone can reach for the test page. */
   destinationHost?: string
+  /** HTTPS site serving the link targets when the devices use a remote fixture. */
+  destinationOrigin?: string
   previewPage?: {
     url: string
     title: string
@@ -221,9 +223,21 @@ export async function providerFor(
 }
 
 /** The browser itself renders its full path, including its client-only fragment. */
-export async function destinationPage(
-  host = '127.0.0.1'
-): Promise<Destination> {
+export async function destinationPage({
+  destinationHost: host = '127.0.0.1',
+  destinationOrigin
+}: Pick<
+  ChatLinkFixture,
+  'destinationHost' | 'destinationOrigin'
+> = {}): Promise<Destination> {
+  if (destinationOrigin != null) {
+    const location = new URL(destinationOrigin)
+    assert(
+      location.protocol === 'https:' && location.origin === destinationOrigin,
+      'The remote fixture requires an HTTPS origin'
+    )
+    return { origin: location.origin, close: () => {} }
+  }
   assert(
     isIPv4(host) && host !== '0.0.0.0',
     'Bind the fixture to one local IPv4 address'
