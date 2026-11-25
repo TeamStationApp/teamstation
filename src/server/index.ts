@@ -815,6 +815,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     healthRoutes(db, VERSION, {
+      rateStore: rateStore.health,
       narration: speechSettings(serverConfig) != null,
       tess: tessSettings(serverConfig) != null,
       dictation: serverConfig.dictation != null,

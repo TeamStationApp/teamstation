@@ -3194,6 +3194,14 @@ export const asHealth = asObject({
   version: asString,
   database: asLiteral('ok', 'unreachable'),
   migrations: asNumber,
+  apiRateLimits: asOptional(
+    asObject({
+      mode: asLiteral('off', 'observe', 'enforce'),
+      readiness: asLiteral('off', 'checking', 'ready', 'degraded', 'failed'),
+      fault: asOptional(asString),
+      degradedMs: asNumber
+    })
+  ),
   dictation: asOptional(asBoolean, false),
   dictationModels: asOptional(asArray(asString), []),
   /** Whether the replay's announcer can speak; absent from an older server. */
@@ -3211,8 +3219,9 @@ export const asHealth = asObject({
 })
 export type Health = Omit<
   ReturnType<typeof asHealth>,
-  'narration' | 'tess' | 'replayPitchSec'
+  'narration' | 'tess' | 'replayPitchSec' | 'apiRateLimits'
 > & {
+  apiRateLimits?: ReturnType<typeof asHealth>['apiRateLimits']
   narration?: boolean
   tess?: boolean
   replayPitchSec?: number

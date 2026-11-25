@@ -81,6 +81,22 @@ describe('health', function () {
     })
   })
 
+  it('keeps the service available and exposes a failed shared enforcement preflight', async () => {
+    const rateStore = () =>
+      ({
+        mode: 'enforce',
+        readiness: 'failed',
+        fault: 'permissions',
+        degradedMs: 1000
+      }) as const
+    const health = await (await serve({ rateStore })).health()
+    expect(health.status).equals('ok')
+    expect(health.apiRateLimits).deep.equals(rateStore())
+    expect((await (await serve(undefined)).health()).apiRateLimits).equals(
+      undefined
+    )
+  })
+
   it('says Tess is off without a key, and by default', async () => {
     const off = await serve({
       tess: tessSettings(asServerConfig({})) != null

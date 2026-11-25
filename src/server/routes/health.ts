@@ -5,10 +5,12 @@ import { defaultReplaySettings } from '../../common/nodeSettings'
 import type { Database } from '../db/database'
 import { withAsync } from '../middleware/withErrors'
 import { replayPitchSec } from '../nodeSettings'
+import type { RateStoreHealth } from '../valkey/apiBudgets'
 
 export interface HealthBody {
   status: 'ok' | 'degraded'
   version: string
+  apiRateLimits?: RateStoreHealth
   database: 'ok' | 'unreachable'
   migrations: number
   uptimeSec: number
@@ -33,6 +35,7 @@ export function healthRoutes(
   db: Kysely<Database>,
   version: string,
   options: {
+    rateStore?: () => RateStoreHealth
     dictation?: boolean
     dictationModels?: readonly string[]
     narration?: boolean
@@ -66,6 +69,7 @@ export function healthRoutes(
         status: database === 'ok' ? 'ok' : 'degraded',
         version,
         database,
+        apiRateLimits: options.rateStore?.(),
         migrations,
         uptimeSec: Math.round(process.uptime()),
         pid: process.pid,
