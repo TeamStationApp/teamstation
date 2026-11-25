@@ -66,6 +66,8 @@ export interface RunOptions {
   fault?: string
   /** Records what the browser executed into this directory. */
   browserCoverage?: string
+  /** Matching deployed web build for a seat with no local stack directory. */
+  browserCoverageWebDir?: string
   /** Stands in for the configured judge, in tests. */
   judges?: JudgeRuntime
   settings: LocalSettings
@@ -392,10 +394,10 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           options.settings,
           runDir,
           size,
-          emulation
+          emulation,
+          options.browserCoverage == null ? undefined : startCoverage
         )
         sessions.push(session)
-        if (options.browserCoverage != null) await startCoverage(session.page)
         watch(session.m, { deviceClass: session.deviceClass })
         return session
       },
@@ -512,11 +514,16 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     }
     let coverageIndex = 0
     const recordCoverage = async (): Promise<void> => {
-      if (options.browserCoverage == null || handle.webDir == null) return
+      if (options.browserCoverage == null) return
+      const webDir = options.browserCoverageWebDir ?? handle.webDir
+      if (webDir == null)
+        throw new Error(
+          'Browser coverage requires the matching web build directory'
+        )
       for (const session of sessions) {
         await writeCoverage(
-          [session.page],
-          handle.webDir,
+          session.pages,
+          webDir,
           handle.origin,
           coverageFile(options.browserCoverage, options.id, coverageIndex++)
         )
@@ -561,6 +568,18 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     }
     if (failure != null) {
       await keepEvidence(targets, runDir)
+      for (const [browser, session] of sessions.entries()) {
+        if (session.pages.length < 2) continue
+        for (const [index, page] of session.pages.entries()) {
+          await page
+            .screenshot({
+              path: join(runDir, `failure-browser-${browser}-tab-${index}.png`)
+            })
+            .catch((error: unknown) => {
+              console.error('No tab screenshot:', String(error))
+            })
+        }
+      }
       failureKind =
         failure instanceof CheckpointFailure || isAssertion(failure)
           ? 'assertion'

@@ -46,7 +46,8 @@ export function socketUrlFor(
   location: PageOrigin | undefined,
   apiBaseUrl: string,
   gameId: string,
-  path: 'socket' | 'dashboard' = 'socket'
+  path: 'socket' | 'dashboard' = 'socket',
+  expectedActor?: string
 ): string {
   let base = apiBaseUrl.replace(/\/+$/, '')
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(base)) {
@@ -55,5 +56,9 @@ export function socketUrlFor(
     }
     base = `${location.protocol}//${location.host}${base.startsWith('/') ? '' : '/'}${base}`
   }
-  return `${base.replace(/^http(s?):/i, 'ws$1:')}/scoreboard/${encodeURIComponent(gameId)}/${path}`
+  const query =
+    expectedActor == null
+      ? ''
+      : `?expectedActor=${encodeURIComponent(expectedActor)}`
+  return `${base.replace(/^http(s?):/i, 'ws$1:')}/scoreboard/${encodeURIComponent(gameId)}/${path}${query}`
 }

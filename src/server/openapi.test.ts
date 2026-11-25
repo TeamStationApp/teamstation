@@ -150,6 +150,39 @@ const UPGRADE_ONLY = new Set([
 ])
 
 describe('the API document', function () {
+  it('documents the guarded development password login and account confirmation', () => {
+    const { post: op } = openApiDocument('0.0.0').paths[
+      '/auth/password/link'
+    ] as { post: any }
+    const body = op.requestBody.content['application/json'].schema
+    expect(body.required).deep.equals(['email', 'clientHash'])
+    expect(body.properties.confirmation.required).deep.equals([
+      'currentId',
+      'targetId'
+    ])
+    const [prompt, stale] =
+      op.responses[409].content['application/json'].schema.oneOf
+    const details = prompt.properties.details
+    expect(details.required).deep.equals([
+      'reason',
+      'confirmation',
+      'currentLabel',
+      'targetLabel'
+    ])
+    expect(details.properties.reason.const).equals('confirmAccountSwitch')
+    expect(details.properties.confirmation).deep.equals(
+      body.properties.confirmation
+    )
+    expect(stale.not.required).deep.equals(['details'])
+    expect(Object.keys(op.responses)).includes.members([
+      '200',
+      '401',
+      '404',
+      '409',
+      '429'
+    ])
+  })
+
   it('declares nullable replay pitcher hit batters and strikes', function () {
     const schemas = openApiDocument('0.0.0').components.schemas as Record<
       string,

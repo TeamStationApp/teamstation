@@ -13,6 +13,7 @@ import { COALESCE_MS } from '../common/screenScope'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
+import { FakeSearchServer } from '../test/fakeSearchSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { App } from './App'
 import { showRoute } from './navigation/useAddressBar'
@@ -150,6 +151,28 @@ describe('the phone session with no signal', () => {
     delete (globalThis as { location?: unknown }).location
   })
 
+  it('binds the Search tab and the follow screen to the account actually displayed', async () => {
+    Object.defineProperty(
+      TeamStationClient.prototype,
+      'coordinatesBrowserSession',
+      {
+        configurable: true,
+        get: () => true
+      }
+    )
+    answer = async () => asSessionUser(ICHIRO)
+    for (const follow of [false, true]) {
+      const server = new FakeSearchServer()
+      showRoute({ name: 'discover', kind: 'team', follow }, true)
+      await mount(<App searchSocketFactory={server.factory} />)
+      await settle(350)
+      expect(
+        new URL(server.made.at(-1)!.url).searchParams.get('expectedActor')
+      ).equals(ICHIRO.id)
+      await unmount()
+    }
+  })
+
   it('keeps the token and opens on the stored user when whoAmI cannot leave the device', async () => {
     showRoute({ name: 'home' }, true)
     const caches = memoryCaches()
@@ -279,7 +302,9 @@ describe('the phone session with no signal', () => {
       trace.push(`delete ${id} with ${this.token ?? 'no token'}`)
       throw new HttpError('offline', 'Cannot reach TeamStation.')
     }
-    api.signOut = async function (this: TeamStationClient) {
+    api.signOut = async function (this: TeamStationClient, departingActor) {
+      expect(departingActor).equals(ICHIRO.id)
+      expect(this.cacheUser).equals(undefined)
       trace.push('logout')
       throw new HttpError('offline', 'Cannot reach TeamStation.')
     }

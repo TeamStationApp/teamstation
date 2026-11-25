@@ -187,6 +187,7 @@ const OPTIONS = {
   checkpoint: { type: 'string' },
   judge: { type: 'string' },
   'browser-coverage': { type: 'string' },
+  'browser-coverage-web-dir': { type: 'string' },
   out: { type: 'string' },
   fault: { type: 'string' },
   question: { type: 'string' },
@@ -417,6 +418,7 @@ export async function main(argv: string[]): Promise<number> {
         retries: values.retries == null ? 0 : retryCount(values.retries),
         concurrent: values.concurrent,
         browserCoverage: values['browser-coverage'],
+        browserCoverageWebDir: values['browser-coverage-web-dir'],
         budgetUsd:
           values['budget-usd'] == null
             ? settings.judgeBudgetUsd

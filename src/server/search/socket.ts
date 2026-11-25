@@ -16,6 +16,7 @@ import {
   type SearchFrame,
   type SearchServerFrame
 } from '../../common/search/types'
+import { socketActorMatches } from '../../common/webPasswordLink'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { bearerToken, sessionToken } from '../auth/tokens'
 import { type Database, isConnectionUnavailable } from '../db/database'
@@ -465,6 +466,10 @@ export function attachSearchSocket(
       token == null ? Promise.resolve(undefined) : actorForToken(db, token)
     actor.then(
       found => {
+        if (!socketActorMatches(request.url, found?.userId)) {
+          refuseUpgrade(socket, 403, 'Forbidden')
+          return
+        }
         wss.handleUpgrade(request, socket, head, ws => {
           if (found != null) connected(ws, found, token, ip)
           // A bearer token that signs nobody in (expired, or revoked before

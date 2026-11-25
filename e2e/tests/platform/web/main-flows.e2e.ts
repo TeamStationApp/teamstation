@@ -415,18 +415,16 @@ export default defineE2e({
       )
       // Out, and the sign-in screen is back.
       await app.go('/account')
-      await app.m.scrollUntilVisible({
-        element: { text: 'Sign out' },
-        direction: 'DOWN'
-      })
-      // A mouse drag selects account text in Chromium. Scroll the button
-      // above the floating navigation bar before tapping it.
       if (ctx.surface === 'web-chromium') {
-        await app.m.scroll({ direction: 'DOWN' })
+        await app.m.tapOn({ css: '[role="button"][aria-label="Sign out"]' })
       } else {
+        await app.m.scrollUntilVisible({
+          element: { text: 'Sign out' },
+          direction: 'DOWN'
+        })
         await clearOfBar(app.m)
+        await app.m.tapOn({ text: 'Sign out' })
       }
-      await app.m.tapOn({ text: 'Sign out' })
       await checkpoint(
         ctx,
         'signed-out',
