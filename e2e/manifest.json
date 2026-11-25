@@ -5811,6 +5811,78 @@
       "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
     },
     {
+      "id": "schedule/sponsors/admin-demo#logos-desktop",
+      "title": "A league administrator previews, accepts, allocates, deactivates and clears sponsor logos on the web, on a desktop and a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 3,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin-demo",
+      "file": "e2e/tests/schedule/sponsors/admin-demo.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin-demo#logos-phone",
+      "title": "A league administrator previews, accepts, allocates, deactivates and clears sponsor logos on the web, on a desktop and a phone",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 3,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin-demo",
+      "file": "e2e/tests/schedule/sponsors/admin-demo.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

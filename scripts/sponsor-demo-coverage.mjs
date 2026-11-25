@@ -50,11 +50,23 @@ const combinedMinimum = 95
 const tsSuites = [
   // The rules and the mock store (M1).
   'src/app/sponsors/sponsorRules.test.ts',
-  'src/app/sponsors/sponsorStore.test.ts'
+  'src/app/sponsors/sponsorStore.test.ts',
+  // The logos screen's pure parts and its address (M2).
+  'src/app/sponsors/overlayBoxes.test.ts',
+  'src/app/sponsors/sampleRecording.test.ts',
+  'src/app/sponsors/pickedFiles.test.ts',
+  'src/app/sponsors/routes.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
-const appSuites = []
+const appSuites = [
+  // The logos screen, its parts, the phone's notice and the app's route (M2).
+  'src/app/sponsors/SponsorSampleVideo.test.tsx',
+  'src/app/sponsors/SponsorFileDrop.test.tsx',
+  'src/app/sponsors/SponsorLogosScreen.test.tsx',
+  'src/app/sponsors/SponsorScreens.native.test.tsx',
+  'src/app/App.sponsors.test.tsx'
+]
 
 function argument(name) {
   const index = process.argv.indexOf(name)
