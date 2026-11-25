@@ -1,5 +1,10 @@
 import { nativePreviewRead } from './previewNativeRead'
 
+/**
+ * Reads through the same public-address-only reader as outgoing previews,
+ * so storage on localhost or a LAN address (a local dev server) leaves
+ * received cards' thumbnails empty on phones; other attachments still load.
+ */
 export async function readPreviewBlob(
   url: string,
   size: number,
