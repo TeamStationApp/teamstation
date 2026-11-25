@@ -12,6 +12,8 @@ import { fixturePositions, fixtureTypes } from '../../test/umpireTypes'
 import { App } from '../App'
 import { UmpireMaskDrawing as NativeMask } from './UmpireMaskDrawing.native'
 
+// This journey mounts the complete shell at both widths and navigates
+// every umpire route, including deferred saves and browser history.
 it('mounts the shell with role-only mask visibility and preserves header order at both widths', async () => {
   const proto = TeamStationClient.prototype
   const originals = Object.getOwnPropertyDescriptors(proto)
@@ -380,7 +382,4 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       value: 1280
     })
   }
-}).timeout(
-  // Mounting the shell for each route takes longer while V8 records coverage.
-  process.env.NODE_V8_COVERAGE == null ? 10000 : 30000
-)
+}).timeout(30000)

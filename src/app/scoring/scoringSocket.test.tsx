@@ -1811,8 +1811,8 @@ describe('a game swapped under the scoring screen on the socket', function () {
       phone?: Record<string, number>
       /** How long the swap notice stays up once drawn. */
       swapNoticeMs?: number
-      /** Each read of the game after the first takes this long. */
-      slowReadsMs?: number
+      /** Holds reads of the game after its initial mount. */
+      reopenRead?: Promise<void>
       /**
        * Once the held save is released, a read of the game's plays before
        * the game opens again never settles: a rebase's, on a stalled link.
@@ -1997,8 +1997,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
             }
           )
     client.game = async () => {
-      if (options.slowReadsMs != null && gameReads > 0)
-        await new Promise(resolve => setTimeout(resolve, options.slowReadsMs))
+      if (gameReads > 0 && options.reopenRead != null) await options.reopenRead
       const read = game
       if (options.swapAfterFirstRead === true && gameReads === 0) swap()
       gameReads++
@@ -2141,10 +2140,10 @@ describe('a game swapped under the scoring screen on the socket', function () {
   })
 
   /**
-   * The screen's `REQUEST_DEADLINE_MS` timers, held for the test to run;
+   * The screen's timers with this delay, held for the test to run;
    * every other timer runs as it would.
    */
-  function deadlineTimers(): {
+  function holdTimers(duration: number): {
     pending: () => number
     run: () => void
     restore: () => void
@@ -2154,7 +2153,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
     const held = new Map<number, () => void>()
     let next = 0
     globalThis.setTimeout = ((run: () => void, ms?: number) => {
-      if (ms !== REQUEST_DEADLINE_MS) return real(run, ms)
+      if (ms !== duration) return real(run, ms)
       const id = --next
       held.set(id, run)
       return id
@@ -2180,7 +2179,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
   }
 
   it('reopens with the notice when a save on its way is refused as stale, reading nothing for the closed session (9.harness-review.1)', async function () {
-    const timers = deadlineTimers()
+    const timers = holdTimers(REQUEST_DEADLINE_MS)
     try {
       const screen = await swappable({
         holdSaves: true,
@@ -2213,7 +2212,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
   })
 
   it('waits for a save on its way no longer than a request, then reopens and says its changes may not have been kept (9.harness-review.1)', async function () {
-    const timers = deadlineTimers()
+    const timers = holdTimers(REQUEST_DEADLINE_MS)
     try {
       const screen = await swappable({ holdSaves: true })
       await click('Called Strike')
@@ -2391,20 +2390,34 @@ describe('a game swapped under the scoring screen on the socket', function () {
   })
 
   it('keeps the notice up for its time once the slow reopen is drawn', async function () {
-    const screen = await swappable({ swapNoticeMs: 100, slowReadsMs: 300 })
-    screen.swap()
-    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 600))
+    let finishRead!: () => void
+    const reopenRead = new Promise<void>(resolve => {
+      finishRead = resolve
     })
-    await settle()
-    expect(screen.opens()).equals(2)
-    expect(document.body.textContent).includes('Home and away were swapped.')
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 300))
-    })
-    expect(document.body.textContent).not.includes(
-      'Home and away were swapped.'
-    )
+    const noticeMs = 1234
+    const timers = holdTimers(noticeMs)
+    try {
+      const screen = await swappable({ swapNoticeMs: noticeMs, reopenRead })
+      screen.swap()
+      await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+      expect(screen.opens()).equals(1)
+      expect(timers.pending()).equals(0)
+      await act(async () => {
+        finishRead()
+      })
+      await settle()
+      expect(screen.opens()).equals(2)
+      expect(document.body.textContent).includes('Home and away were swapped.')
+      expect(timers.pending()).equals(1)
+      await act(async () => {
+        timers.run()
+      })
+      expect(document.body.textContent).not.includes(
+        'Home and away were swapped.'
+      )
+    } finally {
+      finishRead()
+      timers.restore()
+    }
   })
 })
