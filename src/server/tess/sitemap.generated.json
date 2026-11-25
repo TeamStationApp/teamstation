@@ -1211,6 +1211,34 @@
       "settings": []
     },
     {
+      "name": "sponsorEventStream",
+      "path": "/groups/league/:id/sponsors/event-stream",
+      "title": "Sponsor event stream",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorFeatures",
+      "path": "/groups/league/:id/sponsors",
+      "title": "Sponsor features",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorLogos",
+      "path": "/groups/league/:id/sponsors/logos",
+      "title": "Sponsor logos",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorReels",
+      "path": "/groups/league/:id/sponsors/reels",
+      "title": "Sponsor reels",
+      "tabs": [],
+      "settings": []
+    },
+    {
       "name": "team",
       "path": "/teams/:teamId",
       "title": "Team",

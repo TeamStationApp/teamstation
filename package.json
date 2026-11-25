@@ -205,6 +205,7 @@
     "tlds": "1.261.0",
     "marked": "18.1.1",
     "maxmind": "5.0.8",
+    "mediabunny": "1.66.4",
     "node-media-server": "4.2.4",
     "nodemailer": "^10.2.1",
     "oidc-provider": "9.12.2",

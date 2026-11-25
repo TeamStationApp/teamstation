@@ -10,8 +10,9 @@
 //
 // The `.test.ts` suites in `tsSuites` run together under mocha; each
 // `.test.tsx` in `appSuites` is bundled alone, as the web build resolves it;
-// each `.native.test.tsx` in `nativeSuites` is bundled alone with the native
-// stand-ins `scripts/build-player-native-tests.mjs` uses; and each
+// each `.native.spec.tsx` in `nativeSuites` is bundled alone with the native
+// stand-ins `scripts/build-player-native-tests.mjs` uses and the sponsor
+// files' `.native` twins; and each
 // `*.integration.test.ts` in `integrationSuites` runs under mocha against
 // TS_TEST_DATABASE_URL and TS_TEST_REDIS_URL, after the scheduler and chat
 // crypto builds. Any failing suite fails the run, so it is also the work's
@@ -48,6 +49,7 @@ import ts from 'typescript'
 
 import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
+import { sponsorNativePlugin } from './sponsorNativePlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const unitMinimum = 90
@@ -65,14 +67,39 @@ const tsSuites = [
   'src/server/jsonBody.unit.test.ts',
   'src/server/openapi.test.ts',
   // The closed list of server modules errors may name.
-  'src/common/observability/errors.test.ts'
+  'src/common/observability/errors.test.ts',
+  // The admin screens' store, shrinking, picking and placing (M2).
+  'src/app/sponsors/apiSponsorStore.test.ts',
+  'src/app/sponsors/prepareMedia.test.ts',
+  'src/app/sponsors/prepareMedia.native.test.ts',
+  'src/app/sponsors/pickedFiles.test.ts',
+  'src/app/sponsors/pickedFiles.native.test.ts',
+  'src/app/sponsors/routes.test.ts',
+  'src/app/player/sponsors/overlayRects.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
-const appSuites = []
+const appSuites = [
+  // The admin screens on the API store, on the web (M2).
+  'src/app/sponsors/SponsorLogosScreen.test.tsx',
+  'src/app/sponsors/SponsorReelsScreen.test.tsx',
+  'src/app/sponsors/SponsorEventStreamScreen.test.tsx',
+  'src/app/sponsors/SponsorSampleVideo.test.tsx',
+  'src/app/sponsors/SponsorFileDrop.test.tsx',
+  'src/app/sponsors/SponsorFileDrop.native.test.tsx',
+  'src/app/sponsors/SponsoredScheduleRow.test.tsx',
+  'src/app/screens/GroupSettingsScreen.test.tsx',
+  'src/app/App.sponsors.test.tsx'
+]
 
-/** The `.native.test.tsx` suites, each bundled alone with the native stand-ins. */
-const nativeSuites = []
+/**
+ * The native specs, each bundled alone with the native stand-ins and the
+ * sponsor files' `.native` twins (`scripts/sponsorNativePlugin.mjs`).
+ */
+const nativeSuites = [
+  // The same screens as a phone resolves them (M2).
+  'src/app/sponsors/SponsorScreens.native.spec.tsx'
+]
 
 /**
  * The integration suites, each run alone against the test database. `grep`
@@ -200,7 +227,11 @@ async function bundle(suite, outfile, native) {
   await build({
     ...webSettings,
     plugins: native
-      ? [...webSettings.plugins, pagedListStandInPlugin()]
+      ? [
+          ...webSettings.plugins,
+          pagedListStandInPlugin(),
+          sponsorNativePlugin()
+        ]
       : webSettings.plugins,
     alias: {
       ...webSettings.alias,

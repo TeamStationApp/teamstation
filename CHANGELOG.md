@@ -9,6 +9,7 @@
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.
 - added: Node administrators can set an iOS App Store link to offer the app in Safari on iPhone and iPad
+- added: League admins set up Sponsor features from League Settings on the web, iOS and Android: sponsor video logos and reels with their credit pools, and sponsored Schedule rows, with uploads shrunk on the device
 - added: Every league holds sponsor credits (300 game logos, 1,000 reel broadcasts, 10 event stream slots), and league admins manage sponsor logos, reels and sponsored rows through the API
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with `--dry-run` to report first and `--delete-old` for the old copies afterwards

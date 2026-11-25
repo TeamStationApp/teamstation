@@ -6,7 +6,10 @@
 //
 //   npm run test.playerNative
 //
-// The specs import their `.native` file by its explicit path. The web bundle
+// Inside `src/app/sponsors/` a relative import resolves to its `.native` twin
+// (`sponsorNativePlugin.mjs`), so the sponsor screens' spec renders them as a
+// phone does. Elsewhere the specs import their `.native` file by its explicit
+// path. The web bundle
 // otherwise never resolves a `.native` file, and `npm test`'s one bundle
 // (`build-scoring-tests.mjs`, `*.test.tsx`) would resolve `react-native-video`
 // to its real web component, so these specs are kept out of it by their name.
@@ -21,6 +24,7 @@ import { build } from 'esbuild'
 
 import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
+import { sponsorNativePlugin } from './sponsorNativePlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 /** Every native spec, in a stable order. */
@@ -40,7 +44,11 @@ export async function buildNativeSpecs(outDir) {
     const outfile = resolve(outDir, `${index}.cjs`)
     await build({
       ...webSettings,
-      plugins: [...webSettings.plugins, pagedListStandInPlugin()],
+      plugins: [
+        ...webSettings.plugins,
+        pagedListStandInPlugin(),
+        sponsorNativePlugin()
+      ],
       alias: {
         ...webSettings.alias,
         'react-native-webview': './src/test/eventWebViewStub.tsx',

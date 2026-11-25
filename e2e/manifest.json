@@ -6166,6 +6166,656 @@
       "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
     },
     {
+      "id": "schedule/sponsors/admin#event-stream-desktop",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#event-stream-phone",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#logos-desktop",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#logos-ios-app",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#logos-phone",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-android-app",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-desktop",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-no-webcodecs",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-phone",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#settings-ios-app",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

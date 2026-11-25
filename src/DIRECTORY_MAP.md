@@ -11,7 +11,7 @@ Scoring: `app/scoring/`, `common/scoring/`, `server/scoring/`; game state/persis
 Scheduling: `server/schedule/`; automatic placement: `common/autoScheduler/`, `server/autoScheduler/`; scheduling setup: `server/scheduler/`.
 Identity/access: `server/auth/`, `server/access.ts`, `server/middleware/`, `server/users/`; API traffic budgets: `server/middleware/apiRateLimits.ts`, `server/valkey/apiBudgets.ts`, `server/observability/apiRateMetrics.ts`; accounts: `server/account/`; teams/rosters: `server/teams/`; groups/leagues: `server/groups/`; guardians: `server/people/`; joining: `server/invites/`.
 Chat: `app/chat/`, `server/chat/`, `common/chatCrypto/`, `common/chatLinkPreview.ts` (private preview payloads); offline/cache/outbox: `app/sync/`; shared Valkey connections: `server/valkey/`; sockets/change feed: `server/socket/`, `server/changeFeed/`.
-Umpires: `app/umpires/`, `server/umpires/`; sponsor features: `common/sponsors/`, `server/sponsors/`; scoreboards: `app/scoreboard/`, `common/scoreboard.ts`, `server/scoreboard/`.
+Umpires: `app/umpires/`, `server/umpires/`; sponsor features: `app/sponsors/`, `common/sponsors/`, `server/sponsors/`; scoreboards: `app/scoreboard/`, `common/scoreboard.ts`, `server/scoreboard/`.
 Statistics: `server/stats/`, `server/statsBuilder/`; read-only queries: `server/graphql/`.
 Video: `app/player/`, `app/stream/`, `server/media/`, `server/live/`, `server/ingest/`; recording orchestration: `server/director/`.
 Replay/narration: `app/replay/`, `common/replay/`, `server/replay/`; TV: `app/tv/`; ballpark rendering: `app/field/`.

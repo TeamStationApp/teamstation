@@ -208,6 +208,33 @@ if (serve) {
   await schedulerContext.watch()
 }
 
+/**
+ * Mediabunny, which shrinks sponsor reels in the browser on WebCodecs
+ * (`src/app/sponsors/prepareMedia.ts`): a module of its own beside the
+ * bundle (plain `mediabunny.js` under `--serve`), which the page imports only
+ * when an administrator picks a reel, so the app's bundle carries none of it.
+ * The bundle is told its address.
+ */
+for (const name of await readdirSafe(out))
+  if (/^mediabunny-[A-Z0-9]+\.js(\.map)?$/i.test(name))
+    await rm(`${out}/${name}`)
+const mediabunnyOptions = {
+  entryPoints: ['src/app/sponsors/mediabunnyModule.ts'],
+  bundle: true,
+  outdir: out,
+  entryNames: serve ? 'mediabunny' : 'mediabunny-[hash]',
+  format: 'esm',
+  target: ['es2021'],
+  minify: !serve,
+  sourcemap: true,
+  metafile: true
+}
+const mediabunnyBuild = await build(mediabunnyOptions)
+const mediabunnyFile = Object.keys(mediabunnyBuild.metafile.outputs).find(
+  name => name.endsWith('.js')
+)
+if (mediabunnyFile == null) throw new Error('Mediabunny build failed')
+
 const options = {
   ...webSettings,
   entryPoints: ['src/app/web/index.tsx'],
@@ -250,6 +277,7 @@ const options = {
       `/${path.basename(schedulerWorkerFile)}`
     ),
     TS_SCHEDULER_WASM_URL: JSON.stringify(`/${schedulerWasmFile}`),
+    TS_MEDIABUNNY_URL: JSON.stringify(`/${path.basename(mediabunnyFile)}`),
     TS_SQLITE_WASM_URL: JSON.stringify(`/${sqliteWasmFile}`),
     TS_SCHEDULER_WASM_INTEGRITY: JSON.stringify(
       integrityOf(schedulerWasmBytes)
