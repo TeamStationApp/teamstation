@@ -48,7 +48,7 @@ function state(overrides: DashboardOverrides = NO_OVERRIDES): object {
 }
 
 async function dashboard(
-  options: { load?: boolean; token?: string } = {}
+  options: { load?: boolean; token?: string; expectedActor?: string } = {}
 ): Promise<{
   sockets: ReturnType<typeof fakeSockets>
   clock: ReturnType<typeof fakeClock>
@@ -69,6 +69,7 @@ async function dashboard(
           gameId="g1"
           origin={{ protocol: 'https:', host: 'app.teamstation.app' }}
           onSignIn={next => signIns.push(next)}
+          expectedActor={options.expectedActor}
           token={options.token}
           WebSocketImpl={sockets.Impl}
           schedule={clock.schedule}
@@ -165,6 +166,13 @@ async function longPress(
 }
 
 describe('ScoreboardOverrideScreen', function () {
+  it('reconnects using the displayed development account', async () => {
+    const { sockets, clock } = await dashboard({ expectedActor: 'shown' })
+    sockets.latest().drop(1006)
+    clock.advance(RECONNECT_MS)
+    expect(sockets.latest().url).includes('/dashboard?expectedActor=shown')
+  })
+
   it('signs its socket in with the session it is given, as a phone must', async function () {
     const { sockets } = await dashboard({ load: false, token: 'tok_phone' })
     expect(sockets.latest().url).equals(
