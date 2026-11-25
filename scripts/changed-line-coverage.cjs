@@ -31,8 +31,9 @@ function istanbulCounts(entry) {
 }
 
 // Token ranges come from the parser, including contextual template/regex tokens.
-function forEachSourceToken(ts, parsed, work) {
+function forEachSourceToken(ts, parsed, work, intersects) {
   const visit = node => {
+    if (intersects && !intersects(node.pos, node.end)) return
     if (
       node.kind >= ts.SyntaxKind.FirstJSDocNode &&
       node.kind <= ts.SyntaxKind.LastJSDocNode
@@ -47,6 +48,16 @@ function forEachSourceToken(ts, parsed, work) {
 
 // Structural punctuation and plain parameter bindings do not execute alone.
 function nonExecutingToken(ts, node, keepBindings = false) {
+  // A JSX closing delimiter and the keyword introducing a type assertion
+  // are erased. The element, its properties and the asserted value still run.
+  if (ts.isAsExpression(node.parent) && node.kind === ts.SyntaxKind.AsKeyword)
+    return true
+  if (
+    ts.isJsxSelfClosingElement(node.parent) &&
+    (node.kind === ts.SyntaxKind.SlashToken ||
+      node.kind === ts.SyntaxKind.GreaterThanToken)
+  )
+    return true
   // A plain parameter binding has no independent executable expression.
   // Defaults, rest allocation and destructuring retain their runtime tokens.
   if (
@@ -75,35 +86,40 @@ function nonExecutingToken(ts, node, keepBindings = false) {
 
 // Mapping boundary segments can point into whitespace or past an expression.
 // Only actual non-delimiter tokens may contribute an execution count.
-function executionTokens(path, source) {
+function executionTokens(path, source, intersects) {
   const ts = require('typescript')
   const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
   const mask = new Uint8Array(source.length)
   const ownerAt = new Uint32Array(source.length)
   const owners = [{ start: 0, end: source.length, body: 0 }]
   const ownerIds = new Map()
-  forEachSourceToken(ts, parsed, node => {
-    if (nonExecutingToken(ts, node, true)) return
-    const start = node.getStart(parsed)
-    const end = node.getEnd()
-    mask.fill(1, start, end)
-    let owner = node.parent
-    while (owner != null && !(ts.isFunctionLike(owner) && owner.body != null))
-      owner = owner.parent
-    if (owner != null) {
-      let id = ownerIds.get(owner)
-      if (id == null) {
-        id = owners.length
-        ownerIds.set(owner, id)
-        owners.push({
-          start: owner.getStart(parsed),
-          end: owner.end,
-          body: owner.body.getStart(parsed)
-        })
+  forEachSourceToken(
+    ts,
+    parsed,
+    node => {
+      if (nonExecutingToken(ts, node, true)) return
+      const start = node.getStart(parsed)
+      const end = node.getEnd()
+      mask.fill(1, start, end)
+      let owner = node.parent
+      while (owner != null && !(ts.isFunctionLike(owner) && owner.body != null))
+        owner = owner.parent
+      if (owner != null) {
+        let id = ownerIds.get(owner)
+        if (id == null) {
+          id = owners.length
+          ownerIds.set(owner, id)
+          owners.push({
+            start: owner.getStart(parsed),
+            end: owner.end,
+            body: owner.body.getStart(parsed)
+          })
+        }
+        ownerAt.fill(id, start, end)
       }
-      ownerAt.fill(id, start, end)
-    }
-  })
+    },
+    intersects
+  )
   return {
     mask,
     ownerAt,
@@ -162,6 +178,8 @@ function withoutTypeOnlyLines(path, source, counts) {
       (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
       ts.isInterfaceDeclaration(node) ||
       ts.isTypeAliasDeclaration(node) ||
+      (ts.isVariableStatement(node) &&
+        (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Ambient) !== 0) ||
       (ts.isPropertyDeclaration(node) &&
         node.initializer == null &&
         !ts.isComputedPropertyName(node.name) &&
@@ -220,14 +238,50 @@ function withoutTriviaLines(path, source, counts) {
 
 // Every scored line needs a real mapping and V8 counter, including zero counts.
 function mappedV8LineCounts(source, map, scripts, required, options = {}) {
-  const { SourceMap } = require('node:module')
-  const sourceMap = new SourceMap(map)
-  const generated = executionTokens('generated.js', source)
+  const { TraceMap, decodedMappings } = require('@jridgewell/trace-mapping')
+  const mappings = decodedMappings(new TraceMap(map))
+  const segments = []
+  let offset = 0
+  for (const [line, text] of source.split('\n').entries()) {
+    const row = mappings[line] ?? []
+    for (const [
+      i,
+      [column, index, originalLine, originalColumn]
+    ] of row.entries()) {
+      const file = map.sources[index]
+      if (!required[file]?.has(originalLine + 1)) continue
+      const end = row[i + 1]?.[0] ?? text.length
+      if (column >= end || (options.linePreserving && originalLine !== line))
+        continue
+      segments.push({
+        start: offset + column,
+        end: offset + end,
+        file,
+        originalLine,
+        originalColumn
+      })
+    }
+    offset += text.length + 1
+  }
+  // Prune unrelated syntax subtrees when a small change is measured in a
+  // production bundle. Source-map segments are sorted by generated offset.
+  const intersects = (start, end) => {
+    let lo = 0
+    let hi = segments.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (segments[mid].end <= start) lo = mid + 1
+      else hi = mid
+    }
+    return lo < segments.length && segments[lo].start < end
+  }
+  const generated = executionTokens('generated.js', source, intersects)
   const originals = Object.fromEntries(
-    map.sources.map((file, index) => [
-      file,
-      executionTokens(file, map.sourcesContent[index])
-    ])
+    map.sources.flatMap((file, index) =>
+      required[file] && !options.linePreserving
+        ? [[file, executionTokens(file, map.sourcesContent[index])]]
+        : []
+    )
   )
   const counts = Object.fromEntries(
     Object.keys(required).map(file => [file, {}])
@@ -260,40 +314,34 @@ function mappedV8LineCounts(source, map, scripts, required, options = {}) {
     ownerRanges[index].set(id, ranges)
     return ranges
   }
-  let offset = 0
-  for (const [line, text] of source.split('\n').entries()) {
-    for (let column = 0; column < text.length; column++) {
-      if (!generated.mask[offset + column]) continue
-      const entry = sourceMap.findEntry(line, column)
-      const originalLine = entry.originalLine + 1
-      const wanted = required[entry.originalSource]
-      const original = originals[entry.originalSource]
-      // Sucrase may map a whole line to its leading indentation. Resolve
-      // that prefix to its first token; never move an end-of-line boundary.
-      const originalColumn = Math.max(
-        entry.originalColumn,
-        original?.indents[entry.originalLine] ?? -1
-      )
-      if (
-        entry.generatedLine !== line ||
-        wanted == null ||
-        !wanted.has(originalLine) ||
-        (options.linePreserving
-          ? entry.originalLine !== line
-          : original?.mask[
-              original.starts[entry.originalLine] + originalColumn
-            ] !== 1)
-      )
-        continue
-      const point = offset + column
+  for (const {
+    start,
+    end,
+    file,
+    originalLine: mappedLine,
+    originalColumn
+  } of segments) {
+    const originalLine = mappedLine + 1
+    const original = originals[file]
+    if (
+      !options.linePreserving &&
+      original.mask[
+        original.starts[mappedLine] +
+          Math.max(originalColumn, original.indents[mappedLine])
+      ] !== 1
+    )
+      continue
+    for (let point = start; point < end; point++) {
+      if (!generated.mask[point]) continue
       for (const index of scripts.keys()) {
         // Require this token's own function record. Lazy nested functions
         // may be absent only when an explicit enclosing zero range proves
         // their whole body did not run. A positive wrapper is insufficient.
         const ranges = rangesOf(index, generated.ownerAt[point])
+        if (ranges.length === 0 && options.partial) continue
         if (ranges.length === 0)
           throw new Error(
-            `Mapped V8 owning-function counter missing for ${entry.originalSource}:${originalLine}`
+            `Mapped V8 owning-function counter missing for ${file}:${originalLine}`
           )
         const range = ranges
           .filter(r => r.startOffset <= point && point < r.endOffset)
@@ -302,14 +350,14 @@ function mappedV8LineCounts(source, map, scripts, required, options = {}) {
               a.endOffset - a.startOffset - (b.endOffset - b.startOffset)
           )[0]
         if (range != null && Number.isFinite(range.count) && range.count >= 0)
-          counts[entry.originalSource][originalLine] = Math.max(
-            counts[entry.originalSource][originalLine] ?? 0,
+          counts[file][originalLine] = Math.max(
+            counts[file][originalLine] ?? 0,
             range.count
           )
       }
     }
-    offset += text.length + 1
   }
+  if (options.partial) return counts
   for (const [file, lines] of Object.entries(required))
     for (const line of lines)
       if (counts[file][line] == null)

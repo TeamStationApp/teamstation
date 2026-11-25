@@ -20,6 +20,20 @@ const {
 } = require('../../scripts/changed-line-coverage.cjs')
 
 describe('changed executable line coverage gate', function () {
+  it('measures JSX props and cast values while omitting their erased syntax', () => {
+    const source = [
+      'const element = <Widget',
+      '  prop={getValue()}',
+      '/>',
+      'render({',
+      '  element',
+      '} as unknown as Parameters<typeof render>[0])'
+    ].join('\n')
+    expect([...executableLines('component.tsx', source)]).deep.equals([
+      1, 2, 4, 5
+    ])
+  })
+
   it('requires source expressions even when a report omits their statements', function () {
     const source = [
       'import { URL } from "url-parser"',
@@ -27,6 +41,7 @@ describe('changed executable line coverage gate', function () {
       '// The exported parser executes even without a reported statement.',
       'export const CacheUrl: Parser = URL',
       'export const ready = true',
+      'declare const injectedAtBuild: string',
       ''
     ].join('\n')
     const required = executableLines('source.ts', source)

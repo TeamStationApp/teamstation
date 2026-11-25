@@ -6,9 +6,20 @@ import {
   type SearchSocketOptions,
   searchSocketUrl
 } from '../../common/searchSocket'
+import { socketForActor } from '../../common/webPasswordLink'
 
 /** Makes a search socket: a real one, or a test's. */
 export type SearchSocketFactory = (options: SearchSocketOptions) => SearchSocket
+
+export function searchSocketForActor(
+  factory: SearchSocketFactory,
+  actor?: string
+): SearchSocketFactory {
+  return actor == null
+    ? factory
+    : options =>
+        factory({ ...options, url: socketForActor(options.url, actor) })
+}
 
 /** The app's own: a real socket. */
 export const openSearchSocket: SearchSocketFactory = options =>

@@ -133,6 +133,9 @@ export interface WebSession {
   m: any
   /** For reading what maestro-d cannot, never for acting on the UI. */
   page: BrowserPage
+  /** All tabs of this browser, including the original one. */
+  pages: BrowserPage[]
+  openTab: (label: string) => Promise<BrowserPage>
   deviceClass: string
   /** Emulates another window size, keeping the page and what it holds. */
   resize: (size: { width: number; height: number }) => Promise<void>
