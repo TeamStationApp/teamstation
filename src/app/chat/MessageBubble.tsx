@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type GestureResponderEvent,
   Image,
@@ -311,12 +311,16 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
     ? lstrings.chat_you
     : (message.senderName ?? lstrings.chat_former_member)
   const said = statusText(message)
-  const previewAddress =
-    message.preview != null &&
-    said == null &&
-    firstPreviewUrl(message.body) === message.preview.url
-      ? chatLinkSpans(message.body)[0]?.text
-      : undefined
+  const previewUrl = message.preview?.url
+  const previewAddress = useMemo(
+    () =>
+      previewUrl != null &&
+      said == null &&
+      firstPreviewUrl(message.body) === previewUrl
+        ? chatLinkSpans(message.body)[0]?.text
+        : undefined,
+    [message.body, previewUrl, said]
+  )
   const read = message.mine
     ? readLine(message, conversation, members, lstrings.chat_former_member)
     : undefined
