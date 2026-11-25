@@ -4,19 +4,19 @@ import { StyleSheet, Text, View } from 'react-native'
 import {
   EXIT_WIPE_MS,
   type ExitReading,
-  exitReturnAt
+  exitWipes
 } from '../../common/scoreboard'
 import type { BoardClock } from './boardClock'
 import { scoreboardTheme as theme } from './scoreboardTheme'
 
 /** 0 is stats, 1 is exit speed. The return runs from 2 to 3. */
 function wipeAt(reading: ExitReading | undefined, time: number | null): number {
-  if (reading == null || time == null || time < reading.startedAt) return 0
-  const elapsed = time - reading.startedAt
-  if (elapsed < EXIT_WIPE_MS) return elapsed / EXIT_WIPE_MS
-  const returning = time - exitReturnAt(reading)
-  if (returning < 0) return 1
-  return returning < EXIT_WIPE_MS ? 2 + returning / EXIT_WIPE_MS : 0
+  if (reading == null || time == null) return 0
+  const [entry, back] = exitWipes(reading)
+  if (time < entry.from) return 0
+  if (time < entry.to) return (time - entry.from) / EXIT_WIPE_MS
+  if (time < back.from) return 1
+  return time < back.to ? 2 + (time - back.from) / EXIT_WIPE_MS : 0
 }
 
 const width = theme.rem(9.5)

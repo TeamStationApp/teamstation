@@ -63,6 +63,20 @@ export function exitReturnAt(reading: ExitReading): number {
 }
 
 /**
+ * The entry wipe and the return wipe, each from its start to its end on the
+ * server's wall clock: what the batter row draws and what wakes it.
+ */
+export function exitWipes(
+  reading: ExitReading
+): [{ from: number; to: number }, { from: number; to: number }] {
+  const back = exitReturnAt(reading)
+  return [
+    { from: reading.startedAt, to: reading.startedAt + EXIT_WIPE_MS },
+    { from: back, to: back + EXIT_WIPE_MS }
+  ]
+}
+
+/**
  * The reading after a hit of `mph` at `at`. Live writes apply the same rule
  * in the scoreboard script (server/scoreboard/scoreboardScript.ts); the
  * store's integration test runs one sequence through both.

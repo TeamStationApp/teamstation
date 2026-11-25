@@ -10,6 +10,7 @@ import {
   composeScoreboard,
   type DashboardOverrides,
   exitReturnAt,
+  exitWipes,
   mergeScoreboard,
   nextExitReading,
   NO_OVERRIDES,
@@ -282,6 +283,14 @@ describe('scoreboard exit readings', () => {
     expect(held.startedAt).equals(1000)
     expect(exitReturnAt(held)).equals(11499)
     expect(nextExitReading(held, 80, 11499).startedAt).equals(11499)
+  })
+
+  it('times both wipes from the reading: entry from its start, return from its expiry', () => {
+    const held = nextExitReading(nextExitReading(undefined, 55, 1000), 56, 3000)
+    expect(exitWipes(held)).deep.equals([
+      { from: 1000, to: 1500 },
+      { from: 8000, to: 8500 }
+    ])
   })
 
   it('keeps display timing read-only and accepts a legacy viewer state', () => {

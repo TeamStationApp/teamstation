@@ -1,10 +1,6 @@
 import { useMemo } from 'react'
 
-import {
-  EXIT_WIPE_MS,
-  type ExitReading,
-  exitReturnAt
-} from '../../common/scoreboard'
+import { type ExitReading, exitWipes } from '../../common/scoreboard'
 
 /** The wall time of the displayed picture, or of a live socket message. */
 export interface BoardClock {
@@ -46,18 +42,16 @@ export function liveBoardClock(
   return {
     now,
     subscribe(listener) {
-      const returns = exitReturnAt(reading)
+      const [entry, back] = exitWipes(reading)
       let frame: number | undefined
       let timer: ReturnType<typeof setTimeout> | undefined
       const tick = (): void => {
         const time = now()
         listener()
-        if (time < reading.startedAt)
-          timer = setTimeout(tick, reading.startedAt - time)
-        else if (time >= reading.startedAt + EXIT_WIPE_MS && time < returns)
-          timer = setTimeout(tick, returns - time)
-        else if (time < returns + EXIT_WIPE_MS)
-          frame = requestAnimationFrame(tick)
+        if (time < entry.from) timer = setTimeout(tick, entry.from - time)
+        else if (time >= entry.to && time < back.from)
+          timer = setTimeout(tick, back.from - time)
+        else if (time < back.to) frame = requestAnimationFrame(tick)
       }
       tick()
       return () => {

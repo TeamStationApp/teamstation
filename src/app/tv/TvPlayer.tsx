@@ -36,11 +36,7 @@ import {
   battingTotals,
   pitchingTotals
 } from '../../common/replay/replayBoxScore'
-import {
-  EXIT_WIPE_MS,
-  exitReturnAt,
-  SCOREBOARD_BOARD_SIZE
-} from '../../common/scoreboard'
+import { exitWipes, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
 import { livePlaybackRetryDelay } from '../player/liveRejoin'
@@ -907,10 +903,9 @@ export function TvPlayer({
     [board?.exitReading, upcoming?.state.exitReading].some(
       reading =>
         reading != null &&
-        ((picture < reading.startedAt + EXIT_WIPE_MS &&
-          picture + lookAhead >= reading.startedAt) ||
-          (picture < exitReturnAt(reading) + EXIT_WIPE_MS &&
-            picture + lookAhead >= exitReturnAt(reading)))
+        exitWipes(reading).some(
+          wipe => picture < wipe.to && picture + lookAhead >= wipe.from
+        )
     )
   const { box, message: statsMessage } = statisticsAt(stats, wall)
   const line =
