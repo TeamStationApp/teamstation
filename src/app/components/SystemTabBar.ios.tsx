@@ -22,8 +22,8 @@ export function SystemTabBar(
 ): React.ReactElement {
   const theme = useTheme()
   const { bottom } = useInsets()
-  // The banner stops at the safe area. UIKit's floating material normally
-  // extends below that edge, so lift that part clear when the banner appears.
+  // The banner starts at the resting material's lower edge, so the host rises
+  // by the banner's presented height each frame and the glass rides on it.
   const banner = props.bannerHeight ?? 0
   const materialGap = floatingNavBottom('ios', NAV_BOTTOM_GAP, bottom)
   const raisedBottom =
