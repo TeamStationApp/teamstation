@@ -27,7 +27,9 @@ function phone(visible: string[]): ReturnType<typeof fakeDevice> {
         throw new Error('not shown')
       }
     },
-    hierarchy: SLIDER
+    hierarchy: visible.includes('Name this camera angle')
+      ? { type: 'EditText', text: 'PhoneA' }
+      : SLIDER
   })
 }
 
@@ -47,10 +49,13 @@ describe('a publishing phone', function () {
   it('names a new camera for its angle and starts the stream', async function () {
     const { device, calls } = phone([
       'Name this camera angle',
+      '^PhoneA$',
       'broadcast-button'
     ])
     await publisher(device).start()
-    const acts = calls.filter(call => call[0] !== 'assertVisible')
+    const acts = calls.filter(
+      call => !['assertVisible', 'hierarchy'].includes(call[0])
+    )
     expect(acts).deep.equals([
       ['launchApp', { appId: 'app.teamstation.develop', stopApp: true }],
       ['openLink', { link: 'teamstation://games/g1?tab=watch' }],
@@ -61,10 +66,68 @@ describe('a publishing phone', function () {
     ])
   })
 
+  it('retypes a truncated name and checks the value on the iOS input', async function () {
+    let value = ''
+    let retried = false
+    const { device, calls } = fakeDevice({
+      hierarchy: {
+        type: 'TextField',
+        id: 'Camera angle',
+        text: 'Camera angle'
+      },
+      inputText: ({ text }: { text: string }) => {
+        if (retried || text !== 'h') value += text
+      },
+      eraseText: () => {
+        value = ''
+        retried = true
+      },
+      assertVisible: ({ text, id }: { text?: string; id?: string }) => {
+        if (
+          ['Camera angle', 'camera-name'].includes(id ?? '') &&
+          text === `^${value}$`
+        )
+          return
+        if (text === 'Name this camera angle' || id === 'broadcast-button')
+          return
+        throw new Error('not shown')
+      }
+    })
+    await publisher(device).start()
+    expect(value).equals('PhoneA')
+    expect(calls.filter(([name]) => name === 'eraseText')).length(1)
+  })
+
+  it('stops before recording when the field still has the wrong name', async function () {
+    const { device, calls } = fakeDevice({
+      hierarchy: { type: 'EditText', text: 'PneA' }
+    })
+    const failure = await publisher(device)
+      .start()
+      .catch((error: unknown) => (error as Error).message)
+    expect(failure).equals(
+      'PhoneA: the camera name field did not show the requested angle'
+    )
+    expect(calls.filter(([name]) => name === 'tapOn')).deep.equals([
+      ['tapOn', { text: 'Record Video' }]
+    ])
+  })
+
   it('reopens a camera that already has its name', async function () {
-    const { device, calls } = phone(['broadcast-button'])
+    const { device, calls } = phone(['broadcast-button', '^PhoneA$'])
     await publisher(device).start()
     expect(calls.some(call => call[0] === 'inputText')).equals(false)
+  })
+
+  it('does not broadcast an already named camera under the wrong label', async function () {
+    const { device, calls } = phone(['broadcast-button', '^PneA$'])
+    const failure = await publisher(device)
+      .start()
+      .catch((error: unknown) => (error as Error).message)
+    expect(failure).equals(
+      'PhoneA: the camera preview showed a different angle'
+    )
+    expect(calls).not.deep.include(['tapOn', { id: 'broadcast-button' }])
   })
 
   it('says when the camera never opens, or the stream never starts', async function () {
@@ -74,7 +137,11 @@ describe('a publishing phone', function () {
         .start()
         .catch((e: unknown) => (e as Error).message)
     ).equals('PhoneA: the camera screen did not open')
-    const idle = phone(['broadcast-button', 'Press record to start stream'])
+    const idle = phone([
+      'broadcast-button',
+      '^PhoneA$',
+      'Press record to start stream'
+    ])
     expect(
       await publisher(idle.device)
         .start()

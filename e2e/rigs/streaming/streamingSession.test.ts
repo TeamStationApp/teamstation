@@ -417,6 +417,32 @@ describe('the device kit', function () {
 })
 
 describe("the TV's kit", function () {
+  it('restarts the leased TV with its pairing intact for each live join', async function () {
+    const { ctx } = context()
+    const { device, calls } = fakeDevice()
+    const attaches: string[] = []
+    ctx.attach = async role => {
+      attaches.push(role)
+      return awaitable(device)
+    }
+    const { tv } = tvKit(
+      ctx,
+      { ...SETTINGS, tvJoinSteps: ['watchLive'] },
+      async () => ({ stdout: '' })
+    )
+    for (let i = 0; i < 2; i++) {
+      expect(
+        await tv.join().catch((error: unknown) => (error as Error).message)
+      ).equals('tv: refreshed home did not show Watch Live')
+    }
+    expect(attaches).deep.equals(['tv'])
+    const restart = [
+      ['stopApp', { appId: TV_APP }],
+      ['launchApp', { appId: TV_APP, stopApp: false }]
+    ]
+    expect(calls).deep.equals([...restart, ...restart])
+  })
+
   it('drives the remote with the TV named, and captures its picture over NDI', async function () {
     const { ctx, dir } = context()
     const calls: Array<{

@@ -110,6 +110,8 @@ export interface TvOptions {
   appName: string
   /** From the app's home to the game's multi-camera player, as remote steps. */
   joinSteps: string[]
+  /** Refresh the signed-in home before joining a newly published live game. */
+  restartForLive?: () => Promise<void>
   sleep?: Sleep
   frameGapMs?: number
   /** Clicks of the transport across the whole bar. */
@@ -186,6 +188,32 @@ export class TvSurface implements SoakSurfaceDriver {
   }
 
   async join(): Promise<void> {
+    if (this.options.restartForLive != null) {
+      await this.options.restartForLive()
+      // Home may have been cached before any publisher started. Wait for the
+      // live button itself; the header's Search button can have initial focus.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const elements = await this.dump(['wait:1'])
+        const watch = elements.find(
+          element =>
+            element.identifier === 'tv-watch-game' &&
+            element.label?.includes('Watch Live') === true
+        )
+        if (watch?.label == null) continue
+        await this.focusAndSelect(watch.label, true)
+        for (let check = 0; check < 10; check++) {
+          const player = await this.dump(['wait:1'])
+          if (
+            player.some(
+              element => element.identifier?.startsWith('tv-angle-') === true
+            )
+          )
+            return
+        }
+        throw new Error('tv: Watch Live did not open any camera tiles')
+      }
+      throw new Error('tv: refreshed home did not show Watch Live')
+    }
     await this.options.remote([
       `app:${this.options.bundleId}`,
       'wait:3',
@@ -240,7 +268,8 @@ export class TvSurface implements SoakSurfaceDriver {
   async exitAndReenter(waitMs = 10000): Promise<void> {
     await this.options.remote(['menu'])
     await this.sleep(waitMs)
-    await this.focusAndSelect(LABELS.openAngles)
+    if (this.options.restartForLive != null) await this.join()
+    else await this.focusAndSelect(LABELS.openAngles)
   }
 
   /** Home, then the app again from its icon, then back into the game's player. */

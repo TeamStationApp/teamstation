@@ -548,12 +548,27 @@ export function tvKit(
     async (command, args) => await exec(command, args, {}),
     path => readFileSync(path)
   )
+  let liveDevice: Promise<MaestroDevice> | undefined
+  const watchLive =
+    settings.tvJoinSteps.length === 1 && settings.tvJoinSteps[0] === 'watchLive'
   const tv = new TvSurface({
     remote,
     capture,
     bundleId: TV_APP,
     appName: 'TeamStation',
-    joinSteps: settings.tvJoinSteps
+    joinSteps: settings.tvJoinSteps,
+    restartForLive: watchLive
+      ? async () => {
+          liveDevice ??= ctx.attach('tv', {
+            platform: 'ios',
+            appId: TV_APP,
+            noAppInstall: true
+          })
+          const device = await liveDevice
+          await device.stopApp({ appId: TV_APP })
+          await device.launchApp({ appId: TV_APP, stopApp: false })
+        }
+      : undefined
   })
   return { tv, remote, capture }
 }
