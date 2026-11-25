@@ -3,11 +3,13 @@ import { describe, it } from 'mocha'
 
 import {
   advancePlayer,
+  advancePlayerFrame,
   BASES,
   CATCHER_SPOT,
   catcherSpot,
   clampToField,
   createPlayers,
+  type FieldPlayer,
   locomotionSpeed,
   nextBase,
   setDestination
@@ -93,6 +95,92 @@ describe('field locomotion', function () {
     expect(
       Math.hypot(a.position.x - b.position.x, a.position.z - b.position.z)
     ).lessThan(0.02)
+  })
+  it('follows a commanded route at both 60 and 120 Hz', function () {
+    function runRoute(hz: number): number {
+      const runner = createPlayers()[9]
+      runner.position = { x: 0, z: 0 }
+      runner.target = { x: 75, z: 0 }
+      const finish = { x: 75, z: 24 }
+      runner.motion = {
+        id: 'turn-at-first',
+        generation: 1,
+        index: 0,
+        reported: false,
+        waypoints: [runner.target, finish]
+      }
+      let completions = 0
+      let halfwayX = 0
+      for (let frame = 1; frame <= 6 * hz; frame++) {
+        if (advancePlayerFrame(runner, 1 / hz, frame > 1)) completions++
+        if (frame === hz / 2) {
+          halfwayX = runner.position.x
+          expect(halfwayX).greaterThan(0).and.lessThan(75)
+          expect(runner.position.z).equals(0)
+        }
+      }
+      expect(runner.position).deep.equals(finish)
+      expect(completions).equals(1)
+      return halfwayX
+    }
+    expect(runRoute(120)).closeTo(runRoute(60), 0.02)
+  })
+  it('uses active time across frames and follows each waypoint in order', function () {
+    function runner(): FieldPlayer {
+      const player = createPlayers()[9]
+      player.position = { x: 0, z: 0 }
+      player.target = { x: 18, z: 0 }
+      player.motion = {
+        id: 'round-first',
+        generation: 3,
+        index: 0,
+        reported: false,
+        waypoints: [player.target, { x: 18, z: 12 }]
+      }
+      return player
+    }
+    const slow = runner()
+    const ordinary = runner()
+    for (const invalid of [-1, NaN, Infinity]) {
+      expect(advancePlayerFrame(slow, invalid, true)).equals(false)
+      expect(slow.position).deep.equals({ x: 0, z: 0 })
+    }
+    advancePlayerFrame(slow, 30, false)
+    advancePlayer(ordinary, 0.05)
+    expect(slow.position).deep.equals(ordinary.position)
+    advancePlayerFrame(slow, 0.185, true)
+    for (const dt of [0.05, 0.05, 0.05, 0.035]) advancePlayer(ordinary, dt)
+    expect(slow.position.x).closeTo(ordinary.position.x, 1e-8)
+    expect(slow.position.z).equals(0)
+    expect(advancePlayerFrame(slow, 2.1, true)).equals(true)
+    expect(slow.position).deep.equals({ x: 18, z: 12 })
+    expect(slow.stride / 1.85).closeTo(30, 0.04)
+    expect(slow.motion!.index).equals(1)
+    expect(advancePlayerFrame(slow, Number.MAX_VALUE, true)).equals(false)
+    const held = runner()
+    held.dragging = true
+    advancePlayerFrame(held, 2.1, false)
+    expect(held.position).deep.equals({ x: 0, z: 0 })
+    held.dragging = false
+    for (const index of [0, 1]) {
+      held.motion!.index = index
+      held.pose = { windup: 0, swing: 0, catch: 0, throwSide: 'R', run: 1 }
+      // The presentation keeps the render target at the current pose.
+      held.position = { x: 7, z: 0 }
+      held.target = { ...held.position }
+      expect(advancePlayerFrame(held, 2.1, false)).equals(false)
+      expect(held.position).deep.equals({ x: 7, z: 0 })
+      expect(held.motion!.index).equals(index)
+      expect(held.motion!.reported).equals(false)
+    }
+    delete held.pose
+    expect(advancePlayerFrame(held, 0.01, false)).equals(false)
+    expect(held.target).deep.equals({ x: 18, z: 12 })
+    // The render target is a copy: writing it leaves the stored route alone.
+    held.target.x = 25
+    expect(held.motion!.waypoints[1]).deep.equals({ x: 18, z: 12 })
+    expect(advancePlayerFrame(held, 2.1, true)).equals(true)
+    expect(held.position).deep.equals({ x: 18, z: 12 })
   })
   it('caps a resumed frame and bounds off-field pointer destinations', function () {
     const player = createPlayers()[0]

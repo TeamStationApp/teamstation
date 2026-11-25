@@ -63,8 +63,17 @@ import { TERRAIN } from './terrain'
 import { trajectoryGrip } from './trajectoryGrip'
 import { guideBearing } from './trajectoryGuide'
 
+export type FieldSceneProps = FieldCanvasProps & {
+  /**
+   * The web canvas, which pauses the scene while its page is hidden, lets a
+   * continuing commanded movement use the whole elapsed frame time. Native
+   * keeps the bounded step of every frame.
+   */
+  activeMotionTime?: boolean
+}
+
 /** Scene is renderer-independent. Only the canvas adapter owns browser APIs. */
-export function FieldScene(props: FieldCanvasProps): React.ReactElement {
+export function FieldScene(props: FieldSceneProps): React.ReactElement {
   const {
     players,
     onSelect,
@@ -989,6 +998,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           player={player}
           fabric={textures.cloth}
           onMovementComplete={props.onMovementComplete}
+          activeMotionTime={props.activeMotionTime}
           paused={props.presentationPaused}
           selected={
             preview?.id === player.id &&

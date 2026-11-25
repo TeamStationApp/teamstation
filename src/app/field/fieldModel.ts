@@ -178,13 +178,18 @@ export function locomotionSpeed(
     SCORING_SPEED
   )
 }
-/** Frame-rate independent locomotion; cap elapsed time after a backgrounded tab. */
+const MAX_STEP_SECONDS = 0.05
+
+/**
+ * One locomotion step of at most MAX_STEP_SECONDS. A longer elapsed time,
+ * such as the first frame after idle, is capped.
+ */
 export function advancePlayer(player: FieldPlayer, elapsed: number): void {
   if (player.dragging === true) {
     player.speed = 0
     return
   }
-  const dt = Math.max(0, Math.min(elapsed, 0.05))
+  const dt = Math.max(0, Math.min(elapsed, MAX_STEP_SECONDS))
   const dx = player.target.x - player.position.x
   const dz = player.target.z - player.position.z
   const distance = Math.hypot(dx, dz)
@@ -216,6 +221,61 @@ export function advancePlayer(player: FieldPlayer, elapsed: number): void {
   player.speed = dt > 0 ? step / dt : 0
   player.stride += step * 1.85
 }
+
+/** The unfinished command this player's own locomotion advances, if any. */
+export function advancingMotion(
+  player: FieldPlayer
+): FieldPlayer['motion'] | undefined {
+  const motion = player.motion
+  return player.pose?.run == null &&
+    player.dragging !== true &&
+    motion != null &&
+    !motion.reported
+    ? motion
+    : undefined
+}
+
+/** Move along this command's waypoints. Report its final arrival once. */
+export function advancePlayerFrame(
+  player: FieldPlayer,
+  elapsed: number,
+  continuingMotion: boolean
+): boolean {
+  if (player.pose?.run != null) return false
+  const motion = advancingMotion(player)
+  if (motion == null) {
+    advancePlayer(player, Number.isFinite(elapsed) ? elapsed : 0)
+    return false
+  }
+  // A presentation may have set the render target to its last pose. The
+  // command still owns its original waypoint when locomotion resumes.
+  player.target = { ...motion.waypoints[motion.index] }
+  // The ordinary first step excludes idle time. Subsequent active frames
+  // can span several steps; bound the work even for an abnormally long gap.
+  let remaining = Number.isFinite(elapsed)
+    ? Math.max(0, Math.min(elapsed, continuingMotion ? 10 : MAX_STEP_SECONDS))
+    : 0
+  do {
+    const step = Math.min(remaining, MAX_STEP_SECONDS)
+    advancePlayer(player, step)
+    if (
+      Math.hypot(
+        player.position.x - player.target.x,
+        player.position.z - player.target.z
+      ) < 0.04
+    ) {
+      if (motion.index + 1 >= motion.waypoints.length) {
+        motion.reported = true
+        return true
+      }
+      motion.index++
+      player.target = { ...motion.waypoints[motion.index] }
+    }
+    remaining -= step
+  } while (remaining > 0)
+  return false
+}
+
 export function nextBase(player: FieldPlayer): GroundPoint {
   if (player.runnerBase != null)
     return { ...BASES[(player.runnerBase + 1) % BASES.length] }

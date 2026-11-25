@@ -11,7 +11,11 @@ import { Color, type Group, type Material, Mesh, type Texture } from 'three'
 
 import { AthleteRig } from './AthleteRig'
 import { BattingPose, DroppedBat } from './BattingPose'
-import { advancePlayer, type FieldPlayer } from './fieldModel'
+import {
+  advancePlayerFrame,
+  advancingMotion,
+  type FieldPlayer
+} from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import { makePlayerLabel } from './playerLabels'
 import { PLAYER_SCALE } from './playerPresentation'
@@ -49,11 +53,14 @@ export function Player({
   selected,
   fabric,
   onMovementComplete,
-  paused = false
+  paused = false,
+  activeMotionTime = false
 }: {
   player: FieldPlayer
   selected: boolean
   paused?: boolean
+  /** Let a continuing commanded movement use the whole elapsed frame time. */
+  activeMotionTime?: boolean
   fabric?: Texture
   onMovementComplete?: (id: string, generation: number) => void
 }): React.ReactElement {
@@ -136,28 +143,26 @@ export function Player({
     }
   }, [player.suppressed, invalidate])
   const shirt = uniformColor(player)
+  const moving = useRef(false)
+  const motionId = player.motion?.id
+  const generation = player.motion?.generation
+  useLayoutEffect(() => {
+    // A new command or a pause can start and end between drawn frames.
+    moving.current = false
+    if (!paused && motionId != null) invalidate()
+  }, [motionId, generation, paused, invalidate])
   useFrame((_, dt) => {
-    if (!paused && player.pose?.run == null) advancePlayer(player, dt)
-    const motion = player.motion
-    if (
-      !paused &&
-      motion != null &&
-      !motion.reported &&
-      Math.hypot(
-        player.position.x - player.target.x,
-        player.position.z - player.target.z
-      ) < 0.04
-    ) {
-      if (motion.index + 1 < motion.waypoints.length) {
-        motion.index++
-        player.target = { ...motion.waypoints[motion.index] }
-        invalidate()
-      } else {
-        motion.reported = true
+    const motion = paused ? undefined : advancingMotion(player)
+    let arrived = false
+    if (!paused) {
+      arrived = advancePlayerFrame(player, dt, motion != null && moving.current)
+      if (arrived && motion != null)
         onMovementComplete?.(motion.id, motion.generation)
-      }
+      // A first frame with a zero delta still needs another frame to move.
+      if (player.speed > 0 || (motion != null && !arrived)) invalidate()
     }
-    if (player.speed > 0 && !paused) invalidate()
+    // Only a frame that leaves the command unfinished continues it.
+    moving.current = activeMotionTime && motion != null && !arrived
     if (root.current == null || body.current == null) return
     root.current.position.set(
       player.position.x,
