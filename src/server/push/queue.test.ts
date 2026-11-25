@@ -1,3 +1,5 @@
+import { mock } from 'node:test'
+
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
@@ -76,18 +78,17 @@ describe('enqueueWithin', function () {
   it('answers a ready connection at once, with the whole budget', async function () {
     const connection = new Connection()
     const given: number[] = []
-    const result = await timed(
-      async () =>
-        await enqueueWithin(
-          connection,
-          async timeoutMs => {
-            given.push(timeoutMs)
-            return 'queued'
-          },
-          ENQUEUE_TIMEOUT_MS
-        )
+    // A fixed clock: a millisecond tick between the deadline and the try would shorten the budget.
+    const answer = await enqueueWithin(
+      connection,
+      async timeoutMs => {
+        given.push(timeoutMs)
+        return 'queued'
+      },
+      ENQUEUE_TIMEOUT_MS,
+      () => 1000
     )
-    expect(result.answer).equals('queued')
+    expect(answer).equals('queued')
     expect(given).deep.equals([ENQUEUE_TIMEOUT_MS])
   })
 
@@ -133,29 +134,30 @@ describe('enqueueWithin', function () {
   it('waits for the reconnect after a try loses the connection, and tries once more in the time left', async function () {
     const connection = new Connection()
     const given: number[] = []
-    const result = await timed(
-      async () =>
-        await enqueueWithin(
-          connection,
-          async timeoutMs => {
-            given.push(timeoutMs)
-            if (given.length === 1) {
-              connection.lose()
-              connection.later(100, 'ready')
-              throw new Error('Socket closed unexpectedly')
-            }
-            return 'queued'
-          },
-          ENQUEUE_TIMEOUT_MS
-        )
-    )
-    expect(result.answer).equals('queued')
-    expect(given).length(2)
-    expect(given[0]).equals(ENQUEUE_TIMEOUT_MS)
-    // The second try has what the wait left of the budget.
-    expect(given[1])
-      .at.most(ENQUEUE_TIMEOUT_MS - 95)
-      .and.at.least(ENQUEUE_TIMEOUT_MS - 100 - SLACK_MS)
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 })
+    try {
+      const pending = enqueueWithin(
+        connection,
+        async timeoutMs => {
+          given.push(timeoutMs)
+          if (given.length === 1) {
+            connection.lose()
+            connection.later(100, 'ready')
+            throw new Error('Socket closed unexpectedly')
+          }
+          return 'queued'
+        },
+        ENQUEUE_TIMEOUT_MS
+      )
+      // Let the rejected attempt register for reconnection before time advances.
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(connection.waiting.size).equals(1)
+      mock.timers.tick(100)
+      expect(await pending).equals('queued')
+      expect(given).deep.equals([ENQUEUE_TIMEOUT_MS, ENQUEUE_TIMEOUT_MS - 100])
+    } finally {
+      mock.timers.reset()
+    }
     expect(connection.waiting.size).equals(0)
     expect(connection.stopped).equals(1)
   })
