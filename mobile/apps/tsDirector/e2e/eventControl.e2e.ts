@@ -480,6 +480,8 @@ async function receiver(): Promise<void> {
     await pickOnDirector(A)
     await setDirectorControl(true)
     const r = await launchReceiver()
+    // Director assigns the game. The operator still selects the publishing route.
+    await r.m.tapOn({ id: 'scoreboard-route-event' })
     if (!(await receiverRow(r)).consent) await tapSwitch(r.m, r.ids.consent, r.platform)
     check((await receiverRow(r)).consent, 'Allow Director Override is on')
     const directorHost = new URL(control()).hostname
