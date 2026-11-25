@@ -55,13 +55,17 @@ describe('the GraphQL route', function () {
   const post = async (
     url: string,
     query: string
-  ): Promise<{ status: number; body: any }> => {
+  ): Promise<{ status: number; headers: Headers; body: any }> => {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ query })
     })
-    return { status: response.status, body: await response.json() }
+    return {
+      status: response.status,
+      headers: response.headers,
+      body: await response.json()
+    }
   }
 
   it('ends a query at its deadline, and sends none of its later reads', async function () {
@@ -80,6 +84,34 @@ describe('the GraphQL route', function () {
     expect(answer.status).equals(200)
     expect(answer.body.errors[0].extensions.status).equals(504)
     expect(asked.length).at.most(8)
+  })
+
+  it('returns partial data and the longest retry delay when field reads exhaust their allowance', async function () {
+    let reads = 0
+    const url = await serve(async (input: unknown) => {
+      const id = new URL(String(input)).pathname.split('/').pop()
+      if (++reads <= 48) return Response.json({ userId: id })
+      return Response.json(
+        { message: 'Try again' },
+        { status: 429, headers: { 'retry-after': reads === 49 ? '1' : '2' } }
+      )
+    })
+    const fields = Array.from(
+      { length: 50 },
+      (_, i) => `p${i}: player(id: "usr_${i}") { id }`
+    )
+    const answer = await post(url, `{ ${fields.join(' ')} }`)
+    expect(reads).equals(50)
+    expect(answer.status).equals(200)
+    expect(answer.body.data.p0.id).equals('usr_0')
+    expect(answer.headers.get('retry-after')).equals('2')
+    expect(answer.headers.get('cache-control')).equals('no-store')
+    expect(
+      answer.body.errors.map(
+        (error: { extensions: { retryAfterSec: number } }) =>
+          error.extensions.retryAfterSec
+      )
+    ).deep.equals([1, 2])
   })
 
   it('refuses a cyclic, aliased query long before it builds what it asks for', async function () {

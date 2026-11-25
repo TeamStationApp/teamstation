@@ -33,6 +33,7 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
         'access-control-allow-methods',
         'GET,POST,PATCH,PUT,DELETE,OPTIONS'
       )
+      res.setHeader('access-control-expose-headers', 'Retry-After')
       res.setHeader('access-control-max-age', '600')
     }
 

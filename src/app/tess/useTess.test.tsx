@@ -870,6 +870,84 @@ describe('useTess and the chat', function () {
     expect(texts('Tess change status')).deep.equals(['Done', 'Failed', 'Done'])
   })
 
+  it('shows the remaining wait when a pending change first arrives in history', async function () {
+    const api = new FakeTess()
+    await render(<Harness api={api} />)
+    await loaded(api, [
+      HISTORY[0],
+      { ...HISTORY[1], changes: [{ ...CHANGE, retryAfterSec: 120 }] }
+    ])
+    expect(texts('Tess change status')).deep.equals(['Retry in 120s'])
+    expect(byLabel('Hold to confirm').getAttribute('aria-disabled')).equals(
+      'true'
+    )
+  })
+
+  it('keeps a refused row waiting through the report, confirms other rows, then enables it after refill', async function () {
+    const api = new FakeTess()
+    clock = manualClock(600, { intervals: true })
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    try {
+      const later = { ...CHANGE, id: 'c2' }
+      const ordinary = { ...CHANGE, id: 'c3' }
+      await render(<Harness api={api} />)
+      await loaded(api, [
+        HISTORY[0],
+        { ...HISTORY[1], changes: [CHANGE, later, ordinary] }
+      ])
+      await hold()
+      const result: TessChange[] = [
+        { ...CHANGE, status: 'done' },
+        { ...later, retryAfterSec: 5 },
+        ordinary
+      ]
+      await act(async () => {
+        api.confirms[0].tell({ type: 'stored', changes: result, messages: [] })
+      })
+      now += 1000
+      await act(async () => {
+        api.confirms[0].answer.resolve({ changes: result, messages: [] })
+      })
+      expect(texts('Tess change status')).deep.equals([
+        'Done',
+        'Retry in 4s',
+        ''
+      ])
+      await hold()
+      expect(api.confirms[1].ids).deep.equals(['c3'])
+      await act(async () => {
+        api.confirms[1].answer.resolve({
+          changes: [{ ...ordinary, status: 'done' }],
+          messages: []
+        })
+      })
+      expect(byLabel('Hold to confirm').getAttribute('aria-disabled')).equals(
+        'true'
+      )
+      await act(async () => {
+        await latest!.confirmAll(['c2'])
+      })
+      expect(api.confirms).length(2)
+      now += 4000
+      await clock.advance(1000)
+      expect(
+        byLabel('Hold to confirm').getAttribute('aria-disabled')
+      ).not.equals('true')
+      await hold()
+      expect(api.confirms[2].ids).deep.equals(['c2'])
+      await act(async () => {
+        api.confirms[2].answer.resolve({
+          changes: [{ ...later, status: 'done' }],
+          messages: []
+        })
+      })
+    } finally {
+      Date.now = realNow
+    }
+  })
+
   it('holds no other change and sends nothing while Tess answers, until the last of it is answered', async function () {
     const api = new FakeTess()
     clock = manualClock()

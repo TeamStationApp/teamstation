@@ -2294,7 +2294,9 @@ export function openApiDocument(version: string): OpenApiDocument {
       description:
         'Teams, games, videos and the plays underneath them. Every failure ' +
         'answers with the same shape, and every request and response is ' +
-        'checked by a cleaner on both sides.'
+        'checked by a cleaner on both sides. Requests share account and IP rate limits. ' +
+        'A 429 rateLimited response from the API traffic limiter gives the wait in ' +
+        'seconds in Retry-After and details.retryAfterSec.'
     },
     servers: [{ url: '/api/v1' }],
     components: {
@@ -2627,6 +2629,30 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'boolean',
               description:
                 'Whether Tess, the assistant, is available on this server'
+            },
+            apiRateLimits: {
+              type: 'object',
+              description:
+                'Worker-local status of the shared budget preflight. During a store fault the worker continues serving with local limits.',
+              properties: {
+                mode: { type: 'string', enum: ['off', 'observe', 'enforce'] },
+                readiness: {
+                  type: 'string',
+                  enum: ['off', 'checking', 'ready', 'degraded', 'failed']
+                },
+                fault: {
+                  type: 'string',
+                  enum: [
+                    'unavailable',
+                    'timeout',
+                    'permissions',
+                    'readOnly',
+                    'cluster',
+                    'storeError'
+                  ]
+                },
+                degradedMs: { type: 'integer', minimum: 0 }
+              }
             },
             replayPitchSec: {
               type: 'integer',
@@ -11497,7 +11523,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Search leagues, seasons, teams and people over a WebSocket',
           description:
-            'The search field\u2019s socket. Frames are JSON text of at most ' +
+            'The search field\u2019s socket. Opening a socket can return HTTP 429 with Retry-After. A search refused by the traffic limit closes the socket with 1013 and a wait in seconds. Frames are JSON text of at most ' +
             "4096 bytes. Send `{ type: 'search', seq, text, location, " +
             'mode, forTeam?, forGame? }` on every change to the text or the ' +
             'location pill: `seq` a growing integer, `location` a pill ' +

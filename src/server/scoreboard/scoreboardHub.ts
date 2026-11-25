@@ -37,6 +37,7 @@ import { type Database, isConnectionUnavailable } from '../db/database'
 import { mayRunGame } from '../director/runGames'
 import { refreshRadarSpeeds } from '../events/radarSpeeds'
 import { speedHoldMs as nodeSpeedHoldMs } from '../nodeSettings'
+import { SCOREBOARD_SOCKET_PATH as SOCKET_PATH } from '../socket/upgradePaths'
 import { type GameRecord, gameRecord, mayBeGameId } from './gameRecord'
 import { logScoreboard, type ScoreboardLogCause } from './scoreboardLog'
 import {
@@ -140,8 +141,6 @@ export interface ScoreboardHub {
   close: () => Promise<void>
 }
 
-const SOCKET_PATH =
-  /^\/api\/v1\/scoreboard\/([^/]+)\/(socket|publish|dashboard)$/
 const KIND_OF: Record<string, Kind> = {
   socket: 'viewer',
   publish: 'publisher',

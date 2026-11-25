@@ -30,6 +30,7 @@ describe('server history recovery wiring', () => {
       set: () => {},
       disable: () => {},
       get: () => {},
+      post: () => {},
       use: (...args: unknown[]) => {
         if (args.includes(mounted)) throw stop
       }
@@ -64,6 +65,10 @@ describe('server history recovery wiring', () => {
           scoreboardPrefix: noop
         }
       }
+      if (name === './valkey/apiBudgets')
+        return { sharedBudgets: () => services }
+      if (name === './middleware/apiRateLimits')
+        return { apiRateLimits: () => services }
       if (name === './media/mediaContext')
         return {
           FeedHolder: function FeedHolder() {

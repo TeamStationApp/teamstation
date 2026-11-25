@@ -1,4 +1,4 @@
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import type { TessChange, TessChangeStatus, TessMessage } from './tessTypes'
 
 /**
@@ -85,7 +85,12 @@ export function columnWeights(table: ChangeTable): number[] {
 }
 
 /** What became of a change, or nothing while it waits or runs. */
-export function outcomeOf(status: TessChangeStatus): string | undefined {
+export function outcomeOf(
+  status: TessChangeStatus,
+  waitSeconds = 0
+): string | undefined {
+  if (status === 'pending' && waitSeconds > 0)
+    return sprintf(lstrings.tess_change_retry_in, String(waitSeconds))
   if (status === 'done') return lstrings.tess_change_done
   if (status === 'failed') return lstrings.tess_change_failed
   if (status === 'expired') return lstrings.tess_change_expired
@@ -146,8 +151,13 @@ export function escapeHtml(text: string): string {
  * styles the cells in the app's colours, so the page needs no colour of its
  * own and reads in either theme.
  */
-export function changeTableHtml(changes: readonly TessChange[]): string {
-  const withStatus = showsStatus(changes)
+export function changeTableHtml(
+  changes: readonly TessChange[],
+  waitSeconds?: (id: string) => number
+): string {
+  const statusOf = (change: TessChange): string | undefined =>
+    outcomeOf(change.status, waitSeconds?.(change.id))
+  const withStatus = changes.some(change => statusOf(change) != null)
   return changeTables(changes)
     .map(table => {
       const head = columnsOf(table, withStatus)
@@ -157,7 +167,7 @@ export function changeTableHtml(changes: readonly TessChange[]): string {
         .map(change => {
           const cells = [
             ...cellsOf(change),
-            ...(withStatus ? [outcomeOf(change.status) ?? ''] : [])
+            ...(withStatus ? [statusOf(change) ?? ''] : [])
           ]
           return `<tr>${cells.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`
         })

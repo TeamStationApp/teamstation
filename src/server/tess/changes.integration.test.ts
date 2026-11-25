@@ -17,6 +17,7 @@ import {
   type TessWorld,
   tessWorld
 } from '../../test/tessFakes'
+import { API_ADMISSION_HEADER } from '../middleware/apiRateLimits'
 import {
   CHANGE_TTL_MS,
   changesById,
@@ -39,6 +40,8 @@ type Block = Record<string, any>
 describe("Tess's changes", function () {
   this.timeout(60000)
   let w: TessWorld
+  let limitedWrite = true
+  let writes = 0
 
   // A write that is still working on its answer when the loopback gives up.
   const hanging: ExpressResponse[] = []
@@ -46,6 +49,18 @@ describe("Tess's changes", function () {
   before(async () => {
     w = await tessWorld({
       mountExtra: app => {
+        app.put('/api/v1/me/retry-write', (_req, res) => {
+          if (limitedWrite) {
+            res
+              .status(429)
+              .set(API_ADMISSION_HEADER, 'refused')
+              .set('Retry-After', '3')
+              .end()
+            return
+          }
+          ++writes
+          res.status(204).end()
+        })
         app.put('/api/v1/me/slow-write', (_req, res) => {
           hanging.push(res)
         })
@@ -424,6 +439,66 @@ describe("Tess's changes", function () {
     path: '/me/follows/team/tem_missing',
     summary: 'Follow a team that is not there'
   }
+
+  it('keeps a pre-execution refusal pending and retries only the remaining batch entry', async () => {
+    limitedWrite = true
+    writes = 0
+    const changes = await proposeAll([
+      follow,
+      {
+        method: 'PUT',
+        path: '/me/retry-write',
+        summary: 'Save the second change'
+      }
+    ])
+    w.model.reply(say('One change can be confirmed again after six seconds.'))
+    const response = await confirmAll(changes.map(change => change.id))
+    expect(response.status).equals(200)
+    const first = asTessConfirmations(await response.json()).changes
+    expect(first.map(change => change.status)).deep.equals(['done', 'pending'])
+    expect(first[1].retryAfterSec).equals(6)
+    expect(writes).equals(0)
+    expect(await followWrites()).equals(1)
+    limitedWrite = false
+    w.model.reply(say('The remaining change is done.'))
+    const second = await confirmAll(
+      first
+        .filter(change => change.status === 'pending')
+        .map(change => change.id)
+    )
+    expect(asTessConfirmations(await second.json()).changes[0].status).equals(
+      'done'
+    )
+    expect(writes).equals(1)
+    expect(await followWrites()).equals(1)
+  })
+
+  it('asks for a fresh proposal when a refused write cannot retry before expiry', async () => {
+    const proposal = await propose({
+      method: 'PUT',
+      path: '/me/retry-write',
+      summary: 'Save a change'
+    })
+    limitedWrite = true
+    const row = await w.h.db
+      .selectFrom('tess_changes')
+      .selectAll()
+      .where('id', '=', proposal.id)
+      .executeTakeFirstOrThrow()
+    const at = new Date(new Date(row.expires_at).getTime() - 6000)
+    const { change, note } = await runChange(
+      { ...w.deps(), now: () => at },
+      row.user_id,
+      w.user(101).credentials,
+      row.id
+    )
+    expect(change.status).equals('expired')
+    expect(change).not.to.have.property('retryAfterSec')
+    expect(note).includes('fresh proposal')
+    expect(
+      (await changesById(w.h.db, row.user_id, [row.id], at)).get(row.id)?.status
+    ).equals('expired')
+  })
 
   it('stores a change’s details in their order and shows them on its card', async () => {
     const change = await propose({

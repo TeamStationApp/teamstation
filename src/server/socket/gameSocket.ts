@@ -60,10 +60,11 @@ import {
 } from './screenScope'
 import { RESYNC_SPREAD_MS, SCREEN_NOTICE_SPREAD_MS, spread } from './spread'
 import type { ScreenScopePayload } from './syncRevision'
+import { GAME_SOCKET_PATH } from './upgradePaths'
 import { UserNoticeListener, type UserNoticePayload } from './userNotices'
 
 /** The one path the socket answers on. */
-export const SOCKET_PATH = '/socket'
+export const SOCKET_PATH = GAME_SOCKET_PATH
 /** An inbound frame larger than this closes the socket with 1009. */
 export const MAX_FRAME_BYTES = 4096
 /** How many games one socket may be subscribed to at once. */

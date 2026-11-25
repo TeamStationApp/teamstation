@@ -5,6 +5,7 @@ import type { Kysely, Selectable } from 'kysely'
 import type { TessChange } from '../../common/api'
 import { badRequest, conflict, HttpError, notFound } from '../../common/errors'
 import type { Database, TessChangesTable } from '../db/database'
+import { CONFIRM_REFILL_SECONDS } from '../middleware/apiRateLimits'
 import { isUuid } from './attachments'
 import { type ApiMethod, checkApiRequest } from './denyList'
 import { whileLive } from './liveUser'
@@ -158,6 +159,7 @@ function storedDetails(value: unknown): ChangeDetail[] | undefined {
  */
 export function changeView(row: ChangeRow, now = new Date()): TessChange {
   const details = storedDetails(row.details)
+  const retryAt = (row.result as { retryAt?: number } | null)?.retryAt
   const status = lost(row, now) ? 'unknown' : row.status
   return {
     id: row.id,
@@ -167,6 +169,9 @@ export function changeView(row: ChangeRow, now = new Date()): TessChange {
     body: row.body ?? null,
     status,
     ...(details == null ? {} : { details }),
+    ...(status === 'pending' && retryAt != null && retryAt > now.getTime()
+      ? { retryAfterSec: Math.ceil((retryAt - now.getTime()) / 1000) }
+      : {}),
     ...(status === 'pending'
       ? {
           expiresAt: new Date(row.expires_at).toISOString(),
@@ -281,6 +286,29 @@ export async function runChange(
           running.body ?? undefined,
           deps.loopback
         )
+  if (answer.retryAfterSec != null) {
+    const at = deps.now?.() ?? new Date()
+    const retryAfterSec = answer.retryAfterSec + CONFIRM_REFILL_SECONDS
+    const retryAt = at.getTime() + retryAfterSec * 1000
+    const expiresBeforeRetry = retryAt >= new Date(running.expires_at).getTime()
+    const saved = await deps.db
+      .updateTable('tess_changes')
+      .set({
+        status: expiresBeforeRetry ? 'expired' : 'pending',
+        started_at: null,
+        result: expiresBeforeRetry ? null : JSON.stringify({ retryAt })
+      })
+      .where('id', '=', changeId)
+      .where('status', '=', 'running')
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    return {
+      change: changeView(saved, at),
+      note: expiresBeforeRetry
+        ? `The change "${running.summary}" did not run. Its confirmation expires before the allowance refills. Ask Tess for a fresh proposal.`
+        : `The change "${running.summary}" did not run. It can be confirmed again after ${retryAfterSec} seconds.`
+    }
+  }
   const unanswered = answer.status === 0
   const succeeded = answer.status >= 200 && answer.status < 300
   const result = resultOf(answer.body)

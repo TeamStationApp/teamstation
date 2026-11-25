@@ -2,7 +2,7 @@ import './sentry/instrument'
 
 import { fork, type ForkOptions } from 'node:child_process'
 import cluster from 'node:cluster'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { availableParallelism } from 'node:os'
 import path from 'node:path'
 
@@ -11,6 +11,8 @@ import express from 'express'
 import { defaultTvAppOrigin } from '../common/tvLogin'
 import { accountCodeSender, deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
+import { actorForToken } from './auth/sessions'
+import { sessionToken } from './auth/tokens'
 import {
   type BackgroundJobs,
   skipWhileRunning,
@@ -58,6 +60,7 @@ import { FeedHolder, type MediaContext } from './media/mediaContext'
 import { republishOwnedImages, settlesWithin } from './media/republishImages'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
+import { apiRateLimits } from './middleware/apiRateLimits'
 import { withAudit } from './middleware/withAudit'
 import { spokenRequests, withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
@@ -66,6 +69,7 @@ import { recordLocalCopyWarnings } from './notifications/recordingReminders'
 import { oauthRequestLimit, scheduleOAuthPrune } from './oauth/maintenance'
 import { createOAuthProvider } from './oauth/provider'
 import { oauthInteractionRoutes } from './oauth/routes'
+import { rateMetrics } from './observability/apiRateMetrics'
 import { requestLogs, startServerLogging } from './observability/logging'
 import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
@@ -141,7 +145,7 @@ import {
   scoreboardPrefix
 } from './scoreboard/scoreboardStore'
 import { warmLocationsInBackground } from './search/locations'
-import { attachSearchSocket } from './search/socket'
+import { attachSearchSocket, upgradeClientIp } from './search/socket'
 import {
   eventControlIssuerOf,
   primaryHost,
@@ -152,6 +156,7 @@ import {
 } from './serverConfig'
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
+import { supportsUpgrade } from './socket/upgradePaths'
 import {
   exitAfterBuilder,
   forceStop,
@@ -167,6 +172,7 @@ import { stopWorker } from './stopWorker'
 import { rosterCacheOn, startRosterBumpPrune } from './teams/rosterCore'
 import { loopbackOrigin } from './tess/loopback'
 import { startUmpireDigests } from './umpires/notices'
+import { sharedBudgets } from './valkey/apiBudgets'
 
 /**
  * What is actually running, not just what the package says.
@@ -757,8 +763,40 @@ function runWorker(): void {
   // Who is calling, and the ceiling of an API key, then their body, which
   // for a picture is read only when somebody is signed in, then what they
   // changed, then the routes.
+  const mode = serverConfig.apiRateLimitMode
+  log('API rate limit mode: ' + mode)
+  const metrics =
+    mode === 'off'
+      ? undefined
+      : rateMetrics(
+          mode,
+          serverConfig.sentry.dsn === ''
+            ? (event, props) => {
+                log(event + ' ' + JSON.stringify(props))
+              }
+            : undefined
+        )
+  const rateSummary =
+    metrics == null ? undefined : setInterval(metrics.flush, 60000)
+  rateSummary?.unref()
+  const rateStore = sharedBudgets(
+    playlistClient,
+    scoreboardPrefix(serverConfig.redis.prefix, serverConfig.databaseUrl),
+    mode,
+    log,
+    metrics?.storeDegraded
+  )
+  const loopbackKey =
+    mode === 'observe'
+      ? createHmac('sha256', mediaSecret)
+          .update('teamstation/api-rate/observe-parent')
+          .digest('base64url')
+      : undefined
+  const limits = apiRateLimits(rateStore.spend, mode, metrics, loopbackKey)
+  app.use(['/api/v1', '/oauth'], limits.beforeAuth)
   app.use(spokenRequests())
   app.use(withActor(db))
+  app.use(['/api/v1', '/oauth'], limits.afterAuth)
   app.use(withApiKeyCeiling())
   if (serverConfig.oauth?.enabled === true) {
     const provider = createOAuthProvider(db, serverConfig.oauth, publicUrl)
@@ -768,6 +806,7 @@ function runWorker(): void {
     app.use('/oauth', provider.callback())
   }
   app.use(jsonBody)
+  app.post('/api/v1/teams/:teamId/games', limits.scheduleBatch)
   app.use(withAudit(db))
 
   app.get('/api/v1/openapi.json', (req, res) => {
@@ -1092,20 +1131,45 @@ function runWorker(): void {
       : (localIpPlaces ?? ipLookupsFrom(process as IpChannel))
   // The search field's socket, for anybody, signed in or not.
   const searchSocket = attachSearchSocket({
+    spendSearch: async (ip, userId, socket) =>
+      await limits.request(ip, userId, 'aggregate', 'search', socket),
     db,
     deps: { space: mediaContext.space, jevBaseUrl: serverConfig.jev.baseUrl },
     allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
     ...(ipPlaces == null ? {} : { ipPlaces })
   })
-  const unbindUpgrades = bindUpgrades(server, [
-    (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
-    (req, socket, head) => dictation?.acceptUpgrade(req, socket, head) === true,
-    (req, socket, head) => searchSocket.acceptUpgrade(req, socket, head),
-    (req, socket, head) => {
-      scoreboard.hub.handleUpgrade(req, socket, head)
-      return true
-    }
-  ])
+  const unbindUpgrades = bindUpgrades(
+    server,
+    [
+      (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
+      (req, socket, head) =>
+        dictation?.acceptUpgrade(req, socket, head) === true,
+      (req, socket, head) => searchSocket.acceptUpgrade(req, socket, head),
+      (req, socket, head) => {
+        scoreboard.hub.handleUpgrade(req, socket, head)
+        return true
+      }
+    ],
+    mode === 'off'
+      ? undefined
+      : async req =>
+          await limits.upgrade(
+            req.socket,
+            upgradeClientIp(req),
+            supportsUpgrade(req.url, dictation != null)
+              ? async () => {
+                  const token = sessionToken(
+                    req.headers.authorization,
+                    req.headers.cookie
+                  )
+                  return token == null
+                    ? undefined
+                    : (await actorForToken(db, token, { recordUse: false }))
+                        ?.userId
+                }
+              : undefined
+          )
+  )
 
   // Unclustered — one process, which is the whole API. Live ingest is a
   // process of its own, `ingest/main.ts`.
@@ -1134,6 +1198,9 @@ function runWorker(): void {
     stopWorker({
       server,
       destroyDatabase: async () => {
+        rateStore.close()
+        clearInterval(rateSummary)
+        metrics?.flush()
         await stopAnalytics()
         await stopLogging()
         await stopRelay(relay)

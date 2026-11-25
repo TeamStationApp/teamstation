@@ -171,7 +171,8 @@ describe('api client for Tess', () => {
       ...change,
       status: 'pending',
       expiresAt: '2026-05-02T15:30:00.000Z',
-      expiresInMs: 1800000
+      expiresInMs: 1800000,
+      retryAfterSec: 12
     }
     const answer = {
       changes: [detailed, { ...change, details: [] }, pending],

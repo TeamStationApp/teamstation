@@ -101,6 +101,7 @@ export class SearchSocket {
   private state: SearchSocketStatus = 'connecting'
   private closed = false
   private attempt = 0
+  private rateLimited = false
   private timer: unknown
   /** The ask the field shows now, sent again after a reconnect. */
   private current: SearchAsk | undefined
@@ -224,7 +225,7 @@ export class SearchSocket {
     this.socket = socket
     socket.onopen = () => {
       if (this.socket !== socket) return
-      this.attempt = 0
+      if (!this.rateLimited) this.attempt = 0
       this.setStatus('open')
       // Whatever the last connection was asked, this one answers afresh.
       if (this.current != null) {
@@ -242,11 +243,17 @@ export class SearchSocket {
       this.dropped(socket)
     }
     socket.onclose = event => {
-      if (
-        (event as { code?: unknown } | null)?.code === SEARCH_SIGNED_OUT_CLOSE
-      )
-        this.refused(socket)
-      else this.dropped(socket)
+      const close = event as { code?: number; reason?: string } | null
+      if (close?.code === SEARCH_SIGNED_OUT_CLOSE) this.refused(socket)
+      else if (close?.code === 1013) {
+        // The next handshake and the retried search each spend an aggregate
+        // unit. Keep backing off until the server actually answers a search.
+        const retry = /^Try again in (\d{1,6}) seconds$/.exec(
+          close.reason ?? ''
+        )
+        this.rateLimited = true
+        this.dropped(socket, retry == null ? 0 : Number(retry[1]) * 2000)
+      } else this.dropped(socket)
     }
   }
 
@@ -285,7 +292,7 @@ export class SearchSocket {
     this.connect()
   }
 
-  private dropped(socket: WebSocketLike): void {
+  private dropped(socket: WebSocketLike, retryMs = 0): void {
     if (this.socket !== socket) return
     this.detach(socket)
     this.socket = undefined
@@ -296,9 +303,12 @@ export class SearchSocket {
         Math.min(this.attempt, RECONNECT_DELAYS_MS.length - 1)
       ]
     this.attempt++
-    this.timer = this.setTimer(() => {
-      this.connect()
-    }, delay)
+    this.timer = this.setTimer(
+      () => {
+        this.connect()
+      },
+      Math.max(delay, retryMs)
+    )
   }
 
   private detach(socket: WebSocketLike): void {
@@ -323,6 +333,8 @@ export class SearchSocket {
       this.log(`search: unreadable frame: ${String(error)}`)
       return
     }
+    this.rateLimited = false
+    this.attempt = 0
     if (frame.type === 'error') {
       if (frame.seq != null && frame.seq !== this.seq) return
       for (const listener of [...this.errorListeners]) listener(frame)

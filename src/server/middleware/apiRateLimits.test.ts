@@ -7,14 +7,17 @@ import { describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
 import { parseEvent, type Property } from '../../common/observability/contract'
+import { readerHeaders } from '../graphql/restReader'
 import { rateMetrics } from '../observability/apiRateMetrics'
 import type { ScoreboardClient } from '../scoreboard/scoreboardStore'
+import { apiCall, credentialsOf } from '../tess/loopback'
 import { localBudgets, sharedBudgets } from '../valkey/apiBudgets'
 import {
   apiCost,
   apiRateLimits,
   type Bucket,
   CONFIRM_REFILL_SECONDS,
+  OBSERVE_PARENT_HEADER,
   type Spend,
   type SpendResult
 } from './apiRateLimits'
@@ -638,6 +641,64 @@ describe('API traffic budgets', () => {
         expect(status).equals(mode === 'enforce' && refuseAt > 0 ? 429 : 200)
       }
     }
+  })
+
+  it('carries a refused parent across trusted GraphQL and Tess calls only in observe', async () => {
+    const key = randomUUID()
+    let debits = 0
+    const spend = async (): Promise<SpendResult> => {
+      debits++
+      return { backend: 'local' as const, limiting: 0, retryAfterSec: 1 }
+    }
+    const originIp = '192.0.2.15'
+    const request = (
+      ip: string,
+      headers: Record<string, string> = {}
+    ): Request =>
+      ({
+        ip,
+        headers,
+        header: (name: string) => headers[name]
+      }) as unknown as Request
+    const res = { set: () => undefined } as unknown as Response
+    const run = async (
+      mode: 'observe' | 'enforce',
+      req: Request
+    ): Promise<unknown> =>
+      await new Promise(resolve =>
+        apiRateLimits(spend, mode, undefined, key).beforeAuth(req, res, resolve)
+      )
+    const parent = request(originIp)
+    await run('observe', parent)
+    const proof = readerHeaders(parent)[OBSERVE_PARENT_HEADER]
+    expect(proof).to.be.a('string')
+    const nested = request(originIp, { [OBSERVE_PARENT_HEADER]: proof })
+    await run('observe', nested)
+    expect(debits).equals(1)
+    let sent: Record<string, string> = {}
+    await apiCall(
+      'https://fixture.invalid',
+      credentialsOf(nested),
+      'GET',
+      '/teams',
+      undefined,
+      undefined,
+      {
+        fetch: async (_input, init) => {
+          sent = init?.headers as Record<string, string>
+          return Response.json([])
+        }
+      }
+    )
+    await run('observe', request(originIp, sent))
+    expect(debits).equals(1)
+    await run('observe', request('192.0.2.16', sent))
+    await run(
+      'observe',
+      request(originIp, { [OBSERVE_PARENT_HEADER]: 'invalid' })
+    )
+    await run('enforce', request(originIp, sent))
+    expect(debits).equals(4)
   })
 
   it('preserves the virtual lifetime of a shadow-refused search connection', async () => {

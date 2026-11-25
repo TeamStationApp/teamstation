@@ -429,6 +429,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/socket/screenScope.js',
   'server/socket/spread.js',
   'server/socket/syncRevision.js',
+  'server/socket/upgradePaths.js',
   'server/socket/userNotices.js',
   'server/stats.js',
   'server/stats/boxScoreOrder.js',

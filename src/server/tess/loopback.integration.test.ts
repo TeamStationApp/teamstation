@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
+import { API_ADMISSION_HEADER } from '../middleware/apiRateLimits'
 import { TESS_HEADER } from '../middleware/withAuth'
 import {
   apiCall,
@@ -247,6 +248,32 @@ describe("Tess's loopback to the API", function () {
       }
     )
     expect(sent).deep.equals(['http://127.0.0.1:9/api/v1/games/g1/events'])
+  })
+
+  it('marks a write safe to retry only on a confirmed admission refusal with a delay', async () => {
+    for (const [proof, delay, expected] of [
+      ['refused', '4', 4],
+      ['refused', '0', undefined],
+      ['refused', 'invalid', undefined],
+      ['', '4', undefined]
+    ] as const) {
+      const result = await apiCall(
+        'http://localhost',
+        {},
+        'POST',
+        '/teams',
+        undefined,
+        {},
+        {
+          fetch: async () =>
+            new Response('{}', {
+              status: 429,
+              headers: { [API_ADMISSION_HEADER]: proof, 'Retry-After': delay }
+            })
+        }
+      )
+      expect(result.retryAfterSec).equals(expected)
+    }
   })
 
   it('reaches a wildcard listen host on the loopback address', function () {

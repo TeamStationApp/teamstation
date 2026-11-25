@@ -150,6 +150,22 @@ const UPGRADE_ONLY = new Set([
 ])
 
 describe('the API document', function () {
+  it('publishes the optional retry interval for Tess confirmations and history', () => {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const schemaOf = (operation: any): any =>
+      operation.responses[200].content['application/json'].schema.properties
+    const batch = schemaOf(paths['/me/tess/changes/confirm'].post).changes.items
+    const history = schemaOf(paths['/me/tess'].get).messages.items.properties
+      .changes.items
+    for (const change of [batch, history]) {
+      expect(change.properties.retryAfterSec).includes({
+        type: 'integer',
+        minimum: 1
+      })
+      expect(change.required).not.to.include('retryAfterSec')
+    }
+  })
+
   it('declares nullable replay pitcher hit batters and strikes', function () {
     const schemas = openApiDocument('0.0.0').components.schemas as Record<
       string,

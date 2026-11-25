@@ -19,6 +19,7 @@ import { type Actor, actorForToken, keyAllows } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { claimUpgrade } from '../socket/bindUpgrades'
+import { apiSocketPath as pathOf, DICTATION_PATH } from '../socket/upgradePaths'
 import { gameStateLogLines } from './gameStateSummary'
 import {
   type AskOption,
@@ -44,7 +45,7 @@ import { type SttHandlers, SttSession } from './stt'
  * something — that utterance's conversation.
  */
 
-export const DICTATION_PATH = '/api/v1/dictation'
+export { DICTATION_PATH }
 
 export interface DictationConfig extends ProviderKeys {
   sttUrl: string
@@ -228,11 +229,6 @@ function refuse(socket: Duplex, status: number, reason: string): void {
   socket.end(
     `HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
   )
-}
-
-function pathOf(url: string | undefined): string {
-  const path = (url ?? '').split('?')[0]
-  return path.replace(/\/+$/, '')
 }
 
 /** One browser's dictation, from enabling it to switching it off. */

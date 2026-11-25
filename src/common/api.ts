@@ -3423,22 +3423,31 @@ const asTessChangeShape = asObject({
    * it, in milliseconds. The app counts from when it received it, since its
    * own clock need not agree with the server's.
    */
-  expiresInMs: asOptional(asNumber)
+  expiresInMs: asOptional(asNumber),
+  /** How long to wait before confirming this pending change again. */
+  retryAfterSec: asOptional(asNumber)
 })
 export type TessChange = Omit<
   ReturnType<typeof asTessChangeShape>,
-  'details' | 'expiresAt' | 'expiresInMs'
-> & { details?: TessChangeDetail[]; expiresAt?: string; expiresInMs?: number }
+  'details' | 'expiresAt' | 'expiresInMs' | 'retryAfterSec'
+> & {
+  details?: TessChangeDetail[]
+  expiresAt?: string
+  expiresInMs?: number
+  retryAfterSec?: number
+}
 /**
  * A change, without `details` when it has none, nor `expiresAt` and
  * `expiresInMs` when none is due.
  */
 export const asTessChange: Cleaner<TessChange> = raw => {
-  const { details, expiresAt, expiresInMs, ...change } = asTessChangeShape(raw)
+  const { details, expiresAt, expiresInMs, retryAfterSec, ...change } =
+    asTessChangeShape(raw)
   return {
     ...change,
     ...(details == null || details.length === 0 ? {} : { details }),
     ...(expiresAt == null ? {} : { expiresAt }),
+    ...(retryAfterSec == null ? {} : { retryAfterSec }),
     ...(expiresInMs == null ? {} : { expiresInMs })
   }
 }

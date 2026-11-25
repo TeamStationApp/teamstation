@@ -55,7 +55,13 @@ function formatted(error: GraphQLError): GraphQLFormattedError {
   if (cause instanceof RestError)
     return {
       ...shown,
-      extensions: { ...shown.extensions, status: cause.status }
+      extensions: {
+        ...shown.extensions,
+        status: cause.status,
+        ...(cause.retryAfterSec == null
+          ? {}
+          : { retryAfterSec: cause.retryAfterSec })
+      }
     }
   // Anything else that failed is the server's, and says nothing of it to
   // the caller; the log keeps what it was, so a route that changed shape
@@ -153,6 +159,16 @@ export function graphqlRoutes(options: GraphqlRouteOptions): Router {
         return
       }
       const errors = result.errors?.map(formatted)
+      const waits = result.errors?.map(error =>
+        error.originalError instanceof RestError
+          ? (error.originalError.retryAfterSec ?? 0)
+          : 0
+      )
+      const retry = Math.max(0, ...(waits ?? []))
+      if (retry > 0) {
+        res.set('Retry-After', String(retry))
+        res.set('Cache-Control', 'no-store')
+      }
       // A query that ran answers 200, its refused fields among its errors;
       // only one that could not start (its variables) is the request's fault.
       res.status('data' in result ? 200 : 400).json({

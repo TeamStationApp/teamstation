@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Platform, Pressable, Text, View } from 'react-native'
 
 import { ButtonIcon } from '../components/ButtonIcon'
@@ -34,10 +34,12 @@ const MONOSPACE = Platform.OS === 'ios' ? 'ui-monospace' : 'monospace'
  */
 export function ChangeBatch({
   changes,
+  retryAt,
   onConfirmAll,
   holdDisabled = false
 }: {
   changes: TessChange[]
+  retryAt?: ReadonlyMap<string, number>
   /** Runs these changes, the batch's still pending, in order. */
   onConfirmAll: (changeIds: string[]) => void
   /** Tess is answering: nothing is confirmed until she has. */
@@ -48,8 +50,23 @@ export function ChangeBatch({
   const overlay = useTessOverlay()
   const [requestsOpen, setRequestsOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
-  const withStatus = showsStatus(changes)
+  const [, tick] = useState(0)
+  const now = Date.now()
+  const waitSeconds = (id: string): number =>
+    Math.max(0, Math.ceil(((retryAt?.get(id) ?? 0) - now) / 1000))
   const pending = changes.filter(change => change.status === 'pending')
+  const ready = pending.filter(change => waitSeconds(change.id) === 0)
+  const waiting = ready.length < pending.length
+  useEffect(() => {
+    if (!waiting) return
+    const timer = setInterval(() => {
+      tick(n => n + 1)
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [waiting])
+  const withStatus = waiting || showsStatus(changes)
   const running = changes.some(change => change.status === 'running')
   const unknown = changes.some(change => change.status === 'unknown')
   const holding = pending.length > 0 || running
@@ -84,7 +101,9 @@ export function ChangeBatch({
               ))}
             </View>
             {table.changes.map(change => {
-              const outcome = outcomeOf(change.status)
+              const seconds =
+                change.status === 'pending' ? waitSeconds(change.id) : 0
+              const outcome = outcomeOf(change.status, seconds)
               return (
                 <View
                   key={change.id}
@@ -111,7 +130,7 @@ export function ChangeBatch({
                         styles.outcome,
                         change.status === 'done'
                           ? styles.done
-                          : outcome != null && styles.notDone
+                          : seconds === 0 && outcome != null && styles.notDone
                       ]}
                     >
                       {outcome ?? ''}
@@ -168,10 +187,10 @@ export function ChangeBatch({
         <View style={styles.footer}>
           {holding && (
             <HoldToConfirm
-              busy={pending.length === 0}
-              disabled={holdDisabled}
+              busy={ready.length === 0 && running}
+              disabled={holdDisabled || ready.length === 0}
               onConfirm={() => {
-                onConfirmAll(pending.map(change => change.id))
+                onConfirmAll(ready.map(change => change.id))
               }}
             />
           )}
@@ -201,7 +220,7 @@ export function ChangeBatch({
       )}
       {expanded && (
         <RichViewer
-          html={changeTableHtml(changes)}
+          html={changeTableHtml(changes, waitSeconds)}
           onClose={() => {
             setExpanded(false)
           }}

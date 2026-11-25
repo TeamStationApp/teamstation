@@ -22,6 +22,11 @@ describe('the search socket’s client address', () => {
       '203.0.113.7'
     )
     expect(upgradeClientIp(upgrade('::ffff:203.0.113.7'))).equals('203.0.113.7')
+    expect(upgradeClientIp(upgrade('::ffff:cb00:7107'))).equals('203.0.113.7')
+    expect(
+      upgradeClientIp(upgrade('::ffff:7f00:1', '::ffff:cb00:7107'))
+    ).equals('203.0.113.7')
+    expect(upgradeClientIp(upgrade('::1', '127.0.0.2'))).equals('127.0.0.2')
     expect(upgradeClientIp(upgrade('2001:db8::7'))).equals('2001:db8::7')
   })
 
