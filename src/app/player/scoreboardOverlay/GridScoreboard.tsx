@@ -4,6 +4,7 @@ import { StyleSheet, View } from 'react-native'
 import type { BoardStep, LineScoreStep } from '../../../common/api'
 import type { ScoreboardOverlay as OverlaySettings } from '../../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../../common/scoreboard'
+import { type BoardClock, usePictureClock } from '../../scoreboard/boardClock'
 import { aspectOf, MAX_TILES } from '../multiCam/layout'
 import type { PlayerLayout } from '../multiCam/playerLayout'
 import type { MultiCam, MultiCamProps } from '../multiCam/useMultiCam'
@@ -42,6 +43,7 @@ export interface GridBoard {
   natural: Size
   /** The board for the master tile's frame, or null. */
   step: BoardStep | null
+  clock: BoardClock
   /**
    * The game has a line score: it has events. Decided by the whole
    * timeline, not the playhead, so the layout never jumps as the box score
@@ -140,7 +142,9 @@ export function useGridBoard(
   })
   /** The board watches the game's changes while it is up and live. */
   const boardWatches = live && shows && props.gameId != null && fromMs != null
+  const clock = usePictureClock()
   const step = usePlayheadStep({
+    onFrame: clock.sample,
     steps: board.steps,
     wallNow: () => wall.current(),
     onSeek: board.refetchAround
@@ -207,6 +211,7 @@ export function useGridBoard(
     aspect,
     natural,
     step: shown,
+    clock,
     hasLine: (lines.steps?.length ?? 0) > 0,
     line,
     teams: lines.teams,
@@ -256,6 +261,7 @@ export function GridScoreboard(props: {
   const drawn = (
     <ScoreboardOverlay
       step={board.step}
+      clock={board.clock}
       place={size => {
         const rect = layout(size).board
         if (rect == null || clip == null) return rect

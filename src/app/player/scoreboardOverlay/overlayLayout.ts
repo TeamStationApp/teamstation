@@ -79,7 +79,8 @@ function fitted(
   const room = Math.min(
     1,
     Math.max(0, area.x + area.w - x) / w,
-    Math.max(0, area.y + area.h - y) / h
+    Math.max(0, area.y + area.h - y) /
+      (Math.max(FULL_BOARD_HEIGHT, natural.height) * scale)
   )
   w *= room
   h *= room

@@ -124,6 +124,31 @@ describe('ScoreboardPage', function () {
     ).equals('3-1')
   })
 
+  it('uses server time at socket receipt for an active or expired radar reading', async function () {
+    const { sockets, element } = live()
+    await render(element)
+    const state = { ...SAMPLE_SCOREBOARD, exitVelocity: 55 }
+    const exit = (): Element | null =>
+      document.querySelector('[data-scoreboard="exitSpeed"]')
+    await act(async () => {
+      sockets.latest().receive({ ...state, serverNow: 10500 })
+    })
+    expect(exit()).equals(null)
+    const reading = { mph: 55, startedAt: 10000, receivedAt: 10000 }
+    await act(async () => {
+      sockets
+        .latest()
+        .receive({ ...state, exitReading: reading, serverNow: 13000 })
+    })
+    expect(exit()?.textContent).equals('Exit: 55 MPH')
+    await act(async () => {
+      sockets
+        .latest()
+        .receive({ ...state, exitReading: reading, serverNow: 16000 })
+    })
+    expect(exit()).equals(null)
+  })
+
   it('retries a 1006 before any state after 3 s, then shows the board', async function () {
     const { sockets, clock, element } = live()
     await render(element)

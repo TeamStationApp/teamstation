@@ -481,7 +481,7 @@ describe('the scoreboard pages', function () {
     await browser?.close()
   })
 
-  it('E6: the sample page is transparent, B, laid out as 1.0 drew it, and asks for no session [E9]', async function () {
+  it('E6: the sample is transparent, reserves its numeric columns, and asks for no session [E9]', async function () {
     const requests: string[] = []
     const page = await anonymous.newPage()
     page.on('request', request => requests.push(request.url()))
@@ -519,12 +519,9 @@ describe('the scoreboard pages', function () {
       const rect = board.getBoundingClientRect()
       return [rect.left, rect.top, rect.width, rect.height]
     })
-    expect(box).deep.equals([
-      0,
-      0,
-      SCOREBOARD_BOARD_SIZE.width,
-      SCOREBOARD_BOARD_SIZE.height
-    ])
+    expect(box.slice(0, 2)).deep.equals([0, 0])
+    expect(box[2]).closeTo(701, 2)
+    expect(box[3]).equals(SCOREBOARD_BOARD_SIZE.height)
     expect(requests.filter(url => url.includes('/auth/me'))).deep.equals([])
     await shot(page, 'sample')
     await page.close()
@@ -555,8 +552,10 @@ describe('the scoreboard pages', function () {
     ] as Array<[string, number[], number[]]>) {
       const [x, y, width, height] = drawn
       const [x1, y1, width1, height1] = v1
-      expect(Math.abs(x - x1), `${name} across`).lessThan(7)
-      expect(Math.abs(width - width1), `${name} wide`).lessThan(7)
+      if (['A. RIVERA', 'J. WILSON', 'VISITORS', 'PIONEERS'].includes(name))
+        expect(Math.abs(x - x1), `${name} across`).lessThan(7)
+      if (['VISITORS', 'PIONEERS'].includes(name))
+        expect(Math.abs(width - width1), `${name} wide`).lessThan(7)
       expect(Math.abs(y - y1), `${name} down`).lessThan(1.5)
       expect(Math.abs(height - height1), `${name} high`).lessThan(1.5)
     }
@@ -580,6 +579,9 @@ describe('the scoreboard pages', function () {
         Math.ceil(Math.max(y + height, y1 + height1)) + 1 - top
       ]
     })
+    // The wider numeric columns move the right-hand artwork. Keep comparing
+    // the original team bars and the left edge of the board pixel by pixel.
+    letters.push([185, 0, clip.width - 185, clip.height])
     const differing = await pixelsDiffering(browser, v1Png, portedPng, letters)
     console.log(
       `      ${differing} of ${clip.width * clip.height} pixels but the letters differ from 1.0`
@@ -634,6 +636,66 @@ describe('the scoreboard pages', function () {
     await shot(page, 'live')
   })
 
+  it('keeps the board width through radar packets, score changes and both wipes', async function () {
+    const id = group.games['-10m']
+    const page = await open(anonymous, `/scoreboard/${id}`)
+    const send = async (fields: Record<string, unknown>): Promise<void> => {
+      const packet = await publishAt(id, group.runner, fields)
+      packet.done()
+    }
+    const part = (name: string): string => `[data-scoreboard="${name}"]`
+    const width = async (): Promise<number> =>
+      await page.$eval(
+        part('board'),
+        element => element.getBoundingClientRect().width
+      )
+    try {
+      await boardShows(page, 'live board', board => board.drawn)
+      await page.evaluate(async () => {
+        await document.fonts.ready
+      })
+      const baseline = await width()
+      for (const [n, speed] of [9, 44, 88, 100, 0].entries()) {
+        await send({
+          pitchSpeed: speed,
+          inning: n === 0 ? 9 : 10,
+          homeScore: n === 0 ? 9 : 10,
+          batterName: n === 4 ? '' : 'B'.repeat(128),
+          pitcherName: n === 4 ? '' : 'P'.repeat(128)
+        })
+        await until(
+          `pitch ${speed}`,
+          async () =>
+            (await page.$eval(part('pitchSpeed'), e => e.textContent)) ===
+            `${speed}MPH`
+        )
+        expect(await width(), `pitch ${speed}`).equals(baseline)
+      }
+      await send({
+        batterName: 'Batter',
+        batterNumHits: 1,
+        batterAtBats: 2,
+        exitVelocity: 55
+      })
+      await page.waitForSelector(part('exitSpeed'))
+      expect(await page.$eval(part('exitSpeed'), e => e.textContent)).equals(
+        'Exit: 55 MPH'
+      )
+      expect(await width()).equals(baseline)
+      await send({ batterNumHits: 2, batterAtBats: 3 })
+      await page.waitForSelector(part('exitSpeed'), {
+        hidden: true,
+        timeout: 8000
+      })
+      expect(await page.$eval(part('batterLine'), e => e.textContent)).equals(
+        '2-3'
+      )
+      expect(await width()).equals(baseline)
+    } finally {
+      await page.close()
+    }
+  })
+
   it('E7.3: a closed board shows the branded 404 [E9]', async function () {
     const page = await open(anonymous, `/scoreboard/${group.games['-4h']}`)
     await until('the branded 404', async () => await notFoundShown(page))
@@ -683,7 +745,7 @@ describe('the scoreboard pages', function () {
     await page.close()
   })
 
-  it('E8: Director measures B on the sample, a long-named live board and a quiet closed page', async function () {
+  it('E8: Director measures the sample, a long-named live board and a quiet closed page', async function () {
     requireLocal('E8')
     const gameId = group.games['-10m']
     const long = 'L'.repeat(40)
@@ -767,6 +829,9 @@ describe('the scoreboard pages', function () {
             boxes.home[2],
             'the long name is not clipped'
           ).to.be.greaterThan(400)
+        } else if (one.name === 'sample') {
+          expect(size[0]).closeTo(701, 2)
+          expect(size[1]).equals(SCOREBOARD_BOARD_SIZE.height)
         } else {
           expect(
             size,

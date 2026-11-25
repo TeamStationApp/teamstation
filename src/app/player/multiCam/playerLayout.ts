@@ -134,6 +134,12 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
   const board = settings == null ? null : input.board
   const clear = (rect: Rect | null, area?: Rect): Rect | null =>
     rect == null ? null : keptClear(rect, safe, area)
+  const clearBoard = (rect: Rect | null, area?: Rect): Rect | null => {
+    if (board == null || rect == null || rect.h <= 0) return rect
+    const full = bandOf(board) / board.height
+    const placed = keptClear({ ...rect, h: rect.h * full }, safe, area)
+    return { ...placed, h: placed.h / full }
+  }
   const none: PlayerLayout = {
     tiles: [],
     board: null,
@@ -156,7 +162,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
         settings.portraitHeight,
         input.aspect
       )
-      boardRect = clear({
+      boardRect = clearBoard({
         x: BOARD_INSET,
         y: safe.y,
         w: board.width * scale,
@@ -231,7 +237,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       board:
         board == null || settings == null
           ? null
-          : clear(
+          : clearBoard(
               singleBoardRect({
                 picture,
                 placement: settings.single,
@@ -275,7 +281,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       const boxHeight = boxHeightFor(count, boxWidth)
       return {
         tiles,
-        board: clear({
+        board: clearBoard({
           x: half + GAP,
           y: bottom - bandOf(board) * scale,
           w: board.width * scale,
@@ -294,7 +300,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
     if (board != null)
       return {
         tiles,
-        board: clear(aboveBoardRect(screen, top, board)),
+        board: clearBoard(aboveBoardRect(screen, top, board)),
         boardClip: null,
         box: null,
         boardCell: false
@@ -347,7 +353,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
     const boardRect =
       board == null
         ? null
-        : clear(
+        : clearBoard(
             {
               x: right - board.width * scale,
               y: cell.y + BOARD_INSET,
@@ -389,7 +395,7 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
     board:
       placed == null
         ? null
-        : clear(
+        : clearBoard(
             { ...placed, x: corner.x + placed.x, y: corner.y + placed.y },
             corner
           ),

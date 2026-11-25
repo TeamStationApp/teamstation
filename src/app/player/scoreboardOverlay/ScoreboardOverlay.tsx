@@ -4,6 +4,7 @@ import { type LayoutChangeEvent, StyleSheet, View } from 'react-native'
 import type { BoardStep, TeamStationClient } from '../../../common/api'
 import { SCOREBOARD_BOARD_SIZE } from '../../../common/scoreboard'
 import type { WallTimeline } from '../../../common/wallTimeline'
+import { type BoardClock, usePictureClock } from '../../scoreboard/boardClock'
 import { ScoreboardBoard } from '../../scoreboard/ScoreboardBoard'
 import type { Rect } from '../controlGeometry'
 import type { VideoHandle } from '../videoHandle'
@@ -19,6 +20,7 @@ import { timeFrame, wallAt, windowStart } from './wallTimeline'
 export interface ScoreboardOverlayProps {
   /** The board to draw; nothing at all while there is none. */
   step: BoardStep | null
+  clock?: BoardClock
   /**
    * Where the board goes, given the size it measured at: the rectangle it is
    * scaled into, or null to keep it off the picture.
@@ -108,6 +110,7 @@ export function ScoreboardOverlay(
         >
           <ScoreboardBoard
             state={step.state}
+            clock={props.clock}
             minWidth={SCOREBOARD_BOARD_SIZE.width}
           />
         </View>
@@ -172,7 +175,9 @@ export function PictureScoreboard(
     live: live || timeline?.live === true,
     playheadWall: wallNow
   })
+  const clock = usePictureClock()
   const step = usePlayheadStep({
+    onFrame: clock.sample,
     steps: board.steps,
     wallNow,
     onSeek: board.refetchAround
@@ -202,6 +207,7 @@ export function PictureScoreboard(
   return (
     <ScoreboardOverlay
       step={shown}
+      clock={clock}
       place={natural =>
         singleBoardRect({ picture, placement: overlay.single, natural })
       }
