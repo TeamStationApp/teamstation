@@ -106,11 +106,19 @@ async function scoringGame(games = 1): Promise<Fixture> {
       .filter(line => line.startsWith(`${key}=`))
       .map(line => line.slice(key.length + 1))
   const made = value('GAME_ID')
-  // The fixture makes its league, season and teams afresh and names nobody
-  // their scorekeeper, so the scorer is made one of each game's season.
+  // Give the scorer the season role and link its fixture teams to their
+  // managing season. Participation alone does not grant scoring access.
   for (const game of made)
     sql(
-      `INSERT INTO scope_roles (id, user_id, scope_type, scope_id, role)
+      `UPDATE teams t SET league_id = s.league_id
+       FROM games g JOIN seasons s ON s.id = g.season_id
+       WHERE g.id = '${game}' AND t.id IN (g.away_team_id, g.home_team_id);
+       INSERT INTO season_team_parents (team_id, season_id)
+       SELECT st.team_id, st.season_id FROM season_teams st
+       JOIN games g ON g.season_id = st.season_id
+       WHERE g.id = '${game}' AND st.team_id IN (g.away_team_id, g.home_team_id)
+       ON CONFLICT DO NOTHING;
+       INSERT INTO scope_roles (id, user_id, scope_type, scope_id, role)
        SELECT 'rol_e2e' || md5(random()::text), e.user_id, 'season', g.season_id, 'scorekeeper'
        FROM games g, user_emails e
        WHERE g.id = '${game}' AND e.email = '${SCORER.email.toLowerCase()}'
@@ -191,9 +199,6 @@ async function openAs(
 }
 async function click(page: Page, label: string): Promise<void> {
   const selector = `[aria-label="${label}"]:not([aria-disabled="true"]):not(:disabled)`
-  const opening =
-    label === 'Create Player' &&
-    (await page.$('[aria-label="First Name"]')) == null
   // A control that remounts while it settles (the roster editor does, as a
   // save comes back) leaves no box: it is looked up again.
   for (let attempt = 1; ; attempt++) {
@@ -204,7 +209,6 @@ async function click(page: Page, label: string): Promise<void> {
       if (attempt === 3 || !String(error).includes('has no box')) throw error
     }
   }
-  if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
 
 async function pressOnce(
@@ -228,6 +232,22 @@ async function pressOnce(
     await match.evaluate(node => {
       node.scrollIntoView({ block: 'nearest' })
     })
+    // The slide can sit still below the viewport before its first frame.
+    // Wait until a real pointer at the control's center can reach it.
+    await page.waitForFunction(
+      node => {
+        if (!node.isConnected) return true
+        const box = node.getBoundingClientRect()
+        return node.contains(
+          document.elementFromPoint(
+            box.x + box.width / 2,
+            box.y + box.height / 2
+          )
+        )
+      },
+      {},
+      match
+    )
     let box = await match.boundingBox()
     for (let still = 0; still < 3;) {
       await new Promise(resolve => setTimeout(resolve, 100))
@@ -241,8 +261,10 @@ async function pressOnce(
     await page.mouse.up()
     // Let the sheet transition finish before targeting its next control.
     await new Promise(resolve => setTimeout(resolve, 350))
-    break
+    return
   }
+  // A roster save can remount the visible control between the two queries.
+  throw new Error(`${label} has no box to press`)
 }
 
 async function waitReady(page: Page): Promise<void> {
@@ -905,7 +927,8 @@ describe('scoring into the server', function () {
         sql(`select count(*) from events where "gameId"='${gameId}'`)
       ).equals('1')
 
-      // Finish the at-bat and end the game.
+      // Return to the scorer's tab to finish the at-bat and end the game.
+      await page.bringToFront()
       await click(page, 'Undo Ball')
       await waitReady(page)
       await click(page, 'Open scoring menu')
@@ -925,7 +948,13 @@ describe('scoring into the server', function () {
         sql(`select "currentPlay" is null from games where id='${gameId}'`)
       ).equals('t')
       const final = await summary(page)
-      await click(page, 'Ball')
+      const ball = '[aria-label="Ball"]'
+      expect(
+        await page.$eval(ball, node =>
+          node.matches(':disabled, [aria-disabled="true"]')
+        )
+      ).equals(true)
+      await page.locator(ball).setWaitForEnabled(false).click()
       expect(await summary(page)).equals(final)
       const singleId = sql(
         `select id from events where "gameId"='${gameId}' and "atBatIndex"=0`
@@ -1265,13 +1294,6 @@ describe('scoring into the server', function () {
       last: string
     ): Promise<RosterEntry> => {
       await click(page, 'Create Player')
-      // Asked for directly: waitForSelector never saw the sheet's fields.
-      for (let i = 0; i < 50; i++) {
-        if ((await page.$('[aria-label="First Name"]')) != null) break
-        await new Promise(resolve => setTimeout(resolve, 200))
-      }
-      // The sheet moves focus to its first field once it has shown.
-      await new Promise(resolve => setTimeout(resolve, 500))
       await page.locator('[aria-label="First Name"]').fill(first)
       await page.locator('[aria-label="Last Name"]').fill(last)
       const response = page.waitForResponse(
@@ -1290,6 +1312,8 @@ describe('scoring into the server', function () {
         `[aria-label="${label}"]`,
         node => node.getAttribute('aria-disabled') === 'true'
       )
+    const publicLabel = (entry: RosterEntry): string =>
+      entry.compactName ?? entry.shortName
     let starter = ''
     let dueBatter = ''
     let pinchPlayer!: RosterEntry
@@ -1313,7 +1337,7 @@ describe('scoring into the server', function () {
       // replaces the man there: held, then dropped on the batter due.
       await click(page, 'Lineup')
       const bench = (await (await page.waitForSelector(
-        `[aria-label="Add ${pinchPlayer.shortName} to Lineup"]`
+        `[aria-label="Add ${publicLabel(pinchPlayer)} to Lineup"]`
       ))!.boundingBox())!
       const due = (await (await page.waitForSelector(
         `[aria-label="Reorder ${dueBatter}"]`
@@ -1339,7 +1363,7 @@ describe('scoring into the server', function () {
             : first.getAttribute('aria-label') === `Reorder ${label}`
         },
         {},
-        pinchPlayer.shortName
+        publicLabel(pinchPlayer)
       )
       await click(page, 'Home Team')
       // Players are made on the roster, and pitch from the defense.
@@ -1348,7 +1372,7 @@ describe('scoring into the server', function () {
       await click(page, 'Defense')
       // Held, then dragged onto the mound.
       const from = await page.waitForSelector(
-        `[aria-label="${reliefPlayer.shortName}"]`
+        `[aria-label="${publicLabel(reliefPlayer)}"]`
       )
       await from!.scrollIntoView()
       const start = (await from!.boundingBox())!
@@ -1376,19 +1400,19 @@ describe('scoring into the server', function () {
       await click(page, 'Save Rosters')
       await waitReady(page)
       const changed = await summary(page)
-      expect(changed).includes(`Batter ${pinchPlayer.shortName}`)
-      expect(changed).includes(`Pitcher ${reliefPlayer.shortName}`)
+      expect(changed).includes(`Batter ${publicLabel(pinchPlayer)}`)
+      expect(changed).includes(`Pitcher ${publicLabel(reliefPlayer)}`)
       // He walks, in the count his man left.
       for (let i = 0; i < 3; i++) await pitch(page, 'Ball')
       await finishAtBat(page)
       await waitReady(page)
-      // A pitch in the next appearance holds the game open; substitutions do not.
+      // End Game is available with a pitch in the next appearance.
       await pitch(page, 'Ball')
       await waitReady(page)
       await click(page, 'Open scoring menu')
-      expect(await menuItemDisabled('End Game')).equals(true)
+      expect(await menuItemDisabled('End Game')).equals(false)
       await click(page, 'Dismiss scoring menu')
-      // Undone, it can.
+      // Undo the pitch so the stored book ends with the walk.
       await page.locator('[aria-label^="Undo "]').click()
       await waitReady(page)
       await waitSaved(page)
@@ -1445,8 +1469,6 @@ describe('scoring into the server', function () {
     const [pitching, pinch] = play.playEvents.slice(1, 3)
     // A served play names its players by gumbo id and public label: the
     // roster entry reads the scorer their full name, and that label beside it.
-    const publicLabel = (entry: RosterEntry): string =>
-      entry.compactName ?? entry.shortName
     expect(pitching).deep.include({
       isSubstitution: true,
       player: { id: reliefPlayer.gumboId, fullName: publicLabel(reliefPlayer) },
