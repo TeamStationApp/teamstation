@@ -297,8 +297,10 @@ export async function computeBoardTimeline(
 /**
  * What the database works out of a game's timeline version in one query:
  * the game's `updated_at`, which every play post moves (and which the game
- * source writes as its `sourceVersion`), the newest log row's version, and
- * the two teams' names, which every step shows and which a rename or a
+ * source writes as its `sourceVersion`), the newest log row's version, the
+ * count of resets and late exit readings, which are logged without a newer
+ * version (read through `scoreboard_log_late_rows`, whose predicate this
+ * repeats), and the two teams' names, which every step shows and which a rename or a
  * merge changes without touching the game, and the merge graph, which
  * invalidates cached player identities even when no new play follows a
  * merge; and, beside them, the stamp the game's scope is kept under
