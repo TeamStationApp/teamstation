@@ -2,7 +2,8 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import { act } from 'react'
 
-import { startWeb } from './index'
+import { boot } from './index'
+import { startWeb } from './render'
 
 function page(
   path: string,
@@ -95,4 +96,60 @@ describe('the web entry', function () {
       })
     ).throws('The page has no #root')
   })
+})
+
+describe('web bootstrap', () => {
+  for (const mode of [
+    'normal',
+    'production build',
+    'wrong host',
+    'frame',
+    'development'
+  ]) {
+    it('dispatches ' + mode + ' before starting the application', async () => {
+      const actions: string[] = []
+      const page = Object.assign(new EventTarget(), {
+        location: {
+          pathname: mode === 'normal' ? '/games/g1' : '/password-login',
+          origin:
+            mode === 'wrong host'
+              ? 'https://example.test'
+              : 'https://seat.example.test',
+          reload: () => actions.push('reload'),
+          hash: '#auth=sentinel'
+        },
+        history: {
+          replaceState(_state: unknown, _title: string, path: string) {
+            actions.push(path)
+          }
+        },
+        top: {}
+      })
+      if (mode !== 'frame') page.top = page
+      await boot(
+        page as unknown as Window,
+        async () => {
+          actions.push('app')
+        },
+        mode === 'production build'
+          ? undefined
+          : async (params, signal) => {
+              expect(params.get('auth')).equals('sentinel')
+              expect(signal.aborted).equals(false)
+              page.dispatchEvent(new Event('pagehide'))
+              expect(signal.aborted).equals(true)
+              actions.push('link')
+            },
+        'https://seat.example.test'
+      )
+      for (const key of ['unrelated', 'teamstation.account-switch']) {
+        page.dispatchEvent(Object.assign(new Event('storage'), { key }))
+      }
+      expect(actions).deep.equals(
+        mode === 'normal'
+          ? ['app', 'reload']
+          : ['/sign-in', mode === 'development' ? 'link' : 'app']
+      )
+    })
+  }
 })

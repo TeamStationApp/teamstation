@@ -4,6 +4,7 @@ import { after, before, beforeEach, describe, it } from 'mocha'
 import { TeamStationClient } from '../../common/api'
 import { asArgonParameters } from '../../common/passwordProtocol'
 import { userIdOfGumbo } from '../../common/userId'
+import { EXPECTED_ACTOR_HEADER } from '../../common/webPasswordLink'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import {
   signInTestAccount,
@@ -17,6 +18,8 @@ import {
   nativeArgon,
   readPasswordRecord
 } from '../auth/passwords'
+import { SESSION_COOKIE } from '../auth/tokens'
+import { authRoutes } from './auth'
 
 const legacy = '$2b$11$legacy-fixture-not-a-live-password'
 const proof = 'ab'.repeat(32)
@@ -31,7 +34,17 @@ describe('password hashing and email-reset HTTP protocol', function () {
   this.timeout(60000)
   let h: AccountHarness
   before(async () => {
-    h = await accountHarness()
+    h = await accountHarness(undefined, (app, { db, space, sendCode }) => {
+      app.use(
+        '/api/v1/development',
+        authRoutes(db, {
+          publicUrl: 'https://seat.example.test',
+          passwordLinkOrigin: 'https://seat.example.test',
+          space,
+          sendCode
+        })
+      )
+    })
   })
   after(async () => {
     await h?.close()
@@ -83,6 +96,156 @@ describe('password hashing and email-reset HTTP protocol', function () {
     }
     throw new Error('Password authorization did not start')
   }
+  it('limits link login to development and verifies both accounts before issuing a cookie', async () => {
+    const actor = userIdOfGumbo(102)
+    const target = userIdOfGumbo(101)
+    const credentials = { email: 'alex@example.com', clientHash: proof }
+    const path = '/development/auth/password/link'
+    const rows = async (): Promise<number> =>
+      (await h.db.selectFrom('auth_sessions').select('id').execute()).length
+    const originalRows = await rows()
+    await h.db
+      .updateTable('users')
+      .set({
+        password_hash: await createPasswordRecord(
+          proof,
+          testPasswordParameters,
+          target
+        )
+      })
+      .where('id', '=', target)
+      .execute()
+    const disabled = await h.request(
+      'POST',
+      '/auth/password/link',
+      credentials,
+      null
+    )
+    expect(disabled.status).equals(404)
+    expect(disabled.headers.get('cache-control')).equals('no-store')
+    const refused = await h.request(
+      'POST',
+      path,
+      { ...credentials, clientHash: '00'.repeat(32) },
+      102
+    )
+    expect(refused.status).equals(401)
+    const mismatch = await h.request('POST', path, credentials, 102)
+    expect(mismatch.status).equals(409)
+    expect(mismatch.headers.has('set-cookie')).equals(false)
+    const { details } = (await mismatch.json()) as {
+      details: {
+        reason: string
+        confirmation: { currentId: string; targetId: string }
+      }
+    }
+    expect(details.reason).equals('confirmAccountSwitch')
+    const confirmation = { currentId: actor, targetId: target }
+    expect(details.confirmation).deep.equals(confirmation)
+    for (const [currentId, targetId, user] of [
+      [target, target, 102],
+      [actor, actor, 102],
+      [actor, target, null],
+      [actor, target, 101]
+    ] as const) {
+      const stale = await h.request(
+        'POST',
+        path,
+        { ...credentials, confirmation: { currentId, targetId } },
+        user
+      )
+      expect(stale.status).equals(409)
+      expect(stale.headers.has('set-cookie')).equals(false)
+    }
+    expect(await rows()).equals(originalRows)
+    await h.resetLimits()
+    for (const [user, decision] of [
+      [102, confirmation],
+      [null, undefined],
+      [101, undefined]
+    ] as const) {
+      const signed = await h.request(
+        'POST',
+        path,
+        { ...credentials, confirmation: decision },
+        user
+      )
+      expect(signed.status).equals(200)
+      expect(signed.headers.has('set-cookie')).equals(true)
+      expect(
+        ((await signed.json()) as { user: { id: string } }).user.id
+      ).equals(target)
+    }
+    // The still-open first tab sends the identity it displayed. Supplying the
+    // second fixture's cookie must not let its sign-out invalidate that session.
+    const cookie = SESSION_COOKIE + '=' + h.tokens.get(101)!
+    const staleWrite = await fetch(h.origin + '/api/v1/auth/logout', {
+      method: 'POST',
+      headers: { cookie, [EXPECTED_ACTOR_HEADER]: actor }
+    })
+    expect(staleWrite.status).equals(409)
+    const staleBearer = await fetch(h.origin + '/api/v1/auth/logout', {
+      method: 'POST',
+      headers: {
+        cookie,
+        authorization: 'Bearer ' + h.tokens.get(102)!,
+        [EXPECTED_ACTOR_HEADER]: actor
+      }
+    })
+    expect(staleBearer.status).equals(409)
+    expect(staleBearer.headers.has('set-cookie')).equals(false)
+    const staleRead = await fetch(h.origin + '/api/v1/me/account', {
+      headers: { cookie, [EXPECTED_ACTOR_HEADER]: actor }
+    })
+    expect(staleRead.status).equals(409)
+    const signedOutRead = await fetch(h.origin + '/api/v1/me/account', {
+      headers: { [EXPECTED_ACTOR_HEADER]: actor }
+    })
+    expect(signedOutRead.status).equals(401)
+    expect(
+      (await fetch(h.origin + '/api/v1/auth/me', { headers: { cookie } }))
+        .status
+    ).equals(200)
+    expect(await rows()).equals(originalRows + 3)
+    await h.db
+      .updateTable('users')
+      .set({ merged_into: target })
+      .where('id', '=', actor)
+      .execute()
+    try {
+      const alias = await h.request(
+        'POST',
+        path,
+        { ...credentials, email: 'casey@example.com' },
+        101
+      )
+      expect(alias.status).equals(200)
+      expect(((await alias.json()) as { user: { id: string } }).user.id).equals(
+        target
+      )
+    } finally {
+      await h.db
+        .updateTable('users')
+        .set({ merged_into: null })
+        .where('id', '=', actor)
+        .execute()
+    }
+    const issued = await rows()
+    await h.db
+      .updateTable('users')
+      .set({ password_hash: null })
+      .where('id', '=', target)
+      .execute()
+    const expired = await h.request(
+      'POST',
+      path,
+      { ...credentials, confirmation },
+      102
+    )
+    expect(expired.status).equals(401)
+    expect(expired.headers.has('set-cookie')).equals(false)
+    expect(await rows()).equals(issued)
+  })
   it('releases database locks during password hashing and rejects a superseded credential', async () => {
     await h.db
       .updateTable('users')

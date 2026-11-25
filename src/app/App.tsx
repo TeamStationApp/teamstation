@@ -784,7 +784,8 @@ function Shell(props: AppProps): React.ReactElement {
       const left = sessionTurn.current
       Promise.allSettled([releasing, forgotten])
         .then(async () => {
-          if (sessionTurn.current === left) await client.signOut()
+          if (sessionTurn.current === left)
+            await client.signOut(session?.user.id)
         })
         .catch(() => undefined)
     }

@@ -1403,6 +1403,12 @@ describe('the board timeline', function () {
         `${one.ws}/${doomed}/socket?timeline=1`,
         runner
       )
+      // The socket opens before the server finishes authorizing the viewer.
+      // A delivered notice proves it joined the game before we delete it.
+      await until('the timeline viewer is admitted', async () => {
+        await one.store.announceTimeline(doomed)
+        return changes(orphan) > 0
+      })
       await db.deleteFrom('games').where('id', '=', doomed).execute()
       expect(await orphan.closed).equals(4404)
       // And one for no game at all is never admitted.
