@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createWriteStream, writeFileSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as wait } from 'node:timers/promises'
@@ -10,6 +11,33 @@ import type { E2eContext } from '../../core/spec'
 import { boxOf, flatten, type Node } from '../app/keyboardDock'
 
 const exec = promisify(execFile)
+
+interface Point {
+  x: number
+  y: number
+}
+
+export type ReverseKeyboardDrag = (options: {
+  qualifiedDevice: string
+  platform: 'ios' | 'android'
+  from: Point
+  turn: Point
+  to: Point
+}) => Promise<void>
+
+/** A local operator may supply a same-contact gesture that the Hub does not expose. */
+export function keyboardDragAdapter(): ReverseKeyboardDrag | undefined {
+  const path = process.env.TS_CHAT_REVERSE_DRAG_ADAPTER
+  if (path == null || path === '') return undefined
+  if (!isAbsolute(path))
+    throw new Error(
+      'TS_CHAT_REVERSE_DRAG_ADAPTER must be an absolute local path'
+    )
+  const adapter: { reverseKeyboardDrag?: ReverseKeyboardDrag } = require(path)
+  if (typeof adapter.reverseKeyboardDrag !== 'function')
+    throw new Error('The gesture adapter must export reverseKeyboardDrag')
+  return adapter.reverseKeyboardDrag
+}
 
 /** The correlation of the plus glyph with this row of the recorded control lane. */
 function similarity(
@@ -34,7 +62,8 @@ export async function measureComposerMotion(
   ctx: E2eContext,
   device: MaestroDevice,
   action: () => Promise<void>,
-  name = 'composer-motion'
+  name: string,
+  reverseDistance?: number
 ): Promise<{ up: boolean; down: boolean }> {
   const boxes = flatten((await device.hierarchy()) as Node)
   const plus = boxOf(boxes.find(node => node.id === 'chat-attachment-toggle'))
@@ -134,10 +163,18 @@ export async function measureComposerMotion(
   const norm = template.reduce((total, value) => total + value * value, 0)
   if (norm < 100 * template.length)
     throw new Error('The resting plus has insufficient contrast')
+  const lower = reverseDistance == null ? half : Math.max(half, rest - half)
+  const upper = Math.min(
+    rows - half - 1,
+    rest +
+      half +
+      Math.ceil(((reverseDistance ?? 0) * rows * scale) / (stream.height - top))
+  )
+
   const positions = frames.map((frame, index) => {
     let best = 0.88
     let row: number | null = null
-    for (let y = half; y <= Math.min(rest + half, rows - half - 1); y++) {
+    for (let y = lower; y <= upper; y++) {
       const score = similarity(
         template,
         norm,
@@ -156,27 +193,37 @@ export async function measureComposerMotion(
   )
   if (present.length === 0)
     throw new Error('The composer was never visible in the recording')
-  const raised = Math.min(...present.map(p => p.y))
-  const atTop = present.find(p => p.y === raised)!
+  const firstLegUp = reverseDistance == null
+  const positionsY = present.map(p => p.y)
+  const extreme = firstLegUp ? Math.min(...positionsY) : Math.max(...positionsY)
+  const turn = present.findIndex(p => p.y === extreme)
   const countIntermediate = (
     leg: typeof present,
-    direction: -1 | 1
+    from: number,
+    to: number
   ): number => {
-    let previous = direction === -1 ? rest : raised
+    const direction = Math.sign(to - from)
+    let previous = from
     let steps = 0
     for (const { y } of leg) {
-      if (y <= raised + 1 || y >= rest - 1 || (y - previous) * direction < 2)
+      if (
+        (y - from) * direction <= 1 ||
+        (to - y) * direction <= 1 ||
+        (y - previous) * direction < 1
+      )
         continue
       previous = y
       steps++
     }
     return steps
   }
-  const up = countIntermediate(present.slice(0, present.indexOf(atTop)), -1)
-  const down = countIntermediate(present.slice(present.indexOf(atTop) + 1), 1)
+  const outward = countIntermediate(present.slice(0, turn), rest, extreme)
+  const inward = countIntermediate(present.slice(turn + 1), extreme, rest)
+  const up = firstLegUp ? outward : inward
+  const down = firstLegUp ? inward : outward
   const last = present.at(-1)!
   const returned =
-    last.y >= rest - 1 &&
+    Math.abs(last.y - rest) <= 1 &&
     positions.at(-1)!.seconds - positions[last.i].seconds < 0.25
   writeFileSync(
     ctx.artifact(name + '.json'),
@@ -190,12 +237,16 @@ export async function measureComposerMotion(
       columns,
       rows,
       rest,
-      raised,
+      extreme,
+      firstLegUp,
       up,
       down,
       returned,
       positions
     })
   )
-  return { up: up >= 3, down: down >= 3 && returned }
+  return {
+    up: up >= 3 && (firstLegUp || returned),
+    down: down >= 3 && (!firstLegUp || returned)
+  }
 }

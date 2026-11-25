@@ -7,6 +7,7 @@ import type { ChatComposerBandProps } from './ChatViewport'
 export function ChatComposerBand({
   viewport,
   active: _active,
+  frame: _frame,
   style,
   ...rest
 }: ChatComposerBandProps): React.ReactElement {

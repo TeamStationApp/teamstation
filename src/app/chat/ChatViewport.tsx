@@ -14,6 +14,7 @@ import { floatingNavBottom } from '../components/navClearance'
 import { useBreakpoint } from '../components/useBreakpoint'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
+import type { ChatHistoryKeyboard } from './chatHistoryListTypes'
 import { chatLayout, keyboardOverlap } from './chatLayoutModel'
 import { useChatVisualViewport } from './useChatVisualViewport'
 
@@ -43,6 +44,7 @@ export type ChatViewportState = ReturnType<typeof chatLayout> & {
 
 export interface ChatComposerBandProps extends ViewProps {
   active: boolean
+  frame: ChatHistoryKeyboard['frame']
   ref?: React.Ref<React.ComponentRef<typeof View>>
   viewport: Pick<ChatViewportState, 'composerBottom' | 'composerDock'>
 }

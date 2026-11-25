@@ -84,8 +84,10 @@ export interface ChatHistoryKeyboardOptions {
 }
 
 export interface ChatHistoryKeyboard {
-  /** Changes whenever the native keyboard moves through a different frame. */
-  motionRevision?: () => number
+  /** One UI-thread sample shared by the floating field and the gesture fallback. */
+  frame?: {
+    readonly value: { height: number; progress: number; revision: number }
+  }
   holdKeyboardInset?: () => void
   composerRef: React.RefObject<React.ComponentRef<typeof View> | null>
   onComposerLayout: (event: LayoutChangeEvent) => void

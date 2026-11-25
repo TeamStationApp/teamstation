@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { expect } from 'chai'
 
-import type { MaestroDevice } from '../../../core/maestro'
+import { isHubDevice, type MaestroDevice } from '../../../core/maestro'
 import { defineE2e } from '../../../core/spec'
 import {
   aboveKeyboard,
@@ -13,7 +13,10 @@ import {
   platformOf,
   typeKeys
 } from '../../../rigs/app/keyboardDock'
-import { measureComposerMotion } from '../../../rigs/chat/composerMotion'
+import {
+  keyboardDragAdapter,
+  measureComposerMotion
+} from '../../../rigs/chat/composerMotion'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import {
   chatLinkUi,
@@ -24,6 +27,7 @@ import {
 async function chatGeometry(device: MaestroDevice): Promise<{
   field: Box
   list: Box
+  band: Box
   bubbles: Array<{ id: string; box: Box }>
 }> {
   const nodes = flatten((await device.hierarchy()) as Node)
@@ -46,7 +50,7 @@ async function chatGeometry(device: MaestroDevice): Promise<{
       return [{ id: node.id, box }]
     })
     .sort((a, b) => a.box.y - b.box.y)
-  return { field, list, bubbles }
+  return { field, list, band: bounds('chat-composer-band') ?? field, bubbles }
 }
 
 /** Track the composer on the signed phone while reading a seeded conversation. */
@@ -87,6 +91,16 @@ export default defineE2e({
       const observer = await providerFor(fixture, fixture.observer)
       const platform = platformOf(ctx)
       const ios = platform === 'ios'
+      const reverseDrag = keyboardDragAdapter()
+      const qualifiedDevice = ctx.device('phone')
+      if (reverseDrag == null)
+        ctx.degrade(
+          'Same-contact keyboard reversal needs TS_CHAT_REVERSE_DRAG_ADAPTER'
+        )
+      else if (!isHubDevice(qualifiedDevice))
+        throw new Error(
+          'The keyboard drag adapter needs a currently leased Hub device'
+        )
       let cleanup: (() => Promise<void>) | undefined
       try {
         const { m: device, enter } = await chatLinkUi(
@@ -179,34 +193,9 @@ export default defineE2e({
                 )
               }
               const x = Math.round(opened.list.x + opened.list.width * 0.04)
-              // Release a short drag before the commit threshold so the system can
-              // reverse, then make a complete dismissal from the same lane.
               const from = {
-                point:
-                  x +
-                  ',' +
-                  Math.round(opened.field.y - opened.field.height * 0.2)
+                point: x + ',' + Math.round(opened.band.y - 2)
               }
-              await device.dragAndDrop({
-                from,
-                to: {
-                  point:
-                    x +
-                    ',' +
-                    Math.round(opened.field.y + opened.field.height * 0.55)
-                },
-                duration: 330,
-                holdDuration: 10
-              })
-              await delay(350)
-              const partial = await chatGeometry(device)
-              if (
-                Math.abs(partial.field.y - opened.field.y) >
-                opened.field.height * 0.15
-              )
-                throw new Error(
-                  'The partial drag did not return to the open keyboard'
-                )
               await device.dragAndDrop({
                 from,
                 to: { point: x + ',' + Math.round(closed.field.y) },
@@ -220,6 +209,63 @@ export default defineE2e({
             await readChatComposer(device, platform),
             'draft after dismissal'
           ).equals('keyboard')
+          if (reverseDrag != null) {
+            await device.tapOn({ id: 'chat-composer' })
+            await device.waitForAnimationToEnd()
+            const open = await chatGeometry(device)
+            expect(open.field.y, 'keyboard open before reversal').lessThan(
+              closed.field.y - open.field.height
+            )
+            const measuredKeyboard = await aboveKeyboard(device, open.field)
+            const keyboardTop =
+              measuredKeyboard?.keyboard.y ?? open.band.y + open.band.height
+            const from = {
+              x: Math.round(open.list.x + open.list.width * 0.04),
+              y: Math.round(open.band.y - 2)
+            }
+            const turn = {
+              x: from.x,
+              y: Math.round(
+                keyboardTop + (closed.field.y - open.field.y) * 0.25
+              )
+            }
+            const reversal = await measureComposerMotion(
+              ctx,
+              device,
+              async () => {
+                await reverseDrag({
+                  qualifiedDevice,
+                  platform,
+                  from,
+                  turn,
+                  to: from
+                })
+                await delay(350)
+                const settled = await chatGeometry(device)
+                expect(
+                  settled.field.y,
+                  'reversal settles at the open position'
+                ).closeTo(open.field.y, open.field.height * 0.15)
+                expect(
+                  await readChatComposer(device, platform),
+                  'draft after reversal'
+                ).equals('keyboard')
+              },
+              'composer-reversal-' + position,
+              turn.y - from.y
+            )
+            expect(
+              reversal.down && reversal.up,
+              'captured intermediate frames down and back to the open keyboard'
+            ).equals(true)
+            await device.dragAndDrop({
+              from: { point: from.x + ',' + from.y },
+              to: { point: from.x + ',' + Math.round(closed.field.y) },
+              duration: 450,
+              holdDuration: 10
+            })
+            await device.waitForAnimationToEnd()
+          }
           await ctx.checkpoint('composer-over-keyboard-' + position, {
             expect: [{ id: 'chat-composer' }],
             readBack: async () => {

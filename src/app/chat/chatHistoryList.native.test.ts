@@ -22,9 +22,18 @@ import type { ChatComposerBandProps } from './ChatViewport'
 describe('native virtualized chat history', function () {
   let history: typeof NativeHistory
   let composerBand: typeof NativeBand
-  const frames = { height: { value: 0 }, progress: { value: 0 } }
+  interface KeyboardFrame {
+    height: number
+    progress: number
+  }
+  let frameHandlers: {
+    onStart?: (event: KeyboardFrame) => void
+    onMove: (event: KeyboardFrame) => void
+    onInteractive: (event: KeyboardFrame) => void
+    onEnd: (event: KeyboardFrame) => void
+  }
+  let initialKeyboardHeight = 0
   let sampleStyle: () => { transform: Array<{ translateY: number }> }
-  let sampleMotion: () => void
   let bandBottom: number
   const saved = new Map<string, NodeJS.Module | undefined>()
   const platform = { OS: 'android' }
@@ -78,17 +87,6 @@ describe('native virtualized chat history', function () {
   before(async function () {
     stand('react-native', { Platform: platform })
     stand('react-native-reanimated', {
-      useAnimatedReaction: (
-        read: () => number,
-        react: (value: number, previous: number | null) => void
-      ) => {
-        const last = React.useRef<number | null>(null)
-        sampleMotion = () => {
-          const value = read()
-          react(value, last.current)
-          last.current = value
-        }
-      },
       View: ({ style }: { style: [unknown, { bottom: number }, unknown] }) => {
         bandBottom = style[1].bottom
         return null
@@ -106,7 +104,9 @@ describe('native virtualized chat history', function () {
       })
     })
     stand('react-native-keyboard-controller', {
-      useReanimatedKeyboardAnimation: () => frames,
+      useGenericKeyboardHandler: (handlers: typeof frameHandlers) => {
+        frameHandlers = handlers
+      },
       KeyboardGestureArea: (props: {
         children: React.ReactNode
       }): React.ReactElement =>
@@ -122,7 +122,10 @@ describe('native virtualized chat history', function () {
         setEnabled: (value: boolean) => enabled.push(value)
       }),
       // No keyboard up: a conversation that leaves lets go at once.
-      KeyboardController: { isVisible: () => false },
+      KeyboardController: {
+        isVisible: () => initialKeyboardHeight > 0,
+        state: () => ({ height: initialKeyboardHeight })
+      },
       KeyboardEvents: {
         addListener: (name: string, callback: () => void) => {
           if (name === 'keyboardDidShow') shown.add(callback)
@@ -170,6 +173,7 @@ describe('native virtualized chat history', function () {
   let root: Root | undefined
   let host: HTMLElement | undefined
   afterEach(async function () {
+    initialKeyboardHeight = 0
     if (root != null)
       await act(async () => {
         root!.unmount()
@@ -258,6 +262,7 @@ describe('native virtualized chat history', function () {
   }
 
   it('follows intermediate native keyboard frames through a reversal, handoff and pane switch', async function () {
+    const frame = { value: { height: 0, progress: 0, revision: 0 } }
     const render = async (
       consumed: number,
       follow = true,
@@ -268,12 +273,15 @@ describe('native virtualized chat history', function () {
         composerDock: { bottom: 88, gap: 8, consumed, follow }
       }
       await mount(
-        React.createElement(composerBand.ChatComposerBand, { active, viewport })
+        React.createElement(composerBand.ChatComposerBand, {
+          active,
+          viewport,
+          frame
+        })
       )
     }
     function shift(height: number, progress: number): number {
-      frames.height.value = -height
-      frames.progress.value = progress
+      frame.value = { height, progress, revision: frame.value.revision + 1 }
       return sampleStyle().transform[0].translateY
     }
     await render(0)
@@ -293,18 +301,19 @@ describe('native virtualized chat history', function () {
     expect(shift(225, 0.75)).equals(0)
   })
   it('distinguishes a static keyboard from an interactive gesture that reverses to its starting height', async function () {
+    initialKeyboardHeight = 300
     const { element, state } = harness()
     await mount(element)
-    const revision = state.keyboard.current!.motionRevision!
-    frames.height.value = -300
-    sampleMotion()
-    sampleMotion()
-    expect(revision()).equals(0)
-    frames.height.value = -230
-    sampleMotion()
-    frames.height.value = -300
-    sampleMotion()
-    expect(revision()).equals(2)
+    const frame = state.keyboard.current!.frame!
+    frameHandlers.onStart?.({ height: 0, progress: 0 })
+    expect(frame.value).to.deep.equal({ height: 300, progress: 1, revision: 0 })
+    frameHandlers.onMove({ height: 300, progress: 1 })
+    frameHandlers.onInteractive({ height: 230, progress: 0.77 })
+    frameHandlers.onInteractive({ height: 300, progress: 1 })
+    expect(frame.value).to.deep.equal({ height: 300, progress: 1, revision: 2 })
+    frameHandlers.onMove({ height: 90, progress: 0.3 })
+    frameHandlers.onEnd({ height: 0, progress: 0 })
+    expect(frame.value).to.deep.equal({ height: 0, progress: 0, revision: 4 })
   })
 
   it('holds the existing keyboard inset while the source panel replaces the keyboard', async function () {

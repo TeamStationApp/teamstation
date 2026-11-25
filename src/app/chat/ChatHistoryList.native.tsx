@@ -13,14 +13,14 @@ import React, {
 } from 'react'
 import { Platform, type View } from 'react-native'
 import {
+  KeyboardController,
   KeyboardEvents,
   KeyboardGestureArea,
   KeyboardProvider,
-  useReanimatedKeyboardAnimation
+  useGenericKeyboardHandler
 } from 'react-native-keyboard-controller'
 import {
   type SharedValue,
-  useAnimatedReaction,
   useDerivedValue,
   useSharedValue
 } from 'react-native-reanimated'
@@ -180,13 +180,32 @@ export function useChatHistoryKeyboard(
   } | null>(null)
   const { contentInsetEndAdjustment, onComposerLayout } =
     useKeyboardChatComposerInset(listRef, composerRef, 0)
-  const { height } = useReanimatedKeyboardAnimation()
-  const motionRevision = useSharedValue(0)
-  useAnimatedReaction(
-    () => height.value,
-    (current, previous) => {
-      if (previous != null && current !== previous) motionRevision.value += 1
-    }
+  const [initialHeight] = useState(() =>
+    KeyboardController.isVisible() ? KeyboardController.state().height : 0
+  )
+  const frame = useSharedValue({
+    height: initialHeight,
+    progress: initialHeight > 0 ? 1 : 0,
+    revision: 0
+  })
+  const updateFrame = (event: { height: number; progress: number }): void => {
+    'worklet'
+    const previous = frame.value
+    if (
+      event.height !== previous.height ||
+      event.progress !== previous.progress
+    )
+      frame.value = {
+        height: event.height,
+        progress: event.progress,
+        revision: previous.revision + 1
+      }
+  }
+  // iOS announces the destination height at the start of a transition. Its
+  // move and interactive events carry the keyboard's actual position.
+  useGenericKeyboardHandler(
+    { onMove: updateFrame, onInteractive: updateFrame, onEnd: updateFrame },
+    [frame]
   )
   const clearance = useSharedValue(options.closedClearance)
   useEffect(() => {
@@ -243,7 +262,7 @@ export function useChatHistoryKeyboard(
   )
   useKeyboardControllerOwner(options.active)
   return {
-    motionRevision: () => motionRevision.value,
+    frame,
     composerRef,
     holdKeyboardInset: () => {
       holdingInset.current = true

@@ -1,5 +1,4 @@
 import React from 'react'
-import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller'
 import Animated, { useAnimatedStyle } from 'react-native-reanimated'
 
 import { dockShift } from '../screens/SearchDock.native'
@@ -9,25 +8,21 @@ import type { ChatComposerBandProps } from './ChatViewport'
 export function ChatComposerBand({
   viewport,
   active,
+  frame,
   style,
   ...rest
 }: ChatComposerBandProps): React.ReactElement {
-  const { height, progress } = useReanimatedKeyboardAnimation()
   const { bottom, gap, consumed } = viewport.composerDock
   const follow = active && viewport.composerDock.follow
-  const ride = useAnimatedStyle(
-    () => ({
-      transform: [
-        {
-          translateY: follow
-            ? dockShift(height.value, progress.value, bottom - gap) +
-              Math.min(consumed, Math.max(0, -height.value))
-            : 0
-        }
-      ]
-    }),
-    [bottom, gap, consumed, follow]
-  )
+  const ride = useAnimatedStyle(() => {
+    const position = frame?.value
+    const lift =
+      follow && position != null
+        ? dockShift(-position.height, position.progress, bottom - gap) +
+          Math.min(consumed, Math.max(0, position.height))
+        : 0
+    return { transform: [{ translateY: lift }] }
+  }, [bottom, gap, consumed, follow, frame])
   return (
     <Animated.View
       {...rest}

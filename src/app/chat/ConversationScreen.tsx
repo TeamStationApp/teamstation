@@ -2930,7 +2930,7 @@ export function ConversationScreen(
         end === 'drag' &&
         drag.towardOlder &&
         y < drag.start - 2 &&
-        drag.motion === keyboard.motionRevision?.()
+        drag.motion === keyboard.frame?.value.revision
       )
         Keyboard.dismiss()
     }
@@ -3383,7 +3383,7 @@ export function ConversationScreen(
                     start: y,
                     last: y,
                     towardOlder: false,
-                    motion: keyboard.motionRevision?.()
+                    motion: keyboard.frame?.value.revision
                   }
                 : undefined
               nativeUserScroll.current = 'drag'
@@ -3637,6 +3637,7 @@ export function ConversationScreen(
         )}
         <ChatComposerBand
           active={ownsKeyboard}
+          frame={keyboard.frame}
           viewport={viewport}
           testID="chat-composer-band"
           ref={keyboard.composerRef}
