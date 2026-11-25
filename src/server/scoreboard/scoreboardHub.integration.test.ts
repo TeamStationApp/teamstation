@@ -252,6 +252,13 @@ describe('the scoreboard hub', function () {
       SCOREBOARD_CLOSE.notAllowed
     )
 
+    const stale = connect(
+      `${worker.url}/${gameId}/dashboard?expectedActor=previous`,
+      {
+        headers: { cookie: `ts_session=${runner.token}` }
+      }
+    )
+    expect(await closedWith(stale)).equals(SCOREBOARD_CLOSE.notAllowed)
     const watching = viewer(worker, gameId)
     await heard(watching, 1)
     const byCookie = connect(`${worker.url}/${gameId}/publish`, {

@@ -162,6 +162,8 @@ function withoutTypeOnlyLines(path, source, counts) {
       (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
       ts.isInterfaceDeclaration(node) ||
       ts.isTypeAliasDeclaration(node) ||
+      (ts.isVariableStatement(node) &&
+        (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Ambient) !== 0) ||
       (ts.isPropertyDeclaration(node) &&
         node.initializer == null &&
         !ts.isComputedPropertyName(node.name) &&

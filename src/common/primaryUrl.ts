@@ -96,3 +96,23 @@ export function httpOrigin(authority: Authority): string {
 export function rtmpOrigin(authority: Authority, port: number): string {
   return `rtmp://${hostOf(authority)}:${port}`
 }
+
+/** Development sign-in is opt-in on one exact, operator-configured HTTPS origin. */
+export function isDevelopmentWebOrigin(
+  origin: string | undefined,
+  configured: string | undefined
+): boolean {
+  if (origin == null || origin !== configured) return false
+  try {
+    const url = new URL(origin)
+    return (
+      url.protocol === 'https:' &&
+      url.origin === origin &&
+      !url.hostname.endsWith('.') &&
+      url.hostname !== PRIMARY_HOST &&
+      url.hostname !== WEB_HOST
+    )
+  } catch {
+    return false
+  }
+}

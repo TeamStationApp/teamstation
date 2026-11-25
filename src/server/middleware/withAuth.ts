@@ -2,7 +2,8 @@ import { getIsolationScope } from '@sentry/node'
 import type { RequestHandler } from 'express'
 import type { Kysely } from 'kysely'
 
-import { forbidden, unauthorized } from '../../common/errors'
+import { conflict, forbidden, unauthorized } from '../../common/errors'
+import { EXPECTED_ACTOR_HEADER } from '../../common/webPasswordLink'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
@@ -44,7 +45,18 @@ export function spokenRequests(): RequestHandler {
  * marked as hers.
  */
 export function withActor(db: Kysely<Database>): RequestHandler {
-  return (req, res, next) => {
+  return (req, res, forward) => {
+    const next = (error?: unknown): void => {
+      const expected = req.header(EXPECTED_ACTOR_HEADER)
+      if (
+        error == null &&
+        expected != null &&
+        req.actor != null &&
+        req.actor.userId !== expected
+      )
+        forward(conflict('The account changed. Reload to continue.'))
+      else forward(error)
+    }
     const token = sessionToken(
       req.header('authorization'),
       req.header('cookie')
