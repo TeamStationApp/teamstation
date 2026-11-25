@@ -1540,3 +1540,79 @@ describe('U19 the sponsor logo on every TV camera', () => {
     expect(logos()).deep.equals([])
   })
 })
+
+describe('U19 the sponsor reel on the TV', () => {
+  const sponsored = (startMs: number, durationMs: number): GameSponsors => ({
+    leagueId: 'lea_al',
+    logo: null,
+    reels: [
+      {
+        id: 'srp_tv',
+        reelId: 'srl_tv',
+        url: 'https://cdn.example.test/reel.mp4',
+        width: 640,
+        height: 360,
+        startMs,
+        durationMs
+      }
+    ],
+    overlay: {
+      logo: defaultSponsorSettings.logo,
+      reel: defaultSponsorSettings.reel
+    }
+  })
+  const px = (value: string): number => Number.parseFloat(value)
+
+  it('plays the reel over the top-left camera of four, the board making way, with the heard camera turned down', async () => {
+    viewport = await windowSize(1920, 1080)
+    // On over every moment the cameras could be at.
+    sponsorsAnswer = sponsored(0, 4_000_000_000_000)
+    await render()
+    // The cameras load and report where they are: the TV has its wall time.
+    const cameras = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of cameras) {
+        Object.defineProperty(video, 'duration', {
+          configurable: true,
+          value: 600
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    // Ten seconds on with the remote: the TV's clock has a wall time.
+    await press('Close panel')
+    await act(async () => {
+      emitTvDirection('right')
+      await pause()
+    })
+    await act(async () => {
+      await pause()
+    })
+    const reel = document.querySelector<HTMLElement>(
+      '[data-testid="sponsor-reel"]'
+    )!
+    expect(reel).not.equals(null)
+    expect(px(reel.style.left) + px(reel.style.width)).at.most(960 + 0.5)
+    expect(px(reel.style.top) + px(reel.style.height)).at.most(540 + 0.5)
+    expect(document.querySelector('[data-testid="tv-scoreboard"]')).equals(null)
+    const volumes = [
+      ...document.querySelectorAll<HTMLVideoElement>(
+        '[data-testid^="tv-angle-"] video'
+      )
+    ].map(video => video.volume)
+    expect(Math.min(...volumes)).lessThan(Math.max(...volumes))
+  })
+
+  it('draws no reel outside one', async () => {
+    viewport = await windowSize(1920, 1080)
+    sponsorsAnswer = sponsored(1000, 1000)
+    await render()
+    await act(async () => {
+      await pause()
+    })
+    expect(document.querySelector('[data-testid="sponsor-reel"]')).equals(null)
+  })
+})

@@ -446,6 +446,27 @@ describe('NativeVideoHandle', function () {
     expect(changes).equals(2)
   })
 
+  it('hands its volume to the player as a prop, full until set, kept in range, and only on a change (U27)', function () {
+    let changes = 0
+    const handle = new NativeVideoHandle(() => {
+      changes++
+    })
+    expect(handle.volume).equals(1)
+    expect(handle.props.volume).equals(undefined)
+    handle.volume = 0.2
+    handle.volume = 0.2
+    expect(handle.volume).equals(0.2)
+    expect(handle.props.volume).equals(0.2)
+    expect(changes).equals(1)
+    handle.volume = 3
+    expect(handle.volume).equals(1)
+    handle.volume = -1
+    expect(handle.volume).equals(0)
+    handle.volume = Number.NaN
+    expect(handle.volume).equals(1)
+    expect(changes).equals(4)
+  })
+
   it('hears each listener once when asked, and stops hearing one removed', function () {
     const handle = new NativeVideoHandle(() => undefined)
     const heard: string[] = []

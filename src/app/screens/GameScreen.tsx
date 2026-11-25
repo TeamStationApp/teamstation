@@ -2001,12 +2001,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [chosen])
 
-  // The card's sponsor logo: the game's league's, signed in, kept up to date
-  // while the picture is live.
+  // The game's sponsorship, for the card and the grid of angles alike: the
+  // game's league's, signed in, kept up to date while any angle is live.
   const { sponsors } = useGameSponsors(
     client,
     props.signedIn === true ? gameId : null,
-    video?.status === 'live'
+    video?.status === 'live' ||
+      game?.videos.some(each => each.status === 'live') === true
   )
 
   if (error != null) {
@@ -2695,6 +2696,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <MultiCamView
       client={client}
       gameId={game.id}
+      sponsors={sponsors}
       videos={game.videos}
       isLive={async videoId => await isStillLive(client, gameId, videoId)}
       order={angles ?? defaultAngles(game.videos)}

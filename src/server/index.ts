@@ -102,6 +102,7 @@ import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
 import { gamePlanRoutes } from './routes/gamePlans'
+import { eachGameWritten } from './routes/gameWritten'
 import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
@@ -158,6 +159,7 @@ import {
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
 import { supportsUpgrade } from './socket/upgradePaths'
+import { halfInningHook } from './sponsors/reels'
 import { startSponsorSweeps } from './sponsors/sweeps'
 import {
   exitAfterBuilder,
@@ -745,6 +747,12 @@ function runWorker(): void {
     databaseUrl: serverConfig.databaseUrl,
     log
   })
+  // After every committed write to a game: its board and timeline notice,
+  // then its half-inning ends, which the sponsor reels are placed after.
+  const onGameWritten = eachGameWritten(
+    scoreboard.onGameWritten,
+    halfInningHook({ db, log })
+  )
   // Team rosters' cores, read through on every roster read outside a write,
   // and the game socket's frames of a live post's edits; without Valkey they
   // are read from Postgres, as before.
@@ -907,7 +915,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     gameApprovalRoutes(db, undefined, {
-      onGameWritten: scoreboard.onGameWritten
+      onGameWritten
     })
   )
   app.use('/api/v1', umpireRoutes(db, mediaContext, { push: pushQueue }))
@@ -968,15 +976,12 @@ function runWorker(): void {
     '/api/v1',
     sponsorRoutes(db, mediaContext, { uploadsDir: uploadsDir() })
   )
-  app.use(
-    '/api/v1',
-    scheduleRoutes(db, { onGameWritten: scoreboard.onGameWritten })
-  )
+  app.use('/api/v1', scheduleRoutes(db, { onGameWritten }))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
     '/api/v1',
     eventRoutes(db, {
-      onGameWritten: scoreboard.onGameWritten,
+      onGameWritten,
       cache: rosterCache,
       minimumProtocol: serverConfig.gameSocketMinimumProtocol
     })
@@ -984,7 +989,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     lineupRoutes(db, {
-      onGameWritten: scoreboard.onGameWritten,
+      onGameWritten,
       cache: rosterCache
     })
   )

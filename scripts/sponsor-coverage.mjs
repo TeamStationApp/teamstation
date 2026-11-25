@@ -75,7 +75,16 @@ const tsSuites = [
   'src/app/sponsors/pickedFiles.test.ts',
   'src/app/sponsors/pickedFiles.native.test.ts',
   'src/app/sponsors/routes.test.ts',
-  'src/app/player/sponsors/overlayRects.test.ts'
+  'src/app/player/sponsors/overlayRects.test.ts',
+  // When a half-inning is over, the reels' timeline and audio, the layouts'
+  // reel spaces and the players' volume (M4).
+  'src/common/sponsors/halves.test.ts',
+  'src/app/player/sponsors/reelTimeline.test.ts',
+  'src/app/player/multiCam/playerLayout.test.ts',
+  'src/app/tv/tvLayout.test.ts',
+  'src/app/tv/playbackState.test.ts',
+  'src/app/player/nativeVideoHandle.test.ts',
+  'src/server/routes/gameWritten.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -96,7 +105,13 @@ const appSuites = [
   'src/app/player/PlayerSurface.test.tsx',
   'src/app/player/MultiCamView.test.tsx',
   'src/app/player/MultiCamView.native.test.tsx',
-  'src/app/tv/TvPlayer.test.tsx'
+  'src/app/tv/TvPlayer.test.tsx',
+  // The reel on the game's clock, the game's sound under it, the grid's
+  // heard tile and the TV's camera volume (M4).
+  'src/app/player/sponsors/SponsorReel.test.tsx',
+  'src/app/player/sponsors/useGameVolume.test.tsx',
+  'src/app/player/multiCam/useMultiCam.test.tsx',
+  'src/app/tv/TransportVideo.test.tsx'
 ]
 
 /**
@@ -105,7 +120,10 @@ const appSuites = [
  */
 const nativeSuites = [
   // The same screens as a phone resolves them (M2).
-  'src/app/sponsors/SponsorScreens.native.spec.tsx'
+  'src/app/sponsors/SponsorScreens.native.spec.tsx',
+  // The reel and the game's volume as a phone and the TV play them (M4).
+  'src/app/player/sponsors/SponsorReel.native.spec.tsx',
+  'src/app/player/VideoView.native.spec.tsx'
 ]
 
 /**
@@ -132,7 +150,18 @@ const integrationSuites = [
   // that give it: the first publish and an ingest (M3).
   { spec: 'src/server/sponsors/logos.integration.test.ts' },
   { spec: 'src/server/live/startController.integration.test.ts' },
-  { spec: 'src/server/media/ingestFile.integration.test.ts' }
+  { spec: 'src/server/media/ingestFile.integration.test.ts' },
+  // Reels placed before games and after half-innings, and the hook the
+  // scoring and lineup posts call (M4).
+  { spec: 'src/server/sponsors/reels.integration.test.ts' },
+  {
+    spec: 'src/server/routes/events.integration.test.ts',
+    grep: 'U21 the half-inning'
+  },
+  {
+    spec: 'src/server/routes/lineups.integration.test.ts',
+    grep: 'U21'
+  }
 ]
 
 function argument(name) {

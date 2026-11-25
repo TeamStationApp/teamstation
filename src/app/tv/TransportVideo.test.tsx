@@ -40,4 +40,33 @@ describe('TV paused transport rate', () => {
       host.remove()
     }
   })
+
+  it('hands its volume to the camera’s player, full when not given (U27)', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<TransportVideo paused />)
+      })
+      // The browser build of the player scales the prop; the TV's takes it
+      // as it is. Either way the camera plays at a fifth of full.
+      const video = host.querySelector('video')!
+      const full = video.volume
+      expect(full).greaterThan(0)
+      await act(async () => {
+        root.render(<TransportVideo paused volume={0.2} />)
+      })
+      expect(video.volume / full).closeTo(0.2, 1e-6)
+      await act(async () => {
+        root.render(<TransportVideo paused volume={1} />)
+      })
+      expect(video.volume).equals(full)
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
 })

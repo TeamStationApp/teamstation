@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
 
 import type { GameSponsors } from '../../common/sponsors/types'
+import type { WallTimeline } from '../../common/wallTimeline'
 import { livePillBox, LivePillTop } from '../components/LivePill'
 import { lstrings } from '../locales/strings'
 import { elevationFor } from '../theme/elevation'
@@ -33,12 +34,30 @@ import {
   PictureScoreboard,
   type PictureScoreboardProps
 } from './scoreboardOverlay/ScoreboardOverlay'
+import { useScoreboardOverlay } from './scoreboardOverlay/useScoreboardOverlay'
+import { wallAt } from './scoreboardOverlay/wallTimeline'
 import { slowMotion } from './slowMotion'
-import { livePillTop, logoRect } from './sponsors/overlayRects'
+import {
+  boardPlaceSpace,
+  livePillTop,
+  logoRect,
+  reelRect
+} from './sponsors/overlayRects'
+import { reelAspect } from './sponsors/reelTimeline'
 import { SponsorLogoOverlay } from './sponsors/SponsorLogoOverlay'
+import { SponsorReel } from './sponsors/SponsorReel'
+import {
+  type GameAudio,
+  useGameVolume,
+  volumeSettable
+} from './sponsors/useGameVolume'
+import { useReelNow } from './sponsors/useReelNow'
 import { seekableEndOf, type VideoHandle } from './videoHandle'
 import { ZoneIcons } from './ZoneIcons'
 import { beyondSlop, HOLD_MS, seekBy, STEP_SECONDS } from './zones'
+
+/** No client: the overlay is asked for no game. */
+const noClient: PictureScoreboardProps['client'] = Object.create(null)
 
 /** How long the bar shows a seek's target before the player's own time. */
 const AIM_HOLD_MS = 3000
@@ -256,6 +275,78 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     }
   )
 
+  // The game's sponsor reels on the card: on the picture's wall clock, the
+  // one playing takes the board's place (the single-camera placement), the
+  // board making way for it, and the game's sound fades under it.
+  // Asked only while the card has the screen, as its board is.
+  const overlay = useScoreboardOverlay(
+    scoreboard?.client ?? noClient,
+    active ? (scoreboard?.gameId ?? null) : null,
+    scoreboard?.videoId
+  )
+  const [timeline, setTimeline] = useState<WallTimeline | null>(null)
+  const timelineRef = useRef(timeline)
+  timelineRef.current = timeline
+  const takeTimeline = scoreboard?.onTimeline
+  const onTimeline = useCallback(
+    (next: WallTimeline | null): void => {
+      setTimeline(next)
+      takeTimeline?.(next)
+    },
+    [takeTimeline]
+  )
+  const wallNow = useCallback((): number | null => {
+    const video = videoRef.current
+    const known = timelineRef.current
+    if (video == null || known == null) return null
+    return wallAt(known.anchors, video.currentTime * 1000)
+  }, [videoRef])
+  const reels = sponsors?.reels ?? null
+  const reelNow = useReelNow({ reels, wallNow })
+  const picture = scoreboard?.picture ?? box
+  const reelSpace =
+    reelNow == null || overlay == null || sponsors == null
+      ? null
+      : reelRect(
+          boardPlaceSpace(picture, overlay.single),
+          sponsors.overlay.reel.landscape1,
+          { width, height },
+          reelAspect(reelNow)
+        )
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
+  const gameAudio = useMemo<GameAudio>(() => {
+    const settable = new WeakMap<VideoHandle, boolean>()
+    return {
+      setVolume: volume => {
+        const video = videoRef.current
+        if (video != null && video.volume !== volume) video.volume = volume
+      },
+      settable: () => {
+        const video = videoRef.current
+        if (video == null) return null
+        let known = settable.get(video)
+        if (known == null) {
+          known = volumeSettable(video)
+          settable.set(video, known)
+        }
+        return known
+      },
+      setDucked: ducked => {
+        const video = videoRef.current
+        if (video != null) video.muted = ducked || mutedRef.current
+      }
+    }
+  }, [videoRef])
+  // Behind the full-screen player the card's own picture is not heard. With
+  // no answer on where the board goes, no reel is drawn, so the game is not
+  // turned down for one either.
+  useGameVolume({
+    reels: overlay == null ? null : reels,
+    wallNow,
+    audio: active ? gameAudio : null
+  })
+
   const crawl = useMemo(() => slowMotion(() => videoRef.current), [videoRef])
   const [slow, setSlow] = useState(0)
 
@@ -427,11 +518,22 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
           placement={sponsors.overlay.logo.single}
         />
       ) : null}
+      {active ? (
+        <SponsorReel
+          reels={reels ?? []}
+          wallNow={wallNow}
+          rect={reelSpace}
+          muted={muted}
+          paused={!playing}
+        />
+      ) : null}
       {scoreboard != null && active ? (
         <PictureScoreboard
           {...scoreboard}
           videoRef={videoRef}
+          onTimeline={onTimeline}
           onPlaced={setBoard}
+          reelPlaying={reelSpace != null}
         />
       ) : null}
       {/* Every press on the picture, and the mouse over it. */}

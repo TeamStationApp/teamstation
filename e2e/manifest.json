@@ -5922,6 +5922,635 @@
       "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
     },
     {
+      "id": "playback/sponsors/reels#audio-safari-ios",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#half-inning",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#layouts-android-app",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#layouts-ios-app",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#layouts-web",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#pregame-live",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#two-tracks",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#undo-inside-window",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/tv#logo-and-reel",
+      "title": "The Apple TV draws the sponsor logo on every camera and plays the reel in its layout’s space at its placement, the heard camera at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tv/TvPlayer.tsx",
+        "src/app/tv/tvLayout.ts",
+        "src/app/tv/TransportVideo.tsx",
+        "src/app/player/sponsors/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 30,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/tv",
+      "file": "e2e/tests/playback/sponsors/tv.e2e.ts"
+    },
+    {
       "id": "schedule/auto-scheduler/build-modal#limit-accept",
       "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
       "kind": "e2e",

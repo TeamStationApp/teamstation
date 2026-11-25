@@ -8,6 +8,7 @@ import {
 } from 'react'
 
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
+import type { GameSponsors } from '../../../common/sponsors/types'
 import { lstrings } from '../../locales/strings'
 import { CARD_HIDE_MS } from '../cardScrub'
 import { type SeekFlash, useFlash } from '../GestureFeedback'
@@ -22,6 +23,7 @@ import {
   zoneAt
 } from '../pressGrid'
 import { SLOW_RATE } from '../slowMotion'
+import { volumeSettable } from '../sponsors/useGameVolume'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
 import { HAVE_CURRENT_DATA, HAVE_METADATA, seekableEndOf } from '../videoHandle'
 import {
@@ -119,6 +121,12 @@ export interface MultiCamProps {
    * there is no board.
    */
   gameId?: string | null
+  /**
+   * The game's sponsorship, as the game screen reads it once for the card
+   * and the grid (`useGameSponsors`): its logo on every tile and its reels.
+   * None draws neither.
+   */
+  sponsors?: GameSponsors | null
   /** Every video of the game, for names and for the strips on the bar. */
   videos: VideoSummary[]
   /** The chosen angles, in quadrant order. */
@@ -329,6 +337,23 @@ export interface MultiCam {
    */
   soundHeld: (id: string) => void
   heardId: string | null
+  /**
+   * The game's volume under a sponsor's reel, 0 to 1: set on the heard tile
+   * only, the one whose sound plays.
+   */
+  setGameVolume: (volume: number) => void
+  /**
+   * Whether the heard tile's volume can be set (not in iOS Safari); null
+   * while no tile is heard.
+   */
+  gameVolumeSettable: () => boolean | null
+  /**
+   * Where it cannot: the game is muted for a reel (true), and has the
+   * viewer's own sound back after it (false).
+   */
+  setGameDucked: (ducked: boolean) => void
+  /** The game is muted for a sponsor's reel. */
+  gameDucked: boolean
   /** Where each tile rests. */
   rects: Rect[]
   /** The tile that takes the whole box, by its index in `rects`, or null. */
@@ -599,6 +624,8 @@ export function useMultiCam(
 
   const crawl = useRef<Crawl | null>(null)
   const elements = useRef(new Map<string, TileHandle>())
+  /** The game's volume under a sponsor's reel, for the heard tile (`setGameVolume`). */
+  const gameVolume = useRef(1)
   /** The take's own window, readable from the watchdog. */
   const takeRef = useRef<Window | null>(null)
   /** What the view wants each tile to be doing, for `attachHls`'s recovery. */
@@ -880,11 +907,15 @@ export function useMultiCam(
   const takeElement = useCallback(
     (id: string) =>
       (node: TileHandle | null): void => {
-        if (node == null) elements.current.delete(id)
-        else {
-          elements.current.set(id, node)
-          if (crawl.current != null) slowTile(crawl.current, id, node)
+        if (node == null) {
+          elements.current.delete(id)
+          return
         }
+        elements.current.set(id, node)
+        if (crawl.current != null) slowTile(crawl.current, id, node)
+        // A heard tile's new element joins at the game's volume of the moment.
+        if (id === heardRef.current && node.volume !== gameVolume.current)
+          node.volume = gameVolume.current
       },
     []
   )
@@ -2348,6 +2379,42 @@ export function useMultiCam(
     []
   )
 
+  /**
+   * The game's volume under a sponsor's reel, on the heard tile alone: the
+   * others are silent, and are kept at full, so the sound moved to another
+   * angle mid-reel plays there at the game's volume and the angle it left is
+   * at full again for later. Written only where it differs.
+   */
+  const applyGameVolume = useCallback((): void => {
+    for (const [id, element] of elements.current) {
+      const volume = id === heardRef.current ? gameVolume.current : 1
+      if (element.volume !== volume) element.volume = volume
+    }
+  }, [])
+  const setGameVolume = useCallback(
+    (volume: number): void => {
+      gameVolume.current = volume
+      applyGameVolume()
+    },
+    [applyGameVolume]
+  )
+  useEffect(() => {
+    applyGameVolume()
+  }, [applyGameVolume, heardId])
+  const settableOf = useRef(new WeakMap<TileHandle, boolean>())
+  const gameVolumeSettable = useCallback((): boolean | null => {
+    const id = heardRef.current
+    const heard = id == null ? undefined : elements.current.get(id)
+    if (heard == null) return null
+    let known = settableOf.current.get(heard)
+    if (known == null) {
+      known = volumeSettable(heard)
+      settableOf.current.set(heard, known)
+    }
+    return known
+  }, [])
+  const [gameDucked, setGameDucked] = useState(false)
+
   // From the ref, not the render: a tap on a tile acts a moment after it
   // lands, by which time the render it was made in is behind the game.
   const skip = useCallback(
@@ -2793,6 +2860,10 @@ export function useMultiCam(
       setSoundBlocked(true)
     },
     heardId,
+    setGameVolume,
+    gameVolumeSettable,
+    setGameDucked,
+    gameDucked,
     rects,
     zoomed,
     shownRects,

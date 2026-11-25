@@ -62,6 +62,7 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
+import { HALF_WAIT_MS, noteHalfInnings } from '../sponsors/reels'
 import { lineupRoutes, startingContext } from './lineups'
 
 const adminUrl = testDatabaseUrl
@@ -1002,7 +1003,8 @@ describe("saving a side's lineup (U8)", function () {
     newer: makeId('game'),
     fastClock: makeId('game'),
     lateSync: makeId('game'),
-    afterSub: makeId('game')
+    afterSub: makeId('game'),
+    halfEnd: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1046,6 +1048,8 @@ describe("saving a side's lineup (U8)", function () {
   }
   const written: string[] = []
   const heard: string[] = []
+  /** The sponsor reels' half-inning hook on `games.halfEnd`, waited on. */
+  const noting: Array<Promise<unknown>> = []
   let beforeSave: ((gameId: string) => Promise<void>) | undefined
   let afterSave: ((gameId: string) => Promise<void>) | undefined
 
@@ -1099,11 +1103,54 @@ describe("saving a side's lineup (U8)", function () {
         }))
       )
       .execute()
+    // The teams' league has a reel to follow a half-inning's end.
+    await db
+      .insertInto('leagues')
+      .values({ id: 'lea_lineups_reels', name: 'Sponsored' })
+      .execute()
+    await db
+      .insertInto('sponsor_media')
+      .values({
+        id: 'smd_lineups_reels',
+        league_id: 'lea_lineups_reels',
+        purpose: 'reel',
+        object_key: 'sponsors/lea_lineups_reels/smd_lineups_reels.mp4',
+        content_type: 'video/mp4',
+        bytes: 1000,
+        sha256: '0'.repeat(64),
+        width: 640,
+        height: 360,
+        duration_ms: 12000,
+        created_by: null
+      })
+      .execute()
+    await db
+      .insertInto('sponsor_reels')
+      .values({
+        id: 'srl_lineups_reels',
+        league_id: 'lea_lineups_reels',
+        media_id: 'smd_lineups_reels',
+        name: 'Reel',
+        allocation: 10,
+        position: 1,
+        duration_ms: 12000
+      })
+      .execute()
     await db
       .insertInto('teams')
       .values([
-        { id: home, name: 'Hosts', kind: 'full' },
-        { id: away, name: 'Visitors', kind: 'full' }
+        {
+          id: home,
+          name: 'Hosts',
+          kind: 'full',
+          league_id: 'lea_lineups_reels'
+        },
+        {
+          id: away,
+          name: 'Visitors',
+          kind: 'full',
+          league_id: 'lea_lineups_reels'
+        }
       ])
       .execute()
     await db
@@ -1237,6 +1284,8 @@ describe("saving a side's lineup (U8)", function () {
       lineupRoutes(db, {
         onGameWritten: gameId => {
           written.push(gameId)
+          if (gameId === games.halfEnd)
+            noting.push(noteHalfInnings(db!, gameId, new Date()))
         },
         beforeSave: async gameId => {
           await beforeSave?.(gameId)
@@ -2722,6 +2771,57 @@ describe("saving a side's lineup (U8)", function () {
     const after = await scoring(games.live)
     expect(after.state.liveData.linescore.balls).equals(1)
     expect(written.filter(id => id === games.live)).lengthOf(1)
+  })
+
+  it('leaves a half-inning end’s wait as it was when a lineup is saved inside it (U21)', async function () {
+    const gameId = games.halfEnd
+    // Recorded live, so the end of the top of the first waits for its reel.
+    await db!
+      .insertInto('videos')
+      .values({
+        id: makeId('video'),
+        game_id: gameId,
+        kind: 'live',
+        title: 'Home Plate',
+        storage: 'spaces',
+        status: 'live',
+        start_at: new Date(),
+        space_secret: '0123456789abcdef0123456789abcdef',
+        created_at: new Date(),
+        updated_at: new Date()
+      })
+      .execute()
+    const strike: ScoringAction = { type: 'pitch', call: 'C' }
+    await score(gameId, [
+      ...Array<ScoringAction>(9).fill(strike),
+      { type: 'gameFlow', kind: 'closePlay' }
+    ])
+    const ended = Date.now()
+    await noteHalfInnings(db!, gameId, new Date(ended))
+    const fadeAt = async (): Promise<number | null> => {
+      while (noting.length > 0) await noting.shift()
+      const row = await db!
+        .selectFrom('game_half_ends')
+        .select(['state', 'fade_at'])
+        .where('game_id', '=', gameId)
+        .executeTakeFirst()
+      expect(row?.state).equals('waiting')
+      return row?.fade_at == null ? null : new Date(row.fade_at).getTime()
+    }
+    expect(await fadeAt()).equals(ended + HALF_WAIT_MS)
+    // The hosts' outfielders change places inside the nine seconds.
+    const before = asGameLineupsResponse(
+      (await ask('GET', `/games/${gameId}/lineups`, FAN)).body
+    )
+    const session = await scoring(gameId)
+    const body = bodyOf(session.state, 'home')
+    const left = body.defense.LF!
+    body.defense.LF = body.defense.RF
+    body.defense.RF = left
+    const answer = await save(gameId, COACH, { ...body, base: before.digest })
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    expect(written).includes(gameId)
+    expect(await fadeAt()).equals(ended + HALF_WAIT_MS)
   })
 
   it('keeps the batting slot of an order saved after the first pitch', async function () {

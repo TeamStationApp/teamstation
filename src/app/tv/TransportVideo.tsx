@@ -4,6 +4,8 @@ import Video, { type VideoRef } from 'react-native-video'
 /** The native rate setter briefly resumes AVPlayer when leaving a slow rate.
  * Keep its committed rate unchanged while paused, then apply the requested
  * transport rate when playback resumes. Each hidden camera keeps its own latch.
+ * Its `volume` (full when not given) is the heard camera's, faded to 0.2
+ * under a sponsor's reel.
  */
 export const TransportVideo = forwardRef<
   VideoRef,
@@ -14,5 +16,5 @@ export const TransportVideo = forwardRef<
   useLayoutEffect(() => {
     committedRate.current = rate
   }, [rate])
-  return <Video {...props} rate={rate} ref={ref} />
+  return <Video {...props} rate={rate} volume={props.volume ?? 1} ref={ref} />
 })

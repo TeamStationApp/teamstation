@@ -41,6 +41,7 @@ class FakeTile implements TileHandle {
   duration = 600
   paused = true
   muted = false
+  volume = 1
   playbackRate = 1
   readyState = 4
   videoWidth = 1920
@@ -445,6 +446,55 @@ describe('useMultiCam', function () {
       mc().soundHeld('A')
     })
     expect(mc().soundBlocked).equals(true)
+  })
+
+  it('sets the game’s volume under a reel on the heard tile only, and follows the heard angle (U27)', async function () {
+    const { mc, tiles, rerender } = await grid()
+    expect(mc().heardId).equals('A')
+    await act(async () => {
+      mc().setGameVolume(0.2)
+    })
+    expect([tiles.A.volume, tiles.B.volume]).deep.equals([0.2, 1])
+    expect(mc().gameVolumeSettable()).equals(true)
+    // The sound moved mid-reel: the angle heard now is at the game's volume
+    // at once, and the one left is at full again.
+    await rerender({ audioId: 'B' })
+    expect([tiles.A.volume, tiles.B.volume]).deep.equals([1, 0.2])
+    await act(async () => {
+      mc().setGameVolume(0.6)
+    })
+    expect([tiles.A.volume, tiles.B.volume]).deep.equals([1, 0.6])
+    await rerender({ audioId: 'A' })
+    expect([tiles.A.volume, tiles.B.volume]).deep.equals([0.6, 1])
+    await act(async () => {
+      mc().setGameVolume(1)
+    })
+    expect([tiles.A.volume, tiles.B.volume]).deep.equals([1, 1])
+    await rerender({ audioId: 'B' })
+    expect(mc().gameVolumeSettable()).equals(true)
+    // A tile that reads back 1 whatever it is told, as iOS Safari's does.
+    Object.defineProperty(tiles.B, 'volume', {
+      get: () => 1,
+      set: () => undefined,
+      configurable: true
+    })
+    // Known settable already: asked once a tile.
+    expect(mc().gameVolumeSettable()).equals(true)
+    expect(mc().gameDucked).equals(false)
+    await act(async () => {
+      mc().setGameDucked(true)
+    })
+    expect(mc().gameDucked).equals(true)
+  })
+
+  it('finds a heard tile whose volume cannot be set (U27)', async function () {
+    const { mc, tiles } = await grid()
+    Object.defineProperty(tiles.A, 'volume', {
+      get: () => 1,
+      set: () => undefined,
+      configurable: true
+    })
+    expect(mc().gameVolumeSettable()).equals(false)
   })
 
   it('holds the sound of the angle heard now, for a prime begun while another was', async function () {

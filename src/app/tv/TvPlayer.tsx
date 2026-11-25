@@ -41,12 +41,17 @@ import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
 import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import type { Rect as TileRect } from '../player/multiCam/layout'
+import type { PlayerLayout, ReelInput } from '../player/multiCam/playerLayout'
 import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
+import { reelAspect } from '../player/sponsors/reelTimeline'
 import { SponsorLogoOverlay } from '../player/sponsors/SponsorLogoOverlay'
+import { SponsorReel } from '../player/sponsors/SponsorReel'
 import { useGameSponsors } from '../player/sponsors/useGameSponsors'
+import { type GameAudio, useGameVolume } from '../player/sponsors/useGameVolume'
+import { useReelNow } from '../player/sponsors/useReelNow'
 import { usePictureClock } from '../scoreboard/boardClock'
 import {
   replayBattingLabels,
@@ -212,6 +217,35 @@ export function TvPlayer({
   useLayoutEffect(() => {
     boardClock.sample(clock.current.wall)
   }, [boardClock, wall])
+  // The game's sponsor reels on the cameras' wall clock: the last reading,
+  // carried forward while playing (the cameras report four times a second).
+  const wallSeen = useRef<{ wall: number | null; at: number }>({
+    wall: null,
+    at: 0
+  })
+  const runningRef = useRef(false)
+  const reelWallNow = useCallback((): number | null => {
+    const seen = wallSeen.current
+    if (seen.wall === null) return null
+    return runningRef.current
+      ? seen.wall + Math.min(1000, Date.now() - seen.at)
+      : seen.wall
+  }, [])
+  const reels = sponsors?.reels ?? null
+  const reelNow = useReelNow({ reels, wallNow: reelWallNow })
+  // The heard camera's volume under a reel, in steps of 5%: a prop, and
+  // every step a render.
+  const [gameVolume, setGameVolume] = useState(1)
+  const gameAudio = useMemo<GameAudio>(
+    () => ({
+      setVolume: volume => {
+        setGameVolume(Math.round(volume * 20) / 20)
+      },
+      settable: () => true,
+      setDucked: () => undefined
+    }),
+    []
+  )
   const [transportState, setTransportState] = useState({
     visible: false,
     rate: 1,
@@ -924,14 +958,38 @@ export function TvPlayer({
   const line =
     boardAt(stats.lines ?? [], wall)?.line ??
     (box === undefined ? null : lineOf(box))
-  const layout = tvLayout(
-    state,
-    screen,
-    placement,
-    board != null,
-    line != null,
-    boardSize
-  )
+  if (wallSeen.current.wall !== wall)
+    wallSeen.current = { wall, at: Date.now() }
+  runningRef.current = !state.paused && readySequence > 0
+  const reelInput =
+    sponsors == null || sponsors.reels.length === 0
+      ? null
+      : {
+          active: reelNow != null,
+          aspect: reelAspect(reelNow ?? sponsors.reels[0]),
+          placements: sponsors.overlay.reel,
+          any: true
+        }
+  const layoutWith = (reel: ReelInput | null): PlayerLayout =>
+    tvLayout(
+      state,
+      screen,
+      placement,
+      board != null,
+      line != null,
+      boardSize,
+      reel
+    )
+  const layout = layoutWith(reelInput)
+  // No reel is drawn where the layout has no place for one, so the game is
+  // not turned down for it either.
+  const reelPlace =
+    reelInput != null && layoutWith({ ...reelInput, active: true }).reel != null
+  useGameVolume({
+    reels: reelPlace ? reels : null,
+    wallNow: reelWallNow,
+    audio: gameAudio
+  })
   const staticScore =
     state.full === null &&
     (state.visible.length === 2 || state.visible.length === 3)
@@ -1072,6 +1130,7 @@ export function TvPlayer({
                   source={sources[index]}
                   style={StyleSheet.absoluteFill}
                   muted={index !== audio}
+                  volume={index === audio ? gameVolume : 1}
                   rate={transportState.rate}
                   paused={
                     readySequence === 0 ||
@@ -1172,6 +1231,15 @@ export function TvPlayer({
       {angles === null && error === null && (
         <Text style={styles.copy}>Opening game…</Text>
       )}
+      <SponsorReel
+        reels={reels ?? []}
+        wallNow={reelWallNow}
+        rect={layout.reel}
+        muted={false}
+        paused={state.paused}
+        // Over a camera made full, which stacks at 4.
+        zIndex={4}
+      />
       {board != null && placement?.show === true && layout.board != null && (
         <View
           pointerEvents="none"

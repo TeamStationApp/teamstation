@@ -1,18 +1,32 @@
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
-import { playerLayout } from '../player/multiCam/playerLayout'
+import { playerLayout, type ReelInput } from '../player/multiCam/playerLayout'
 import { lineBoxHeight } from '../player/scoreboardOverlay/lineScoreLayout'
-import { FULL_BOARD_HEIGHT } from '../player/scoreboardOverlay/overlayLayout'
+import {
+  FULL_BOARD_HEIGHT,
+  intersects
+} from '../player/scoreboardOverlay/overlayLayout'
+import { reelRect } from '../player/sponsors/overlayRects'
 import type { PlaybackState } from './playbackState'
 
+/**
+ * The TV's cameras, board, box score and sponsor reel on a screen: the
+ * landscape player's layout, with two cameras centred up and down and the
+ * board and box above them, and three with the board and box down the
+ * top-left quadrant. A reel playing moves with them: under the right-hand
+ * camera of two, and in the quadrant of three, hiding the box where it
+ * covers it.
+ */
 export function tvLayout(
   state: PlaybackState,
   screen: { width: number; height: number },
   settings: ScoreboardOverlay | null,
   hasBoard: boolean,
   hasLine: boolean,
-  natural: { width: number; height: number } = SCOREBOARD_BOARD_SIZE
+  natural: { width: number; height: number } = SCOREBOARD_BOARD_SIZE,
+  reel: ReelInput | null = null
 ): ReturnType<typeof playerLayout> {
+  const board = hasBoard && settings?.show === true
   const result = playerLayout({
     screen,
     safe: { x: 0, y: 0, w: screen.width, h: screen.height },
@@ -26,10 +40,11 @@ export function tvLayout(
             ...settings,
             landscape: settings.tvLandscape ?? settings.landscape
           },
-    board: hasBoard && settings?.show === true ? natural : null,
+    board: board ? natural : null,
     // Keep the reserved quadrant even while statistics are loading.
     line: hasLine || state.visible.length === 3,
-    zoomed: state.full === null ? null : state.visible.indexOf(state.full)
+    zoomed: state.full === null ? null : state.visible.indexOf(state.full),
+    reel
   })
   if (state.full !== null) return result
   const count = state.visible.length
@@ -55,9 +70,22 @@ export function tvLayout(
         h: natural.height * scale
       }
     }
+    if (result.reel !== null && reel !== null) {
+      const right = result.tiles[1]
+      const top = right.y + right.h + 8
+      result.reel = reelRect(
+        { x: right.x, y: top, w: right.w, h: screen.height - top - 8 },
+        reel.placements.landscape2,
+        screen,
+        reel.aspect,
+        'band'
+      )
+    }
   } else if (count === 3) {
     const width = screen.width / 2
     const fullHeight = (FULL_BOARD_HEIGHT * width) / natural.width
+    // A reel playing hides the board, but the box stays below its place.
+    const boarded = result.board !== null || (result.reel !== null && board)
     if (result.board !== null)
       result.board = {
         x: 0,
@@ -65,16 +93,22 @@ export function tvLayout(
         w: width,
         h: (natural.height * width) / natural.width
       }
-    if (result.box !== null)
+    if (result.box !== null || result.reel !== null)
       result.box = {
         x: 0,
-        y: result.board === null ? 0 : fullHeight + 5,
+        y: boarded ? fullHeight + 5 : 0,
         w: width,
         h: Math.min(
           lineBoxHeight(width),
-          screen.height / 2 - (result.board === null ? 0 : fullHeight + 5)
+          screen.height / 2 - (boarded ? fullHeight + 5 : 0)
         )
       }
+    if (
+      result.reel !== null &&
+      result.box !== null &&
+      intersects(result.box, result.reel)
+    )
+      result.box = null
   }
   return result
 }

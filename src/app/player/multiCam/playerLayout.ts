@@ -1,4 +1,9 @@
-import type { ScoreboardOverlay as OverlaySettings } from '../../../common/nodeSettings'
+import {
+  defaultScoreboardSettings,
+  type ReelLayout,
+  type ReelPlacement,
+  type ScoreboardOverlay as OverlaySettings
+} from '../../../common/nodeSettings'
 import { BOARD_INSET } from '../scoreboardOverlay/layouts'
 import {
   LINE_BOX_WIDTH,
@@ -13,6 +18,7 @@ import {
   type Size,
   tileBoardRect
 } from '../scoreboardOverlay/overlayLayout'
+import { boardPlaceSpace, reelRect } from '../sponsors/overlayRects'
 import { type Rect, tileRects } from './layout'
 
 /** The space between the board, the box score and the tiles, in px. */
@@ -46,6 +52,23 @@ export interface PlayerLayoutInput {
    * as of the other edges. None unless set.
    */
   singleHiddenTopInset?: number
+  /** The game's sponsor reels, for the viewer's track; null for none. */
+  reel?: ReelInput | null
+}
+
+/** What the layout needs of a game's sponsor reels. */
+export interface ReelInput {
+  /** A reel is playing now. */
+  active: boolean
+  /** Its shape, width over height. */
+  aspect: number
+  /** The node's largest box for a reel in each layout. */
+  placements: Record<ReelLayout, ReelPlacement>
+  /**
+   * The track has reels at all: two angles sideways then keep the band
+   * below them free for the whole game, and three keep the top-left quadrant.
+   */
+  any: boolean
 }
 
 export interface PlayerLayout {
@@ -62,6 +85,8 @@ export interface PlayerLayout {
   box: Rect | null
   /** Three angles sideways leave the top-left quadrant to the board. */
   boardCell: boolean
+  /** Where a sponsor reel playing now is drawn; null while none plays. */
+  reel: Rect | null
 }
 
 /**
@@ -141,7 +166,29 @@ function boxHeightFor(count: number, w: number): number {
  * (`singleHiddenTopInset`).
  */
 export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
+  const laid = arrange(input)
+  const reel = input.reel ?? null
+  if (reel == null || !reel.active || laid.tiles.length === 0) return laid
+  return withReel(laid, input, reel)
+}
+
+/**
+ * Whether a reel, once one plays, has a place in this layout: the layout as
+ * `playerLayout` gives it with the reel playing. Where it has none (no band
+ * below two angles that fill the window's height, three sideways with no
+ * quadrant), no reel is drawn, so the game is not turned down for one either.
+ */
+export function reelHasPlace(input: PlayerLayoutInput): boolean {
+  const reel = input.reel ?? null
+  if (reel == null) return false
+  return (
+    playerLayout({ ...input, reel: { ...reel, active: true } }).reel != null
+  )
+}
+
+function arrange(input: PlayerLayoutInput): PlayerLayout {
   const { screen, safe, landscape, settings, line } = input
+  const reelsAny = input.reel?.any === true
   const count = Math.max(0, Math.min(4, input.count))
   const board = settings == null ? null : input.board
   const clear = (rect: Rect | null, area?: Rect): Rect | null =>
@@ -161,7 +208,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
     board: null,
     boardClip: null,
     box: null,
-    boardCell: false
+    boardCell: false,
+    reel: null
   }
   if (count === 0) return none
 
@@ -224,7 +272,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       board: boardRect,
       boardClip: null,
       box: boxRect,
-      boardCell: false
+      boardCell: false,
+      reel: null
     }
   }
 
@@ -234,8 +283,12 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       : count === 1
         ? 0
         : null
-  // Three angles leave the top-left quadrant to whatever goes there.
-  const boardCell = count === 3 && zoomed == null && (board != null || line)
+  // Three angles leave the top-left quadrant to whatever goes there: the
+  // board, the box, or a sponsor's reel.
+  const boardCell =
+    count === 3 && zoomed == null && (board != null || line || reelsAny)
+  // Two angles with reels to come keep to the top, the band below them free.
+  const twoReels = count === 2 && zoomed == null && reelsAny
   const tiles = tileRects({
     width: screen.width,
     height: screen.height,
@@ -243,7 +296,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
     aspect: input.aspect,
     zoomed: input.zoomed,
     boardCell,
-    align: count === 2 && zoomed == null ? 'bottom' : 'centre'
+    align:
+      count === 2 && zoomed == null ? (twoReels ? 'top' : 'bottom') : 'centre'
   })
 
   if (zoomed != null) {
@@ -270,9 +324,12 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
             ),
       boardClip: null,
       box: null,
-      boardCell: false
+      boardCell: false,
+      reel: null
     }
   }
+
+  if (count === 2 && twoReels) return bandBelowTwo(input, tiles, board, line)
 
   if (count === 2) {
     const top = Math.min(tiles[0].y, tiles[1].y)
@@ -317,7 +374,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
           w: boxWidth,
           h: boxHeight
         }),
-        boardCell: false
+        boardCell: false,
+        reel: null
       }
     }
     if (board != null)
@@ -326,7 +384,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
         board: clearBoard(aboveBoardRect(screen, top, board)),
         boardClip: null,
         box: null,
-        boardCell: false
+        boardCell: false,
+        reel: null
       }
     if (line) {
       const w = Math.max(
@@ -344,7 +403,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
           w,
           h
         }),
-        boardCell: false
+        boardCell: false,
+        reel: null
       }
     }
     return { ...none, tiles }
@@ -405,7 +465,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
       board: boardRect,
       boardClip: null,
       box: boxRect,
-      boardCell: true
+      boardCell: true,
+      reel: null
     }
   }
 
@@ -424,8 +485,180 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
           ),
     boardClip: corner,
     box: null,
-    boardCell: false
+    boardCell: false,
+    reel: null
   }
+}
+
+/**
+ * Two angles sideways with reels to come: the angles at the top, and the
+ * band below them shared, the board and the box score in its left half
+ * (board above box, as large as both fit), the right half left free for the
+ * reel under the right-hand angle.
+ */
+function bandBelowTwo(
+  input: PlayerLayoutInput,
+  tiles: Rect[],
+  board: Size | null,
+  line: boolean
+): PlayerLayout {
+  const { screen, safe } = input
+  const half = screen.width / 2
+  const bottom = Math.max(...tiles.map(tile => tile.y + tile.h))
+  const left = Math.max(BOARD_INSET, safe.x + BOARD_INSET)
+  const top = bottom + BOARD_INSET
+  const floor = Math.min(screen.height, safe.y + safe.h) - BOARD_INSET
+  const room = Math.max(0, floor - top)
+  const wide = Math.max(0, half - GAP - left)
+  const result: PlayerLayout = {
+    tiles,
+    board: null,
+    boardClip: null,
+    box: null,
+    boardCell: false,
+    reel: null
+  }
+  const clear = (rect: Rect): Rect => keptClear(rect, safe)
+  if (board != null) {
+    // The box as wide as the board, its height a share of that width.
+    const boxPerWidth = line ? boxHeightFor(2, 1) : 0
+    const gaps = line ? GAP : 0
+    const scale = Math.max(
+      0,
+      Math.min(
+        (room - gaps) / (bandOf(board) + boxPerWidth * board.width),
+        wide / board.width
+      )
+    )
+    const w = board.width * scale
+    result.board = clear({ x: left, y: top, w, h: board.height * scale })
+    if (line)
+      result.box = clear({
+        x: left,
+        y: top + bandOf(board) * scale + GAP,
+        w,
+        h: boxHeightFor(2, w)
+      })
+  } else if (line) {
+    const w = Math.max(
+      0,
+      Math.min(wide, lineBoxWidth(room) / COMPACT_LINE_SCALE)
+    )
+    result.box = clear({ x: left, y: top, w, h: boxHeightFor(2, w) })
+  }
+  return result
+}
+
+/**
+ * The layout with a reel playing: the reel in its layout's space, by the
+ * node's placement for that layout, and the board and box hidden where the
+ * reel takes their place.
+ *
+ * - Upright with one or two angles, the free space below them, centred; the
+ *   board stays.
+ * - Upright with three or four, the board's place; the board goes.
+ * - Sideways with one angle (or one zoomed), the board's place on it; the
+ *   board goes.
+ * - Sideways with two, the band below the right-hand angle; both stay.
+ * - Sideways with three, the top-left quadrant; the board goes, and the box
+ *   too where the reel covers it.
+ * - Sideways with four, the board's place on the top-left angle; it goes.
+ */
+function withReel(
+  laid: PlayerLayout,
+  input: PlayerLayoutInput,
+  reel: ReelInput
+): PlayerLayout {
+  const { screen, safe, landscape } = input
+  const settings = input.settings ?? defaultScoreboardSettings
+  const count = laid.tiles.length
+  const place = (
+    space: Rect,
+    layout: ReelLayout,
+    anchor: 'board' | 'band'
+  ): Rect | null => {
+    if (space.w <= 0 || space.h <= 0) return null
+    const rect = reelRect(
+      space,
+      reel.placements[layout],
+      screen,
+      reel.aspect,
+      anchor
+    )
+    return rect.w > 0 && rect.h > 0 ? rect : null
+  }
+  if (!landscape) {
+    if (count <= 2) {
+      const top = Math.max(...laid.tiles.map(tile => tile.y + tile.h)) + GAP
+      const space = {
+        x: 0,
+        y: top,
+        w: screen.width,
+        h: Math.min(screen.height, safe.y + safe.h) - top
+      }
+      return { ...laid, reel: place(space, 'portrait12', 'band') }
+    }
+    const space = laid.board ?? laid.box ?? laid.tiles[0]
+    const rect = place(space, count === 3 ? 'portrait3' : 'portrait4', 'board')
+    return rect == null ? laid : { ...laid, board: null, reel: rect }
+  }
+  const zoomed =
+    input.zoomed != null && input.zoomed >= 0 && input.zoomed < count
+      ? input.zoomed
+      : count === 1
+        ? 0
+        : null
+  if (zoomed != null) {
+    const rect = place(
+      boardPlaceSpace(laid.tiles[zoomed], settings.single),
+      'landscape1',
+      'board'
+    )
+    return rect == null ? laid : { ...laid, board: null, reel: rect }
+  }
+  if (count === 2) {
+    const right = laid.tiles[1]
+    const top = Math.max(...laid.tiles.map(tile => tile.y + tile.h)) + GAP
+    const space = {
+      x: right.x,
+      y: top,
+      w: right.w,
+      h: Math.min(screen.height, safe.y + safe.h) - top
+    }
+    return { ...laid, reel: place(space, 'landscape2', 'band') }
+  }
+  if (count === 3 && laid.boardCell) {
+    const cell = {
+      x: laid.tiles[1].x,
+      y: laid.tiles[0].y,
+      w: laid.tiles[1].w,
+      h: laid.tiles[0].h
+    }
+    const rect = place(cell, 'landscape3', 'board')
+    if (rect == null) return laid
+    return {
+      ...laid,
+      board: null,
+      box: laid.box != null && overlaps(laid.box, rect) ? null : laid.box,
+      reel: rect
+    }
+  }
+  if (count === 3) return laid
+  const rect = place(
+    boardPlaceSpace(laid.tiles[0], settings.landscape),
+    'landscape4',
+    'board'
+  )
+  return rect == null
+    ? laid
+    : { ...laid, board: null, boardClip: null, reel: rect }
+}
+
+/** Two rects share some area. */
+function overlaps(a: Rect, b: Rect): boolean {
+  return (
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+  )
 }
 
 /** The top of the highest angle, where a notice goes; 0 with none. */

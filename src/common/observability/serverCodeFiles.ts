@@ -439,6 +439,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/sponsors/logos.js',
   'server/sponsors/media.js',
   'server/sponsors/probe.js',
+  'server/sponsors/reels.js',
   'server/sponsors/rows.js',
   'server/sponsors/sample.js',
   'server/sponsors/sweeps.js',

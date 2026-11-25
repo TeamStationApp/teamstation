@@ -12,6 +12,7 @@ import {
 } from '../scoreboard/scoreboardStore'
 import { LOGO_SETTLE_MS, settleGameLogos } from './logos'
 import { sweepSponsorMedia } from './media'
+import { placeDueReels, placePregameReels, REEL_SWEEP_MS } from './reels'
 
 /** How often uploads nothing used are looked for. */
 export const MEDIA_SWEEP_MS = 60 * 60 * 1000
@@ -29,12 +30,15 @@ export interface SponsorSweepOptions {
 
 /**
  * The sponsor sweeps, run once a node from `startBackgroundJobs`: every
- * minute the game logos not yet settled are charged or settled free
- * (`settleGameLogos`), and every hour the uploads nothing used are swept,
- * each on the way up and then on its period. They tell
- * live players of a change through a scoreboard store of their own, on its
- * own Valkey connection, which is started and not waited for, as a worker's
- * is. Answers how to stop: the timers, and that connection.
+ * second the pre-game reels due and the half-inning reels whose wait is up
+ * are placed (`placePregameReels`, `placeDueReels`), every minute the game
+ * logos not yet settled are charged or settled free (`settleGameLogos`), and
+ * every hour the uploads nothing used are swept, each on the way up and then
+ * on its period. A game given a reel is announced on its board timeline, so
+ * its live players read its sponsorship again; that goes through a
+ * scoreboard store of their own, on its own Valkey connection, which is
+ * started and not waited for, as a worker's is. Answers how to stop: the
+ * timers, and that connection.
  */
 export function startSponsorSweeps(options: SponsorSweepOptions): Stoppable & {
   store: ScoreboardStore
@@ -54,6 +58,18 @@ export function startSponsorSweeps(options: SponsorSweepOptions): Stoppable & {
     timer.unref?.()
     timers.push(timer)
   }
+  const announce = async (games: string[]): Promise<void> => {
+    for (const gameId of games)
+      await store.announceTimeline(gameId).catch((error: unknown) => {
+        log(`sponsor sweeps: game ${gameId} not announced: ${String(error)}`)
+      })
+  }
+  every(REEL_SWEEP_MS, async () => {
+    await announce(await placePregameReels(db, now()))
+  })
+  every(REEL_SWEEP_MS, async () => {
+    await announce(await placeDueReels(db, now()))
+  })
   every(LOGO_SETTLE_MS, async () => {
     const settled = await settleGameLogos(db, now())
     if (settled.charged + settled.free > 0)

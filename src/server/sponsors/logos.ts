@@ -302,8 +302,9 @@ export async function settleGameLogos(
 
 /**
  * What a game's players draw. In this version the sponsorship is the home
- * team's league's, or the away team's when home is in no league; a league
- * that gave the game no logo answers none.
+ * team's league's, or the away team's when home is in no league: the logo
+ * that league gave the game, if any, and its track of reels in start order.
+ * A league that gave the game neither answers none.
  */
 export async function gameSponsorsFor(
   db: Kysely<Database>,
@@ -330,15 +331,48 @@ export async function gameSponsorsFor(
     .where('game_sponsor_logos.game_id', '=', gameId)
     .where('game_sponsor_logos.league_id', '=', leagueId)
     .executeTakeFirst()
-  if (logo == null) return none
+  const reels = await db
+    .selectFrom('game_reel_placements')
+    .innerJoin(
+      'sponsor_media',
+      'sponsor_media.id',
+      'game_reel_placements.media_id'
+    )
+    .select([
+      'game_reel_placements.id as id',
+      'game_reel_placements.reel_id as reelId',
+      'game_reel_placements.starts_at as startsAt',
+      'game_reel_placements.duration_ms as durationMs',
+      'sponsor_media.object_key as key',
+      'sponsor_media.width as width',
+      'sponsor_media.height as height'
+    ])
+    .where('game_reel_placements.game_id', '=', gameId)
+    .where('game_reel_placements.league_id', '=', leagueId)
+    .orderBy('game_reel_placements.starts_at')
+    .orderBy('game_reel_placements.id')
+    .execute()
+  if (logo == null && reels.length === 0) return none
   return {
     leagueId,
-    logo: {
-      url: mediaUrl(space, logo.key),
-      width: logo.width,
-      height: logo.height
-    },
-    reels: [],
+    logo:
+      logo == null
+        ? null
+        : {
+            url: mediaUrl(space, logo.key),
+            width: logo.width,
+            height: logo.height
+          },
+    reels: reels.map(reel => ({
+      id: reel.id,
+      // A reel since removed keeps its placements: its media are pinned.
+      reelId: reel.reelId ?? '',
+      url: mediaUrl(space, reel.key),
+      width: reel.width,
+      height: reel.height,
+      startMs: new Date(reel.startsAt).getTime(),
+      durationMs: reel.durationMs
+    })),
     overlay
   }
 }

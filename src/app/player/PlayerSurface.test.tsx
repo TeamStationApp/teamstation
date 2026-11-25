@@ -10,7 +10,10 @@ import {
   asVideoSummary,
   TeamStationClient
 } from '../../common/api'
-import { defaultSponsorSettings } from '../../common/nodeSettings'
+import {
+  defaultScoreboardSettings,
+  defaultSponsorSettings
+} from '../../common/nodeSettings'
 import type { GameSponsors } from '../../common/sponsors/types'
 import {
   boardStep,
@@ -25,7 +28,7 @@ import { lstrings } from '../locales/strings'
 import { GameScreen } from '../screens/GameScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerSurface } from './PlayerSurface'
-import { logoRect } from './sponsors/overlayRects'
+import { boardPlaceSpace, logoRect, reelRect } from './sponsors/overlayRects'
 import type { VideoHandle } from './videoHandle'
 
 let root: Root | undefined
@@ -93,6 +96,7 @@ function fakeVideo(): VideoHandle & {
     paused: true,
     playbackRate: 1,
     muted: true,
+    volume: 1,
     async play() {
       calls.push('play')
       video.paused = false
@@ -1251,5 +1255,202 @@ describe('U19 the sponsor logo on the card', function () {
       expect(at, `top ${top}`).lessThan(0.05 * 360)
       await unmount()
     }
+  })
+})
+
+describe('U19 the sponsor reel on the card', function () {
+  afterEach(unmount)
+
+  const reel = {
+    id: 'srp_card',
+    reelId: 'srl_card',
+    url: 'https://cdn.example.test/reel.mp4',
+    width: 640,
+    height: 360,
+    startMs: OVERLAY_T0 + 1000,
+    durationMs: 12000
+  }
+  const sponsored: GameSponsors = {
+    leagueId: 'lea_al',
+    logo: null,
+    reels: [reel],
+    overlay: {
+      logo: defaultSponsorSettings.logo,
+      reel: {
+        ...defaultSponsorSettings.reel,
+        landscape1: { maxWidth: 0.3, maxHeight: 0.3 }
+      }
+    }
+  }
+  const drawnReel = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-testid="sponsor-reel"]')
+
+  it('plays in the board’s place while the picture is inside the reel, the board hidden, and the board back after, with the game quiet under it', async function () {
+    const server = overlayServer()
+    server.timelines.set('v1', wallTimelineOf([[0, OVERLAY_T0]]))
+    server.steps.set('g1', [boardStep(OVERLAY_T0 + 500, 1)])
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server.fetch
+    })
+    const picture = { x: 0, y: 45, w: 640, h: 270 }
+    const video = fakeVideo()
+    // 0.5 s into the game: before the reel's fade.
+    video.currentTime = 0
+    const placed: unknown[] = []
+    await render(
+      <PlayerSurface
+        videoRef={{ current: video }}
+        player={video}
+        width={640}
+        height={360}
+        sponsors={sponsored}
+        muted={false}
+        scoreboard={{
+          client,
+          gameId: 'g1',
+          videoId: 'v1',
+          live: false,
+          durationSec: 600,
+          picture,
+          onTimeline: timeline => placed.push(timeline)
+        }}
+      >
+        <div data-testid="picture" />
+      </PlayerSurface>
+    )
+    video.currentTime = 0.6
+    await settle(80)
+    await layOutBoards(607, 247)
+    expect(drawnReel()).equals(null)
+    expect(overlay()).not.equals(null)
+    // The timeline reached the game screen as before.
+    expect(placed.length).greaterThan(0)
+    // Into the reel: in the board's place, by the landscape-1 box.
+    video.currentTime = 4
+    await settle(80)
+    const drawn = drawnReel()!
+    const rect = reelRect(
+      boardPlaceSpace(picture, defaultScoreboardSettings.single),
+      sponsored.overlay.reel.landscape1,
+      { width: 640, height: 360 },
+      16 / 9
+    )
+    expect(drawn.style.left).equals(`${rect.x}px`)
+    expect(drawn.style.top).equals(`${rect.y}px`)
+    expect(drawn.style.width).equals(`${rect.w}px`)
+    expect(drawn.style.height).equals(`${rect.h}px`)
+    expect(drawn.querySelector('video')?.getAttribute('src')).equals(reel.url)
+    expect(overlay()).equals(null)
+    expect(video.volume).closeTo(0.2, 1e-9)
+    // Past its end: gone, the board kept and drawn again, the game back up.
+    video.currentTime = 15
+    await settle(80)
+    await layOutBoards(607, 247)
+    expect(drawnReel()).equals(null)
+    expect(overlay()).not.equals(null)
+    expect(video.volume).equals(1)
+  })
+
+  it('mutes a game whose volume cannot be set for the reel, keeping the viewer’s mute after', async function () {
+    const server = overlayServer()
+    server.timelines.set('v1', wallTimelineOf([[0, OVERLAY_T0]]))
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server.fetch
+    })
+    const video = fakeVideo()
+    Object.defineProperty(video, 'volume', {
+      get: () => 1,
+      set: () => undefined,
+      configurable: true
+    })
+    video.muted = false
+    video.currentTime = 4
+    await render(
+      <PlayerSurface
+        videoRef={{ current: video }}
+        player={video}
+        width={640}
+        height={360}
+        sponsors={sponsored}
+        muted={false}
+        scoreboard={{
+          client,
+          gameId: 'g1',
+          videoId: 'v1',
+          live: false,
+          durationSec: 600,
+          picture: { x: 0, y: 0, w: 640, h: 360 }
+        }}
+      >
+        <div />
+      </PlayerSurface>
+    )
+    await settle(80)
+    expect(drawnReel()).not.equals(null)
+    expect(video.muted).equals(true)
+    video.currentTime = 15
+    await settle(80)
+    expect(video.muted).equals(false)
+  })
+
+  it('leaves the game’s sound alone through a reel it cannot draw, the board’s placement refused', async function () {
+    const server = overlayServer()
+    server.timelines.set('v1', wallTimelineOf([[0, OVERLAY_T0]]))
+    server.fail.add('/games/g1/scoreboard-overlay')
+    server.failStatus = 403
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server.fetch
+    })
+    const video = fakeVideo()
+    video.currentTime = 0
+    await render(
+      <PlayerSurface
+        videoRef={{ current: video }}
+        player={video}
+        width={640}
+        height={360}
+        sponsors={sponsored}
+        muted={false}
+        scoreboard={{
+          client,
+          gameId: 'g1',
+          videoId: 'v1',
+          live: false,
+          durationSec: 600,
+          picture: { x: 0, y: 0, w: 640, h: 360 }
+        }}
+      >
+        <div />
+      </PlayerSurface>
+    )
+    // Inside the reel on the picture's wall clock.
+    video.currentTime = 4
+    await settle(80)
+    expect(
+      server.asked.some(ask => ask.path === '/videos/v1/wall-timeline')
+    ).equals(true)
+    expect(drawnReel()).equals(null)
+    expect(video.volume).equals(1)
+  })
+
+  it('draws no reel without the node’s board placement, behind the full-screen player, or with no sponsorship', async function () {
+    const video = fakeVideo()
+    video.currentTime = 4
+    await render(
+      <PlayerSurface
+        videoRef={{ current: video }}
+        width={640}
+        height={360}
+        sponsors={sponsored}
+      >
+        <div />
+      </PlayerSurface>
+    )
+    await settle(80)
+    expect(drawnReel()).equals(null)
+    expect(video.volume).equals(1)
   })
 })

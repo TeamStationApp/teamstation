@@ -159,3 +159,18 @@ describe("the phone's picture and its buffer (U33a)", function () {
     expect(tile.bufferingStrategy).equals('DependingOnMemory')
   })
 })
+
+describe("the phone's picture and its volume (U27)", function () {
+  it('hands the handle’s volume to the player, full until one is set', async function () {
+    let handle: { volume: number } | undefined
+    const onHandle = (given: unknown): void => {
+      handle = given as { volume: number }
+    }
+    expect((await handed({ onHandle })).volume).equals(1)
+    expect(handle?.volume).equals(1)
+    await act(async () => {
+      handle!.volume = 0.2
+    })
+    expect((await handed({ onHandle })).volume).equals(0.2)
+  })
+})

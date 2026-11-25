@@ -9944,7 +9944,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'For anybody who may watch the game’s video (404 otherwise): ' +
             '`{leagueId, logo, reels, overlay}`. `logo` is `{url, width, ' +
             'height}`, the logo the game was given when its first recording ' +
-            'began, or null; `reels` the reel broadcasts on its clock; ' +
+            'began, or null; `reels` the reel broadcasts on its clock, in ' +
+            'start order, each `{id, reelId, url, width, height, startMs, ' +
+            'durationMs}` with `startMs` on the wall clock in epoch ms; ' +
             '`overlay` where the node’s settings put them. The league is the ' +
             'home team’s, or the away team’s when home is in none; null with ' +
             'no logo and no reels when it gave the game none. Reading it ' +

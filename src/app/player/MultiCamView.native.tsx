@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Animated,
   type GestureResponderEvent,
@@ -33,6 +33,8 @@ import {
 import {
   type PlayerLayout,
   playerLayout,
+  type PlayerLayoutInput,
+  reelHasPlace,
   topOfAngles
 } from './multiCam/playerLayout'
 import { claimsSwipe, commitsSwipe, followOf } from './multiCam/sheetSwipe'
@@ -49,8 +51,11 @@ import {
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
 import type { Size } from './scoreboardOverlay/overlayLayout'
+import { reelAspect } from './sponsors/reelTimeline'
 import { SponsorLogoOverlay } from './sponsors/SponsorLogoOverlay'
-import { useGameSponsors } from './sponsors/useGameSponsors'
+import { SponsorReel } from './sponsors/SponsorReel'
+import { type GameAudio, useGameVolume } from './sponsors/useGameVolume'
+import { useReelNow } from './sponsors/useReelNow'
 import { useScreenInsets } from './useScreenInsets'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
@@ -168,11 +173,7 @@ function MultiCamGrid(
   // The game's sponsor logo on every tile: upright by the portrait
   // placement, sideways by the grid's, or the single camera's for one
   // picture alone.
-  const { sponsors } = useGameSponsors(
-    props.client,
-    props.gameId,
-    props.videos.some(video => video.status === 'live')
-  )
+  const sponsors = props.sponsors ?? null
   const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
   const zoomedIndex =
     props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
@@ -184,21 +185,40 @@ function MultiCamGrid(
         : (zoomedIndex != null && zoomedIndex >= 0) || props.order.length === 1
           ? sponsors.overlay.logo.single
           : sponsors.overlay.logo.grid
+  // The game's sponsor reels, on the clock of the pictures: the one playing
+  // takes its layout's space, and the board and box make way where it says.
+  const reels = sponsors?.reels ?? null
+  const wallRef = useRef<() => number | null>(() => null)
+  const wallNow = useCallback((): number | null => wallRef.current(), [])
+  const reelNow = useReelNow({ reels, wallNow })
+  const layoutInput = (natural: Size): PlayerLayoutInput => ({
+    screen: { width, height },
+    safe,
+    count: board.count,
+    aspect: board.aspect,
+    landscape,
+    settings: board.settings,
+    board: board.hasBoard ? natural : null,
+    line: board.hasLine,
+    zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null,
+    singleHiddenTopInset:
+      Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0,
+    reel:
+      sponsors == null || sponsors.reels.length === 0
+        ? null
+        : {
+            active: reelNow != null,
+            aspect: reelAspect(reelNow ?? sponsors.reels[0]),
+            placements: sponsors.overlay.reel,
+            any: true
+          }
+  })
   const layoutFor = (natural: Size): PlayerLayout =>
-    playerLayout({
-      screen: { width, height },
-      safe,
-      count: board.count,
-      aspect: board.aspect,
-      landscape,
-      settings: board.settings,
-      board: board.hasBoard ? natural : null,
-      line: board.hasLine,
-      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null,
-      singleHiddenTopInset:
-        Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0
-    })
+    playerLayout(layoutInput(natural))
   const layout = layoutFor(board.natural)
+  // No reel is drawn where the layout has no place for one: the game is not
+  // turned down for it either.
+  const heardReels = reelHasPlace(layoutInput(board.natural)) ? reels : null
   // The controls go on the block of videos, kept inside the safe area: the
   // press grid over it (`pressGrid.ts`), the icons and the way out at its
   // top, the scrub line on its bottom.
@@ -296,6 +316,18 @@ function MultiCamGrid(
     }
   )
   board.follow(mc)
+  wallRef.current = mc.wallNow
+  // The game's sound fades under each reel, on the heard tile.
+  const { setGameVolume, gameVolumeSettable, setGameDucked } = mc
+  const gameAudio = useMemo<GameAudio>(
+    () => ({
+      setVolume: setGameVolume,
+      settable: gameVolumeSettable,
+      setDucked: setGameDucked
+    }),
+    [setGameVolume, gameVolumeSettable, setGameDucked]
+  )
+  useGameVolume({ reels: heardReels, wallNow, audio: gameAudio })
   const {
     askAgain,
     attaching,
@@ -430,7 +462,8 @@ function MultiCamGrid(
               mc.slow !== 0 ||
               video.id !== mc.heardId ||
               mc.soundBlocked ||
-              mc.soundOff
+              mc.soundOff ||
+              mc.gameDucked
             }
             deferGridRelease={coalescing}
             onAttaching={attaching}
@@ -453,6 +486,14 @@ function MultiCamGrid(
             }
           />
         ))}
+
+        <SponsorReel
+          reels={reels ?? []}
+          wallNow={wallNow}
+          rect={layout.reel}
+          muted={mc.soundOff || mc.soundBlocked || mc.slow !== 0}
+          paused={!mc.playing}
+        />
 
         <GridScoreboard board={board} layout={layoutFor} />
 

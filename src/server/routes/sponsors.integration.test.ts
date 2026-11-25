@@ -847,13 +847,13 @@ describe('U5 the sponsor routes', function () {
         log: message => logged.push(message),
         makeStore: () => ({ store: noStore, close: async () => undefined })
       })
-      // The logo settle and the media sweep, each failing on its own.
-      for (let wait = 0; wait < 100 && logged.length < 2; wait++)
+      // The two reel sweeps, the logo settle and the media sweep, each
+      // failing on its own.
+      for (let wait = 0; wait < 100 && logged.length < 4; wait++)
         await new Promise(resolve => setTimeout(resolve, 20))
-      expect(logged).deep.equals([
-        'sponsor sweeps: Error: no database',
-        'sponsor sweeps: Error: no database'
-      ])
+      expect(logged.slice(0, 4)).deep.equals(
+        Array(4).fill('sponsor sweeps: Error: no database')
+      )
       await failing.stop()
       // Its own Valkey connection, started and not waited for.
       const own = startSponsorSweeps({

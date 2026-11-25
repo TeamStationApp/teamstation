@@ -75,6 +75,12 @@ export interface VideoHandle {
   /** Native playback confirmation; a play request alone is not viewing. */
   readonly actuallyPlaying?: boolean
   muted: boolean
+  /**
+   * How loud, from 0 to 1, under `muted`. A sponsor's reel fades the game
+   * to 0.2 under it. iOS Safari ignores a write (it reads back 1), and
+   * `volumeSettable` finds that out.
+   */
+  volume: number
   playbackRate: number
   /**
    * Zero until the metadata has loaded, and at least 1 after.
