@@ -236,6 +236,7 @@ import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import {
+  SponsorEventStreamScreen,
   SponsorLogosScreen,
   SponsorReelsScreen
 } from './sponsors/SponsorScreens'
@@ -3233,6 +3234,8 @@ function Shell(props: AppProps): React.ReactElement {
       <SponsorLogosScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'sponsorReels' ? (
       <SponsorReelsScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'sponsorEventStream' ? (
+      <SponsorEventStreamScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'groupSettings' ? (
       <GroupSettingsScreen
         key={`${top.kind}:${top.id}:${sceneVisit}`}

@@ -50,6 +50,7 @@ export type CreationRoute =
         /** The sponsor features demo's screens, for a league's id. */
         | 'sponsorLogos'
         | 'sponsorReels'
+        | 'sponsorEventStream'
       id: string
     }
   | { name: 'umpireRequirementEdit'; id: string; seasonIds: string[] }
@@ -133,6 +134,7 @@ export function isCreationRoute(route: {
     'umpireSchedule',
     'sponsorLogos',
     'sponsorReels',
+    'sponsorEventStream',
     'nodeAdministration',
     'userManagement',
     'adminAccount',
@@ -398,6 +400,8 @@ export function parseRoute(path: string, search = ''): Route {
       return { name: 'sponsorLogos', id }
     if (parts[3] === 'sponsors' && parts[4] === 'reels')
       return { name: 'sponsorReels', id }
+    if (parts[3] === 'sponsors' && parts[4] === 'event-stream')
+      return { name: 'sponsorEventStream', id }
   }
   if (parts[0] === 'umpires') {
     const id = decodeURIComponent(parts[1] ?? '')
@@ -802,6 +806,8 @@ export function routePath(route: Route): string {
       return `/groups/league/${encodeURIComponent(route.id)}/sponsors/logos`
     case 'sponsorReels':
       return `/groups/league/${encodeURIComponent(route.id)}/sponsors/reels`
+    case 'sponsorEventStream':
+      return `/groups/league/${encodeURIComponent(route.id)}/sponsors/event-stream`
     case 'umpireNoteTypes':
       return `/groups/league/${encodeURIComponent(route.id)}/umpire-note-types`
     case 'umpireTypes':

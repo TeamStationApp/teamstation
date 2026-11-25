@@ -1207,6 +1207,13 @@
       "settings": []
     },
     {
+      "name": "sponsorEventStream",
+      "path": "/groups/league/:id/sponsors/event-stream",
+      "title": "Sponsor event stream",
+      "tabs": [],
+      "settings": []
+    },
+    {
       "name": "sponsorLogos",
       "path": "/groups/league/:id/sponsors/logos",
       "title": "Sponsor logos",
