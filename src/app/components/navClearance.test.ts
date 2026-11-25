@@ -36,4 +36,14 @@ describe('the floating nav and the unsafe area', function () {
       margin + inset
     )
   })
+
+  it('keeps the minimum capsule margin continuously as the strip slides past it', function () {
+    for (const platform of ['web', 'android'])
+      expect(
+        [0, 1, 15, 16, 17, 34].map(height =>
+          floatingNavBottom(platform, margin, 0, height)
+        )
+      ).deep.equals([16, 16, 16, 16, 17, 34])
+    expect(floatingNavBottom('ios', margin, inset, 1)).equals(inset + 1)
+  })
 })

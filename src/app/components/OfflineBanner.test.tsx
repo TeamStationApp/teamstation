@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Animated } from 'react-native'
 
 import { ScopedThemeProvider, type Theme } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -95,17 +96,93 @@ describe('the offline banner', () => {
       style: { position: 'absolute', bottom: 34 },
       onLayout: height => heights.push(height)
     })
-    const banner = byTestId(host, 'offlineBanner')! as HTMLElement & {
+    const banner = byTestId(host, 'offlineBanner')!
+    const content = byTestId(host, 'offlineBannerContent')! as HTMLElement & {
       __reactLayoutHandler?: (event: object) => void
     }
     expect(getComputedStyle(banner).position).equals('absolute')
     expect(getComputedStyle(banner).bottom).equals('34px')
     await act(async () => {
-      banner.__reactLayoutHandler?.({
+      content.__reactLayoutHandler?.({
         nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 40 } }
       })
     })
     expect(heights).deep.equals([40])
+  })
+
+  it('reports the painted height to the shell and reverses an exit from its current frame', async () => {
+    const timing = Object.getOwnPropertyDescriptor(Animated, 'timing')!
+    let advance!: (height: number, finished?: boolean) => void
+    const targets: number[] = []
+    const observed: number[] = []
+    const animate: typeof Animated.timing = (value, config) => ({
+      start: end => {
+        targets.push(Number(config.toValue))
+        advance = (frame, finished) => {
+          ;(value as Animated.Value).setValue(frame)
+          if (finished === true) end?.({ finished: true })
+        }
+      },
+      stop: () => {},
+      reset: () => {}
+    })
+    Object.defineProperty(Animated, 'timing', { ...timing, value: animate })
+    const report = (height: number): void => {
+      observed.push(height)
+    }
+    try {
+      const host = await draw(tsBallpark, {
+        text: 'Offline',
+        onPresentedHeight: report
+      })
+      const layout = byTestId(host, 'offlineBannerContent')! as HTMLElement & {
+        __reactLayoutHandler: (event: object) => void
+      }
+      const show = async (text?: string): Promise<void> => {
+        await act(async () => {
+          root!.render(
+            <ScopedThemeProvider theme={tsBallpark}>
+              <OfflineBanner text={text} onPresentedHeight={report} />
+            </ScopedThemeProvider>
+          )
+        })
+      }
+      await act(async () => {
+        layout.__reactLayoutHandler({
+          nativeEvent: { layout: { width: 390, height: 34 } }
+        })
+      })
+      await act(async () => {
+        advance(12)
+        advance(34, true)
+      })
+      await show()
+      await act(async () => {
+        advance(18)
+      })
+      expect(
+        byTestId(host, 'offlineBanner')!.getAttribute('aria-hidden')
+      ).equals('true')
+      expect(byTestId(host, 'offlineBannerText')!.textContent).equals('Offline')
+      await show('Sending an edit')
+      expect(observed.at(-1)).equals(18)
+      expect(byTestId(host, 'offlineBannerText')!.textContent).equals(
+        'Sending an edit'
+      )
+      await act(async () => {
+        advance(34, true)
+      })
+      await show()
+      await act(async () => {
+        advance(9)
+        advance(0, true)
+      })
+      expect(byTestId(host, 'offlineBanner')).equals(null)
+      expect(targets).deep.equals([34, 0, 34, 0])
+      expect(observed).deep.equals([0, 12, 34, 18, 34, 9, 0])
+    } finally {
+      Object.defineProperty(Animated, 'timing', timing)
+    }
   })
 
   it('opens the held list from its line, a button labelled for it', async () => {
