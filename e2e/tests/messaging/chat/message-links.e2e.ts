@@ -16,7 +16,7 @@ import {
   readChatComposer,
   revealChatTarget
 } from '../../../rigs/chat/messageLinkUi'
-import { flattenPublicHierarchy } from '../../../rigs/chat2Maestro'
+import { flattenPublicHierarchy, until } from '../../../rigs/chat2Maestro'
 
 const composer = { id: 'chat-composer' }
 const exact = (s: string): string =>
@@ -205,6 +205,37 @@ async function waitForMenuDismissal(m: MaestroDevice): Promise<void> {
   )
 }
 
+async function holdNativeLink(m: MaestroDevice, url: string): Promise<void> {
+  const { x, y, width, height } = await revealChatTarget(
+    m,
+    node => node.text === url
+  )
+  await m.tapOnPoint({
+    point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`,
+    longPress: true
+  })
+}
+
+async function tapIosPaste(m: MaestroDevice): Promise<void> {
+  const deadline = Date.now() + 12000
+  do {
+    const items = flattenPublicHierarchy(await m.hierarchy()).filter(
+      node =>
+        node.type === 'MenuItem' && node.id === 'Paste' && node.text === 'Paste'
+    )
+    const bounds = items.length === 1 ? items[0].bounds : undefined
+    if (bounds != null && bounds.width > 0 && bounds.height > 0) {
+      const { x, y, width, height } = bounds
+      await m.tapOnPoint({
+        point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+      })
+      return
+    }
+    await delay(200)
+  } while (Date.now() < deadline)
+  assert.fail('The system Paste menu item must be visible')
+}
+
 /** Android can expose the field before its keyboard has finished moving it. */
 async function waitForAndroidPasteTarget(m: MaestroDevice): Promise<void> {
   const deadline = Date.now() + 8000
@@ -286,10 +317,7 @@ async function copyMessage(
   if (web != null) {
     await showLink(m, web, url)
     await touchLink(m, url, false)
-  } else {
-    await revealChatTarget(m, node => node.text === url)
-    await m.longPressOn({ text: exact(url) })
-  }
+  } else await holdNativeLink(m, url)
   await m.assertVisible({ text: '^Copy$', timeout: 6000 })
   if (web != null) {
     const clone = await web.page.$(
@@ -338,7 +366,8 @@ async function copyMessage(
     await waitForMenuDismissal(m)
     await m.tapOn(composer)
     await m.longPressOn(composer)
-    await m.tapOn({ text: '^Paste$' })
+    if (platform === 'ios') await tapIosPaste(m)
+    else await m.tapOn({ text: '^Paste$' })
     const nodes = flattenPublicHierarchy(await m.hierarchy())
     if (nodes.some(node => node.text === 'Allow Paste'))
       await m.tapOn({ text: '^Allow Paste$' })
@@ -456,7 +485,7 @@ async function open(ctx: E2eContext): Promise<void> {
   try {
     const sender = await providerFor(f, f.sender)
     try {
-      const dest = await destinationPage(f.destinationHost)
+      const dest = await destinationPage(f)
       const platform =
         ctx.surface === 'ios-app'
           ? 'ios'
@@ -470,7 +499,11 @@ async function open(ctx: E2eContext): Promise<void> {
         })
       let reversed = false
       try {
-        if (platform === 'android' && f.destinationHost == null) {
+        if (
+          platform === 'android' &&
+          f.destinationHost == null &&
+          dest.port != null
+        ) {
           adb('reverse', '--no-rebind', 'tcp:' + dest.port, 'tcp:' + dest.port)
           reversed = true
         }
@@ -547,11 +580,14 @@ async function open(ctx: E2eContext): Promise<void> {
         if (web == null) {
           // A reader above the live edge stays on the same rows when the peer sends.
           // Use the same jump control as the reader to reveal the new attachment.
-          await m.tapOn({
-            id: 'chat-jump-latest',
-            optional: true,
-            timeout: 2500
-          })
+          const position = await until(async () => {
+            const nodes = flattenPublicHierarchy(await m.hierarchy())
+            if (nodes.some(node => node.id === 'chat-jump-latest'))
+              return 'older'
+            if (nodes.some(node => node.id === 'chat-message-' + file.id))
+              return 'latest'
+          }, 'the new attachment or the control to jump to it')
+          if (position === 'older') await m.tapOn({ id: 'chat-jump-latest' })
         }
         await m.assertVisible({ id: 'chat-message-' + file.id, timeout: 20000 })
         await m.assertVisible({ text: exact(second), timeout: 20000 })
@@ -667,7 +703,7 @@ async function open(ctx: E2eContext): Promise<void> {
         else await revealChatTarget(m, node => node.text === second)
         const reading = await linkPosition(m, web, second)
         if (web != null) await touchLink(m, second, false)
-        else await m.longPressOn({ text: exact(second) })
+        else await holdNativeLink(m, second)
         await m.assertVisible({ text: '^Copy$' })
         if (web != null) {
           await m.pressKey({ key: 'Escape' })

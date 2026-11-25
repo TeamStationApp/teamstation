@@ -1488,6 +1488,7 @@ export async function observeComposerCaptureReady(
           sample.rawPairStable = false
           while (Date.now() < burstDeadline) {
             remaining()
+            const captureStartedAt = Date.now()
             const bytes = Buffer.from(
               await device.screenshot({
                 // Burst expiry stops new captures; only the overall deadline aborts one.
@@ -1544,7 +1545,14 @@ export async function observeComposerCaptureReady(
             }
             previous = frame
             previousAt = at
-            const pause = Math.min(200, burstDeadline - Date.now(), remaining())
+            // Hub screenshots already take part of the sampling interval. An
+            // extra fixed pause can sample every transition of the blinking caret.
+            const captureTime = ui.usesHubPhone ? at - captureStartedAt : 0
+            const pause = Math.min(
+              200 - captureTime,
+              burstDeadline - Date.now(),
+              remaining()
+            )
             if (pause > 0)
               await new Promise(resolve => setTimeout(resolve, pause))
           }
@@ -1696,10 +1704,18 @@ export async function submitPasswordSignIn(
       ['Password', actor.password]
     ]) {
       await ui.text(label)
-      if (await ui.visible({ text: exactText('Clear ' + label) }, 200))
-        await ui.text('Clear ' + label)
-      await ui.text(label)
+      const hasValue = await ui.visible(
+        { text: exactText('Clear ' + label) },
+        200
+      )
+      if (hasValue) await ui.text('Clear ' + label)
+      if (hasValue || !ui.physical || ui.surface !== 'android')
+        await ui.text(label)
       await ui.append(value)
+      // On a compact physical Android screen the email keyboard can cover
+      // the password field. Close it before moving focus to the next field.
+      if (ui.physical && ui.surface === 'android' && label === 'E-mail address')
+        await ui.device.hideKeyboard()
       // The simulator keyboard can drop typed characters; the address is
       // read back from its field and typed again until it is exact.
       if (ui.surface === 'ios' && label === 'E-mail address')
@@ -8817,6 +8833,10 @@ export class Scenarios {
           await ui.present(this.controlId('attentionRetry'))
           await ui.replaceDraft('Keep retry state')
           if (ui.native) await ui.hideKeyboard()
+          // A cold conversation follows the newest posts as the offline banner
+          // clears. Pin navigation puts the reader back in older history first.
+          await this.anchor(fixture.readerAnchor)
+          await ui.present(this.controlId('attentionRetry'))
           const body = await this.visibleReaderAnchor()
           fixtureControl(this.f, 'clear-fault')
           await ui.id(this.controlId('attentionRetry'))
@@ -9271,9 +9291,9 @@ export class Scenarios {
                 variant +
                 ' header, composer, pins and chevron reachability/composition'
             )
-            // A phone's screen has no host-side recorder on iOS.
             const recordable =
-              ui.native && !(ui.surface === 'ios' && ui.physical)
+              ui.native &&
+              (ui.surface !== 'ios' || !ui.physical || ui.usesHubPhone)
             if (
               ui.native &&
               !recordable &&
@@ -9572,6 +9592,10 @@ export class Scenarios {
 }
 
 async function matrix(f: Chat2Fixture): Promise<void> {
+  const driverReleased = (entry: Json | undefined, device: unknown): boolean =>
+    typeof device === 'string' && device.includes('@')
+      ? entry?.hubLeaseReleased === true
+      : entry?.daemonStopped === true
   const source = need(process.env.CHAT2_SOURCE, 'Exact final source required')
   const surfaces = CHAT2_SURFACES.filter(s => s !== 'web-320')
   const required: Array<{
@@ -9613,7 +9637,7 @@ async function matrix(f: Chat2Fixture): Promise<void> {
           review.runReceipt === entry.receipt &&
           review.deviceStopped === true &&
           review.listenersReleased === true &&
-          review.daemonStopped === true &&
+          driverReleased(review, receipt.device) &&
           review.independent === true
       }
       if (cell.scenario === 'E2') {
@@ -9668,7 +9692,7 @@ async function matrix(f: Chat2Fixture): Promise<void> {
         receipt.variant === cell.variant &&
         independentlyClean &&
         keyboardGeometryReviewed &&
-        cleanup?.daemonStopped === true &&
+        driverReleased(cleanup, receipt.device) &&
         (!(cell.surface === 'ios' || cell.surface === 'android') ||
           (cleanup?.nativeAbsence as Json)?.absent === true) &&
         (cell.variant === 'default' || environment?.variantVerified === true)
@@ -9737,7 +9761,7 @@ async function matrix(f: Chat2Fixture): Promise<void> {
           review?.runReceipt === entry.receipt &&
           review?.independent === true &&
           review?.deviceStopped === true &&
-          review?.daemonStopped === true &&
+          driverReleased(review, receipt.device) &&
           review?.listenersReleased === true
       }
       rows.push({
@@ -9759,7 +9783,7 @@ async function matrix(f: Chat2Fixture): Promise<void> {
             ((variant === 'dark' ||
               (surface === 'android' && variant === 'reduced-transparency')) &&
               String(environment.reason).length > 20)) &&
-          (receipt.cleanup as Json)?.daemonStopped === true
+          driverReleased(receipt.cleanup as Json, receipt.device)
             ? environment.applicability === 'not-applicable'
               ? 'not-applicable'
               : 'passed'
@@ -9800,7 +9824,7 @@ async function matrix(f: Chat2Fixture): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const fixture = loadChat2Fixture(
+  const fixture = await loadChat2Fixture(
     need(process.env.CHAT2_FIXTURE_FILE, 'Private CHAT2_FIXTURE_FILE required')
   )
   const command = process.argv[2] ?? 'prepare'

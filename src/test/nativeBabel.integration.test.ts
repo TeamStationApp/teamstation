@@ -19,30 +19,37 @@ const {
 describe('the phone bundle’s Babel transform', function () {
   this.timeout(120000)
 
-  it('takes every app and common file', function () {
-    const files = execFileSync(
-      'git',
-      ['ls-files', 'src/app/*.ts', 'src/app/*.tsx', 'src/common/*.ts'],
-      { encoding: 'utf8' }
-    )
-      .trim()
-      .split('\n')
-      // The web twins and the tests never reach a phone.
-      .filter(file => !/\.(test|e2e)\.tsx?$|\.web\.tsx?$/.test(file))
+  const files = execFileSync(
+    'git',
+    ['ls-files', 'src/app/*.ts', 'src/app/*.tsx', 'src/common/*.ts'],
+    { encoding: 'utf8' }
+  )
+    .trim()
+    .split('\n')
+    // The web twins and the tests never reach a phone.
+    .filter(file => !/\.(test|e2e)\.tsx?$|\.web\.tsx?$/.test(file))
+  it('finds the app and common sources', function () {
     expect(files.length).greaterThan(100)
-    const refused: string[] = []
-    for (const file of files) {
-      try {
-        transformFileSync(file, {
-          cwd: process.cwd(),
-          configFile: './babel.config.js',
-          babelrc: false
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        refused.push(`${file}: ${message.split('\n')[0]}`)
-      }
-    }
-    expect(refused).deep.equals([])
   })
+  // Give each batch the same transform deadline even as the bundle grows.
+  const batchSize = 100
+  for (let start = 0; start < files.length; start += batchSize) {
+    const batch = files.slice(start, start + batchSize)
+    it(`transforms ${batch[0]} through ${batch[batch.length - 1]}`, function () {
+      const refused: string[] = []
+      for (const file of batch) {
+        try {
+          transformFileSync(file, {
+            cwd: process.cwd(),
+            configFile: './babel.config.js',
+            babelrc: false
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          refused.push(`${file}: ${message.split('\n')[0]}`)
+        }
+      }
+      expect(refused).deep.equals([])
+    })
+  }
 })
