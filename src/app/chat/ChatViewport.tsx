@@ -4,7 +4,8 @@ import {
   Keyboard,
   Platform,
   useWindowDimensions,
-  View
+  View,
+  type ViewProps
 } from 'react-native'
 
 import { FLOATING_BOTTOM_REM, FLOATING_HEIGHT_REM } from '../components/AppNav'
@@ -13,6 +14,7 @@ import { floatingNavBottom } from '../components/navClearance'
 import { useBreakpoint } from '../components/useBreakpoint'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
+import type { ChatHistoryKeyboard } from './chatHistoryListTypes'
 import { chatLayout, keyboardOverlap } from './chatLayoutModel'
 import { useChatVisualViewport } from './useChatVisualViewport'
 
@@ -24,6 +26,14 @@ export type ChatViewportState = ReturnType<typeof chatLayout> & {
   closedClearance: number
   /** The part of a keyboard's height that the closed clearance covers. */
   keyboardOffset: number
+  /** Native composer geometry before the keyboard covers the conversation. */
+  composerDock: {
+    bottom: number
+    gap: number
+    consumed: number
+    follow: boolean
+  }
+  onTabletKeyboardRest: (height: number) => void
   softwareKeyboardOpen: boolean
   dockedKeyboardWidth?: number
   attachmentHandoff: boolean
@@ -31,6 +41,15 @@ export type ChatViewportState = ReturnType<typeof chatLayout> & {
   returningToKeyboard: boolean
   returnToKeyboard: () => void
   keyboardReturnSettled: () => void
+}
+
+export interface ChatComposerBandProps extends ViewProps {
+  active: boolean
+  frame: ChatHistoryKeyboard['frame']
+  tabletLift?: ChatHistoryKeyboard['tabletLift']
+
+  ref?: React.Ref<React.ComponentRef<typeof View>>
+  viewport: Pick<ChatViewportState, 'composerBottom' | 'composerDock'>
 }
 
 export function useChatViewport(
@@ -53,6 +72,12 @@ export function useChatViewport(
   const measurement = useRef(0)
   const [frameBottom, setFrameBottom] = useState(window.height)
   const [nativeKeyboardTop, setNativeKeyboardTop] = useState<number>()
+  const [floatingKeyboard, setFloatingKeyboard] = useState(false)
+  const [tabletDock, setTabletDock] = useState<{
+    width: number
+    height: number
+    overlap: number
+  }>()
   const [returningToKeyboard, setReturningToKeyboard] = useState(false)
   // iPad floating keyboards and hardware accessory bars do not occupy a dock.
   const docked = useRef(
@@ -141,6 +166,7 @@ export function useChatViewport(
         const fullWidth = width >= windowWidth - 2
         if (height > 80 && fullWidth)
           docked.current.set(windowWidth, { bottom: screenY + height, height })
+        setFloatingKeyboard(width > 0 && !fullWidth)
         // A floating iPad keyboard can sit anywhere over the history.
         setNativeKeyboardTop(width > 0 && !fullWidth ? undefined : screenY)
         // Android's window bounds and IME animation can settle in either order.
@@ -163,6 +189,8 @@ export function useChatViewport(
         const app = Dimensions.get('window')
         const dock = docked.current.get(app.width)
         if (dock != null) dock.hiddenWindowHeight = app.height
+        // A floating keyboard remains undocked throughout its hide animation.
+        // The next show event supplies the new keyboard geometry.
         setNativeKeyboardTop(undefined)
         measure()
       }
@@ -173,8 +201,37 @@ export function useChatViewport(
       hidden.remove()
     }
   }, [measure, ready])
+  // UIKit measures the tablet guide inside this viewport, including its accessory
+  // bar. A floating keyboard leaves the guide at the foot of the conversation.
+  const onTabletKeyboardRest = useCallback(
+    (overlap: number) => {
+      if (overlap > 80)
+        docked.current.set(window.width, {
+          bottom: frameBottom,
+          height: overlap
+        })
+      setTabletDock(previous =>
+        previous?.width === window.width &&
+        previous.height === window.height &&
+        previous.overlap === overlap
+          ? previous
+          : { width: window.width, height: window.height, overlap }
+      )
+    },
+    [window.width, window.height, frameBottom]
+  )
+  const tabletOverlap =
+    tabletDock?.width === window.width && tabletDock.height === window.height
+      ? tabletDock.overlap
+      : undefined
   const keyboardTop =
-    visual?.keyboardOpen === true ? visual.bottom : nativeKeyboardTop
+    tabletOverlap == null
+      ? visual?.keyboardOpen === true
+        ? visual.bottom
+        : nativeKeyboardTop
+      : tabletOverlap > 0
+        ? frameBottom - tabletOverlap
+        : undefined
   const navigation =
     breakpoint === 'phone'
       ? (slot.navigationHeight ?? theme.rem(FLOATING_HEIGHT_REM))
@@ -251,6 +308,15 @@ export function useChatViewport(
     frame,
     measure,
     header: slot.headerHeight,
+    composerDock: {
+      bottom: closed.composerBottom,
+      gap: input.gap / 2,
+      consumed: Math.max(0, screenBottom - frameBottom),
+      follow:
+        !nativePanel &&
+        (!floatingKeyboard || (Platform.OS === 'ios' && Platform.isPad))
+    },
+    onTabletKeyboardRest,
     softwareKeyboardOpen: keyboardTop != null,
     dockedKeyboardWidth:
       remembered != null &&

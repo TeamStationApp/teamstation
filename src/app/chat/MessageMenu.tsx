@@ -79,8 +79,7 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
     if (!live.current || closingNow.current) return
     closingNow.current = true
     afterClose.current = after
-    if (latest.current.desktop === true) finish()
-    else setClosing(true)
+    setClosing(true)
   }
   const has = (action: MessageAction): boolean => props.actions.includes(action)
   const invoke = (
@@ -274,6 +273,8 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
   )
   return props.desktop === true ? (
     <ChatAnchoredMenu
+      closing={closing}
+      onClosed={finish}
       anchor={props.anchor}
       label={label}
       onClose={() => {

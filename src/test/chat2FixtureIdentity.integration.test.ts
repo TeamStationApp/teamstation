@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -24,9 +25,82 @@ import {
   isChat2HarnessPath,
   requireAfterArchive,
   sourceBinding,
-  verifyChat2HarnessSource
+  verifyChat2HarnessSource,
+  verifyChat2Stack
 } from '../../e2e/fixtures/chat2Fixture'
 import { userIdOfGumbo, userIdOfValue } from '../common/userId'
+
+describe('signed chat fixture runtime', () => {
+  const origin = 'https://e2e-01.example.test'
+  const source = 'a'.repeat(40)
+  const witness = 'c'.repeat(64)
+  const handle = {
+    version: 2,
+    id: 'e2e-stack-20000101-000001',
+    name: 'e2e-01',
+    origin,
+    api: origin + '/api/v1',
+    ssh: 'fixture',
+    serverLog: 'fixture',
+    hlsRoot: 'fixture',
+    databaseUrl: 'fixture'
+  }
+  const marker = {
+    stack: handle.id,
+    ownershipId: 'fixture-room',
+    source,
+    witness
+  }
+
+  async function probe(
+    settings: typeof handle,
+    observation: typeof marker,
+    requested: string[] = []
+  ): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'chat-runtime-'))
+    try {
+      const file = join(dir, 'handle.json')
+      writeFileSync(file, JSON.stringify(settings), { mode: 0o600 })
+      return await verifyChat2Stack(
+        file,
+        marker.ownershipId,
+        source,
+        witness,
+        async (url, init) => {
+          assert(url instanceof URL)
+          requested.push(url.href)
+          expect(init?.redirect).equals('error')
+          return Response.json(observation)
+        }
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('requires the source, owner and witness served by the stack over TLS', async () => {
+    const requested: string[] = []
+    expect(await probe(handle, marker, requested)).equals(origin)
+    expect(requested).deep.equals([origin + '/.well-known/chat2-runtime.json'])
+    for (const field of ['stack', 'ownershipId', 'source', 'witness'])
+      await assert.rejects(
+        probe(handle, { ...marker, [field]: 'different' }),
+        /does not serve this disposable relay/
+      )
+  })
+
+  it('rejects a shared seat, a different API and a non-TLS host before any request', async () => {
+    const requested: string[] = []
+    for (const settings of [
+      { ...handle, origin: 'https://develop.example.test' },
+      { ...handle, api: 'https://other.example.test/api/v1' },
+      { ...handle, origin: origin.replace('https:', 'http:') },
+      { ...handle, id: 'shared-seat' }
+    ])
+      await assert.rejects(probe(settings, marker, requested))
+    expect(requested).deep.equals([])
+  })
+})
 
 describe('identity compatibility driver descriptor', () => {
   const old = userIdOfGumbo(42)

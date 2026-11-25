@@ -53,6 +53,7 @@
 - fixed: A tab or phone left open on a busy schedule no longer reads every game again and again
 - fixed: Closing the scoring screen with no connection no longer keeps asking the server for the time
 - fixed: Web scorers can record the next pitch after a strikeout even when the field redraws slowly
+- fixed: The chat message field follows the phone keyboard during a drag. Changes to draft height, reply and edit controls, and the desktop message menu animate smoothly.
 
 ## 1.4.0 (2026-11-21)
 

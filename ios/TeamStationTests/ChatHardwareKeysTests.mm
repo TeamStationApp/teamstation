@@ -1,3 +1,4 @@
+#import "ChatKeyboardGuideChecks.h"
 #import <React/RCTTextInputComponentView.h>
 #import <React/RCTUITextView.h>
 #import <XCTest/XCTest.h>
@@ -168,5 +169,18 @@ static void RecordForwardedPresses(id receiver, SEL command, NSSet<UIPress *> *p
   [handler handleBegan:plainReturn field:field event:nil forward:RecordForwardedPresses];
   XCTAssertEqualObjects(field.forwardedPresses, plainReturn.allObjects);
   XCTAssertEqual(host.emissions, 0u);
+}
+@end
+
+
+@interface ChatKeyboardGuideTests : XCTestCase
+@end
+@implementation ChatKeyboardGuideTests
+- (void)testDockedKeyboardGuide
+{
+  UIWindow *window = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 1210, 834)];
+  TSCheckChatKeyboardGuide(window, ^(BOOL passed, NSString *reason) {
+    XCTAssertTrue(passed, @"%@", reason);
+  });
 }
 @end
