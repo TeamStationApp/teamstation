@@ -29,9 +29,9 @@ import {
   type ScoringMutation
 } from '../../common/scoring/scoringMutation'
 import {
-  requiresDeferredLineups,
   SCORING_FEATURE_HEADER,
-  SCORING_FEATURES
+  SCORING_FEATURES,
+  supportsScoringRecords
 } from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
@@ -345,7 +345,8 @@ export function eventRoutes(
             gameId,
             body,
             async (trx, game) => {
-              if (req.get(SCORING_FEATURE_HEADER) !== SCORING_FEATURES) {
+              const features = req.get(SCORING_FEATURE_HEADER)
+              if (features !== SCORING_FEATURES) {
                 // This callback runs with the game row locked, before writes.
                 const held = await trx
                   .selectFrom('games')
@@ -354,16 +355,17 @@ export function eventRoutes(
                   .executeTakeFirstOrThrow()
                 const plays = await readPlays(trx, gameId)
                 if (
-                  [
+                  !supportsScoringRecords(features, [
                     held.currentPlay,
-                    held.pregame,
+                    { teamStation: held.pregame },
                     ...plays.map(play => play.gumbo),
                     body.currentPlay,
-                    ...body.plays
-                  ].some(requiresDeferredLineups)
+                    ...body.plays,
+                    ...(body.scoringHistory ?? [])
+                  ])
                 )
                   throw conflict(
-                    'Update TeamStation to score this game; its lineup changes require a newer app.'
+                    'Update TeamStation to score this game; its scoring records require a newer app.'
                   )
               }
               // A scorekeeper of either team, which an administrator of it is.
@@ -510,14 +512,13 @@ export function eventRoutes(
           )
       )
       if (
-        req.get(SCORING_FEATURE_HEADER) !== SCORING_FEATURES &&
-        [
+        !supportsScoringRecords(req.get(SCORING_FEATURE_HEADER), [
           result.answer.currentPlay,
           ...result.answer.plays.map(play => (play as { gumbo: unknown }).gumbo)
-        ].some(requiresDeferredLineups)
+        ])
       )
         throw conflict(
-          'Update TeamStation to open scoring for this game; its lineup changes require a newer app.'
+          'Update TeamStation to open scoring for this game; its scoring records require a newer app.'
         )
       // A game with nothing stored has no setup to hold anyone's halves, and
       // whoever may dictate still needs their first names.

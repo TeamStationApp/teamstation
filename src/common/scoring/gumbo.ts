@@ -1,4 +1,10 @@
-import { asArray, asObject, asUnknown, type Cleaner } from 'cleaners'
+import {
+  asArray,
+  asObject,
+  asOptional,
+  asUnknown,
+  type Cleaner
+} from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
 import { eventTypeName } from '../gumboEventTypes'
@@ -49,6 +55,8 @@ import { ownTeams, recordBySide, type SideTeams } from './teamRecord'
 
 export interface TeamStationRecord {
   version: 2
+  /** Read from a version 5 envelope, retained across team and player remapping. */
+  liveScoring?: true
   /** The rosters and lineups as they stood before this play's first action. */
   setupBefore: GameSetup
   /** The actions of this play, in order, lineup changes included. */
@@ -67,6 +75,7 @@ export interface TeamStationRecord {
 
 const asRecord: Cleaner<TeamStationRecord> = asObject({
   version: asLiteral(2),
+  liveScoring: asOptional(asLiteral(true)),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   actionTimes: asUnknown,

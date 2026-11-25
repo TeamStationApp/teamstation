@@ -58,6 +58,7 @@ export { fenceOf }
  */
 
 export interface PlayStamp {
+  liveScoring?: true
   setupBefore: GameSetup
   actions: ScoringAction[]
   /** When each action was taken, one per action; undefined where unknown. */
@@ -87,7 +88,7 @@ export function teamStationOf(
     teamSetups.set(stamp.setupBefore, made)
   }
   return {
-    version: recordVersion(stamp.actions),
+    version: recordVersion(stamp.actions, stamp.liveScoring),
     setupBefore: made.setup,
     ...recordActions(stamp, teams),
     ...(detail === undefined ? {} : { detail })
@@ -107,7 +108,9 @@ function recordActions(
   playbackTimes?: string[]
 } {
   const times = stamp.actionTimes
-  const actions = stamp.actions.map(action => actionByTeam(action, teams))
+  const actions = stamp.actions.map(action =>
+    actionByTeam(action, teams, stamp.liveScoring)
+  )
   return times != null &&
     stamp.actions.length > 0 &&
     times.length === stamp.actions.length &&

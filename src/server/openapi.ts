@@ -5896,7 +5896,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: "Replace a game's plays",
           description:
-            'Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. ' +
+            'The x-teamstation-scoring header lists comma-separated capabilities. Reads and writes require deferred-lineups-v1 for deferred lineup changes and live-scoring-v1 for interrupted endings, fielder’s choice calls recorded one runner at a time, and newly recorded dropped-third-strike advances. Unsupported clients receive 409 and an update message. Version 4 and 5 records retain their by-team envelopes on the wire. ' +
             'One body is the whole set. A play is replaced when its ' +
             '`about.atBatIndex` is already stored, and a stored index that is ' +
             'not in the body is deleted, including a legacy line-score-only ' +
@@ -6149,7 +6149,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "A game's plays",
           description:
-            'The stored plays in `atBatIndex` order. Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. Override-slot or pitcher-less override actions require x-teamstation-protocol 5 or newer; older or missing app versions receive 503 with reason updateRequired. API keys and machine actors are exempt from that protocol-version check.',
+            'The stored plays in `atBatIndex` order. The x-teamstation-scoring header lists comma-separated capabilities. Reads and writes require deferred-lineups-v1 for deferred lineup changes and live-scoring-v1 for interrupted endings, fielder’s choice calls recorded one runner at a time, and newly recorded dropped-third-strike advances. Unsupported clients receive 409 and an update message. Version 4 and 5 records retain their by-team envelopes on the wire. Override-slot or pitcher-less override actions require x-teamstation-protocol 5 or newer; older or missing app versions receive 503 with reason updateRequired. API keys and machine actors are exempt from that protocol-version check.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,

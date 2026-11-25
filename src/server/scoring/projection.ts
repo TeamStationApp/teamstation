@@ -2,7 +2,11 @@ import { mapPlayers } from '../../common/scoring/actions'
 import { recordOf, type TeamStationRecord } from '../../common/scoring/gumbo'
 import type { StoredGame } from '../../common/scoring/session'
 import { type GameSetup, POSITIONS } from '../../common/scoring/state'
-import { ownTeams, recordByTeam } from '../../common/scoring/teamRecord'
+import {
+  isTeamRecordVersion,
+  ownTeams,
+  recordByTeam
+} from '../../common/scoring/teamRecord'
 import { asGumboId } from '../../common/userId'
 
 /**
@@ -126,7 +130,7 @@ function mapDocument<T>(document: T, resolve: (id: number) => number): T {
         const own = ownTeams(value)
         const record = recordOf({ teamStation: value }, own)
         const stored = (mapped: object): unknown =>
-          [3, 4].includes((value as { version?: number }).version ?? 0)
+          isTeamRecordVersion((value as { version?: number }).version)
             ? recordByTeam(mapped as TeamStationRecord, own)
             : mapped
         result[key] =

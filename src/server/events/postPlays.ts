@@ -41,6 +41,7 @@ import {
 import type { StoredGame } from '../../common/scoring/session'
 import { pregameRecord } from '../../common/scoring/sideSwap'
 import { withoutNames } from '../../common/scoring/storedNames'
+import { isTeamRecordVersion } from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
@@ -280,7 +281,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
   ].find(play => play != null && !readableVersion(play))
   if (unread != null)
     throw badRequest(
-      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1, 2, 3 or 4 record`
+      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1, 2, 3, 4 or 5 record`
     )
   let refreshDelay: number | undefined
   /** The answer's at-bat, folded once the row is let go (`pregameFold`). */
@@ -1334,7 +1335,7 @@ function readableVersion(play: object): boolean {
       ? (record as { version?: unknown }).version
       : undefined
   return (
-    (version === 1 || version === 2 || version === 3 || version === 4) &&
+    (version === 1 || version === 2 || isTeamRecordVersion(version)) &&
     storedRecordOf(play) != null
   )
 }
