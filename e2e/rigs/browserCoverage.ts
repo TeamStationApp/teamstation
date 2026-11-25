@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, dirname, resolve } from 'node:path'
@@ -27,6 +28,8 @@ export async function recordBrowserCoverage(
     toJSON: () => unknown
   }
   const coverage = createCoverageMap({})
+  const measured = []
+
   for (const page of pages) {
     for (const script of await page.coverage.stopJSCoverage()) {
       if (
@@ -38,6 +41,15 @@ export async function recordBrowserCoverage(
         sourceMapRoot,
         basename(new URL(script.url).pathname)
       )
+      if (script.text !== (await readFile(generated, 'utf8')))
+        throw new Error(
+          'The web build does not match the bundle executed by Chromium'
+        )
+      measured.push({
+        asset: basename(generated),
+        sha256: createHash('sha256').update(script.text).digest('hex'),
+        functions: script.rawScriptCoverage.functions
+      })
       const converter = convert(generated, 0, {
         source: script.text,
         sourceMap: {
@@ -56,6 +68,7 @@ export async function recordBrowserCoverage(
   }
   await mkdir(dirname(output), { recursive: true })
   await writeFile(output, JSON.stringify(coverage.toJSON()))
+  await writeFile(output + '.v8', JSON.stringify(measured))
 }
 
 /**

@@ -65,7 +65,7 @@ import {
   storePlayerAvatar
 } from '../teams/storeTeamPictures'
 import { gumboIdOf } from '../users/insertUser'
-import { clearSessionCookie, secureCookieFor } from './auth'
+import { checkBrowserActor, clearSessionCookie, secureCookieFor } from './auth'
 
 export interface AccountOptions extends PictureStore {
   sendCode: (email: string, code: string) => Promise<void>
@@ -291,6 +291,7 @@ export function accountRoutes(
     '/me/account',
     withAsync(async (req, res) => {
       const userId = accountId(req)
+      await checkBrowserActor(db, req)
       // Read in the delete's own transaction, before the rows are emptied:
       // a public picture's name does not say whose it is.
       let pictures: string[] = []

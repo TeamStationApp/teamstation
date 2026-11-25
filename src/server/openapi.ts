@@ -1361,6 +1361,12 @@ const targetUser = {
   required: true,
   schema: { type: 'string' }
 }
+const passwordSwitchIds = {
+  type: 'object',
+  required: ['currentId', 'targetId'],
+  properties: { currentId: { type: 'string' }, targetId: { type: 'string' } }
+}
+
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -4209,6 +4215,81 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             401: errorResponse
+          }
+        }
+      },
+      '/auth/password/link': {
+        post: {
+          summary: 'Sign in from a development web password link',
+          description:
+            'Requires a development server and a valid password proof. To change accounts, repeat the request with the two IDs from the confirmation prompt.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['email', 'clientHash'],
+                  properties: {
+                    email: { type: 'string', maxLength: 254 },
+                    clientHash: clientHashSchema,
+                    confirmation: passwordSwitchIds
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'Signed in',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/Session' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: {
+              description:
+                'A switch requires consent, or the active account changed after consent. Reopen the link after a stale confirmation.',
+              content: {
+                'application/json': {
+                  schema: {
+                    allOf: [{ $ref: '#/components/schemas/ApiError' }],
+                    properties: { code: { const: 'conflict' } },
+                    oneOf: [
+                      {
+                        required: ['details'],
+                        properties: {
+                          details: {
+                            type: 'object',
+                            required: [
+                              'reason',
+                              'confirmation',
+                              'currentLabel',
+                              'targetLabel'
+                            ],
+                            properties: {
+                              reason: { const: 'confirmAccountSwitch' },
+                              confirmation: passwordSwitchIds,
+                              currentLabel: { type: 'string' },
+                              targetLabel: { type: 'string' }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        description: 'Stale confirmation',
+                        not: { required: ['details'] }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            429: errorResponse
           }
         }
       },

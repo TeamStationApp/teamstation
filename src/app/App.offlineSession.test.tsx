@@ -279,7 +279,9 @@ describe('the phone session with no signal', () => {
       trace.push(`delete ${id} with ${this.token ?? 'no token'}`)
       throw new HttpError('offline', 'Cannot reach TeamStation.')
     }
-    api.signOut = async function (this: TeamStationClient) {
+    api.signOut = async function (this: TeamStationClient, departingActor) {
+      expect(departingActor).equals(ICHIRO.id)
+      expect(this.cacheUser).equals(undefined)
       trace.push('logout')
       throw new HttpError('offline', 'Cannot reach TeamStation.')
     }
