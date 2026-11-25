@@ -1207,6 +1207,13 @@
       "settings": []
     },
     {
+      "name": "sponsorLogos",
+      "path": "/groups/league/:id/sponsors/logos",
+      "title": "Sponsor logos",
+      "tabs": [],
+      "settings": []
+    },
+    {
       "name": "team",
       "path": "/teams/:teamId",
       "title": "Team",
