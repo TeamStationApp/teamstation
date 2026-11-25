@@ -153,6 +153,120 @@ export const defaultNodeSettings: NodeSettings = {
   jev: defaultJevSettings
 }
 
+/**
+ * Where a sponsor's logo sits over one video: its margins from the top and
+ * from the side it is on, and the largest box it fits in, all as fractions
+ * of that video.
+ */
+export interface LogoPlacement {
+  side: number
+  top: number
+  maxWidth: number
+  maxHeight: number
+}
+
+/** The largest box a sponsor's reel fits in, as fractions of the screen. */
+export interface ReelPlacement {
+  maxWidth: number
+  maxHeight: number
+}
+
+/** The layouts a reel has a space in: portrait with 1–2, 3 or 4 angles, and landscape with 1–4. */
+export type ReelLayout =
+  | 'portrait12'
+  | 'portrait3'
+  | 'portrait4'
+  | 'landscape1'
+  | 'landscape2'
+  | 'landscape3'
+  | 'landscape4'
+
+export const REEL_LAYOUTS: readonly ReelLayout[] = [
+  'portrait12',
+  'portrait3',
+  'portrait4',
+  'landscape1',
+  'landscape2',
+  'landscape3',
+  'landscape4'
+]
+
+export const LOGO_PLACEMENTS = ['single', 'grid', 'tv', 'portrait'] as const
+
+/** What a player needs to place a sponsor's logo and reel. */
+export interface SponsorOverlay {
+  logo: Record<(typeof LOGO_PLACEMENTS)[number], LogoPlacement>
+  reel: Record<ReelLayout, ReelPlacement>
+}
+
+export interface SponsorSettings extends SponsorOverlay {
+  /** The node's own sample video's object, or `null` for the default. */
+  sampleKey: string | null
+}
+
+/** Where the node's sample video is when nobody has uploaded one. */
+export const DEFAULT_SPONSOR_SAMPLE_KEY = 'sponsors/sample/default.mp4'
+
+const defaultLogoPlacement: LogoPlacement = {
+  side: 0.05,
+  top: 0.05,
+  maxWidth: 0.25,
+  maxHeight: 0.25
+}
+
+const defaultReelPlacement: ReelPlacement = {
+  maxWidth: 1 / 3,
+  maxHeight: 1 / 3
+}
+
+export const defaultSponsorSettings: SponsorSettings = {
+  logo: {
+    single: defaultLogoPlacement,
+    grid: defaultLogoPlacement,
+    tv: defaultLogoPlacement,
+    portrait: defaultLogoPlacement
+  },
+  reel: Object.fromEntries(
+    REEL_LAYOUTS.map(layout => [layout, defaultReelPlacement])
+  ) as Record<ReelLayout, ReelPlacement>,
+  sampleKey: null
+}
+
+/** A sponsor overlay, checked: every placement present and in range. */
+export function asSponsorOverlay(raw: unknown): SponsorOverlay {
+  const value = record(raw, 'the sponsor overlay')
+  const logo = record(value.logo, 'the logo placements')
+  const reel = record(value.reel, 'the reel placements')
+  return {
+    logo: Object.fromEntries(
+      LOGO_PLACEMENTS.map(name => {
+        const placement = record(logo[name], `the ${name} logo`)
+        return [
+          name,
+          {
+            side: asFraction(placement.side, `${name} side`),
+            top: asFraction(placement.top, `${name} top`),
+            maxWidth: asHeight(placement.maxWidth, `${name} maxWidth`),
+            maxHeight: asHeight(placement.maxHeight, `${name} maxHeight`)
+          }
+        ]
+      })
+    ) as SponsorOverlay['logo'],
+    reel: Object.fromEntries(
+      REEL_LAYOUTS.map(layout => {
+        const placement = record(reel[layout], `the ${layout} reel`)
+        return [
+          layout,
+          {
+            maxWidth: asHeight(placement.maxWidth, `${layout} maxWidth`),
+            maxHeight: asHeight(placement.maxHeight, `${layout} maxHeight`)
+          }
+        ]
+      })
+    ) as SponsorOverlay['reel']
+  }
+}
+
 /** The longest any of the second-valued settings may be. */
 export const MAX_SETTING_SEC = 600
 

@@ -9649,6 +9649,294 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/leagues/{leagueId}/sponsors': {
+        get: {
+          summary: "A league's sponsor features",
+          description:
+            'For an administrator of the league (404 for a league that is ' +
+            'not there): `{totals: {logoCredits, reelCredits, eventSlots}, ' +
+            'logos, reels, placements, keptSlots}`. Every league holds 300 ' +
+            'game logo credits, 1,000 reel broadcast credits and 10 event ' +
+            'stream slots. Logos and reels are in the order they were ' +
+            'accepted, inactive ones included; `placements` are the listed ' +
+            'sponsored rows, by start time. Every change below answers this.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('leagueId')],
+          responses: {
+            200: { description: 'What the league holds' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/leagues/{leagueId}/sponsors/media': {
+        post: {
+          summary: 'Upload a sponsor logo, reel or row picture',
+          description:
+            'The raw bytes of a file the client has already shrunk; the ' +
+            'server only checks it, in order: its size, its magic bytes, ' +
+            'then its dimensions or ffprobe’s reading. A logo is a PNG ' +
+            'within 480 × 270 (at most 1 MB); a reel an H.264 MP4 of 10–15 ' +
+            's, within 640 × 360, at most 30 fps, 1.7 Mbit/s and 3.2 MB; a ' +
+            'row logo a JPEG or PNG of 128 × 128 and a row background one ' +
+            'within 1,920 × 224 (each at most 4 MB). A refusal is a 400 ' +
+            'with the sentence the screen shows. Answers 201 `{mediaId, ' +
+            'url, width, height, durationMs}`; an upload nothing uses ' +
+            'within a day is deleted. For an administrator of the league; ' +
+            'the body is read only once that is known.',
+          security: [{ bearer: [] }],
+          parameters: [
+            pathParam('leagueId'),
+            {
+              name: 'purpose',
+              in: 'query',
+              required: true,
+              schema: {
+                type: 'string',
+                enum: ['logo', 'reel', 'rowLogo', 'rowBackground']
+              }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' }
+              }
+            }
+          },
+          responses: {
+            201: { description: 'Stored' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/leagues/{leagueId}/sponsors/logos': {
+        post: {
+          summary: 'List a sponsor logo',
+          description:
+            '`{mediaId, name, allocation}`: one of the league’s unused logo ' +
+            'uploads, after every logo it has accepted, with `allocation` ' +
+            'game logo credits (a whole number, at least 1, within what the ' +
+            'league has left). A logo’s image never changes: a new image is ' +
+            'a new logo. Answers 201 with the league’s sponsor features.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('leagueId')],
+          requestBody: keyBody({
+            mediaId: { type: 'string' },
+            name: { type: 'string' },
+            allocation: { type: 'integer', minimum: 1 }
+          }),
+          responses: {
+            201: { description: 'Listed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/sponsors/logos/{logoId}': {
+        patch: {
+          summary: "Change an active sponsor logo's allocation",
+          description:
+            '`{allocation}`: at least what it has used, within the league’s ' +
+            'credits. An inactive logo’s cannot change.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('logoId')],
+          requestBody: keyBody({ allocation: { type: 'integer', minimum: 1 } }),
+          responses: {
+            200: { description: 'Changed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/sponsors/logos/{logoId}/deactivate': {
+        post: {
+          summary: 'Deactivate a sponsor logo',
+          description:
+            'A logo that has used credits stays, inactive, its allocation ' +
+            'still counted; an unused one is removed and its allocation ' +
+            'returns.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('logoId')],
+          responses: {
+            200: { description: 'Deactivated' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/leagues/{leagueId}/sponsors/reels': {
+        post: {
+          summary: 'List a sponsor reel',
+          description:
+            '`{mediaId, name, allocation}`, as a logo is listed, with reel ' +
+            'broadcast credits. Answers 201 with the league’s sponsor ' +
+            'features.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('leagueId')],
+          requestBody: keyBody({
+            mediaId: { type: 'string' },
+            name: { type: 'string' },
+            allocation: { type: 'integer', minimum: 1 }
+          }),
+          responses: {
+            201: { description: 'Listed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/sponsors/reels/{reelId}': {
+        patch: {
+          summary: "Change an active sponsor reel's allocation",
+          description: '`{allocation}`, as for a logo.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('reelId')],
+          requestBody: keyBody({ allocation: { type: 'integer', minimum: 1 } }),
+          responses: {
+            200: { description: 'Changed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/sponsors/reels/{reelId}/deactivate': {
+        post: {
+          summary: 'Deactivate a sponsor reel',
+          description: 'As for a logo.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('reelId')],
+          responses: {
+            200: { description: 'Deactivated' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/leagues/{leagueId}/sponsors/rows': {
+        post: {
+          summary: "Place a sponsored row in the league's event stream",
+          description:
+            '`{logoMediaId, backgroundMediaId, title, message, url, ' +
+            'textColor, startsAt}`: the league’s own row logo and ' +
+            'background uploads, a title of at most 20 characters, a ' +
+            'message of at most 90, an https URL, `dark` or `white` text ' +
+            '(dark when left out) and the ISO date-time the row shows at. ' +
+            'Uses one of the league’s event stream slots; refused when none ' +
+            'is left. Answers 201 with the league’s sponsor features.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('leagueId')],
+          requestBody: keyBody(
+            {
+              logoMediaId: { type: 'string' },
+              backgroundMediaId: { type: 'string' },
+              title: { type: 'string', maxLength: 20 },
+              message: { type: 'string', maxLength: 90 },
+              url: { type: 'string', format: 'uri' },
+              textColor: { type: 'string', enum: ['dark', 'white'] },
+              startsAt: { type: 'string', format: 'date-time' }
+            },
+            [
+              'logoMediaId',
+              'backgroundMediaId',
+              'title',
+              'message',
+              'url',
+              'startsAt'
+            ]
+          ),
+          responses: {
+            201: { description: 'Placed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/sponsors/rows/{rowId}': {
+        patch: {
+          summary: 'Change a sponsored row',
+          description:
+            'Any of the fields a row is placed with, only within 24 hours ' +
+            'of placing it; after that it can only be deleted. A picture ' +
+            'left out keeps the row’s current one.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('rowId')],
+          requestBody: keyBody(
+            {
+              logoMediaId: { type: 'string' },
+              backgroundMediaId: { type: 'string' },
+              title: { type: 'string', maxLength: 20 },
+              message: { type: 'string', maxLength: 90 },
+              url: { type: 'string', format: 'uri' },
+              textColor: { type: 'string', enum: ['dark', 'white'] },
+              startsAt: { type: 'string', format: 'date-time' }
+            },
+            []
+          ),
+          responses: {
+            200: { description: 'Changed' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Delete a sponsored row',
+          description:
+            'Within 24 hours of placing it the slot returns; after that ' +
+            'the slot stays used.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('rowId')],
+          responses: {
+            200: { description: 'Deleted' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/leagues/{leagueId}/sponsors/sample': {
+        get: {
+          summary: "The video a league's sponsor previews play",
+          description:
+            'The league’s newest recording with a home-plate angle (a title ' +
+            'with the word “home”), else its newest recording, from a game ' +
+            'in one of its seasons or with one of its teams: `{kind: ' +
+            '"recording", videoId, url, window, overlay}`, `url` as ' +
+            '`/videos/{videoId}/playback` answers it and `window` 30:00–32:00 ' +
+            'of a recording that long, else its first two minutes. Another ' +
+            'league’s footage is never used. With none, `{kind: "node", ' +
+            'url, window: [0, 120], overlay}`, the node’s sample video. ' +
+            '`overlay` places the logo and reel as the node’s settings do.',
+          security: [{ bearer: [] }],
+          parameters: [pathParam('leagueId')],
+          responses: {
+            200: { description: 'The sample video' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/chat/attachments': {
         post: {
           summary: 'Open an encrypted attachment upload',

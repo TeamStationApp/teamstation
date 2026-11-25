@@ -72,6 +72,8 @@ export function apiCost(method: string, path: string): ApiCost {
     (method === 'DELETE' &&
       (p === '/me/account' || /^\/videos\/[^/]+$/.test(p))) ||
     (method === 'POST' && /^\/director\/uploads\/[^/]+\/finish$/.test(p)) ||
+    // A league's raw sponsor upload: its bytes go to storage and are probed.
+    (method === 'POST' && /^\/leagues\/[^/]+\/sponsors\/media$/.test(p)) ||
     (method !== 'GET' &&
       method !== 'HEAD' &&
       /^\/(node\/ownership-preflight|leagues\/[^/]+\/(umpire-settings|umpire-requirements|umpire-season-priority|umpires))$/.test(

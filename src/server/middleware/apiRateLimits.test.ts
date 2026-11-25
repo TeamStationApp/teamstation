@@ -44,6 +44,8 @@ describe('API traffic budgets', () => {
       ['DELETE', '/me/account', 'expensive'],
       ['DELETE', '/videos/two', 'expensive'],
       ['POST', '/director/uploads/one/finish', 'expensive'],
+      ['POST', '/leagues/one/sponsors/media', 'expensive'],
+      ['GET', '/leagues/one/sponsors', 'ordinary'],
       ['GET', '/leagues/one/schedule-previews/latest', 'expensive'],
       ['POST', '/me/tess/changes/one/confirm', 'expensive'],
       ['GET', '/anything-new', 'ordinary']

@@ -14,6 +14,7 @@ import { coordinateColumns } from '../location/places'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { groupScopeIds, noteScopeChange } from '../socket/syncRevision'
+import { grantStartingCredits } from '../sponsors/credits'
 import { storeGroupPhoto } from './groupPhoto'
 import { inheritedAdminIds } from './inheritedAdmins'
 import { currentActor, requireGroupAdmin } from './rights'
@@ -89,7 +90,7 @@ export async function createGroup(
         ? null
         : catalogPicture(body.picture.catalogId)!
     let prefix = picture?.prefix ?? null
-    if (body.kind === 'league')
+    if (body.kind === 'league') {
       await trx
         .insertInto('leagues')
         .values({
@@ -103,7 +104,9 @@ export async function createGroup(
           logo_source: picture == null ? null : 'upload'
         })
         .execute()
-    else if (body.kind === 'season')
+      // 300 game logos, 1,000 reel broadcasts and 10 event stream slots.
+      await grantStartingCredits(trx, id)
+    } else if (body.kind === 'season')
       await trx
         .insertInto('seasons')
         .values({

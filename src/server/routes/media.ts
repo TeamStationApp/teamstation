@@ -10,15 +10,14 @@ import {
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { deleteVideo } from '../media/deleteVideo'
-import { locateVideo, videoFrameSource } from '../media/locations'
+import { videoFrameSource } from '../media/locations'
 import type { FeedHolder, MediaContext } from '../media/mediaContext'
 import {
   MEDIA_TOKEN_TTL_SEC,
-  mediaUrlPath,
-  signQueryToken,
   verifyMediaPath,
   verifyQueryToken
 } from '../media/mediaTokens'
+import { hlsSubject, playbackAnswer } from '../media/playbackAnswer'
 import {
   mediaVariant,
   rewriteMasterPlaylist,
@@ -102,68 +101,19 @@ export function mediaRoutes(
       if (video == null || video.hidden) throw notFound()
       if (!canSeeGame(scopes, video)) throw membersOnly()
 
-      const waitingForOrigin =
-        video.storage === 'local' &&
-        video.kind === 'live' &&
-        spaceConfigured(space)
-      const location = waitingForOrigin
-        ? undefined
-        : await locateVideo({
+      res.json(
+        await playbackAnswer(
+          {
             mediaRoot,
-            storage: video.storage,
-            videoId,
-            spaceSecret: video.spaceSecret
-          })
-      if (location == null) {
-        // The row says there is a video; its files are not there. Better to
-        // say so than to hand back a URL that plays black.
-        res.json({
-          videoId,
-          storage: video.storage,
-          url: null,
-          expiresAt: null,
-          durationSec: video.durationSec,
-          unavailable: true,
-          // Finish may race the first acknowledgement. No node should issue
-          // a scratch URL that the pending origin close will immediately remove.
-          pending: waitingForOrigin
-        })
-        return
-      }
-
-      let entry = 'master.m3u8'
-      if (video.storage === 'spaces' && video.kind === 'live') {
-        const master = await playback.playlists.get(
-          { id: videoId, spaceSecret: video.spaceSecret },
-          'master.m3u8'
+            space,
+            playlists: playback.playlists,
+            publicUrl,
+            mediaSecret
+          },
+          video,
+          Date.now()
         )
-        if (master != null && mediaVariant(master) === 'index.m3u8')
-          entry = 'index.m3u8'
-      }
-      const now = Date.now()
-      const url =
-        video.storage === 'spaces'
-          ? // The API serves these playlists itself, pointing each media entry
-            // at the Space (unsigned under the video's secret path, presigned
-            // without one) so the bytes come from the Space directly. A
-            // `<video>` element cannot send a bearer token, so the permission
-            // rides in the query string.
-            `${publicUrl}/api/v1/videos/${videoId}/hls/${entry}?t=${signQueryToken(
-              mediaSecret,
-              hlsSubject(videoId),
-              now
-            )}`
-          : publicUrl +
-            mediaUrlPath(mediaSecret, location.dir, location.master, now)
-
-      res.json({
-        videoId,
-        storage: video.storage,
-        url,
-        expiresAt: new Date(now + MEDIA_TOKEN_TTL_SEC * 1000).toISOString(),
-        durationSec: video.durationSec,
-        unavailable: false
-      })
+      )
     })
   )
 
@@ -482,11 +432,6 @@ export function mediaRoutes(
 
 /** How long the Space URL a still redirect names stays good for. */
 const STILL_URL_TTL_SEC = 60 * 60
-
-/** What an HLS token is signed against: this video's playlists, and no other. */
-function hlsSubject(videoId: string): string {
-  return `hls:${videoId}`
-}
 
 /** What the playlist route reads of a video's row. */
 interface HlsRow {

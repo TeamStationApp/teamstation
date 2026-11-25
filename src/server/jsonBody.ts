@@ -71,6 +71,13 @@ const LARGE_BODIES: ReadonlyArray<{
     path: /^\/api\/v1\/schedule-previews\/[^/]+\/result$/,
     parser: parsedByRoute
   },
+  // A sponsor upload's raw bytes, read by the route once it knows the
+  // caller administers the league, up to the purpose's cap.
+  {
+    method: 'POST',
+    path: /^\/api\/v1\/leagues\/[^/]+\/sponsors\/media$/,
+    parser: parsedByRoute
+  },
   {
     method: 'POST',
     path: /^\/api\/v1\/analytics\/events$/,

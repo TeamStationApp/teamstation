@@ -37,6 +37,7 @@ import {
   runSearch,
   SEARCH_JEV_PLACEHOLDER
 } from './search'
+import { runSponsors } from './sponsors'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 import { RATE_LIMIT_SCALE, runTess } from './tess'
@@ -115,6 +116,7 @@ describe('the fixtures script', function () {
     expect(Object.keys(WORLDS)).includes('streaming')
     expect(Object.keys(WORLDS)).includes('packed-league')
     expect(Object.keys(WORLDS)).includes('packed-league-limit')
+    expect(Object.keys(WORLDS)).includes('sponsors')
   })
 })
 
@@ -398,6 +400,137 @@ describe('fixture worlds', function () {
       'First Base',
       'Home Plate'
     ])
+  })
+
+  it("sponsors gives two leagues, four teams with their players, the AL season's two games and the five accounts", async function () {
+    const world = await runSponsors({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const { ids, accounts } = world
+    const leagues = await the()
+      .selectFrom('leagues')
+      .select(['id', 'name'])
+      .where('id', 'in', [ids.americanLeague, ids.nationalLeague])
+      .orderBy('name')
+      .execute()
+    expect(leagues.map(league => league.name)).deep.equals([
+      'American League',
+      'National League'
+    ])
+    const teams = await the()
+      .selectFrom('teams')
+      .select(['id', 'name', 'league_id'])
+      .where('id', 'in', [ids.yankees, ids.redSox, ids.dodgers, ids.cubs])
+      .execute()
+    const leagueOf = (id: string): string | null | undefined =>
+      teams.find(team => team.id === id)?.league_id
+    expect(leagueOf(ids.yankees)).equals(ids.americanLeague)
+    expect(leagueOf(ids.redSox)).equals(ids.americanLeague)
+    expect(leagueOf(ids.dodgers)).equals(ids.nationalLeague)
+    expect(leagueOf(ids.cubs)).equals(ids.nationalLeague)
+    const players = async (teamId: string): Promise<string[]> =>
+      (
+        await the()
+          .selectFrom('memberships')
+          .select('user_id')
+          .where('team_id', '=', teamId)
+          .where('is_player', '=', true)
+          .execute()
+      ).map(row => row.user_id)
+    expect((await players(ids.yankees)).length).equals(10)
+    expect((await players(ids.redSox)).length).equals(9)
+    expect((await players(ids.dodgers)).length).equals(12)
+    expect((await players(ids.cubs)).length).equals(8)
+    expect(await players(ids.yankees)).includes(accounts.yankeesPlayer.userId)
+    expect(await players(ids.dodgers)).includes(accounts.dodgersPlayer.userId)
+    const games = await the()
+      .selectFrom('games')
+      .select(['id', 'season_id', 'home_team_id', 'away_team_id'])
+      .where('season_id', '=', ids.season)
+      .execute()
+    const game = (id: string): (typeof games)[number] | undefined =>
+      games.find(row => row.id === id)
+    expect(games.length).equals(2)
+    expect(game(ids.yankeesAtRedSox)).deep.include({
+      home_team_id: ids.redSox,
+      away_team_id: ids.yankees
+    })
+    expect(game(ids.dodgersAtYankees)).deep.include({
+      home_team_id: ids.yankees,
+      away_team_id: ids.dodgers
+    })
+    const season = await the()
+      .selectFrom('seasons')
+      .select('league_id')
+      .where('id', '=', ids.season)
+      .executeTakeFirstOrThrow()
+    expect(season.league_id).equals(ids.americanLeague)
+    const roles = await the()
+      .selectFrom('scope_roles')
+      .select(['user_id', 'scope_type', 'scope_id', 'role'])
+      .where(
+        'user_id',
+        'in',
+        Object.values(accounts).map(account => account.userId)
+      )
+      .execute()
+    const rolesOf = (role: string): string[] =>
+      roles
+        .filter(row => row.user_id === accounts[role].userId)
+        .map(row => `${row.scope_type}:${row.scope_id}:${row.role}`)
+    expect(rolesOf('alAdmin')).deep.equals([
+      `league:${ids.americanLeague}:admin`
+    ])
+    expect(rolesOf('nlAdmin')).deep.equals([
+      `league:${ids.nationalLeague}:admin`
+    ])
+    for (const role of ['yankeesPlayer', 'dodgersPlayer', 'neutral'])
+      expect(rolesOf(role), role).deep.equals([])
+    const memberships = await the()
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id'])
+      .where(
+        'user_id',
+        'in',
+        Object.values(accounts).map(account => account.userId)
+      )
+      .execute()
+    const teamsOf = (role: string): string[] =>
+      memberships
+        .filter(row => row.user_id === accounts[role].userId)
+        .map(row => row.team_id)
+    expect(teamsOf('yankeesPlayer')).deep.equals([ids.yankees])
+    expect(teamsOf('dodgersPlayer')).deep.equals([ids.dodgers])
+    for (const role of ['alAdmin', 'nlAdmin', 'neutral'])
+      expect(teamsOf(role), role).deep.equals([])
+    const videos = await the()
+      .selectFrom('videos')
+      .select('id')
+      .where('game_id', 'in', [ids.yankeesAtRedSox, ids.dodgersAtYankees])
+      .execute()
+    expect(videos).deep.equals([])
+    const streams = await the()
+      .selectFrom('live_streams')
+      .select('id')
+      .where('game_id', 'in', [ids.yankeesAtRedSox, ids.dodgersAtYankees])
+      .execute()
+    expect(streams).deep.equals([])
+    for (const table of [
+      'sponsor_media',
+      'sponsor_logos',
+      'sponsor_reels',
+      'sponsor_rows'
+    ] as const)
+      expect(
+        await the()
+          .selectFrom(table)
+          .select('id')
+          .where('league_id', 'in', [ids.americanLeague, ids.nationalLeague])
+          .execute(),
+        table
+      ).deep.equals([])
   })
 
   it('refresh-notices gives a spectator 320 games on four teams, and a scorekeeper four soon on three of them', async function () {

@@ -59,6 +59,7 @@ import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
+import { sponsorRoutes } from './routes/sponsors'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
@@ -207,6 +208,7 @@ describe('the API document', function () {
         chatAttachmentRoutes(db, { space: media.space, uploadsDir: '/tmp' })
       ),
       ...routesOf(scheduleRoutes(db)),
+      ...routesOf(sponsorRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
@@ -281,6 +283,7 @@ describe('the API document', function () {
         chatAttachmentRoutes(db, { space: media.space, uploadsDir: '/tmp' })
       ),
       ...routesOf(scheduleRoutes(db)),
+      ...routesOf(sponsorRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),

@@ -1732,6 +1732,108 @@ export interface ChatMessagePinsTable {
   pinned_at: Generated<Date>
 }
 
+/** A league's sponsor credits and slots (131sponsorFeatures). */
+export interface LeagueSponsorCreditsTable {
+  league_id: string
+  logo_credits: Generated<number>
+  reel_credits: Generated<number>
+  event_slots: Generated<number>
+  /** Slots whose rows were deleted more than 24 hours after placing. */
+  kept_slots: Generated<number>
+  /** The `position` of the last logo placed on a game, for round-robin. */
+  logo_turn: Generated<number>
+  /** The `position` of the last reel placed. */
+  reel_turn: Generated<number>
+}
+
+export type SponsorMediaPurpose = 'logo' | 'reel' | 'rowLogo' | 'rowBackground'
+
+/** A checked sponsor upload, never changed. */
+export interface SponsorMediaTable {
+  id: string
+  league_id: string
+  purpose: SponsorMediaPurpose
+  object_key: string
+  content_type: string
+  bytes: number
+  sha256: string
+  width: number
+  height: number
+  duration_ms: number | null
+  created_by: string | null
+  created_at: Generated<Date>
+}
+
+/** A sponsor logo or reel with its credits, in acceptance order. */
+export interface SponsorLogosTable {
+  id: string
+  league_id: string
+  media_id: string
+  name: string
+  allocation: number
+  used: Generated<number>
+  active: Generated<boolean>
+  position: number
+  accepted_at: Generated<Date>
+  deactivated_at: Timestamp | null
+}
+
+export interface SponsorReelsTable extends SponsorLogosTable {
+  duration_ms: number
+}
+
+/** The logo a game shows for one of its teams' leagues. */
+export interface GameSponsorLogosTable {
+  game_id: string
+  league_id: string
+  logo_id: string | null
+  media_id: string
+  assigned_at: Generated<Date>
+  settled_at: Timestamp | null
+  charged: Generated<boolean>
+}
+
+/** One broadcast of a reel on a game's clock. */
+export interface GameReelPlacementsTable {
+  id: string
+  game_id: string
+  league_id: string
+  reel_id: string | null
+  media_id: string
+  slot: 'pregame' | 'half'
+  inning: number | null
+  half: 'top' | 'bottom' | null
+  starts_at: Timestamp
+  duration_ms: number
+  placed_at: Generated<Date>
+}
+
+/** A half-inning end the scoring hook has seen. */
+export interface GameHalfEndsTable {
+  game_id: string
+  inning: number
+  half: 'top' | 'bottom'
+  at_bat_index: number
+  state: 'waiting' | 'placed' | 'skipped'
+  fade_at: Timestamp | null
+  created_at: Generated<Date>
+}
+
+/** A sponsored row in a league's event stream. */
+export interface SponsorRowsTable {
+  id: string
+  league_id: string
+  logo_media_id: string
+  background_media_id: string
+  title: string
+  message: string
+  url: string
+  text_color: Generated<'dark' | 'white'>
+  starts_at: Timestamp
+  placed_at: Generated<Date>
+  deleted_at: Timestamp | null
+}
+
 export interface Database {
   umpire_note_types: UmpireLevelsTable
   game_umpire_notes: { game_id: string; note_type_id: string; value: string }
@@ -1825,6 +1927,9 @@ export interface Database {
   events: EventsTable
   external_ids: ExternalIdsTable
   games: GamesTable
+  game_half_ends: GameHalfEndsTable
+  game_reel_placements: GameReelPlacementsTable
+  game_sponsor_logos: GameSponsorLogosTable
   game_field_warnings: GameFieldWarningsTable
   game_plans: GamePlansTable
   league_schedule_setups: LeagueScheduleSetupsTable
@@ -1838,6 +1943,7 @@ export interface Database {
   invites: InvitesTable
   league_members: LeagueMembersTable
   leagues: LeaguesTable
+  league_sponsor_credits: LeagueSponsorCreditsTable
   live_streams: LiveStreamsTable
   login_requests: LoginRequestsTable
   memberships: MembershipsTable
@@ -1847,6 +1953,10 @@ export interface Database {
   scoreboard_log: ScoreboardLogTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
+  sponsor_logos: SponsorLogosTable
+  sponsor_media: SponsorMediaTable
+  sponsor_reels: SponsorReelsTable
+  sponsor_rows: SponsorRowsTable
   sync_idempotency: SyncIdempotencyTable
   system_settings: SystemSettingsTable
   team_follows: TeamFollowsTable

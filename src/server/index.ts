@@ -127,6 +127,7 @@ import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
+import { sponsorRoutes } from './routes/sponsors'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
@@ -157,6 +158,7 @@ import {
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
 import { supportsUpgrade } from './socket/upgradePaths'
+import { startSponsorSweeps } from './sponsors/sweeps'
 import {
   exitAfterBuilder,
   forceStop,
@@ -543,6 +545,14 @@ function jobsOn(
         console.log(message)
       })
     },
+    startSponsorSweeps: () =>
+      startSponsorSweeps({
+        db,
+        space: serverConfig.space,
+        redis: serverConfig.redis,
+        databaseUrl: serverConfig.databaseUrl,
+        log: say
+      }),
     // The only process that reads the push keys and sends.
     startPushSender: () =>
       supervise({
@@ -951,6 +961,12 @@ function runWorker(): void {
       space: serverConfig.space,
       uploadsDir: uploadsDir()
     })
+  )
+  // A sponsor upload's body is raw bytes, read by the route's own
+  // `express.raw` once the caller is known to administer the league.
+  app.use(
+    '/api/v1',
+    sponsorRoutes(db, mediaContext, { uploadsDir: uploadsDir() })
   )
   app.use(
     '/api/v1',
