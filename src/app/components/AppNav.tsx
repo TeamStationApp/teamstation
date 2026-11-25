@@ -176,6 +176,11 @@ export function AppNav(props: AppNavProps): React.ReactElement {
       onLayout={event => {
         props.onHeight?.(event.nativeEvent.layout.height)
       }}
+      dataSet={
+        Platform.OS === 'web' && floating
+          ? { offlineBannerDock: 'true' }
+          : undefined
+      }
       accessibilityRole="tablist"
       // Interactive, unlike the header: this is the one surface a thumb
       // presses, and on iOS 26 that is what makes the glass deform under it

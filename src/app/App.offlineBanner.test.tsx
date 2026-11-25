@@ -87,7 +87,9 @@ const bottomOf = (node: HTMLElement): string => getComputedStyle(node).bottom
 
 /** Reports the banner's layout, as a phone would once it is drawn. */
 async function layOutBanner(height: number): Promise<void> {
-  const node = banner() as unknown as {
+  const node = document.querySelector(
+    '[data-testid="offlineBannerContent"]'
+  ) as unknown as {
     __reactLayoutHandler: (event: object) => void
   }
   await act(async () => {
@@ -95,6 +97,7 @@ async function layOutBanner(height: number): Promise<void> {
       nativeEvent: { layout: { x: 0, y: 0, width: 390, height } }
     })
   })
+  await settle(240)
 }
 
 /** Sizes the window, as the breakpoint reads it. */
