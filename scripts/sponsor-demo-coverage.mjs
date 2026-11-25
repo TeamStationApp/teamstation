@@ -65,7 +65,9 @@ const appSuites = [
   'src/app/sponsors/SponsorFileDrop.test.tsx',
   'src/app/sponsors/SponsorLogosScreen.test.tsx',
   'src/app/sponsors/SponsorScreens.native.test.tsx',
-  'src/app/App.sponsors.test.tsx'
+  'src/app/App.sponsors.test.tsx',
+  // The reels screen (M3).
+  'src/app/sponsors/SponsorReelsScreen.test.tsx'
 ]
 
 function argument(name) {

@@ -235,7 +235,10 @@ import { UserManagementScreen } from './screens/UserManagementScreen'
 import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
-import { SponsorLogosScreen } from './sponsors/SponsorScreens'
+import {
+  SponsorLogosScreen,
+  SponsorReelsScreen
+} from './sponsors/SponsorScreens'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
 import { openDocumentCache } from './sync/cache'
 import {
@@ -3228,6 +3231,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'sponsorLogos' ? (
       <SponsorLogosScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'sponsorReels' ? (
+      <SponsorReelsScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'groupSettings' ? (
       <GroupSettingsScreen
         key={`${top.kind}:${top.id}:${sceneVisit}`}

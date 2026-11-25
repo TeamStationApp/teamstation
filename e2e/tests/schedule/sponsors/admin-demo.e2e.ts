@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
+import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
@@ -38,7 +40,9 @@ const remaining = (left: number): ExpectItem => ({
 })
 const NO_RECORDING: ExpectItem = { text: 'No recording to preview' }
 
-interface Logos {
+const run = promisify(execFile)
+
+interface Opened {
   web: WebSession
   league: string
 }
@@ -68,18 +72,22 @@ async function signInAsAdmin(
   }, 30_000)
 }
 
-/** Seeds the packed league, signs its admin in, and opens Sponsor Video Logos. */
-async function openLogos(
+/**
+ * Seeds the packed league, signs its admin in, and opens the league's
+ * sponsor screen at `screen`: `logos` or `reels`.
+ */
+async function openSponsor(
   ctx: E2eContext,
-  size: { width: number; height: number }
-): Promise<Logos> {
+  size: { width: number; height: number },
+  screen: 'logos' | 'reels'
+): Promise<Opened> {
   const world = await ctx.fixture('packed-league')
   const web = await ctx.browser(size)
   await web.m.openLink({ link: ctx.stack.origin })
   await signInAsAdmin(web, world.accounts.admin)
   const league = world.ids.league
   await web.m.openLink({
-    link: `${ctx.stack.origin}/groups/league/${encodeURIComponent(league)}/sponsors/logos`
+    link: `${ctx.stack.origin}/groups/league/${encodeURIComponent(league)}/sponsors/${screen}`
   })
   return { web, league }
 }
@@ -153,7 +161,7 @@ async function logosFlow(
   ctx: E2eContext,
   size: { width: number; height: number }
 ): Promise<WebSession> {
-  const { web } = await openLogos(ctx, size)
+  const { web } = await openSponsor(ctx, size, 'logos')
   const png = ctx.artifact('sponsor-logo.png')
   const jpeg = ctx.artifact('sponsor-logo.jpg')
   writeFileSync(png, PNG)
@@ -268,6 +276,153 @@ async function logosFlow(
   return web
 }
 
+const REEL_PREVIEW = 'sponsor-reel-preview'
+const REEL_HEADERS = [
+  'Video reel',
+  'Broadcasts used',
+  'Broadcasts remaining',
+  'Action'
+]
+const REEL_NOTE =
+  'Each broadcast reel will be evenly distributed across all videos recorded by your league. One broadcast credit is used at the beginning of each game and between each half-inning, until the allocated broadcast count is depleted.'
+const REEL_LIMITS =
+  'Reels are 10 to 15 seconds long and 640 × 360. Larger videos are shrunk automatically to fit 640 × 360, keeping their proportions. After shrinking, a reel can be at most 3.2 MB.'
+const reelsLeft = (left: string): ExpectItem => ({
+  text: `Remaining reel broadcast credits: ${left} of 1,000`
+})
+
+/** A `seconds`-long 640 × 360 VP9 test pattern, written at `path`. */
+async function testReel(path: string, seconds: number): Promise<string> {
+  await run(process.env.TS_FFMPEG ?? 'ffmpeg', [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc=size=640x360:rate=30',
+    '-t',
+    String(seconds),
+    '-c:v',
+    'libvpx-vp9',
+    '-deadline',
+    'realtime',
+    '-y',
+    path
+  ])
+  return path
+}
+
+/** How many reel rows the table lists. */
+async function reelRowCount(web: WebSession): Promise<number> {
+  return await web.page.evaluate(
+    () => document.querySelectorAll('[data-testid^="sponsor-row-reel"]').length
+  )
+}
+
+/** The whole reels flow, on a window of `size`. */
+async function reelsFlow(
+  ctx: E2eContext,
+  size: { width: number; height: number }
+): Promise<WebSession> {
+  const long = await testReel(ctx.artifact('sponsor-reel-20s.webm'), 20)
+  const short = await testReel(ctx.artifact('sponsor-reel-12s.webm'), 12)
+  const { web } = await openSponsor(ctx, size, 'reels')
+
+  await checkpoint(ctx, web, 'reels-rows', {
+    expect: [
+      ...REEL_HEADERS.map(text => ({ text, timeout: 30_000 })),
+      { text: REEL_NOTE },
+      { text: REEL_LIMITS },
+      reelsLeft('500'),
+      { text: 'Ridgeview Auto' }
+    ],
+    readBack: async () => {
+      expect(await reelRowCount(web)).equals(2)
+    }
+  })
+
+  await web.m.uploadFile({ css: ADD_INPUT, path: long, timeout: 15_000 })
+  await checkpoint(ctx, web, 'reels-too-long', {
+    expect: [
+      {
+        text: 'This reel is 20 seconds. Reels must be 10 to 15 seconds long.',
+        timeout: 15_000
+      },
+      { id: REEL_PREVIEW, absent: true }
+    ]
+  })
+
+  await web.m.uploadFile({ css: ADD_INPUT, path: short, timeout: 15_000 })
+  await checkpoint(ctx, web, 'reels-pending', {
+    expect: [
+      { id: REEL_PREVIEW, timeout: 15_000 },
+      { text: 'Broadcasts for this reel' },
+      { text: 'Up to 500 broadcast credits left' },
+      { text: 'Accept' },
+      { text: 'Cancel' }
+    ],
+    readBack: async () => {
+      // A third of the frame each way, in its upper-left, over the panel.
+      const place = await web.page.evaluate(() => {
+        const preview = document.querySelector(
+          '[data-testid="sponsor-reel-preview"]'
+        )
+        const frame = preview == null ? null : preview.parentElement
+        if (preview == null || frame == null) return null
+        const box = preview.getBoundingClientRect()
+        const outer = frame.getBoundingClientRect()
+        const video = preview.querySelector('video')
+        return {
+          left: (box.left - outer.left) / outer.width,
+          top: (box.top - outer.top) / outer.height,
+          width: box.width / outer.width,
+          height: box.height / outer.height,
+          playing: video != null && video.muted && video.loop
+        }
+      })
+      expect(place, 'the preview').not.equals(null)
+      expect(place!.left).closeTo(0.01, 0.01)
+      expect(place!.top).closeTo(0.01, 0.01)
+      expect(place!.width).closeTo(1 / 3, 0.01)
+      expect(place!.height).closeTo(1 / 3, 0.01)
+      expect(place!.playing, 'muted and looping').equals(true)
+    }
+  })
+
+  await typeInto(web, 'input[aria-label="Broadcasts for this reel"]', '100')
+  await tapButton(web, 'Accept')
+  await checkpoint(ctx, web, 'reels-accepted', {
+    expect: [
+      reelsLeft('400'),
+      { text: 'sponsor-reel-12s' },
+      { id: REEL_PREVIEW, absent: true }
+    ],
+    readBack: async () => {
+      expect(await reelRowCount(web)).equals(3)
+    }
+  })
+
+  await tapCss(web, '[aria-label="Deactivate Ridgeview Auto"]')
+  await confirmDeactivate(web)
+  await checkpoint(ctx, web, 'reels-ridgeview-removed', {
+    expect: [reelsLeft('500'), { text: 'Ridgeview Auto', absent: true }],
+    readBack: async () => {
+      expect(await reelRowCount(web)).equals(2)
+    }
+  })
+
+  await tapButton(web, 'Clear all rows')
+  await checkpoint(ctx, web, 'reels-empty', {
+    expect: [
+      { text: 'No reels yet. Add one above.' },
+      { text: 'Broadcasts used', absent: true },
+      reelsLeft('1,000')
+    ]
+  })
+  return web
+}
+
 /** The page's widest element is no wider than its window. */
 async function fitsTheWindow(web: WebSession): Promise<void> {
   const { scrollWidth, innerWidth } = await web.page.evaluate(() => ({
@@ -280,7 +435,7 @@ async function fitsTheWindow(web: WebSession): Promise<void> {
 export default defineE2e({
   id: 'schedule/sponsors/admin-demo',
   title:
-    'A league administrator previews, accepts, allocates, deactivates and clears sponsor logos on the web, on a desktop and a phone',
+    'A league administrator previews, accepts, allocates, deactivates and clears sponsor logos and reels on the web, on a desktop and a phone',
   kind: 'e2e',
   covers: [
     'src/app/sponsors/**',
@@ -309,6 +464,19 @@ export default defineE2e({
       await tapButton(web, 'Reset to sample rows')
       await checkpoint(ctx, web, 'logos-phone-fits', {
         expect: [...HEADERS.map(text => ({ text })), remaining(120)],
+        readBack: async () => {
+          await fitsTheWindow(web)
+        }
+      })
+    },
+    'reels-desktop': async ctx => {
+      await reelsFlow(ctx, DESKTOP)
+    },
+    'reels-phone': async ctx => {
+      const web = await reelsFlow(ctx, PHONE)
+      await tapButton(web, 'Reset to sample rows')
+      await checkpoint(ctx, web, 'reels-phone-fits', {
+        expect: [...REEL_HEADERS.map(text => ({ text })), reelsLeft('500')],
         readBack: async () => {
           await fitsTheWindow(web)
         }

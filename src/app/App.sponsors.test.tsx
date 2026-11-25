@@ -87,4 +87,17 @@ describe('the sponsor features screens in the app', () => {
     expect(page).includes('Remaining game logo credits: 120 of 300')
     expect(page).includes('No recording to preview')
   })
+
+  it('opens Sponsor Video Reels at its address', async () => {
+    signedIn()
+    await open('/groups/league/lea_demo/sponsors/reels')
+    await settle(150)
+    expect(window.location.pathname).equals(
+      '/groups/league/lea_demo/sponsors/reels'
+    )
+    const page = document.body.textContent ?? ''
+    expect(page).includes('Sponsor Video Reels')
+    expect(page).includes('Remaining reel broadcast credits: 500 of 1,000')
+    expect(page).includes('No recording to preview')
+  })
 })

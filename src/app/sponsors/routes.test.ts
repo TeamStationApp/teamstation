@@ -5,7 +5,10 @@ import { parseRoute, type Route, routePath } from '../navigation/routes'
 
 describe('the sponsor features addresses', () => {
   it('round-trips each sponsor screen’s address', () => {
-    const routes: Route[] = [{ name: 'sponsorLogos', id: 'lea_demo' }]
+    const routes: Route[] = [
+      { name: 'sponsorLogos', id: 'lea_demo' },
+      { name: 'sponsorReels', id: 'lea_demo' }
+    ]
     for (const route of routes)
       expect(parseRoute(routePath(route), '')).deep.equals(route)
     expect(routePath({ name: 'sponsorLogos', id: 'lea demo' })).equals(
@@ -17,6 +20,9 @@ describe('the sponsor features addresses', () => {
       name: 'sponsorLogos',
       id: 'lea demo'
     })
+    expect(routePath({ name: 'sponsorReels', id: 'lea demo' })).equals(
+      '/groups/league/lea%20demo/sponsors/reels'
+    )
   })
 
   it('leaves the league’s other addresses as they were', () => {
@@ -24,8 +30,9 @@ describe('the sponsor features addresses', () => {
       name: 'leagueUmpires',
       id: 'x'
     })
-    expect(parseRoute('/groups/league/x/sponsors/unknown', '').name).not.equals(
-      'sponsorLogos'
-    )
+    for (const name of ['sponsorLogos', 'sponsorReels'])
+      expect(
+        parseRoute('/groups/league/x/sponsors/unknown', '').name
+      ).not.equals(name)
   })
 })

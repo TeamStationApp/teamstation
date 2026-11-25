@@ -19,6 +19,7 @@ const SCREEN_IDS: { [Name in Pushed['name']]: Ids<Name> } = {
   umpireRequirementEdit: frame => [frame.id],
   umpireSchedule: frame => [frame.id],
   sponsorLogos: frame => [frame.id],
+  sponsorReels: frame => [frame.id],
   groupAddPeople: frame => [frame.kind, frame.id],
   groupInvites: frame => [frame.kind, frame.id],
   teamCreatePlayer: frame => [frame.id],

@@ -12,7 +12,7 @@ afterEach(async () => {
 describe('the sponsor screens on a phone', () => {
   it('says each one is set up on the web', async () => {
     const names = Object.keys(screens)
-    expect(names).deep.equals(['SponsorLogosScreen'])
+    expect(names).deep.equals(['SponsorLogosScreen', 'SponsorReelsScreen'])
     for (const Each of Object.values(screens)) {
       await mount(<Each client={{}} league="lea_demo" />)
       expect(text()).equals('Sponsor features are set up on the web.')
