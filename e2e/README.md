@@ -106,3 +106,11 @@ A category's coverage script reads what its scenarios executed:
 NODE_V8_COVERAGE=coverage/server npm run e2e -- run <id> --surface web-chromium --browser-coverage coverage/browser
 npm run e2e -- coverage-merge coverage/browser --out coverage/browser.json
 ```
+
+For the development web password-link gate, build or copy the matching seat bundle and its source map into `dist/` in the checkout that built it. Configure the seat and its fixture command in the usual E2E settings. On a test host with PostgreSQL available, run:
+
+```sh
+node scripts/webPasswordLinkCoverage.mjs --seat <configured-seat> --web-dir dist
+```
+
+This runs the real Chromium scenario, checks the served bundle and source map against the checkout, records the source revision, and combines the counters with the focused unit and HTTP suites.

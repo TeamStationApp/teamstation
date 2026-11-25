@@ -96,3 +96,7 @@ export function httpOrigin(authority: Authority): string {
 export function rtmpOrigin(authority: Authority, port: number): string {
   return `rtmp://${hostOf(authority)}:${port}`
 }
+
+export function isDevelopmentWebOrigin(origin: string | undefined): boolean {
+  return /^https:\/\/develop[1-8]?\.teamstation\.app$/.test(origin ?? '')
+}

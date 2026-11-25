@@ -263,6 +263,7 @@ import {
 } from './venues'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
+import { EXPECTED_ACTOR_HEADER } from './webPasswordLink'
 
 /**
  * The client the app talks to the server through.
@@ -4351,7 +4352,23 @@ function statisticsPath(
   return `/games/${encodeURIComponent(gameId)}/box-score?${params}`
 }
 
+declare const TS_PASSWORD_LINK_BUILD: boolean
+
 export class TeamStationClient {
+  /** A UI client knows whose documents it has open. */
+  get cacheUser(): string | undefined {
+    return undefined
+  }
+
+  private get cookieWriteActor(): string | undefined {
+    return typeof TS_PASSWORD_LINK_BUILD !== 'undefined' &&
+      TS_PASSWORD_LINK_BUILD &&
+      this.baseUrl === '/api/v1' &&
+      this.token == null
+      ? this.cacheUser
+      : undefined
+  }
+
   private readonly statisticsRequests = new Map<
     string,
     Promise<GameStatistics>
@@ -5315,7 +5332,10 @@ export class TeamStationClient {
     )
   }
 
-  async signInWithPassword(email: string, password: string): Promise<Session> {
+  protected async passwordProof(
+    email: string,
+    password: string
+  ): Promise<string> {
     const derive = this.requirePasswordKdf()
     const parameters = await this.request(
       'POST',
@@ -5323,7 +5343,11 @@ export class TeamStationClient {
       raw => asArgonParameters(raw),
       { email }
     )
-    const clientHash = asClientHash(await derive(password, parameters))
+    return asClientHash(await derive(password, parameters))
+  }
+
+  async signInWithPassword(email: string, password: string): Promise<Session> {
+    const clientHash = await this.passwordProof(email, password)
     const session = await this.request('POST', '/auth/password', asSession, {
       email,
       clientHash,
@@ -8886,6 +8910,8 @@ export class TeamStationClient {
     xhr.setRequestHeader(PROTOCOL_HEADER, String(GAME_SOCKET_PROTOCOL))
     if (this.token != null)
       xhr.setRequestHeader('authorization', `Bearer ${this.token}`)
+    const actor = this.cookieWriteActor
+    if (actor != null) xhr.setRequestHeader(EXPECTED_ACTOR_HEADER, actor)
     xhr.send(body === undefined ? undefined : JSON.stringify(body))
   }
 
@@ -8912,6 +8938,9 @@ export class TeamStationClient {
       headers['x-teamstation-app'] = this.analyticsApp
     headers[PROTOCOL_HEADER] = String(GAME_SOCKET_PROTOCOL)
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
+    const actor = this.cookieWriteActor
+    if (actor != null && method !== 'GET')
+      headers[EXPECTED_ACTOR_HEADER] = actor
     const json =
       bytes == null && body !== undefined ? JSON.stringify(body) : undefined
     // A link that takes the request and then stalls answers nothing: past
