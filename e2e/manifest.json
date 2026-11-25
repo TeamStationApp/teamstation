@@ -208,6 +208,60 @@
       "file": "e2e/tests/account/sign-in/password.e2e.ts"
     },
     {
+      "id": "app-shell/chat/composer-keyboard#centered-text",
+      "title": "The editable chat line is centered beside its controls",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/Composer.tsx",
+        "src/app/chat/chatWebInteractions.ts"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/chat/composer-keyboard",
+      "file": "e2e/tests/app-shell/chat/composer-line.e2e.ts"
+    },
+    {
       "id": "app-shell/chat/composer-keyboard#rides-keyboard",
       "title": "A conversation’s composer rides the keyboard on a phone",
       "kind": "e2e",

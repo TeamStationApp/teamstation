@@ -2390,7 +2390,7 @@ export class Scenarios {
             this.f,
             ui.scenario === 'capture' ? ui.surface : undefined
           )
-        if (ui.usesFreshBrowserProfile) {
+        if (!ui.native) {
           await ui.dom(`
             const buttons = [...document.querySelectorAll('button,[role="button"]')]
               .filter(n => n.textContent?.trim() === 'Sign out')
