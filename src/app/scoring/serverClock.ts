@@ -55,10 +55,17 @@ export class ServerClock {
     return new Date(this.local() + this.offsetMs)
   }
 
-  /** Measures the offset now and keeps it; offline, the last one stands. */
-  async measure(): Promise<void> {
+  /**
+   * Measures the offset now and keeps it; offline, the last one stands. Once
+   * `stopped` says so, no further reading is asked for.
+   */
+  async measure(stopped: () => boolean = () => false): Promise<void> {
+    const fetchTime = async (): Promise<number> => {
+      if (stopped()) throw new Error('Stopped keeping time')
+      return await this.fetchTime()
+    }
     try {
-      const sample = await measureOffset(this.fetchTime, 5, this.local)
+      const sample = await measureOffset(fetchTime, 5, this.local)
       this.offsetMs = Math.round(sample.offsetMs)
       this.measured = true
       await this.storage.setItem(KEY, String(this.offsetMs))
@@ -71,16 +78,20 @@ export class ServerClock {
    * Measures now, and again each time the network or the app comes back,
    * until the returned function is called: the scoring screen keeps time
    * this way while it is open. A clock that drifts by seconds over a game
-   * needs no more than that.
+   * needs no more than that. A measurement under way when it is called asks
+   * for no further reading, so a screen closed on a link that answers nothing
+   * starts no new request.
    */
   keepTime(): () => void {
+    let stopped = false
     let stop: (() => void) | undefined
     const measure = (): void => {
-      this.measure().catch(() => undefined)
+      this.measure(() => stopped).catch(() => undefined)
       stop = this.whenBack(measure)
     }
     measure()
     return () => {
+      stopped = true
       stop?.()
     }
   }
