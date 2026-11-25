@@ -114,6 +114,59 @@ describe('chat document visibility read adapter', function () {
     expect(input.style.height).equals('42px')
   })
 
+  it('animates multiline growth, reverses from the presented height and fades with reduced motion', function () {
+    const field = document.createElement('div')
+    const input = document.createElement('textarea')
+    field.dataset.testid = 'chat-composer-field'
+    field.style.border = '1px solid black'
+    field.appendChild(input)
+    document.body.appendChild(field)
+    let target = 42
+    let reduced = false
+    let canceled = 0
+    const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+    const keyframes: Array<Keyframe[] | PropertyIndexedKeyframes | null> = []
+    Object.defineProperty(field, 'animate', {
+      value: (frames: Keyframe[]) => {
+        keyframes.push(frames)
+        return {
+          playState: 'running',
+          cancel: () => {
+            canceled++
+          }
+        }
+      }
+    })
+    input.getBoundingClientRect = () => new window.DOMRect(0, 0, 1, target)
+    field.getBoundingClientRect = () => new window.DOMRect(0, 0, 1, 58)
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches: reduced })
+    })
+    try {
+      sizeComposerText(input)
+      target = 82
+      sizeComposerText(input)
+      sizeComposerText(input)
+      target = 42
+      sizeComposerText(input)
+      reduced = true
+      target = 62
+      sizeComposerText(input)
+      expect(keyframes).deep.equals([
+        [{ height: '44px' }, { height: '84px' }],
+        [{ height: '58px' }, { height: '44px' }],
+        [{ opacity: 0.78 }, { opacity: 1 }]
+      ])
+      expect(canceled).equals(2)
+    } finally {
+      field.remove()
+      if (original != null)
+        Object.defineProperty(window, 'matchMedia', original)
+      else Reflect.deleteProperty(window, 'matchMedia')
+    }
+  })
+
   it('resizes for a narrower chat pane within the same window', function () {
     const globals = globalThis as { ResizeObserver?: unknown }
     const original = globals.ResizeObserver

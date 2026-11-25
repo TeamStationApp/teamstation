@@ -3,7 +3,11 @@ import { describe, it } from 'mocha'
 
 import type { MaestroDevice } from '../../core/maestro'
 import type { PublicNode } from '../chat2Maestro'
-import { clearChatComposer, revealChatTarget } from './messageLinkUi'
+import {
+  clearChatComposer,
+  readChatComposer,
+  revealChatTarget
+} from './messageLinkUi'
 
 describe('native message link targets', function () {
   it('reveals a covered first line and waits for its actual tap position to settle', async function () {
@@ -36,6 +40,24 @@ describe('native message link targets', function () {
   })
 })
 
+describe('reading a native Android composer', function () {
+  it('reads multiline text without opening a clipboard preview', async function () {
+    const draft = 'First line\nSecond line 🧢'
+    const m: MaestroDevice = {
+      state: async () => ({}),
+      screenshot: async () => new Uint8Array(),
+      detach: async () => undefined,
+      hierarchy: async () => ({
+        nodes: [
+          { id: 'other-editor', type: 'EditText', text: 'ignored' },
+          { id: 'chat-composer', type: 'android.widget.EditText', text: draft }
+        ]
+      })
+    }
+    expect(await readChatComposer(m, 'android')).to.equal(draft)
+  })
+})
+
 describe('clearing a retained Android draft', function () {
   for (const attachment of [false, true]) {
     it(
@@ -50,11 +72,15 @@ describe('clearing a retained Android draft', function () {
           detach: async () => undefined,
           tapOn: async () => {},
           eraseText: async () => {},
-          copyTextFrom: async () => ({
-            data: value === '' ? 'Message' : value
-          }),
           hierarchy: async () => ({
-            nodes: value !== '' || attachment ? [{ id: 'chat-send' }] : []
+            nodes: [
+              {
+                id: 'chat-composer',
+                type: 'EditText',
+                text: value === '' ? 'Message' : value
+              },
+              ...(value !== '' || attachment ? [{ id: 'chat-send' }] : [])
+            ]
           }),
           pressKey: async ({ key }: { key: string }) => {
             if (key === 'BACKSPACE') {
