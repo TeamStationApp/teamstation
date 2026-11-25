@@ -623,6 +623,8 @@ public struct ScoreboardMonitorPreference: Equatable, Codable, Sendable {
       if let slot = row(among: cameras).sourceIndex, value { return .enabled(sourceIndex: slot) }
       return .disabled
     }
+    // An unplaced monitor keeps the tile it is shown in instead of following the last free slot.
+    if preferredSlot == nil, monitor.isEnabled { preferredSlot = monitor.sourceIndex }
     return SourceSelectionRules.setEnabled(value, for: id, in: &cameras,
                                            reserving: monitor.isEnabled ? monitor.sourceIndex : nil)
   }

@@ -1421,8 +1421,9 @@ public final class AppEnvironment {
     let result: SourceSelectionRules.EnableResult
     if monitorURL != nil {
       result = monitorPreference.setEnabled(enabled, for: id, cameras: &selections)
+      // A camera toggle can place an unplaced monitor.
+      selectionStore.saveMonitor(monitorPreference)
       if id == ScoreboardMonitorPreference.id {
-        selectionStore.saveMonitor(monitorPreference)
         statusMessage = result == .rejectedAtCap ? "Five sources maximum — turn one off first" : nil
         return result
       }

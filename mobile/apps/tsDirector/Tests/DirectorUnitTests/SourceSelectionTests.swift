@@ -509,6 +509,20 @@ struct ScoreboardMonitorTests {
     #expect(monitor.assign(slot: 5, to: monitorID, cameras: &cameras) == .invalidSlot)
   }
 
+  @Test("An unplaced monitor stays in its tile when a camera beside it is turned off")
+  func unplacedMonitorStays() {
+    var cameras = cameras(5)
+    cameras.remove(at: 3)
+    var monitor = ScoreboardMonitorPreference()
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+    let last = cameras[3].id
+    #expect(monitor.setEnabled(false, for: last, cameras: &cameras) == .disabled)
+    #expect(monitor.preferredSlot == 3)
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+    #expect(monitor.setEnabled(true, for: last, cameras: &cameras) == .enabled(sourceIndex: 4))
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+  }
+
   @Test("A disabled camera with a stale preferred slot cannot displace two enabled sources")
   func occupiedPreviousSlot() {
     var cameras = cameras(2)
