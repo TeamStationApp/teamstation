@@ -9268,14 +9268,20 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Post a message',
           description:
             'From a member’s linked device (403 `notHolder`): `{id, epoch, ' +
-            'kind, senderIdentityId, targetIds?, attachmentIds?, nonce, ' +
-            'ciphertext, signature}`. `id` is the client’s `msg_` id: a ' +
+            'kind, senderIdentityId, targetIds?, attachmentIds?, ' +
+            'previewAttachmentId?, nonce, ciphertext, signature}`. `id` is ' +
+            'the client’s `msg_` id: a ' +
             'repeat by the same sender in the same chat answers 200 with the ' +
             'stored row, the id anywhere else is 409 `idTaken`. `kind` is ' +
             '`post`, `reaction`, `edit`, `delete` or `moderatorDelete`; ' +
             '`targetIds` come with the two deletes and nothing else, ' +
             '`attachmentIds` (completed uploads by the sender in this chat, ' +
-            '400 `attachment`) with posts only (400 otherwise). The ' +
+            '400 `attachment`) with posts only (400 otherwise). ' +
+            '`previewAttachmentId` names the link preview’s encrypted ' +
+            'thumbnail, an upload checked the same way, on a `post` or an ' +
+            '`edit` only and not repeating one of its `attachmentIds` (400 ' +
+            '`Invalid preview attachment`); it is stored with the message’s ' +
+            'other attachments and listed among its `attachmentIds`. The ' +
             'ciphertext is at most 64 KiB. 409: `closed`, `staleIdentity` ' +
             '(not the sender’s current identity), `staleEpoch` (not the ' +
             'latest epoch), `locked` (no box for it). In Announcements only ' +
