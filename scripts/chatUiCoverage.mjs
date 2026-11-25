@@ -113,6 +113,7 @@ await build({
   loader: ASSET_LOADER
 })
 const specs = [
+  'e2e/rigs/chat/composerLine.test.ts',
   ...globSync('src/app/chat/**/*.test.ts'),
   ...globSync('src/server/chat/*.test.ts'),
   ...globSync('src/server/notifications/*.test.ts'),
