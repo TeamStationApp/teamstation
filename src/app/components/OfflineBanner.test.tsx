@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { AccessibilityInfo, Animated, View } from 'react-native'
 
 import { ScopedThemeProvider, type Theme } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -10,7 +11,8 @@ import {
   OFFLINE_BANNER_BACKGROUND,
   OFFLINE_BANNER_TEXT,
   OfflineBanner,
-  type OfflineBannerProps
+  type OfflineBannerProps,
+  useOfflineBannerHeight
 } from './OfflineBanner'
 
 let root: Root | undefined
@@ -95,18 +97,255 @@ describe('the offline banner', () => {
       style: { position: 'absolute', bottom: 34 },
       onLayout: height => heights.push(height)
     })
-    const banner = byTestId(host, 'offlineBanner')! as HTMLElement & {
+    const banner = byTestId(host, 'offlineBanner')!
+    const content = byTestId(host, 'offlineBannerContent')! as HTMLElement & {
       __reactLayoutHandler?: (event: object) => void
     }
     expect(getComputedStyle(banner).position).equals('absolute')
     expect(getComputedStyle(banner).bottom).equals('34px')
     await act(async () => {
-      banner.__reactLayoutHandler?.({
+      content.__reactLayoutHandler?.({
         nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 40 } }
       })
     })
     expect(heights).deep.equals([40])
   })
+
+  it('reports the painted height to the shell and reverses an exit from its current frame', async () => {
+    const timing = Object.getOwnPropertyDescriptor(Animated, 'timing')!
+    let advance!: (height: number, finished?: boolean) => void
+    const targets: number[] = []
+    const observed: number[] = []
+    const animate: typeof Animated.timing = (value, config) => ({
+      start: end => {
+        targets.push(Number(config.toValue))
+        advance = (frame, finished) => {
+          ;(value as Animated.Value).setValue(frame)
+          if (finished === true) end?.({ finished: true })
+        }
+      },
+      stop: () => {},
+      reset: () => {}
+    })
+    Object.defineProperty(Animated, 'timing', { ...timing, value: animate })
+    const report = (height: number): void => {
+      observed.push(height)
+    }
+    try {
+      const host = await draw(tsBallpark, {
+        text: 'Offline',
+        onPresentedHeight: report
+      })
+      const layout = byTestId(host, 'offlineBannerContent')! as HTMLElement & {
+        __reactLayoutHandler: (event: object) => void
+      }
+      const show = async (text?: string): Promise<void> => {
+        await act(async () => {
+          root!.render(
+            <ScopedThemeProvider theme={tsBallpark}>
+              <OfflineBanner text={text} onPresentedHeight={report} />
+            </ScopedThemeProvider>
+          )
+        })
+      }
+      await act(async () => {
+        layout.__reactLayoutHandler({
+          nativeEvent: { layout: { width: 390, height: 34 } }
+        })
+      })
+      await act(async () => {
+        advance(12)
+        advance(34, true)
+      })
+      await show()
+      await act(async () => {
+        advance(18)
+      })
+      expect(
+        byTestId(host, 'offlineBanner')!.getAttribute('aria-hidden')
+      ).equals('true')
+      expect(byTestId(host, 'offlineBannerText')!.textContent).equals('Offline')
+      await show('Sending an edit')
+      expect(observed.at(-1)).equals(18)
+      expect(byTestId(host, 'offlineBannerText')!.textContent).equals(
+        'Sending an edit'
+      )
+      await act(async () => {
+        advance(34, true)
+      })
+      await show()
+      await act(async () => {
+        advance(9)
+        advance(0, true)
+      })
+      expect(byTestId(host, 'offlineBanner')).equals(null)
+      expect(targets).deep.equals([34, 0, 34, 0])
+      expect(observed).deep.equals([0, 12, 34, 18, 34, 9, 0])
+    } finally {
+      Object.defineProperty(Animated, 'timing', timing)
+    }
+  })
+
+  for (const reduced of [false, true]) {
+    it(`commits web clearance at the endpoints, preserving moving docks on reversal (reduced motion ${reduced})`, async () => {
+      const animate = Object.getOwnPropertyDescriptor(
+        HTMLElement.prototype,
+        'animate'
+      )
+      const preference = Object.getOwnPropertyDescriptor(
+        AccessibilityInfo,
+        'isReduceMotionEnabled'
+      )!
+      const calls: Array<{
+        node: HTMLElement
+        frames: Keyframe[]
+        duration: number
+        job: { onfinish?: () => void }
+      }> = []
+      const offsets = new WeakMap<HTMLElement, number>()
+      Object.defineProperty(HTMLElement.prototype, 'animate', {
+        configurable: true,
+        value(
+          this: HTMLElement,
+          frames: Keyframe[],
+          options: KeyframeAnimationOptions
+        ) {
+          const job: { cancel: () => void; onfinish?: () => void } = {
+            cancel: () => {
+              offsets.delete(this)
+            }
+          }
+          calls.push({
+            node: this,
+            frames,
+            duration: Number(options.duration),
+            job
+          })
+          return job
+        }
+      })
+      Object.defineProperty(AccessibilityInfo, 'isReduceMotionEnabled', {
+        configurable: true,
+        value: async () => reduced
+      })
+      const heights: number[] = []
+      function Shell({ label }: { label?: string }): React.ReactElement {
+        const { shell, height, report } = useOfflineBannerHeight()
+        React.useLayoutEffect(() => {
+          heights.push(height)
+        }, [height])
+        return (
+          <View ref={shell}>
+            <View testID="reader" />
+            <View
+              testID="dock"
+              dataSet={{ offlineBannerDock: 'true' }}
+              style={{ position: 'absolute', bottom: height + 12 }}
+            />
+            <View
+              testID="fixed-dock"
+              dataSet={{ offlineBannerDock: 'true' }}
+              style={{ position: 'absolute', bottom: 80 }}
+            />
+            <OfflineBanner text={label} onPresentedHeight={report} />
+          </View>
+        )
+      }
+      const host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      const show = async (label?: string): Promise<void> => {
+        await act(async () => {
+          root!.render(
+            <ScopedThemeProvider theme={tsBallpark}>
+              <Shell label={label} />
+            </ScopedThemeProvider>
+          )
+        })
+      }
+      try {
+        await show('Offline')
+        const dock = byTestId(host, 'dock')!
+        const strip = byTestId(host, 'offlineBanner')!
+        const content = byTestId(
+          host,
+          'offlineBannerContent'
+        )! as HTMLElement & {
+          __reactLayoutHandler: (event: object) => void
+        }
+        dock.getBoundingClientRect = () =>
+          new window.DOMRect(
+            0,
+            (offsets.get(dock) ?? 0) - parseFloat(dock.style.bottom),
+            100,
+            30
+          )
+        const measure = async (height: number): Promise<void> => {
+          await act(async () => {
+            content.__reactLayoutHandler({
+              nativeEvent: { layout: { width: 390, height } }
+            })
+          })
+        }
+        await measure(34)
+        expect(heights).deep.equals([0, 34])
+        const first = calls.find(call => call.node === dock)!
+        expect(first.frames.map(frame => frame.translate)).deep.equals([
+          '0 34px',
+          '0 0px'
+        ])
+        expect(first.duration).equals(reduced ? 90 : 160)
+        offsets.set(dock, 12)
+        await show()
+        const closing = calls.filter(call => call.node === dock).at(-1)!
+        expect(closing.frames.map(frame => frame.translate)).deep.equals([
+          '0 -22px',
+          '0 0px'
+        ])
+        expect(strip.getAttribute('aria-hidden')).equals('true')
+        expect(byTestId(host, 'offlineBannerText')?.textContent).equals(
+          'Offline'
+        )
+        const closeAnimation = calls
+          .filter(call => call.node === strip)
+          .at(-1)!.job
+        offsets.set(dock, -6)
+        await show('Sending')
+        expect(
+          calls.filter(call => call.node === dock).at(-1)!.frames[0].translate
+        ).equals('0 28px')
+        closeAnimation.onfinish?.()
+        expect(byTestId(host, 'offlineBannerText')?.textContent).equals(
+          'Sending'
+        )
+        await measure(48)
+        expect(heights).deep.equals([0, 34, 0, 34, 48])
+        expect(
+          calls.some(
+            call =>
+              call.node === byTestId(host, 'reader') ||
+              call.node === byTestId(host, 'fixed-dock')
+          )
+        ).equals(false)
+        await show()
+        const last = calls.filter(call => call.node === strip).at(-1)!.job
+        await act(async () => {
+          last.onfinish?.()
+        })
+        expect(byTestId(host, 'offlineBanner')).equals(null)
+        expect(heights).deep.equals([0, 34, 0, 34, 48, 0])
+      } finally {
+        if (animate != null)
+          Object.defineProperty(HTMLElement.prototype, 'animate', animate)
+        else delete (HTMLElement.prototype as Partial<HTMLElement>).animate
+        Object.defineProperty(
+          AccessibilityInfo,
+          'isReduceMotionEnabled',
+          preference
+        )
+      }
+    })
+  }
 
   it('opens the held list from its line, a button labelled for it', async () => {
     let opened = 0

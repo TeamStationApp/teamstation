@@ -20,8 +20,7 @@ export function floatingNavBottom(
   insetBottom: number,
   bannerPx = 0
 ): number {
-  if (bannerPx > 0) return insetBottom + bannerPx
-  return platform === 'ios' ? insetBottom : marginPx + insetBottom
+  return insetBottom + Math.max(platform === 'ios' ? 0 : marginPx, bannerPx)
 }
 
 /**
