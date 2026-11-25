@@ -85,7 +85,20 @@ export async function readChatComposer(
       node => (node as HTMLTextAreaElement).value
     )
   }
-  if (platform !== 'ios') return (await m.copyTextFrom(composer)).data
+  if (platform !== 'ios') {
+    // Copying opens Android's clipboard preview over the composer, including
+    // during motion recordings. The native editable field exposes the same text.
+    const editors = flattenPublicHierarchy(await m.hierarchy()).filter(
+      node =>
+        node.id === composer.id &&
+        (node.type === 'EditText' || node.type === 'android.widget.EditText')
+    )
+    assert(
+      editors.length === 1 && typeof editors[0].text === 'string',
+      'One Android composer with readable text is required'
+    )
+    return editors[0].text
+  }
   const { element } = iosPublicRead(
     await m.hierarchyRaw(),
     composer,

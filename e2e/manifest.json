@@ -213,9 +213,10 @@
       "kind": "e2e",
       "covers": [
         "src/app/chat/ChatHistoryList.native.tsx",
+        "src/app/chat/ChatComposerBand.native.tsx",
         "src/app/components/keyboardControllerOwner.native.ts"
       ],
-      "stack": "none",
+      "stack": "seat",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -226,7 +227,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "hardware": "required"
             }
           ]
         },
@@ -237,18 +238,20 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "hardware": "required"
             }
           ]
         }
       },
-      "services": [],
+      "services": [
+        "api"
+      ],
       "apps": [
         "teamstation-ios",
         "teamstation-android"
       ],
       "secrets": [
-        "searchKeyboardChatAccount"
+        "chatLinkFixture"
       ],
       "costUsd": 0,
       "minutes": 5,

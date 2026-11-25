@@ -30,6 +30,8 @@ import {
 } from '../../src/app/chat/keyRecord'
 import { TeamStationClient } from '../../src/common/api'
 import { asUserId } from '../../src/common/userId'
+import { parseHandle } from '../core/attach'
+import { requireDropletHandle } from '../core/dropletStack'
 
 export const CHAT2_SURFACES = [
   'web-wide',
@@ -152,7 +154,11 @@ const asFixture = asObject({
   localOnly: asValue(true),
   ownershipId: asString,
   // A phone lane drives the separate QA app beside any installed store app.
-  appId: asValue('app.teamstation.app', 'app.teamstation.app.chatqa'),
+  appId: asValue(
+    'app.teamstation.app',
+    'app.teamstation.app.chatqa',
+    'app.teamstation.develop'
+  ),
   scheme: asOptional(asString, 'teamstation'),
   apiUrl: asString,
   webUrl: asString,
@@ -216,6 +222,7 @@ const asFixture = asObject({
             id: asOptional(asString),
             checked: asOptional(asBoolean),
             selected: asOptional(asBoolean),
+            androidSwitchRow: asOptional(asString),
             rawValue: asOptional(
               asObject({
                 identifier: asString,
@@ -240,6 +247,7 @@ const asFixture = asObject({
             id: asOptional(asString),
             checked: asOptional(asBoolean),
             selected: asOptional(asBoolean),
+            androidSwitchRow: asOptional(asString),
             rawValue: asOptional(
               asObject({
                 identifier: asString,
@@ -478,7 +486,77 @@ export function outsideCheckout(root: string, path: string): void {
   )
 }
 
-export function loadChat2Fixture(path: string): Chat2Fixture {
+/** Verify a live, fixture-specific marker on the TLS origin named by the private stack handle. */
+export async function verifyChat2Stack(
+  handlePath: string,
+  ownershipId: string,
+  source: string,
+  witness: string,
+  request: typeof fetch = fetch
+): Promise<string> {
+  privateFile(handlePath)
+  const handle = requireDropletHandle(
+    parseHandle(readFileSync(handlePath, 'utf8'), handlePath)
+  )
+  const origin = new URL(handle.origin)
+  assert(
+    /^e2e-stack-[0-9]{8}-[0-9]{6}$/.test(handle.id),
+    'Disposable stack id required'
+  )
+  assert(
+    /^e2e-[0-9]{2}$/.test(handle.name) &&
+      origin.hostname.split('.')[0] === handle.name,
+    'Disposable stack hostname required'
+  )
+  assert(
+    origin.protocol === 'https:' &&
+      handle.origin === origin.origin &&
+      handle.api === origin.origin + '/api/v1',
+    'Single HTTPS stack origin required'
+  )
+  assert(
+    /^[a-f0-9]{64}$/.test(witness) && /^[a-f0-9]{40}$/.test(source),
+    'Stack witness and source required'
+  )
+  const response = await request(
+    new URL('/.well-known/chat2-runtime.json', origin),
+    {
+      redirect: 'error',
+      signal: AbortSignal.timeout(5000)
+    }
+  )
+  assert(response.ok, 'Disposable stack ownership probe failed')
+  const marker = asObject({
+    stack: asString,
+    ownershipId: asString,
+    source: asString,
+    witness: asString
+  })(await response.json())
+  assert(
+    marker.stack === handle.id &&
+      marker.ownershipId === ownershipId &&
+      marker.source === source &&
+      marker.witness === witness,
+    'Stack does not serve this disposable relay'
+  )
+  return origin.origin
+}
+
+const verifiedStack = new WeakMap<Chat2Fixture, string>()
+
+function runtimeOrigin(fixture: Chat2Fixture, value: string): string {
+  const url = new URL(value)
+  if (url.origin === verifiedStack.get(fixture)) {
+    assert(
+      url.username === '' && url.password === '',
+      'Credentials do not belong in origins'
+    )
+    return url.origin
+  }
+  return localOrigin(value)
+}
+
+export async function loadChat2Fixture(path: string): Promise<Chat2Fixture> {
   privateFile(path)
   let fixture: Chat2Fixture
   try {
@@ -492,10 +570,29 @@ export function loadChat2Fixture(path: string): Chat2Fixture {
     /^[a-z0-9][a-z0-9-]{5,80}$/.test(fixture.ownershipId),
     'Explicit synthetic resource ownership is required'
   )
-  const allowed = new Set(fixture.allowedOrigins.map(localOrigin))
+  if (process.env.CHAT2_STACK_HANDLE != null) {
+    assert(
+      fixture.appId === 'app.teamstation.develop',
+      'Remote fixtures require the develop app'
+    )
+    const origin = await verifyChat2Stack(
+      process.env.CHAT2_STACK_HANDLE,
+      fixture.ownershipId,
+      need(process.env.CHAT2_SOURCE, 'Pinned source required'),
+      need(process.env.CHAT2_STACK_WITNESS, 'Stack witness required')
+    )
+    assert(
+      fixture.apiUrl === origin + '/api/v1',
+      'Phone must use the verified stack API'
+    )
+    verifiedStack.set(fixture, origin)
+  }
+  const allowed = new Set(
+    fixture.allowedOrigins.map(value => runtimeOrigin(fixture, value))
+  )
   assert(
-    allowed.has(localOrigin(fixture.apiUrl)) &&
-      allowed.has(localOrigin(fixture.webUrl)),
+    allowed.has(runtimeOrigin(fixture, fixture.apiUrl)) &&
+      allowed.has(runtimeOrigin(fixture, fixture.webUrl)),
     'Runtime origins must be explicitly owned'
   )
   for (const actor of Object.values(fixture.actors)) {
@@ -710,10 +807,12 @@ export function sourceBinding(
     unknown
   >
   assert(receipt.source === source, 'Build receipt source differs')
-  const allowed = new Set(fixture.allowedOrigins.map(localOrigin))
+  const allowed = new Set(
+    fixture.allowedOrigins.map(value => runtimeOrigin(fixture, value))
+  )
   assert(
-    allowed.has(localOrigin(binding.apiUrl)) &&
-      allowed.has(localOrigin(binding.mediaOrigin)),
+    allowed.has(runtimeOrigin(fixture, binding.apiUrl)) &&
+      allowed.has(runtimeOrigin(fixture, binding.mediaOrigin)),
     'Build runtime origins are not explicitly owned'
   )
   assert(

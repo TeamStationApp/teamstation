@@ -42,6 +42,51 @@ export function isFinePointer(): boolean {
     matchMedia('(any-pointer: fine)').matches
   )
 }
+const fieldHeights = new WeakMap<
+  HTMLElement,
+  { target: number; animation?: Animation }
+>()
+
+/** The textarea keeps its intrinsic line metrics while the surrounding field resizes. */
+function animateComposerHeight(input: HTMLElement): void {
+  const field = input.parentElement
+  if (
+    field?.dataset.testid !== 'chat-composer-field' ||
+    typeof field.animate !== 'function'
+  )
+    return
+  const style = getComputedStyle(field)
+  const target =
+    Math.max(
+      ...Array.from(
+        field.children,
+        child => child.getBoundingClientRect().height
+      )
+    ) +
+    parseFloat(style.borderTopWidth) +
+    parseFloat(style.borderBottomWidth)
+  const previous = fieldHeights.get(field)
+  if (!Number.isFinite(target) || target <= 0 || target === previous?.target)
+    return
+  if (previous == null) {
+    fieldHeights.set(field, { target })
+    return
+  }
+  const current =
+    previous.animation?.playState === 'running'
+      ? field.getBoundingClientRect().height
+      : previous.target
+  previous.animation?.cancel()
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const animation = field.animate(
+    reduced
+      ? [{ opacity: 0.78 }, { opacity: 1 }]
+      : [{ height: current + 'px' }, { height: target + 'px' }],
+    { duration: reduced ? 95 : 150, easing: 'ease-out' }
+  )
+  fieldHeights.set(field, { target, animation })
+}
+
 /** Use the textarea's intrinsic content height between the field's CSS bounds. */
 export function sizeComposerText(view: unknown): void {
   if (!(view instanceof HTMLElement) || view.tagName !== 'TEXTAREA') return
@@ -56,6 +101,7 @@ export function sizeComposerText(view: unknown): void {
     view.style.height = view.scrollHeight + 'px'
     view.scrollTop = top
   }
+  animateComposerHeight(view)
 }
 
 /** Rewrap an unchanged draft when the available field width changes. */

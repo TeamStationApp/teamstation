@@ -79,11 +79,18 @@ export interface ChatHistoryKeyboardOptions {
   onKeyboardReturnSettled?: () => void
   /** How much of the keyboard's height the closed clearance already covers. */
   keyboardOffset: number
+  dockClearance?: number
+  onTabletKeyboardRest?: (height: number) => void
   /** Whether this conversation owns the keyboard (shown, no overlay scene). */
   active: boolean
 }
 
 export interface ChatHistoryKeyboard {
+  /** One UI-thread sample shared by the floating field and the gesture fallback. */
+  frame?: {
+    readonly value: { height: number; progress: number; revision: number }
+  }
+  tabletLift?: { readonly value: number }
   holdKeyboardInset?: () => void
   composerRef: React.RefObject<React.ComponentRef<typeof View> | null>
   onComposerLayout: (event: LayoutChangeEvent) => void

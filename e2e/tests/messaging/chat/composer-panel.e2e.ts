@@ -25,6 +25,22 @@ const panel = { id: 'chat-attachment-panel' }
 const toggle = { id: 'chat-attachment-toggle' }
 const filename = 'practice-lineup.txt'
 const documentBytes = Buffer.from('Bring the lineup sheet to practice.\n')
+
+/** Platform pickers can finish immediately or present a confirmation first. */
+async function confirmPicker(
+  m: MaestroDevice,
+  action: RegExp,
+  ready: (node: PublicNode) => boolean
+): Promise<void> {
+  const state = await until(async () => {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    if (nodes.some(node => node.text != null && action.test(node.text)))
+      return 'confirm'
+    return nodes.some(ready) ? 'ready' : undefined
+  }, `picker action ${action} or its result`)
+  if (state === 'confirm') await m.tapOn({ text: action.source })
+}
+
 function staysAligned(
   a: PublicNode['bounds'],
   b: PublicNode['bounds']
@@ -174,10 +190,34 @@ async function attach(ctx: E2eContext): Promise<void> {
         fromKeyboard = false,
         multiline = false
       ): Promise<void> => {
-        const before = await web?.page.$eval(
-          '[data-testid="chat-composer-field"]',
-          el => el.getBoundingClientRect().top
-        )
+        let previousField: { top: number; height: number } | undefined
+        const before =
+          web != null && multiline
+            ? await until(async () => {
+                const current = await web.page.evaluate(() => {
+                  const box = document
+                    .querySelector('[data-testid="chat-composer-field"]')!
+                    .getBoundingClientRect()
+                  const toggle = document
+                    .querySelector('[data-testid="chat-attachment-toggle"]')!
+                    .getBoundingClientRect()
+                  return {
+                    top: box.top,
+                    height: box.height,
+                    toggleHeight: toggle.height
+                  }
+                })
+                const settled =
+                  current.height > current.toggleHeight &&
+                  previousField?.top === current.top &&
+                  previousField.height === current.height
+                previousField = current
+                return settled ? current.top : undefined
+              }, 'the multiline composer to finish growing before opening the panel')
+            : await web?.page.$eval(
+                '[data-testid="chat-composer-field"]',
+                el => el.getBoundingClientRect().top
+              )
         const scrollBefore = await web?.page.$eval(
           '[data-testid="chat-message-history"]',
           el => el.scrollTop
@@ -279,24 +319,29 @@ async function attach(ctx: E2eContext): Promise<void> {
         let previous: Geometry | undefined
         const before =
           web == null
-            ? await until(async () => {
-                const geometry = await composerGeometry()
-                if (
-                  geometry.field == null ||
-                  geometry.toggle == null ||
-                  geometry.send == null ||
-                  (platform === 'android' && geometry.ime == null)
-                )
-                  return undefined
-                if (
-                  source === 'File' &&
-                  geometry.field.height <= geometry.toggle.height + 2
-                )
-                  return undefined
-                const settled = previous != null && aligned(previous, geometry)
-                previous = geometry
-                return settled ? geometry : undefined
-              }, 'settled draft and Send before the panel opens')
+            ? await until(
+                async () => {
+                  const geometry = await composerGeometry()
+                  if (
+                    geometry.field == null ||
+                    geometry.toggle == null ||
+                    geometry.send == null ||
+                    (platform === 'android' && geometry.ime == null)
+                  )
+                    return undefined
+                  if (
+                    source === 'File' &&
+                    geometry.field.height <= geometry.toggle.height + 2
+                  )
+                    return undefined
+                  const settled =
+                    previous != null && aligned(previous, geometry)
+                  previous = geometry
+                  return settled ? geometry : undefined
+                },
+                'settled draft and Send before the panel opens',
+                45000
+              )
             : undefined
         await openPanel(
           web != null && source === 'Photos',
@@ -420,11 +465,10 @@ async function attach(ctx: E2eContext): Promise<void> {
             await m.tapOn(sourceButton)
             if (source === 'Camera') {
               // First use can present the platform camera permission prompt.
-              await m.tapOn({
-                text: '^(While using the app|Allow|OK)$',
-                optional: true,
-                timeout: 1200
-              })
+              const shutter = new RegExp(native.shutter)
+              await confirmPicker(m, /^(While using the app|Allow|OK)$/, node =>
+                shutter.test(node.text ?? '')
+              )
               await m.assertVisible({ text: native.shutter })
             }
             if (cancel) {
@@ -461,11 +505,11 @@ async function attach(ctx: E2eContext): Promise<void> {
               } else await m.tapOn({ text: native.acceptPhoto })
             } else if (source === 'Photos') {
               await m.tapOn({ text: native.libraryPhoto })
-              await m.tapOn({
-                text: '^(Add|Done)$',
-                optional: true,
-                timeout: 800
-              })
+              await confirmPicker(
+                m,
+                /^(Add|Done)$/,
+                node => node.id === 'chat-attachment-chip'
+              )
             } else {
               for (const folder of native.documentFolders)
                 await m.tapOn({ text: folder })
@@ -474,11 +518,19 @@ async function attach(ctx: E2eContext): Promise<void> {
                 // the document thumbnail inside its cell to import it.
                 const documentCell = { id: 'practice-lineup, txt' }
                 await m.tapOn({ ...documentCell, point: '50%,24%' })
-                await m.tapOn({ text: '^Open$', optional: true, timeout: 800 })
+                await confirmPicker(
+                  m,
+                  /^Open$/,
+                  node => node.id === 'chat-attachment-chip'
+                )
                 await m.assertNotVisible(documentCell)
               } else {
                 await m.tapOn({ text: '^practice-lineup(?:\\.txt)?$' })
-                await m.tapOn({ text: '^Open$', optional: true, timeout: 800 })
+                await confirmPicker(
+                  m,
+                  /^Open$/,
+                  node => node.id === 'chat-attachment-chip'
+                )
               }
             }
           }
@@ -502,23 +554,25 @@ async function attach(ctx: E2eContext): Promise<void> {
                   '[data-testid="chat-draft-photo"]'
                 )
                 assert(thumbnail != null)
-                const { data } = decodeRaster(
-                  Buffer.from(await thumbnail.screenshot())
-                )
-                // The baseball's red seams must be visible in the actual draft.
-                let stitches = 0
-                for (let i = 0; i < data.length; i += 4) {
-                  if (
-                    data[i] > 140 &&
-                    data[i] > data[i + 1] * 1.6 &&
-                    data[i] > data[i + 2] * 1.6
+                // The image can be loaded while the closing drawer still obscures it.
+                let previousStitches: number | undefined
+                await until(async () => {
+                  const { data } = decodeRaster(
+                    Buffer.from(await thumbnail.screenshot())
                   )
-                    stitches++
-                }
-                assert(
-                  stitches > 8,
-                  'The staged thumbnail must show the chosen baseball'
-                )
+                  let stitches = 0
+                  for (let i = 0; i < data.length; i += 4) {
+                    if (
+                      data[i] > 140 &&
+                      data[i] > data[i + 1] * 1.6 &&
+                      data[i] > data[i + 2] * 1.6
+                    )
+                      stitches++
+                  }
+                  const revealed = stitches > 8 && stitches === previousStitches
+                  previousStitches = stitches
+                  return revealed ? true : undefined
+                }, 'the chosen baseball’s red seams in the revealed draft thumbnail')
               }
               await m.waitForAnimationToEnd()
               writeFileSync(
@@ -528,7 +582,11 @@ async function attach(ctx: E2eContext): Promise<void> {
             }
           }
         }
-        await m.tapOn({ text: '^Send$' })
+        await m.tapOn(
+          platform === 'ios'
+            ? { id: 'chat-send', enabled: true }
+            : { text: '^Send$' }
+        )
         const received = await until(
           async () =>
             (await peer.engine.open(f.conversationId)).messages.find(
