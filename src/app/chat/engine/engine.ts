@@ -1483,10 +1483,10 @@ export class ChatEngine {
     conversationId: string,
     file: OutgoingFile
   ): Promise<AttachmentRef> {
-    const revision = this.memory.blockRevision
     const ref = await uploadAttachment(this.ctx, conversationId, file)
     // The draft card shows the bytes just sealed without downloading them,
-    // when they would pass the checks a download is opened with.
+    // when they would pass the checks a download is opened with. They do not
+    // depend on blocks, so they join the cache at the current revision.
     const actual = rasterDimensions(file.bytes)
     if (
       isPreviewThumbnail(ref) &&
@@ -1494,7 +1494,7 @@ export class ChatEngine {
       actual.width === ref.width &&
       actual.height === ref.height
     )
-      this.rememberThumbnail(ref, file.bytes, revision)
+      this.rememberThumbnail(ref, file.bytes, this.memory.blockRevision)
     return ref
   }
 
