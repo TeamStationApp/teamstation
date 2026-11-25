@@ -1167,17 +1167,21 @@ describe('the Score screen and the override dashboard (E10–E11)', function () 
     // The Score screen stays mounted under the scorer: wait for the address.
     await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
     expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
-    const events = await fetch(`${API}/games/${gameId}/events`, {
-      headers: { authorization: `Bearer ${group.runner}` }
+    // Saving rosters and scoring the pitch both post to this route. Observe
+    // the committed pitch even if the first successful POST saved the roster.
+    await until('the pitch was stored', async () => {
+      const events = await fetch(`${API}/games/${gameId}/events`, {
+        headers: { authorization: `Bearer ${group.runner}` }
+      })
+      expect(events.status).equals(200)
+      const stored = (await events.json()) as {
+        currentPlay: { playEvents?: unknown[] } | null
+        plays: unknown[]
+      }
+      return (
+        (stored.currentPlay?.playEvents ?? []).length + stored.plays.length > 0
+      )
     })
-    const stored = (await events.json()) as {
-      currentPlay: { playEvents?: unknown[] } | null
-      plays: unknown[]
-    }
-    expect(
-      (stored.currentPlay?.playEvents ?? []).length + stored.plays.length,
-      'the pitch was stored'
-    ).greaterThan(0)
     await page.close()
   })
 
