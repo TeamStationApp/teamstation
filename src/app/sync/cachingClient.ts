@@ -739,7 +739,7 @@ export class CachingClient extends TeamStationClient {
   }
 
   /** Whose file is open, if any. */
-  get cacheUser(): string | undefined {
+  override get cacheUser(): string | undefined {
     return this.opened?.userId
   }
 
