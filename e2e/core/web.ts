@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   applyEmulation,
   browserFor,
+  type BrowserPage,
   connectToMaestroChromium,
   type Emulation
 } from './browserCdp'
@@ -21,7 +22,8 @@ export async function openWebSession(
   settings: LocalSettings,
   runDir: string,
   size: { width: number; height: number },
-  emulation: Emulation = {}
+  emulation: Emulation = {},
+  track?: (page: BrowserPage) => Promise<void>
 ): Promise<WebSession> {
   const device = `web-${randomUUID().slice(0, 8)}`
   const daemon = await connectDaemon(settings, `e2e-${device}`)
@@ -57,10 +59,27 @@ export async function openWebSession(
       emulation.observeNetwork
     )
     const { browser, page } = connected
+    const pages = [page]
     await applyEmulation(page, emulation)
+    await track?.(page)
+    const driver = m
     return {
       m,
       page,
+      pages,
+      openTab: async label => {
+        const url = 'about:blank#' + randomUUID()
+        await driver.openTab({ url, tabLabel: label })
+        const target = await browser.waitForTarget(
+          candidate => candidate.url() === url
+        )
+        const tab = await target.page()
+        if (tab == null) throw Error('The new browser tab has no page')
+        pages.push(tab)
+        await applyEmulation(tab, emulation)
+        await track?.(tab)
+        return tab
+      },
       deviceClass: browserClassOf(await browser.version(), size),
       resize: async next => {
         await page.setViewport(next)

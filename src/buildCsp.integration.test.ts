@@ -257,6 +257,29 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     })
 
+    it('sets an origin-only referrer before loading page resources', function () {
+      const html = readFileSync(join(once, 'index.html'), 'utf8')
+      const policy = '<meta name="referrer" content="strict-origin" />'
+      const firstResource = html.search(/<(?:link|script|img)\b/i)
+      expect(firstResource).to.be.greaterThan(0)
+      expect(html.slice(0, firstResource)).contains(policy)
+    })
+
+    it('omits the development password-link handler from ordinary web builds', function () {
+      const app = readdirSync(once).find(name =>
+        /^app-[A-Z0-9]+\.js$/.test(name)
+      )
+      expect(app, 'built web entry').to.be.a('string')
+      const js = readFileSync(join(once, app!), 'utf8')
+      expect(js).not.to.include('/auth/password/link')
+      const map = JSON.parse(readFileSync(join(once, app! + '.map'), 'utf8'))
+      expect(
+        map.sources.some((file: string) =>
+          file.endsWith('/app/web/passwordLogin.ts')
+        )
+      ).to.equal(false)
+    })
+
     it('hashes every script tag with its file’s sha384', function () {
       const html = readFileSync(join(once, 'index.html'), 'utf8')
       const tags = [

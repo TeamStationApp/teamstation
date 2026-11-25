@@ -158,6 +158,48 @@ const CHANGED = JSON.stringify({ type: 'changed' })
 /** How often the node's pitch-speed hold setting is read again. */
 const SETTINGS_MS = 30000
 
+// Bind admission and any queued dashboard commands to the displayed user.
+export async function scoreboardSession(
+  db: Kysely<Database>,
+  req: Pick<IncomingMessage, 'url' | 'headers'>,
+  member: Pick<Member, 'kind' | 'socket' | 'token' | 'userId'>
+): Promise<Actor | undefined> {
+  const { socket, kind } = member
+  const token = sessionToken(
+    headerOf(req.headers.authorization),
+    headerOf(req.headers.cookie)
+  )
+  const runner = token == null ? undefined : await actorForToken(db, token)
+  if (runner == null) {
+    shut(socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
+    return undefined
+  }
+  if (kind === 'dashboard') {
+    const expected = new URL(
+      req.url ?? '/',
+      'http://localhost'
+    ).searchParams.get('expectedActor')
+    if (expected != null && expected !== runner.userId) {
+      shut(socket, SCOREBOARD_CLOSE.notAllowed, 'The signed-in account changed')
+      return undefined
+    }
+  }
+  // A key runs a scoreboard only with game events write, and reads a
+  // timeline only with game events read.
+  if (
+    !keyAllows(
+      runner,
+      kind === 'viewer' ? 'gameEvents:read' : 'gameEvents:write'
+    )
+  ) {
+    shut(socket, SCOREBOARD_CLOSE.notAllowed, 'This API key cannot do that')
+    return undefined
+  }
+  member.token = token
+  member.userId = runner.userId
+  return runner
+}
+
 export function makeScoreboardHub(
   options: ScoreboardHubOptions
 ): ScoreboardHub {
@@ -542,32 +584,8 @@ export function makeScoreboardHub(
       if (!store.reachable()) throw new ScoreboardUnavailable()
       let runner: Actor | undefined
       if (kind !== 'viewer' || member.timeline) {
-        const token = sessionToken(
-          headerOf(req.headers.authorization),
-          headerOf(req.headers.cookie)
-        )
-        runner = token == null ? undefined : await actorForToken(db, token)
-        if (runner == null) {
-          shut(socket, SCOREBOARD_CLOSE.notSignedIn, 'Sign in to continue')
-          return undefined
-        }
-        // A key runs a scoreboard only with game events write, and reads a
-        // timeline only with game events read.
-        if (
-          !keyAllows(
-            runner,
-            kind === 'viewer' ? 'gameEvents:read' : 'gameEvents:write'
-          )
-        ) {
-          shut(
-            socket,
-            SCOREBOARD_CLOSE.notAllowed,
-            'This API key cannot do that'
-          )
-          return undefined
-        }
-        member.token = token
-        member.userId = runner.userId
+        runner = await scoreboardSession(db, req, member)
+        if (runner == null) return undefined
       }
       const record = await gameRecord(db, gameId)
       let open = false
