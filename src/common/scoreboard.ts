@@ -62,6 +62,11 @@ export function exitReturnAt(reading: ExitReading): number {
   )
 }
 
+/**
+ * The reading after a hit of `mph` at `at`. Live writes apply the same rule
+ * in the scoreboard script (server/scoreboard/scoreboardScript.ts); the
+ * store's integration test runs one sequence through both.
+ */
 export function nextExitReading(
   previous: ExitReading | undefined,
   mph: number,

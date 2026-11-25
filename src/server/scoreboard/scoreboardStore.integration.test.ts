@@ -6,6 +6,8 @@ import { expect } from 'chai'
 import { after, before, beforeEach, describe, it } from 'mocha'
 
 import {
+  type ExitReading,
+  nextExitReading,
   NO_OVERRIDES,
   scoreboardExpiry,
   type ScoreboardUpdate
@@ -126,6 +128,35 @@ describe('the scoreboard store', function () {
     expect(await store.readScoreboard('nothing')).equals(undefined)
     expect(await store.exists('g1')).equals(true)
     expect(await store.exists('nothing')).equals(false)
+  })
+
+  it('times exit readings as playback does', async function () {
+    // Live writes run the script's copy of the rule and playback runs
+    // nextExitReading: one sequence through both. A hit during the hold
+    // extends it, one at its end or later starts again, and a zero or a
+    // pitch alone keeps the reading.
+    const packets: Array<[number, ScoreboardUpdate]> = [
+      [0, { exitVelocity: 55 }],
+      [3000, { exitVelocity: 55 }],
+      [4000, { pitchSpeed: 70 }],
+      [9000, { exitVelocity: 70 }],
+      [9200, { exitVelocity: 0 }],
+      [14_500, { exitVelocity: 88 }],
+      [14_700, { exitVelocity: 91 }]
+    ]
+    let expected: ExitReading | undefined
+    for (const [offset, update] of packets) {
+      clock = S + offset
+      const message = written(await store.mergeWatcher('g1', update, S))
+      if (update.exitVelocity != null && update.exitVelocity > 0)
+        expected = nextExitReading(expected, update.exitVelocity, clock)
+      expect(message.watcher?.exitReading, `at ${offset}`).deep.equals(expected)
+    }
+    expect(expected).deep.equals({
+      mph: 91,
+      startedAt: S + 14_500,
+      receivedAt: S + 14_700
+    })
   })
 
   it('expires the key when scoreboardExpiry says', async function () {

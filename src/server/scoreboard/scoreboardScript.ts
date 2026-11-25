@@ -80,6 +80,8 @@ elseif field ~= 'overrides' then
   local state = cjson.decode(json)
   local reading = nil
   if field == 'watcher' then
+    -- nextExitReading and exitReturnAt (common/scoreboard.ts) time playback
+    -- by this same rule; the store's integration test runs both.
     if previous ~= nil then reading = previous.exitReading end
     if type(state.exitVelocity) == 'number' and state.exitVelocity > 0 then
       local startedAt = now
