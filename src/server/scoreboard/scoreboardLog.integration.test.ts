@@ -339,6 +339,46 @@ describe('the scoreboard log', function () {
     }
   })
 
+  it('announces a committed exit reading when refreshing the scored pitch fails', async () => {
+    let failRefresh = false
+    const brokenRefresh = new Proxy(db, {
+      get(target, name) {
+        if (name === 'transaction' && failRefresh)
+          return () => {
+            throw new Error('radar refresh failed')
+          }
+        const value = Reflect.get(target, name)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const worker = await startWorker({ db: brokenRefresh })
+    const announce = worker.store.announceTimeline
+    worker.store.announceTimeline = async (gameId, fromMs) => {
+      await announce(gameId, fromMs)
+      failRefresh = true
+    }
+    const gameId = await newGame()
+    const phone = await publisher(worker, gameId)
+    const listener = connect(
+      `${worker.url}/${gameId}/socket?timeline=1`,
+      runner
+    )
+    await listener.opened
+    send(phone, { exitVelocity: 55 })
+    await until('timeline notice', () =>
+      listener.messages.some(message => message.fromMs === clock)
+    )
+    await until('refresh failure', () =>
+      logged.some(line =>
+        line.includes('refresh radar speeds: radar refresh failed')
+      )
+    )
+    expect(
+      (await computeBoardTimeline(db, gameId))?.steps.at(-1)?.state.exitReading
+        ?.mph
+    ).equals(55)
+  })
+
   it('invalidates cached playback when an earlier exit arrives without replacing newer board snapshots', async () => {
     const gameId = await newGame()
     const cache = makeBoardTimelineCache(2)

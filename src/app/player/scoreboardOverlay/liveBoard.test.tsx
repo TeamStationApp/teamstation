@@ -258,7 +258,7 @@ describe('the live wall timeline (U36)', function () {
   })
 })
 
-describe('the live board timeline (U36)', function () {
+describe('the live scoreboard timeline (U36)', function () {
   interface Harness {
     server: ReturnType<typeof overlayServer>
     clock: ReturnType<typeof fakeClock>
@@ -372,11 +372,17 @@ describe('the live board timeline (U36)', function () {
     await flush()
     h.playhead.wall = OVERLAY_T0 + 150_000
     const corrected = OVERLAY_T0 + 5000
+    h.server.fail.add('/games/g1/box-score')
     h.sockets.latest().receive({ type: 'changed', fromMs: corrected })
     h.sockets.latest().receive({ type: 'changed', fromMs: corrected + 1000 })
     h.sockets.latest().receive({ type: 'changed' })
     await advance(h.clock, NOTICE_DEBOUNCE_MS)
     expect(boardAsks(h.server).at(-1)).equals(corrected)
+
+    h.server.fail.clear()
+    h.sockets.latest().receive({ type: 'changed' })
+    await advance(h.clock, NOTICE_DEBOUNCE_MS)
+    expect(boardAsks(h.server).slice(-2)).deep.equals([corrected, corrected])
   })
 
   it('never refetches from before the window', async function () {
