@@ -3,9 +3,117 @@ import { describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
 import { lstrings } from '../locales/strings'
+import { message } from './chatViews.test.helpers'
 import { ChatDraftOwner, newChatWorkspaceState } from './chatWorkspaceModel'
+import { UnconfirmedChatPost } from './engine/context'
 
 describe('chat send failure messages', () => {
+  it('restores the exact ordinary retry, reply and files after cancelling or acknowledging an edit', () => {
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    const mine = message({ mine: true, body: 'Practice' })
+    const file = {
+      fileName: 'lineup.txt',
+      contentType: 'text/plain',
+      bytes: new Uint8Array([1])
+    }
+    const retry = async (): Promise<void> => {}
+    owner.write('A', {
+      text: 'My unsent draft',
+      replyTo: mine,
+      picked: [file],
+      scrollOffset: 50
+    })
+    const ordinary = owner.begin('A')!
+    expect(owner.startEdit('A', mine)).equals(false)
+    owner.finish(
+      'A',
+      ordinary,
+      false,
+      new UnconfirmedChatPost(new HttpError('offline', 'Lost reply'), retry)
+    )
+    expect(owner.startEdit('A', mine)).equals(true)
+    expect(owner.startEdit('A', mine)).equals(false)
+    expect(owner.draft('A')).includes({
+      text: mine.body,
+      replyTo: undefined,
+      editing: mine
+    })
+    expect(owner.draft('A').picked).deep.equals([])
+    const edit = owner.begin('A')!
+    expect(edit.retry).equals(undefined)
+    owner.finish('A', edit, false, new HttpError('offline', 'Send interrupted'))
+    expect(owner.draft('A').editing).equals(mine)
+    owner.write('B', { text: 'Other room', picked: [], scrollOffset: 0 })
+    const save = owner.begin('A')!
+    owner.finish('A', save, true)
+    expect(owner.draft('A')).includes({
+      text: 'My unsent draft',
+      replyTo: mine,
+      editing: undefined
+    })
+    expect(owner.draft('A').picked[0]).equals(file)
+    expect(owner.draft('B').text).equals('Other room')
+    owner.startEdit('A', mine)
+    const cancelled = owner.begin('A')!
+    owner.cancelEdit('A')
+    owner.finish(
+      'A',
+      cancelled,
+      false,
+      new HttpError('offline', 'Late failure')
+    )
+    expect(owner.begin('A')?.retry).equals(retry)
+    owner.cancelEdit('B')
+    owner.invalidate()
+    expect(owner.startEdit('B', mine)).equals(false)
+    owner.cancelEdit('B')
+  })
+
+  it('replays an unchanged draft and distinguishes edits and dismissed cards', async () => {
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    owner.write('chat', { text: 'An event', picked: [], scrollOffset: 0 })
+    let count = 0
+    const error = new UnconfirmedChatPost(
+      new HttpError('offline', 'Lost reply'),
+      async () => ++count
+    )
+    const first = owner.begin('chat')!
+    owner.finish('chat', first, false, error)
+    const retry = owner.begin('chat')!
+    expect(await retry.retry!()).equals(1)
+    owner.write('chat', { ...owner.draft('chat'), text: 'A new event' })
+    owner.finish('chat', retry, false, error)
+    const other = owner.begin('chat')!
+    expect(other.retry).equals(undefined)
+    owner.discardRetry('chat')
+    owner.finish('chat', other, false, error)
+    expect(owner.begin('chat')!.retry).equals(undefined)
+  })
+  it('clears a draft whose card was dismissed while its post succeeded', () => {
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    owner.write('chat', {
+      text: 'See the schedule',
+      picked: [],
+      scrollOffset: 0
+    })
+    const posted = owner.begin('chat')!
+    owner.discardRetry('chat')
+    expect(owner.finish('chat', posted, true)?.text).equals('')
+    owner.write('chat', { text: 'And the map', picked: [], scrollOffset: 0 })
+    const lost = owner.begin('chat')!
+    owner.discardRetry('chat')
+    owner.finish(
+      'chat',
+      lost,
+      false,
+      new UnconfirmedChatPost(
+        new HttpError('offline', 'Lost reply'),
+        async () => {}
+      )
+    )
+    expect(owner.draft('chat').text).equals('And the map')
+    expect(owner.begin('chat')!.retry).equals(undefined)
+  })
   for (const [label, error, blocked] of [
     [
       'recipient block',

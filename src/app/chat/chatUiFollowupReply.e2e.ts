@@ -300,9 +300,26 @@ interface Envelope {
   senderUserId: string
 }
 async function envelopes(device: Device, id: string): Promise<Envelope[]> {
+  const url = JSON.stringify(API + '/chat/conversations/' + id + '/messages')
   return await evaluate(
     device,
-    `const r=await fetch(${JSON.stringify(API + '/chat/conversations/')}+${JSON.stringify(id)}+'/messages',{credentials:'include'});if(!r.ok)throw new Error('Own message metadata unavailable');return JSON.stringify((await r.json()).map(row=>({id:row.id,kind:row.kind,seq:row.seq,senderUserId:row.senderUserId})));`
+    `
+      const endpoint = new URL(${url}, location.href);
+      const rows = [];
+      let after = 0;
+      for (;;) {
+        endpoint.searchParams.set('after', String(after));
+        const response = await fetch(endpoint, {credentials: 'include'});
+        if (!response.ok) throw new Error('Own message metadata unavailable');
+        const page = await response.json();
+        if (page.length === 0) break;
+        const last = page[page.length - 1].seq;
+        if (!Number.isSafeInteger(last) || last <= after) throw new Error('Message page did not advance');
+        rows.push(...page.map(({id, kind, seq, senderUserId}) => ({id, kind, seq, senderUserId})));
+        after = last;
+      }
+      return JSON.stringify(rows);
+    `
   )
 }
 async function sent(
@@ -329,7 +346,7 @@ async function send(device: Device, id: string, body: string): Promise<string> {
   const before = await envelopes(device, id)
   await device.tapOn({ css: '[data-testid="chat-composer"]' })
   await device.inputText({ text: body })
-  await device.tapOn({ text: 'Send' })
+  await device.tapOn({ css: '[aria-label="Send"]', timeout: 10000 })
   return await sent(device, id, before)
 }
 async function reply(device: Device, id: string): Promise<void> {
@@ -408,7 +425,7 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     `const transfer=new DataTransfer();transfer.items.add(new File(['Fixture notes'],'reply-draft.txt',{type:'text/plain'}));document.querySelector('[data-testid="chat-drop-target"]').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));return true;`
   )
   await device.assertVisible({ text: 'Remove reply-draft.txt', timeout: 10000 })
-  await device.tapOn({ text: 'Cancel reply' })
+  await device.tapOn({ css: '[aria-label="Cancel reply"]', timeout: 10000 })
   const retained = await evaluate<{
     text: string
     file: boolean
@@ -430,7 +447,7 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     patterns: [`*api/v1/chat/conversations/${id}/messages*`]
   })
   try {
-    await device.tapOn({ text: 'Send' })
+    await device.tapOn({ css: '[aria-label="Send"]', timeout: 10000 })
     await device.assertVisible({
       text: 'That did not send. Try again.',
       timeout: 20000
@@ -454,7 +471,7 @@ async function small(device: Device, results: CaseResult[]): Promise<void> {
     before.length,
     'Blocked normal request must not reach the server'
   )
-  await device.tapOn({ text: 'Send' })
+  await device.tapOn({ css: '[aria-label="Send"]', timeout: 10000 })
   const replyId = await sent(device, id, before)
   const clean = await evaluate<{ text: string; file: boolean; reply: boolean }>(
     device,

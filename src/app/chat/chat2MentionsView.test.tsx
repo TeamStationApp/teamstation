@@ -300,11 +300,14 @@ function nativePicker(platform: 'ios' | 'android' = 'ios'): {
   }
 }
 
-/** The React Native props of the TextInput that rendered a DOM field. */
-function textInputProps(node: HTMLElement): Record<string, unknown> {
+/** Read a native-only prop from the component that rendered this DOM node. */
+function nativeProps(
+  node: HTMLElement,
+  property: string
+): Record<string, unknown> {
   const key = Object.keys(node).find(name => name.startsWith('__reactFiber'))!
   let fiber = (node as unknown as Record<string, FiberNode>)[key]
-  while (!('onChangeText' in (fiber.memoizedProps ?? {}))) fiber = fiber.return!
+  while (!(property in (fiber.memoizedProps ?? {}))) fiber = fiber.return!
   return fiber.memoizedProps
 }
 interface FiberNode {
@@ -378,7 +381,11 @@ describe('current-member mention picker', function () {
     expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
   })
   for (const platform of ['ios', 'android'] as const) {
-    for (const method of ['Cancel', 'Back', 'Escape'] as const)
+    for (const method of [
+      'Cancel',
+      platform === 'ios' ? 'accessibility Escape' : 'hardware Back',
+      'Escape'
+    ] as const)
       it(`releases Search before ${platform} ${method} hands focus back once`, async () => {
         const native = nativePicker(platform)
         const calls: boolean[] = []
@@ -411,8 +418,19 @@ describe('current-member mention picker', function () {
         await render(<Scene />)
         await act(async () => {
           if (method === 'Cancel') button('Cancel').click()
-          else if (method === 'Back') native.back()
-          else
+          else if (method === 'hardware Back') native.back()
+          else if (method === 'accessibility Escape') {
+            const scene = host!.querySelector<HTMLElement>(
+              '[data-testid="chat-picker-scene"]'
+            )!
+            const escape = nativeProps(
+              scene,
+              'onAccessibilityEscape'
+            ).onAccessibilityEscape
+            if (typeof escape !== 'function')
+              throw new Error('Expected iOS modal escape handler')
+            escape()
+          } else
             labelled('Search members').dispatchEvent(
               new window.KeyboardEvent('keydown', {
                 key: 'Escape',
@@ -518,8 +536,8 @@ describe('current-member mention picker', function () {
       expect(state.calls).deep.equals([])
     })
 
-  it('lets native Back replace a pending selection and ignores rapid rows/late completions', async () => {
-    const native = nativePicker()
+  it('lets Android hardware Back replace a pending selection and ignores rapid rows/late completions', async () => {
+    const native = nativePicker('android')
     const state = fixture()
     await render(screen(state.engine))
     const input = host!.querySelector<HTMLTextAreaElement>(
@@ -583,7 +601,7 @@ describe('current-member mention picker', function () {
       )
       const search = labelled('Search members') as HTMLInputElement
       expect(
-        textInputProps(search).autoFocus,
+        nativeProps(search, 'onChangeText').autoFocus,
         'A native field focused mid-slide makes iOS scroll the chooser'
       ).equals(platform === 'web')
       search.blur()
@@ -1062,6 +1080,7 @@ describe('mention send/edit and draft compatibility', function () {
         body: '@Aaron Judge',
         mentions: [userIdOfGumbo(2)]
       })
+      state.update({ ...state.shown, messages: [original] })
       const draft = {
         ...emptyChatDraft(),
         text: '@Aaron Judge ',
@@ -1185,13 +1204,15 @@ describe('mention send/edit and draft compatibility', function () {
     expect(() => {
       setComposerSelection(undefined, { start: 0, end: 0 })
     }).not.throws()
-    const values: unknown[] = []
+    const ranges: number[][] = []
     setNativeComposerSelection(
-      { setNativeProps: (props: unknown) => values.push(props) },
-      { start: 3, end: 3 }
+      {
+        setSelection: (start: number, end: number) => ranges.push([start, end])
+      },
+      { start: 3, end: 7 }
     )
     setNativeComposerSelection(undefined, { start: 0, end: 0 })
-    expect(values).deep.equals([{ selection: { start: 3, end: 3 } }])
+    expect(ranges).deep.equals([[3, 7]])
   })
 })
 

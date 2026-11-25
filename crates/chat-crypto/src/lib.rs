@@ -17,6 +17,7 @@ pub mod hpke;
 pub mod keys;
 pub mod ops;
 pub mod prim;
+pub mod preview;
 pub mod random;
 pub mod seal;
 pub mod stream;

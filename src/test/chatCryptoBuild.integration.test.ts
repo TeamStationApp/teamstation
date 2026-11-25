@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -11,7 +12,7 @@ const {
   main,
   targetDir
 }: {
-  findCargo: (env: Record<string, string>) => { error?: string }
+  findCargo: (env: Record<string, string>) => { path?: string; error?: string }
   homePathIn: (bytes: Uint8Array, home?: string) => string | undefined
   main: (argv?: string[], env?: Record<string, string>) => number
   targetDir: (env?: Record<string, string>) => string
@@ -46,6 +47,46 @@ describe('the chat crypto build', function () {
     const module = readFileSync('src/common/chatCrypto/wasm/chat_crypto.wasm')
     expect(homePathIn(module)).equals(undefined)
     expect(module.subarray(0, 4).toString('hex')).equals('0061736d')
+  })
+
+  it('resolves the deployed Node crate with only the server archive present', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-server-crypto-'))
+    try {
+      for (const file of [
+        'rust-toolchain.toml',
+        'Cargo.toml',
+        'Cargo.lock',
+        'src',
+        'build.rs'
+      ]) {
+        cpSync(join('crates/chat-crypto', file), join(dir, file), {
+          recursive: true
+        })
+      }
+      const { path } = findCargo(process.env as Record<string, string>)
+      expect(path).to.be.a('string')
+      const graph = execFileSync(
+        'cargo',
+        [
+          'tree',
+          '--locked',
+          '--offline',
+          '--features',
+          'node',
+          '--edges',
+          'normal'
+        ],
+        {
+          cwd: dir,
+          env: { ...process.env, PATH: path },
+          encoding: 'utf8'
+        }
+      )
+      expect(graph).contains('chat-crypto')
+      expect(graph).not.contains('chat-link-preview')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('refuses without cargo, and says how to get it', function () {

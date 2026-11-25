@@ -215,6 +215,7 @@ describe('what a long press offers', function () {
   it('offers reply, react, copy, personal pin and delete on one’s own message', function () {
     expect(actionsFor(message({ mine: true }), view('enabled'))).deep.equals([
       'reply',
+      'edit',
       'react',
       'copy',
       'pin',

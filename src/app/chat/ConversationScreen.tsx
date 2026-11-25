@@ -7,6 +7,7 @@ import React, {
   useState
 } from 'react'
 import {
+  Keyboard,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -17,6 +18,8 @@ import {
 
 import { MAX_ATTACHMENTS } from '../../common/chatContent'
 import { Button, Icon, Screen } from '../components'
+import { CardThemeScope } from '../components/ActionRow'
+import { Card } from '../components/Card'
 import { GlassView } from '../components/GlassView'
 import { useHeaderHandoff } from '../components/headerSlot'
 import { useBreakpoint } from '../components/useBreakpoint'
@@ -52,6 +55,8 @@ import {
   ChatBlockConfirmation,
   type ChatSafetyAction
 } from './ChatBlockConfirmation'
+import { chatLinkOrigins } from './chatBrowser'
+import { chatBrowserVisible, watchChatBrowser } from './chatBrowserVisibility'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -64,6 +69,7 @@ import {
   useChatHistoryKeyboard
 } from './ChatHistoryList'
 import { anchorAfterChromeChange } from './chatLayoutModel'
+import { ChatLinkPreviewCard } from './ChatLinkPreviewCard'
 import {
   type ComposerChange,
   type ComposerSelection,
@@ -98,7 +104,7 @@ import {
   emptyChatDraft,
   newChatWorkspaceState
 } from './chatWorkspaceModel'
-import { Composer } from './Composer'
+import { Composer, type ComposerPicker } from './Composer'
 import { EmojiPicker } from './EmojiPicker'
 import { type MessageView, reactionKey } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
@@ -110,6 +116,7 @@ import { MessageMenu } from './MessageMenu'
 import { PinnedMessages } from './PinnedMessages'
 import { PinnedMessageSummary } from './PinnedMessageSummary'
 import type { ChatScreenEngine } from './screenEngine'
+import { useChatLinkPreview } from './useChatLinkPreview'
 
 /** What the screen needs of the platform's file twin. */
 export interface ConversationFiles extends ChatFileOps {
@@ -118,6 +125,8 @@ export interface ConversationFiles extends ChatFileOps {
 }
 
 export interface ConversationScreenProps {
+  apiBaseUrl?: string
+  onOpenLink?: (address: string) => Promise<void>
   engine: ChatScreenEngine
   conversationId: string
   /** The signed-in person, who is never asked to approve their own reset. */
@@ -145,7 +154,7 @@ export interface ConversationScreenProps {
  * and an app in the foreground on a phone.
  */
 function readableNow(): boolean {
-  return readDocumentActive() && inForeground()
+  return readDocumentActive() && inForeground() && !chatBrowserVisible()
 }
 
 /**
@@ -203,12 +212,22 @@ export function ConversationScreen(
   const breakpoint = useBreakpoint()
   const margin = theme.rem(edgeMarginRem(theme, breakpoint))
   const [paneHeaderHeight, setPaneHeaderHeight] = useState(theme.rem(3.5))
-  const [composerHeight, setComposerHeight] = useState(theme.rem(3.25))
+  const [composerSize, setComposerSize] = useState({
+    height: theme.rem(3.25),
+    drawer: 0
+  })
   const [noticeHeight, setNoticeHeight] = useState(0)
   const [pinHeight, setPinHeight] = useState(0)
+  const [composerPicker, setComposerPicker] = useState<ComposerPicker>()
+  const attachmentPanel = composerPicker === 'attachments'
+  const composerOverlay = composerPicker != null
+  const [handoffWidth, setHandoffWidth] = useState<number>()
   const viewport = useChatViewport({
+    attachmentPanel: attachmentPanel && props.active !== false,
+    handoffWidth,
     paneHeader: props.paneHeader === true ? paneHeaderHeight : 0,
-    composer: composerHeight,
+    composer: composerSize.height,
+    measuredDrawer: composerSize.drawer,
     pins: pinHeight
   })
   const readableTop = useRef(viewport.readableTop)
@@ -261,7 +280,7 @@ export function ConversationScreen(
   const discovering = useRef(false)
   const retryDiscovery = useRef(false)
   const discoveryPaused = useRef(false)
-  const [composerOverlay, setComposerOverlay] = useState(false)
+  const headerIdentity = useRef<React.ComponentRef<typeof View>>(null)
   const bodyRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
   const refreshAttention = useRef<(manual?: boolean) => void>(() => {})
   const committed = useRef(0)
@@ -273,13 +292,26 @@ export function ConversationScreen(
         )
         .map(message => message.id)
     )
+    const native = Platform.OS !== 'web'
+    // The recovery notice changes before the decrypted rows arrive. Both
+    // updates resize content above the reader and belong to one restoration.
+    const recoveryNoticeChanged =
+      native &&
+      pending.size > 0 &&
+      next != null &&
+      latestView.current?.historyRecovery !== next.historyRecovery
     if (
-      next?.messages.some(
-        message => message.status === 'ok' && pending.has(message.id)
-      ) === true &&
+      (recoveryNoticeChanged ||
+        next?.messages.some(
+          message => message.status === 'ok' && pending.has(message.id)
+        ) === true) &&
       scrolled.current.hasPosition &&
       !scrolled.current.followNewest &&
-      restoreAnchor.current == null &&
+      (restoreAnchor.current == null ||
+        (native &&
+          restoreAnchor.current !== settlingAnchor.current?.anchor &&
+          prepend.current == null &&
+          backgroundReading.current == null)) &&
       measuringJump.current == null &&
       menuReading.current == null
     ) {
@@ -290,15 +322,45 @@ export function ConversationScreen(
         scroller.current,
         messageRefs.current
       )
-      const offset = physical?.offset ?? scrolled.current.offset
+      const pane =
+        Platform.OS === 'web'
+          ? undefined
+          : viewport.frame.current?.getBoundingClientRect()
+      const offset =
+        physical?.offset ??
+        scroller.current?.state()?.scroll ??
+        scrolled.current.offset
+      // Native layout can shift between the last throttled scroll event and
+      // decryption. Capture the mounted rows in the same frame as the reader.
+      const positions =
+        pane == null || pane.height === 0
+          ? messagePositions.current
+          : new Map(
+              [...messageRefs.current].flatMap(([id, row]) => {
+                const rect = row.getBoundingClientRect()
+                return rect.height > 0
+                  ? [[id, rect.top - pane.top + offset] as const]
+                  : []
+              })
+            )
       // Keep the first row the reader sees whole. A row starting under the
       // floating header grows past it when it unlocks; holding that row would
       // push every row the reader can actually read down by its growth.
-      const whole = [...messagePositions.current]
+      const identity = native
+        ? headerIdentity.current?.getBoundingClientRect()
+        : undefined
+      // In the app header the identity sits inside the glass with a small
+      // margin. A message immediately below it is already readable.
+      const top =
+        pane != null &&
+        identity != null &&
+        identity.height > 0 &&
+        (latestView.current?.pins?.length ?? 0) === 0
+          ? identity.bottom - pane.top
+          : readableTop.current
+      const whole = [...positions]
         .filter(
-          ([, y]) =>
-            y - offset >= readableTop.current &&
-            y - offset < scrolled.current.height
+          ([, y]) => y - offset >= top && y - offset < scrolled.current.height
         )
         .sort((a, b) => a[1] - b[1])[0]
       const anchor =
@@ -307,9 +369,14 @@ export function ConversationScreen(
           : { id: whole[0], relativeY: whole[1] - offset }
       if (anchor != null) {
         restoreAnchor.current = { ...anchor }
+        scrolled.current.anchor = restoreAnchor.current
         restoreTarget.current = offset
         atBottom.current = false
-        settlingAnchor.current = { id: anchor.id, checks: 0 }
+        settlingAnchor.current = { anchor: restoreAnchor.current, checks: 0 }
+        if (native && nativeUserScroll.current !== 'drag') {
+          nativeUserScroll.current = undefined
+          nativeMomentumFromDrag.current = false
+        }
       }
     }
     setView(
@@ -368,8 +435,26 @@ export function ConversationScreen(
   const editingNow = useRef(editing)
   editingNow.current = editing
   const [picked, setPicked] = useState<PickedFile[]>(props.draft?.picked ?? [])
-  const [sending, setSending] = useState(() =>
-    draftOwner.isSending(conversationId)
+  const [submissionPhase, setSubmissionPhase] = useState(() =>
+    draftOwner.submissionPhase(conversationId)
+  )
+  const sending = submissionPhase != null
+  const savingEdit = submissionPhase === 'savingEdit'
+  const linkOrigin = useMemo(
+    () =>
+      props.apiBaseUrl == null ||
+      (Platform.OS === 'web' && typeof window === 'undefined')
+        ? undefined
+        : chatLinkOrigins(props.apiBaseUrl),
+    [props.apiBaseUrl]
+  )
+  const draftPreview = useChatLinkPreview(
+    engine,
+    conversationId,
+    editing,
+    text,
+    props.active !== false && !sending && view?.composer === 'enabled',
+    linkOrigin
   )
   const sendingNow = useRef(sending)
   const preparingNow = useRef(0)
@@ -430,6 +515,7 @@ export function ConversationScreen(
   // waits until the scroll lands.
   const jumpLanding = useRef<JumpLanding | undefined>(undefined)
   const gestureGeneration = useRef(0)
+  const keyboardDragStart = useRef<number | undefined>(undefined)
   const gestureOffset = useRef({ x: 0, y: 0 })
   const nativeUserScroll = useRef<'drag' | 'momentum' | undefined>(undefined)
   const nativeMomentumFromDrag = useRef(false)
@@ -461,6 +547,8 @@ export function ConversationScreen(
   const keyboard = useChatHistoryKeyboard({
     closedClearance: viewport.closedClearance,
     keyboardOffset: viewport.keyboardOffset,
+    attachmentHandoff: viewport.attachmentHandoff,
+    onKeyboardReturnSettled: viewport.keyboardReturnSettled,
     active:
       props.active !== false && mentionChoosing == null && reacting == null
   })
@@ -488,9 +576,11 @@ export function ConversationScreen(
     }
     const stopDocument = watchReadDocumentActive(update)
     const stopApp = watchForeground(update)
+    const stopBrowser = watchChatBrowser(update)
     return () => {
       stopDocument()
       stopApp()
+      stopBrowser()
     }
   }, [])
   // On screen in the foreground: this device shows no notification for it.
@@ -603,8 +693,9 @@ export function ConversationScreen(
           setReplyTo(next.replyTo)
           setEditing(next.editing)
           setPicked(next.picked)
-          sendingNow.current = draftOwner.isSending(conversationId)
-          setSending(sendingNow.current)
+          const phase = draftOwner.submissionPhase(conversationId)
+          sendingNow.current = phase != null
+          setSubmissionPhase(phase)
           setError(draftOwner.failure(conversationId))
         }
       ),
@@ -632,9 +723,9 @@ export function ConversationScreen(
   // A phone's list keeps its first visible row in place on its own when rows
   // resize, sometimes after a restoration has already landed. The reader
   // restored across history recovery is checked on screen until it settles.
-  const settlingAnchor = useRef<{ id: string; checks: number } | undefined>(
-    undefined
-  )
+  const settlingAnchor = useRef<
+    { anchor: { id: string; relativeY: number }; checks: number } | undefined
+  >(undefined)
   const lastScrollOffset = useRef(0)
   const exhaustedPageRestorer = useRef<() => void>(() => {})
   const atBottom = useRef(
@@ -773,7 +864,7 @@ export function ConversationScreen(
     const current = latestView.current
     if (
       current?.composer !== 'enabled' ||
-      editing != null ||
+      editingNow.current != null ||
       sendingNow.current ||
       props.active === false
     ) {
@@ -827,6 +918,8 @@ export function ConversationScreen(
           setError(
             error instanceof Error &&
               (error.message === lstrings.chat_attachment_limit ||
+                error.message === lstrings.chat_camera_permission ||
+                error.message === lstrings.chat_camera_unavailable ||
                 error.message.includes('too large'))
               ? error.message
               : lstrings.chat_attachment_failed
@@ -873,6 +966,7 @@ export function ConversationScreen(
     if (!mounted.current || !paneActive.current) return
     endJumpLanding(jumpLanding)
     initialFollow.current = false
+    settlingAnchor.current = undefined
     historyGeneration.current += 1
     discoveryPaused.current = true
     setAttentionLoading(false)
@@ -1322,6 +1416,43 @@ export function ConversationScreen(
   const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   )
+  // The native list can compensate for a resized row before its throttled
+  // scroll event reaches JS. Read the current host offset and both rectangles
+  // together, in the same coordinate system used to capture the reader.
+  const correctNativeRecovery = (): boolean => {
+    const saved = settlingAnchor.current
+    if (
+      Platform.OS === 'web' ||
+      saved == null ||
+      restoreAnchor.current !== saved.anchor
+    )
+      return false
+    const row = messageRefs.current
+      .get(saved.anchor.id)
+      ?.getBoundingClientRect()
+    const pane = viewport.frame.current?.getBoundingClientRect()
+    const host = scroller.current?.getNativeScrollRef()
+    if (
+      row == null ||
+      pane == null ||
+      host == null ||
+      row.height <= 0 ||
+      pane.height <= 0 ||
+      !Number.isFinite(host.scrollTop)
+    )
+      return false
+    scrolled.current.offset = host.scrollTop
+    const drift = row.top - pane.top - saved.anchor.relativeY
+    if (Math.abs(drift) > 0.5) {
+      const target = Math.max(0, host.scrollTop + drift)
+      // Native clamps against its live content. The previous JS content height
+      // can still describe the locked rows and must not replace the saved goal.
+      restoreTarget.current = target
+      scrolled.current.offset = target
+      scroller.current?.scrollTo({ y: target, animated: false })
+    }
+    return true
+  }
   const settleRestoredAnchor = (): void => {
     if (settleTimer.current != null) return
     settleTimer.current = setTimeout(() => {
@@ -1330,13 +1461,18 @@ export function ConversationScreen(
       const anchor = restoreAnchor.current
       if (
         settling == null ||
-        anchor?.id !== settling.id ||
+        anchor?.id !== settling.anchor.id ||
         !mounted.current ||
         !paneActive.current ||
         restoringAnchor.current ||
         measuringJump.current != null
       )
         return
+      if (correctNativeRecovery()) {
+        settling.checks += 1
+        if (settling.checks < 3) settleRestoredAnchor()
+        return
+      }
       const cancelled = (): boolean =>
         !mounted.current ||
         !paneActive.current ||
@@ -1370,6 +1506,10 @@ export function ConversationScreen(
       !paneActive.current
     )
       return
+    if (correctNativeRecovery()) {
+      if (settlingAnchor.current!.checks < 3) settleRestoredAnchor()
+      return
+    }
     if (restoringAnchor.current) {
       restoreAnchorDirty.current = true
       return
@@ -1434,7 +1574,8 @@ export function ConversationScreen(
    */
   const loadOlder = async (
     cancelled: () => boolean = () => false,
-    page = false
+    page = false,
+    onPage?: (loaded: ConversationView) => void
   ): Promise<ConversationView> => {
     initialFollow.current = false
     const visit = readingVisit.current
@@ -1464,7 +1605,8 @@ export function ConversationScreen(
         if (stopped()) throw new AttentionCancelled()
       }
       const next = await loadOlderPage(stopped)
-      if (visit !== readingVisit.current) throw new AttentionCancelled()
+      if (stopped()) throw new AttentionCancelled()
+      onPage?.(next)
       await waitForReading()
       return next
     })
@@ -1944,6 +2086,7 @@ export function ConversationScreen(
         props.active !== false &&
         props.paneHeader !== true ? (
           <ChatConversationIdentity
+            identityRef={headerIdentity}
             conversation={headerConversation}
             onPress={() => {
               identityPress.current()
@@ -1966,6 +2109,7 @@ export function ConversationScreen(
       attentionSession.current == null ||
       props.active === false ||
       !documentActive ||
+      !readableNow() ||
       menu != null ||
       mentionChoosing != null ||
       pinsOpen ||
@@ -2236,6 +2380,55 @@ export function ConversationScreen(
     []
   )
 
+  const shortcutRevision = useRef(0)
+  const shortcutsActive =
+    props.active !== false &&
+    documentActive &&
+    !composerOverlay &&
+    menu == null &&
+    !pinsOpen &&
+    reacting == null &&
+    mentionChoosing == null &&
+    safetyAction == null
+  const keysAvailable = useRef(shortcutsActive)
+  keysAvailable.current = shortcutsActive
+  useEffect(() => {
+    shortcutRevision.current++
+  }, [shortcutsActive, conversationId, view?.composer])
+  const { discardEdit } = draftPreview
+  const cancelEditing = useCallback((): boolean => {
+    const target = editingNow.current
+    if (target == null) return true
+    if (!draftOwner.cancelEdit(conversationId)) return false
+    shortcutRevision.current++
+    discardEdit(target.id)
+    return true
+  }, [conversationId, discardEdit, draftOwner])
+  useEffect(() => {
+    if (editing == null || view == null || props.active === false) return
+    const raw = engine.view(conversationId)
+    if (raw == null) return
+    const target = raw.messages.find(message => message.id === editing.id)
+    // An older original may still be outside the loaded page on reopening.
+    if (
+      (target != null && !actionsFor(target, raw).includes('edit')) ||
+      raw.composer === 'closed' ||
+      raw.composer === 'readOnly' ||
+      (target == null &&
+        (!raw.hasEarlier ||
+          (raw.historyBefore != null && editing.seq >= raw.historyBefore)))
+    ) {
+      cancelEditing()
+    }
+  }, [
+    view,
+    editing,
+    conversationId,
+    engine,
+    props.active,
+    cancelEditing,
+    savingEdit
+  ])
   if (view == null) initialScrollChosen.current = false
   if (failed && view == null) {
     return (
@@ -2261,7 +2454,8 @@ export function ConversationScreen(
         sending: draftOwner.isSending(conversationId),
         preparing: preparingNow.current > 0,
         text: textNow.current,
-        attachments: pickedNow.current
+        attachments: pickedNow.current,
+        editingCaption: (editingNow.current?.attachments.length ?? 0) > 0
       })
     )
       return
@@ -2269,15 +2463,59 @@ export function ConversationScreen(
     if (submission == null) return
     const submitted = submission.draft
     const body = submitted.text.trim()
-    const mentions = mentionIds(
-      submitted.text,
-      submitted.mentionTokens,
-      current.members,
-      submitted.editing
-    )
+    const preview = draftPreview.submit(body)
     const work = async (): Promise<unknown> => {
+      let members = current.members
       if (submitted.editing != null) {
-        if (mentions.length > 0)
+        const targetId = submitted.editing.id
+        let latest = engine.view(conversationId)
+        let original = latest?.messages.find(message => message.id === targetId)
+        if (original == null) {
+          const cancelled = (): boolean =>
+            !mounted.current ||
+            !paneActive.current ||
+            !draftOwner.ownsSubmission(conversationId, submission) ||
+            engine.view(conversationId)?.composer !== 'enabled'
+          await findOriginal(
+            {
+              view: engine.view.bind(engine),
+              loadEarlier: async () => await discoverPage(cancelled)
+            },
+            conversationId,
+            targetId,
+            cancelled
+          )
+          if (cancelled()) throw new AttentionCancelled()
+          latest = engine.view(conversationId)
+          original = latest?.messages.find(message => message.id === targetId)
+        }
+        if (
+          latest == null ||
+          original == null ||
+          !actionsFor(original, latest).includes('edit')
+        )
+          throw new Error('Message unavailable')
+        members = latest.members
+        if (!draftOwner.dispatchEdit(conversationId, submission))
+          throw new AttentionCancelled()
+      }
+      if (submission.retry != null) return await submission.retry()
+      const mentions = mentionIds(
+        submitted.text,
+        submitted.mentionTokens,
+        members,
+        submitted.editing
+      )
+      if (submitted.editing != null) {
+        if (preview != null)
+          await engine.edit(
+            conversationId,
+            submitted.editing.id,
+            body,
+            mentions,
+            preview
+          )
+        else if (mentions.length > 0)
           await engine.edit(
             conversationId,
             submitted.editing.id,
@@ -2288,6 +2526,7 @@ export function ConversationScreen(
         return
       }
       const quote = {
+        ...(preview == null ? {} : { preview }),
         ...(submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }),
         ...(mentions.length === 0 ? {} : { mentions })
       }
@@ -2303,6 +2542,14 @@ export function ConversationScreen(
     }
     const finish = (success: boolean, error?: unknown): void => {
       const next = draftOwner.finish(conversationId, submission, success, error)
+      if (
+        success &&
+        next != null &&
+        (submitted.editing == null
+          ? next.text === ''
+          : next.editing?.id !== submitted.editing.id)
+      )
+        draftPreview.sent()
       // Standalone consumers retain their external draft callback; workspaces
       // reconcile directly in their persistent owner, never the old screen.
       if (props.draftOwner == null && next != null) props.onDraftChange?.(next)
@@ -2322,6 +2569,7 @@ export function ConversationScreen(
     // iOS can report the same text again once a send has cleared the draft;
     // that is no edit, and must not close a chooser the at-sign just opened.
     if (next === before) return
+    shortcutRevision.current++
     const reconciled = reconcileMentions(
       before,
       next,
@@ -2397,6 +2645,77 @@ export function ConversationScreen(
     focusComposer.current(next.selection)
   }
 
+  const edit = (id: string): void => {
+    const current = engine.view(conversationId)
+    const target = current?.messages.find(message => message.id === id)
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      target == null ||
+      current == null ||
+      !actionsFor(target, current).includes('edit') ||
+      draftOwner.isSending(conversationId)
+    )
+      return
+    const previous = editingNow.current
+    if (previous?.id !== id) {
+      if (previous != null) draftPreview.discardEdit(previous.id)
+      preparationGeneration.current++
+      preparingNow.current = 0
+      setPreparing(0)
+      preparationQueue.current = Promise.resolve()
+      draftOwner.startEdit(conversationId, target)
+    }
+    shortcutRevision.current++
+    const end = textNow.current.length
+    focusComposer.current({ start: end, end })
+  }
+
+  const editLatest = (): void => {
+    const revision = ++shortcutRevision.current
+    const visit = readingVisit.current
+    const cancelled = (): boolean =>
+      revision !== shortcutRevision.current ||
+      visit !== readingVisit.current ||
+      !mounted.current ||
+      !paneActive.current ||
+      !keysAvailable.current ||
+      textNow.current !== '' ||
+      pickedNow.current.length !== 0 ||
+      editingNow.current != null ||
+      replyNow.current != null ||
+      sendingNow.current ||
+      preparingNow.current > 0 ||
+      engine.view(conversationId)?.composer !== 'enabled'
+    const select = (page: ConversationView): boolean => {
+      if (cancelled()) return false
+      const target = page.messages.findLast(message =>
+        actionsFor(message, page).includes('edit')
+      )
+      if (target == null) return false
+      edit(target.id)
+      return true
+    }
+    run(async () => {
+      let current = engine.view(conversationId)
+      if (current == null || select(current)) return
+      while (current.hasEarlier && !cancelled()) {
+        const before = current
+        try {
+          current = await loadOlder(cancelled, true, select)
+        } catch (error) {
+          if (!cancelled()) throw error
+          return
+        }
+        if (
+          current.historyBefore === before.historyBefore &&
+          current.messages[0]?.id === before.messages[0]?.id
+        )
+          return
+      }
+    }, lstrings.chat_message_unavailable)
+  }
+
   const reply = (pressed: MessageView): void => {
     const current = engine.view(conversationId)
     const original = current?.messages.find(
@@ -2409,8 +2728,7 @@ export function ConversationScreen(
       !actionsFor(original, current).includes('reply')
     )
       return
-    editingNow.current = undefined
-    setEditing(undefined)
+    if (!cancelEditing()) return
     replyNow.current = original
     setReplyTo(original)
     // Keep trusted mobile-web activation and repeated Reply actions synchronous.
@@ -2512,6 +2830,12 @@ export function ConversationScreen(
       return
     if (restoreTarget.current != null) {
       if (!widthLayoutReady() || restoringAnchor.current) return
+      // A native acknowledgement may belong to an earlier list layout. Keep
+      // the exact recovery anchor until the reader chooses a new position.
+      if (!userOwned && correctNativeRecovery()) {
+        if (settlingAnchor.current!.checks < 3) settleRestoredAnchor()
+        return
+      }
       const actual = Math.max(0, contentOffset.y)
       const target = reachableOffset(restoreTarget.current)
       // The list moved the restored reader on its own, after its checks ran
@@ -2521,7 +2845,7 @@ export function ConversationScreen(
         Math.abs(actual - target) > 1 &&
         !userOwned &&
         settling != null &&
-        settling.id === restoreAnchor.current?.id
+        settling.anchor.id === restoreAnchor.current?.id
       ) {
         settling.checks = 0
         settleRestoredAnchor()
@@ -2541,7 +2865,7 @@ export function ConversationScreen(
                   : { readableTop: anchor.readableTop })
               }
         )
-        if (settlingAnchor.current?.id === restoreAnchor.current?.id)
+        if (settlingAnchor.current?.anchor.id === restoreAnchor.current?.id)
           settleRestoredAnchor()
       }
       return
@@ -2596,6 +2920,15 @@ export function ConversationScreen(
     const input = nativeUserScroll.current
     const owned =
       Platform.OS !== 'web' && input != null && (end == null || end === input)
+    if (
+      owned &&
+      input === 'drag' &&
+      keyboardDragStart.current != null &&
+      event.nativeEvent.contentOffset.y < keyboardDragStart.current - 2
+    ) {
+      keyboardDragStart.current = undefined
+      Keyboard.dismiss()
+    }
     // An authoritative user offset must not be discarded as an outstanding
     // programmatic restoration acknowledgement.
     if (owned) restoreTarget.current = undefined
@@ -2675,11 +3008,18 @@ export function ConversationScreen(
   }
   // Rows that must stay mounted wherever the reader is: the selected
   // message's source while its actions are open, and a jump's target.
+  const recoveryRow =
+    settlingAnchor.current?.anchor === restoreAnchor.current
+      ? settlingAnchor.current?.anchor.id
+      : undefined
   const alwaysRender = [
-    ...(currentMenu == null ? [] : [currentMenu.id]),
-    ...(mountedTarget == null || mountedTarget === currentMenu?.id
-      ? []
-      : [mountedTarget])
+    ...new Set([
+      ...(currentMenu == null ? [] : [currentMenu.id]),
+      ...(mountedTarget == null || mountedTarget === currentMenu?.id
+        ? []
+        : [mountedTarget]),
+      ...(recoveryRow == null || Platform.OS === 'web' ? [] : [recoveryRow])
+    ])
   ]
   const historyHeaderVisible =
     view.historyLocked ||
@@ -2827,6 +3167,11 @@ export function ConversationScreen(
     >
       {notices.get(index)?.map(renderNotice)}
       <MessageBubble
+        onOpenLink={address => {
+          props.onOpenLink?.(address).catch(() => {
+            setError(lstrings.chat_link_failed)
+          })
+        }}
         bodyRef={node => {
           if (node == null) bodyRefs.current.delete(message.id)
           else bodyRefs.current.set(message.id, node)
@@ -2840,8 +3185,10 @@ export function ConversationScreen(
         engine={engine}
         files={files}
         maxWidth={bubbleWidth}
-        swipe={swipe && view.composer === 'enabled'}
-        actions={actionsFor(message, view)}
+        swipe={swipe && !savingEdit && view.composer === 'enabled'}
+        actions={actionsFor(message, view).filter(
+          action => !savingEdit || action !== 'reply'
+        )}
         pinned={view.pins?.some(pin => pin.messageId === message.id)}
         userId={userId}
         onJump={jumpTo}
@@ -2909,6 +3256,7 @@ export function ConversationScreen(
             }}
           >
             <ChatConversationIdentity
+              identityRef={headerIdentity}
               conversation={view.conversation}
               onPress={() => {
                 identityPress.current()
@@ -2972,6 +3320,13 @@ export function ConversationScreen(
             }
           ]}
           keyboardShouldPersistTaps="handled"
+          onTouchEnd={
+            Platform.OS !== 'web' && attachmentPanel
+              ? () => {
+                  setComposerPicker(undefined)
+                }
+              : undefined
+          }
           onScroll={event => {
             const { x = 0, y } = event.nativeEvent.contentOffset
             const previous = gestureOffset.current
@@ -2992,6 +3347,7 @@ export function ConversationScreen(
           // End events carry the authoritative settled position.
           onScrollEndDrag={event => {
             rememberNativeScroll(event, 'drag')
+            keyboardDragStart.current = undefined
           }}
           onMomentumScrollEnd={event => {
             rememberNativeScroll(event, 'momentum')
@@ -3008,13 +3364,17 @@ export function ConversationScreen(
               userScrolled()
             }
           }}
-          onScrollBeginDrag={() => {
+          onScrollBeginDrag={event => {
             gestureGeneration.current += 1
             if (
               Platform.OS !== 'web' &&
               mounted.current &&
               paneActive.current
             ) {
+              keyboardDragStart.current = viewport.softwareKeyboardOpen
+                ? (event?.nativeEvent.contentOffset.y ??
+                  gestureOffset.current.y)
+                : undefined
               nativeUserScroll.current = 'drag'
               nativeMomentumFromDrag.current = true
               userScrolled()
@@ -3160,7 +3520,13 @@ export function ConversationScreen(
               content === 0 ||
               offset + scrolled.current.height >= content - 48
             scrolled.current.content = height
-            atBottom.current = initialFollow.current && following
+            // Keep following on web and Android when a card grows again before
+            // the previous end scroll arrives. User scrolling clears this flag.
+            atBottom.current =
+              following &&
+              (Platform.OS === 'web' ||
+                Platform.OS === 'android' ||
+                initialFollow.current)
             if (following) scroller.current?.scrollToEnd({ animated: false })
             else recaptureLiveAnchor()
           }}
@@ -3263,7 +3629,19 @@ export function ConversationScreen(
           ref={keyboard.composerRef}
           pointerEvents="box-none"
           onLayout={event => {
-            setComposerHeight(event.nativeEvent.layout.height)
+            // The band includes the visible drawer. Record both dimensions from
+            // this layout so its next height calculation reserves the controls once.
+            const height = event.nativeEvent.layout.height
+            const drawer =
+              Platform.OS !== 'web' &&
+              (attachmentPanel || viewport.returningToKeyboard)
+                ? viewport.attachmentPanelHeight + theme.rem(theme.spaceXsRem)
+                : 0
+            setComposerSize(previous =>
+              previous.height === height && previous.drawer === drawer
+                ? previous
+                : { height, drawer }
+            )
             keyboard.onComposerLayout(event)
           }}
           style={{
@@ -3274,6 +3652,20 @@ export function ConversationScreen(
             zIndex: 4
           }}
         >
+          {draftPreview.preview != null && (
+            <Card flush>
+              <CardThemeScope>
+                <ChatLinkPreviewCard
+                  preview={draftPreview.preview}
+                  onDismiss={() => {
+                    draftOwner.discardRetry(conversationId)
+                    draftPreview.handleDismiss()
+                  }}
+                  loadThumbnail={engine.openPreviewThumbnail}
+                />
+              </CardThemeScope>
+            </Card>
+          )}
           {typing.length > 0 && (
             <Text style={shared.small} accessibilityLiveRegion="polite">
               {typing.length === 1
@@ -3298,7 +3690,19 @@ export function ConversationScreen(
             </View>
           ) : (
             <Composer
-              onOverlay={setComposerOverlay}
+              key={conversationId}
+              files={files}
+              onOpenAttachments={() => {
+                if (viewport.attachmentHandoff) return
+                setHandoffWidth(viewport.dockedKeyboardWidth)
+                if (viewport.dockedKeyboardWidth != null)
+                  keyboard.holdKeyboardInset?.()
+              }}
+              picker={composerPicker}
+              onPickerChange={setComposerPicker}
+              attachmentPanelHeight={viewport.attachmentPanelHeight}
+              returnToKeyboard={viewport.returnToKeyboard}
+              returningToKeyboard={viewport.returningToKeyboard}
               registerFocus={registerComposerFocus}
               onRead={() => {
                 if (
@@ -3323,7 +3727,11 @@ export function ConversationScreen(
               preparing={preparing > 0}
               context={
                 editing != null
-                  ? { kind: 'edit' }
+                  ? {
+                      kind: 'edit',
+                      saving: savingEdit,
+                      hasAttachments: editing.attachments.length > 0
+                    }
                   : replyTo != null
                     ? {
                         kind: 'reply',
@@ -3340,24 +3748,26 @@ export function ConversationScreen(
                       }
                     : undefined
               }
+              shortcutsActive={shortcutsActive}
+              onEditLatest={editLatest}
+              onInterruptShortcut={() => {
+                shortcutRevision.current++
+              }}
               onCancelContext={() => {
-                if (editing != null) {
-                  textNow.current = ''
-                  setText('')
-                  mentionTokensNow.current = undefined
-                  setMentionTokens(undefined)
+                if (editingNow.current != null) cancelEditing()
+                else {
+                  replyNow.current = undefined
+                  setReplyTo(undefined)
                 }
-                setEditing(undefined)
-                replyNow.current = undefined
-                setReplyTo(undefined)
               }}
               attachments={picked}
               onRemoveAttachment={index => {
+                if (editingNow.current != null) return
                 const next = pickedNow.current.filter((_, at) => at !== index)
                 pickedNow.current = next
                 setPicked(next)
               }}
-              sources={editing == null ? files.PICK_SOURCES : []}
+              sources={files.PICK_SOURCES}
               onAttach={source => {
                 prepareFiles(
                   async remaining => await files.pickFiles(source, remaining),
@@ -3419,11 +3829,23 @@ export function ConversationScreen(
             setMenu(undefined)
             setMenuSource(undefined)
           }}
-          onReply={() => {
-            const selected = selectedFor('reply')
-            if (selected == null) return
-            reply(selected)
-          }}
+          onReply={
+            savingEdit
+              ? undefined
+              : () => {
+                  const selected = selectedFor('reply')
+                  if (selected == null) return
+                  reply(selected)
+                }
+          }
+          onEdit={
+            sending
+              ? undefined
+              : () => {
+                  const selected = selectedFor('edit')
+                  if (selected != null) edit(selected.id)
+                }
+          }
           onReact={emoji => {
             const selected = selectedFor('react')
             if (selected == null) return

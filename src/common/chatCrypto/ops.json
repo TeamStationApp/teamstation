@@ -278,6 +278,36 @@
       "name": "safetyBytes",
       "args": ["identityKey", "userId:identity"],
       "results": ["bytes"]
+    },
+    {
+      "id": 35,
+      "name": "sealPreview",
+      "args": [
+        "conversationId",
+        "epoch:u64",
+        "messageId",
+        "senderUserId:identity",
+        "kind",
+        "epochKey",
+        "plaintext",
+        "nonce?"
+      ],
+      "results": ["nonce", "ciphertext"]
+    },
+    {
+      "id": 36,
+      "name": "openPreview",
+      "args": [
+        "conversationId",
+        "epoch:u64",
+        "messageId",
+        "senderUserId:identity",
+        "kind",
+        "epochKey",
+        "nonce",
+        "ciphertext"
+      ],
+      "results": ["plaintext"]
     }
   ],
   "refusals": [

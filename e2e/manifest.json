@@ -4009,6 +4009,287 @@
       "file": "e2e/tests/assistant/chat/weekly-usage.e2e.ts"
     },
     {
+      "id": "messaging/chat/composer-panel#attach",
+      "title": "Open the attachment panel and send a photo or file from each available source",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/Composer.tsx",
+        "src/app/chat/ChatViewport.tsx",
+        "src/app/chat/ChatHistoryList.native.tsx",
+        "src/app/chat/chatWebInteractions.ts",
+        "src/app/chat/chatFiles*",
+        "src/app/chat/ConversationScreen.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/composer-panel",
+      "file": "e2e/tests/messaging/chat/composer-panel.e2e.ts"
+    },
+    {
+      "id": "messaging/chat/edit-message#edit",
+      "title": "Authors edit their original chat message or caption",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/Composer.tsx",
+        "src/app/chat/ConversationScreen.tsx",
+        "src/app/chat/MessageMenu.tsx",
+        "src/app/chat/chatWorkspaceModel.ts",
+        "src/app/chat/chatWebInteractions*",
+        "android/app/src/main/java/app/teamstation/app/chat/ChatHardwareKeys.kt"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/edit-message",
+      "file": "e2e/tests/messaging/chat/edit-message.e2e.ts"
+    },
+    {
+      "id": "messaging/chat/edit-message-ipad#hardware",
+      "title": "The focused iPad chat composer accepts hardware Up and Escape",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSShiftReturn.m",
+        "ios/TeamStation/ChatKeyboard/**",
+        "src/app/chat/Composer.tsx"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "tablet",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/edit-message-ipad",
+      "file": "e2e/tests/messaging/chat/edit-message-ipad.e2e.ts"
+    },
+    {
+      "id": "messaging/chat/link-previews#send",
+      "title": "Chat members receive the sender’s private link preview",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/*Preview*",
+        "src/app/chat/preview*",
+        "src/app/chat/linkPreview*",
+        "src/common/chatLinkPreview.ts",
+        "src/app/chat/engine/send.ts",
+        "src/app/chat/engine/decrypt.ts",
+        "src/app/chat/engine/apply.ts",
+        "crates/chat-link-preview/**",
+        "crates/chat-crypto/src/preview.rs",
+        "native/linkPreview/**",
+        "ios/TeamStation/ChatPreview/**"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/link-previews",
+      "file": "e2e/tests/messaging/chat/link-previews.e2e.ts"
+    },
+    {
+      "id": "messaging/chat/message-links#open",
+      "title": "Chat links in text and file captions open their displayed destination",
+      "kind": "e2e",
+      "covers": [
+        "src/app/chat/chatMessageLinks.ts",
+        "src/app/chat/ChatMessageText.tsx",
+        "src/app/chat/chatBrowser*",
+        "src/app/chat/NativeChatBrowser.ts",
+        "src/app/chat/MessageBubble.tsx",
+        "src/app/chat/ChatWorkspace.tsx",
+        "src/app/chat/ConversationScreen.tsx",
+        "ios/TeamStation/RCTChatBrowser.mm",
+        "android/app/src/main/java/app/teamstation/app/browser/**"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "chatLinkFixture"
+      ],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "messaging/chat/message-links",
+      "file": "e2e/tests/messaging/chat/message-links.e2e.ts"
+    },
+    {
       "id": "people/add-existing/add-player-device#keyboard",
       "title": "Add Player’s field rides the keyboard on a phone while its header stays put, and Add to Roster stays above it",
       "kind": "e2e",

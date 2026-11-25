@@ -32,6 +32,8 @@ export interface Emulation {
   beforeLoad?: string
   /** Opens a browser that plays H.264, which maestro-d's own Chromium cannot. */
   h264?: boolean
+  /** Subscribe to requests and responses for scenarios that verify or hold real traffic. */
+  observeNetwork?: boolean
 }
 
 /**
@@ -98,7 +100,8 @@ export async function applyEmulation(
 /** Connects to the Chromium maestro-d started, read from its profile directory. */
 export async function connectToMaestroChromium(
   profile: string,
-  targetUrl: string
+  targetUrl: string,
+  observeNetwork = false
 ): Promise<{ browser: Browser; page: Page }> {
   const [port, path] = readFileSync(join(profile, 'DevToolsActivePort'), 'utf8')
     .trim()
@@ -106,9 +109,8 @@ export async function connectToMaestroChromium(
   const browser = await puppeteer.connect({
     browserWSEndpoint: `ws://127.0.0.1:${port}${path}`,
     defaultViewport: null,
-    // Maestro observes requests. This read-only connection needs no duplicate
-    // network events or renderer cache of downloaded response bodies.
-    networkEnabled: false
+    // Keep response bodies out of the read-only observer unless a scenario needs them.
+    networkEnabled: observeNetwork
   })
   const page = (await browser.pages()).find(p => p.url() === targetUrl)
   if (page == null) throw new Error(`No browser target at ${targetUrl}`)

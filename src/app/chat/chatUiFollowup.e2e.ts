@@ -471,6 +471,25 @@ async function s4(daemon: Daemon): Promise<void> {
   }
 }
 
+async function assertFixtureBody(
+  device: Device,
+  id: string,
+  text: string
+): Promise<void> {
+  const selector = `[data-testid="chat-message-body-${id}"]`
+  await device.assertVisible({ css: selector, timeout: 60000 })
+  // Text selectors interpret fixture punctuation as a regular expression.
+  const result = (await device.evalBrowserScript({
+    script: `const body = document.querySelector(${JSON.stringify(selector)})?.cloneNode(true);
+      body?.querySelector('[data-testid="chat-link-preview"]')?.remove();
+      return body?.textContent === ${JSON.stringify(text)}`
+  })) as { data?: unknown }
+  assert(
+    result.data === true || result.data === 'true',
+    'The displayed message must exactly match the fixture body'
+  )
+}
+
 async function s5(daemon: Daemon): Promise<void> {
   const id = required('CHAT_UI_MESSAGE')
   const target = required('CHAT_UI_TARGET_TEXT')
@@ -488,12 +507,26 @@ async function s5(daemon: Daemon): Promise<void> {
       userDataDir: required('CHAT_UI_PROFILE_DIR')
     }
   })
+  const pinnedByTest = new Set<string>()
+  const setPin = async (
+    messageId: string,
+    action: 'Pin' | 'Unpin'
+  ): Promise<void> => {
+    const message = `[data-testid="chat-message-${messageId}"]`
+    await m.evalBrowserScript({
+      script: `const row=document.querySelector(${JSON.stringify(message)});row.scrollIntoView({block:'center'});row.dispatchEvent(new PointerEvent('pointerenter'));return true`
+    })
+    await m.tapOn({ css: message + ' [aria-label="More message actions"]' })
+    await m.tapOn({ text: action })
+    if (action === 'Pin') pinnedByTest.add(messageId)
+    else pinnedByTest.delete(messageId)
+  }
   try {
     await signIn(m, 'Hc')
     await m.openLink({
       link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
     })
-    await m.assertVisible({ text: target, timeout: 60000 })
+    await assertFixtureBody(m, id, target)
     console.log(
       '$ S5 hover actual original message, inspect named controls, anchored menu and clipboard body'
     )
@@ -531,31 +564,62 @@ async function s5(daemon: Daemon): Promise<void> {
     )
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     console.log('$ S8 personal message pin badge/header/list and verified jump')
-    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
-    await m.tapOn({ text: 'Pin' })
-    await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
+    await setPin(id, 'Pin')
+    await m.assertVisible({
+      css: '[data-testid="chat-pinned-summary"][aria-label="Pinned messages: 1"]',
+      timeout: 30000
+    })
     writeFileSync(
       join(artifacts, 'desktop-message-pins-after.png'),
       await m.screenshot()
     )
-    await m.tapOn({ text: 'Pinned messages: 1' })
+    // One pin jumps directly. The original and its fixture reply open the list.
+    await m.tapOn({ css: '[data-testid="chat-pinned-summary"]' })
+    await m.assertVisible({ css: row })
+    const { data: replyId } = (await m.evalBrowserScript({
+      script: `const quotes=[...document.querySelectorAll('[aria-label^="Jump to message from "]')];const quote=quotes.find(node=>node.textContent.includes(${JSON.stringify(Array.from(target).slice(0, 200).join(''))}));return quote?.closest('[data-testid^="chat-message-msg_"]')?.getAttribute('data-testid')?.slice('chat-message-'.length)`
+    })) as { data?: string }
+    assert(
+      replyId?.startsWith('msg_') === true && replyId !== id,
+      'Expected a separate fixture reply'
+    )
+    await setPin(replyId, 'Pin')
+    await m.assertVisible({
+      css: '[data-testid="chat-pinned-summary"][aria-label="Pinned messages: 2"]'
+    })
+    await m.tapOn({ css: '[data-testid="chat-pinned-summary"]' })
+    await m.assertVisible({ css: `[data-testid="chat-pin-${replyId}"]` })
     writeFileSync(
       join(artifacts, 'desktop-pinned-messages-after.png'),
       await m.screenshot()
     )
-    // One pin jumps straight to its message; no list opens (develop
-    // 8cd994cef).
-    await m.assertVisible({ text: target })
+    await m.tapOn({ css: `[data-testid="chat-pin-${id}"]` })
+    await assertFixtureBody(m, id, target)
     console.log(
       await m.evalBrowserScript({
         script: `const row=document.querySelector(${JSON.stringify(row)});if(!row)throw new Error('Pin jump original missing');return JSON.stringify({pinBadgeHeaderList:true,originalJump:true});`
       })
     )
-    await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
-    await m.tapOn({ text: 'Unpin' })
+    await setPin(replyId, 'Unpin')
+    await setPin(id, 'Unpin')
     console.log('S5/S7/S8 wide core PASS')
   } finally {
-    await m.detach()
+    try {
+      // Restore the fixture if an assertion interrupted a pin or its jump.
+      for (const messageId of pinnedByTest) {
+        const url =
+          API +
+          '/chat/conversations/' +
+          required('CHAT_UI_CONVERSATION') +
+          '/pins/' +
+          messageId
+        await m.evalBrowserScript({
+          script: `const r=await fetch(${JSON.stringify(url)},{method:'DELETE',credentials:'include'});if(!r.ok)throw Error('Could not restore the fixture pin');return true`
+        })
+      }
+    } finally {
+      await m.detach()
+    }
   }
 }
 
@@ -591,7 +655,7 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
       '$ S9 file drag across nested composer children, exact overlay, prepare without sending'
     )
     await m.evalBrowserScript({
-      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const initialMessages=await (await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();window.chatUiDropPosts=initialMessages.filter(row=>row.kind==='post').length;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
+      script: `${listed}window.chatUiDropSeq=chat.lastSeq;const pane=document.querySelector('[data-testid="chat-drop-target"]');const transfer=new DataTransfer();transfer.items.add(new File(['Practice notes'],'notes.txt',{type:'text/plain'}));window.chatUiDropTransfer=transfer;pane.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));const input=document.querySelector('[data-testid="chat-composer"]');input.dispatchEvent(new DragEvent('dragenter',{bubbles:true,cancelable:true,dataTransfer:transfer}));pane.dispatchEvent(new DragEvent('dragleave',{bubbles:true,cancelable:true,dataTransfer:transfer,relatedTarget:input}));return true;`
     })
     await m.assertVisible({ text: 'Attaching file to chat' })
     if (!keyboard)
@@ -630,7 +694,20 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
       })
       console.log(
         await m.evalBrowserScript({
-          script: `${listed}const messages=await (await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();if(messages.filter(row=>row.kind==='post').length!==window.chatUiDropPosts+1)throw new Error('Enter did not send exactly one post: '+JSON.stringify({before:window.chatUiDropPosts,after:messages.filter(row=>row.kind==='post').length,hasBaseline:typeof window.chatUiDropPosts==='number'}));if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Successful send did not clear draft');const markerRows=[...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].filter(row=>row.getAttribute('data-testid')!=='chat-message-pane' && row.innerText.includes(${JSON.stringify(marker)}));if(markerRows.length!==1)throw new Error('Unique marker did not appear in exactly one post bubble');return JSON.stringify({enterSentExactlyOnce:true,uniqueMarkerBubbleCount:markerRows.length,draftCleared:true});`
+          script: `
+            if (!Number.isSafeInteger(window.chatUiDropSeq)) throw new Error('Missing sequence before desktop Enter');
+            const url = new URL(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')}, location.href);
+            url.searchParams.set('after', String(window.chatUiDropSeq));
+            const response = await fetch(url, {credentials: 'include'});
+            if (!response.ok) throw new Error('Cannot verify posts after desktop Enter');
+            const posts = (await response.json()).filter(row => row.kind === 'post');
+            if (posts.length !== 1) throw new Error('Enter created ' + posts.length + ' posts');
+            if (document.querySelector('[data-testid="chat-composer"]').value !== '') throw new Error('Successful send did not clear draft');
+            const markerRows = [...document.querySelectorAll('[data-testid^="chat-message-msg_"]')].filter(row => row.innerText.includes(${JSON.stringify(marker)}));
+            if (markerRows.length !== 1 || markerRows[0].getAttribute('data-testid') !== 'chat-message-' + posts[0].id)
+              throw new Error('The unique keyboard marker must appear in the posted message exactly once');
+            return JSON.stringify({enterSentExactlyOnce: true, uniqueMarkerBubbleCount: markerRows.length, draftCleared: true});
+          `
         })
       )
     }
@@ -641,9 +718,11 @@ async function s9(daemon: Daemon, keyboard: boolean): Promise<void> {
 }
 
 async function s6(daemon: Daemon): Promise<void> {
+  const conversation = required('CHAT_UI_CONVERSATION')
+  const row = chatRowById(conversation)
   const id = required('CHAT_UI_MESSAGE')
   const target = required('CHAT_UI_TARGET_TEXT')
-  const row = `[data-testid="chat-message-${id}"]`
+  const bubble = `[data-testid="chat-bubble-${id}"]`
   const m = await daemon.attach({
     device: 'chat-ui-mobile-web',
     platform: 'web',
@@ -658,25 +737,24 @@ async function s6(daemon: Daemon): Promise<void> {
   })
   const hold = async (): Promise<void> => {
     await m.evalBrowserScript({
-      script: `const bubble=document.querySelector(${JSON.stringify(row + ' [tabindex="0"]')});if(!bubble)throw new Error('Target bubble missing');bubble.scrollIntoView({block:'center'});await new Promise(resolve=>setTimeout(resolve,350));return true`
+      script: `const bubble=document.querySelector(${JSON.stringify(bubble)});if(!bubble)throw new Error('Target bubble missing');bubble.scrollIntoView({block:'center'});await new Promise(resolve=>setTimeout(resolve,350));return true`
     })
-    await m.longPressOn({ css: row + ' [tabindex="0"]' })
+    await m.longPressOn({ css: bubble })
   }
   try {
     await signIn(m, 'Hs')
-    await m.openLink({
-      link: WEB + '/chat/' + required('CHAT_UI_CONVERSATION')
-    })
-    await m.assertVisible({ text: target, timeout: 60000 })
-    console.log(
-      '$ S6 390px real browser with coarse-pointer media emulation; actual hold, blur, exact actions'
-    )
+    await m.openLink({ link: WEB + '/chat' })
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=query=>query.includes('pointer')&&query.includes('fine')?new Proxy(original(query),{get(target,key){if(key==='matches')return false;const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value}}):original(query);return true`
     })
-    // The conversation's own menu is its row's (develop 2bc27808d removed
-    // the header's), by the conversation's id.
-    await rowMenu(m, required('CHAT_UI_CONVERSATION'))
+    await rowMenu(m, required('CHAT_UI_CONVERSATION'), true)
+    await m.tapOn({ css: row, timeout: 60000 })
+    await m.assertVisible({ css: bubble, timeout: 60000 })
+    await assertFixtureBody(m, id, target)
+    await dismissNotificationAskOn(m)
+    console.log(
+      '$ S6 390px real browser with coarse-pointer media emulation; actual hold, blur, exact actions'
+    )
     await hold()
     await m.assertVisible({ text: 'Copy' })
     await m.assertVisible({ text: 'Reply' })
@@ -705,18 +783,26 @@ async function s6(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Replying to Hank C' })
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     await hold()
-    await m.tapOn({ text: 'Pin' })
+    await m.tapOn({ text: '^Pin$' })
     await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
     await hold()
-    await m.tapOn({ text: 'Unpin' })
-    await m.tapOn({ text: 'Back' })
-    await m.longPressOn({ css: MEMBERS_ROW })
+    await m.tapOn({ text: '^Unpin$' })
+    const pins = API + '/chat/conversations/' + conversation + '/pins'
+    await m.evalBrowserScript({
+      script: `for(let attempt=0;attempt<50;attempt++){const r=await fetch(${JSON.stringify(pins)},{credentials:'include'});if(!r.ok)throw Error('Personal pin list unavailable');if(!(await r.json()).some(pin=>pin.messageId===${JSON.stringify(id)}))return true;await new Promise(resolve=>setTimeout(resolve,100))}throw Error('The fixture original remained pinned')`
+    })
+    await m.openLink({ link: WEB + '/chat' })
+    await m.assertVisible({ css: row, timeout: 30000 })
+    await m.longPressOn({ css: row })
     await m.assertVisible({ text: 'Mark unread' })
     writeFileSync(
       join(required('CHAT_UI_ARTIFACTS'), 'narrow-conversation-menu-after.png'),
       await m.screenshot()
     )
     await m.pressKey({ key: 'Escape' })
+    await m.evalBrowserScript({
+      script: `for(let attempt=0;attempt<40;attempt++){if(!document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))return true;await new Promise(resolve=>setTimeout(resolve,50))}throw new Error('Conversation actions did not dismiss')`
+    })
     console.log(
       'S3/S6/S7/S8 narrow core PASS; media query emulated, app/clipboard/pin paths real'
     )
@@ -946,6 +1032,7 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       if (!atInfo) await new Promise(resolve => setTimeout(resolve, 250))
     }
     assert(atInfo, 'Info must navigate outside the workspace')
+    await m.assertVisible({ css: '[data-testid="chat-info-members"]' })
     await m.setNetworkConditions({
       latency: 1200,
       downloadSpeed: -1,
@@ -1693,7 +1780,7 @@ async function pendingSend(daemon: Daemon): Promise<void> {
           narrow ? 'Hs' : 'Hc',
           outcome,
           gateId,
-          '15000'
+          '60000'
         ],
         { stdio: 'pipe' }
       )
@@ -1723,6 +1810,12 @@ async function pendingSend(daemon: Daemon): Promise<void> {
       })
       await input(next)
       const returnedAt = Date.now()
+      // Release only after the ordinary composer has returned and recorded the new draft.
+      execFileSync(
+        process.execPath,
+        [required('CHAT_UI_PENDING_CONTROL'), 'clear'],
+        { stdio: 'pipe' }
+      )
       await m.evalBrowserScript({
         script: `for(let n=0;n<1000;n++){const send=document.querySelector('[aria-label="Send"]');if(send?.getAttribute('aria-disabled')!=='true'){if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(next)})throw new Error('Old completion overwrote a newer draft');return true}await new Promise(resolve=>setTimeout(resolve,25))}throw new Error('Pending request did not complete')`
       })
@@ -2133,23 +2226,33 @@ async function composeFull(daemon: Daemon): Promise<void> {
     required('CHAT_UI_PROFILE_DIR'),
     false
   )
-  const peer = await attach(
-    'chat-ui-compose-peer',
-    required('CHAT_UI_PEER_PROFILE_DIR'),
-    true
-  )
   const marker = 'Attachment delivery probe ' + Date.now().toString(36)
-  const posts = `const raw=await(await fetch(${JSON.stringify(API + '/chat/conversations/' + conversation + '/messages')},{credentials:'include'})).json();const count=raw.filter(x=>x.kind==='post').length;`
+  const messagesUrl = JSON.stringify(
+    API + '/chat/conversations/' + conversation + '/messages'
+  )
+  // A full conversation returns a bounded newest page. Count from the last original
+  // sequence observed before this test so adding a post cannot evict one from the count.
+  const posts = `const raw=await(await fetch(${messagesUrl}+'?after='+window.chatUiComposeAfter,{credentials:'include'})).json();const count=raw.filter(x=>x.kind==='post').length;`
+  const committed = (expected: number): string => `
+    const expected = window.chatUiComposePosts + ${expected};
+    let raw, count;
+    for (let tries = 0; tries < 100; tries++) {
+      const response = await fetch(${messagesUrl} + '?after=' + window.chatUiComposeAfter, { credentials:'include' });
+      if (!response.ok) throw Error('Message read failed: ' + response.status);
+      raw = await response.json();
+      count = raw.filter(row => row.kind === 'post').length;
+      if (count >= expected) break;
+      await new Promise(done => setTimeout(done, 100));
+    }
+    if (count !== expected) throw Error('Expected '+expected+' new posts, received '+count);
+  `
   const drop = `const target=document.querySelector('[data-testid="chat-drop-target"]');function drop(files){const data=new DataTransfer();for(const file of files)data.items.add(file);const event=new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data});target.dispatchEvent(event);if(!event.defaultPrevented)throw new Error('File navigation not prevented');}`
   try {
     await signIn(m, 'Hc')
-    await signIn(peer, 'Hs')
     await m.openLink({ link: WEB + '/chat/' + conversation })
-    await peer.openLink({ link: WEB + '/chat/' + conversation })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
-    await peer.assertVisible({ text: 'Message', timeout: 60000 })
     await m.evalBrowserScript({
-      script: `${posts}window.chatUiComposePosts=count;window.chatUiByteReads=[];const original=File.prototype.arrayBuffer;window.chatUiOriginalRead=original;File.prototype.arrayBuffer=function(){window.chatUiByteReads.push(this.name);if(this.name==='slow.txt')return new Promise(resolve=>{window.chatUiReleaseRead=async()=>resolve(await original.call(this))});if(this.name==='bad.txt')return Promise.reject(new Error('Synthetic file read failure'));return original.call(this)};return true`
+      script: `const conversations=await(await fetch(${JSON.stringify(API + '/chat/conversations')},{credentials:'include'})).json();window.chatUiComposeAfter=conversations.find(row=>row.id===${JSON.stringify(conversation)}).lastSeq;${posts}window.chatUiComposePosts=count;window.chatUiByteReads=[];const original=File.prototype.arrayBuffer;window.chatUiOriginalRead=original;File.prototype.arrayBuffer=function(){window.chatUiByteReads.push(this.name);if(this.name==='slow.txt')return new Promise(resolve=>{window.chatUiReleaseRead=async()=>resolve(await original.call(this))});if(this.name==='bad.txt')return Promise.reject(new Error('Synthetic file read failure'));return original.call(this)};return true`
     })
     console.log(
       '$ S9 actual File metadata limits before byte reads; delayed preparation blocks both send paths'
@@ -2176,6 +2279,9 @@ async function composeFull(daemon: Daemon): Promise<void> {
       script: `${drop}drop([new File(['Practice notes'],'bad.txt',{type:'text/plain'})]);return true`
     })
     await m.assertVisible({ text: 'That attachment could not be opened.' })
+    await m.tapOn({ css: '[data-testid="chat-composer"]' })
+    await m.inputText({ text: marker })
+    await m.assertVisible({ text: 'Send' })
     await m.evalBrowserScript({
       script: `${drop}drop([new File(['Practice notes'],'slow.txt',{type:'text/plain'})]);await new Promise(r=>setTimeout(r,100));const send=document.querySelector('[aria-label="Send"]');if(send.getAttribute('aria-disabled')!=='true'&&!send.disabled)throw new Error('Send allowed during preparation');document.querySelector('[data-testid="chat-composer"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));send.click();${posts}if(count!==window.chatUiComposePosts)throw new Error('Preparation sent a post');await window.chatUiReleaseRead();return true`
     })
@@ -2186,27 +2292,15 @@ async function composeFull(daemon: Daemon): Promise<void> {
     })
     await m.assertVisible({ text: 'Remove notes.txt' })
     await m.assertVisible({ text: 'Remove lineup.txt' })
-    await m.tapOn({ css: '[data-testid="chat-composer"]' })
-    await m.inputText({ text: marker })
     await m.tapOn({ text: 'Send' })
-    await peer.assertVisible({ text: marker, timeout: 60000 })
-    await peer.evalBrowserScript({
-      script: `window.chatUiOriginalObjectURL=URL.createObjectURL;URL.createObjectURL=function(blob){window.chatUiDecodedBlob=blob;return window.chatUiOriginalObjectURL.call(URL,blob)};return true`
+    await m.assertVisible({ text: marker, timeout: 60000 })
+    await m.assertVisible({
+      css: '[data-testid="chat-composer"]:placeholder-shown',
+      timeout: 10000
     })
-    for (const [file, bytes] of [
-      ['notes.txt', 'Practice notes'],
-      ['lineup.txt', 'Bring a glove']
-    ]) {
-      await peer.tapOn({ text: 'Save ' + file })
-      console.log(
-        await peer.evalBrowserScript({
-          script: `for(let n=0;n<100;n++){if(window.chatUiDecodedBlob){const text=await window.chatUiDecodedBlob.text();if(text!==${JSON.stringify(bytes)})throw new Error('Peer decrypted file bytes differ');window.chatUiDecodedBlob=undefined;return JSON.stringify({file:${JSON.stringify(file)},peerDecryptedExactBytes:true})}await new Promise(r=>setTimeout(r,50))}throw new Error('Peer file was not decrypted')`
-        })
-      )
-    }
     console.log(
       await m.evalBrowserScript({
-        script: `${posts}if(count!==window.chatUiComposePosts+1)throw new Error('Multiple files/caption did not send exactly one post');if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Submitted caption not cleared');const wire=JSON.stringify(raw);if(wire.includes(${JSON.stringify(marker)})||wire.includes('notes.txt')||wire.includes('Bring a glove'))throw new Error('Plaintext canary entered message API wire');return JSON.stringify({captionAndTwoFiles:true,postCountDelta:1,ciphertextWireCanaryAbsent:true})`
+        script: `${committed(1)}if(document.querySelector('[data-testid="chat-composer"]').value!=='')throw new Error('Submitted caption not cleared');const wire=JSON.stringify(raw);if(wire.includes(${JSON.stringify(marker)})||wire.includes('notes.txt')||wire.includes('Bring a glove'))throw new Error('Plaintext canary entered message API wire');return JSON.stringify({captionAndTwoFiles:true,postCountDelta:1,ciphertextWireCanaryAbsent:true})`
       })
     )
     console.log(
@@ -2220,18 +2314,55 @@ async function composeFull(daemon: Daemon): Promise<void> {
     await m.evalBrowserScript({
       script: `const input=document.querySelector('[data-testid="chat-composer"]');document.querySelector('[aria-label="Send"]').click();input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));return true`
     })
+    console.log(
+      await m.evalBrowserScript({
+        script: `${committed(2)}File.prototype.arrayBuffer=window.chatUiOriginalRead;return JSON.stringify({compositionQuiet:true,rapidButtonKeyExactlyOne:true})`
+      })
+    )
+  } finally {
+    await m.detach()
+  }
+  // The recipient opens its saved profile after the author has finished.
+  const peer = await attach(
+    'chat-ui-compose-peer',
+    required('CHAT_UI_PEER_PROFILE_DIR'),
+    true
+  )
+  try {
+    await signIn(peer, 'Hs')
+    await peer.openLink({ link: WEB + '/chat/' + conversation })
+    await peer.assertVisible({ text: 'Message', timeout: 60000 })
+    await peer.assertVisible({ text: marker, timeout: 60000 })
+    await peer.evalBrowserScript({
+      script: `window.chatUiOriginalObjectURL=URL.createObjectURL;URL.createObjectURL=function(blob){window.chatUiDecodedBlob=blob;return window.chatUiOriginalObjectURL.call(URL,blob)};return true`
+    })
+    const { data: rowId } = (await peer.evalBrowserScript({
+      script: `const rows=Array.from(document.querySelectorAll('[data-testid^="chat-message-msg_"]'));const row=rows.find(el=>el.textContent.includes(${JSON.stringify(marker)}));return row?.getAttribute('data-testid')`
+    })) as { data?: unknown }
+    assert(
+      typeof rowId === 'string' &&
+        /^chat-message-msg_[A-Za-z0-9_-]+$/.test(rowId)
+    )
+    for (const [file, bytes] of [
+      ['notes.txt', 'Practice notes'],
+      ['lineup.txt', 'Bring a glove']
+    ]) {
+      await peer.tapOn({
+        css: '[data-testid="' + rowId + '"] [aria-label="Save ' + file + '"]',
+        timeout: 15000
+      })
+      console.log(
+        await peer.evalBrowserScript({
+          script: `for(let n=0;n<100;n++){if(window.chatUiDecodedBlob){const text=await window.chatUiDecodedBlob.text();if(text!==${JSON.stringify(bytes)})throw new Error('Peer decrypted file bytes differ');window.chatUiDecodedBlob=undefined;return JSON.stringify({file:${JSON.stringify(file)},peerDecryptedExactBytes:true})}await new Promise(r=>setTimeout(r,50))}throw new Error('Peer file was not decrypted')`
+        })
+      )
+    }
     await peer.assertVisible({
       text: 'Composition probe ' + marker,
       timeout: 60000
     })
-    console.log(
-      await m.evalBrowserScript({
-        script: `await new Promise(r=>setTimeout(r,250));${posts}if(count!==window.chatUiComposePosts+2)throw new Error('Rapid button/key made duplicate posts');File.prototype.arrayBuffer=window.chatUiOriginalRead;return JSON.stringify({compositionQuiet:true,rapidButtonKeyExactlyOne:true,peerDelivered:true})`
-      })
-    )
     console.log('S9/S10 full encrypted browser peer delivery PASS')
   } finally {
-    await m.detach()
     await peer.detach()
   }
 }
@@ -2256,12 +2387,13 @@ async function picker(daemon: Daemon): Promise<void> {
     })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
     console.log(
-      '$ S9 actual Attach button creates picker input; browser file chooser is intercepted for maestro uploadFile; prepared chip without send'
+      '$ S9 actual Attach panel and File action create picker input; browser file chooser is intercepted for maestro uploadFile; prepared chip without send'
     )
     await m.evalBrowserScript({
       script: `window.chatUiInputClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';this.style.width='200px';this.style.height='30px';return}return window.chatUiInputClick.call(this)};return true`
     })
     await m.tapOn({ text: 'Attach' })
+    await m.tapOn({ text: 'File' })
     await m.uploadFile({
       css: 'input[type="file"]',
       path: required('CHAT_UI_PICK_FILE')
@@ -2272,6 +2404,7 @@ async function picker(daemon: Daemon): Promise<void> {
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.inputText({ text: marker })
     await m.tapOn({ text: 'Attach' })
+    await m.tapOn({ text: 'File' })
     console.log(
       await m.evalBrowserScript({
         script: `const picker=document.querySelector('input[type="file"]');if(!picker)throw new Error('Pending picker input absent');const send=document.querySelector('[aria-label="Send"]');if(send.getAttribute('aria-disabled')!=='true'&&!send.disabled)throw new Error('Send allowed while picker pending');picker.dispatchEvent(new Event('cancel'));for(let n=0;n<50;n++){await new Promise(r=>setTimeout(r,50));if(!document.querySelector('input[type="file"]')&&send.getAttribute('aria-disabled')!=='true'&&!send.disabled){if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(marker)})throw new Error('Cancel lost draft');return JSON.stringify({modernBrowserCancelReleasedPreparation:true,draftPreserved:true})}}throw new Error('Picker cancel left preparation blocked')`
@@ -3089,6 +3222,7 @@ async function videoFixture(daemon: Daemon): Promise<void> {
       script: `window.chatUiVideoInputClick=HTMLInputElement.prototype.click;HTMLInputElement.prototype.click=function(){if(this.type==='file'){this.style.display='block';return}return window.chatUiVideoInputClick.call(this)};return true`
     })
     await m.tapOn({ text: 'Attach' })
+    await m.tapOn({ text: 'File' })
     await m.uploadFile({
       css: 'input[type="file"]',
       path: required('CHAT_UI_VIDEO_FILE')
@@ -3431,6 +3565,9 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
   try {
     await signIn(m, 'Hs')
     await m.openLink({ link: WEB + '/chat' })
+    await m.evalBrowserScript({
+      script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
+    })
     await m.assertVisible({ text: 'Team Members', timeout: 60000 })
     console.log(
       '$ Actual Chrome raw TouchEvent list movement>10px cancels row hold and release navigation; no nativeEvent.pageX shortcut'
@@ -3440,19 +3577,17 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
         script: `const row=document.querySelector(${JSON.stringify(MEMBERS_ROW)});if(!row)throw new Error('Hawks Members row unavailable');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
       })
     )
-    await m.evalBrowserScript({
-      script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
-    })
-    // The conversation's own menu is its row's (develop 2bc27808d removed
-    // the header's), opened while the list is the top screen: once the
-    // conversation is pushed over it at this width, the covered list stays
-    // mounted but takes no taps (develop f6d21316d).
     await rowMenu(m, required('CHAT_UI_CONVERSATION'), true)
+    await m.longPressOn({ css: MEMBERS_ROW })
+    await m.assertVisible({ text: 'Mark unread' })
+    await m.pressKey({ key: 'Escape' })
     await m.tapOn({ css: MEMBERS_ROW })
-    await m.assertVisible({
-      text: required('CHAT_UI_TARGET_TEXT'),
-      timeout: 60000
-    })
+    await assertFixtureBody(
+      m,
+      required('CHAT_UI_MESSAGE'),
+      required('CHAT_UI_TARGET_TEXT')
+    )
+    await dismissNotificationAskOn(m)
     console.log(
       '$ Actual Chrome coarse media + rawTouchEvent bubble500ms recognizes exactly one menu'
     )
@@ -3460,7 +3595,7 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     // settles a moment after the conversation is pushed, so the press waits
     // until the history has stopped moving.
     await m.evalBrowserScript({
-      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-message-' + required('CHAT_UI_MESSAGE') + '"] [tabindex="0"]')});bubble.scrollIntoView({block:'center'});let still=bubble.parentElement;while(still&&!/auto|scroll/.test(getComputedStyle(still).overflowY))still=still.parentElement;still=still||document.scrollingElement;let last=-1,stable=0;while(stable<5){await new Promise(r=>setTimeout(r,100));stable=still.scrollTop===last?stable+1:0;last=still.scrollTop}const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
+      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + required('CHAT_UI_MESSAGE') + '"]')});bubble.scrollIntoView({block:'center'});let still=bubble.parentElement;while(still&&!/auto|scroll/.test(getComputedStyle(still).overflowY))still=still.parentElement;still=still||document.scrollingElement;let last=-1,stable=0;while(stable<5){await new Promise(r=>setTimeout(r,100));stable=still.scrollTop===last?stable+1:0;last=still.scrollTop}const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
     })
     await m.assertVisible({ text: 'Copy' })
     await m.assertVisible({ text: 'Reply' })

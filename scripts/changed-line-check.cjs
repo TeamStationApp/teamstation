@@ -224,9 +224,22 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   }
   const excluded = excluder(topLevel, args.excludes, cwd)
   const changes = {}
-  for (const [path, lines] of Object.entries(all))
-    if (executableFile(path, args.exts) && !excluded(path))
-      changes[path] = lines
+  for (const [path, lines] of Object.entries(all)) {
+    if (!executableFile(path, args.exts) || excluded(path)) continue
+    // LLVM emits no file record for Rust crate roots made entirely of module
+    // and dependency declarations. Any other item still requires counters.
+    if (path.endsWith('.rs')) {
+      const declarationsOnly = readFileSync(join(topLevel, path), 'utf8')
+        .split(/\r?\n/)
+        .every(line =>
+          /^(?:\s*|\s*\/\/.*|#\[cfg\(feature = "[\w-]+"\)\]|(?:pub )?mod \w+;|extern crate \w+;)$/.test(
+            line
+          )
+        )
+      if (declarationsOnly) continue
+    }
+    changes[path] = lines
+  }
   const counts = countsFor(args, topLevel, Object.keys(changes), cwd)
   const report = lineReportFromCounts(changes, counts, () => true, {
     newFiles: added,

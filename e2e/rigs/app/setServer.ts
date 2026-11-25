@@ -61,14 +61,7 @@ export function appLink(path: string): string {
   return `${PHONE_SCHEME}://${path.replace(/^\/+/, '')}`
 }
 
-/**
- * Opens `link` in a phone's app from a stopped app, so the launch reads it:
- * the app routes only the link it was launched with. An iPhone gets it
- * handed to the app by its id, since on a phone the system's own handling
- * of a link stops short of the app it names; a simulator takes it through
- * simctl.
- */
-export async function openInApp(options: {
+interface OpenInAppOptions {
   platform: 'ios' | 'android'
   udid: string
   appId: string
@@ -82,17 +75,19 @@ export async function openInApp(options: {
    */
   hub?: boolean
   run?: Run
-}): Promise<void> {
+}
+
+/** Delivers the URL and reports whether iOS may ask permission to open it. */
+async function deliverAppLink(options: OpenInAppOptions): Promise<boolean> {
   const { platform, udid, appId, link, device } = options
   await device.stopApp({ appId })
   if (platform === 'ios' && options.simulator === true) {
     // A simulator's system hands its own app the link: devicectl sees only
     // phones.
     await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
-  } else if (platform === 'ios' && options.hub === true) {
-    // The system asks once before a link opens the app it names.
+  } else if (platform === 'ios' && (options.hub ?? isHubDevice(udid))) {
     await device.openLink({ link })
-    await device.tapOn({ text: 'Open', optional: true })
+    return true
   } else if (platform === 'ios') {
     await (options.run ?? realRun)('xcrun', [
       'devicectl',
@@ -109,6 +104,23 @@ export async function openInApp(options: {
   } else {
     await device.openLink({ link })
   }
+  return false
+}
+
+/**
+ * Opens `link` in a phone's app from a stopped app, so the launch reads it:
+ * the app routes only the link it was launched with. An iPhone gets it
+ * handed to the app by its id, since on a phone the system's own handling
+ * of a link stops short of the app it names; a simulator takes it through
+ * simctl.
+ */
+export async function openInApp(options: OpenInAppOptions): Promise<void> {
+  if (await deliverAppLink(options))
+    await options.device.tapOn({
+      text: '^Open$',
+      optional: true,
+      timeout: 2500
+    })
 }
 
 export async function setServer(options: {
@@ -160,7 +172,7 @@ export async function setServer(options: {
   const device = options.device
   if (device == null)
     throw new Error(`setServer on ${platform} needs a maestro-d device`)
-  await openInApp({
+  const mayAskToOpen = await deliverAppLink({
     platform,
     udid,
     appId,
@@ -170,9 +182,19 @@ export async function setServer(options: {
     hub: options.hub,
     run: options.run
   })
-  await device.assertVisible({
-    text: `.*${escapeRegExp(hostOf(origin))}.*Restart TeamStation.*`
-  })
+  const text = `.*${escapeRegExp(hostOf(origin))}.*Restart TeamStation.*`
+  if (mayAskToOpen) {
+    // A trusted link goes straight to the app. Observe its acknowledgement
+    // immediately, before looking for a system prompt that never appeared.
+    try {
+      await device.assertVisible({ text, timeout: 10000 })
+    } catch {
+      await device.tapOn({ text: 'Open', optional: true })
+      await device.assertVisible({ text })
+    }
+  } else {
+    await device.assertVisible({ text })
+  }
   // A fresh launch, the ordinary one, now talking to the server kept.
   await device.launchApp({ appId, stopApp: true })
 }

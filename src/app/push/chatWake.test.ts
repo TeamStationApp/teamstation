@@ -81,6 +81,22 @@ describe('opening a chat wake on the device', function () {
     expect(calls).deep.equals(['message cnv_wakeDm 7', 'epochs cnv_wakeDm 0'])
   })
 
+  it('shows the original body for inline and fetched private previews', async () => {
+    const inline = named('inlinePreview')
+    const fetched = named('fetchedPreview')
+    for (const item of [inline, fetched]) {
+      const calls: string[] = []
+      expect((await open(item, depsOf(item, calls)))?.body).equals(
+        'Game details https://example.org/game'
+      )
+      expect(calls).deep.equals(
+        item === inline
+          ? ['epochs cnv_wakeDm 0']
+          : ['message cnv_wakeDm 7', 'epochs cnv_wakeDm 0']
+      )
+    }
+  })
+
   it('opens an epoch key it does not hold from its box, or down the chain, and keeps neither', async function () {
     for (const name of ['uncachedEpoch', 'chainedEpoch']) {
       const item = named(name)

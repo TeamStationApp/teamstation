@@ -157,6 +157,15 @@ pub fn dispatch(op: u32, input: &[u8]) -> Result<Vec<Vec<u8>>> {
             a.count(3)?;
             Ok(vec![seal::message_key(a.bytes(0), a.bytes(1), a.bytes(2))?])
         }
+        ops::SEAL_PREVIEW => {
+            a.count(8)?;
+            let (nonce, ciphertext) = crate::preview::seal(&message_fields(a)?, a.bytes(5), a.bytes(6), a.optional(7))?;
+            Ok(vec![nonce, ciphertext])
+        }
+        ops::OPEN_PREVIEW => {
+            a.count(8)?;
+            Ok(vec![crate::preview::open(&message_fields(a)?, a.bytes(5), a.bytes(6), a.bytes(7))?])
+        }
         ops::SEAL_MESSAGE => {
             a.count(9)?;
             let fields = message_fields(a)?;
@@ -358,6 +367,24 @@ mod tests {
 
     fn n(value: u64) -> [u8; 8] {
         value.to_be_bytes()
+    }
+
+    #[test]
+    fn preview_operations_round_trip_only_with_the_epoch_key() {
+        let epoch = n(1);
+        let author = n(7);
+        let key = [5; 32];
+        let fields: [&[u8]; 5] = [b"room", &epoch, b"message", &author, b"post"];
+        let mut args = fields.to_vec();
+        args.extend_from_slice(&[&key, b"page details", &[]]);
+        let sealed = results(&call_bytes(ops::SEAL_PREVIEW, &input(&args)));
+        assert_eq!(sealed.len(), 2);
+        let mut open = fields.to_vec();
+        open.extend_from_slice(&[&key, &sealed[0], &sealed[1]]);
+        assert_eq!(results(&call_bytes(ops::OPEN_PREVIEW, &input(&open))), [b"page details".to_vec()]);
+        let report_key = seal::message_key(&key, fields[0], fields[2]).unwrap();
+        open[5] = &report_key;
+        assert_eq!(refusal(&call_bytes(ops::OPEN_PREVIEW, &input(&open))), "notAuthentic");
     }
 
     #[test]

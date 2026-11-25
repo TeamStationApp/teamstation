@@ -36,8 +36,11 @@ pub const SHA256_UPDATE: u32 = 32;
 pub const SHA256_FINISH: u32 = 33;
 pub const SAFETY_BYTES: u32 = 34;
 
+pub const SEAL_PREVIEW: u32 = 35;
+pub const OPEN_PREVIEW: u32 = 36;
+
 /// Every op, as `(number, name)`.
-pub const ALL: [(u32, &str); 34] = [
+pub const ALL: [(u32, &str); 36] = [
     (SHA256, "sha256"),
     (RANDOM_BYTES, "randomBytes"),
     (NEW_BOX_KEY_PAIR, "newBoxKeyPair"),
@@ -72,6 +75,8 @@ pub const ALL: [(u32, &str); 34] = [
     (SHA256_UPDATE, "sha256Update"),
     (SHA256_FINISH, "sha256Finish"),
     (SAFETY_BYTES, "safetyBytes"),
+    (SEAL_PREVIEW, "sealPreview"),
+    (OPEN_PREVIEW, "openPreview"),
 ];
 
 #[cfg(test)]

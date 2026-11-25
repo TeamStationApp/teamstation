@@ -14,7 +14,12 @@ import { createRequire } from 'node:module'
 import { basename, join, resolve } from 'node:path'
 
 import {
+  recentPickerPhoto,
+  tapImportedPhoto
+} from '../../../e2e/rigs/chat2Maestro'
+import {
   type ChatConversation,
+  type ChatMessage,
   type Session,
   TeamStationClient
 } from '../../common/api'
@@ -75,6 +80,7 @@ interface Device {
   detach: () => Promise<unknown>
 }
 interface Daemon {
+  readonly hub?: boolean
   startDevice: (options: object) => Promise<unknown>
   attach: (options: object) => Promise<Device>
   shutdown: () => Promise<unknown>
@@ -389,12 +395,7 @@ async function settleAndroidReplyContent(
     async () => {
       const nodes = flatten(await device.hierarchy())
       const row = nodes.find(node => node.id === rowId)
-      const viewport = nodes.find(
-        node =>
-          node.type?.includes('ScrollView') === true &&
-          node.bounds != null &&
-          flatten(node).some(child => child.id === rowId)
-      )?.bounds
+      const viewport = messageViewport(nodes, rowId)
       const children = row == null ? [] : flatten(row)
       const body = children.find(
         node =>
@@ -461,6 +462,101 @@ async function settleAndroidReplyContent(
   )
 }
 
+function messageViewport(
+  nodes: Hierarchy[],
+  rowId?: string
+): Bounds | undefined {
+  const scroll = (
+    nodes.find(
+      node => node.id === 'chat-message-history' && node.bounds != null
+    ) ??
+    nodes.find(
+      node =>
+        node.type?.includes('ScrollView') === true &&
+        node.bounds != null &&
+        flatten(node).some(child =>
+          rowId == null
+            ? child.id?.startsWith('chat-message-') === true
+            : child.id === rowId
+        )
+    )
+  )?.bounds
+  if (scroll == null) return
+  // The native scroll view can extend under the fixed header and composer.
+  const header = nodes.find(
+    node => node.id === 'chat-conversation-identity'
+  )?.bounds
+  const composer = (
+    nodes.find(
+      node => node.id === 'chat-composer-band' && node.bounds != null
+    ) ?? nodes.find(node => node.id === 'chat-composer')
+  )?.bounds
+  const pins = nodes.find(node => node.id === 'chat-pinned-band')?.bounds
+  const top = Math.max(
+    scroll.y,
+    header == null ? scroll.y : header.y + header.height,
+    pins == null ? scroll.y : pins.y + pins.height
+  )
+  const bottom = Math.min(scroll.y + scroll.height, composer?.y ?? Infinity)
+  return bottom > top ? { ...scroll, y: top, height: bottom - top } : undefined
+}
+
+/** The part of an actual message body that can receive a gesture. */
+function visibleBodyPoint(
+  body: Bounds,
+  viewport: Bounds
+): { x: number; y: number } | undefined {
+  const top = Math.max(body.y, viewport.y + 8)
+  const bottom = Math.min(
+    body.y + body.height,
+    viewport.y + viewport.height - 8
+  )
+  const left = Math.max(body.x, viewport.x)
+  const right = Math.min(body.x + body.width, viewport.x + viewport.width)
+  if (
+    right <= left ||
+    bottom <= top ||
+    bottom - top < Math.min(body.height, 44)
+  )
+    return
+  return {
+    x: Math.round((left + right) / 2),
+    y: Math.round((top + bottom) / 2)
+  }
+}
+
+async function dismissMessageSpotlight(device: Device): Promise<void> {
+  const nodes = flatten(await device.hierarchy())
+  const frame = nodes.find(node => node.id === 'chat-message-spotlight')?.bounds
+  const controls = nodes.find(
+    node => node.id === 'chat-message-spotlight-controls'
+  )?.bounds
+  assert(frame != null && controls != null, 'Measured spotlight required')
+  // The panel keeps a horizontal gutter even when the keyboard is open.
+  // Pick the wider side and stay level with the visible controls.
+  const right = controls.x + controls.width
+  const leftGap = controls.x - frame.x
+  const rightGap = frame.x + frame.width - right
+  assert(
+    Math.max(leftGap, rightGap) >= 2,
+    'Spotlight backdrop must be reachable'
+  )
+  const x = leftGap >= rightGap ? frame.x + leftGap / 2 : right + rightGap / 2
+  const top = Math.max(frame.y, controls.y)
+  const bottom = Math.min(frame.y + frame.height, controls.y + controls.height)
+  assert(bottom > top, 'Spotlight controls must be visible')
+  await device.tapOnPoint({
+    point: `${Math.round(x)},${Math.round((top + bottom) / 2)}`
+  })
+  await until('The spotlight must dismiss after a backdrop tap', async () =>
+    flatten(await device.hierarchy()).some(
+      node => node.id === 'chat-message-spotlight'
+    )
+      ? undefined
+      : true
+  )
+}
+
 async function physicalMessageHold(
   device: Device,
   rowId: string,
@@ -487,12 +583,7 @@ async function physicalMessageHold(
                 node.bounds != null
             )
       const current = body?.bounds
-      viewport = nodes.find(
-        node =>
-          node.type?.includes('ScrollView') === true &&
-          node.bounds != null &&
-          flatten(node).some(child => child.id === rowId)
-      )?.bounds
+      viewport = messageViewport(nodes, rowId)
       assert(
         viewport != null,
         'Actual message viewport required for physical hold'
@@ -504,11 +595,7 @@ async function physicalMessageHold(
         viewport,
         observedAt: Date.now()
       }
-      if (
-        current == null ||
-        current.y + current.height <= viewport.y + 8 ||
-        current.y >= viewport.y + viewport.height - 8
-      ) {
+      if (current == null || visibleBodyPoint(current, viewport) == null) {
         assert(
           parent != null,
           'Exact identified row required before body preparation'
@@ -537,15 +624,17 @@ async function physicalMessageHold(
       previous = current
       return stable ? current : undefined
     },
-    15000
+    // Two WDA hierarchy reads in a retained iPhone conversation can each
+    // take several seconds, even when the target is already on screen.
+    platform === 'ios' ? 60000 : 15000
   )
-  const x = Math.round(bounds.x + bounds.width / 2)
   assert(viewport != null)
-  const y = Math.round(
-    (Math.max(bounds.y, viewport.y + 8) +
-      Math.min(bounds.y + bounds.height, viewport.y + viewport.height - 8)) /
-      2
+  const point = visibleBodyPoint(bounds, viewport)
+  assert(
+    point != null,
+    'The identified message must have a visible gesture target'
   )
+  const { x, y } = point
   results.physicalHoldReceipts = [
     ...((results.physicalHoldReceipts as object[] | undefined) ?? []),
     {
@@ -580,13 +669,18 @@ async function physicalMessageHold(
   }
 }
 
-async function tapVisibleControl(device: Device, label: string): Promise<void> {
+async function tapVisibleControl(
+  device: Device,
+  label: string | ((node: Hierarchy) => boolean)
+): Promise<void> {
   const node = await until(
     'Actual native control must be present',
     async () =>
       flatten(await device.hierarchy()).find(
         node =>
-          (node.text === label || node.label === label) &&
+          (typeof label === 'string'
+            ? node.text === label || node.label === label
+            : label(node)) &&
           node.bounds != null &&
           node.bounds.width > 0 &&
           node.bounds.height > 0
@@ -675,11 +769,11 @@ async function until<T>(
 
 /**
  * A leased iPhone's keyboard can drop or reorder fast input (an e-mail lost
- * its "@ch"): there, credentials are typed one character at a time. A
+ * its "@ch"): there, type fixture text one character at a time. A
  * physical Android 17 phone replaces the field on every input, so Android
- * always types the whole credential at once.
+ * always types the whole value at once.
  */
-async function typeCredential(m: Device, text: string): Promise<void> {
+async function typeFixtureText(m: Device, text: string): Promise<void> {
   if (process.env.CHAT_UI_NATIVE_PHYSICAL !== '1' || platform !== 'ios') {
     await m.inputText({ text })
     return
@@ -721,7 +815,7 @@ async function main(): Promise<void> {
           Number(idleTimeout) <= 10000,
         'Explicit native idle timeout must be supported milliseconds'
       )
-    device = await daemon.attach({
+    const attachOptions = {
       device: deviceId,
       platform,
       // A leased iPhone adds photos on the device itself, through devicelab.
@@ -729,21 +823,39 @@ async function main(): Promise<void> {
         ? {}
         : { driver: process.env.CHAT_UI_NATIVE_DRIVER }),
       appId: fixture.appId,
-      appFile,
       artifacts: 'none',
       driverStartTimeout: 180,
       ...idleSettings
-    })
+    }
+    device = await daemon.attach({ ...attachOptions, appFile })
     results.driverSettings = idleSettings
     await device.stopApp({ appId: fixture.appId }).catch(() => undefined)
     await device.launchApp({
       appId: fixture.appId,
-      permissions: { all: 'unset' },
+      ...(process.env.CHAT_UI_NATIVE_PHYSICAL === '1'
+        ? {}
+        : { permissions: { all: 'unset' } }),
       ...(platform === 'ios'
         ? { environment: { TS_DECLARED_AGE_LOWER: '18' } }
         : {})
     })
+    if (platform === 'android' && daemon.hub === true) {
+      // Installation can expose a landscape launcher. UIAutomator caches the
+      // display size when it attaches, so bind again to the running app.
+      await device.detach()
+      device = await daemon.attach(attachOptions)
+    }
     const m = device
+    if (platform === 'android' && process.env.CHAT_UI_NATIVE_PHYSICAL === '1') {
+      const labels = strings(flatten(await m.hierarchy()))
+      if (
+        labels.some(label =>
+          /^Allow .+ to send you notifications\?$/.test(label)
+        )
+      ) {
+        await m.tapOn({ text: "^Don['’]t allow$" })
+      }
+    }
     if (process.argv[2] === 'locked-link') {
       stage = 'normal-disposable-native-link'
       assert(
@@ -769,12 +881,12 @@ async function main(): Promise<void> {
         await m.assertVisible({ text: 'E-mail address', timeout: 60000 })
         await m.tapOn({ text: 'E-mail address' })
         await m.eraseText()
-        await typeCredential(m, fixture.actor.email)
+        await typeFixtureText(m, fixture.actor.email)
         if (platform === 'android') await m.hideKeyboard()
         else await m.tapOn({ text: 'Sign in to TeamStation' })
         await m.tapOn({ text: 'Password' })
         await m.eraseText()
-        await typeCredential(m, fixture.actor.password)
+        await typeFixtureText(m, fixture.actor.password)
         if (platform === 'android') await m.hideKeyboard()
         else {
           // Blur the secure field before tapping a button below the keyboard.
@@ -897,20 +1009,38 @@ async function main(): Promise<void> {
       )
       return
     }
-    await m.assertVisible({ text: 'Chat', timeout: 60000 })
-    const chatTab = flatten(await m.hierarchy())
-      .filter(
-        node =>
-          (node.text === 'Chat' || node.label === 'Chat') && node.bounds != null
+    if (
+      platform === 'ios' &&
+      daemon.hub === true &&
+      [
+        'hold-probe',
+        'messages',
+        'picker',
+        'picker-large',
+        'picker-document-large'
+      ].includes(process.argv[2])
+    ) {
+      // A retained phone can resume its previous tab or conversation. Start
+      // these message and picker checks at the list to select their fixture.
+      await m.assertVisible({ text: '^Chat$', timeout: 60000 })
+      await m.openLink({ link: `${fixture.scheme}://chat` })
+    } else {
+      await m.assertVisible({ text: 'Chat', timeout: 60000 })
+      const chatTab = flatten(await m.hierarchy())
+        .filter(
+          node =>
+            (node.text === 'Chat' || node.label === 'Chat') &&
+            node.bounds != null
+        )
+        .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]
+      assert(
+        chatTab?.bounds != null,
+        'Retained app must expose the native Chat tab'
       )
-      .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]
-    assert(
-      chatTab?.bounds != null,
-      'Retained app must expose the native Chat tab'
-    )
-    await m.tapOnPoint({
-      point: `${Math.round(chatTab.bounds.x + chatTab.bounds.width / 2)},${Math.round(chatTab.bounds.y + chatTab.bounds.height / 2)}`
-    })
+      await m.tapOnPoint({
+        point: `${Math.round(chatTab.bounds.x + chatTab.bounds.width / 2)},${Math.round(chatTab.bounds.y + chatTab.bounds.height / 2)}`
+      })
+    }
     if (process.argv[2] === 'inspect-unready') {
       const tree = await m.hierarchy()
       writeFileSync(
@@ -942,7 +1072,7 @@ async function main(): Promise<void> {
     results.deviceInfo = await m.platformInfo()
     results.appFile = appFile
     results.buildName = basename(appFile)
-    if (platform === 'android')
+    if (platform === 'android' || appFile.endsWith('.ipa'))
       results.buildHash = createHash('sha256')
         .update(readFileSync(appFile))
         .digest('hex')
@@ -1127,25 +1257,33 @@ async function main(): Promise<void> {
           await m.assertVisible({ text: fixture.replyText, timeout: 10000 })
         })
     }
+    async function messageHistory(
+      conversationId: string
+    ): Promise<Array<Pick<ChatMessage, 'id' | 'seq' | 'senderUserId'>>> {
+      const room = (await api.chatConversations()).find(
+        row => row.id === conversationId
+      )
+      assert(room != null, 'Current message scope must remain accessible')
+      const rows: Array<Pick<ChatMessage, 'id' | 'seq' | 'senderUserId'>> = []
+      let after = 0
+      while (after < room.lastSeq) {
+        const page = await api.chatMessages(conversationId, {
+          after,
+          limit: 100
+        })
+        if (page.length === 0) break
+        for (const { id, seq, senderUserId } of page)
+          rows.push({ id, seq, senderUserId })
+        after = page[page.length - 1].seq
+      }
+      return rows
+    }
     async function revealMessage(
       conversationId: string,
       messageId: string
     ): Promise<void> {
-      const conversation = (await api.chatConversations()).find(
-        row => row.id === conversationId
-      )
-      assert(
-        conversation != null,
-        'Current message scope must remain accessible'
-      )
-      const pages = await Promise.all([
-        api.chatMessages(conversationId, { after: 0, limit: 100 }),
-        api.chatMessages(conversationId, {
-          before: conversation.lastSeq + 1,
-          limit: 100
-        })
-      ])
-      const sequences = new Map(pages.flat().map(row => [row.id, row.seq]))
+      const history = await messageHistory(conversationId)
+      const sequences = new Map(history.map(row => [row.id, row.seq]))
       const targetSeq = sequences.get(messageId)
       assert(
         targetSeq != null,
@@ -1156,14 +1294,7 @@ async function main(): Promise<void> {
         'Exact identified message must reach its real visible pane',
         async () => {
           const nodes = flatten(await m.hierarchy())
-          const pane = nodes.find(
-            node =>
-              node.type?.includes('ScrollView') === true &&
-              node.bounds != null &&
-              flatten(node).some(
-                child => child.id?.startsWith('chat-message-') === true
-              )
-          )?.bounds
+          const pane = messageViewport(nodes)
           assert(
             pane != null,
             'Actual current message scroll viewport required'
@@ -2043,17 +2174,7 @@ async function main(): Promise<void> {
         )
         await photo(`hold-probe-${trial + 1}-menu`)
         results.stationaryHoldTrials = trial + 1
-        await m.tapOnPoint({ point: '5%,15%' })
-        await until(
-          'The exact message action menu must dismiss',
-          async () =>
-            flatten(await m.hierarchy()).some(
-              node => node.text === 'Reply' || node.label === 'Reply'
-            )
-              ? undefined
-              : true,
-          3000
-        )
+        await dismissMessageSpotlight(m)
       }
       pass(
         'bounded stationary 550 ms holds open message actions on the exact readable body'
@@ -3233,15 +3354,8 @@ async function main(): Promise<void> {
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: draft })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const photoLabel = await until(
-        'Owned small imported photo must be selectable',
-        async () =>
-          strings(flatten(await m.hierarchy())).find(label =>
-            /^Photo(?: taken|,)/.test(label)
-          )
-      )
-      await tapStableControl(m, photoLabel)
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, platform)
       const fileLabel = await until(
         'Prepared file must remain in native draft',
         async () =>
@@ -5274,44 +5388,109 @@ async function main(): Promise<void> {
       await m.inputText({ text: fixture.draft })
       await m.tapOn({ text: 'Attach' })
       await m.tapOn({ text: 'File' })
-      await m.assertVisible({ text: 'Cancel', timeout: 15000 })
+      if (platform === 'ios') {
+        await m.assertVisible({ text: 'Cancel', timeout: 15000 })
+      } else {
+        await until(
+          'Android system file picker',
+          async () => {
+            const labels = strings(flatten(await m.hierarchy()))
+            return labels.some(
+              label =>
+                label === 'Show roots' ||
+                label === fixture.oversizeDocumentName ||
+                label === fixture.oversizeDocumentFolder
+            )
+              ? true
+              : undefined
+          },
+          15000
+        )
+      }
       writeFileSync(
         join(resultDirectory, `${platform}-document-picker-initial.json`),
         JSON.stringify(await m.hierarchy(), null, 2)
       )
       await photo('document-picker-initial')
-      let fileLabels = strings(flatten(await m.hierarchy()))
-      if (
-        !fileLabels.includes(fixture.oversizeDocumentName) &&
-        !fileLabels.includes(fixture.oversizeDocumentFolder)
-      ) {
-        if (fileLabels.includes('Browse')) {
-          const browse = flatten(await m.hierarchy())
-            .filter(
-              node =>
-                (node.text === 'Browse' || node.label === 'Browse') &&
-                node.bounds != null
-            )
-            .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]
-          assert(
-            browse?.bounds != null,
-            'Native document browser must be reachable'
-          )
-          await m.tapOnPoint({
-            point: `${Math.round(browse.bounds.x + browse.bounds.width / 2)},${Math.round(browse.bounds.y + browse.bounds.height / 2)}`
-          })
+      if (platform === 'android') {
+        const name = fixture.oversizeDocumentName
+        const fileTitle = {
+          id: 'android:id/title',
+          text: '^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
         }
-        await m.assertVisible({ text: 'On My iPhone', timeout: 15000 })
-        await tapVisibleControl(m, 'On My iPhone')
+        const fileVisible = async (): Promise<boolean> =>
+          flatten(await m.hierarchy()).some(
+            node =>
+              node.id === fileTitle.id &&
+              (node.text === name || node.label === name) &&
+              node.bounds != null &&
+              node.bounds.height > 0
+          )
+        if (!(await fileVisible())) {
+          await m.tapOn({ text: '^Show roots$' })
+          await m.tapOn({ text: fixture.oversizeDocumentFolder })
+          if (!(await fileVisible())) {
+            await m.tapOn({ text: '^Search$' })
+            await m.inputText({ text: name })
+            await m.pressKey({ key: 'ENTER' })
+          }
+        }
+        // Search also exposes the exact filename as editable text.
+        // Choose the document title so the keyboard cannot receive this tap.
+        await m.assertVisible({ ...fileTitle, timeout: 15000 })
+        await m.tapOn(fileTitle)
+      } else {
+        let fileLabels = strings(flatten(await m.hierarchy()))
+        // Files can reopen its previous Browse location. Look in Recents for
+        // the supplied document before navigating to its configured folder.
+        if (
+          !fileLabels.includes(fixture.oversizeDocumentName) &&
+          fileLabels.includes('Recents')
+        ) {
+          await tapVisibleControl(m, 'Recents')
+          fileLabels = strings(flatten(await m.hierarchy()))
+        }
+        if (
+          !fileLabels.includes(fixture.oversizeDocumentName) &&
+          !fileLabels.includes(fixture.oversizeDocumentFolder)
+        ) {
+          if (fileLabels.includes('Browse')) {
+            const browse = flatten(await m.hierarchy())
+              .filter(
+                node =>
+                  (node.text === 'Browse' || node.label === 'Browse') &&
+                  node.bounds != null
+              )
+              .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]
+            assert(
+              browse?.bounds != null,
+              'Native document browser must be reachable'
+            )
+            await m.tapOnPoint({
+              point: `${Math.round(browse.bounds.x + browse.bounds.width / 2)},${Math.round(browse.bounds.y + browse.bounds.height / 2)}`
+            })
+          }
+          await m.assertVisible({ text: 'On My iPhone', timeout: 15000 })
+          await tapVisibleControl(m, 'On My iPhone')
+        }
+        fileLabels = strings(flatten(await m.hierarchy()))
+        if (!fileLabels.includes(fixture.oversizeDocumentName))
+          await tapVisibleControl(m, fixture.oversizeDocumentFolder)
+        await m.assertVisible({
+          text: fixture.oversizeDocumentName,
+          timeout: 15000
+        })
+        // Files uses the filename for renaming. Tap the thumbnail in its cell
+        // to select the document, as in the normal attachment-panel scenario.
+        const name = fixture.oversizeDocumentName
+        const cell = flatten(await m.hierarchy()).find(
+          node =>
+            node.type?.endsWith('Cell') === true &&
+            node.id?.startsWith(name + ',') === true
+        )
+        assert(cell?.id != null, 'Expected the supplied document’s Files cell')
+        await m.tapOn({ id: cell.id, point: '50%,24%' })
       }
-      fileLabels = strings(flatten(await m.hierarchy()))
-      if (!fileLabels.includes(fixture.oversizeDocumentName))
-        await tapVisibleControl(m, fixture.oversizeDocumentFolder)
-      await m.assertVisible({
-        text: fixture.oversizeDocumentName,
-        timeout: 15000
-      })
-      await tapVisibleControl(m, fixture.oversizeDocumentName)
       if (strings(flatten(await m.hierarchy())).includes('Open'))
         await tapVisibleControl(m, 'Open')
       await until(
@@ -5357,15 +5536,8 @@ async function main(): Promise<void> {
       await m.eraseText({ characters: 2048 })
       await m.inputText({ text: fixture.draft })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const largePhoto = await until(
-        'Owned over-limit photo must appear in the native picker',
-        async () =>
-          strings(flatten(await m.hierarchy())).find(label =>
-            /^Photo(?: taken|,)/.test(label)
-          )
-      )
-      await tapVisibleControl(m, largePhoto)
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, platform)
       await until(
         'Native metadata size guard must reject the over-limit photo',
         async () =>
@@ -5438,17 +5610,27 @@ async function main(): Promise<void> {
         'File picker cancellation preserves the draft'
       )
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      await until('Photo picker must expose owned media cells', async () =>
-        strings(flatten(await m.hierarchy())).some(label =>
-          /^Photo(?: taken|,)/.test(label)
+      await m.tapOn({ text: 'Photos' })
+      if (platform === 'android') {
+        await until('Photo picker must expose owned media cells', async () =>
+          recentPickerPhoto(await m.hierarchy(), platform)
         )
-          ? true
-          : undefined
-      )
-      const cancelLabels = strings(flatten(await m.hierarchy()))
-      const cancel = cancelLabels.includes('Cancel') ? 'Cancel' : 'Close'
-      await tapVisibleControl(m, cancel)
+        await m.back()
+      } else {
+        const cancel = { text: '^(Cancel|Close)$', traits: 'button' }
+        await m.assertVisible({ ...cancel, timeout: 15000 })
+        // A selector-relative center can land over the grid on a system sheet.
+        // Use the screen coordinates of its actual dismissal button.
+        await tapVisibleControl(
+          m,
+          node =>
+            node.type === 'Button' &&
+            [node.id, node.label, node.text].some(
+              name => name === 'Cancel' || name === 'Close'
+            )
+        )
+        await m.assertNotVisible({ ...cancel, timeout: 15000 })
+      }
       await m.assertVisible({ id: 'chat-composer', timeout: 15000 })
       assert.equal(
         await composerValue(m),
@@ -5456,15 +5638,8 @@ async function main(): Promise<void> {
         'Photo picker cancellation preserves the draft'
       )
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
-      const selectedPhoto = await until(
-        'Owned imported photo must be selectable',
-        async () =>
-          strings(flatten(await m.hierarchy())).find(label =>
-            /^Photo(?: taken|,)/.test(label)
-          )
-      )
-      await tapVisibleControl(m, selectedPhoto)
+      await m.tapOn({ text: 'Photos' })
+      await tapImportedPhoto(m, platform)
       const removeLabel = await until(
         'Native picker must read the selected photo and expose a removable draft attachment',
         async () =>
@@ -5501,15 +5676,8 @@ async function main(): Promise<void> {
       if (fixture.oversizePhotoPath != null) {
         await m.addMedia({ files: [fixture.oversizePhotoPath] })
         await m.tapOn({ text: 'Attach' })
-        await m.tapOn({ text: 'Photo library' })
-        const largePhoto = await until(
-          'Owned over-limit photo must appear in the native picker',
-          async () =>
-            strings(flatten(await m.hierarchy())).find(label =>
-              /^Photo(?: taken|,)/.test(label)
-            )
-        )
-        await tapVisibleControl(m, largePhoto)
+        await m.tapOn({ text: 'Photos' })
+        await tapImportedPhoto(m, platform)
         await until(
           'Native metadata size guard must reject the over-limit photo',
           async () =>
@@ -5554,7 +5722,7 @@ async function main(): Promise<void> {
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: fixture.draft })
       await m.tapOn({ text: 'Attach' })
-      await m.tapOn({ text: 'Photo library' })
+      await m.tapOn({ text: 'Photos' })
       await m.assertVisible({ text: 'Photos', timeout: 30000 })
       writeFileSync(
         join(resultDirectory, `${platform}-native-picker-hierarchy.json`),
@@ -5732,9 +5900,8 @@ async function main(): Promise<void> {
       )
       await revealMessage(fixture.conversationId, posts[0].id)
       await physicalMessageHold(m, `chat-message-${posts[0].id}`, body, 550)
-      for (const action of ['Reply', 'Copy', 'Delete'])
+      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
         await m.assertVisible({ text: action, timeout: 10000 })
-      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
       await photo('own-message-actions-after')
       await m.tapOnPoint({ point: '5%,15%' })
       results.replySend = {
@@ -5745,7 +5912,7 @@ async function main(): Promise<void> {
         senderMatches: true,
         submittedTextAndContextCleared: true,
         ownDeleteAvailable: true,
-        editUnavailable: true,
+        ownEditAvailable: true,
         protectedPostsNotDeleted: true
       }
       pass(
@@ -5759,7 +5926,7 @@ async function main(): Promise<void> {
         '$ S6 native message holds, quick reactions, Copy and blur; S7 reply inset/jump; S8 personal pin result'
       )
       await open()
-      const originalMessages = await api.chatMessages(fixture.conversationId)
+      const originalMessages = await messageHistory(fixture.conversationId)
       const original = originalMessages.find(
         row => row.id === fixture.originalMessageIds[0]
       )
@@ -5846,20 +6013,34 @@ async function main(): Promise<void> {
         !strings(flatten(await m.hierarchy())).includes('Copy'),
         'Early native release must not recognize actions'
       )
-      const movingBody = flatten(await m.hierarchy()).find(
-        node => node.text === fixture.targetText && node.bounds != null
-      )
+      const movingNodes = flatten(await m.hierarchy())
+      const movingRowId = `chat-message-${originalId}`
+      const movingRow = movingNodes.find(node => node.id === movingRowId)
       assert(
-        movingBody?.bounds != null,
-        'Actual visible message body required for scroll cancellation'
+        movingRow != null,
+        'Actual selected row required for scroll cancellation'
       )
+      const movingBody = flatten(movingRow).find(
+        node =>
+          node.text === fixture.targetText || node.label === fixture.targetText
+      )?.bounds
+      const movingViewport = messageViewport(movingNodes, movingRowId)
+      assert(
+        movingBody != null && movingViewport != null,
+        'Actual message and viewport required'
+      )
+      const start = visibleBodyPoint(movingBody, movingViewport)
+      assert(
+        start != null,
+        'The cancellation swipe must start on visible message text'
+      )
+      const endY =
+        start.y - 80 >= movingViewport.y + 8
+          ? start.y - 80
+          : Math.min(start.y + 80, movingViewport.y + movingViewport.height - 8)
       await m.dragAndDrop({
-        from: {
-          point: `${Math.round(movingBody.bounds.x + movingBody.bounds.width / 2)},${Math.round(movingBody.bounds.y + movingBody.bounds.height / 2)}`
-        },
-        to: {
-          point: `${Math.round(movingBody.bounds.x + movingBody.bounds.width / 2)},${Math.round(movingBody.bounds.y + movingBody.bounds.height / 2 - 80)}`
-        },
+        from: { point: `${start.x},${start.y}` },
+        to: { point: `${start.x},${endY}` },
         holdDuration: 10,
         duration: 550
       })
@@ -5897,21 +6078,35 @@ async function main(): Promise<void> {
         'More emoji'
       ])
         await m.assertVisible({ text: label })
-      for (const label of ['Edit', 'Report', 'Delete for everyone'])
-        await m.assertNotVisible({ text: label, timeout: 1000 })
-      if (!target.canModerate)
+      await m.assertNotVisible({ text: 'Delete for everyone', timeout: 1000 })
+      const ownMessage = original.senderUserId === fixture.actor.userId
+      const edit = { text: '^Edit$', timeout: 3000 }
+      if (ownMessage) await m.assertVisible(edit)
+      else await m.assertNotVisible(edit)
+      for (const label of ['Report', 'Block', 'Report and Block']) {
+        const control = { text: '^' + label + '$', timeout: 3000 }
+        if (ownMessage) await m.assertNotVisible(control)
+        else await m.assertVisible(control)
+      }
+      if (!ownMessage && !target.canModerate)
         await m.assertNotVisible({ text: 'Delete', timeout: 1000 })
       else await m.assertVisible({ text: 'Delete', timeout: 10000 })
       await photo('message-actions-after')
-      await m.tapOnPoint({ point: '5%,15%' })
+      await dismissMessageSpotlight(m)
       await m.assertNotVisible({ text: 'Copy', timeout: 1000 })
       pass(
         'recognized native message menu, exact reactions and permission-filtered actions over blur'
       )
       stage = 'S6-copy'
       await messageMenu()
-      await m.tapOn({ text: 'Copy' })
-      await m.assertNotVisible({ text: 'Copy', timeout: 3000 })
+      await tapStableControl(m, 'Copy')
+      await until('Copy must close the selected message menu', async () =>
+        flatten(await m.hierarchy()).some(
+          node => node.id === 'chat-message-spotlight'
+        )
+          ? undefined
+          : true
+      )
       await m.tapOn({ id: 'chat-composer' })
       await m.longPressOn({ id: 'chat-composer', duration: 650 })
       const paste = await until(
@@ -5939,14 +6134,17 @@ async function main(): Promise<void> {
         fixture.targetText,
         'Native Copy must paste only the readable body without quoted context or metadata'
       )
-      await m.eraseText({ characters: 2048 })
+      await m.eraseText({ characters: fixture.targetText.length })
+      const remaining = await composerValue(m)
+      if (remaining.length > 0) await clearNativeComposer(m, remaining)
+      if (platform === 'android') await m.hideKeyboard()
       await m.tapOn({ text: 'Back' })
       await open()
       pass('native Copy round trip equals only the selected message body')
       stage = 'S8-pin-result'
       if (wasPinned) {
         await messageMenu()
-        await m.tapOn({ text: 'Unpin' })
+        await tapStableControl(m, 'Unpin')
         await until('Native prior pin did not remove', async () =>
           !(await api.chatPins(fixture.conversationId)).some(
             row => row.messageId === originalId
@@ -5956,7 +6154,7 @@ async function main(): Promise<void> {
         )
       }
       await messageMenu()
-      await m.tapOn({ text: 'Pin' })
+      await tapStableControl(m, 'Pin')
       await until('Personal native message pin did not persist', async () =>
         (await api.chatPins(fixture.conversationId)).some(
           row => row.messageId === original.id
@@ -6028,13 +6226,39 @@ async function main(): Promise<void> {
       if (process.env.CHAT_UI_NATIVE_RECORD_STOP != null)
         writeFileSync(process.env.CHAT_UI_NATIVE_RECORD_STOP, 'stop')
       stage = 'S6-reaction-toggles'
+      const rowId = `chat-message-${originalId}`
+      async function waitForReaction(
+        emoji: string,
+        present: boolean
+      ): Promise<void> {
+        const label = `${emoji}, 1`
+        await until(
+          `Expected ${label} to be ${present ? 'visible on' : 'removed from'} the original message`,
+          async () => {
+            const nodes = flatten(await m.hierarchy())
+            const row = nodes.find(node => node.id === rowId)
+            const viewport = messageViewport(nodes, rowId)
+            if (row?.bounds == null || viewport == null) return
+            if (visibleBodyPoint(row.bounds, viewport) == null) return
+            const chip = flatten(row).find(node =>
+              strings([node]).includes(label)
+            )
+            if (!present) return chip == null ? true : undefined
+            return chip?.bounds != null &&
+              visibleBodyPoint(chip.bounds, viewport) != null
+              ? true
+              : undefined
+          },
+          platform === 'ios' ? 60000 : 30000
+        )
+      }
       for (const emoji of ['❤️', '👍', '👎', '😂', '😮', '😢']) {
         const before = (await api.chatConversations()).find(
           row => row.id === fixture.conversationId
         )!
         await messageMenu()
-        await m.tapOn({ text: `React with ${emoji}` })
-        await m.assertVisible({ text: `${emoji}, 1`, timeout: 10000 })
+        await tapStableControl(m, `React with ${emoji}`)
+        await waitForReaction(emoji, true)
         if (emoji === '❤️') {
           await physicalMessageHold(
             m,
@@ -6053,23 +6277,17 @@ async function main(): Promise<void> {
             10000
           )
           await photo('reaction-chip-hold-actions')
-          await m.tapOnPoint({ point: '5%,15%' })
-          assert(
-            strings(flatten(await m.hierarchy())).includes(`${emoji}, 1`),
-            'Holding the reaction chip must not perform its short toggle'
-          )
+          await dismissMessageSpotlight(m)
+          await waitForReaction(emoji, true)
           pass(
             'physical nested reaction hold selects the message without toggling its reaction'
           )
         }
-        await m.tapOn({ text: `${emoji}, 1` })
-        await until(
-          'Native reaction toggle did not restore the visible state',
-          async () =>
-            !strings(flatten(await m.hierarchy())).includes(`${emoji}, 1`)
-              ? true
-              : undefined
-        )
+        await m.tapOn({
+          text: `^${emoji}, 1$`,
+          childOf: { id: `chat-message-${originalId}` }
+        })
+        await waitForReaction(emoji, false)
         const after = (await api.chatConversations()).find(
           row => row.id === fixture.conversationId
         )!
@@ -6084,8 +6302,11 @@ async function main(): Promise<void> {
           'Reaction toggle must not change post time'
         )
       }
+      // Cancel reply restores the focused composer. Finish that keyboard
+      // transition before opening the independent reaction picker.
+      if (platform === 'android') await m.hideKeyboard()
       await messageMenu()
-      await m.tapOn({ text: 'More emoji' })
+      await m.tapOn({ text: '^More emoji$' })
       await m.assertVisible({ text: 'More emoji', timeout: 10000 })
       await m.tapOn({ text: 'Cancel' })
       pass('all six native quick reaction toggles and More emoji picker')
@@ -6111,7 +6332,8 @@ async function main(): Promise<void> {
         (await composerValue(m)).includes(fixture.draft),
         'Cancel reply must preserve unsent typed text'
       )
-      await m.eraseText({ characters: 2048 })
+      await m.tapOn({ id: 'chat-composer' })
+      await clearNativeComposer(m, await composerValue(m))
       assert(
         fixture.nativeReplyText != null,
         'Private synthetic outgoing reply text required'
@@ -6120,6 +6342,7 @@ async function main(): Promise<void> {
       await tapVisibleControl(m, 'Reply')
       await m.tapOn({ id: 'chat-composer' })
       await m.inputText({ text: fixture.nativeReplyText })
+      assert.equal(await composerValue(m), fixture.nativeReplyText)
       const beforeReply = await current()
       const previous = beforeReply.lastPostId
       const previousOwnPosts = new Set(
@@ -6131,6 +6354,7 @@ async function main(): Promise<void> {
           .map(row => row.id)
       )
       await m.tapOn({ text: 'Send' })
+      if (platform === 'android') await m.hideKeyboard()
       await m.assertVisible({ text: fixture.nativeReplyText, timeout: 60000 })
       await until('Native outgoing reply not observed', async () =>
         (await current()).lastPostId !== previous ? true : undefined
@@ -6174,23 +6398,22 @@ async function main(): Promise<void> {
         fixture.nativeReplyText,
         550
       )
-      for (const action of ['Reply', 'Copy', 'Delete'])
+      for (const action of ['Reply', 'Edit', 'Copy', 'Delete'])
         await m.assertVisible({ text: action, timeout: 10000 })
-      await m.assertNotVisible({ text: 'Edit', timeout: 1000 })
       results.messagePermissionMatrix = {
         receivedDeleteAvailable: target.canModerate,
         ownDeleteAvailable: true,
-        editUnavailable: true,
+        ownEditAvailable: true,
         protectedMessagesNotDeleted: true
       }
       await photo('own-message-actions-after')
-      await m.tapOnPoint({ point: '5%,15%' })
+      await dismissMessageSpotlight(m)
       pass(
         'native reply Cancel keeps draft; successful encrypted reply send clears context exactly once'
       )
       if (!(fixture.initialMessagePinned ?? wasPinned)) {
         await messageMenu()
-        await m.tapOn({ text: 'Unpin' })
+        await tapStableControl(m, 'Unpin')
         await until('Personal pin cleanup did not persist', async () =>
           !(await api.chatPins(fixture.conversationId)).some(
             row => row.messageId === original.id
@@ -6778,7 +7001,7 @@ async function main(): Promise<void> {
         await reveal(m, { text: 'New message' })
         await m.tapOn({ text: 'New message' })
         await m.tapOn({ text: 'Name' })
-        await m.inputText({ text: candidate.shortName })
+        await typeFixtureText(m, candidate.shortName)
         await m.tapOn({ text: `Pick ${candidate.shortName}` })
         await m.tapOn({ text: 'Start conversation' })
         await m.assertVisible({ id: 'chat-composer', timeout: 60000 })
@@ -7381,7 +7604,7 @@ async function main(): Promise<void> {
       JSON.stringify(results, null, 2)
     )
     await device?.detach().catch(() => undefined)
-    await daemon.shutdown().catch(() => undefined)
+    if (daemon.hub !== true) await daemon.shutdown().catch(() => undefined)
     await daemon.close()
   }
 }

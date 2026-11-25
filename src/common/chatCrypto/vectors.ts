@@ -27,6 +27,7 @@ import { runIdentityVectors } from './identityVectors'
 import { signingPublicKey } from './keys'
 import { linkCode } from './linkCode'
 import { GENESIS_HASH, logRowHash } from './logHash'
+import { runPreviewVectors } from './previewVectors'
 import { safetyNumber } from './safetyNumber'
 import { bucketSize, messageKey, openMessage, sealMessage } from './seal'
 import { openAttachment, sealAttachment } from './stream'
@@ -437,7 +438,7 @@ export function runVectors(): VectorResult[] {
     () => linkCode(recipient.publicKey, 'clk_link1'),
     FROZEN.linkCode
   )
-  return [...results, ...runIdentityVectors(call)]
+  return [...results, ...runIdentityVectors(call), ...runPreviewVectors(call)]
 }
 
 /**
