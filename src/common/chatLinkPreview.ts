@@ -33,6 +33,16 @@ export function isPreviewThumbnail(ref: AttachmentRef): boolean {
   )
 }
 
+/** The card without its image, or none when no text would remain on it. */
+export function withoutThumbnail(
+  preview: ChatLinkPreview
+): ChatLinkPreview | undefined {
+  const { url, title, description, siteName } = preview
+  return title.trim() !== '' || description.trim() !== ''
+    ? { url, title, description, siteName }
+    : undefined
+}
+
 function text(value: unknown, max: number): string {
   if (typeof value !== 'string' || Array.from(value).length > max)
     throw new Error('Invalid preview text')

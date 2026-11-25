@@ -14,7 +14,8 @@ import {
 } from '../../../common/chatCrypto/stream'
 import {
   type ChatLinkPreview,
-  contentWithPreview
+  contentWithPreview,
+  withoutThumbnail
 } from '../../../common/chatLinkPreview'
 import { b64, epochKeyOf, unb64 } from '../keyRecord'
 import {
@@ -155,11 +156,7 @@ export async function postContent(
       delete attempt.candidate
       const reason = reasonOf(error)
       if (reason === 'attachment' && preview?.thumbnail != null) {
-        const { url, title, siteName, description } = preview
-        preview =
-          title.trim() !== '' || description.trim() !== ''
-            ? { url, title, siteName, description }
-            : undefined
+        preview = withoutThumbnail(preview)
         continue
       }
       if (!retryEpoch || reason == null || !RETRY.has(reason)) throw error

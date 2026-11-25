@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useReducer } from 'react'
 
-import type { ChatLinkPreview } from '../../common/chatLinkPreview'
+import {
+  type ChatLinkPreview,
+  withoutThumbnail
+} from '../../common/chatLinkPreview'
 import {
   firstPreviewUrl,
   pageMetadata,
@@ -134,12 +137,8 @@ export function useChatLinkPreview(
       if (
         draft.ready?.thumbnail != null &&
         Date.now() - (draft.uploadedAt ?? 0) >= 23 * 60 * 60 * 1000
-      ) {
-        const { url, title, description, siteName } = draft.ready
-        return title !== '' || description !== ''
-          ? { url, title, description, siteName }
-          : undefined
-      }
+      )
+        return withoutThumbnail(draft.ready)
       return draft.ready
     }
   }

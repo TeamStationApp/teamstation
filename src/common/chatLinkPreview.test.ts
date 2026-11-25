@@ -8,7 +8,11 @@ import {
 } from './chatContent'
 import { fromUtf8, utf8 } from './chatCrypto/bytes'
 import { type MessageFields, messageKey } from './chatCrypto/seal'
-import { contentWithPreview, previewFromContent } from './chatLinkPreview'
+import {
+  contentWithPreview,
+  previewFromContent,
+  withoutThumbnail
+} from './chatLinkPreview'
 import { userIdOfGumbo } from './userId'
 
 describe('private chat link preview', () => {
@@ -60,6 +64,25 @@ describe('private chat link preview', () => {
     expect(
       originalReportContent('{"future":2,"sealedPreview":{},"body":"text"}')
     ).equals('{"future":2,"body":"text"}')
+  })
+  it('keeps a card without its image only while text remains', () => {
+    const thumbnail = {
+      fileName: 'preview.jpg',
+      contentType: 'image/jpeg',
+      size: 3,
+      width: 2,
+      height: 1,
+      id: 'cat_image',
+      key: 'key',
+      digest: 'digest'
+    }
+    expect(withoutThumbnail({ ...preview, thumbnail })).deep.equals(preview)
+    expect(
+      withoutThumbnail({ ...preview, description: 'About', title: ' ' })
+    ).deep.equals({ ...preview, description: 'About', title: ' ' })
+    expect(withoutThumbnail({ ...preview, title: ' \n', thumbnail })).equals(
+      undefined
+    )
   })
   it('discards a missing or damaged optional card', () => {
     for (const box of [
