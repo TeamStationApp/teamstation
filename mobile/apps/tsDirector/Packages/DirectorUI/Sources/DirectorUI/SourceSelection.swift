@@ -598,8 +598,12 @@ public struct ScoreboardMonitorPreference: Equatable, Codable, Sendable {
 
   public func row(among cameras: [SourceSelection]) -> SourceSelection {
     let occupied = SourceSelectionRules.occupiedSlots(in: cameras)
+    // A camera that is off still owns the number it remembers: an unplaced monitor takes one of
+    // those only when no other is free.
+    let remembered = Set(cameras.compactMap(\.sourceIndex))
     let slots = 0 ..< SourceSelectionRules.maximumEnabled
     let free = preferredSlot.flatMap { slots.contains($0) && !occupied.contains($0) ? $0 : nil }
+      ?? slots.last { !remembered.contains($0) }
       ?? slots.last { !occupied.contains($0) }
     return SourceSelection(
       id: Self.id, kind: .scoreboard, advertisedName: "Scoreboard",
@@ -642,7 +646,15 @@ public struct ScoreboardMonitorPreference: Equatable, Codable, Sendable {
       return SourceSelectionRules.assign(slot: slot, to: id, in: &cameras)
     }
     var rows = cameras + [monitor]
-    let result = SourceSelectionRules.assign(slot: slot, to: id, in: &rows)
+    var result = SourceSelectionRules.assign(slot: slot, to: id, in: &rows)
+    // With every other number taken the monitor has nowhere to park. A camera that is off takes
+    // the number anyway, as real cameras get the final tile, and the tile once it is turned on.
+    if result == .unchanged, monitor.sourceIndex == slot,
+       let position = cameras.firstIndex(where: { $0.id == id }), !cameras[position].isEnabled,
+       !SourceSelectionRules.isLinkedControl(id, in: cameras) {
+      rows[position].sourceIndex = slot
+      result = .applied(reassign: nil)
+    }
     if id == Self.id || rows.last?.sourceIndex != monitor.sourceIndex {
       preferredSlot = rows.last?.sourceIndex
     }
