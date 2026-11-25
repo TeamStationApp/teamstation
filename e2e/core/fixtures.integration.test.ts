@@ -71,9 +71,9 @@ describe('ctx.signIn', function () {
       }
     await signInWithPassword(
       {
-        assertVisible: async (value: { text?: string; timeout?: number }) => {
+        assertVisible: async (value: { text: string; timeout?: number }) => {
           calls.push(['see', value])
-          if (value.text === 'TeamStation menu' && value.timeout === 2000) {
+          if (value.timeout === 2000) {
             throw new Error('still on the form')
           }
         },
@@ -99,8 +99,10 @@ describe('ctx.signIn', function () {
     expect(calls[4][1]).deep.equals({ text: 'box+c@example.test' })
     expect(calls[7][1]).deep.equals({ text: 'pw' })
     expect(calls[9][1]).deep.includes({ text: 'Sign in' })
-    // The home screen's mark is only there once the password was accepted.
-    expect(calls[10][1]).deep.includes({ text: 'TeamStation menu' })
+    const signedIn = new RegExp((calls[10][1] as { text: string }).text)
+    expect('TeamStation menu').to.match(signedIn)
+    expect('Account, Test Member').to.match(signedIn)
+    expect('Sign in to TeamStation').not.to.match(signedIn)
   })
 
   it('types the password again when the phone drops a key', async function () {
@@ -108,9 +110,12 @@ describe('ctx.signIn', function () {
     let menuChecks = 0
     await signInWithPassword(
       {
-        assertVisible: async (value: { text?: string }) => {
+        assertVisible: async (value: { text: string }) => {
           calls.push(['see', value])
-          if (value.text === 'TeamStation menu' && menuChecks++ < 3) {
+          if (
+            new RegExp(value.text).test('TeamStation menu') &&
+            menuChecks++ < 3
+          ) {
             throw new Error('not signed in')
           }
         },
@@ -140,8 +145,8 @@ describe('ctx.signIn', function () {
   it('still fails when the password never signs in', async function () {
     let menuChecks = 0
     const device = {
-      assertVisible: async (value: { text?: string }) => {
-        if (value.text === 'TeamStation menu') {
+      assertVisible: async (value: { text: string }) => {
+        if (new RegExp(value.text).test('TeamStation menu')) {
           menuChecks++
           throw new Error('not signed in')
         }
