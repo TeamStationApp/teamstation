@@ -206,7 +206,7 @@ function withoutTriviaLines(path, source, counts) {
   const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
   const tokenLines = new Set()
   forEachSourceToken(ts, parsed, node => {
-    if (nonExecutingToken(ts, node)) return
+    if (nonExecutingToken(ts, node) || node.flags & ts.NodeFlags.Ambient) return
     const first =
       parsed.getLineAndCharacterOfPosition(node.getStart(parsed)).line + 1
     const last =

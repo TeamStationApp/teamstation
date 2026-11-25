@@ -1,7 +1,10 @@
 import type { Kysely } from 'kysely'
+import type { PoolClient, QueryResult } from 'pg'
 
 import { asHttpsUrl } from '../common/distribution'
+import { unavailable } from '../common/errors'
 import {
+  appStoreProduct,
   asDate,
   asHeight,
   asHoldSeconds,
@@ -23,7 +26,7 @@ import {
 } from '../common/nodeSettings'
 import { requireNodeAdmin } from './admin/nodeAdministration'
 import type { Actor } from './auth/sessions'
-import type { Database } from './db/database'
+import type { Database, PooledDatabase } from './db/database'
 import { forgetSettings, highlightSettings } from './settings'
 
 /**
@@ -103,7 +106,8 @@ export async function distributionSettings(
     .select(['key', 'value'])
     .where('key', 'in', [
       'distribution.betaBuildsUrl',
-      'distribution.appStoreUrl'
+      'distribution.appStoreUrl',
+      'distribution.iosAppStoreUrl'
     ])
     .execute()
   const byKey = new Map(rows.map(row => [row.key, row.value]))
@@ -118,10 +122,89 @@ export async function distributionSettings(
   }
   const value: DistributionSettings = {
     betaBuildsUrl: read('distribution.betaBuildsUrl'),
-    appStoreUrl: read('distribution.appStoreUrl')
+    appStoreUrl: read('distribution.appStoreUrl'),
+    iosAppStoreUrl:
+      appStoreProduct(byKey.get('distribution.iosAppStoreUrl'))?.url ?? ''
   }
   distributionCache = { at: now, value }
   return value
+}
+
+const bannerLookups = new WeakMap<PooledDatabase, Promise<string | null>>()
+
+/**
+ * Nothing is cached, so a page load sees a save from any worker as soon as
+ * the next read starts. Requests that arrive while a read is out share it
+ * instead: a flood of page loads holds at most one request-pool connection
+ * per process, and a load may get a value at most that one read old.
+ */
+export async function iosAppBannerId(
+  db: PooledDatabase
+): Promise<string | null> {
+  let lookup = bannerLookups.get(db)
+  if (lookup == null) {
+    lookup = readIosAppBannerId(db).finally(() => {
+      bannerLookups.delete(db)
+    })
+    bannerLookups.set(db, lookup)
+  }
+  return await lookup
+}
+
+async function readIosAppBannerId(db: PooledDatabase): Promise<string | null> {
+  const pool = db.pool
+  const timedOut = unavailable('The App Store link lookup timed out')
+  // Optional metadata must not queue behind other work when the pool is full.
+  if (
+    pool.totalCount >= pool.options.max &&
+    pool.idleCount <= pool.waitingCount
+  )
+    throw timedOut
+  const signal = AbortSignal.timeout(750)
+  const deadline = new Promise<never>((_resolve, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(timedOut)
+      },
+      { once: true }
+    )
+  })
+  const checkout = pool.connect().then(client => {
+    if (signal.aborted) client.release()
+    return client
+  })
+  let client: PoolClient | undefined
+  // Only a query the deadline abandoned can still be running on the client.
+  // A server error such as the statement timeout leaves it idle and reusable,
+  // and the pool itself drops a client whose connection broke.
+  let settled = false
+  try {
+    client = await Promise.race([checkout, deadline])
+    // One simple-query message runs both statements in an implicit transaction.
+    // SET LOCAL therefore bounds the indexed read on the same pooler backend.
+    const batch = await Promise.race([
+      client
+        .query(
+          `set local statement_timeout = '600ms';
+        select value from system_settings where key = 'distribution.iosAppStoreUrl'`
+        )
+        .finally(() => {
+          settled = true
+        }),
+      deadline
+    ])
+    // pg returns one result per statement in a simple-query batch.
+    const [, setting] = batch as unknown as Array<
+      QueryResult<{ value: unknown }>
+    >
+    return appStoreProduct(setting.rows[0]?.value)?.appId ?? null
+  } catch (error) {
+    if ((error as { code?: string })?.code === '57014') throw timedOut
+    throw error
+  } finally {
+    client?.release(!settled)
+  }
 }
 
 export async function replayPitchSec(db: Kysely<Database>): Promise<number> {
@@ -322,6 +405,8 @@ export async function setNodeSettings(
     ['highlights.mergeWithinSec', highlights.mergeWithinSec],
     ['highlights.tailSec', highlights.tailSec]
   ]
+  if (distribution?.iosAppStoreUrl !== undefined)
+    rows.push(['distribution.iosAppStoreUrl', distribution.iosAppStoreUrl])
   const now = new Date()
   await db.transaction().execute(async trx => {
     for (const [key, value] of rows) {

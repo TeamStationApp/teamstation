@@ -1650,7 +1650,7 @@ const nodeSettingsSchema = {
       type: 'object',
       additionalProperties: false,
       description:
-        'Where the about screen sends someone. A save from an older client omits it and keeps the stored URLs. An empty string hides that button. A read always has both.',
+        'The beta links on About and the published App Store link for Safari. Reads always include all three links, iosAppStoreUrl too. Omitting the group or the published link on a save preserves its stored value.',
       required: ['betaBuildsUrl', 'appStoreUrl'],
       properties: {
         betaBuildsUrl: {
@@ -1661,6 +1661,11 @@ const nodeSettingsSchema = {
         appStoreUrl: {
           type: 'string',
           description: 'HTTPS URL of the iOS TestFlight download, or empty.'
+        },
+        iosAppStoreUrl: {
+          type: 'string',
+          description:
+            'An https://apps.apple.com product URL, stored as given: the path is /app/id<digits>, optionally with a two-letter storefront before app and an app name before the ID, then any trailing slashes, and the URL may carry port 443, a query and a fragment. The banner uses the ID from the path. An empty string turns off the Safari banner. Always present on reads; a save may omit it.'
         }
       }
     },
@@ -7641,6 +7646,40 @@ export function openApiDocument(version: string): OpenApiDocument {
             200: { description: '`Page<PublicGame>`' },
             400: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/node/ios-app-banner': {
+        get: {
+          summary: 'The App Store product offered by Safari on this website',
+          security: [],
+          responses: {
+            200: {
+              description:
+                'Current product ID, or null when no valid link is set',
+              headers: {
+                'Cache-Control': {
+                  schema: { type: 'string', const: 'no-store' }
+                }
+              },
+              content: {
+                'text/css': {
+                  schema: { type: 'string' },
+                  example: ':root{--teamstation-ios-app-id:123}'
+                },
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['appId'],
+                    properties: {
+                      appId: { type: ['string', 'null'], pattern: '^[0-9]+$' }
+                    }
+                  }
+                }
+              }
+            },
+            503: errorResponse
           }
         }
       },

@@ -18,6 +18,7 @@ import { after, before, describe, it } from 'mocha'
 
 import {
   cspFor,
+  finishAppBannerScript,
   integrityOf,
   originOf,
   originsFor,
@@ -46,6 +47,64 @@ function policyOf(html: string): string {
     /<meta http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)
   if (found == null) throw new Error('no CSP meta')
   return found[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+}
+
+/** Execute the emitted classic script at the place an eligible browser finds it. */
+function checkBanner(
+  html: string,
+  dir: string,
+  api: string,
+  production: boolean
+): void {
+  const tags = [
+    ...html.matchAll(
+      /<script src="\/((?:app-)?ios-app-banner[^"]*)"([^>]*)><\/script>/gi
+    )
+  ]
+  expect(tags).length(1)
+  const [tag] = tags
+  expect(tag[1]).matches(
+    production ? /^app-ios-app-banner-[A-Z0-9]+\.js$/ : /^ios-app-banner\.js$/
+  )
+  expect(tag[2]).not.match(/\b(?:defer|async|type)=?/)
+  expect(tag.index).greaterThan(html.indexOf('Content-Security-Policy'))
+  // Last in the head: the viewport, title and preloads are parsed first.
+  expect(tag.index).greaterThan(html.indexOf('<title>'))
+  expect(tag.index).greaterThan(html.indexOf('</style>'))
+  expect(tag.index).lessThan(html.indexOf('</head>'))
+  const bytes = readFileSync(join(dir, tag[1]))
+  if (production) expect(tag[2]).equals(` integrity="${integrityOf(bytes)}"`)
+  const written: string[] = []
+  const window: { top?: unknown } = {}
+  window.top = window
+  const context = vm.createContext({
+    window,
+    setTimeout,
+    clearTimeout,
+    getComputedStyle: () => ({ getPropertyValue: () => '00123' }),
+    navigator: {
+      platform: 'iPhone',
+      userAgent: 'iPhone Version/18.1 Mobile/14E Safari/604.1'
+    },
+    document: {
+      readyState: 'loading',
+      querySelector: () => null,
+      write: (meta: string) => written.push(meta)
+    }
+  })
+  vm.runInContext(bytes.toString(), context)
+  const callback = /<script>([^<]+)<\/script>/i.exec(html)!
+  expect(callback.index).equals(tag.index + tag[0].length)
+  const finish = callback[1]
+  const policy = directives(policyOf(html))
+  expect(policy['script-src']).includes(`'${integrityOf(finish)}'`)
+  if (api.startsWith('http'))
+    expect(policy['style-src']).includes(api + '/node/ios-app-banner')
+  vm.runInContext(finish, context)
+  expect(written).deep.equals([
+    `<link rel="stylesheet" id="teamstation-ios-app-banner-css" href="${api}/node/ios-app-banner">`,
+    '<meta name="apple-itunes-app" content="app-id=00123">'
+  ])
 }
 
 describe('the web page’s Content-Security-Policy and integrity', function () {
@@ -159,6 +218,18 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     )
     expect(policyOf(html)).equals(`a 'b' "c" & d`)
     expect(() => withCsp('<html></html>', 'x')).throws(/charset/)
+    expect(
+      withCsp(
+        '<html><head><meta charset="utf-8" /><title>x</title>\n  </head></html>',
+        'p',
+        '<script src="/b.js"></script>'
+      )
+    ).matches(
+      /<title>x<\/title>\n {4}<script src="\/b\.js"><\/script>\n {2}<\/head>/
+    )
+    expect(() =>
+      withCsp('<html><meta charset="utf-8" /></html>', 'p', '<script></script>')
+    ).throws(/<\/head>/)
   })
 
   it('hashes every script it is given, and leaves a hashed one alone', function () {
@@ -219,6 +290,7 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
 
     it('carries the API, socket and media origins, fonts and the worker rule', function () {
       const html = readFileSync(join(once, 'index.html'), 'utf8')
+      checkBanner(html, once, 'https://devhost1.example-ts.test/api/v1', true)
       const policy = directives(policyOf(html))
       expect(policy['connect-src']).deep.equals([
         "'self'",
@@ -257,14 +329,19 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
     })
 
-    it('hashes every script tag with its file’s sha384', function () {
+    it('checks every external script with SRI and every inline script with CSP', function () {
       const html = readFileSync(join(once, 'index.html'), 'utf8')
       const tags = [
-        ...html.matchAll(/<script src="\/([^"]+)" integrity="([^"]+)"/g)
+        ...html.matchAll(/<script src="\/([^"]+)" integrity="([^"]+)"/gi)
       ]
-      expect(tags.length).equals(
-        [...html.matchAll(/<script\b/g)].length,
-        'every script tag has integrity'
+      const inline = [...html.matchAll(/<script>([^<]*)<\/script>/gi)]
+      expect(tags.length + inline.length).equals(
+        [...html.matchAll(/<script\b/gi)].length,
+        'every script is covered'
+      )
+      expect(inline.map(match => match[1])).deep.equals([finishAppBannerScript])
+      expect(directives(policyOf(html))['script-src']).includes(
+        `'${integrityOf(inline[0][1])}'`
       )
       expect(tags.length).greaterThan(0)
       for (const [, file, integrity] of tags) {
@@ -408,7 +485,9 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       )
       // WebAssembly's magic number: the real module, not the stale one.
       expect(bytes.subarray(0, 4).toString('hex')).equals('0061736d')
-      const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
+      const bundle = readdirSync(once).find(name =>
+        /^app-[A-Z0-9]+\.js$/.test(name)
+      )
       const code = readFileSync(join(once, bundle!), 'utf8')
       expect(code).contains(`/${module}`)
       expect(code).contains(integrityOf(bytes))
@@ -416,7 +495,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       const html = readFileSync(join(once, 'index.html'), 'utf8')
       expect(directives(policyOf(html))['script-src']).deep.equals([
         "'self'",
-        "'wasm-unsafe-eval'"
+        "'wasm-unsafe-eval'",
+        `'${integrityOf(finishAppBannerScript)}'`
       ])
     })
 
@@ -431,7 +511,9 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         'cheer-small',
         'crowd-idle'
       ])
-      const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
+      const bundle = readdirSync(once).find(name =>
+        /^app-[A-Z0-9]+\.js$/.test(name)
+      )
       const code = readFileSync(join(once, bundle!), 'utf8')
       // Root-relative, so they load from `/games/:id/replay` too.
       for (const sound of sounds) expect(code).contains(`"/${sound}"`)
@@ -503,7 +585,9 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
     })
 
     it('has no chat bench route in the web bundle', function () {
-      const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
+      const bundle = readdirSync(once).find(name =>
+        /^app-[A-Z0-9]+\.js$/.test(name)
+      )
       expect(bundle).not.equals(undefined)
       const code = readFileSync(join(once, bundle!), 'utf8')
       expect(code).not.contains('chat-bench')
@@ -540,6 +624,7 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         })
       })
       const html = readFileSync(join(served, 'index.html'), 'utf8')
+      checkBanner(html, served, 'http://127.0.0.1:9120/api/v1', false)
       expect(html).not.contains('integrity=')
       expect(html).contains('<script src="/app.js"></script>')
       expect(directives(policyOf(html))['connect-src']).deep.equals([

@@ -3,6 +3,7 @@ import type { RequestHandler } from 'express'
 import type { Kysely } from 'kysely'
 
 import { forbidden, unauthorized } from '../../common/errors'
+import { ignoresSession } from '../auth/apiKeyFamilies'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
@@ -45,6 +46,10 @@ export function spokenRequests(): RequestHandler {
  */
 export function withActor(db: Kysely<Database>): RequestHandler {
   return (req, res, next) => {
+    if (ignoresSession(req.method, req.path)) {
+      next()
+      return
+    }
     const token = sessionToken(
       req.header('authorization'),
       req.header('cookie')

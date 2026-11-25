@@ -1,6 +1,8 @@
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { makeDatabase } from '../db/database'
+import type { Kysely } from 'kysely'
+
+import { type Database, makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
 import { owedCount } from './builder'
 import { requestAllGameStats, requestGameStats } from './request'
@@ -40,7 +42,7 @@ export interface StatusSummary {
 }
 
 export async function summarizeStatuses(
-  db: ReturnType<typeof makeDatabase>
+  db: Kysely<Database>
 ): Promise<StatusSummary> {
   const rows = await db
     .selectFrom('game_stats_state')

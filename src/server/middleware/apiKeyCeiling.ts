@@ -1,10 +1,8 @@
 import type { RequestHandler } from 'express'
 
 import { forbidden } from '../../common/errors'
-import { keyNeeds } from '../auth/apiKeyFamilies'
+import { belowApiPrefix, keyNeeds } from '../auth/apiKeyFamilies'
 import { keyAllows } from '../auth/sessions'
-
-const API_PREFIX = '/api/v1'
 
 /**
  * The ceiling on a user API key: the families of `API_KEY_FAMILIES`, and
@@ -23,11 +21,7 @@ export function withApiKeyCeiling(): RequestHandler {
       next()
       return
     }
-    const path = req.path
-    const below =
-      path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)
-        ? path.slice(API_PREFIX.length)
-        : null
+    const below = belowApiPrefix(req.path)
     const needs = below == null ? null : keyNeeds(req.method, below)
     if (needs === 'keyless') {
       req.actor = undefined

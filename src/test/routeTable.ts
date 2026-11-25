@@ -1,8 +1,7 @@
 import type { Router } from 'express'
-import type { Kysely } from 'kysely'
 import type Provider from 'oidc-provider'
 
-import type { Database } from '../server/db/database'
+import type { PooledDatabase } from '../server/db/database'
 import type { MediaContext } from '../server/media/mediaContext'
 import { oauthInteractionRoutes } from '../server/oauth/routes'
 import { analyticsRoutes } from '../server/observability/routes'
@@ -84,7 +83,7 @@ export function routesOf(router: Router): string[] {
  * mounts there, built against nothing: what the server answers, by shape.
  */
 export function apiRoutes(): string[] {
-  const db = {} as unknown as Kysely<Database>
+  const db = {} as unknown as PooledDatabase
   const store = {} as unknown as ScoreboardStore
   const provider = {} as unknown as Provider
   const media: MediaContext = {

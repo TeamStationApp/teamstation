@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,6 +22,9 @@ import { describe, it } from 'mocha'
  */
 export const OLD_NAME =
   'GameStation|gameStation|gamestation|GAMESTATION|\\bGS\\b|\\bGS[A-Z_]|\\bgs[A-Z_]|\\bGs[A-Z]|co\\.gamestation'
+
+const oldName = new RegExp(OLD_NAME)
+const bannerUserAgentFiles = /^src\/app\/web\/iosAppBanner(?:\.test)?\.ts$/
 
 const KEEP: Array<{ path: RegExp; line?: RegExp }> = [
   { path: /^src\/migrate\/migrations\/0(?:[0-3]\d|4[0-6])[A-Za-z]+\.ts$/ },
@@ -73,6 +76,13 @@ export function oldNameHits(cwd: string): string[] {
     .filter(row => {
       const [path, , ...rest] = row.split(':')
       const text = rest.join(':')
+      // GSA identifies Google's search app in its iOS user agent. Keep
+      // checking the rest of the line for spellings of the old product name.
+      if (
+        bannerUserAgentFiles.test(path) &&
+        !oldName.test(text.replace(/\bGSA\b/g, ''))
+      )
+        return false
       return !KEEP.some(
         keep => keep.path.test(path) && (keep.line?.test(text) ?? true)
       )
@@ -109,6 +119,15 @@ describe('the brand', function () {
       )
       git('add', '.')
       expect(oldNameHits(dir)).deep.equals([
+        'stray.ts:1:export const name = "GameStation"'
+      ])
+      const banner = 'src/app/web/iosAppBanner.ts'
+      mkdirSync(join(dir, 'src/app/web'), { recursive: true })
+      writeFileSync(join(dir, banner), 'GSA\nGSA GameStation\nGSAWidget\n')
+      git('add', banner)
+      expect(oldNameHits(dir)).deep.equals([
+        banner + ':2:GSA GameStation',
+        banner + ':3:GSAWidget',
         'stray.ts:1:export const name = "GameStation"'
       ])
     } finally {

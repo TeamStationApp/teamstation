@@ -1889,16 +1889,29 @@ const STARVATION_REPORT_MS = 5 * 60_000
 /** How often a pool's wait log writes its line. */
 const WAIT_LOG_MS = 60_000
 
+/** Keep the monitored request pool available for reads that must discard a stalled client. */
+export class PooledDatabase extends Kysely<Database> {
+  private closing?: Promise<void>
+
+  constructor(readonly pool: Pool) {
+    super({ dialect: new PostgresDialect({ pool }) })
+  }
+
+  override async destroy(): Promise<void> {
+    // Kysely opens its driver lazily. A direct pool read can be its only use.
+    this.closing ??= super.destroy().then(async () => {
+      if (!this.pool.ending) await this.pool.end()
+    })
+    await this.closing
+  }
+}
+
 export function makeDatabase(
   connectionString: string,
   options: PoolOptions = {}
-): Kysely<Database> {
+): PooledDatabase {
   attachInt8Parser()
-  return new Kysely<Database>({
-    dialect: new PostgresDialect({
-      pool: makePool(connectionString, undefined, options)
-    })
-  })
+  return new PooledDatabase(makePool(connectionString, undefined, options))
 }
 
 /**

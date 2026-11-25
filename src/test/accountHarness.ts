@@ -19,7 +19,7 @@ import {
 } from '../migrate/testDatabase'
 import { createSession } from '../server/auth/sessions'
 import { makeToken } from '../server/auth/tokens'
-import type { Database } from '../server/db/database'
+import type { Database, PooledDatabase } from '../server/db/database'
 import { makeDatabase } from '../server/db/database'
 import { jsonBody } from '../server/jsonBody'
 import type { MediaContext } from '../server/media/mediaContext'
@@ -56,7 +56,7 @@ export async function accountHarness(
     app: express.Express,
     fixture: {
       tokens: Map<number, string>
-      db: Kysely<Database>
+      db: PooledDatabase
       space: SpaceSettings
       media: {
         space: SpaceSettings

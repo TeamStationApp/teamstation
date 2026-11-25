@@ -1,5 +1,4 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
 import { describe, it } from 'mocha'
 import type Provider from 'oidc-provider'
 
@@ -13,7 +12,7 @@ import { idPrefixes, makeId } from '../common/ids'
 import { ROLE_FLAGS, ROLES } from '../common/roles'
 import { PITCH_TYPE_CODES } from '../common/scoring/pitchType'
 import { routesOf } from '../test/routeTable'
-import type { Database } from './db/database'
+import type { PooledDatabase } from './db/database'
 import type { MediaContext } from './media/mediaContext'
 import { oauthInteractionRoutes } from './oauth/routes'
 import { analyticsRoutes } from './observability/routes'
@@ -80,7 +79,7 @@ import type { ScoreboardStore } from './scoreboard/scoreboardStore'
  * the shape of the router, not its behaviour.
  */
 
-const db = {} as unknown as Kysely<Database>
+const db = {} as unknown as PooledDatabase
 const store = {} as unknown as ScoreboardStore
 const provider = {} as unknown as Provider
 const oauthRoutes = (): string[] =>
