@@ -73,6 +73,7 @@
 - fixed: The scoreboard's ball-strike count stays on one line, "0-0" with the out dots below it, instead of wrapping after its hyphen
 - fixed: The Valkey enqueue tests no longer fail CI when the clock passes a millisecond between setting a command's deadline and giving its first try the time left
 - fixed: The phone build's type check, `npm run typecheck.native`, passes with no errors
+- fixed: The chat message field follows the phone keyboard during a drag. Changes to draft height, reply and edit controls, and the desktop message menu animate smoothly.
 
 ## 1.4.0 (2026-11-21)
 

@@ -474,12 +474,10 @@ describe('push registrations', function () {
     })
     const switches = async (): Promise<unknown[]> =>
       (await rows()).map(row => [row.id, row.messages, row.rsvpEvents])
-    expect(await switches()).deep.equals(
-      [
-        [id, true, false],
-        [other, false, false]
-      ].sort((a, b) => String(a[0]).localeCompare(String(b[0])))
-    )
+    expect(await switches()).to.have.deep.members([
+      [id, true, false],
+      [other, false, false]
+    ])
     // Posted again, at sign-in or for a new token: the switches it posts.
     expect(
       await registered({

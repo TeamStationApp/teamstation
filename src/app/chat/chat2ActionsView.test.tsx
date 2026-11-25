@@ -20,6 +20,7 @@ import { ChatOverlayHost } from './ChatOverlayHost'
 import { watchReducedTransparency } from './chatTransparency'
 import { watchReducedTransparency as watchNativeTransparency } from './chatTransparency.native'
 import { chat, member, message } from './chatViews.test.helpers'
+import { TestComposer } from './composer.test.helpers'
 import {
   MessageActionOverlay,
   type MessageActionOverlayProps
@@ -189,6 +190,49 @@ describe('chat message presentation', function () {
     onClose: () => {},
     ...over
   })
+  it('rotates the attachment control from its visible angle when a tap reverses it', async function () {
+    const node = await render(
+      <TestComposer
+        text=""
+        onText={() => {}}
+        enabled
+        sending={false}
+        context={undefined}
+        onCancelContext={() => {}}
+        attachments={[]}
+        onRemoveAttachment={() => {}}
+        sources={['files']}
+        onAttach={() => {}}
+        onSend={() => {}}
+      />
+    )
+    const toggle = node.querySelector<HTMLElement>(
+      '[data-testid="chat-attachment-toggle"]'
+    )!
+    const icon = layerOf(toggle)
+    expect(icon.style.transform).equals('rotate(0deg)')
+    await act(async () => {
+      toggle.click()
+    })
+    const opening = animations.at(-1)!
+    expect(opening.config.toValue).equals(1)
+    await act(async () => {
+      opening.value.setValue(0.5)
+    })
+    expect(icon.style.transform).equals('rotate(22.5deg)')
+    await act(async () => {
+      toggle.click()
+    })
+    const closing = animations.at(-1)!
+    expect(opening.stopped).equals(true)
+    expect(closing.config.toValue).equals(0)
+    expect(icon.style.transform).equals('rotate(22.5deg)')
+    await act(async () => {
+      closing.value.setValue(0)
+    })
+    expect(icon.style.transform).equals('rotate(0deg)')
+  })
+
   function button(label: string): HTMLElement {
     const found = [
       ...host!.querySelectorAll<HTMLElement>('[role="button"],button')

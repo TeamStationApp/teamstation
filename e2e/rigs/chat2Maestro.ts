@@ -32,6 +32,8 @@ import {
   type Raster,
   roundHalfEven
 } from '../../src/test/rasterImage'
+import { connectDaemon, isHubDevice, type MaestroDaemon } from '../core/maestro'
+import { loadSettings } from '../core/settings'
 import {
   Chat2Blocked,
   type Chat2Fixture,
@@ -44,8 +46,27 @@ import {
   redact,
   sourceBinding
 } from '../fixtures/chat2Fixture'
+import { openInApp, setServer } from './app/setServer'
 
 type Args = Record<string, unknown>
+export interface Chat2HubPhone {
+  lease?: { device: string }
+  release: () => Promise<void>
+}
+
+/** A successful release clears the lease only after the Hub acknowledges it. */
+export async function releaseChat2Phone(
+  device: Chat2HubPhone,
+  id: string
+): Promise<void> {
+  assert(
+    device.lease?.device === id,
+    'The phone must hold the requested Hub lease'
+  )
+  await device.release()
+  assert(device.lease == null, 'Hub release was not acknowledged')
+}
+
 export interface Chat2Device {
   pasteText: () => Promise<unknown>
   setClipboard: (args: Args) => Promise<unknown>
@@ -1405,6 +1426,40 @@ export function publicWebNodes(parentId?: string): PublicNode[] {
   })
 }
 
+/** Read the switch belonging to an exact Settings row on Android. */
+export function androidSettingsSwitch(raw: Uint8Array, label: string): boolean {
+  const dom = new JSDOM(Buffer.from(raw).toString('utf8'), {
+    contentType: 'text/xml'
+  })
+  try {
+    const labels = Array.from(
+      dom.window.document.querySelectorAll(
+        '[package="com.android.settings"][text]'
+      )
+    ).filter(node => node.getAttribute('text') === label)
+    assert.equal(
+      labels.length,
+      1,
+      'An exact, unique Android Settings row is required'
+    )
+    const row = labels[0].closest('[clickable="true"]')
+    const controls = row?.querySelectorAll('[checkable="true"]')
+    assert.equal(
+      controls?.length,
+      1,
+      'The Settings row must own exactly one switch'
+    )
+    const checked = controls[0].getAttribute('checked')
+    assert(
+      checked === 'true' || checked === 'false',
+      'Explicit switch state required'
+    )
+    return checked === 'true'
+  } finally {
+    dom.window.close()
+  }
+}
+
 /** Supports documented normalized nodes and the supported native backends. */
 export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
   if (Array.isArray(raw)) return raw.flatMap(flattenPublicHierarchy)
@@ -2166,11 +2221,17 @@ export function emptyEditorPlaceholder(node: {
 
 export class Chat2UI {
   readonly native: boolean
+  private hubClient?: MaestroDaemon
+  private hubOverrideRequested = false
   /** A per-run browser never touches the profiles kept for historical captures. */
   private freshBrowserProfile?: string
 
   get usesFreshBrowserProfile(): boolean {
     return this.freshBrowserProfile != null
+  }
+
+  get usesHubPhone(): boolean {
+    return this.hubClient != null
   }
 
   readonly steps: Args[] = []
@@ -2260,6 +2321,72 @@ export class Chat2UI {
     writeFileSync(join(this.runDir, 'daemon-inventory.txt'), inventory, {
       mode: 0o600
     })
+    const phone =
+      this.surface === 'ios' || this.surface === 'android'
+        ? this.surface
+        : undefined
+    if (
+      phone != null &&
+      this.physical &&
+      isHubDevice(this.fixture.devices[phone].id)
+    ) {
+      const configured = this.fixture.devices[phone]
+      assert(
+        configured.owned &&
+          configured.id ===
+            process.env[
+              phone === 'ios' ? 'CHAT_IOS_DEVICE' : 'CHAT_ANDROID_DEVICE'
+            ],
+        'Leased device must match the fixture'
+      )
+      assert(
+        this.fixture.appId === 'app.teamstation.develop' &&
+          process.env.CHAT2_STACK_HANDLE != null,
+        'A verified disposable runtime is required on a Hub phone'
+      )
+      const settings = loadSettings()
+      assert(
+        settings.maestroHub != null,
+        'Shared Maestro Hub configuration required'
+      )
+      this.deviceId = configured.id
+      this.hubClient = await connectDaemon(settings, this.daemonName)
+      const device = await this.hubClient.attach({
+        device: this.deviceId,
+        platform: phone,
+        driver: configured.driver,
+        noAppInstall: true,
+        appId: this.fixture.appId
+      })
+      this.device = device as unknown as Chat2Device
+      const { artifact, sha256 } = this.binding.binding
+      assert(
+        artifact.endsWith(phone === 'ios' ? '.ipa' : '.apk') &&
+          digest(artifact) === sha256,
+        'Exact signed install package required'
+      )
+      const installed = await device.installApp(artifact)
+      assert(
+        installed?.appId == null || installed.appId === this.fixture.appId,
+        'Different app installed'
+      )
+      this.steps.push({
+        name: 'Installed signed package through the leased Hub device',
+        device: this.deviceId,
+        sha256
+      })
+      this.hubOverrideRequested = true
+      await setServer({
+        platform: phone,
+        appId: this.fixture.appId,
+        udid: this.deviceId,
+        hub: true,
+        device: this.device,
+        origin: new URL(this.fixture.apiUrl).origin
+      })
+      this.environment = await this.device.platformInfo()
+      return
+    }
     const clientRoot = need(
       process.env.MAESTRO_D_CLIENT_ROOT,
       'MAESTRO_D_CLIENT_ROOT must identify the installed/built client'
@@ -3154,7 +3281,8 @@ export class Chat2UI {
       // the focused field, as a keyboard's paste does; the caller still
       // proves the pasted text.
       await this.device.tapOn({ id: 'chat-composer' })
-      await this.androidKey(ANDROID_KEYCODE_PASTE)
+      if (this.hubClient == null) await this.androidKey(ANDROID_KEYCODE_PASTE)
+      else await this.device.pasteText()
       // The paste answers with a system toast ("pasted from your clipboard")
       // and the clipboard overlay, and the driver's hierarchy read fails
       // while such a window is up: wait them out, then close the overlay.
@@ -3673,6 +3801,26 @@ export class Chat2UI {
       }
     }
   ): Promise<void> {
+    if (this.hubClient != null) {
+      const name = 'chat-transition-' + randomUUID()
+      const device = this.device as Chat2Device & {
+        artifact: (file: string) => Promise<Buffer>
+      }
+      await device.startRecording({ path: name })
+      try {
+        await work()
+      } finally {
+        await device.stopRecording()
+      }
+      const bytes = await device.artifact('recordings/' + name + '.mp4')
+      writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' })
+      this.steps.push({
+        name: 'Recorded Hub transition',
+        path,
+        recording: inspect(path)
+      })
+      return
+    }
     if (this.surface === 'android') {
       // maestro-d's Android startRecording runs screenrecord with its path on
       // the phone and never pulls the movie back, so a host path records
@@ -4171,10 +4319,36 @@ export class Chat2UI {
     })
   }
 
+  private async readAndroidSettingsSwitch(label: string): Promise<boolean> {
+    assert.equal(this.surface, 'android')
+    const device = this.device as Chat2Device & {
+      hierarchyRaw: () => Promise<Uint8Array>
+    }
+    const raw = await device.hierarchyRaw()
+    const checked = androidSettingsSwitch(raw, label)
+    const path = join(this.runDir, 'android-setting-' + randomUUID() + '.xml')
+    writeFileSync(path, raw, { flag: 'wx', mode: 0o600 })
+    this.steps.push({
+      name: 'Observed Android Settings switch',
+      label,
+      checked,
+      path,
+      sha256: digest(path)
+    })
+    return checked
+  }
+
   private async settingsActions(
     actions: NonNullable<Chat2Fixture['variants']>[string]['set']
   ): Promise<void> {
     for (const action of actions) {
+      if (action.command === 'setAndroidSettingsSwitch') {
+        const { label, checked } = action.args
+        assert(typeof label === 'string' && typeof checked === 'boolean')
+        if ((await this.readAndroidSettingsSwitch(label)) !== checked)
+          await this.device.tapOn({ text: exactText(label) })
+        continue
+      }
       assert(
         [
           'launchApp',
@@ -4275,6 +4449,14 @@ export class Chat2UI {
     checks: NonNullable<Chat2Fixture['variants']>[string]['verify']
   ): Promise<void> {
     for (const check of checks) {
+      if (check.androidSwitchRow != null) {
+        assert(typeof check.checked === 'boolean')
+        assert.equal(
+          await this.readAndroidSettingsSwitch(check.androidSwitchRow),
+          check.checked
+        )
+        continue
+      }
       if (check.rawValue == null) {
         assert(
           this.surface !== 'ios' || check.checked == null,
@@ -4362,6 +4544,20 @@ export class Chat2UI {
     return lowest == null ? undefined : { id: lowest.id, bounds: lowest.bounds }
   }
 
+  /** A foreign browser modifier can type the accelerator into the focused composer. */
+  private async browserZoomShortcut(...keys: string[]): Promise<void> {
+    const read =
+      'return {platform:navigator.platform,draft:document.querySelector(\'[data-testid="chat-composer"]\')?.value}'
+    const before = await this.dom(read)
+    const modifier = /^(Mac|iP)/.test(String(before.platform)) ? 'Cmd' : 'Ctrl'
+    for (const key of keys)
+      await this.device.pressKey({ key: modifier + '+' + key })
+    assert(
+      (await this.dom(read)).draft === before.draft,
+      'The browser zoom shortcut changed the composer draft'
+    )
+  }
+
   async variant(
     name: string,
     sweep: () => Promise<void>,
@@ -4404,7 +4600,11 @@ export class Chat2UI {
         )
     try {
       if (this.native) {
-        if (this.surface === 'android' && name === 'reduced-transparency') {
+        if (
+          this.surface === 'android' &&
+          name === 'reduced-transparency' &&
+          recipe?.applicability !== 'applicable'
+        ) {
           assert(
             recipe?.applicability === 'not-applicable' &&
               (recipe.reason?.length ?? 0) > 20,
@@ -4413,7 +4613,7 @@ export class Chat2UI {
           row.applicability = 'not-applicable'
           row.reason = recipe.reason
           row.environment =
-            'No Android OS reduced-transparency preference; inspect actual native fallback composition'
+            'This Android device has no observed reduced-transparency preference; inspect its native fallback composition'
         } else if (name === 'light' || name === 'dark') {
           assert(
             recipe?.applicability === 'applicable' &&
@@ -4509,8 +4709,7 @@ export class Chat2UI {
             Number(actual.height) > Number(before?.height)
           )) {
             browserZoomAttempted = true
-            await this.device.pressKey({ key: 'Cmd+=' })
-            await this.device.pressKey({ key: 'Cmd+=' })
+            await this.browserZoomShortcut('=', '=')
             actual = await observe()
             const pixelFont = (value: Args | undefined): number =>
               Number(value?.font) * Number(value?.scale) * Number(value?.dpr)
@@ -4596,7 +4795,7 @@ export class Chat2UI {
           await this.returnFromSettings()
         }
       } else {
-        if (browserZoomAttempted) await this.device.pressKey({ key: 'Cmd+0' })
+        if (browserZoomAttempted) await this.browserZoomShortcut('0')
         await this.cdp?.send('Emulation.setPageScaleFactor', {
           pageScaleFactor: 1
         })
@@ -4894,6 +5093,17 @@ export class Chat2UI {
   }
 
   private async openNativeLink(path: string): Promise<void> {
+    if (this.hubClient != null) {
+      await openInApp({
+        platform: this.surface === 'ios' ? 'ios' : 'android',
+        udid: this.deviceId,
+        appId: this.fixture.appId,
+        hub: true,
+        device: this.device,
+        link: this.fixture.scheme + ':/' + path
+      })
+      return
+    }
     if (this.physical) {
       // A phone may also hold the store TeamStation, which claims the same
       // scheme; deliver the link to the QA app by its own identifier.
@@ -6524,6 +6734,39 @@ export class Chat2UI {
           ? undefined
           : await this.connectCleanup?.().catch(() => this.daemon)
       const physical = this.physical
+      if (this.hubClient != null) {
+        try {
+          if (this.hubOverrideRequested)
+            await setServer({
+              platform: this.surface === 'ios' ? 'ios' : 'android',
+              appId: this.fixture.appId,
+              udid: this.deviceId,
+              hub: true,
+              device: this.device,
+              origin: null
+            })
+          if (this.device != null) {
+            await this.device.stopApp({ appId: this.fixture.appId })
+            this.cleanup.physicalAppStopped = true
+          }
+        } catch (failure) {
+          this.cleanup.deviceStopError = redact(this.fixture, String(failure))
+        } finally {
+          try {
+            await releaseChat2Phone(
+              this.device as Chat2Device & Chat2HubPhone,
+              this.deviceId
+            )
+            this.cleanup.hubLeaseReleased = true
+          } catch (failure) {
+            this.cleanup.daemonError = redact(this.fixture, String(failure))
+          } finally {
+            await this.hubClient.shutdown().catch((failure: unknown) => {
+              this.cleanup.daemonError = redact(this.fixture, String(failure))
+            })
+          }
+        }
+      }
       if (daemon != null) {
         if (physical && this.deviceId !== '') {
           // Never power, reboot or reset a phone; only the QA app stops.
@@ -6649,17 +6892,19 @@ export class Chat2UI {
           String(failure)
         )
       }
-      const daemonStatus = spawnSync(
-        process.env.MAESTRO_D_BIN ?? 'maestro-d',
-        ['status', '--daemon', this.daemonName, '--json'],
-        { encoding: 'utf8', timeout: 5000 }
-      )
-      this.cleanup.daemonAbsence = {
-        name: this.daemonName,
-        exit: daemonStatus.status,
-        absent: daemonStatus.status === 3
+      if (this.hubClient == null) {
+        const daemonStatus = spawnSync(
+          process.env.MAESTRO_D_BIN ?? 'maestro-d',
+          ['status', '--daemon', this.daemonName, '--json'],
+          { encoding: 'utf8', timeout: 5000 }
+        )
+        this.cleanup.daemonAbsence = {
+          name: this.daemonName,
+          exit: daemonStatus.status,
+          absent: daemonStatus.status === 3
+        }
+        this.cleanup.daemonStopped = daemonStatus.status === 3
       }
-      this.cleanup.daemonStopped = daemonStatus.status === 3
       if (this.fixture.cleanupServices) {
         try {
           this.cleanup.services = fixtureControl(this.fixture, 'cleanup')
@@ -6680,7 +6925,9 @@ export class Chat2UI {
       this.cleanup.deviceStopError != null ||
       this.cleanup.servicesError != null ||
       this.cleanup.deviceVerificationError != null ||
-      this.cleanup.daemonStopped !== true ||
+      (this.hubClient == null
+        ? this.cleanup.daemonStopped !== true
+        : this.cleanup.hubLeaseReleased !== true) ||
       (this.native && object(this.cleanup.nativeAbsence).absent !== true)
     const result = {
       scenario: this.scenario,
