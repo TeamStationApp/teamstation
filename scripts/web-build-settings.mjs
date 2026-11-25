@@ -28,8 +28,27 @@ export const worklets = {
   }
 }
 
+// Only explicitly identified development deployments include the module.
+// Archive provenance is supplied by the deployer, independently of Git.
+export const developmentPasswordLinks = {
+  name: 'development-password-links',
+  setup({ initialOptions }) {
+    const define = (initialOptions.define ??= {})
+    const info = process.env.TS_BUILD_INFO
+    const branch = info && JSON.parse(info).branch
+    const seat = process.env.TS_SEAT_BRANCH
+    const enabled =
+      define.TS_API_BASE_URL === JSON.stringify('/api/v1') &&
+      ((branch === 'develop' && (seat == null || seat === branch)) ||
+        (typeof branch === 'string' &&
+          branch.startsWith('paul/') &&
+          seat === branch))
+    define.TS_PASSWORD_LINK_BUILD = JSON.stringify(Boolean(enabled))
+  }
+}
+
 export const webSettings = {
-  plugins: [worklets],
+  plugins: [worklets, developmentPasswordLinks],
   // 1.0's gradient alias, which came with 1.0's scoreboard: the board keeps
   // 1.0's `react-native-linear-gradient` import, and on the web that is the
   // package that draws it.

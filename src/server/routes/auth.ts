@@ -5,10 +5,21 @@ import { type Kysely, sql } from 'kysely'
 
 import { asAccountEmail } from '../../common/accountSettings'
 import { asSession } from '../../common/api'
-import { badRequest, unauthorized, unavailable } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  notFound,
+  unauthorized,
+  unavailable
+} from '../../common/errors'
 import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
 import { safeNext } from '../../common/signInReturn'
 import { asTvPlatform, defaultTvAppOrigin } from '../../common/tvLogin'
+import { isDevelopmentWebOrigin } from '../../common/primaryUrl'
+import {
+  type AccountSwitch,
+  asAccountSwitch
+} from '../../common/webPasswordLink'
 import { allowedAppOrigin } from '../appLinks/appOrigin'
 import {
   asSignInOrigin,
@@ -460,9 +471,17 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       res.json(record?.client ?? decoyParameters(email, parameterSecret))
     })
   )
-  router.post(
-    '/auth/password',
+  const passwordLogin = (fromLink: boolean) =>
     withAsync(async (req, res) => {
+      const verifySwitch = fromLink
+        ? passwordLinkGuard(
+            options.publicUrl,
+            res,
+            req.body,
+            req.actor?.userId,
+            id => primaryEmail(db, id)
+          )
+        : undefined
       const body = cleanBody(raw => {
         rejectRawPassword(raw)
         return asPasswordLogin(raw)
@@ -491,6 +510,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           'Wrong e-mail or password. Use an email code to sign in and set a new password'
         )
       }
+
+      await verifySwitch?.(user)
 
       const session = await db.transaction().execute(async tx => {
         const current = await tx
@@ -529,7 +550,8 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         })
       )
     })
-  )
+  router.post('/auth/password', passwordLogin(false))
+  router.post('/auth/password/link', passwordLogin(true))
 
   router.post(
     '/auth/email-code',
@@ -806,6 +828,48 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   )
 
   return router
+}
+
+// Gate and parse the development request before any account lookup. The
+// returned decision is only evaluated once password verification succeeds.
+export function passwordLinkGuard(
+  origin: string | undefined,
+  res: Pick<Response, 'set'>,
+  body: unknown,
+  currentId: string | undefined,
+  accountEmail: (id: string) => Promise<string | undefined>
+): (target: Pick<FoundUser, 'id' | 'email'>) => Promise<void> {
+  res.set('cache-control', 'no-store')
+  if (!isDevelopmentWebOrigin(origin)) throw notFound()
+  const { confirmation } = cleanBody(
+    asObject({ confirmation: asOptional(asAccountSwitch) }),
+    body
+  )
+  return target =>
+    confirmPasswordLinkSwitch(currentId, target, confirmation, accountEmail)
+}
+
+// Decide only after the target password has been verified, before creating a session.
+export async function confirmPasswordLinkSwitch(
+  currentId: string | undefined,
+  target: Pick<FoundUser, 'id' | 'email'>,
+  confirmation: AccountSwitch | undefined,
+  accountEmail: (id: string) => Promise<string | undefined>
+): Promise<void> {
+  if (confirmation != null) {
+    if (
+      currentId !== confirmation.currentId ||
+      target.id !== confirmation.targetId
+    )
+      throw conflict('The account changed. Open the sign-in link again.')
+  } else if (currentId != null && currentId !== target.id) {
+    throw conflict('Confirm the account switch', {
+      reason: 'confirmAccountSwitch',
+      confirmation: { currentId, targetId: target.id },
+      currentLabel: (await accountEmail(currentId)) ?? currentId,
+      targetLabel: target.email
+    })
+  }
 }
 
 /** Turns a cleaner's complaint into a 400 that names the problem. */
