@@ -78,6 +78,32 @@ export function asFielderRef(raw: unknown): FielderRef {
 const asPoint = asObject({ x: asNumber, z: asNumber })
 export type Point = ReturnType<typeof asPoint>
 
+/** A scorer-confirmed destination during a fielder's choice relay. */
+interface ChoiceCall {
+  runner: number
+  to: number
+  putout?: number
+  location: Point
+}
+const choiceCallFields = {
+  runner: asSessionId,
+  to: asNumber,
+  putout: asOptional(asNumber),
+  location: asPoint
+}
+export const asChoiceCall: Cleaner<ChoiceCall> = asObject(choiceCallFields)
+const asChoiceRelay = asArray(asObject({ id: asFielderRef, point: asPoint }))
+const asAnsweredChoice = asObject({
+  route: asChoiceRelay,
+  calls: asArray(
+    asObject({
+      ...choiceCallFields,
+      replaced: asOptional(asBoolean),
+      outsBefore: asOptional(asNumber)
+    })
+  )
+})
+
 export const asPlayerRef = asObject({ id: asSessionId, fullName: asString })
 export type PlayerRef = ReturnType<typeof asPlayerRef>
 const asCount = asObject({ balls: asNumber, strikes: asNumber, outs: asNumber })
@@ -242,6 +268,9 @@ export function lineupsOf(state: GameState): Lineups {
   })
 }
 
+/** The result of an appearance filed as a runner’s out between pitches. */
+export const RUNNER_OUT_EVENT = 'Runner out'
+
 /** One play as the game holds it, in GUMBO's shape, with session ids. */
 export const asGamePlay = asObject({
   about: asObject({
@@ -330,6 +359,8 @@ export const asGamePlay = asObject({
     teamstation: asObject({
       version: asLiteral('estimated-v1'),
       outcome: asString,
+      /** End Game filed this result while a scoring decision was still open. */
+      partialResult: asOptional(asBoolean),
       outSubtype: asOptional(asString),
       contactKind: asOptional(asLiteral('swing', 'bunt')),
       foulCaught: asOptional(asBoolean),
@@ -521,6 +552,10 @@ export interface Resolution {
   homeRunKind?: 'out-of-park' | 'in-park'
   /** A balk moves runners without ending the appearance. */
   sameAppearance?: boolean
+  answeredChoice?: {
+    route: ReturnType<typeof asChoiceRelay>
+    calls: Array<ChoiceCall & { replaced?: boolean; outsBefore?: number }>
+  }
   choiceApplied?: boolean
   /** The fielder who first handled the ball, and who holds it now. */
   fielder?: FielderRef
@@ -564,6 +599,12 @@ export function fenceOf(state: GameState): number {
 }
 
 export interface GameState {
+  /** The board if this appearance's independent running plays are omitted. */
+  beforeRunning?: {
+    bases: Array<{ id: number; charge: RunnerCharge } | null>
+    outs: number
+    errors: number
+  }
   /** Keep the overridden turn and substitution history until scoring resumes. */
   overrideLineupSetup?: boolean
   /** A half reset may discard an unfinished play; remember that scoring began. */
@@ -946,6 +987,15 @@ const asErrorlessOuts = asObject({
 /** Checks a whole game, such as one a session kept or a test built. */
 export const asGameState: Cleaner<GameState> = exactly(
   asObject({
+    beforeRunning: asOptional(
+      asObject({
+        bases: asArray(
+          asNullable(asObject({ id: asSessionId, charge: asCharge }))
+        ),
+        outs: asNumber,
+        errors: asNumber
+      })
+    ),
     overrideLineupSetup: asOptional(asBoolean),
     overridePlayStarted: asOptional(asBoolean),
     overridePitchers: asOptional(
@@ -1019,6 +1069,7 @@ export const asGameState: Cleaner<GameState> = exactly(
         homeRunKind: asOptional(asLiteral('out-of-park', 'in-park')),
         sameAppearance: asOptional(asBoolean),
         choiceApplied: asOptional(asBoolean),
+        answeredChoice: asOptional(asAnsweredChoice),
         fielder: asOptional(asFielderRef),
         ballHolder: asOptional(asFielderRef),
         originalRunnerRecordCount: asNumber,

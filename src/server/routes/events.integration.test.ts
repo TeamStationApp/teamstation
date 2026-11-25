@@ -1741,7 +1741,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 2: teamStation must be a valid version 1, 2, 3 or 4 record'
+        'Play 2: teamStation must be a valid version 1, 2, 3, 4 or 5 record'
       ],
       [
         {
@@ -1756,7 +1756,7 @@ describe('posting and reading plays', function () {
             teamStation: record('2')
           }
         },
-        'Play 5: teamStation must be a valid version 1, 2, 3 or 4 record'
+        'Play 5: teamStation must be a valid version 1, 2, 3, 4 or 5 record'
       ],
       [
         {
@@ -1767,7 +1767,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 0: teamStation must be a valid version 1, 2, 3 or 4 record'
+        'Play 0: teamStation must be a valid version 1, 2, 3, 4 or 5 record'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {

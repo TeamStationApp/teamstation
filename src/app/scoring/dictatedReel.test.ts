@@ -351,6 +351,34 @@ describe('a dictated sentence on the field', function () {
     expect(atRest(state)).equals(true)
   })
 
+  it('finishes a dictated single and accepts the next pitch after undoing End Game during the preceding ball', function () {
+    const live = say(game(), { type: 'pitch', call: 'B' }, ...single)
+    expect(live.presentation).deep.include({ kind: 'pitch', pitch: 'ball' })
+    const final = scoringReducer(live, { type: 'END_GAME' })
+    const restored = scoringReducer(final, { type: 'UNDO' })
+    const hit = finishPicture(restored)
+    expect(hit.presentation).deep.include({
+      kind: 'hit',
+      generation: restored.generation
+    })
+    const settled = playOut(hit)
+    expect(atRest(settled)).equals(true)
+    const ready = scoringReducer(settled, { type: 'CLOSE_PLAY' })
+    const pitched = scoringReducer(ready, { type: 'PITCH', kind: 'called' })
+    expect(pitched.session.liveData.linescore.strikes).equals(1)
+    expect(pitched.session.liveData.linescore.offense.first?.id).equals(1)
+  })
+
+  it('closes an open dictation question when the game ends from it', function () {
+    const asking: ScoringState = {
+      ...game(),
+      dictationQuestion: { transcript: 'two balls', question: 'Which?' }
+    }
+    const final = scoringReducer(asking, { type: 'END_GAME' })
+    expect(final.session.final).equals(true)
+    expect(final.dictationQuestion).equals(undefined)
+  })
+
   it('runs the batter and every runner together while a hit is in the air', function () {
     let state = say(game({ second: 5 }), ...single)
     const hit = state.presentation as HitSequence

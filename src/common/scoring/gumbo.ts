@@ -1,4 +1,10 @@
-import { asArray, asObject, asUnknown, type Cleaner } from 'cleaners'
+import {
+  asArray,
+  asObject,
+  asOptional,
+  asUnknown,
+  type Cleaner
+} from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
 import { eventTypeName } from '../gumboEventTypes'
@@ -26,6 +32,7 @@ import {
   startAppearance,
   updateDefense
 } from './lineup'
+import { choiceOpen } from './rules'
 import {
   asGamePlay,
   asGameSetup,
@@ -49,6 +56,8 @@ import { ownTeams, recordBySide, type SideTeams } from './teamRecord'
 
 export interface TeamStationRecord {
   version: 2
+  /** Read from a version 5 envelope, retained across team and player remapping. */
+  liveScoring?: true
   /** The rosters and lineups as they stood before this play's first action. */
   setupBefore: GameSetup
   /** The actions of this play, in order, lineup changes included. */
@@ -67,6 +76,7 @@ export interface TeamStationRecord {
 
 const asRecord: Cleaner<TeamStationRecord> = asObject({
   version: asLiteral(2),
+  liveScoring: asOptional(asLiteral(true)),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   actionTimes: asUnknown,
@@ -220,6 +230,7 @@ export function foldFinal(state: GameState, stamp: PlayStamp): GumboPlay {
 
 /** One play's share of the log: the setup it started from and its actions. */
 export interface Segment {
+  liveScoring?: true
   setupBefore: GameSetup
   actions: ScoringAction[]
   startTime?: string | null
@@ -240,10 +251,30 @@ export function segmentAfter(
   const completed = applied.state.liveData.plays.allPlays.slice(
     before.liveData.plays.allPlays.length
   )
+  const feature = applied.liveScoring ? { liveScoring: true as const } : {}
   if (completed.length === 0)
     return {
       finished: [],
-      current: { ...current, actions: [...current.actions, action] }
+      current: { ...current, ...feature, actions: [...current.actions, action] }
+    }
+  // The final marker owns End Game. The preceding row owns the actions
+  // that made its play, including any pitches that only Undo will restore.
+  // A play End Game files after the first, which no path makes today, is
+  // stamped as the general case below stamps one.
+  if (action.type === 'gameFlow' && action.kind === 'endGame')
+    return {
+      finished: completed.map((play, index) => ({
+        play,
+        segment:
+          index === 0
+            ? current
+            : { setupBefore: setupOf(applied.state), actions: [] }
+      })),
+      current: {
+        setupBefore: setupOf(applied.state),
+        actions: [action],
+        ...feature
+      }
     }
   const finished: Array<{ play: GamePlay; segment: Segment }> = []
   let segment = current
@@ -260,7 +291,8 @@ export function segmentAfter(
     )
     segment = { setupBefore: setupOf(closed.state), actions: [action] }
     rest = completed.slice(1)
-  } else segment = { ...segment, actions: [...segment.actions, action] }
+  } else
+    segment = { ...segment, ...feature, actions: [...segment.actions, action] }
   for (const play of rest) {
     finished.push({ play, segment })
     segment = { setupBefore: setupOf(applied.state), actions: [] }
@@ -286,6 +318,21 @@ export interface Replayed {
   derived: number
   /** An action that no longer applies, and everything after it, is dropped. */
   problems: Problem[]
+}
+
+/** Preserve the old placement rule when a saved call is replayed or edited. */
+export function actionForReplay(
+  record: TeamStationRecord,
+  state: GameState,
+  stored: ScoringAction
+): ScoringAction {
+  return record.liveScoring !== true &&
+    stored.type === 'runnerMovement' &&
+    stored.out !== true &&
+    state.pending?.outcome === 'Dropped Third Strike' &&
+    choiceOpen(state)
+    ? { ...stored, legacyDroppedThirdStrike: true }
+    : stored
 }
 
 /**
@@ -354,8 +401,9 @@ export function replayPlays(
   for (const { atBatIndex, record } of logged) {
     const kept: ScoringAction[] = []
     const times: Array<string | undefined> = []
-    for (const [i, action] of record.actions.entries()) {
+    for (const [i, stored] of record.actions.entries()) {
       if (problems.length > 0) break
+      const action = actionForReplay(record, state, stored)
       beforeAction?.(state, action)
       // `copyGame` shares the finished plays an earlier copy made, where
       // `applyAction`'s own copy copies every one of them again: at 85 plate

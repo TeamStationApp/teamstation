@@ -28,8 +28,12 @@ function object(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Version 4 adds deferred lineup semantics; old readers must not replay it as v2. */
-export function recordVersion(actions: readonly ScoringAction[]): 3 | 4 {
+/** Each record uses the oldest format that can replay its scoring rules. */
+export function recordVersion(
+  actions: readonly ScoringAction[],
+  liveScoring = false
+): 3 | 4 | 5 {
+  if (liveScoring) return 5
   return actions.some(
     action =>
       action.type === 'lineup' &&
@@ -40,7 +44,33 @@ export function recordVersion(actions: readonly ScoringAction[]): 3 | 4 {
 }
 
 export const SCORING_FEATURE_HEADER = 'x-teamstation-scoring'
-export const SCORING_FEATURES = 'deferred-lineups-v1'
+const DEFERRED_LINEUPS = 'deferred-lineups-v1'
+const LIVE_SCORING = 'live-scoring-v1'
+export const SCORING_FEATURES = `${DEFERRED_LINEUPS},${LIVE_SCORING}`
+
+/** Versions that name teams in their setups and lineup actions. */
+export function isTeamRecordVersion(version: unknown): boolean {
+  return version === 3 || version === 4 || version === 5
+}
+
+/** Whether the client can replay every scoring record in the game. */
+export function supportsScoringRecords(
+  header: string | undefined,
+  plays: unknown[]
+): boolean {
+  if (header === SCORING_FEATURES) return true
+  const features = new Set(header?.split(',').map(feature => feature.trim()))
+  return plays.every(play => {
+    if (
+      object(play) &&
+      object(play.teamStation) &&
+      play.teamStation.version === 5 &&
+      !features.has(LIVE_SCORING)
+    )
+      return false
+    return features.has(DEFERRED_LINEUPS) || !requiresDeferredLineups(play)
+  })
+}
 
 /** Also detects records written before the version boundary was introduced. */
 export function requiresDeferredLineups(play: unknown): boolean {
@@ -107,10 +137,20 @@ function sidesOf(raw: unknown, teams: SideTeams): unknown {
  */
 export function actionByTeam<A extends { type: string }>(
   action: A,
-  teams: SideTeams
+  teams: SideTeams,
+  liveScoring = false
 ): Record<string, unknown> {
   if (action.type === 'runnerMovement') {
-    const movement = action as A & { reason?: string }
+    const { legacyDroppedThirdStrike, ...rest } = action as A & {
+      reason?: string
+      legacyDroppedThirdStrike?: boolean
+    }
+    // Version 5 can mix an old advance with a new one after reopening.
+    // Earlier envelopes already select the legacy rule for every advance.
+    const movement =
+      liveScoring && legacyDroppedThirdStrike === true
+        ? { ...rest, legacyDroppedThirdStrike }
+        : rest
     return movement.reason === 'Ground Out'
       ? { ...movement, reason: 'Throw Out' }
       : movement
@@ -147,7 +187,7 @@ export function ownTeams(raw: unknown): SideTeams {
   const setup = object(raw) ? raw.setupBefore : undefined
   const ids =
     object(raw) &&
-    (raw.version === 3 || raw.version === 4) &&
+    isTeamRecordVersion(raw.version) &&
     object(setup) &&
     object(setup.teams)
       ? Object.keys(setup.teams)
@@ -160,11 +200,14 @@ export function recordByTeam(
   record: TeamStationRecord,
   teams: SideTeams
 ): Record<string, unknown> {
+  const { liveScoring, ...stored } = record
   return {
-    ...record,
-    version: recordVersion(record.actions),
+    ...stored,
+    version: recordVersion(record.actions, liveScoring),
     setupBefore: setupByTeam(record.setupBefore, teams),
-    actions: record.actions.map(action => actionByTeam(action, teams))
+    actions: record.actions.map(action =>
+      actionByTeam(action, teams, liveScoring)
+    )
   }
 }
 
@@ -201,7 +244,7 @@ function actionBySide(raw: unknown, teams: SideTeams): unknown {
  * setup names a team on neither side is not this game's to read.
  */
 export function recordBySide(raw: unknown, teams: SideTeams): unknown {
-  if (!object(raw) || (raw.version !== 3 && raw.version !== 4)) return raw
+  if (!object(raw) || !isTeamRecordVersion(raw.version)) return raw
   const setup = raw.setupBefore
   const byTeam = object(setup) ? setup.teams : undefined
   if (
@@ -213,6 +256,7 @@ export function recordBySide(raw: unknown, teams: SideTeams): unknown {
   return {
     ...raw,
     version: 2,
+    ...(raw.version === 5 ? { liveScoring: true } : {}),
     setupBefore: setupBySide(setup, teams),
     actions: Array.isArray(raw.actions)
       ? raw.actions.map(action => actionBySide(action, teams))
@@ -230,7 +274,7 @@ export function retargetRecord(
   fromId: string,
   toId: string
 ): unknown {
-  if (!object(raw) || (raw.version !== 3 && raw.version !== 4)) return raw
+  if (!object(raw) || !isTeamRecordVersion(raw.version)) return raw
   const team = (id: unknown): unknown => (id === fromId ? toId : id)
   // Each player names his team too.
   const players = (value: unknown): unknown =>

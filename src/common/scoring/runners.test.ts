@@ -534,6 +534,24 @@ describe('the batter on a ball in play', function () {
     ])
   })
 
+  it('keeps the lead runner on third until he advances on a dropped third strike', function () {
+    const dropped = after(
+      walk(walk(game())),
+      move(1, '3B', { reason: 'Steal' }),
+      move(2, '2B', { reason: 'Steal' }),
+      strike,
+      strike,
+      result('strikeout')
+    )
+    for (const to of ['3B', 'home'] as const)
+      expect(applyAction(dropped, move(2, to)).problems[0].code).equals(
+        'illegal'
+      )
+    const advanced = after(dropped, move(1, 'home'), move(2, '3B'))
+    expect(bases(advanced)).deep.equals([3, null, 2])
+    expect(runs(advanced)).equals(1)
+  })
+
   it('forces every runner on a dropped third strike with the bases loaded, and bats nobody in', function () {
     const loaded = walk(walk(walk(twoOuts(game()))))
     expect(bases(loaded)).deep.equals([5, 4, 3])
@@ -1179,21 +1197,17 @@ describe('closing and ending', function () {
     expect(ended.transitions).deep.equals([{ type: 'gameEnded' }])
     expect(applyAction(ended.state, ball).problems[0].code).equals('gameOver')
     expect(
-      applyAction(after(game(), ball), { type: 'gameFlow', kind: 'endGame' })
-        .problems[0].message
-    ).equals('Finish the at-bat first')
+      applyAction(ended.state, { type: 'gameFlow', kind: 'endGame' })
+        .problems[0].code
+    ).equals('gameOver')
   })
 
-  it('keeps a game going while the lineup changed during the at-bat', function () {
+  it('keeps lineup changes without adding a play on End Game', function () {
     const switched = after(strikeout(game()), {
       type: 'lineup',
       kind: 'batterSide',
       batSide: 'L'
     })
-    expect(
-      applyAction(switched, { type: 'gameFlow', kind: 'endGame' }).problems[0]
-        .message
-    ).equals('Finish the at-bat first')
     const added = after(strikeout(game()), {
       type: 'lineup',
       kind: 'addPlayer',
@@ -1201,10 +1215,13 @@ describe('closing and ending', function () {
       side: 'away',
       name: 'Late Arrival'
     })
-    expect(
-      applyAction(added, { type: 'gameFlow', kind: 'endGame' }).problems[0]
-        .message
-    ).equals('Finish the at-bat first')
+    for (const state of [switched, added]) {
+      const final = after(state, { type: 'gameFlow', kind: 'endGame' })
+      expect(final.final).equals(true)
+      expect(final.liveData.plays.allPlays).deep.equals(
+        state.liveData.plays.allPlays
+      )
+    }
   })
 
   it('closes a decided play before ending the game', function () {

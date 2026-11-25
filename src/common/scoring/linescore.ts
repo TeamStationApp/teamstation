@@ -224,14 +224,21 @@ function countedPlay(play: GumboPlay): {
   halfInning: 'top' | 'bottom' | null
   eventType: string
   errorCredits: number
+  unattributedResultError: boolean
 } {
+  const stamp = play.teamStation as
+    { detail?: { partialResult?: boolean; errorCredit?: unknown } } | undefined
   return {
     halfInning:
       play.about.halfInning === 'top' || play.about.halfInning === 'bottom'
         ? play.about.halfInning
         : null,
     eventType: play.result.eventType,
-    errorCredits: errorCredits(play)
+    errorCredits: errorCredits(play),
+    unattributedResultError:
+      play.result.eventType === 'field_error' &&
+      stamp?.detail?.partialResult === true &&
+      stamp.detail.errorCredit == null
   }
 }
 

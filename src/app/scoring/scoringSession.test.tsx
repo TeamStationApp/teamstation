@@ -559,6 +559,101 @@ describe('saving from the scoring screen', function () {
     expect(await kinds()).deep.equals(['pitch', 'pitch'])
   })
 
+  async function mountSavedGame(
+    source: DevelopmentScoringSource
+  ): Promise<GameSession> {
+    let session!: GameSession
+    await mount(clientForSwitchHitter('right'), {
+      persistent: source.persistent,
+      open: async (game, away, home) => {
+        session = await source.open(game, away, home)
+        return session
+      }
+    })
+    return session
+  }
+
+  for (const reopenFinal of [false, true])
+    it(`End Game restores the saved batted ball in one Undo after opening the ${reopenFinal ? 'final' : 'unfinished'} game`, async function () {
+      const source = new DevelopmentScoringSource()
+      const first = await source.open(
+        gameFixture,
+        scoringRoster(1),
+        scoringRoster(10)
+      )
+      first.apply({ type: 'pitch', call: 'B' })
+      first.apply({ type: 'ballInPlay', contact: 'swing' })
+      if (reopenFinal)
+        expect(
+          first.apply({ type: 'gameFlow', kind: 'endGame' }).problems
+        ).deep.equals([])
+      await first.flush()
+      const mounted = await mountSavedGame(source)
+      if (!reopenFinal) {
+        await click('Open scoring menu')
+        await click('End Game')
+        expect(document.body.textContent).includes(
+          'The pitch in play is left out of the book.'
+        )
+        await click('Confirm End Game')
+      }
+      await click(reopenFinal ? 'Undo Last play' : 'Undo End game')
+      expect(document.body.textContent).includes('Pitches 2')
+      await act(async () => {
+        await mounted.flush()
+      })
+      const reopened = await source.open(
+        gameFixture,
+        scoringRoster(1),
+        scoringRoster(10)
+      )
+      expect(reopened.actions.map(action => action.type)).deep.equals([
+        'pitch',
+        'ballInPlay'
+      ])
+    })
+
+  for (const reopenFinal of [false, true])
+    it(`undoes End Game to the decided award after opening the ${reopenFinal ? 'final' : 'unfinished'} game`, async function () {
+      const source = new DevelopmentScoringSource()
+      const first = await source.open(
+        gameFixture,
+        scoringRoster(1),
+        scoringRoster(10)
+      )
+      const award = { type: 'result', eventType: 'hit_by_pitch' } as const
+      first.apply(award)
+      if (reopenFinal)
+        expect(
+          first.apply({ type: 'gameFlow', kind: 'endGame' }).problems
+        ).deep.equals([])
+      await first.flush()
+      const mounted = await mountSavedGame(source)
+      if (!reopenFinal) {
+        await click('Open scoring menu')
+        await click('End Game')
+        await click('Confirm End Game')
+        expect(mounted.actions).deep.equals([
+          award,
+          { type: 'gameFlow', kind: 'endGame' }
+        ])
+      }
+      await click(reopenFinal ? 'Undo Last play' : 'Undo End game')
+      await act(async () => {
+        await mounted.flush()
+      })
+      const reopened = await source.open(
+        gameFixture,
+        scoringRoster(1),
+        scoringRoster(10)
+      )
+      expect(reopened.actions).deep.equals([award])
+      expect(reopened.state.liveData.plays.allPlays).has.length(0)
+      expect(
+        reopened.state.liveData.plays.currentPlay?.result.eventType
+      ).equals('hit_by_pitch')
+    })
+
   it('undoes a saved ball in play back to the pitch before it, not to a ball without a result', async function () {
     const source = new DevelopmentScoringSource()
     const first = await source.open(

@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
+import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { candidate } from '../../test/fakeCandidateClient'
@@ -1230,15 +1231,131 @@ describe('ending the game from the menu', function () {
     expect(document.body.textContent).includes('1 balls')
   })
 
-  it('keeps End Game off while an at-bat is open', async function () {
+  it('keeps the pitches in a begun appearance and returns to the same count on Undo', async function () {
     await mount()
     await click('Ball')
-    await click('Open scoring menu')
+    await menu('End Game')
+    expect(document.body.textContent).includes(
+      'The open at-bat is saved with its pitches.'
+    )
+    await click('Cancel')
+    expect(openedGame.state.final).equals(false)
+    await menu('End Game')
+    await click('Confirm End Game')
+    expect(openedGame.state.final).equals(true)
+    expect(
+      openedGame.state.liveData.plays.allPlays.at(-1)?.result.eventType
+    ).equals('ts_at_bat_ended')
+    await click('Undo End game')
+    expect(openedGame.state.liveData.linescore.balls).equals(1)
+  })
+
+  it('leaves a batted ball before trajectory acceptance out of the book, then restores the drawn play', async function () {
+    await mount()
+    await click('Swing in Play')
+    await click('Single')
+    const before = [...openedGame.actions]
+    await menu('End Game')
+    expect(document.body.textContent).includes(
+      'The pitch in play is left out of the book.'
+    )
+    await click('Confirm End Game')
+    expect(openedGame.state.liveData.plays.allPlays).has.length(0)
+    await click('Undo End game')
+    expect(openedGame.actions).deep.equals(before)
+    expect(document.body.textContent).includes(
+      'Tap or drag a player to where the ball was fielded.'
+    )
+  })
+
+  it('keeps an unanswered putout and its result when ending the game', async function () {
+    await mount(game =>
+      Object.assign(
+        game,
+        applyAction(game, {
+          type: 'result',
+          eventType: 'field_out',
+          outBy: 'throw'
+        }).state
+      )
+    )
+    await menu('End Game')
+    expect(document.body.textContent).includes(
+      'The play is saved as Ground Out. What is still undecided is left undecided.'
+    )
+    await click('Confirm End Game')
+    expect(
+      openedGame.state.liveData.plays.allPlays.at(-1)?.result.eventType
+    ).equals('field_out')
+    expect(openedGame.state.liveData.linescore.outs).equals(0)
+  })
+
+  it('shows the same score it files after a confirmed home crossing on a partial relay', async function () {
+    await mount(game => {
+      for (const action of [
+        { type: 'gameFlow', kind: 'placeRunner', base: '1B', runner: 6 },
+        { type: 'gameFlow', kind: 'placeRunner', base: '3B', runner: 8 },
+        { type: 'ballInPlay', contact: 'swing', fielder: 15 },
+        { type: 'result', eventType: 'fielders_choice' },
+        {
+          type: 'fieldingPlay',
+          fielders: [15],
+          locations: [{ x: 0, z: -35 }],
+          choiceCall: { runner: 8, to: 4, location: { x: 0, z: 0 } }
+        }
+      ] satisfies ScoringAction[]) {
+        const applied = applyAction(game, action)
+        expect(applied.problems).deep.equals([])
+        Object.assign(game, applied.state)
+      }
+    })
+    await menu('End Game')
+    expect(document.body.textContent).includes(
+      'End the game at Owls 1, Hawks 0?'
+    )
+    await click('Confirm End Game')
+    expect(
+      openedGame.state.liveData.plays.allPlays.at(-1)!.result.awayScore
+    ).equals(1)
+  })
+
+  it('refuses confirmation when the game becomes read-only while the sheet is open', async function () {
+    await mount()
+    await menu('End Game')
+    Object.defineProperty(openedGame, 'readOnly', { get: () => true })
+    await click('Confirm End Game')
+    expect(openedGame.state.final).equals(false)
+    await act(async () => {
+      for (const listener of gameListeners) listener()
+    })
     expect(
       document
-        .querySelector('[aria-label="End Game"]')
+        .querySelector('[aria-label="Confirm End Game"]')
         ?.getAttribute('aria-disabled')
     ).equals('true')
+  })
+
+  it('requires exiting the roster and resumes the same tiebreaker choice on Cancel', async function () {
+    await mount()
+    await menu('Set Team Rosters')
+    expect(document.querySelector('[aria-label="End Game"]')).equals(null)
+    await click('Cancel')
+    await click('More')
+    await click('Place a Runner (Tiebreaker)')
+    await click('End Game')
+    expect(
+      document.querySelector('[aria-label="Place runner on base"]')
+    ).equals(null)
+    await click('Cancel')
+    await click('Place runner on base')
+    await menu('End Game')
+    await click('Cancel')
+    expect(
+      document.querySelector('[aria-label="Cancel runner placement"]')
+    ).not.equals(null)
+    await menu('End Game')
+    await click('Confirm End Game')
+    expect(openedGame.state.final).equals(true)
   })
 })
 

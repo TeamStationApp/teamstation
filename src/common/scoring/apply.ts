@@ -70,6 +70,7 @@ import {
   inPlay,
   moreEligibility,
   nextDecision,
+  pendingPutouts,
   previousRunnerError,
   runnerDecisionError,
   tiebreakerSetupError,
@@ -96,6 +97,7 @@ import {
   type Resolution,
   type ResolutionOutcome,
   type RouteHop,
+  RUNNER_OUT_EVENT,
   type RunnerCredit,
   setupOf,
   type Side,
@@ -113,6 +115,8 @@ import type { Transition } from './transitions'
  */
 export interface Applied {
   state: GameState
+  /** This action used scoring semantics introduced in record version 5. */
+  liveScoring?: true
   /** What the screen animates, in order. No coordinates, no durations. */
   transitions: Transition[]
   /** The play the action touched: the current one, or the one it completed. */
@@ -131,6 +135,7 @@ function refuse(code: Problem['code'], message: string): never {
 }
 
 interface Ctx {
+  liveScoring?: true
   state: GameState
   out: Transition[]
   replay: boolean
@@ -432,21 +437,158 @@ function nextHalf(ctx: Ctx): void {
   })
 }
 
-/** Ends the play: stamps the score, moves the order on, and brings up the next batter. */
-function closePlay(ctx: Ctx): void {
-  const state = ctx.state
+/** Files the current play exactly as scored, including the runs already counted. */
+function filePlay(ctx: Ctx): void {
   const play = current(ctx)
   play.about.isComplete = true
   play.result.awayScore = line(ctx).teams.away.runs
   play.result.homeScore = line(ctx).teams.home.runs
-  refineEventType(play, state.pending)
   countRbi(play)
-  state.liveData.plays.allPlays.push(copyState(play))
+  ctx.state.liveData.plays.allPlays.push(copyState(play))
   ctx.out.push({
     type: 'playClosed',
     atBatIndex: play.about.atBatIndex,
     eventType: play.result.eventType
   })
+}
+
+/** Files the calls already made while a result is still waiting on the scorer. */
+function filePartialResult(ctx: Ctx): void {
+  const pending = ctx.state.pending!
+  current(ctx).source.teamstation.partialResult = true
+  if (pending.errorPending === true)
+    line(ctx).teams[fieldingSide(ctx.state)].errors++
+  if (pending.outcome === 'Dropped Third Strike') {
+    const batter = pending.movements.find(move => move.from === 0)
+    if (batter?.decision === 'pending') setBase(ctx, batter.playerId, 0)
+  }
+  fileChoiceMovements(ctx)
+  filePlay(ctx)
+}
+
+/** Applies confirmed relay calls in their original order. */
+function applyAnsweredChoice(ctx: Ctx): void {
+  const pending = ctx.state.pending!
+  const answered = pending.answeredChoice
+  if (answered == null) return
+  delete pending.answeredChoice
+  const ordinaryOuts = line(ctx).outs
+  const earlierCalls = new Map<number, number>()
+  let routeStart = 0
+  for (const call of answered.calls) {
+    if (line(ctx).outs >= 3) break
+    const start = routeStart
+    if (call.putout != null) routeStart = call.putout
+    if (call.replaced === true) continue
+    const move = pending.movements.find(move => move.playerId === call.runner)!
+    if (call.putout != null) {
+      if (call.outsBefore != null && call.outsBefore < ordinaryOuts)
+        earlierCalls.set(call.runner, call.outsBefore)
+      const route = answered.route.slice(start, call.putout + 1)
+      finishOut(ctx, {
+        runner: call.runner,
+        from: move.from,
+        to: call.to,
+        reason: 'Out',
+        fielders: route.map(hop => hop.id),
+        locations: route.map(hop => hop.point),
+        runnerLocation: call.location
+      })
+    } else {
+      move.to = call.to
+      move.decision = 'safe'
+      move.force = call.to === move.from + 1 && forcedFrom(ctx.state, move.from)
+      if (pending.choiceApplied === true && call.to < 4) {
+        setBase(ctx, call.runner, call.to)
+        recordRunner(ctx, move, { reason: pending.outcome })
+      } else if (call.to === 4) {
+        const reason = 'Safe at home'
+        const rbi = earnsRbi(pending.outcome, reason)
+        setBase(ctx, call.runner, 0)
+        scoreRun(ctx, call.runner, rbi)
+        recordRunner(ctx, move, { reason, rbi })
+      }
+    }
+  }
+  if (earlierCalls.size > 0) orderChoiceOuts(ctx, earlierCalls)
+}
+
+/** A later ordinary out can already have a row when a relay putout is filed.
+ * Keep each out's runner, credits and event together in the order it was called.
+ */
+function orderChoiceOuts(ctx: Ctx, earlierCalls: Map<number, number>): void {
+  const pending = ctx.state.pending!
+  const play = current(ctx)
+  const actions = play.source.teamstation.runnerActions!
+  const slots = play.runners.flatMap((runner, index) => {
+    if (index < pending.originalRunnerRecordCount || !runner.movement.isOut)
+      return []
+    const event = play.playEvents.find(
+      event => event.details.runnerEntry === index
+    )!
+    return [{ index, event: event.index }]
+  })
+  const outs = slots
+    .map(slot => {
+      const runner = play.runners[slot.index]
+      const id = runner.details.runner.id
+      const move = pending.movements.find(move => move.playerId === id)!
+      move.decision = 'pending'
+      return {
+        runner,
+        move,
+        action: actions[slot.index],
+        event: play.playEvents[slot.event],
+        // An ordinary out already precedes any later relay call tied with it.
+        order: earlierCalls.get(id) ?? runner.movement.outNumber!
+      }
+    })
+    .sort((a, b) => a.order - b.order)
+  for (const [index, out] of outs.entries()) {
+    const slot = slots[index]
+    const number = pending.originalOuts + index + 1
+    const { start, end } = out.runner.movement
+    const force =
+      (end === start + 1 && forcedFrom(ctx.state, start)) ||
+      (start === 0 && end <= 1)
+    out.move.force = force
+    out.move.decision = 'out'
+    out.runner.movement.forceOut = force
+    out.action.forceOut = force
+    out.runner.movement.outNumber = number
+    out.event.count.outs = number
+    out.event.details.runnerEntry = slot.index
+    out.event.index = slot.event
+    play.runners[slot.index] = out.runner
+    actions[slot.index] = out.action
+    play.playEvents[slot.event] = out.event
+  }
+}
+
+/** Places the choice advances after applying each remaining relay call. */
+function fileChoiceMovements(ctx: Ctx): void {
+  const pending = ctx.state.pending!
+  applyAnsweredChoice(ctx)
+  // A choice normally places its safe runners together once everyone has a
+  // destination. Outs already have entries, and home needs its separate call.
+  if (pending.outcome === "Fielder's Choice" && pending.choiceApplied !== true)
+    for (const move of pending.movements) {
+      if (move.decision !== 'safe' || move.from === move.to || move.to >= 4)
+        continue
+      setBase(ctx, move.playerId, move.to)
+      recordRunner(ctx, move, {
+        reason: pending.outcome,
+        credits: fielded(ctx, move)
+      })
+    }
+}
+
+/** Ends the decided play, moves the order on, and brings up the next batter. */
+function closePlay(ctx: Ctx): void {
+  const state = ctx.state
+  if (state.pending?.answeredChoice != null) fileChoiceMovements(ctx)
+  refineEventType(current(ctx), state.pending)
+  filePlay(ctx)
   const battingLineup = state.liveData.boxscore.teams[battingSide(state)]
   battingLineup.battingIndex =
     (battingLineup.battingIndex + 1) % battingLineup.battingOrder.length
@@ -633,7 +775,7 @@ function interruptedEvent(play: GamePlay): {
   const out = [...play.runners].reverse().find(runner => runner.movement.isOut)
   if (out != null)
     return {
-      event: 'Runner out',
+      event: RUNNER_OUT_EVENT,
       eventType: betweenEventType(
         out.details.movementReason,
         out.movement.start,
@@ -672,19 +814,117 @@ function interruptedEvent(play: GamePlay): {
 function closeInterruptedAtBat(ctx: Ctx): void {
   const play = current(ctx)
   const named = interruptedEvent(play)
-  play.about.isComplete = true
   play.result.event = named.event
   play.result.eventType = named.eventType
   play.result.description = named.event
-  play.result.awayScore = line(ctx).teams.away.runs
-  play.result.homeScore = line(ctx).teams.home.runs
-  countRbi(play)
-  ctx.state.liveData.plays.allPlays.push(copyState(play))
-  ctx.out.push({
-    type: 'playClosed',
-    atBatIndex: play.about.atBatIndex,
-    eventType: play.result.eventType
+  filePlay(ctx)
+}
+
+/** The scorebook entry End Game will make for the live appearance. */
+export function endGameFiling(
+  state: GameState
+):
+  | { kind: 'decided' | 'batted' | 'begun' | 'unbegun' }
+  | { kind: 'partial'; result: string } {
+  const play = state.liveData.plays.currentPlay
+  if (play == null || state.final) return { kind: 'unbegun' }
+  if (nextDecision(state) === 'close') return { kind: 'decided' }
+  if (state.pending != null)
+    return { kind: 'partial', result: play.source.teamstation.outcome }
+  if (inPlay(play)) return { kind: 'batted' }
+  return { kind: atBatUnderWay(play) ? 'begun' : 'unbegun' }
+}
+
+function chargedBases(
+  ctx: Ctx
+): NonNullable<GameState['beforeRunning']>['bases'] {
+  return baseIds(ctx.state).map(id =>
+    id == null ? null : { id, charge: chargeOf(ctx.state, ctx.charges, id) }
+  )
+}
+
+/** A placement takes precedence over an omitted advance or putout of the same runner. */
+function keepPlacement(ctx: Ctx, index: number, id: number): void {
+  const saved = ctx.state.beforeRunning
+  if (saved == null) return
+  saved.bases = saved.bases.map((runner, base) => {
+    if (base === index)
+      return { id, charge: chargeOf(ctx.state, ctx.charges, id) }
+    return runner?.id === id ? null : runner
   })
+}
+
+/** A replacement keeps the outgoing runner's base even if his advances are omitted. */
+function replaceRunner(ctx: Ctx, leaving: number, incoming: number): void {
+  ctx.charges.set(incoming, chargeOf(ctx.state, ctx.charges, leaving))
+  ctx.charges.delete(leaving)
+  const index = ctx.state.beforeRunning?.bases.findIndex(
+    base => base?.id === leaving
+  )
+  if (index != null && index >= 0) keepPlacement(ctx, index, incoming)
+}
+
+/**
+ * A ball without a result leaves no pitches in the book. If a runner already
+ * scored independently, his running play still accounts for the run.
+ */
+function omitBattedBall(ctx: Ctx): void {
+  const play = current(ctx)
+  const counts =
+    ctx.state.liveData.boxscore.teams[fieldingSide(ctx.state)].pitchCounts
+  const kept: PlayEvent[] = []
+  const indexes = new Map<number, number>()
+  for (const event of play.playEvents) {
+    if (event.isPitch) {
+      const pitcher = event.player.id
+      if (counts[pitcher] > 1) counts[pitcher]--
+      else Reflect.deleteProperty(counts, pitcher)
+    } else {
+      indexes.set(event.index, kept.length)
+      kept.push({
+        ...event,
+        index: kept.length,
+        count: { ...event.count, balls: 0, strikes: 0 }
+      })
+    }
+  }
+  line(ctx).balls = 0
+  line(ctx).strikes = 0
+  if (!play.runners.some(runner => runner.movement.runScored === true)) {
+    const saved = ctx.state.beforeRunning
+    if (saved != null) {
+      const { currentInning: inning, isTopInning: top, outs } = line(ctx)
+      BASE_KEYS.forEach((key, index) => {
+        const runner = saved.bases[index]
+        line(ctx).offense[key] =
+          runner == null ? null : playerRef(ctx.state, runner.id)
+        if (runner != null) ctx.charges.set(runner.id, runner.charge)
+      })
+      line(ctx).outs = saved.outs
+      line(ctx).teams[fieldingSide(ctx.state)].errors = saved.errors
+      outsCorrected(ctx.state, { inning, top, outs })
+    }
+    return
+  }
+
+  play.playEvents = kept
+  play.count = count(ctx)
+  for (const runner of play.runners) {
+    const original = runner.details.playIndex
+    if (original != null) runner.details.playIndex = indexes.get(original)
+  }
+  const detail = play.source.teamstation
+  delete detail.contactKind
+  delete detail.homeRunKind
+  delete detail.landingHeight
+  delete detail.trajectory
+  delete detail.launchAngle
+  delete detail.launchAngleSet
+  for (const runner of detail.runnerActions ?? [])
+    if (runner.pitchReference?.atBatIndex === play.about.atBatIndex)
+      delete runner.pitchReference
+  delete play.hitData
+  closeInterruptedAtBat(ctx)
 }
 
 /** Three outs between pitches: the play ends as the runner's out, and so does the half. */
@@ -698,7 +938,7 @@ function finishBetween(
   const play = current(ctx)
   play.about.isComplete = true
   play.result.description = reason
-  play.result.event = 'Runner out'
+  play.result.event = RUNNER_OUT_EVENT
   play.result.eventType = betweenEventType(reason, from, to)
   play.result.awayScore = line(ctx).teams.away.runs
   play.result.homeScore = line(ctx).teams.home.runs
@@ -983,6 +1223,8 @@ interface OutCall {
   fielders: FielderRef[]
   locations?: Point[]
   runnerLocation?: Point
+  /** Position of the confirmed putout being submitted by the scoring controls. */
+  relayCall?: { index: number; outsBefore?: number }
 }
 
 /**
@@ -992,6 +1234,18 @@ interface OutCall {
 function finishOut(ctx: Ctx, call: OutCall): void {
   const pending = ctx.state.pending
   const l = line(ctx)
+  const relay = pending?.answeredChoice
+  if (relay != null) {
+    // Completion resubmits the confirmed putouts in order. An independent out
+    // follows every saved call, but a resubmitted out precedes the later calls.
+    const earlier = relay.calls.slice(0, call.relayCall?.index)
+    if (l.outs + pendingPutouts(earlier) + 1 >= 3) {
+      relay.calls = earlier
+      // The scoring controls place their safe advances as the play completes.
+      if (call.relayCall == null) fileChoiceMovements(ctx)
+      else applyAnsweredChoice(ctx)
+    }
+  }
   if (l.outs >= 3) return
   const old = pending?.movements.find(move => move.playerId === call.runner)
   // Put out at the next base while the batter is still running, and with
@@ -1050,6 +1304,9 @@ function finishOut(ctx: Ctx, call: OutCall): void {
     at: call.to,
     outs: l.outs
   })
+  const outsBefore = call.relayCall?.outsBefore
+  if (outsBefore != null && outsBefore < l.outs - 1)
+    orderChoiceOuts(ctx, new Map([[call.runner, outsBefore]]))
   ctx.state.homeQueue = ctx.state.homeQueue.filter(id => id !== call.runner)
   if (l.outs >= 3) {
     if (pending != null && force) {
@@ -1445,6 +1702,61 @@ function battedResult(
 
 function fieldingPlay(ctx: Ctx, action: FieldingPlayAction): void {
   const pending = ctx.state.pending
+  const call = action.choiceCall
+  if (call != null) {
+    const from = (pending?.originalBases.indexOf(call.runner) ?? -1) + 1
+    if (
+      pending?.outcome !== "Fielder's Choice" ||
+      pending.choiceApplied === true ||
+      action.error != null ||
+      from === 0 ||
+      !Number.isInteger(call.to) ||
+      call.to <= from ||
+      call.to > 4 ||
+      !Number.isFinite(call.location.x) ||
+      !Number.isFinite(call.location.z) ||
+      pending.movements.some(
+        move => move.playerId === call.runner && move.decision === 'out'
+      ) ||
+      pending.answeredChoice?.calls.some(
+        other => other.runner === call.runner && other.replaced !== true
+      ) === true ||
+      action.locations?.length !== action.fielders.length
+    )
+      refuse('illegal', 'Choose a runner and a destination on this relay')
+    const route = action.fielders.map((id, index) => ({
+      id,
+      point: action.locations![index]
+    }))
+    const previous = pending.answeredChoice
+    const lastPutout =
+      previous?.calls.findLast(other => other.putout != null)?.putout ?? 0
+    if (
+      (previous != null &&
+        (previous.route.length !== route.length ||
+          previous.route.some(
+            (hop, index) =>
+              hop.id !== route[index].id ||
+              hop.point.x !== route[index].point.x ||
+              hop.point.z !== route[index].point.z
+          ))) ||
+      (call.putout != null &&
+        (!Number.isInteger(call.putout) ||
+          call.putout < lastPutout ||
+          call.putout >= route.length))
+    )
+      refuse('illegal', 'Choose a fielder on the same relay')
+    saveChoiceRoute(ctx, route)
+    pending.answeredChoice = {
+      route,
+      calls: [
+        ...(previous?.calls ?? []),
+        { ...call, outsBefore: line(ctx).outs }
+      ]
+    }
+    ctx.liveScoring = true
+    return
+  }
   if (pending?.errorPending !== true || action.error == null)
     refuse('notNow', 'No error is waiting to be charged')
   if (!action.fielders.includes(action.error))
@@ -1537,6 +1849,30 @@ function runnerMovement(
   }
   const pending = state.pending
   const to = destinationBase(action.to)
+  let relayCall: OutCall['relayCall']
+  if (pending?.answeredChoice != null) {
+    const calls = pending.answeredChoice.calls
+    const index = calls.findLastIndex(call => call.runner === action.runner)
+    if (index >= 0) {
+      const call = calls[index]
+      if (
+        action.fieldingRoute != null &&
+        action.out === true &&
+        call.putout != null &&
+        call.to === to &&
+        call.replaced !== true
+      ) {
+        relayCall = { index, outsBefore: call.outsBefore }
+        // Later confirmations now have this putout in their recorded out count.
+        for (const later of calls.slice(index + 1))
+          if (later.outsBefore != null) later.outsBefore++
+      }
+      // Keep the relay boundary for the next putout until its runner is scored.
+      call.replaced = true
+      if (calls.every(call => call.replaced === true))
+        delete pending.answeredChoice
+    }
+  }
   if (action.reason === 'Back' && returnHitAdvance(ctx, action, to)) return
   let where = locate(ctx, action.runner)
   if (where < 0) refuse('unknownPlayer', 'That runner is not on the play')
@@ -1544,6 +1880,18 @@ function runnerMovement(
   if (decision === 'errorAttribution')
     refuse('notNow', 'Charge the error first')
   if (action.fieldingRoute != null) saveChoiceRoute(ctx, action.fieldingRoute)
+  // A separate advance comes after every saved call. File an earlier third out
+  // before accepting a new destination, even if the batter is still undecided.
+  if (
+    action.out !== true &&
+    action.fieldingRoute == null &&
+    pending?.answeredChoice != null &&
+    line(ctx).outs + pendingPutouts(pending.answeredChoice.calls) >= 3
+  ) {
+    fileChoiceMovements(ctx)
+    settle(ctx)
+    return
+  }
   // Choice calls may describe a home crossing after the third out. The
   // defensive sequence still belongs to this play, but the half has ended.
   if (
@@ -1592,7 +1940,7 @@ function runnerMovement(
     )
   if (droppedBatter) where = 0
   if (where === 4) {
-    homeMovement(ctx, action, to)
+    homeMovement(ctx, action, to, relayCall)
     return
   }
   // Hit-offer retreat / re-take is allowed even while a lead runner waits on
@@ -1646,17 +1994,18 @@ function runnerMovement(
         (decision === 'batterOut' || droppedBatter ? pending!.outcome : 'Out'),
       fielders: action.fielders ?? [],
       locations: action.locations,
-      runnerLocation: action.runnerLocation
+      runnerLocation: action.runnerLocation,
+      relayCall
     })
     if (pending == null) finishBetween(ctx, action.reason ?? 'Out', where, to)
     settle(ctx)
     return
   }
-  const error = runnerDecisionError(state, {
-    playerId: action.runner,
-    from: where,
-    to
-  })
+  const error = runnerDecisionError(
+    state,
+    { playerId: action.runner, from: where, to },
+    action.legacyDroppedThirdStrike
+  )
   if (error != null) refuse('illegal', error)
   // Older choice actions carried the complete relay on the Safe batter.
   if (
@@ -1804,7 +2153,18 @@ function commitSafe(
         REACHED_ON_ERROR_REASONS.has(action.reason)
       )
         batterReachedOnError(ctx)
+      // Forced advances and the provisional batter are already on the field.
+      // A safe call updates that placement immediately, including a run home.
+      if (action.legacyDroppedThirdStrike !== true) {
+        ctx.liveScoring = true
+        if (locate(ctx, action.runner) !== to) {
+          setBase(ctx, action.runner, to)
+          if (to === 4) scoreRun(ctx, action.runner, false)
+          moved(ctx, movement)
+        }
+      }
       recordRunner(ctx, movement, { reason: pending.outcome })
+      if (action.legacyDroppedThirdStrike !== true) return
     }
     let required = 0
     for (const other of [...pending.movements]
@@ -1970,7 +2330,8 @@ function removeAdvanceRow(
 function homeMovement(
   ctx: Ctx,
   action: RunnerMovementAction,
-  to: number
+  to: number,
+  relayCall?: OutCall['relayCall']
 ): void {
   const state = ctx.state
   const pending = state.pending!
@@ -1992,7 +2353,8 @@ function homeMovement(
       reason: action.reason ?? 'Out at home',
       fielders: action.fielders ?? [],
       locations: action.locations,
-      runnerLocation: action.runnerLocation
+      runnerLocation: action.runnerLocation,
+      relayCall
     })
     settle(ctx)
     return
@@ -2168,8 +2530,7 @@ function courtesyRunner(ctx: Ctx, action: LineupAction): void {
   const team = state.liveData.boxscore.teams[side]
   if (!team.players.includes(incoming)) team.players.push(incoming)
   // He takes the charges of the man he runs for (9.16).
-  ctx.charges.set(incoming, chargeOf(state, ctx.charges, runner))
-  ctx.charges.delete(runner)
+  replaceRunner(ctx, runner, incoming)
   const replaced = playerRef(state, runner)
   line(ctx).offense[BASE_KEYS[index]] = playerRef(state, incoming)
   play.source.teamstation.lineupChanged = true
@@ -2351,8 +2712,7 @@ function lineup(ctx: Ctx, action: LineupAction): void {
   baseIds(ctx.state).forEach((id, index) => {
     const runner = was[index]
     if (id == null || runner == null || id === runner) return
-    ctx.charges.set(id, chargeOf(state, ctx.charges, runner))
-    ctx.charges.delete(runner)
+    replaceRunner(ctx, runner, id)
   })
   const play = ctx.state.liveData.plays.currentPlay
   if (play != null || recordReplacement) {
@@ -2414,6 +2774,33 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
     closePlay(ctx)
     return
   }
+  if (action.kind === 'endGame') {
+    // A decided play has already closed through closesFirst. Only the
+    // remaining appearance can need an interrupted or partial entry.
+    const play = state.liveData.plays.currentPlay
+    // This is the boundary the previous release enforced after closing any
+    // decided play. Its reader cannot reproduce an ending beyond it.
+    if (
+      state.pending != null ||
+      (play != null &&
+        (play.playEvents.some(event => event.isSubstitution !== true) ||
+          play.runners.length > 0 ||
+          play.source.teamstation.lineupChanged === true))
+    )
+      ctx.liveScoring = true
+    const filing = endGameFiling(state)
+    if (filing.kind === 'partial') filePartialResult(ctx)
+    else if (filing.kind === 'begun') closeInterruptedAtBat(ctx)
+    else if (filing.kind === 'batted') omitBattedBall(ctx)
+    state.liveData.plays.currentPlay = null
+    state.pending = null
+    state.homeQueue = []
+    state.recentPitch = null
+    delete state.beforeRunning
+    state.final = true
+    ctx.out.push({ type: 'gameEnded' })
+    return
+  }
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
   if (action.kind === 'endHalf') {
     const play = state.liveData.plays.currentPlay
@@ -2426,21 +2813,6 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
       if (atBatUnderWay(play)) closeInterruptedAtBat(ctx)
     }
     nextHalf(ctx)
-    return
-  }
-  if (action.kind === 'endGame') {
-    // The play has begun with a pitch or any action but a substitution, and
-    // a runner who moved or a lineup changed during it holds it open too.
-    const play = state.liveData.plays.currentPlay
-    if (
-      play != null &&
-      (play.playEvents.some(event => event.isSubstitution !== true) ||
-        play.runners.length > 0 ||
-        play.source.teamstation.lineupChanged === true)
-    )
-      refuse('notNow', 'Finish the at-bat first')
-    state.final = true
-    ctx.out.push({ type: 'gameEnded' })
     return
   }
   if (action.kind === 'placeRunner') {
@@ -2477,6 +2849,7 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
       pitcher: halfPitcher(state),
       reachedOnError: true
     })
+    keepPlacement(ctx, base - 1, runner)
     const movement: Movement = {
       playerId: runner,
       from: 0,
@@ -2533,6 +2906,11 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
   })
   // Runners put on base in a new half are charged to its pitcher.
   if (line(ctx).errorlessOuts == null) ctx.charges.clear()
+  const saved = ctx.state.beforeRunning
+  if (saved != null) {
+    saved.bases = chargedBases(ctx)
+    if (action.outs != null) saved.outs = action.outs
+  }
   ctx.out.push({
     type: 'batterChanged',
     batter: ctx.state.liveData.linescore.offense.batter?.id ?? null
@@ -2626,6 +3004,18 @@ export function applyAction(
       const problem = currentSetupError(ctx.state, acceptedLineup)
       if (problem != null) refuse('notNow', problem)
     }
+    // All movements of one award share the board from before the first move.
+    if (
+      ctx.state.pending == null &&
+      (action.type === 'runnerMovement' ||
+        action.type === 'baseRunning' ||
+        action.type === 'batteryEvent')
+    )
+      ctx.state.beforeRunning ??= {
+        bases: chargedBases(ctx),
+        outs: line(ctx).outs,
+        errors: line(ctx).teams[fieldingSide(ctx.state)].errors
+      }
     const priorFieldingRoute =
       ctx.state.liveData.plays.currentPlay?.source.teamstation.fieldingRoute
     ;(HANDLERS[action.type] as (ctx: Ctx, action: ScoringAction) => void)(
@@ -2694,6 +3084,7 @@ export function applyAction(
   const plays = ctx.state.liveData.plays.allPlays
   return {
     state: ctx.state,
+    ...(ctx.liveScoring ? { liveScoring: true } : {}),
     transitions: ctx.out,
     play:
       plays.length > played

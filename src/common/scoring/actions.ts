@@ -13,6 +13,7 @@ import { DEPTHS, FOUL_DEPTHS, FOUL_SIDES } from './depth'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
+  asChoiceCall,
   asFielderRef,
   asLineupAction,
   asSessionId,
@@ -301,6 +302,7 @@ const actionCleaners = {
   }),
   fieldingPlay: asObject({
     type: asLiteral('fieldingPlay'),
+    choiceCall: asOptional(asChoiceCall),
     fielders: asArray(asFielderRef),
     error: asOptional(asFielderRef),
     errorKind: asOptional(asOneOf(ERROR_KINDS)),
@@ -308,6 +310,8 @@ const actionCleaners = {
   }),
   runnerMovement: asObject({
     type: asLiteral('runnerMovement'),
+    /** A saved safe call made before dropped-third-strike advances moved the runner. */
+    legacyDroppedThirdStrike: asOptional(asBoolean),
     runner: asSessionId,
     to: asOneOf(DESTINATIONS),
     out: asOptional(asBoolean),
@@ -605,6 +609,12 @@ export function mapPlayers(
       out[field] = (out[field] as unknown[]).map(value =>
         value == null ? value : map(value, field)
       )
+  if (out.choiceCall != null && typeof out.choiceCall === 'object')
+    out.choiceCall = mapPlayers(
+      out.choiceCall as Record<string, unknown>,
+      each,
+      options
+    )
   if (Array.isArray(out.advances))
     out.advances = out.advances.map((advance: unknown) =>
       advance != null && typeof advance === 'object'

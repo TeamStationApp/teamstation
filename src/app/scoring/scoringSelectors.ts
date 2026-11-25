@@ -85,6 +85,7 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
 /** Bottom scoring actions remain locked until every current-play interaction settles. */
 export function bottomActionsAllowed(state: ScoringSnapshot): boolean {
   return (
+    !state.session.final &&
     state.phase === 'ready' &&
     state.presentation == null &&
     state.activeGesture !== true &&

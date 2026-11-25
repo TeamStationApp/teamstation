@@ -1618,6 +1618,12 @@ async function liveAnnouncer(
     }
     if (!ended) await shot(scorer, 'scorer-could-not-end')
     assert.ok(ended, 'the scorer could not end the game')
+    await cardUntil(
+      viewer,
+      'the final',
+      text => text.includes("That's the ballgame"),
+      60000
+    )
     const halves = (
       await evalJson<Array<{ t: number; text: string }>>(
         viewer,
@@ -1628,12 +1634,6 @@ async function liveAnnouncer(
       halves.at(-1)?.text ?? '',
       /End of the 2nd/,
       'the game did not end at the end of the bottom of the 2nd'
-    )
-    await cardUntil(
-      viewer,
-      'the final',
-      text => text.includes("That's the ballgame"),
-      60000
     )
     await wait(8000)
     const media = await mediaEvents(viewer)
@@ -1670,9 +1670,10 @@ async function liveAnnouncer(
       [],
       'an impossible count'
     )
-    assert.ok(
-      plays.some(event => event.card.includes("That's the ballgame")),
-      'the final call was not read'
+    assert.equal(
+      plays.filter(event => event.card.includes("That's the ballgame")).length,
+      1,
+      'the final call should be read exactly once'
     )
     assert.deepEqual(overlaps(media), [])
   } finally {

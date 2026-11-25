@@ -26,6 +26,7 @@ import {
   isPosition,
   type Movement,
   type Position,
+  type Resolution,
   type ResolutionOutcome
 } from './state'
 
@@ -382,12 +383,19 @@ export function tiebreakerSetupError(state: GameState): string | undefined {
 }
 
 /** Some runner on the play has no base yet: the batter's choice is open. */
-export function choiceOpen(state: GameState): boolean {
+export function choiceOpen(state: GameState, countRelayCalls = false): boolean {
+  const pending = state.pending
   return (
-    state.pending != null &&
+    pending != null &&
     state.liveData.linescore.outs < 3 &&
-    state.pending.movements.some(
-      move => move.to < 4 && move.decision === 'pending'
+    pending.movements.some(
+      move =>
+        move.to < 4 &&
+        move.decision === 'pending' &&
+        (!countRelayCalls ||
+          pending.answeredChoice?.calls.some(
+            call => call.runner === move.playerId && call.replaced !== true
+          ) !== true)
     )
   )
 }
@@ -399,11 +407,18 @@ export function choiceOpen(state: GameState): boolean {
  */
 export function runnerDecisionError(
   state: GameState,
-  move: { playerId: number; from: number; to: number }
+  move: { playerId: number; from: number; to: number },
+  legacyDroppedThirdStrike = false
 ): string | undefined {
   if (move.to === 0) return 'The batter must reach a base to be safe.'
   const bases = baseIds(state)
-  if (!choiceOpen(state)) {
+  const useLiveBases =
+    state.pending?.choiceApplied === true &&
+    !(
+      legacyDroppedThirdStrike &&
+      state.pending.outcome === 'Dropped Third Strike'
+    )
+  if (useLiveBases || !choiceOpen(state)) {
     if (bases[move.to - 1] != null && bases[move.to - 1] !== move.playerId)
       return 'That base is occupied. Move the lead runner first.'
     if (
@@ -566,7 +581,7 @@ export function nextDecision(state: GameState): Decision {
     !batterRetired(state)
   )
     return 'batterOut'
-  if (choiceOpen(state)) return 'resolveBatter'
+  if (choiceOpen(state, true)) return 'resolveBatter'
   if (pending.errorPending === true) return 'errorAttribution'
   if (state.homeQueue.length > 0 && outs < 3) return 'homeDecision'
   return 'close'
@@ -660,4 +675,28 @@ export function undoesHitOffer(
   if (move == null) return false
   const start = move.start ?? move.from
   return to === from - 1 && to === start && from === move.offeredTo
+}
+
+type RelayCalls = NonNullable<Resolution['answeredChoice']>['calls']
+
+/** Confirmed putouts on a relay still awaiting their runner movement. */
+export function pendingPutouts(calls: RelayCalls): number {
+  return calls.filter(call => call.replaced !== true && call.putout != null)
+    .length
+}
+
+/**
+ * Runners whose saved relay calls come after the play's third out, counting
+ * from `outs`. The engine stops applying calls there.
+ */
+export function callsAfterThirdOut(
+  calls: RelayCalls,
+  outs: number
+): Set<number> {
+  const late = new Set<number>()
+  for (const [index, call] of calls.entries()) {
+    if (call.replaced === true) continue
+    if (outs + pendingPutouts(calls.slice(0, index)) >= 3) late.add(call.runner)
+  }
+  return late
 }

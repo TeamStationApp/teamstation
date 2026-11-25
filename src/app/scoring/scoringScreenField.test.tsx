@@ -92,7 +92,8 @@ function props(): Props {
 }
 function dictate(
   transcript: string,
-  actions: ScoringAction[] = [{ type: 'pitch', call: 'B' }]
+  actions: ScoringAction[] = [{ type: 'pitch', call: 'B' }],
+  undo = false
 ): void {
   const key = Object.keys(container ?? {}).find(name =>
     name.startsWith('__reactContainer$')
@@ -108,7 +109,7 @@ function dictate(
     const ref = hook.memoizedState as
       { current?: Partial<UseDictationOptions> } | undefined
     if (ref?.current != null && typeof ref.current.onActions === 'function') {
-      ref.current.onActions(transcript, actions, [])
+      ref.current.onActions(transcript, actions, [], undo)
       return
     }
   }
@@ -218,6 +219,76 @@ async function mount(
 }
 
 describe('scoring screen field wiring', function () {
+  it('restores a saved unfinished pitch on a dictated Undo of End Game', async function () {
+    const live = ScoringSession.start(
+      memoryStore(),
+      'g1',
+      scoringSession(gameFixture)
+    )
+    const batted = { type: 'ballInPlay', contact: 'swing' } as const
+    live.apply(batted)
+    live.apply({ type: 'gameFlow', kind: 'endGame' })
+    await live.flush()
+    await mount({ open: async () => live })
+    await step(() => {
+      dictate('Undo', [], true)
+    })
+    expect(live.state.final).equals(false)
+    expect(live.actions).deep.equals([batted])
+    expect(props().summary).includes('Pitches 1')
+  })
+
+  it('keeps the uncommitted runner decision through End Game Cancel and Undo', async function () {
+    const live = ScoringSession.start(
+      memoryStore(),
+      'g1',
+      scoringSession(gameFixture)
+    )
+    live.apply({ type: 'gameFlow', kind: 'placeRunner', runner: 2, base: '1B' })
+    live.apply({ type: 'pitch', call: 'B' })
+    await mount({ open: async () => live })
+    await step(() =>
+      field().onRunnerDrop?.(
+        'offense-2',
+        2,
+        'safe',
+        field().interaction!.generation
+      )
+    )
+    const press = async (label: string): Promise<void> => {
+      const control = document.querySelector<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(control, label).not.equals(null)
+      await step(() => {
+        control!.click()
+      })
+    }
+    await press('Passed Ball')
+    await press('End Game')
+    expect(document.body.textContent).includes(
+      'The open at-bat is saved with its pitches.'
+    )
+    await press('Cancel')
+    expect(document.body.textContent).includes(
+      'Was the passed ball the previous pitch?'
+    )
+    await press('End Game')
+    await press('Confirm End Game')
+    expect(live.state.final).equals(true)
+    expect(live.state.liveData.plays.allPlays.at(-1)?.result.eventType).equals(
+      'ts_at_bat_ended'
+    )
+    await step(() => {
+      props().onUndo()
+    })
+    expect(live.state.final).equals(false)
+    expect(document.body.textContent).includes(
+      'Was the passed ball the previous pitch?'
+    )
+    expect(baseIds(live.state)).deep.equals([2, null, null])
+  })
+
   for (const previous of [false, true])
     it(`limits passed-ball pitch entry to three controls, previous pitch ${previous}`, async () => {
       const initial = scoringSession(gameFixture)
@@ -608,6 +679,7 @@ describe('scoring screen field wiring', function () {
     await step(() => {
       props().onMenu()
     })
+    await press('Dismiss scoring menu')
     expect(live.actions).has.length(0)
     await step(() =>
       field().onBaseProjection?.({

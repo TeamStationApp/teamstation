@@ -897,6 +897,32 @@ describe('a read-only screen', function () {
   })
 })
 
+it('End Game during a pitch ignores the stale animation and Undo restores it with a fresh generation', function () {
+  const before = scoringReducer(
+    scoringReducer(initial(), { type: 'PRESENTATION', enabled: true }),
+    { type: 'PITCH', kind: 'ball' }
+  )
+  const pitch = before.presentation!
+  const late = {
+    type: 'PRESENTATION_DONE',
+    id: pitch.id,
+    generation: pitch.generation,
+    stage: pitch.stage
+  } as const
+  const final = scoringReducer(before, { type: 'END_GAME' })
+  expect(final.session.final).equals(true)
+  expect(final.presentation).equals(null)
+  expect(scoringReducer(final, late)).equals(final)
+  const back = scoringReducer(final, { type: 'UNDO' })
+  expect(back.log).deep.equals(before.log)
+  expect(back.presentation).deep.include({
+    id: pitch.id,
+    stage: pitch.stage,
+    generation: back.generation
+  })
+  expect(scoringReducer(back, late)).equals(back)
+})
+
 describe('the play animation setting', function () {
   it('keeps the setting with the other preferences and turns animation on and off', async function () {
     const items = new Map<string, string>()
@@ -1039,6 +1065,16 @@ describe('a scorekeeper and a side left unseen', function () {
     if (roster.type !== 'lineup') throw new Error('roster save')
     expect(roster.confirmed).deep.equals(['home'])
     expect(roster.shown).equals(undefined)
+  })
+
+  it('records only End Game when a default lineup was visible but never accepted', function () {
+    const { screen } = shownOrder()
+    const final = scoringReducer(screen, { type: 'END_GAME' })
+    expect(final.session.final).equals(true)
+    expect(final.log.slice(screen.log.length)).deep.equals([
+      { type: 'gameFlow', kind: 'endGame' }
+    ])
+    expect(scoringReducer(final, { type: 'UNDO' }).log).deep.equals(screen.log)
   })
 
   it('confirms a save of the default he is shown', function () {

@@ -1,7 +1,7 @@
 import React from 'react'
 
+import { ScoringDecisionSheet } from './EndGameConfirmation'
 import { ScoringPlayerCard } from './ScoringPlayerCard'
-import { ScoringSheet } from './ScoringSheet'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 export function ErrorCreditSheet({
@@ -16,7 +16,7 @@ export function ErrorCreditSheet({
     ...new Set(state.runnerAction?.defensiveRoute?.map(hop => hop.id))
   ]
   return (
-    <ScoringSheet
+    <ScoringDecisionSheet
       title="Who committed the error?"
       onClose={() => {
         dispatch({ type: 'ERROR_CANCEL' })
@@ -45,6 +45,6 @@ export function ErrorCreditSheet({
           />
         )
       })}
-    </ScoringSheet>
+    </ScoringDecisionSheet>
   )
 }

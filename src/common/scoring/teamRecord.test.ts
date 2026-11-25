@@ -9,7 +9,9 @@ import {
   ownTeams,
   recordByTeam,
   requiresDeferredLineups,
-  retargetRecord
+  retargetRecord,
+  SCORING_FEATURES,
+  supportsScoringRecords
 } from './teamRecord'
 
 describe('deferred lineup record compatibility', () => {
@@ -53,6 +55,53 @@ describe('deferred lineup record compatibility', () => {
         { ...TEAMS, home: { ...TEAMS.home, id: 'replacement' } }
       )!.actions[0]
     ).deep.includes({ side: 'home', effectiveAtBat: 2 })
+  })
+
+  it('keeps version 5 records by team on the wire and checks capabilities independently', () => {
+    const deferred = {
+      type: 'lineup' as const,
+      kind: 'roster' as const,
+      effectiveSides: ['away' as const]
+    }
+    const record = recordByTeam(
+      {
+        version: 2,
+        liveScoring: true,
+        setupBefore: setupOf(game()),
+        actions: [deferred]
+      },
+      TEAMS
+    )
+    const play = { teamStation: record }
+    expect(record.version).equals(5)
+    expect(playForWire(play, TEAMS)).equals(play)
+    expect(playFromWire(play, TEAMS)).equals(play)
+    expect(
+      JSON.parse(JSON.stringify(recordByTeam(recordOf(play, TEAMS)!, TEAMS)))
+    ).deep.equals(record)
+    const swapped = { away: TEAMS.home, home: TEAMS.away }
+    expect(recordOf(play, swapped)!.actions[0]).deep.includes({
+      effectiveSides: ['home']
+    })
+    const replaced = retargetRecord(record, TEAMS.home.id, 'replacement')
+    expect(ownTeams(replaced).home.id).equals('replacement')
+    expect(supportsScoringRecords(undefined, [play])).equals(false)
+    expect(supportsScoringRecords('deferred-lineups-v1', [play])).equals(false)
+    expect(supportsScoringRecords('live-scoring-v1', [play])).equals(false)
+    expect(supportsScoringRecords(SCORING_FEATURES, [play])).equals(true)
+    expect(
+      supportsScoringRecords('unknown, live-scoring-v1, deferred-lineups-v1', [
+        play
+      ])
+    ).equals(true)
+    expect(
+      supportsScoringRecords('deferred-lineups-v1', [
+        { teamStation: { version: 4 } }
+      ])
+    ).equals(true)
+    expect(
+      supportsScoringRecords(undefined, [{ teamStation: { version: 3 } }, null])
+    ).equals(true)
   })
 
   it('leaves ordinary records compatible and recognizes earlier deferred envelopes', () => {

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Animated, Platform, Text, View } from 'react-native'
 
 import { dictationModelOf } from '../../common/api'
+import { CancelAction } from '../components/CancelAction'
 import { Checkbox } from '../components/Checkbox'
 import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
@@ -13,6 +14,7 @@ import type {
   DictationControlsProps,
   TalkKeys
 } from './dictationTypes'
+import { useDecisionEndGame } from './EndGameConfirmation'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
 import { PushToTalkButton, TAP_MS } from './PushToTalkButton'
 import {
@@ -550,6 +552,7 @@ function ScreenQuestion(props: {
   const theme = useTheme()
   const { question, onAnswer, onDismiss } = props
   const [picks, setPicks] = useState<number[]>([])
+  const end = useDecisionEndGame()
   // Modal: nothing else is scored until it is answered or dismissed, and a
   // stray tap beside it dismisses nothing.
   return (
@@ -558,7 +561,7 @@ function ScreenQuestion(props: {
       animationType="fade"
       visible
       supportedOrientations={MODAL_ORIENTATIONS}
-      onRequestClose={onDismiss}
+      onRequestClose={end.confirmation == null ? onDismiss : end.handleCancel}
     >
       <View
         style={{
@@ -583,59 +586,72 @@ function ScreenQuestion(props: {
             maxWidth: 420
           }}
         >
-          <Text
-            style={{
-              color: theme.primaryTextColor,
-              fontFamily: theme.semiBoldTextFont,
-              fontSize: 16
-            }}
-          >
-            {question.question}
-          </Text>
-          {question.options?.map((option, index) => (
-            <ScoringButton
-              key={`${index}:${option.label}`}
-              label={option.label}
-              onPress={() => {
-                onAnswer({ option: index })
-              }}
-            />
-          ))}
-          {question.pick?.choices.map((choice, index) => {
-            const on = picks.includes(index)
-            return (
-              <Checkbox
-                key={`${index}:${choice.label}`}
-                label={choice.label}
-                checked={on}
-                onPress={() => {
-                  setPicks(
-                    on
-                      ? picks.filter(pick => pick !== index)
-                      : [...picks, index]
-                  )
-                }}
+          {end.confirmation != null ? (
+            <>
+              {end.confirmation}
+              <CancelAction
+                accessibilityLabel="Cancel"
+                onPress={end.handleCancel}
               />
-            )
-          })}
-          {question.pick != null && (
-            <ScoringButton
-              label={lstrings.dictation_record}
-              text={
-                picks.length === 0
-                  ? lstrings.dictation_record_nobody
-                  : lstrings.dictation_record
-              }
-              onPress={() => {
-                onAnswer({ picks })
-              }}
-            />
+            </>
+          ) : (
+            <>
+              <Text
+                style={{
+                  color: theme.primaryTextColor,
+                  fontFamily: theme.semiBoldTextFont,
+                  fontSize: 16
+                }}
+              >
+                {question.question}
+              </Text>
+              {question.options?.map((option, index) => (
+                <ScoringButton
+                  key={`${index}:${option.label}`}
+                  label={option.label}
+                  onPress={() => {
+                    onAnswer({ option: index })
+                  }}
+                />
+              ))}
+              {question.pick?.choices.map((choice, index) => {
+                const on = picks.includes(index)
+                return (
+                  <Checkbox
+                    key={`${index}:${choice.label}`}
+                    label={choice.label}
+                    checked={on}
+                    onPress={() => {
+                      setPicks(
+                        on
+                          ? picks.filter(pick => pick !== index)
+                          : [...picks, index]
+                      )
+                    }}
+                  />
+                )
+              })}
+              {question.pick != null && (
+                <ScoringButton
+                  label={lstrings.dictation_record}
+                  text={
+                    picks.length === 0
+                      ? lstrings.dictation_record_nobody
+                      : lstrings.dictation_record
+                  }
+                  onPress={() => {
+                    onAnswer({ picks })
+                  }}
+                />
+              )}
+              <ScoringButton
+                label={lstrings.dictation_dismiss_question}
+                text={lstrings.dictation_dismiss_score}
+                onPress={onDismiss}
+              />
+              {end.button}
+            </>
           )}
-          <ScoringButton
-            label={lstrings.dictation_dismiss_question}
-            text={lstrings.dictation_dismiss_score}
-            onPress={onDismiss}
-          />
         </View>
       </View>
     </Modal>

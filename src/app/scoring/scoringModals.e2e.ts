@@ -3,10 +3,19 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import type { Browser } from 'puppeteer'
 import { PerspectiveCamera, Vector3 } from 'three'
 
 import { modalFixture } from '../../../e2e/fixtures/scoringModalsFixture'
+import {
+  installSceneProbe,
+  maestroDriver,
+  setTrajectory,
+  tapFielder
+} from '../../../e2e/rigs/fieldPointer'
 import { turnWheel, wheelAt, wheelValue } from '../../../e2e/rigs/iosWheel'
+import { browserSession } from '../../../e2e/rigs/refinementsMaestro'
+import type { StoredGame } from '../../common/scoring/session'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { runnerTargets } from './runnerDrag'
@@ -23,7 +32,9 @@ const { MaestroD } = clientRequire('maestro-d')
 
 async function main(): Promise<void> {
   const surface = required('SCORING_MODAL_SURFACE')
-  assert(['safari', 'native'].includes(surface))
+  const chromium = surface === 'chromium'
+  assert(['safari', 'native', 'chromium'].includes(surface))
+  if (chromium) assert.equal(process.env.SCORING_MODAL_SECTION, 'endGame')
   const native = surface === 'native'
   const baseline = process.env.SCORING_MODAL_BASELINE === '1'
   const phase = baseline ? 'before' : 'after'
@@ -40,13 +51,20 @@ async function main(): Promise<void> {
   const fixture = await modalFixture(assetUrl, fixturePort)
   const daemon = await MaestroD.connect({
     name: daemonName,
-    spawn: false
+    ...(chromium ? { bin: required('MAESTRO_D_BIN') } : { spawn: false })
   }).catch(async (error: unknown) => {
     await fixture.close()
     throw error
   })
-  const m = await daemon
-    .attach({
+  let browser: Browser | undefined
+  const m = await (async () => {
+    if (chromium) {
+      const session = await browserSession(daemon, device, 430, 932, artifacts)
+      browser = session.browser
+      await installSceneProbe(session.page)
+      return session.m
+    }
+    return await daemon.attach({
       device,
       platform: 'ios',
       appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari',
@@ -54,14 +72,11 @@ async function main(): Promise<void> {
       waitForIdleTimeout: 500,
       stepDelay: 250
     })
-    .catch(async (error: unknown) => {
-      try {
-        daemon.close()
-      } finally {
-        await fixture.close()
-      }
-      throw error
-    })
+  })().catch(async (error: unknown) => {
+    daemon.close()
+    await fixture.close()
+    throw error
+  })
   interface Node {
     text?: string
     type?: string
@@ -102,6 +117,13 @@ async function main(): Promise<void> {
   }
   const tap = async (text: string): Promise<void> => {
     console.log('Tap', text)
+    if (chromium) {
+      await m.tapOn({
+        css: `[aria-label="${text}"]:not([aria-disabled="true"])`,
+        timeout: 15000
+      })
+      return
+    }
     if (native) {
       const id = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const defensivePlayer = text.startsWith('Assign P #')
@@ -160,6 +182,10 @@ async function main(): Promise<void> {
     }
   }
   const shown = async (text: string): Promise<void> => {
+    if (chromium) {
+      await m.assertVisible({ text, timeout: 20000 })
+      return
+    }
     if (!native) {
       // Read the browser accessibility tree rather than the driver's cached
       // visibility, which can include clipped or underlying modal controls.
@@ -205,16 +231,19 @@ async function main(): Promise<void> {
     console.log('Captured', state, phase)
   }
   let browserOpened = false
-  const open = async (missing = false): Promise<void> => {
+  const open = async (
+    missing = false,
+    existingGame?: string
+  ): Promise<void> => {
     if (native) {
       await m.stopApp()
       await m.launchApp()
     }
-    const gameId = fixture.reset(missing)
+    const gameId = existingGame ?? fixture.reset(missing)
     const link = native
       ? `teamstation://games/${gameId}/score`
       : `${required('SCORING_TEST_URL')}/games/${gameId}/score?capture=${phase}`
-    if (!native && browserOpened) {
+    if (!native && !chromium && browserOpened) {
       await m.tapOn({ id: 'TabBarItemTitle' })
       await m.eraseText()
       await m.inputText({ text: link })
@@ -252,7 +281,8 @@ async function main(): Promise<void> {
     )
     await new Promise(resolve => setTimeout(resolve, 1500))
     await shown('^Open scoring menu$')
-    await shown(missing ? 'Assign a pitcher' : '^Ball$')
+    if (existingGame == null)
+      await shown(missing ? 'Assign a pitcher' : '^Ball$')
     console.log('Opened synthetic game', gameId)
   }
   const menu = async (label: string): Promise<void> => {
@@ -415,6 +445,99 @@ async function main(): Promise<void> {
       'PASS settings controls and persistence, pitch/undo boundary, player submit/reset, position pills, roster save/reopen/undo, confirmation/undo'
     )
   }
+  const waitForBook = async (
+    matches: (game: StoredGame) => boolean,
+    description: string
+  ): Promise<StoredGame> => {
+    const until = Date.now() + 20000
+    do {
+      const book = fixture.stored()
+      if (matches(book)) return book
+      await new Promise(resolve => setTimeout(resolve, 100))
+    } while (Date.now() < until)
+    throw new Error(`Timed out waiting for ${description}`)
+  }
+  const endGameBehavior = async (): Promise<void> => {
+    await open()
+    await tap('Ball')
+    await menu('End Game')
+    await shown('The open at-bat is saved with its pitches')
+    await tap('Cancel')
+    await shown('Undo Ball')
+    await menu('End Game')
+    await tap('Confirm End Game')
+    await waitForBook(
+      game =>
+        game.plays.map(play => play.result.eventType).join(',') ===
+          'ts_at_bat_ended,final_score' && game.currentPlay == null,
+      'the interrupted at-bat and final score'
+    )
+    await tap('Undo End game')
+    await shown('1 balls 0 strikes')
+    await tap('Undo Ball')
+
+    await tap('Swing in Play')
+    await tap('Single')
+    const gameId = fixture.loaded()
+    const live = await waitForBook(
+      game =>
+        Array.isArray(game.currentPlay?.playEvents) &&
+        game.currentPlay.playEvents.some(
+          event => event.details?.isInPlay === true
+        ),
+      'the pitch in play'
+    )
+    await menu('End Game')
+    await shown('The pitch in play is left out of the book')
+    await tap('Confirm End Game')
+    await waitForBook(
+      game =>
+        game.currentPlay == null &&
+        game.plays.length === 1 &&
+        game.plays[0].result.eventType === 'final_score',
+      'a final score with no filed pitch'
+    )
+    await open(false, gameId)
+    await tap('Undo Last play')
+    const restored = await waitForBook(
+      game => game.currentPlay != null && game.plays.length === 0,
+      'the reopened batted ball'
+    )
+    assert.deepEqual(
+      restored.currentPlay?.playEvents,
+      live.currentPlay?.playEvents
+    )
+
+    await openErrorDecision()
+    await tap('End Game')
+    await shown('What is still undecided is left undecided')
+    await tap('Cancel')
+    await shown('Who committed the error')
+    await tap('End Game')
+    await tap('Confirm End Game')
+    const filed = await waitForBook(
+      game => game.currentPlay == null && game.plays.length === 2,
+      'the chosen result and final score'
+    )
+    assert.equal(filed.plays[0].result.eventType, 'field_error')
+
+    await open()
+    await menu('Set Team Rosters')
+    await shown('Roster')
+    await tap('Cancel')
+    await menu('End Game')
+    await shown('End the game at Owls 0, Hawks 0')
+    await tap('Cancel')
+    await tap('More')
+    await tap('Place a Runner (Tiebreaker)')
+    await tap('End Game')
+    await tap('Cancel')
+    await shown('Place runner on base')
+    await tap('End Game')
+    await tap('Confirm End Game')
+    await shown('Game over')
+    console.log('PASS End Game, Cancel and Undo from live scoring decisions')
+  }
   const field = async (): Promise<{
     rect: NonNullable<Node['bounds']>
     project: (x: number, z: number, y?: number) => { x: number; y: number }
@@ -468,6 +591,40 @@ async function main(): Promise<void> {
     )
     await new Promise(resolve => setTimeout(resolve, 4000))
   }
+  const openErrorDecision = async (): Promise<void> => {
+    await open()
+    await tap('Swing in Play')
+    await tap('Error')
+    if (chromium) {
+      const pointer = maestroDriver(m)
+      await tapFielder(pointer, 'P')
+      await setTrajectory(pointer)
+    } else {
+      const pitchField = await field()
+      const pitcher = createPlayers().find(player => player.id === 'P')!
+      const pitcherPoint = pitchField.project(
+        pitcher.position.x,
+        pitcher.position.z,
+        5
+      )
+      await point(pitcherPoint.x, pitcherPoint.y)
+      await shown('Drag up and down for ball trajectory')
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      await m.dragAndDrop({
+        from: {
+          point: `${Math.round(pitcherPoint.x)},${Math.round(pitcherPoint.y)}`
+        },
+        to: {
+          point: `${Math.round(pitcherPoint.x)},${Math.round(pitcherPoint.y - 15)}`
+        },
+        holdDuration: 100,
+        duration: 500
+      })
+    }
+    await shown('Finish defensive play')
+    await tap('Finish defensive play')
+    await shown('Who committed the error')
+  }
   const advancedSheets = async (): Promise<void> => {
     await open()
     // Safari exposes canvas fallback text even while WebGL renders. These
@@ -514,41 +671,22 @@ async function main(): Promise<void> {
       await capture('runner-out')
       await tap('Cancel')
     }
-    await open()
-    await tap('Swing in Play')
-    await tap('Error')
-    const pitchField = await field()
-    const pitcher = createPlayers().find(player => player.id === 'P')!
-    const pitcherPoint = pitchField.project(
-      pitcher.position.x,
-      pitcher.position.z,
-      5
-    )
-    await point(pitcherPoint.x, pitcherPoint.y)
-    await shown('Drag up and down for ball trajectory')
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    await m.dragAndDrop({
-      from: {
-        point: `${Math.round(pitcherPoint.x)},${Math.round(pitcherPoint.y)}`
-      },
-      to: {
-        point: `${Math.round(pitcherPoint.x)},${Math.round(pitcherPoint.y - 15)}`
-      },
-      holdDuration: 100,
-      duration: 500
-    })
-    await shown('Finish defensive play')
-    await tap('Finish defensive play')
-    await shown('Who committed the error')
+    await openErrorDecision()
     await capture('error-credit')
     await tap('Cancel')
   }
   try {
-    await m.stopApp({
-      appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari'
-    })
-    await m.launchApp({ stopApp: true })
-    await m.setOrientation({ orientation: 'PORTRAIT' })
+    if (!chromium) {
+      await m.stopApp({
+        appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari'
+      })
+      await m.launchApp({ stopApp: true })
+      await m.setOrientation({ orientation: 'PORTRAIT' })
+    }
+    if (process.env.SCORING_MODAL_SECTION === 'endGame') {
+      await endGameBehavior()
+      return
+    }
     if (process.env.SCORING_MODAL_SECTION === 'preview') {
       if (!native)
         await m.openLink({ link: required('SCORING_TEST_URL'), browser: true })
@@ -693,6 +831,7 @@ async function main(): Promise<void> {
     }
     if (process.env.SCORING_MODAL_SECTION === 'behavior') {
       await behavior()
+      if (!baseline) await endGameBehavior()
       assert.deepEqual(fixture.unexpected, [])
       return
     }
@@ -907,13 +1046,15 @@ async function main(): Promise<void> {
             JSON.stringify(await m.hierarchy(), null, 2)
           )
         }
-        await m.setOrientation({ orientation: 'PORTRAIT' })
+        if (!chromium) await m.setOrientation({ orientation: 'PORTRAIT' })
       } finally {
+        await browser?.disconnect()
         await m.detach()
       }
     } finally {
       try {
-        daemon.close()
+        if (chromium) await daemon.shutdown()
+        else daemon.close()
       } finally {
         await fixture.close()
       }

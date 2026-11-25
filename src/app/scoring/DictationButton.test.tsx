@@ -19,6 +19,7 @@ import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { useDictationControls } from './DictationButton'
 import type { DictationButtonProps } from './dictationTypes'
+import { EndGameConfirmation, EndGameContext } from './EndGameConfirmation'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import type { ScoringState } from './scoringTypes'
@@ -1368,6 +1369,54 @@ describe('a question the screen asks', function () {
     await press('Ann B. out at second')
     await press('Record')
     expect(answers).deep.equals([{ picks: [1] }])
+  })
+
+  it('opens End Game within the question and keeps the selected runner on Cancel', async function () {
+    const state = fresh()
+    const h = harness(state, {
+      question: {
+        transcript: 'fielders choice',
+        question: 'Who was out?',
+        pick: {
+          choices: [{ label: 'Runner at second', actions: [] }],
+          before: [],
+          none: []
+        }
+      }
+    })
+    let confirmed = 0
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <EndGameContext.Provider
+            value={
+              <EndGameConfirmation
+                session={state.session}
+                disabled={false}
+                onConfirm={() => {
+                  confirmed++
+                }}
+              />
+            }
+          >
+            <Controls {...h.props} />
+          </EndGameContext.Provider>
+        </ThemeProvider>
+      )
+    })
+    await press('Runner at second')
+    await press('End Game')
+    expect(find('Runner at second')).equals(null)
+    await press('Cancel')
+    expect(find('Runner at second')?.getAttribute('aria-checked')).equals(
+      'true'
+    )
+    await press('End Game')
+    await press('Confirm End Game')
+    expect(confirmed).equals(1)
   })
 
   it('shows nothing of its own while the LLM is asking', async function () {

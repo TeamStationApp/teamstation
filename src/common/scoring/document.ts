@@ -33,6 +33,7 @@ import {
   type Point,
   type Position,
   POSITIONS,
+  RUNNER_OUT_EVENT,
   type RunnerCredit,
   type Side,
   type SideLineup,
@@ -58,6 +59,7 @@ export { fenceOf }
  */
 
 export interface PlayStamp {
+  liveScoring?: true
   setupBefore: GameSetup
   actions: ScoringAction[]
   /** When each action was taken, one per action; undefined where unknown. */
@@ -87,7 +89,7 @@ export function teamStationOf(
     teamSetups.set(stamp.setupBefore, made)
   }
   return {
-    version: recordVersion(stamp.actions),
+    version: recordVersion(stamp.actions, stamp.liveScoring),
     setupBefore: made.setup,
     ...recordActions(stamp, teams),
     ...(detail === undefined ? {} : { detail })
@@ -107,7 +109,9 @@ function recordActions(
   playbackTimes?: string[]
 } {
   const times = stamp.actionTimes
-  const actions = stamp.actions.map(action => actionByTeam(action, teams))
+  const actions = stamp.actions.map(action =>
+    actionByTeam(action, teams, stamp.liveScoring)
+  )
   return times != null &&
     stamp.actions.length > 0 &&
     times.length === stamp.actions.length &&
@@ -1905,18 +1909,15 @@ function documentBody(
 }
 
 /**
- * The play's result put somebody out: an out made on the play itself, or the
- * runner's third out between pitches that ended it. A runner caught stealing
- * earlier in the plate appearance is the play's out (`hasOut`), not its
- * result's.
+ * An out on the play itself counts toward its result. A between-pitch out
+ * counts here only when the appearance was filed as that runner's out.
  */
 function resultIsOut(play: GamePlay): boolean {
-  const last = play.runners.at(-1)
   return (
+    play.result.event === RUNNER_OUT_EVENT ||
     play.runners.some(
       runner => runner.movement.isOut && runner.details.byAction !== true
-    ) ||
-    (last?.details.byAction === true && last.movement.isOut)
+    )
   )
 }
 
