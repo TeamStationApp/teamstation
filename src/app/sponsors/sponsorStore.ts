@@ -5,7 +5,6 @@
 import {
   allocated,
   allocationProblem,
-  changed,
   checkPlacementEdit,
   checkPlacementSlot,
   deactivated,
@@ -37,7 +36,6 @@ export interface SponsorStore {
     picked: PickedFile
     allocation: number
   }) => Promise<SponsorState>
-  changeLogo: (id: string, picked: PickedFile) => Promise<SponsorState>
   setLogoAllocation: (id: string, allocation: number) => Promise<SponsorState>
   deactivateLogo: (id: string) => Promise<SponsorState>
   addReel: (input: {
@@ -45,11 +43,6 @@ export interface SponsorStore {
     durationSec: number
     allocation: number
   }) => Promise<SponsorState>
-  changeReel: (
-    id: string,
-    picked: PickedFile,
-    durationSec: number
-  ) => Promise<SponsorState>
   setReelAllocation: (id: string, allocation: number) => Promise<SponsorState>
   deactivateReel: (id: string) => Promise<SponsorState>
   addPlacement: (draft: PlacementDraft) => Promise<SponsorState>
@@ -138,14 +131,6 @@ export function createMockSponsorStore({
         }
         return { ...current, logos: [...current.logos, logo] }
       }),
-    changeLogo: async (logoId, picked) =>
-      await apply(current => {
-        check(logoFileProblem(picked))
-        return {
-          ...current,
-          logos: changed(current.logos, logoId, { imageUrl: picked.url })
-        }
-      }),
     setLogoAllocation: async (logoId, allocation) =>
       await apply(current => ({
         ...current,
@@ -188,19 +173,6 @@ export function createMockSponsorStore({
         }
         return { ...current, reels: [...current.reels, reel] }
       }),
-    changeReel: async (reelId, picked, durationSec) =>
-      await apply(current => {
-        check(reelFileProblem(picked))
-        check(reelLengthProblem(durationSec))
-        return {
-          ...current,
-          reels: changed(current.reels, reelId, {
-            videoUrl: picked.url,
-            posterUrl: '',
-            durationSec
-          })
-        }
-      }),
     setReelAllocation: async (reelId, allocation) =>
       await apply(current => ({
         ...current,
@@ -229,6 +201,7 @@ export function createMockSponsorStore({
           title: draft.title,
           message: draft.message,
           url: draft.url,
+          textColor: draft.textColor ?? 'dark',
           startsAt: new Date(draft.startsAt).toISOString(),
           placedAt: now().toISOString()
         }
@@ -245,6 +218,7 @@ export function createMockSponsorStore({
           title: draft.title,
           message: draft.message,
           url: draft.url,
+          textColor: draft.textColor ?? placement.textColor ?? 'dark',
           startsAt: new Date(draft.startsAt).toISOString()
         }
         return {

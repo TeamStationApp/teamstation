@@ -76,7 +76,6 @@ async function choose(selector: string, file: File): Promise<void> {
   await settle(0)
 }
 const ADD = '[data-testid="sponsor-drop-zone-input"]'
-const CHANGE = '[data-testid="sponsor-change-input"]'
 
 const pending = (): Element | null =>
   document.querySelector('[data-testid="sponsor-logo-pending"]')
@@ -158,33 +157,6 @@ describe('the Sponsor Video Logos screen', () => {
     expect(disabled('No game logo credits left to assign')).equals(true)
   })
 
-  it('checks a row’s allocation and saves it', async () => {
-    await open()
-    await fill('Games allocated, Harbor Hardware', '300')
-    expect(text()).includes('Only 220 game logo credits are left to assign.')
-    expect(disabled('Save games allocated, Harbor Hardware')).equals(true)
-    await fill('Games allocated, Harbor Hardware', '120')
-    expect(disabled('Save games allocated, Harbor Hardware')).equals(false)
-    await press('Save games allocated, Harbor Hardware')
-    await settle(0)
-    // Used 42 of 120.
-    expect(row('logo-harbor-hardware')).includes('4278')
-    expect(text()).includes('Remaining game logo credits: 100 of 300')
-  })
-
-  it('shows a refused save’s sentence on the row', async () => {
-    const store = await open()
-    store.setLogoAllocation = async () => {
-      throw new Error('Harbor Hardware could not be saved.')
-    }
-    await fill('Games allocated, Harbor Hardware', '110')
-    await press('Save games allocated, Harbor Hardware')
-    await settle(0)
-    expect(row('logo-harbor-hardware')).includes(
-      'Harbor Hardware could not be saved.'
-    )
-  })
-
   it('confirms Deactivate, and Cancel changes nothing', async () => {
     await open()
     await press('Deactivate Harbor Hardware')
@@ -204,7 +176,6 @@ describe('the Sponsor Video Logos screen', () => {
     await press('Deactivate')
     await settle(50)
     expect(row('logo-harbor-hardware')).includes('Inactive')
-    expect(find('Change Logo, Harbor Hardware')).equals(undefined)
     expect(text()).includes('Remaining game logo credits: 120 of 300')
     await press('Deactivate Summit Dental')
     await settle(50)
@@ -213,41 +184,6 @@ describe('the Sponsor Video Logos screen', () => {
     await settle(50)
     expect(row('logo-summit-dental')).equals('')
     expect(text()).includes('Remaining game logo credits: 170 of 300')
-  })
-
-  it('changes a logo’s picture and keeps its counts', async () => {
-    const store = await open()
-    let chooserOpened = 0
-    document.querySelector(CHANGE)!.addEventListener('click', () => {
-      chooserOpened++
-    })
-    await press('Change Logo, Harbor Hardware')
-    expect(chooserOpened).equals(1)
-    await choose(CHANGE, png('Harbor new.png'))
-    expect(preview(), 'the preview').not.equals(null)
-    expect(text()).includes(
-      'Games already assigned Harbor Hardware keep the version they had.'
-    )
-    expect(
-      document.querySelector('input[aria-label="Credits for this logo"]')
-    ).equals(null)
-    await press('Accept')
-    await settle(0)
-    const harbor = (await store.read()).logos.find(
-      logo => logo.id === 'logo-harbor-hardware'
-    )!
-    expect(harbor.imageUrl).match(/^blob:Harbor new\.png#/)
-    expect(harbor).deep.include({ version: 2, allocation: 100, used: 42 })
-    expect(row('logo-harbor-hardware')).includes('4258')
-    expect(text()).includes('Remaining game logo credits: 120 of 300')
-  })
-
-  it('refuses a changed picture that is not a PNG', async () => {
-    await open()
-    await press('Change Logo, Harbor Hardware')
-    await choose(CHANGE, jpeg)
-    expect(text()).includes('Logos must be PNG files.')
-    expect(pending()).equals(null)
   })
 
   it('clears every row, and puts the samples back', async () => {

@@ -123,8 +123,9 @@ export function SponsorFileDrop({
       >
         <Text style={styles.label}>{label}</Text>
         <Text style={styles.prompt}>{prompt}</Text>
+        {/* The Schedule's Add Game button: same component, size and colour. */}
         <Button
-          kind="secondary"
+          color={theme.scoreActionColor}
           label="Choose file"
           accessibilityLabel={`Choose file: ${label}`}
           onPress={() => {

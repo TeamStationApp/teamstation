@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Image, StyleSheet, Text, TextInput, View } from 'react-native'
 
 import { Button, Screen } from '../components'
@@ -9,9 +9,9 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CreditTable } from './CreditTable'
 import { DemoDataBar } from './DemoDataBar'
 import { logoBox } from './overlayBoxes'
-import { pickedFileOf } from './pickedFiles'
 import type { SampleClient, SampleRecording } from './sampleRecording'
 import { SponsorFileDrop } from './SponsorFileDrop'
+import { SponsorPreviewLayout } from './SponsorPreviewLayout'
 import {
   allocationProblem,
   logoFileProblem,
@@ -19,7 +19,7 @@ import {
 } from './sponsorRules'
 import { OverlayAt, SponsorSampleVideo } from './SponsorSampleVideo'
 import { type SponsorStore, sponsorStoreFor } from './sponsorStore'
-import type { PickedFile, SponsorLogo } from './sponsorTypes'
+import type { PickedFile } from './sponsorTypes'
 import { useLeagueAdmin } from './useLeagueAdmin'
 import { useSponsorState } from './useSponsorState'
 
@@ -34,9 +34,9 @@ export interface SponsorLogosScreenProps {
   attachSample?: (handle: VideoHandle, url: string) => () => void
 }
 
-type Pending =
-  | { mode: 'add'; picked: PickedFile }
-  | { mode: 'change'; picked: PickedFile; logo: SponsorLogo }
+interface Pending {
+  picked: PickedFile
+}
 
 const count = (value: number): string => value.toLocaleString('en-US')
 
@@ -63,17 +63,21 @@ export function SponsorLogosScreen({
   const [acceptError, setAcceptError] = useState('')
   const [accepting, setAccepting] = useState(false)
   const [size, setSize] = useState({ width: 1, height: 1 })
-  const changeInput = useRef<HTMLInputElement>(null)
-  const changing = useRef<SponsorLogo | null>(null)
+  // The listed logo whose name was tapped, shown over the sample.
+  const [shownId, setShownId] = useState<string | null>(null)
   const confirm = useConfirmedAction(store, league)
 
-  const pendingUrl = pending?.picked.url
+  const logos = state?.logos ?? []
+  const shownLogo =
+    shownId == null ? null : (logos.find(logo => logo.id === shownId) ?? null)
+  const previewUrl = pending?.picked.url ?? shownLogo?.imageUrl
+  const previewName = pending?.picked.name ?? shownLogo?.name
   useEffect(() => {
     setSize({ width: 1, height: 1 })
-    if (pendingUrl == null) return
+    if (previewUrl == null) return
     let live = true
     Image.getSize(
-      pendingUrl,
+      previewUrl,
       (width, height) => {
         if (live) setSize({ width, height })
       },
@@ -82,7 +86,7 @@ export function SponsorLogosScreen({
     return () => {
       live = false
     }
-  }, [pendingUrl])
+  }, [previewUrl])
 
   if (admin === 'loading')
     return (
@@ -102,15 +106,14 @@ export function SponsorLogosScreen({
     )
 
   const total = state?.totals.logoCredits ?? 0
-  const logos = state?.logos ?? []
   const left = remainingCredits(total, logos)
   const allocation = draft.trim() === '' ? NaN : Number(draft)
   const problem =
-    pending?.mode === 'add'
+    pending != null
       ? allocationProblem(logos, total, null, allocation, 'game logo')
       : null
 
-  const pick = (picked: PickedFile, logo: SponsorLogo | null): void => {
+  const pick = (picked: PickedFile): void => {
     const refused = logoFileProblem(picked)
     setAcceptError('')
     if (refused != null) {
@@ -120,9 +123,7 @@ export function SponsorLogosScreen({
     }
     setPickError(null)
     setDraft('')
-    setPending(
-      logo == null ? { mode: 'add', picked } : { mode: 'change', picked, logo }
-    )
+    setPending({ picked })
   }
   const cancel = (): void => {
     setPending(null)
@@ -134,9 +135,7 @@ export function SponsorLogosScreen({
     setAccepting(true)
     setAcceptError('')
     try {
-      if (pending.mode === 'add')
-        await store.addLogo({ picked: pending.picked, allocation })
-      else await store.changeLogo(pending.logo.id, pending.picked)
+      await store.addLogo({ picked: pending.picked, allocation })
       cancel()
     } catch (caught) {
       setAcceptError(
@@ -157,116 +156,102 @@ export function SponsorLogosScreen({
           Your sponsor logo appears in the upper-right of every applicable game
           video, overlaid during playback on Apple TV, web, and mobile.
         </Text>
-        <SponsorSampleVideo
-          client={client}
-          leagueId={league}
-          find={findSample}
-          attach={attachSample}
-        >
-          {pending != null && (
-            <OverlayAt box={logoBox(size)} testID="sponsor-logo-preview">
-              <Image
-                source={{ uri: pending.picked.url }}
-                accessibilityLabel={`Preview of ${pending.picked.name}`}
-                resizeMode="contain"
-                style={StyleSheet.absoluteFill}
-              />
-            </OverlayAt>
+        <SponsorPreviewLayout
+          video={fill => (
+            <SponsorSampleVideo
+              client={client}
+              leagueId={league}
+              find={findSample}
+              attach={attachSample}
+              fill={fill}
+            >
+              {previewUrl != null && (
+                <OverlayAt box={logoBox(size)} testID="sponsor-logo-preview">
+                  <Image
+                    source={{ uri: previewUrl }}
+                    accessibilityLabel={`Preview of ${previewName ?? 'logo'}`}
+                    resizeMode="contain"
+                    style={StyleSheet.absoluteFill}
+                  />
+                </OverlayAt>
+              )}
+            </SponsorSampleVideo>
           )}
-        </SponsorSampleVideo>
-        {pending == null ? (
-          <SponsorFileDrop
-            label="Add Logo"
-            prompt="Drop a PNG here or Choose file"
-            accept="image/png"
-            error={pickError}
-            onPick={picked => {
-              pick(picked, null)
-            }}
-          />
-        ) : (
-          <View style={styles.pending} testID="sponsor-logo-pending">
-            {pending.mode === 'add' ? (
-              <View style={styles.field}>
-                <Text style={styles.label}>Credits for this logo</Text>
-                <TextInput
-                  accessibilityLabel="Credits for this logo"
-                  value={draft}
-                  inputMode="numeric"
-                  keyboardType="number-pad"
-                  style={styles.input}
-                  onChangeText={text => {
-                    setAcceptError('')
-                    setDraft(text.replace(/[^0-9]/g, ''))
-                  }}
-                />
-                <Text style={styles.hint}>
-                  Up to {count(Math.max(0, left))} game logo credits left
-                </Text>
-                {draft !== '' && problem != null && (
+          side={
+            pending == null ? (
+              <SponsorFileDrop
+                label="Add Logo"
+                prompt="Drop a PNG here or Choose file"
+                accept="image/png"
+                error={pickError}
+                onPick={pick}
+              />
+            ) : (
+              <View style={styles.pending} testID="sponsor-logo-pending">
+                <View style={styles.field}>
+                  <Text style={styles.label}>Credits for this logo</Text>
+                  <TextInput
+                    accessibilityLabel="Credits for this logo"
+                    value={draft}
+                    inputMode="numeric"
+                    keyboardType="number-pad"
+                    style={styles.input}
+                    onChangeText={text => {
+                      setAcceptError('')
+                      setDraft(text.replace(/[^0-9]/g, ''))
+                    }}
+                  />
+                  <Text style={styles.hint}>
+                    Up to {count(Math.max(0, left))} game logo credits left
+                  </Text>
+                  {draft !== '' && problem != null && (
+                    <Text accessibilityRole="alert" style={styles.error}>
+                      {problem}
+                    </Text>
+                  )}
+                </View>
+                {acceptError !== '' && (
                   <Text accessibilityRole="alert" style={styles.error}>
-                    {problem}
+                    {acceptError}
                   </Text>
                 )}
+                <Button
+                  label={
+                    left <= 0 ? 'No game logo credits left to assign' : 'Accept'
+                  }
+                  block
+                  busy={accepting}
+                  disabled={accepting || left <= 0 || problem != null}
+                  onPress={() => {
+                    accept().catch(() => undefined)
+                  }}
+                />
+                <CancelAction onPress={cancel} />
               </View>
-            ) : (
-              <Text style={styles.hint}>
-                Games already assigned {pending.logo.name} keep the version they
-                had.
-              </Text>
-            )}
-            {acceptError !== '' && (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {acceptError}
-              </Text>
-            )}
-            <Button
-              label={
-                pending.mode === 'add' && left <= 0
-                  ? 'No game logo credits left to assign'
-                  : 'Accept'
-              }
-              block
-              busy={accepting}
-              disabled={
-                accepting ||
-                (pending.mode === 'add' && (left <= 0 || problem != null))
-              }
-              onPress={() => {
-                accept().catch(() => undefined)
-              }}
-            />
-            <CancelAction onPress={cancel} />
-          </View>
-        )}
+            )
+          }
+        />
         <CreditTable
           headers={['Logo', 'Games used', 'Games remaining', 'Action']}
           rows={logos}
-          allocationLabel="Games allocated"
-          changeLabel="Change Logo"
           emptyHint="No logos yet. Add one above."
-          renderItem={logo => (
-            <View style={styles.item}>
-              <Image
-                source={{ uri: logo.imageUrl }}
-                accessibilityLabel={`${logo.name} logo`}
-                resizeMode="contain"
-                style={styles.tile}
-              />
-              <Text style={styles.itemName} numberOfLines={2}>
-                {logo.name}
-              </Text>
-            </View>
+          renderPicture={logo => (
+            <Image
+              source={{ uri: logo.imageUrl }}
+              accessibilityLabel={`${logo.name} logo`}
+              resizeMode="contain"
+              style={styles.tile}
+            />
           )}
+          onSelect={logo => {
+            setShownId(logo.id)
+          }}
+          selectDisabled={pending != null}
           allocationProblem={(logo, value) =>
             allocationProblem(logos, total, logo.id, value, 'game logo')
           }
           onSaveAllocation={async (logo, value) => {
             await store.setLogoAllocation(logo.id, value)
-          }}
-          onChange={logo => {
-            changing.current = logo
-            changeInput.current?.click()
           }}
           onDeactivate={logo => {
             confirm.open({
@@ -284,23 +269,13 @@ export function SponsorLogosScreen({
             })
           }}
         />
-        <input
-          ref={changeInput}
-          type="file"
-          accept="image/png"
-          aria-label="Change Logo file"
-          data-testid="sponsor-change-input"
-          style={{ display: 'none' }}
-          onChange={event => {
-            const target = event.currentTarget
-            const file = target.files?.[0]
-            const logo = changing.current
-            target.value = ''
-            if (file != null && logo != null) pick(pickedFileOf(file), logo)
-          }}
-        />
         <Text style={styles.remaining} testID="sponsor-logo-remaining">
           Remaining game logo credits: {count(left)} of {count(total)}
+        </Text>
+        <Text style={styles.text} testID="sponsor-logo-note">
+          One logo is displayed per game. One logo credit is used for each game
+          a logo is displayed in, and the credit is deducted only if the game is
+          at least 30 minutes long.
         </Text>
         <DemoDataBar store={store} onReset={cancel} />
       </View>
@@ -358,24 +333,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(1)
   },
-  item: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: theme.rem(0.5),
-    minWidth: 0
-  },
   tile: {
     width: theme.rem(2.5),
     height: theme.rem(2.5),
     borderRadius: theme.rem(0.375)
-  },
-  itemName: {
-    flexShrink: 1,
-    minWidth: 0,
-    color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375)
   },
   remaining: {
     color: theme.primaryTextColor,

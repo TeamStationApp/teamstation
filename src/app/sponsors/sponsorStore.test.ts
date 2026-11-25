@@ -147,8 +147,6 @@ describe('sponsorStore U4', () => {
       active: true
     })
     expect(remainingCredits(300, state.logos)).equals(100)
-    state = await store.changeLogo(added.id, file('new.png', 'image/png'))
-    expect(state.logos[3]).to.include({ imageUrl: 'blob:new.png', version: 2 })
     state = await store.setLogoAllocation(added.id, 25)
     expect(state.logos[3].allocation).equals(25)
     state = await store.deactivateLogo('logo-harbor-hardware')
@@ -171,12 +169,6 @@ describe('sponsorStore U4', () => {
       version: 1
     })
     expect(remainingCredits(1000, state.reels)).equals(400)
-    state = await store.changeReel(reel.id, file('cut.mp4', 'video/mp4'), 10)
-    expect(state.reels[2]).to.include({
-      videoUrl: 'blob:cut.mp4',
-      durationSec: 10,
-      version: 2
-    })
     state = await store.setReelAllocation('reel-harbor-hardware', 120)
     expect(state.reels[0].allocation).equals(120)
     state = await store.deactivateReel('reel-ridgeview-auto')
@@ -226,12 +218,6 @@ describe('sponsorStore U4', () => {
     )
     await refused(
       store,
-      store.changeLogo('logo-lakeside-pizza', png),
-      'inactive'
-    )
-    await refused(store, store.changeLogo('logo-summit-dental', jpeg), 'PNG')
-    await refused(
-      store,
       store.setLogoAllocation('logo-harbor-hardware', 41),
       'has used 42'
     )
@@ -250,16 +236,6 @@ describe('sponsorStore U4', () => {
       store,
       store.addReel({ picked: webm, durationSec: 12, allocation: 501 }),
       'Only 500 broadcast credits'
-    )
-    await refused(
-      store,
-      store.changeReel('reel-harbor-hardware', webm, NaN),
-      'could not be read'
-    )
-    await refused(
-      store,
-      store.changeReel('reel-harbor-hardware', jpeg, 12),
-      'Choose a video file.'
     )
     await refused(
       store,

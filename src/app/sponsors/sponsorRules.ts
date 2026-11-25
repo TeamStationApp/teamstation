@@ -106,23 +106,6 @@ export function allocated<Row extends CreditRow>(
   return rows.map(each => (each.id === id ? { ...each, allocation } : each))
 }
 
-/**
- * Swaps a row's image or video: `media` replaces those fields, the version
- * goes up by 1 and the counts stay. An inactive row cannot be changed.
- */
-export function changed<Row extends CreditRow>(
-  rows: readonly Row[],
-  id: string,
-  media: Partial<Omit<Row, keyof CreditRow>>
-): Row[] {
-  const row = rowOf(rows, id)
-  if (!row.active)
-    throw new SponsorRuleError(`${row.name} is inactive; it can't be changed.`)
-  return rows.map(each =>
-    each.id === id ? { ...each, ...media, version: each.version + 1 } : each
-  )
-}
-
 export function logoFileProblem(file: { type: string }): string | null {
   return file.type === 'image/png' ? null : 'Logos must be PNG files.'
 }

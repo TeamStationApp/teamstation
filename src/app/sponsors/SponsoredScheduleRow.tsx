@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import { Badge } from '../components/Badge'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import type { SponsoredTextColor } from './sponsorTypes'
 
 export interface SponsoredScheduleRowProps {
   logoUrl: string
@@ -10,6 +11,17 @@ export interface SponsoredScheduleRowProps {
   title: string
   message: string
   url: string
+  /** Dark when not given. */
+  textColor?: SponsoredTextColor
+}
+
+/** Each text colour and the shadow that keeps it legible on the image. */
+const TEXT_COLORS: Record<
+  SponsoredTextColor,
+  { color: string; textShadowColor: string }
+> = {
+  dark: { color: '#1C1C1E', textShadowColor: 'rgba(255,255,255,0.8)' },
+  white: { color: '#FFFFFF', textShadowColor: 'rgba(0,0,0,0.75)' }
 }
 
 /**
@@ -23,10 +35,12 @@ export function SponsoredScheduleRow({
   backgroundUrl,
   title,
   message,
-  url
+  url,
+  textColor = 'dark'
 }: SponsoredScheduleRowProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
+  const ink = TEXT_COLORS[textColor]
   const open = (): void => {
     if (url.startsWith('https://')) window.open(url, '_blank', 'noopener')
   }
@@ -62,12 +76,12 @@ export function SponsoredScheduleRow({
         </View>
         <View style={styles.text}>
           <View style={styles.first}>
-            <Text style={styles.title} numberOfLines={1}>
+            <Text style={[styles.title, ink]} numberOfLines={1}>
               {title === '' ? 'Sponsor title' : title}
             </Text>
             <Badge label="Sponsored" compact />
           </View>
-          <Text style={styles.message} numberOfLines={3}>
+          <Text style={[styles.message, ink]} numberOfLines={3}>
             {message === '' ? 'Sponsor message' : message}
           </Text>
         </View>
@@ -109,18 +123,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
   title: {
     flex: 1,
     minWidth: 0,
-    color: theme.primaryTextColor,
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1),
     fontWeight: '600',
-    textShadowColor: 'rgba(255,255,255,0.8)',
     textShadowRadius: 3
   },
   message: {
-    color: theme.primaryTextColor,
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
-    textShadowColor: 'rgba(255,255,255,0.8)',
     textShadowRadius: 3
   }
 }))

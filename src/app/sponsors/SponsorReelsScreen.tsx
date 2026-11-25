@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Image, Text, TextInput, View } from 'react-native'
+import { Image, StyleSheet, Text, TextInput, View } from 'react-native'
 
 import { Button, Screen } from '../components'
 import { CancelAction } from '../components/CancelAction'
@@ -9,9 +9,10 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CreditTable } from './CreditTable'
 import { DemoDataBar } from './DemoDataBar'
 import { reelBox } from './overlayBoxes'
-import { pickedFileOf, readVideoDuration } from './pickedFiles'
+import { readVideoDuration } from './pickedFiles'
 import type { SampleClient, SampleRecording } from './sampleRecording'
 import { SponsorFileDrop } from './SponsorFileDrop'
+import { SponsorPreviewLayout } from './SponsorPreviewLayout'
 import {
   allocationProblem,
   reelFileProblem,
@@ -20,7 +21,7 @@ import {
 } from './sponsorRules'
 import { OverlayAt, SponsorSampleVideo } from './SponsorSampleVideo'
 import { type SponsorStore, sponsorStoreFor } from './sponsorStore'
-import type { PickedFile, SponsorReel } from './sponsorTypes'
+import type { PickedFile } from './sponsorTypes'
 import { useLeagueAdmin } from './useLeagueAdmin'
 import { useSponsorState } from './useSponsorState'
 
@@ -37,14 +38,10 @@ export interface SponsorReelsScreenProps {
   readDuration?: (picked: PickedFile) => Promise<number>
 }
 
-type Pending =
-  | { mode: 'add'; picked: PickedFile; durationSec: number }
-  | {
-      mode: 'change'
-      picked: PickedFile
-      durationSec: number
-      reel: SponsorReel
-    }
+interface Pending {
+  picked: PickedFile
+  durationSec: number
+}
 
 const count = (value: number): string => value.toLocaleString('en-US')
 const seconds = (value: number): string => `${Math.round(value * 10) / 10} s`
@@ -73,8 +70,8 @@ export function SponsorReelsScreen({
   const [draft, setDraft] = useState('')
   const [acceptError, setAcceptError] = useState('')
   const [accepting, setAccepting] = useState(false)
-  const changeInput = useRef<HTMLInputElement>(null)
-  const changing = useRef<SponsorReel | null>(null)
+  // The listed reel whose name was tapped, shown in the scoreboard's place.
+  const [shownId, setShownId] = useState<string | null>(null)
   // Each pick's number, so a length read after a newer pick or a Cancel
   // is dropped.
   const picks = useRef(0)
@@ -101,8 +98,10 @@ export function SponsorReelsScreen({
   const reels = state?.reels ?? []
   const left = remainingCredits(total, reels)
   const allocation = draft.trim() === '' ? NaN : Number(draft)
+  const shownReel =
+    shownId == null ? null : (reels.find(reel => reel.id === shownId) ?? null)
   const problem =
-    pending?.mode === 'add'
+    pending != null
       ? allocationProblem(reels, total, null, allocation, 'broadcast')
       : null
 
@@ -111,10 +110,7 @@ export function SponsorReelsScreen({
     setPickError(sentence)
     setPending(null)
   }
-  const pick = async (
-    picked: PickedFile,
-    reel: SponsorReel | null
-  ): Promise<void> => {
+  const pick = async (picked: PickedFile): Promise<void> => {
     const turn = ++picks.current
     setAcceptError('')
     setPending(null)
@@ -139,11 +135,7 @@ export function SponsorReelsScreen({
       return
     }
     setDraft('')
-    setPending(
-      reel == null
-        ? { mode: 'add', picked, durationSec }
-        : { mode: 'change', picked, durationSec, reel }
-    )
+    setPending({ picked, durationSec })
   }
   const cancel = (): void => {
     picks.current++
@@ -157,18 +149,11 @@ export function SponsorReelsScreen({
     setAccepting(true)
     setAcceptError('')
     try {
-      if (pending.mode === 'add')
-        await store.addReel({
-          picked: pending.picked,
-          durationSec: pending.durationSec,
-          allocation
-        })
-      else
-        await store.changeReel(
-          pending.reel.id,
-          pending.picked,
-          pending.durationSec
-        )
+      await store.addReel({
+        picked: pending.picked,
+        durationSec: pending.durationSec,
+        allocation
+      })
       cancel()
     } catch (caught) {
       setAcceptError(
@@ -193,99 +178,124 @@ export function SponsorReelsScreen({
           shrunk automatically to fit 640 × 360, keeping their proportions.
           After shrinking, a reel can be at most 3.2 MB.
         </Text>
-        <SponsorSampleVideo
-          client={client}
-          leagueId={league}
-          find={findSample}
-          attach={attachSample}
-        >
-          {pending != null && (
-            <OverlayAt box={reelBox()} testID="sponsor-reel-preview">
-              <video
-                src={pending.picked.url}
-                aria-label={`Preview of ${pending.picked.name}`}
-                muted
-                loop
-                autoPlay
-                playsInline
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            </OverlayAt>
+        <SponsorPreviewLayout
+          video={fill => (
+            <SponsorSampleVideo
+              client={client}
+              leagueId={league}
+              find={findSample}
+              attach={attachSample}
+              fill={fill}
+            >
+              {pending != null ? (
+                <OverlayAt box={reelBox()} testID="sponsor-reel-preview">
+                  <video
+                    src={pending.picked.url}
+                    aria-label={`Preview of ${pending.picked.name}`}
+                    muted
+                    loop
+                    autoPlay
+                    playsInline
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover'
+                    }}
+                  />
+                </OverlayAt>
+              ) : shownReel != null ? (
+                <OverlayAt box={reelBox()} testID="sponsor-reel-preview">
+                  {shownReel.videoUrl !== '' ? (
+                    <video
+                      key={shownReel.id}
+                      src={shownReel.videoUrl}
+                      aria-label={`Preview of ${shownReel.name}`}
+                      muted
+                      loop
+                      autoPlay
+                      playsInline
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover'
+                      }}
+                    />
+                  ) : (
+                    <Image
+                      source={{ uri: shownReel.posterUrl }}
+                      accessibilityLabel={`Preview of ${shownReel.name}`}
+                      resizeMode="cover"
+                      style={StyleSheet.absoluteFill}
+                    />
+                  )}
+                </OverlayAt>
+              ) : null}
+            </SponsorSampleVideo>
           )}
-        </SponsorSampleVideo>
-        {pending == null ? (
-          <View style={styles.field}>
-            <SponsorFileDrop
-              label="Add Reel"
-              prompt="Drop a video here or Choose file"
-              accept="video/*"
-              error={pickError}
-              onPick={picked => {
-                pick(picked, null).catch(() => undefined)
-              }}
-            />
-            {reading && (
-              <Text style={styles.hint}>Reading the reel's length…</Text>
-            )}
-          </View>
-        ) : (
-          <View style={styles.pending} testID="sponsor-reel-pending">
-            <Text style={styles.label}>
-              {pending.picked.name} · {seconds(pending.durationSec)}
-            </Text>
-            {pending.mode === 'add' ? (
+          side={
+            pending == null ? (
               <View style={styles.field}>
-                <Text style={styles.label}>Broadcasts for this reel</Text>
-                <TextInput
-                  accessibilityLabel="Broadcasts for this reel"
-                  value={draft}
-                  inputMode="numeric"
-                  keyboardType="number-pad"
-                  style={styles.input}
-                  onChangeText={text => {
-                    setAcceptError('')
-                    setDraft(text.replace(/[^0-9]/g, ''))
+                <SponsorFileDrop
+                  label="Add Reel"
+                  prompt="Drop a video here or Choose file"
+                  accept="video/*"
+                  error={pickError}
+                  onPick={picked => {
+                    pick(picked).catch(() => undefined)
                   }}
                 />
-                <Text style={styles.hint}>
-                  Up to {count(Math.max(0, left))} broadcast credits left
-                </Text>
-                {draft !== '' && problem != null && (
-                  <Text accessibilityRole="alert" style={styles.error}>
-                    {problem}
-                  </Text>
+                {reading && (
+                  <Text style={styles.hint}>Reading the reel's length…</Text>
                 )}
               </View>
             ) : (
-              <Text style={styles.hint}>
-                Broadcasts already assigned {pending.reel.name} keep the version
-                they had.
-              </Text>
-            )}
-            {acceptError !== '' && (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {acceptError}
-              </Text>
-            )}
-            <Button
-              label={
-                pending.mode === 'add' && left <= 0
-                  ? 'No broadcast credits left to assign'
-                  : 'Accept'
-              }
-              block
-              busy={accepting}
-              disabled={
-                accepting ||
-                (pending.mode === 'add' && (left <= 0 || problem != null))
-              }
-              onPress={() => {
-                accept().catch(() => undefined)
-              }}
-            />
-            <CancelAction onPress={cancel} />
-          </View>
-        )}
+              <View style={styles.pending} testID="sponsor-reel-pending">
+                <Text style={styles.label} numberOfLines={1}>
+                  {pending.picked.name} · {seconds(pending.durationSec)}
+                </Text>
+                <View style={styles.field}>
+                  <Text style={styles.label}>Broadcasts for this reel</Text>
+                  <TextInput
+                    accessibilityLabel="Broadcasts for this reel"
+                    value={draft}
+                    inputMode="numeric"
+                    keyboardType="number-pad"
+                    style={styles.input}
+                    onChangeText={text => {
+                      setAcceptError('')
+                      setDraft(text.replace(/[^0-9]/g, ''))
+                    }}
+                  />
+                  <Text style={styles.hint}>
+                    Up to {count(Math.max(0, left))} broadcast credits left
+                  </Text>
+                  {draft !== '' && problem != null && (
+                    <Text accessibilityRole="alert" style={styles.error}>
+                      {problem}
+                    </Text>
+                  )}
+                </View>
+                {acceptError !== '' && (
+                  <Text accessibilityRole="alert" style={styles.error}>
+                    {acceptError}
+                  </Text>
+                )}
+                <Button
+                  label={
+                    left <= 0 ? 'No broadcast credits left to assign' : 'Accept'
+                  }
+                  block
+                  busy={accepting}
+                  disabled={accepting || left <= 0 || problem != null}
+                  onPress={() => {
+                    accept().catch(() => undefined)
+                  }}
+                />
+                <CancelAction onPress={cancel} />
+              </View>
+            )
+          }
+        />
         <CreditTable
           headers={[
             'Video reel',
@@ -294,51 +304,44 @@ export function SponsorReelsScreen({
             'Action'
           ]}
           rows={reels}
-          allocationLabel="Broadcasts allocated"
-          changeLabel="Change Reel"
           emptyHint="No reels yet. Add one above."
-          renderItem={reel => (
-            <View style={styles.item}>
-              {reel.posterUrl !== '' ? (
-                <Image
-                  source={{ uri: reel.posterUrl }}
-                  accessibilityLabel={`${reel.name} reel`}
-                  resizeMode="cover"
-                  style={styles.poster}
+          renderPicture={reel =>
+            reel.posterUrl !== '' ? (
+              <Image
+                source={{ uri: reel.posterUrl }}
+                accessibilityLabel={`${reel.name} reel`}
+                resizeMode="cover"
+                style={styles.poster}
+              />
+            ) : (
+              <View style={styles.poster}>
+                <video
+                  src={reel.videoUrl}
+                  aria-label={`${reel.name} reel`}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover'
+                  }}
                 />
-              ) : (
-                <View style={styles.poster}>
-                  <video
-                    src={reel.videoUrl}
-                    aria-label={`${reel.name} reel`}
-                    muted
-                    playsInline
-                    preload="metadata"
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover'
-                    }}
-                  />
-                </View>
-              )}
-              <View style={styles.itemText}>
-                <Text style={styles.itemName} numberOfLines={2}>
-                  {reel.name}
-                </Text>
-                <Text style={styles.hint}>{seconds(reel.durationSec)}</Text>
               </View>
-            </View>
+            )
+          }
+          renderDetail={reel => (
+            <Text style={styles.hint}>{seconds(reel.durationSec)}</Text>
           )}
+          onSelect={reel => {
+            setShownId(reel.id)
+          }}
+          selectDisabled={pending != null}
           allocationProblem={(reel, value) =>
             allocationProblem(reels, total, reel.id, value, 'broadcast')
           }
           onSaveAllocation={async (reel, value) => {
             await store.setReelAllocation(reel.id, value)
-          }}
-          onChange={reel => {
-            changing.current = reel
-            changeInput.current?.click()
           }}
           onDeactivate={reel => {
             confirm.open({
@@ -354,22 +357,6 @@ export function SponsorReelsScreen({
                 await store.deactivateReel(reel.id)
               }
             })
-          }}
-        />
-        <input
-          ref={changeInput}
-          type="file"
-          accept="video/*"
-          aria-label="Change Reel file"
-          data-testid="sponsor-change-input"
-          style={{ display: 'none' }}
-          onChange={event => {
-            const target = event.currentTarget
-            const file = target.files?.[0]
-            const reel = changing.current
-            target.value = ''
-            if (file != null && reel != null)
-              pick(pickedFileOf(file), reel).catch(() => undefined)
           }}
         />
         <Text style={styles.text} testID="sponsor-reel-note">
@@ -437,25 +424,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(1)
   },
-  item: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: theme.rem(0.5),
-    minWidth: 0
-  },
   poster: {
     width: theme.rem(4),
     height: theme.rem(2.25),
     borderRadius: theme.rem(0.375),
     overflow: 'hidden',
     backgroundColor: '#111'
-  },
-  itemText: { flexShrink: 1, minWidth: 0 },
-  itemName: {
-    color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375)
   },
   remaining: {
     color: theme.primaryTextColor,

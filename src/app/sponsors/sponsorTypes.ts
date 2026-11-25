@@ -17,7 +17,7 @@ export interface SponsorLogo {
   id: string
   name: string
   imageUrl: string
-  /** Starts at 1 and goes up by 1 each time the image is changed. */
+  /** Starts at 1. */
   version: number
   allocation: number
   used: number
@@ -39,6 +39,12 @@ export interface SponsorReel {
   active: boolean
 }
 
+/**
+ * A sponsored row's title and message colour, each with a shadow to match:
+ * dark text on a light shadow, or white text on a dark one.
+ */
+export type SponsoredTextColor = 'dark' | 'white'
+
 /** A sponsored row in the league's event stream. */
 export interface EventPlacement {
   id: string
@@ -47,6 +53,8 @@ export interface EventPlacement {
   title: string
   message: string
   url: string
+  /** Dark when not given. */
+  textColor?: SponsoredTextColor
   /** When the row shows, as an ISO date-time. */
   startsAt: string
   /** When the administrator placed it, as an ISO date-time. */
@@ -81,6 +89,8 @@ export interface PlacementDraft {
   title: string
   message: string
   url: string
+  /** Dark when not given. */
+  textColor?: SponsoredTextColor
   /** An ISO date-time, or empty when none is chosen. */
   startsAt: string
 }

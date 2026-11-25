@@ -25,6 +25,8 @@ export interface SponsorSampleVideoProps {
   attach?: (handle: VideoHandle, url: string) => () => void
   /** Finds the recording; the league's newest home angle by default. */
   find?: (client: SampleClient, leagueId: string) => Promise<SampleRecording>
+  /** Fills the box it is in, as beside a side panel. */
+  fill?: boolean
 }
 
 /**
@@ -38,7 +40,8 @@ export function SponsorSampleVideo({
   leagueId,
   children,
   attach = attachHls,
-  find = findSampleRecording
+  find = findSampleRecording,
+  fill = false
 }: SponsorSampleVideoProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -96,7 +99,10 @@ export function SponsorSampleVideo({
       style={[
         styles.frame,
         {
-          width: paneWidth > 0 && paneWidth < FULL_WIDTH_BELOW ? '100%' : '50%'
+          width:
+            fill || (paneWidth > 0 && paneWidth < FULL_WIDTH_BELOW)
+              ? '100%'
+              : '50%'
         }
       ]}
     >

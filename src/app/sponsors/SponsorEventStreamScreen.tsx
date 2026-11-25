@@ -4,6 +4,7 @@ import { Text, TextInput, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { Button, Card, Screen, SectionHeader } from '../components'
 import { ScheduleRow } from '../components/ScheduleRow'
+import { SegmentedPill } from '../components/SegmentedPill'
 import { useConfirmedAction } from '../components/useConfirmedAction'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { DemoDataBar } from './DemoDataBar'
@@ -23,7 +24,8 @@ import type {
   EventPlacement,
   PickedFile,
   PlacementDraft,
-  PlacementField
+  PlacementField,
+  SponsoredTextColor
 } from './sponsorTypes'
 import { useLeagueAdmin } from './useLeagueAdmin'
 import { useSponsorState } from './useSponsorState'
@@ -44,8 +46,14 @@ const EMPTY_DRAFT: PlacementDraft = {
   title: '',
   message: '',
   url: '',
+  textColor: 'dark',
   startsAt: ''
 }
+
+const TEXT_COLOR_OPTIONS = [
+  { id: 'dark', label: 'Dark' },
+  { id: 'white', label: 'White' }
+] as const satisfies ReadonlyArray<{ id: SponsoredTextColor; label: string }>
 
 /** An ISO date-time as a `datetime-local` value in the viewer's zone. */
 function localInputValue(iso: string): string {
@@ -166,6 +174,7 @@ export function SponsorEventStreamScreen({
       title: placement.title,
       message: placement.message,
       url: placement.url,
+      textColor: placement.textColor ?? 'dark',
       startsAt: localInputValue(placement.startsAt)
     })
     setTouched(new Set())
@@ -192,7 +201,7 @@ export function SponsorEventStreamScreen({
 
   const previewSource: Pick<
     EventPlacement,
-    'logoUrl' | 'backgroundUrl' | 'title' | 'message' | 'url'
+    'logoUrl' | 'backgroundUrl' | 'title' | 'message' | 'url' | 'textColor'
   > | null =
     draft !== EMPTY_DRAFT || editing != null
       ? {
@@ -200,7 +209,8 @@ export function SponsorEventStreamScreen({
           backgroundUrl: draft.background?.url ?? editing?.backgroundUrl ?? '',
           title: draft.title,
           message: draft.message,
-          url: draft.url
+          url: draft.url,
+          textColor: draft.textColor
         }
       : (placements[0] ?? null)
 
@@ -381,7 +391,8 @@ export function SponsorEventStreamScreen({
               <TextInput
                 accessibilityLabel="Website"
                 value={draft.url}
-                placeholder="https://…"
+                placeholder="https://example.com/littleleaguedeal"
+                placeholderTextColor={theme.placeholderTextColor}
                 inputMode="url"
                 autoCapitalize="none"
                 style={styles.input}
@@ -407,11 +418,28 @@ export function SponsorEventStreamScreen({
                   borderRadius: 8,
                   border: `1px solid ${theme.inputBorderColor}`,
                   background: theme.inputBackgroundColor,
-                  color: theme.inputTextColor,
+                  // Empty, its mm/dd/yyyy reads as a placeholder.
+                  color:
+                    draft.startsAt === ''
+                      ? theme.placeholderTextColor
+                      : theme.inputTextColor,
                   fontSize: 16
                 }}
               />
             )}
+            <View style={styles.field}>
+              <Text style={styles.label}>Text color</Text>
+              <View style={styles.toggle}>
+                <SegmentedPill
+                  options={TEXT_COLOR_OPTIONS}
+                  selected={draft.textColor ?? 'dark'}
+                  accessibilityLabel="Text color"
+                  onSelect={textColor => {
+                    change({ textColor })
+                  }}
+                />
+              </View>
+            </View>
             {saveError !== '' && (
               <Text accessibilityRole="alert" style={styles.error}>
                 {saveError}
@@ -533,5 +561,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     paddingVertical: theme.rem(0.5),
     textAlignVertical: 'top'
   },
+  toggle: { maxWidth: theme.rem(14) },
   schedule: { gap: theme.rem(0.75) }
 }))

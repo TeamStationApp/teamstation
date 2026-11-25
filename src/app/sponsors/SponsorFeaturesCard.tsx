@@ -41,9 +41,11 @@ export function SponsorFeaturesCard({
 const getStyles = cacheStyles((theme: Theme) => ({
   section: { gap: theme.rem(0.75) },
   wrap: { position: 'relative' },
+  // In the row's upper-right corner, as far from the top as from the
+  // right, and clear above the chevron.
   pill: {
     position: 'absolute',
-    top: theme.rem(0.5),
-    right: theme.rem(0.75)
+    top: theme.rem(0.375),
+    right: theme.rem(0.375)
   }
 }))

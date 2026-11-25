@@ -4,7 +4,6 @@ import {
   allocated,
   allocationProblem,
   canEditPlacement,
-  changed,
   characters,
   checkPlacementEdit,
   checkPlacementSlot,
@@ -155,27 +154,6 @@ describe('sponsorRules', () => {
       expect(remainingCredits(300, unused)).equals(170)
       expect(() => deactivated(logos, 'logo-missing')).to.throw(
         SponsorRuleError
-      )
-    })
-
-    it('bumps the version on a change, keeps the counts, refuses inactive rows', () => {
-      const { logos } = seed()
-      const rows = changed(logos, 'logo-harbor-hardware', {
-        imageUrl: 'blob:new'
-      })
-      expect(rows[0]).to.include({
-        imageUrl: 'blob:new',
-        version: 2,
-        allocation: 100,
-        used: 42,
-        active: true
-      })
-      expect(rows[1]).equals(logos[1])
-      expect(() =>
-        changed(logos, 'logo-lakeside-pizza', { imageUrl: 'blob:x' })
-      ).to.throw(
-        SponsorRuleError,
-        "Lakeside Pizza is inactive; it can't be changed."
       )
     })
   })

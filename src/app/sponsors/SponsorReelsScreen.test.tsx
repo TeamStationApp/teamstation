@@ -97,7 +97,6 @@ async function choose(selector: string, file: File): Promise<void> {
   await settle(0)
 }
 const ADD = '[data-testid="sponsor-drop-zone-input"]'
-const CHANGE = '[data-testid="sponsor-change-input"]'
 
 const pending = (): Element | null =>
   document.querySelector('[data-testid="sponsor-reel-pending"]')
@@ -135,7 +134,6 @@ describe('the Sponsor Video Reels screen', () => {
     // Used 120 of 400.
     expect(row('reel-harbor-hardware')).includes('120280')
     expect(row('reel-ridgeview-auto')).includes('15 s')
-    expect(find('Change Reel, Ridgeview Auto')).not.equals(undefined)
   })
 
   it('refuses a 20 second reel with its sentence and nothing pending', async () => {
@@ -251,17 +249,6 @@ describe('the Sponsor Video Reels screen', () => {
     expect(pending(), 'still pending').not.equals(null)
   })
 
-  it('checks a row’s allocation and saves it', async () => {
-    await open()
-    await fill('Broadcasts allocated, Harbor Hardware', '901')
-    expect(text()).includes('Only 900 broadcast credits are left to assign.')
-    await fill('Broadcasts allocated, Harbor Hardware', '450')
-    await press('Save broadcasts allocated, Harbor Hardware')
-    await settle(0)
-    expect(row('reel-harbor-hardware')).includes('120330')
-    expect(text()).includes('Remaining reel broadcast credits: 450 of 1,000')
-  })
-
   it('keeps a used reel as inactive, and removes an unused one with its credits', async () => {
     await open()
     await press('Deactivate Harbor Hardware')
@@ -270,7 +257,6 @@ describe('the Sponsor Video Reels screen', () => {
     await press('Deactivate')
     await settle(50)
     expect(row('reel-harbor-hardware')).includes('Inactive')
-    expect(find('Change Reel, Harbor Hardware')).equals(undefined)
     expect(text()).includes('Remaining reel broadcast credits: 500 of 1,000')
     await press('Deactivate Ridgeview Auto')
     await settle(50)
@@ -279,46 +265,6 @@ describe('the Sponsor Video Reels screen', () => {
     await settle(50)
     expect(row('reel-ridgeview-auto')).equals('')
     expect(text()).includes('Remaining reel broadcast credits: 600 of 1,000')
-  })
-
-  it('changes a reel and keeps its counts', async () => {
-    const store = await open()
-    let chooserOpened = 0
-    document.querySelector(CHANGE)!.addEventListener('click', () => {
-      chooserOpened++
-    })
-    await press('Change Reel, Harbor Hardware')
-    expect(chooserOpened).equals(1)
-    await choose(CHANGE, webm('Harbor new.webm'))
-    expect(preview(), 'the preview').not.equals(null)
-    expect(text()).includes(
-      'Broadcasts already assigned Harbor Hardware keep the version they had.'
-    )
-    expect(
-      document.querySelector('input[aria-label="Broadcasts for this reel"]')
-    ).equals(null)
-    await press('Accept')
-    await settle(0)
-    const harbor = (await store.read()).reels.find(
-      reel => reel.id === 'reel-harbor-hardware'
-    )!
-    expect(harbor.videoUrl).match(/^blob:Harbor new\.webm#/)
-    expect(harbor).deep.include({
-      version: 2,
-      allocation: 400,
-      used: 120,
-      durationSec: 11
-    })
-    expect(row('reel-harbor-hardware')).includes('11 s')
-    expect(text()).includes('Remaining reel broadcast credits: 500 of 1,000')
-  })
-
-  it('refuses a changed reel of the wrong length', async () => {
-    await open()
-    await press('Change Reel, Harbor Hardware')
-    await choose(CHANGE, webm('long.webm'))
-    expect(text()).includes('This reel is 20 seconds.')
-    expect(pending()).equals(null)
   })
 
   it('clears every row, and puts the samples back', async () => {
