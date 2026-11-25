@@ -69,12 +69,13 @@ async function render(
     )
   })
 }
-afterEach(async function () {
-  await settle(() => root?.unmount())
-  root = undefined
-})
 
 describe('the picker of whom to message for a player who cannot sign in', function () {
+  afterEach(async function () {
+    await settle(() => root?.unmount())
+    root = undefined
+  })
+
   it('says the player has no account and lists their guardians to choose from', async function () {
     const asked: string[] = []
     const events = { chose: [] as string[], closed: 0 }

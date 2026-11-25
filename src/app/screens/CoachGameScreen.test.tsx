@@ -41,6 +41,7 @@ import {
 import { candidate } from '../../test/fakeCandidateClient'
 import { measureBoxes } from '../../test/measureBoxes'
 import { completeMotions } from '../../test/scoringHelpers'
+import { manualClock } from '../../test/tessTestKit'
 import { App } from '../App'
 import {
   currentRoute,
@@ -1668,17 +1669,31 @@ describe('Coach Game (U25)', function () {
       return { batting: [], pitching: [], stats: undefined }
     }
     const socket = new FakeChanges()
-    await coach(held, { socket, boxScoreEveryMs: 400 })
-    expect(held.reads.boxScore).equals(1)
-    await socket.change('playEdits')
-    await socket.change('playEdits')
-    await waitFor(() => held.reads.boxScore === 2, 'a second read')
-    // The second change waits out the period, and is read once.
-    await new Promise(resolve => setTimeout(resolve, 150))
-    expect(held.reads.boxScore).equals(2)
-    await socket.emit({ type: 'resync', gameId: 'g1' })
-    await waitFor(() => held.reads.boxScore === 3, 'a third read')
-    expect(asked).deep.equals(['offlineFirst', 'server', 'server'])
+    const period = 400
+    const clock = manualClock(period)
+    const originalNow = Date.now
+    let now = Date.now()
+    Date.now = () => now
+    try {
+      await coach(held, { socket, boxScoreEveryMs: period })
+      expect(held.reads.boxScore).equals(1)
+      now += period
+      await socket.change('playEdits')
+      await socket.change('playEdits')
+      await waitFor(() => held.reads.boxScore === 2, 'a second read')
+      // The second change waits out the period, and is read once.
+      now += 150
+      await clock.advance(150)
+      expect(held.reads.boxScore).equals(2)
+      await socket.emit({ type: 'resync', gameId: 'g1' })
+      now += period - 150
+      await clock.advance(period - 150)
+      await waitFor(() => held.reads.boxScore === 3, 'a third read')
+      expect(asked).deep.equals(['offlineFirst', 'server', 'server'])
+    } finally {
+      Date.now = originalNow
+      clock.restore()
+    }
   })
 
   it('opens on the server’s plays and defaults, never the phone’s stored copy', async function () {
