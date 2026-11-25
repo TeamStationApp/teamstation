@@ -1822,7 +1822,11 @@ export async function checkMonitorAssignments(m: Device): Promise<void> {
   for (const slot of [1, 2, 3, 4, 5]) {
     const row = await openCameraRow()
     await m.tapOn({ id: `source-slot-${row}` })
-    const choice = { id: `source-assign-${slot}` }
+    // Some iPadOS menus expose their title as text and omit the action identifier.
+    const itemID = `source-assign-${slot}`
+    const title = `^Source ${slot}( · .*)?$`
+    const byID = await isVisible(m, itemID, 1_000)
+    const choice = byID ? { id: itemID } : { text: title }
     await m.extendedWaitUntil({ visible: choice, timeout: 8_000 })
     // UIKit reports a menu item's bounds before its popover finishes opening. If the
     // choice stays open after a tap, it has not committed; tap only that still-open item.
@@ -1831,7 +1835,7 @@ export async function checkMonitorAssignments(m: Device): Promise<void> {
       await m.tapOn(choice)
       await waitForMenu()
       const nodes = flatten(await m.hierarchy())
-      if (!nodes.some(node => node.id === choice.id)) break
+      if (!nodes.some(node => node.id === itemID || new RegExp(title).test(node.text ?? ''))) break
     }
     const button = { id: `source-slot-${row}`, text: `SOURCE ${slot}` }
     await m.extendedWaitUntil({ visible: button, timeout: 8_000 })
