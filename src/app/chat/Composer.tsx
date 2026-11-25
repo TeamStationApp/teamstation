@@ -67,7 +67,7 @@ export interface ComposerProps {
   files?: Pick<ChatFileOps, 'bytesUri' | 'releaseUri'>
   attachments: PickedFile[]
   onRemoveAttachment: (index: number) => void
-  /** Where Attach can pick from; none hides it (an edit takes no files). */
+  /** Where Attach can pick from; none hides it. An edit shows it disabled. */
   sources: PickSource[]
   onAttach: (source: PickSource) => void
   onSend: () => void
