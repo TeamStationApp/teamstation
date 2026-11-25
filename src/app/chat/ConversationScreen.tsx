@@ -389,7 +389,7 @@ export function ConversationScreen(
   const draftPreview = useChatLinkPreview(
     engine,
     conversationId,
-    editing?.id,
+    editing,
     text,
     props.active !== false && !sending && view?.composer === 'enabled',
     linkOrigin
