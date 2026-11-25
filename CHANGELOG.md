@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- fixed: The chat message field follows the phone keyboard during a drag. Changes to draft height, reply and edit controls, and the desktop message menu animate smoothly.
+
 - added: Chat senders can include a removable link preview. Recipients see its encrypted copy, and reporting the message shares the original content while keeping the preview private.
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.

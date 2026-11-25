@@ -4,7 +4,8 @@ import {
   Keyboard,
   Platform,
   useWindowDimensions,
-  View
+  View,
+  type ViewProps
 } from 'react-native'
 
 import { FLOATING_BOTTOM_REM, FLOATING_HEIGHT_REM } from '../components/AppNav'
@@ -24,6 +25,13 @@ export type ChatViewportState = ReturnType<typeof chatLayout> & {
   closedClearance: number
   /** The part of a keyboard's height that the closed clearance covers. */
   keyboardOffset: number
+  /** Native composer geometry before the keyboard covers the conversation. */
+  composerDock: {
+    bottom: number
+    gap: number
+    consumed: number
+    follow: boolean
+  }
   softwareKeyboardOpen: boolean
   dockedKeyboardWidth?: number
   attachmentHandoff: boolean
@@ -31,6 +39,12 @@ export type ChatViewportState = ReturnType<typeof chatLayout> & {
   returningToKeyboard: boolean
   returnToKeyboard: () => void
   keyboardReturnSettled: () => void
+}
+
+export interface ChatComposerBandProps extends ViewProps {
+  active: boolean
+  ref?: React.Ref<React.ComponentRef<typeof View>>
+  viewport: Pick<ChatViewportState, 'composerBottom' | 'composerDock'>
 }
 
 export function useChatViewport(
@@ -53,6 +67,7 @@ export function useChatViewport(
   const measurement = useRef(0)
   const [frameBottom, setFrameBottom] = useState(window.height)
   const [nativeKeyboardTop, setNativeKeyboardTop] = useState<number>()
+  const [floatingKeyboard, setFloatingKeyboard] = useState(false)
   const [returningToKeyboard, setReturningToKeyboard] = useState(false)
   // iPad floating keyboards and hardware accessory bars do not occupy a dock.
   const docked = useRef(
@@ -141,6 +156,7 @@ export function useChatViewport(
         const fullWidth = width >= windowWidth - 2
         if (height > 80 && fullWidth)
           docked.current.set(windowWidth, { bottom: screenY + height, height })
+        setFloatingKeyboard(width > 0 && !fullWidth)
         // A floating iPad keyboard can sit anywhere over the history.
         setNativeKeyboardTop(width > 0 && !fullWidth ? undefined : screenY)
         // Android's window bounds and IME animation can settle in either order.
@@ -163,6 +179,8 @@ export function useChatViewport(
         const app = Dimensions.get('window')
         const dock = docked.current.get(app.width)
         if (dock != null) dock.hiddenWindowHeight = app.height
+        // A floating keyboard remains undocked throughout its hide animation.
+        // The next show event supplies the new keyboard geometry.
         setNativeKeyboardTop(undefined)
         measure()
       }
@@ -251,6 +269,12 @@ export function useChatViewport(
     frame,
     measure,
     header: slot.headerHeight,
+    composerDock: {
+      bottom: closed.composerBottom,
+      gap: input.gap / 2,
+      consumed: Math.max(0, screenBottom - frameBottom),
+      follow: !nativePanel && !floatingKeyboard
+    },
     softwareKeyboardOpen: keyboardTop != null,
     dockedKeyboardWidth:
       remembered != null &&

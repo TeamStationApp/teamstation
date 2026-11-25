@@ -5,12 +5,14 @@ import { after, afterEach, before, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import type * as NativeBand from './ChatComposerBand.native'
 import type * as NativeHistory from './ChatHistoryList.native'
 import type {
   ChatHistoryHandle,
   ChatHistoryKeyboard,
   ChatHistoryListProps
 } from './chatHistoryListTypes'
+import type { ChatComposerBandProps } from './ChatViewport'
 
 /**
  * The phone's history list over stand-ins for Legend List's keyboard
@@ -19,6 +21,11 @@ import type {
  */
 describe('native virtualized chat history', function () {
   let history: typeof NativeHistory
+  let composerBand: typeof NativeBand
+  const frames = { height: { value: 0 }, progress: { value: 0 } }
+  let sampleStyle: () => { transform: Array<{ translateY: number }> }
+  let sampleMotion: () => void
+  let bandBottom: number
   const saved = new Map<string, NodeJS.Module | undefined>()
   const platform = { OS: 'android' }
   const shown = new Set<() => void>()
@@ -71,6 +78,25 @@ describe('native virtualized chat history', function () {
   before(async function () {
     stand('react-native', { Platform: platform })
     stand('react-native-reanimated', {
+      useAnimatedReaction: (
+        read: () => number,
+        react: (value: number, previous: number | null) => void
+      ) => {
+        const last = React.useRef<number | null>(null)
+        sampleMotion = () => {
+          const value = read()
+          react(value, last.current)
+          last.current = value
+        }
+      },
+      View: ({ style }: { style: [unknown, { bottom: number }, unknown] }) => {
+        bandBottom = style[1].bottom
+        return null
+      },
+      useAnimatedStyle: (sample: typeof sampleStyle) => {
+        sampleStyle = sample
+        return sample()
+      },
       useSharedValue: (initial: unknown) =>
         React.useRef({ value: initial }).current,
       useDerivedValue: (derive: () => unknown) => ({
@@ -80,6 +106,11 @@ describe('native virtualized chat history', function () {
       })
     })
     stand('react-native-keyboard-controller', {
+      useReanimatedKeyboardAnimation: () => frames,
+      KeyboardGestureArea: (props: {
+        children: React.ReactNode
+      }): React.ReactElement =>
+        React.createElement(React.Fragment, null, props.children),
       KeyboardProvider: (props: {
         enabled: boolean
         children: React.ReactNode
@@ -126,6 +157,7 @@ describe('native virtualized chat history', function () {
       })
     })
     history = await import('./ChatHistoryList.native')
+    composerBand = await import('./ChatComposerBand.native')
   })
 
   after(function () {
@@ -224,6 +256,56 @@ describe('native virtualized chat history', function () {
       root!.render(element)
     })
   }
+
+  it('follows intermediate native keyboard frames through a reversal, handoff and pane switch', async function () {
+    const render = async (
+      consumed: number,
+      follow = true,
+      active = true
+    ): Promise<void> => {
+      const viewport: ChatComposerBandProps['viewport'] = {
+        composerBottom: 32,
+        composerDock: { bottom: 88, gap: 8, consumed, follow }
+      }
+      await mount(
+        React.createElement(composerBand.ChatComposerBand, { active, viewport })
+      )
+    }
+    function shift(height: number, progress: number): number {
+      frames.height.value = -height
+      frames.progress.value = progress
+      return sampleStyle().transform[0].translateY
+    }
+    await render(0)
+    expect(bandBottom).equals(88)
+    expect(shift(0, 0)).equals(0)
+    expect(shift(150, 0.5)).equals(-110)
+    expect(shift(300, 1)).equals(-220)
+    expect(shift(225, 0.75)).equals(-165)
+    expect(shift(270, 0.9)).equals(-198)
+    await render(60)
+    expect(shift(150, 0.5)).equals(-50)
+    expect(shift(0, 0)).equals(0)
+    await render(60, false)
+    expect(bandBottom).equals(32)
+    expect(shift(300, 1)).equals(0)
+    await render(60, true, false)
+    expect(shift(225, 0.75)).equals(0)
+  })
+  it('distinguishes a static keyboard from an interactive gesture that reverses to its starting height', async function () {
+    const { element, state } = harness()
+    await mount(element)
+    const revision = state.keyboard.current!.motionRevision!
+    frames.height.value = -300
+    sampleMotion()
+    sampleMotion()
+    expect(revision()).equals(0)
+    frames.height.value = -230
+    sampleMotion()
+    frames.height.value = -300
+    sampleMotion()
+    expect(revision()).equals(2)
+  })
 
   it('holds the existing keyboard inset while the source panel replaces the keyboard', async function () {
     const { element, state } = harness()

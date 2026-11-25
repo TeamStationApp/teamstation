@@ -456,7 +456,7 @@ async function open(ctx: E2eContext): Promise<void> {
   try {
     const sender = await providerFor(f, f.sender)
     try {
-      const dest = await destinationPage(f.destinationHost)
+      const dest = await destinationPage(f)
       const platform =
         ctx.surface === 'ios-app'
           ? 'ios'
@@ -470,7 +470,11 @@ async function open(ctx: E2eContext): Promise<void> {
         })
       let reversed = false
       try {
-        if (platform === 'android' && f.destinationHost == null) {
+        if (
+          platform === 'android' &&
+          f.destinationHost == null &&
+          dest.port != null
+        ) {
           adb('reverse', '--no-rebind', 'tcp:' + dest.port, 'tcp:' + dest.port)
           reversed = true
         }

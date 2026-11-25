@@ -84,6 +84,8 @@ export interface ChatHistoryKeyboardOptions {
 }
 
 export interface ChatHistoryKeyboard {
+  /** Changes whenever the native keyboard moves through a different frame. */
+  motionRevision?: () => number
   holdKeyboardInset?: () => void
   composerRef: React.RefObject<React.ComponentRef<typeof View> | null>
   onComposerLayout: (event: LayoutChangeEvent) => void

@@ -14,10 +14,13 @@ import React, {
 import { Platform, type View } from 'react-native'
 import {
   KeyboardEvents,
-  KeyboardProvider
+  KeyboardGestureArea,
+  KeyboardProvider,
+  useReanimatedKeyboardAnimation
 } from 'react-native-keyboard-controller'
 import {
   type SharedValue,
+  useAnimatedReaction,
   useDerivedValue,
   useSharedValue
 } from 'react-native-reanimated'
@@ -117,10 +120,11 @@ export function ChatHistoryList<T>(
     ...rest
   } = props
   const keys = keyboard as NativeKeyboardProps | undefined
-  return (
+  const history = (
     <KeyboardAwareLegendList
       {...rest}
       ref={list}
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
       keyExtractor={(item: T) => keyOf(item)}
       renderItem={({ item, index }: { item: T; index: number }) =>
         renderItem(item, index)
@@ -147,6 +151,12 @@ export function ChatHistoryList<T>(
           })}
     />
   )
+  if (Platform.OS !== 'android') return history
+  return (
+    <KeyboardGestureArea style={props.style} interpolator="linear">
+      {history}
+    </KeyboardGestureArea>
+  )
 }
 
 /** The scroll view's inset already holds the composer and the keyboard. */
@@ -170,6 +180,14 @@ export function useChatHistoryKeyboard(
   } | null>(null)
   const { contentInsetEndAdjustment, onComposerLayout } =
     useKeyboardChatComposerInset(listRef, composerRef, 0)
+  const { height } = useReanimatedKeyboardAnimation()
+  const motionRevision = useSharedValue(0)
+  useAnimatedReaction(
+    () => height.value,
+    (current, previous) => {
+      if (previous != null && current !== previous) motionRevision.value += 1
+    }
+  )
   const clearance = useSharedValue(options.closedClearance)
   useEffect(() => {
     clearance.value = options.closedClearance
@@ -225,6 +243,7 @@ export function useChatHistoryKeyboard(
   )
   useKeyboardControllerOwner(options.active)
   return {
+    motionRevision: () => motionRevision.value,
     composerRef,
     holdKeyboardInset: () => {
       holdingInset.current = true
