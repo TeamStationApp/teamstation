@@ -172,6 +172,9 @@ export async function measureComposerMotion(
   const top = Math.floor((stream.height * 0.35) / 2) * 2
   const columns = 12
   const rows = Math.round(((stream.height - top) * columns) / cropWidth)
+  // The thin horizontal stroke can fall between two sampled rows. Keep half-row
+  // vertical detail so a visible plus stays distinguishable during a fast pan.
+  const rasterRows = rows * 2
   const { stdout: pixels } = await exec(
     'ffmpeg',
     [
@@ -180,7 +183,7 @@ export async function measureComposerMotion(
       '-i',
       file,
       '-vf',
-      `crop=${cropWidth}:ih-${top}:${cx - cropWidth / 2}:${top},scale=${columns}:${rows},format=gray`,
+      `crop=${cropWidth}:ih-${top}:${cx - cropWidth / 2}:${top},scale=${columns}:${rasterRows},format=gray`,
       '-fps_mode',
       'passthrough',
       '-f',
@@ -189,26 +192,32 @@ export async function measureComposerMotion(
     ],
     { encoding: 'buffer', maxBuffer: 128 * 1024 * 1024 }
   )
-  if (frames.length === 0 || pixels.length !== frames.length * rows * columns)
+  if (
+    frames.length === 0 ||
+    pixels.length !== frames.length * rasterRows * columns
+  )
     throw new Error('Incomplete frame timestamps or image data')
-  const half = 5
-  const rest = Math.round(((cy - top) * rows) / (stream.height - top))
-  if (rest < half || rest >= rows - half)
+  const half = 10
+  const center = Math.round(((cy - top) * rasterRows) / (stream.height - top))
+  const rest = center / 2
+  if (center < half || center >= rasterRows - half)
     throw new Error('The composer lies outside the measured control lane')
   const raw = Array.from(
-    pixels.subarray((rest - half) * columns, (rest + half + 1) * columns)
+    pixels.subarray((center - half) * columns, (center + half + 1) * columns)
   )
   const mean = raw.reduce((a, b) => a + b, 0) / raw.length
   const template = raw.map(value => value - mean)
   const norm = template.reduce((total, value) => total + value * value, 0)
   if (norm < 100 * template.length)
     throw new Error('The resting plus has insufficient contrast')
-  const lower = reverseDistance == null ? half : Math.max(half, rest - half)
+  const lower = reverseDistance == null ? half : Math.max(half, center - half)
   const upper = Math.min(
-    rows - half - 1,
-    rest +
+    rasterRows - half - 1,
+    center +
       half +
-      Math.ceil(((reverseDistance ?? 0) * rows * scale) / (stream.height - top))
+      Math.ceil(
+        ((reverseDistance ?? 0) * rasterRows * scale) / (stream.height - top)
+      )
   )
 
   const positions = frames.map((frame, index) => {
@@ -219,11 +228,11 @@ export async function measureComposerMotion(
         template,
         norm,
         pixels,
-        (index * rows + y - half) * columns
+        (index * rasterRows + y - half) * columns
       )
       if (score > best) {
         best = score
-        row = y
+        row = y / 2
       }
     }
     return { seconds: Number(frame.best_effort_timestamp_time), row }
