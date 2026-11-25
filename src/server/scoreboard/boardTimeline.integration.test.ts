@@ -1,5 +1,6 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { mock } from 'node:test'
 
 import { expect } from 'chai'
 import express from 'express'
@@ -1396,19 +1397,33 @@ describe('the board timeline', function () {
       // Several checks later, it is still open.
       await new Promise(resolve => setTimeout(resolve, 400))
       expect(listener.socket.readyState).equals(WebSocket.OPEN)
+    })
 
-      // A game that goes away takes its timeline viewers with it.
-      const doomed = await newGame()
-      const orphan = await opened(
-        `${one.ws}/${doomed}/socket?timeline=1`,
-        runner
-      )
-      await db.deleteFrom('games').where('id', '=', doomed).execute()
-      expect(await orphan.closed).equals(4404)
-      // And one for no game at all is never admitted.
-      expect(
-        await connect(`${one.ws}/gam_nothere/socket?timeline=1`, runner).closed
-      ).equals(4404)
+    it('closes an admitted timeline viewer when its next check finds the game deleted', async function () {
+      // Delete between checks so this exercises a missing game. Deleting in
+      // the middle of a membership query can instead observe lost access.
+      mock.timers.enable({ apis: ['setInterval'] })
+      try {
+        const worker = await startWorker({ checkMs: 100 })
+        const doomed = await newGame()
+        const orphan = await opened(
+          `${worker.ws}/${doomed}/socket?timeline=1`,
+          runner
+        )
+        await until('the timeline viewer is admitted', async () => {
+          await worker.store.announceTimeline(doomed)
+          return changes(orphan) > 0
+        })
+        await db.deleteFrom('games').where('id', '=', doomed).execute()
+        mock.timers.tick(100)
+        expect(await orphan.closed).equals(4404)
+        expect(
+          await connect(`${worker.ws}/gam_nothere/socket?timeline=1`, runner)
+            .closed
+        ).equals(4404)
+      } finally {
+        mock.timers.reset()
+      }
     })
 
     describe('a check that finds no connection', function () {

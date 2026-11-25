@@ -27,6 +27,7 @@ describe('changed executable line coverage gate', function () {
       '// The exported parser executes even without a reported statement.',
       'export const CacheUrl: Parser = URL',
       'export const ready = true',
+      'declare const injectedAtBuild: string',
       ''
     ].join('\n')
     const required = executableLines('source.ts', source)

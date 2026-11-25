@@ -14,6 +14,7 @@ import type { TeamLineups } from './api'
 import { asLiteral } from './asLiteral'
 import { asUserId } from './userId'
 import type { WalkUpSong } from './walkUpSong'
+import { socketForActor } from './webPasswordLink'
 
 /**
  * A game's changes, as they happen, over one WebSocket at `/socket`.
@@ -701,6 +702,7 @@ interface HeldScreen {
 }
 
 export interface GameSocketOptions {
+  expectedActor?: string
   /** The API's base URL, as the client is given it. */
   baseUrl: string
   /** The session token, where the platform has no cookie (a phone). */
@@ -743,6 +745,7 @@ export interface GameSocketOptions {
  * `error`; no scope is asked for again on this socket.
  */
 export class GameSocket {
+  private readonly expectedActor: string | undefined
   private readonly baseUrl: string
   private readonly pageHref: string | undefined
   private token: string | undefined
@@ -799,6 +802,7 @@ export class GameSocket {
    * cannot fail.
    */
   constructor(options: GameSocketOptions) {
+    this.expectedActor = options.expectedActor
     this.baseUrl = options.baseUrl
     this.pageHref = options.pageHref
     this.token = options.token
@@ -819,7 +823,10 @@ export class GameSocket {
    */
   get url(): string {
     const page = (globalThis as { location?: { href?: string } }).location
-    return socketUrl(this.baseUrl, this.pageHref ?? page?.href)
+    return socketForActor(
+      socketUrl(this.baseUrl, this.pageHref ?? page?.href),
+      this.expectedActor
+    )
   }
 
   /** Whether the socket is connected now. */

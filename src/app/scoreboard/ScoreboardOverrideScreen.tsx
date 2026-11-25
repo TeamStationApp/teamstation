@@ -48,6 +48,7 @@ export interface ScoreboardOverrideScreenProps {
    * The session, on a phone. The dashboard's socket needs the person running
    * the game, and a phone proves who that is with this rather than a cookie.
    */
+  expectedActor?: string
   token?: string
   /** A test's socket and clock; the browser's otherwise. */
   WebSocketImpl?: SocketConstructor
@@ -101,7 +102,8 @@ function pagePoint(event: GestureResponderEvent): PagePoint {
 export function ScoreboardOverrideScreen(
   props: ScoreboardOverrideScreenProps
 ): React.ReactElement {
-  const { apiBaseUrl, gameId, token, WebSocketImpl, schedule } = props
+  const { apiBaseUrl, gameId, token, expectedActor, WebSocketImpl, schedule } =
+    props
   const theme = dashboardTheme
   const styles = getStyles(theme)
   const { headerHeight } = useHeaderSlot()
@@ -134,7 +136,8 @@ export function ScoreboardOverrideScreen(
         protocol == null || host == null ? undefined : { protocol, host },
         apiBaseUrl,
         gameId,
-        'dashboard'
+        'dashboard',
+        expectedActor
       ),
       token,
       onState: state => {
@@ -168,7 +171,16 @@ export function ScoreboardOverrideScreen(
       dashboard.close()
       client.current = undefined
     }
-  }, [apiBaseUrl, gameId, protocol, host, token, WebSocketImpl, schedule])
+  }, [
+    apiBaseUrl,
+    gameId,
+    protocol,
+    host,
+    token,
+    expectedActor,
+    WebSocketImpl,
+    schedule
+  ])
 
   if (refused) return <ScoreboardNotFound />
 

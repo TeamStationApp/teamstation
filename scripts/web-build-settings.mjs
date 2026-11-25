@@ -1,6 +1,8 @@
 import babel from '@babel/core'
 import { readFile } from 'fs/promises'
 
+import { isDevelopmentWebOrigin } from '../src/common/primaryUrl.ts'
+
 export const worklets = {
   name: 'reanimated-worklets',
   setup(pluginBuild) {
@@ -28,8 +30,36 @@ export const worklets = {
   }
 }
 
+// Only explicitly identified development deployments include the module.
+// Archive provenance is supplied by the deployer, independently of Git.
+export const developmentPasswordLinks = {
+  name: 'development-password-links',
+  setup({ initialOptions }) {
+    const define = (initialOptions.define ??= {})
+    const info = process.env.TS_BUILD_INFO
+    const provenance = info && JSON.parse(info)
+    const branch = provenance?.branch
+    const seat = process.env.TS_SEAT_BRANCH
+    const origin = process.env.TS_WEB_PASSWORD_LINK_ORIGIN
+    const enabled =
+      isDevelopmentWebOrigin(origin, origin) &&
+      define.TS_API_BASE_URL === JSON.stringify('/api/v1') &&
+      ((branch === 'develop' && (seat == null || seat === branch)) ||
+        (typeof branch === 'string' &&
+          branch.length > 0 &&
+          !/^(?:(?:main|master)$|release(?:$|[/.-])|v\d)/i.test(branch) &&
+          seat === branch))
+    if (enabled && /^[a-f0-9]{40}$/.test(provenance.commit)) {
+      const banner = (initialOptions.banner ??= {})
+      banner.js = `/*! teamstation-web-revision: ${provenance.commit} */\n${banner.js ?? ''}`
+    }
+    define.TS_PASSWORD_LINK_BUILD = JSON.stringify(Boolean(enabled))
+    define.TS_PASSWORD_LINK_ORIGIN = JSON.stringify(enabled ? origin : '')
+  }
+}
+
 export const webSettings = {
-  plugins: [worklets],
+  plugins: [worklets, developmentPasswordLinks],
   // 1.0's gradient alias, which came with 1.0's scoreboard: the board keeps
   // 1.0's `react-native-linear-gradient` import, and on the web that is the
   // package that draws it.
