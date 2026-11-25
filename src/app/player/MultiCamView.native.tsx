@@ -22,6 +22,7 @@ import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import type { ParkReason } from './multiCam/align'
 import { ExitButton, exitClearance, gridControls } from './multiCam/barParts'
 import { TILE_BUFFER } from './multiCam/buffering'
+import { GridRelease } from './multiCam/gridRelease'
 import { edgeToEdge, type Rect } from './multiCam/layout'
 import {
   gridRotation,
@@ -51,6 +52,7 @@ import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
 import type { WallMapping } from './wallMapping'
 import { ZoneIcons } from './ZoneIcons'
+import { beyondSlop } from './zones'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -298,6 +300,14 @@ function MultiCamGrid(
 
   const touch = useRef<Touch | null>(null)
 
+  const [coalescing, setCoalescing] = useState(false)
+  const [release] = useState(() => new GridRelease(setCoalescing))
+  useEffect(
+    () => () => {
+      release.dispose()
+    },
+    [release]
+  )
   const armed = mc.armedTile
 
   // The grid's own press does the rest — a tap's square, a scrub, a crawl,
@@ -307,6 +317,12 @@ function MultiCamGrid(
     const id = Number(identifier)
     const tile = tileAt(mc.rects, locationX, locationY)
     if (!pressStart(id, locationX, locationY, tile)) return
+    release.contact(
+      locationX,
+      locationY,
+      block,
+      mc.controlsShown ? icons : null
+    )
     touch.current = {
       id,
       x: locationX,
@@ -323,6 +339,7 @@ function MultiCamGrid(
     if (held == null) return
     const x = event.nativeEvent.pageX - held.pageX
     const y = event.nativeEvent.pageY - held.pageY
+    if (beyondSlop(x, y)) release.finish()
     pressMove(held.id, held.x + x, held.y + y)
     if (held.tile == null || armed !== held.tile) return
     held.carried = true
@@ -336,6 +353,8 @@ function MultiCamGrid(
     const x = event.nativeEvent.pageX - held.pageX
     const y = event.nativeEvent.pageY - held.pageY
     const mode = pressEnd(held.id, held.x + x, held.y + y)
+    if (Platform.OS === 'ios' && mode === 'held') release.begin()
+    else release.lifted()
     // Always: the picture goes back when the press meant nothing.
     if (held.tile != null) {
       const carried = mode === 'reorder'
@@ -347,6 +366,7 @@ function MultiCamGrid(
     const held = touch.current
     if (held == null) return
     touch.current = null
+    release.finish()
     pressCancel(held.id)
     if (held.tile != null) dropTile(held.tile, 0, 0)
   }
@@ -392,6 +412,7 @@ function MultiCamGrid(
               mc.soundBlocked ||
               mc.soundOff
             }
+            deferGridRelease={coalescing}
             onAttaching={attaching}
             onAttached={attached}
             wantsToPlay={() => mc.intents.current.get(video.id) === true}
@@ -512,6 +533,7 @@ function Tile(props: {
   unavailable: boolean
   onGiveUp: (videoId: string) => void
   muted: boolean
+  deferGridRelease: boolean
   onAttaching: (id: string) => number | null
   onAttached: (id: string, element: TileHandle, toSec: number | null) => void
   wantsToPlay: () => boolean
@@ -634,6 +656,8 @@ function Tile(props: {
         onHandle={takeHandle}
         resizeMode="contain"
         buffer={TILE_BUFFER}
+        gridTransport
+        deferGridRelease={props.deferGridRelease}
         // The heard tile takes the audio session, as the videos page's
         // player does: sound with the ring switch on silent.
         primary={heard}

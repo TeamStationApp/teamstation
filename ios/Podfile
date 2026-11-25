@@ -33,6 +33,20 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
+# This native option belongs to the multi-camera player. Apply it to the local
+# CocoaPod source on every clean install; an incompatible update must surface.
+video_package = File.dirname(Pod::Executable.execute_command('node', ['-p',
+  'require.resolve("react-native-video/package.json", {paths: [process.argv[1]]})',
+  __dir__]).strip)
+transport_patch = File.join(__dir__, 'patches/react-native-video-grid-transport.patch')
+Dir.chdir(video_package) do
+  args = ['-s', '-f', '-p1', '-i', transport_patch]
+  unless system('patch', '--dry-run', '-R', *args, out: File::NULL, err: File::NULL)
+    Pod::Executable.execute_command('patch', ['--dry-run', *args])
+    Pod::Executable.execute_command('patch', args)
+  end
+end
+
 target 'TeamStation' do
   use_expo_modules!
   config = use_native_modules!

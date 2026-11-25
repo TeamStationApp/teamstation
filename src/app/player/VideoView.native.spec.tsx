@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import { VideoView } from './VideoView.native'
 
@@ -48,6 +49,64 @@ async function handed(
 }
 
 describe("the phone's picture and its audio session (U33a)", function () {
+  it('requests direct transport updates only for iOS grid cameras', async function () {
+    const original = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    try {
+      Object.defineProperty(Platform, 'OS', { ...original, value: 'ios' })
+      expect(
+        (await handed({ gridTransport: true })).teamstationGridCrawlRate
+      ).equals(0.25)
+      expect((await handed({})).teamstationGridCrawlRate).equals(undefined)
+      Object.defineProperty(Platform, 'OS', { ...original, value: 'android' })
+      expect(
+        (await handed({ gridTransport: true })).teamstationGridCrawlRate
+      ).equals(undefined)
+    } finally {
+      Object.defineProperty(Platform, 'OS', original)
+    }
+  })
+  it('keeps the exact restored speed while a same-frame tap commits its pause', async function () {
+    let tile: Parameters<
+      React.ComponentProps<typeof VideoView>['onHandle']
+    >[0] = null
+    const onHandle: React.ComponentProps<
+      typeof VideoView
+    >['onHandle'] = next => {
+      tile = next
+    }
+    await show({ onHandle, gridTransport: true })
+    const handle = tile as NonNullable<Parameters<typeof onHandle>[0]> | null
+    if (handle == null) throw new Error('missing tile handle')
+    await act(async () => {
+      handle.playbackRate = 1.02
+      await handle.play()
+    })
+    const holding = await handed({
+      onHandle,
+      gridTransport: true,
+      deferGridRelease: true
+    })
+    expect(holding.rate).equals(0.25)
+    expect(holding.muted).equals(true)
+    expect(handle.playbackRate).equals(1.02)
+    await act(async () => {
+      handle.pause()
+    })
+    const paused = await handed({
+      onHandle,
+      gridTransport: true,
+      deferGridRelease: true
+    })
+    expect(paused.paused).equals(true)
+    expect(paused.rate).equals(0.25)
+    const settled = await handed({
+      onHandle,
+      gridTransport: true,
+      deferGridRelease: false
+    })
+    expect(settled.paused).equals(true)
+    expect(settled.rate).equals(1.02)
+  })
   it('takes the session through the silent switch when primary, with no controls', async function () {
     const props = await handed({ controls: false, primary: true })
     expect(props.controls).equals(false)

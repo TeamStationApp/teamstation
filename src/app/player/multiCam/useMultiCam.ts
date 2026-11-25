@@ -90,6 +90,28 @@ import type { TileHandle } from './tileHandle'
 
 export type { TileHandle }
 
+/** One clock update per native video progress interval. */
+const CRAWL_UPDATE_MS = 250
+
+interface Crawl {
+  rates: Map<string, number>
+  lastUpdate: number
+  timer: ReturnType<typeof setTimeout> | null
+}
+
+// Both the browser and React Native expose the monotonic performance clock.
+function crawlTime(): number {
+  return (
+    globalThis as typeof globalThis & { performance: { now: () => number } }
+  ).performance.now()
+}
+
+function slowTile(held: Crawl, id: string, tile: TileHandle): void {
+  if (!held.rates.has(id)) held.rates.set(id, tile.playbackRate)
+  if (tile.playbackRate !== SLOW_RATE) tile.playbackRate = SLOW_RATE
+  if (!tile.muted) tile.muted = true
+}
+
 export interface MultiCamProps {
   client: TeamStationClient
   /**
@@ -575,6 +597,7 @@ export function useMultiCam(
     })
   }, [])
 
+  const crawl = useRef<Crawl | null>(null)
   const elements = useRef(new Map<string, TileHandle>())
   /** The take's own window, readable from the watchdog. */
   const takeRef = useRef<Window | null>(null)
@@ -858,7 +881,10 @@ export function useMultiCam(
     (id: string) =>
       (node: TileHandle | null): void => {
         if (node == null) elements.current.delete(id)
-        else elements.current.set(id, node)
+        else {
+          elements.current.set(id, node)
+          if (crawl.current != null) slowTile(crawl.current, id, node)
+        }
       },
     []
   )
@@ -936,11 +962,8 @@ export function useMultiCam(
       }
       // One that arrives in the middle of a crawl joins it at once, rather
       // than running a frame or two at full speed with its sound on.
-      const crawling = crawlRate.current !== 0
-      if (crawling) {
-        element.playbackRate = SLOW_RATE
-        element.muted = true
-      }
+      const crawling = crawl.current != null
+      if (crawl.current != null) slowTile(crawl.current, id, element)
       // One that arrives while the rest are already playing has nothing in
       // hand yet. Waited for, it would stop the whole grid for the seconds it
       // takes to fill; so it fills where the game is, and joins in once it
@@ -1237,7 +1260,7 @@ export function useMultiCam(
        * (`nudgeRate`), and one joining or far out is sent just ahead and
        * started when the game reaches it (`JOIN_LEAD_SEC`).
        */
-      mode: 'exact' | 'open' | 'settle' = 'exact'
+      mode: 'exact' | 'open' | 'settle' | 'crawl' = 'exact'
     ): void => {
       const settle = mode !== 'exact'
       // Nothing shows this moment, and a tile's recording goes on past a
@@ -1273,7 +1296,7 @@ export function useMultiCam(
         if (correction.kind === 'park') {
           farSent.current.delete(video.id)
           intents.current.set(video.id, false)
-          element.pause()
+          if (!element.paused) element.pause()
           // Waiting for its live footage to reach the game: left where it is,
           // with nothing sought, until its mapping says the footage is there.
           if (correction.reason === 'notYet') {
@@ -1298,16 +1321,28 @@ export function useMultiCam(
             correction.reason === 'beforeStart'
               ? 0
               : (mediaLengthOf(element) ?? element.currentTime)
-          if (Math.abs(element.currentTime - edge) > 0.5) {
+          if (
+            Math.abs(element.currentTime - edge) > 0.5 &&
+            !(
+              crawl.current != null &&
+              (element.seeking === true ||
+                isOurSilence(Date.now(), seekedAt.current.get(video.id)))
+            )
+          ) {
             element.currentTime = edge
+            seekedAt.current.set(video.id, Date.now())
           }
-          setTiles(current => ({
-            ...current,
-            [video.id]: {
-              ...(current[video.id] ?? freshTile()),
-              parked: correction.reason
-            }
-          }))
+          setTiles(current =>
+            current[video.id]?.parked === correction.reason
+              ? current
+              : {
+                  ...current,
+                  [video.id]: {
+                    ...(current[video.id] ?? freshTile()),
+                    parked: correction.reason
+                  }
+                }
+          )
           continue
         }
         // The moment is inside a hole in its own recording: it waits at the
@@ -1328,11 +1363,7 @@ export function useMultiCam(
             farSent.current.set(video.id, farSide)
             element.currentTime = farSide
             seekedAt.current.set(video.id, Date.now())
-          } else if (
-            element.seeking !== true &&
-            run &&
-            crawlRate.current === 0
-          ) {
+          } else if (element.seeking !== true && run && crawl.current == null) {
             // There, or where its player landed sent there, and still:
             // started from there when the game arrives.
             startWhereItStandsRef.current(video, element, farSide)
@@ -1357,7 +1388,7 @@ export function useMultiCam(
         const joins =
           mode === 'settle' &&
           run &&
-          crawlRate.current === 0 &&
+          crawl.current == null &&
           target != null &&
           (element.paused ||
             (Math.abs(errorSec) > NUDGE_MAX_SEC &&
@@ -1377,16 +1408,21 @@ export function useMultiCam(
         const nudging =
           settle &&
           run &&
-          crawlRate.current === 0 &&
+          crawl.current == null &&
           target != null &&
           Math.abs(errorSec) <= NUDGE_MAX_SEC
         if (nudging) {
           const rate = nudgeRate(errorSec)
           if (element.playbackRate !== rate) element.playbackRate = rate
-        } else if (crawlRate.current === 0 && element.playbackRate !== 1) {
+        } else if (crawl.current == null && element.playbackRate !== 1) {
           element.playbackRate = 1
         }
-        if (correction.kind === 'seek' && !nudging) {
+        // A running tile is already advancing from its own picture at the
+        // same quarter rate as the clock. A native seek can land on an
+        // earlier keyframe; chasing the moving target would replay it again
+        // and again. A newly unparked tile or a jump across a hole still seeks.
+        const coasting = mode === 'crawl' && !element.paused && carried == null
+        if (correction.kind === 'seek' && !nudging && !coasting) {
           // Not a tile with nothing in hand: it cannot show where it is, let
           // alone where it is moved to, and every seek would be a fresh excuse
           // for the silence that follows — which is how a starved camera used
@@ -1403,7 +1439,10 @@ export function useMultiCam(
           const now = Date.now()
           // Still landing from the last seek: judge where it landed, not
           // where it is on the way.
-          if (!(settle && isOurSilence(now, seekedAt.current.get(video.id)))) {
+          if (
+            !(crawl.current != null && element.seeking === true) &&
+            !(settle && isOurSilence(now, seekedAt.current.get(video.id)))
+          ) {
             element.currentTime = correction.toSec
             // We moved it, so it will draw nothing for a moment: that silence
             // is this view's own doing, for a second and a half and no longer.
@@ -1711,7 +1750,7 @@ export function useMultiCam(
    */
   const dryCheck = useRef(() => {})
   dryCheck.current = () => {
-    if (!playing || !flowing.current || slowFrame.current !== 0) return
+    if (!playing || !flowing.current || crawl.current != null) return
     const instant = atWallRef.current
     if (instant == null) return
     const now = Date.now()
@@ -1744,7 +1783,7 @@ export function useMultiCam(
   const watchdog = useRef(() => {})
   watchdog.current = () => {
     // Nothing is inferred while slow motion is stepping the clock itself.
-    if (slowFrame.current !== 0) return
+    if (crawl.current != null) return
     const now = Date.now()
 
     /** What each tile is doing, for `?debug=1`. */
@@ -2243,93 +2282,71 @@ export function useMultiCam(
     })
   }, [chosen, playTile, tiles])
 
-  /**
-   * A quarter speed, forwards, by moving the clock — in silence.
-   *
-   * Every tile plays at a quarter of its rate and the take's clock steps at
-   * the same pace; a tile is only moved when it drifts past the usual
-   * tolerance. The first version paused the tiles and seeked all four on every
-   * frame — and handed each step to an alignment that called `play()` on them
-   * because the view was playing, so between seeks they ran at full speed with
-   * their sound on and every seek pulled them back: the picture lurched
-   * forwards and backwards and the sound stuttered.
-   */
-  const slowFrame = useRef(0)
   const [slow, setSlow] = useState(0)
-  /** The crawl's rate, for callbacks that outlive the render they were made in. */
-  const crawlRate = useRef(0)
+  const alignSlow = useRef(alignTo)
+  alignSlow.current = alignTo
 
-  /**
-   * Every tile at the given rate, and heard or not as `muted` says.
-   *
-   * Over the elements actually on screen rather than a list of angles, so a
-   * crawl that outlives the render it began in still reaches every tile. Only
-   * what differs is written: an element announces every rate it is given.
-   */
-  const setRateAll = useCallback(
-    (rate: number, muted: (id: string) => boolean): void => {
-      for (const [id, element] of elements.current) {
-        if (element.playbackRate !== rate) element.playbackRate = rate
-        const silent = muted(id)
-        if (element.muted !== silent) element.muted = silent
-      }
+  // The players advance their own pictures. The grid needs its clock for the
+  // scoreboard and to notice drift or a camera crossing a recording boundary.
+  const advanceSlowClock = useCallback((held: Crawl): number => {
+    const now = crawlTime()
+    const next = (atWallRef.current ?? 0) + (now - held.lastUpdate) * SLOW_RATE
+    held.lastUpdate = now
+    atWallRef.current = next
+    setAtWallMs(next)
+    return next
+  }, [])
+
+  const beginSlow = useCallback((): boolean => {
+    if (crawl.current != null || atWallRef.current == null) return false
+    atWallRef.current = gameNowRef.current('') ?? atWallRef.current
+    setAtWallMs(atWallRef.current)
+    const held: Crawl = {
+      rates: new Map(),
+      lastUpdate: crawlTime(),
+      timer: null
+    }
+    crawl.current = held
+    for (const [id, tile] of elements.current) slowTile(held, id, tile)
+    setSlow(SLOW_RATE)
+    alignSlow.current(atWallRef.current, undefined, true, 'open')
+    const tick = (): void => {
+      if (crawl.current !== held) return
+      alignSlow.current(advanceSlowClock(held), undefined, true, 'crawl')
+      held.timer = setTimeout(tick, CRAWL_UPDATE_MS)
+    }
+    held.timer = setTimeout(tick, CRAWL_UPDATE_MS)
+    return true
+  }, [advanceSlowClock])
+
+  const endSlow = useCallback((): void => {
+    const held = crawl.current
+    if (held == null) return
+    if (held.timer != null) clearTimeout(held.timer)
+    // Settle play/pause and position while the crawl still owns the rates.
+    // Normal alignment would first send 1× to every camera.
+    alignSlow.current(advanceSlowClock(held), undefined, undefined, 'crawl')
+    crawl.current = null
+    setSlow(0)
+    for (const [id, tile] of elements.current) {
+      const saved = held.rates.get(id)
+      if (saved != null && tile.playbackRate !== saved)
+        tile.playbackRate = saved
+      const muted =
+        id !== heardRef.current ||
+        soundOffRef.current ||
+        soundBlockedRef.current
+      if (tile.muted !== muted) tile.muted = muted
+    }
+  }, [advanceSlowClock])
+
+  useEffect(
+    () => () => {
+      if (crawl.current?.timer != null) clearTimeout(crawl.current.timer)
+      crawl.current = null
     },
     []
   )
-
-  /** False when a crawl was already running, or there is no clock to move. */
-  const beginSlow = useCallback((): boolean => {
-    if (slowFrame.current !== 0 || atWallRef.current == null) return false
-    // From where the pictures are. The watchdog last set the clock up to a
-    // second ago, and a crawl begun from there put every tile back by however
-    // far it had played since: a visible step back as the hold took.
-    atWallRef.current = gameNowRef.current('') ?? atWallRef.current
-    crawlRate.current = SLOW_RATE
-    setRateAll(SLOW_RATE, () => true)
-    setSlow(SLOW_RATE)
-    alignTo(atWallRef.current, undefined, true)
-    // The baseline is the first frame's own timestamp: `requestAnimationFrame`
-    // hands one to its callback on every platform, so no clock is needed here
-    // (`performance` is a browser global a phone does not type).
-    let last = 0
-    const step = (now: number): void => {
-      const seconds = last === 0 ? 0 : (now - last) / 1000
-      last = now
-      const next = (atWallRef.current ?? 0) + seconds * SLOW_RATE * 1000
-      atWallRef.current = next
-      setAtWallMs(next)
-      // Every frame, not once at the start. A tile handed a new source
-      // mid-crawl loads at full speed, and one whose sound was switched on by
-      // the angle it was heard from changing would play out loud: set once,
-      // either lurched ahead of the others until the next seek.
-      setRateAll(SLOW_RATE, () => true)
-      alignTo(next, undefined, true)
-      slowFrame.current = requestAnimationFrame(step)
-    }
-    slowFrame.current = requestAnimationFrame(step)
-    return true
-  }, [alignTo, setRateAll])
-
-  const endSlow = useCallback((): void => {
-    if (slowFrame.current === 0) return
-    cancelAnimationFrame(slowFrame.current)
-    slowFrame.current = 0
-    crawlRate.current = 0
-    setSlow(0)
-    // Heard again after the crawl only if the sound is on and not held.
-    setRateAll(
-      1,
-      id => id !== heardId || soundOffRef.current || soundBlockedRef.current
-    )
-    if (atWallRef.current != null) alignTo(atWallRef.current)
-  }, [alignTo, heardId, setRateAll])
-
-  // A key held while the tab changes never delivers its `keyup`.
-  useEffect(() => {
-    return () => {
-      if (slowFrame.current !== 0) cancelAnimationFrame(slowFrame.current)
-    }
-  }, [])
 
   // From the ref, not the render: a tap on a tile acts a moment after it
   // lands, by which time the render it was made in is behind the game.
@@ -2623,8 +2640,8 @@ export function useMultiCam(
       if (action === 'slowForward') beginSlow()
     },
     endSlow,
-    // A crawl is running exactly while there is a frame scheduled for it.
-    holding: () => slowFrame.current !== 0
+    // The keyboard and touch handlers share the same crawl owner.
+    holding: () => crawl.current != null
   })
 
   // A live take has no end of its own: it ends at the newest footage any of

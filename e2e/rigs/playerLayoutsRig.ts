@@ -100,33 +100,37 @@ export async function maestro(): Promise<MaestroDaemon> {
  * its owner alone, and used again while the server still takes it: the
  * sign-in is rate limited, and every tool and scenario of a run needs one.
  */
-let token: string | undefined
-export async function signedIn(): Promise<string> {
-  if (token != null) return token
+let session:
+  { api: string; path: string; email: string; token: string } | undefined
+export async function signedIn(api = API): Promise<string> {
   const f = fixture()
-  const kept = `${fixturePath()}.session`
+  const path = fixturePath()
+  const email = f.admin.email
+  if (session?.api === api && session.path === path && session.email === email)
+    return session.token
+  const kept = `${path}.session`
   try {
     const held = JSON.parse(readFileSync(kept, 'utf8')) as {
+      api?: string
       email: string
       token: string
     }
-    if (held.email === f.admin.email) {
-      const me = await fetch(`${API}/me/account`, {
+    if (held.email === email && (held.api == null || held.api === api)) {
+      const me = await fetch(`${api}/me/account`, {
         headers: { authorization: `Bearer ${held.token}` }
       })
       if (me.ok) {
-        token = held.token
-        return token
+        session = { api, path, email, token: held.token }
+        return held.token
       }
     }
   } catch {
     // None kept yet, or it is no longer good: sign in.
   }
   const { signInTestAccount } = await import('../../src/test/passwordFixtures')
-  token = await signInTestAccount(API, f.admin)
-  writeFileSync(kept, JSON.stringify({ email: f.admin.email, token }), {
-    mode: 0o600
-  })
+  const token = await signInTestAccount(api, f.admin)
+  writeFileSync(kept, JSON.stringify({ api, email, token }), { mode: 0o600 })
+  session = { api, path, email, token }
   return token
 }
 

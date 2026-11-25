@@ -8,6 +8,7 @@ import Video, {
 
 import { nativeSource } from './nativeSource'
 import { NativeVideoHandle } from './nativeVideoHandle'
+import { SLOW_RATE } from './slowMotion'
 import {
   audioSession,
   forwardBufferSec,
@@ -153,8 +154,11 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
         onControlsVisible?.(event.isVisible)
       }}
       paused={handle.props.paused}
-      muted={muted || handle.props.muted}
-      rate={handle.props.rate}
+      muted={props.deferGridRelease === true || muted || handle.props.muted}
+      rate={props.deferGridRelease === true ? SLOW_RATE : handle.props.rate}
+      {...(Platform.OS === 'ios' && props.gridTransport === true
+        ? { teamstationGridCrawlRate: SLOW_RATE }
+        : {})}
       progressUpdateInterval={PROGRESS_MS}
       // A card's silent preview must not take the audio session away from
       // whatever the person was already listening to.

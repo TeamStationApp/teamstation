@@ -50,6 +50,7 @@
 - fixed: The API rate-limit tests no longer fail GitHub Code Quality, which checks merges to develop
 - fixed: The scoreboard keeps its width as scores, player names and radar speeds change
 - changed: The two-hour streaming test signs in through the same password form as a viewer and pairs the TV from its on-screen code
+- fixed: Letting go of slow motion in a multi-camera game restores each camera’s previous speed and the next tap responds immediately
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 - fixed: A ball scored on the web just before browser Back is no longer lost

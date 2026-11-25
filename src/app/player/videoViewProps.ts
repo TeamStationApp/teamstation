@@ -31,6 +31,10 @@ export interface VideoViewProps {
    * silent preview, it leaves whatever was already playing alone.
    */
   primary?: boolean
+  /** A multi-camera tile, whose transport is coordinated with the other tiles. */
+  gridTransport?: boolean
+  /** A lift shares this display frame with a pending tap. */
+  deferGridRelease?: boolean
   /**
    * The control bar appeared or faded away.
    *
