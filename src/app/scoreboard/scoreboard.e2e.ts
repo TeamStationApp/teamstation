@@ -392,9 +392,11 @@ async function pixelsDiffering(
         for (let i = 0; i < one.length; i += 4) {
           if (
             !skipped(i) &&
-            (one[i] !== two[i] ||
-              one[i + 1] !== two[i + 1] ||
-              one[i + 2] !== two[i + 2] ||
+            // A few pixels of team-bar width change the gradient's rounded
+            // colour channels by one or two levels. Its alpha must agree.
+            (Math.abs(one[i] - two[i]) > 2 ||
+              Math.abs(one[i + 1] - two[i + 1]) > 2 ||
+              Math.abs(one[i + 2] - two[i + 2]) > 2 ||
               one[i + 3] !== two[i + 3])
           )
             count++
@@ -584,11 +586,11 @@ describe('the scoreboard pages', function () {
     letters.push([185, 0, clip.width - 185, clip.height])
     const differing = await pixelsDiffering(browser, v1Png, portedPng, letters)
     console.log(
-      `      ${differing} of ${clip.width * clip.height} pixels but the letters differ from 1.0`
+      `      ${differing} pixels differ in the original team-bar area`
     )
     // Antialiasing on the turned bases and round dots differs from one
     // drawing of 1.0 to the next by about 200 pixels; layout does not.
-    expect(differing).lessThan((clip.width * clip.height) / 100)
+    expect(differing).lessThan((185 * clip.height) / 100)
     await ported.close()
   })
 
