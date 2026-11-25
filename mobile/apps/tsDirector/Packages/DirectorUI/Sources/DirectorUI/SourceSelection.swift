@@ -56,7 +56,7 @@ public struct SourceSelection: Identifiable, Hashable, Sendable, Codable {
     self.advertisedName = advertisedName
     self.customName = customName
     self.isEnabled = isEnabled
-    self.usesAudio = usesAudio
+    self.usesAudio = kind != .scoreboard && usesAudio
     self.inputGain = SourceSelectionRules.clampedInputGain(inputGain)
     self.sourceIndex = sourceIndex
     self.isPresent = isPresent
@@ -206,6 +206,8 @@ public enum SourceSelectionRules {
     switch selection.kind {
     case .synthetic, .file, .ndi:
       return true
+    case .scoreboard:
+      return false // The monitor preference is independent of discovered and recorded cameras.
     case .rtsp:
       return CameraIdentityRules.isHardenedSourceID(selection.id)
     }
@@ -244,7 +246,8 @@ public enum SourceSelectionRules {
   public static func setEnabled(
     _ enabled: Bool,
     for id: SourceID,
-    in selections: inout [SourceSelection]
+    in selections: inout [SourceSelection],
+    reserving monitorSlot: Int? = nil
   ) -> EnableResult {
     guard let position = selections.firstIndex(where: { $0.id == id }) else { return .unknownSource }
 
@@ -257,7 +260,8 @@ public enum SourceSelectionRules {
       return .enabled(sourceIndex: slot)
     }
 
-    let used = occupiedSlots(in: selections)
+    var used = occupiedSlots(in: selections)
+    if let monitorSlot, used.count < maximumEnabled - 1 { used.insert(monitorSlot) }
     if let preferred = selections[position].sourceIndex, !used.contains(preferred) {
       selections[position].isEnabled = true
       return .enabled(sourceIndex: preferred)
@@ -301,8 +305,10 @@ public enum SourceSelectionRules {
     let from = selections[position].sourceIndex
     if from == slot { return .unchanged }
 
-    let other = selections.firstIndex(where: { $0.id != id && $0.sourceIndex == slot })
-    if let other, selections[other].isEnabled, from == nil {
+    let occupant = selections.firstIndex { $0.id != id && $0.sourceIndex == slot && $0.isEnabled }
+    let other = occupant ?? selections.firstIndex { $0.id != id && $0.sourceIndex == slot }
+    let fromIsBusy = from.map { occupiedSlots(in: selections).contains($0) } == true
+    if let other = occupant, from == nil || (!selections[position].isEnabled && fromIsBusy) {
       let used = occupiedSlots(in: selections)
       guard let park = (0 ..< maximumEnabled).first(where: { $0 != slot && !used.contains($0) })
       else { return .unchanged }
@@ -341,7 +347,7 @@ public enum SourceSelectionRules {
     in selections: inout [SourceSelection]
   ) {
     guard let position = selections.firstIndex(where: { $0.id == id }) else { return }
-    guard !isLinkedControl(id, in: selections) else { return }
+    guard selections[position].kind != .scoreboard, !isLinkedControl(id, in: selections) else { return }
     selections[position].usesAudio = usesAudio
     guard usesAudio else { return }
     for other in selections.indices where other != position {
@@ -447,7 +453,7 @@ public enum SourceSelectionRules {
     preferring preferredID: SourceID?,
     among selections: [SourceSelection]
   ) -> Int? {
-    let live = selections.filter { $0.isEnabled && $0.sourceIndex != nil }
+    let live = selections.filter { $0.kind != .scoreboard && $0.isEnabled && $0.sourceIndex != nil }
     if let preferredID, let match = live.first(where: { $0.id == preferredID }) {
       return match.sourceIndex
     }
@@ -581,6 +587,68 @@ public enum SourceSelectionRules {
   }
 }
 
+/// Only the operator's preference is saved. A full grid or a different stream destination
+/// temporarily hides the monitor without disabling it or losing the assigned source number.
+public struct ScoreboardMonitorPreference: Equatable, Codable, Sendable {
+  public static let id = SourceID("director:scoreboard")
+  public var enabled = true
+  public var preferredSlot: Int?
+
+  public init() {}
+
+  public func row(among cameras: [SourceSelection]) -> SourceSelection {
+    let occupied = SourceSelectionRules.occupiedSlots(in: cameras)
+    let slots = 0 ..< SourceSelectionRules.maximumEnabled
+    let free = preferredSlot.flatMap { slots.contains($0) && !occupied.contains($0) ? $0 : nil }
+      ?? slots.last { !occupied.contains($0) }
+    return SourceSelection(
+      id: Self.id, kind: .scoreboard, advertisedName: "Scoreboard",
+      isEnabled: enabled && free != nil,
+      sourceIndex: (enabled ? free : nil) ?? preferredSlot ?? slots.last
+    )
+  }
+
+  /// Real cameras get the final tile even when the monitor is using it. Earlier enables
+  /// use the ordinary allocator with the monitor occupying its chosen slot.
+  public mutating func setEnabled(
+    _ value: Bool, for id: SourceID, cameras: inout [SourceSelection]
+  ) -> SourceSelectionRules.EnableResult {
+    let monitor = row(among: cameras)
+    if id == Self.id {
+      if value && SourceSelectionRules.occupiedSlots(in: cameras).count == SourceSelectionRules.maximumEnabled {
+        return .rejectedAtCap
+      }
+      if !value && preferredSlot == nil { preferredSlot = monitor.sourceIndex }
+      enabled = value
+      if let slot = row(among: cameras).sourceIndex, value { return .enabled(sourceIndex: slot) }
+      return .disabled
+    }
+    return SourceSelectionRules.setEnabled(value, for: id, in: &cameras,
+                                           reserving: monitor.isEnabled ? monitor.sourceIndex : nil)
+  }
+
+  public mutating func assign(
+    slot: Int, to id: SourceID, cameras: inout [SourceSelection]
+  ) -> SourceSelectionRules.AssignResult {
+    guard (0 ..< SourceSelectionRules.maximumEnabled).contains(slot) else { return .invalidSlot }
+    let monitor = row(among: cameras)
+    guard monitor.isEnabled else {
+      if id == Self.id {
+        preferredSlot = slot
+        return .applied(reassign: nil)
+      }
+      return SourceSelectionRules.assign(slot: slot, to: id, in: &cameras)
+    }
+    var rows = cameras + [monitor]
+    let result = SourceSelectionRules.assign(slot: slot, to: id, in: &rows)
+    if id == Self.id || rows.last?.sourceIndex != monitor.sourceIndex {
+      preferredSlot = rows.last?.sourceIndex
+    }
+    cameras = Array(rows.dropLast())
+    return result
+  }
+}
+
 /// Where a camera-row preview gets its picture.
 ///
 /// Opening the preview does not enable the camera, so it takes no grid slot. When a tile already
@@ -643,10 +711,19 @@ public struct ProgramSourceStore: Sendable {
 /// `UserDefaults` persistence for the selection list.
 public struct SourceSelectionStore: Sendable {
   private static let key = "app.teamstation.director.sources"
+  private static let monitorKey = "app.teamstation.director.scoreboardMonitor"
   private let store: ConfigStore
 
   public init(store: ConfigStore = ConfigStore()) {
     self.store = store
+  }
+
+  public func loadMonitor() -> ScoreboardMonitorPreference {
+    store.codableValue(ScoreboardMonitorPreference.self, forKey: Self.monitorKey) ?? ScoreboardMonitorPreference()
+  }
+
+  public func saveMonitor(_ preference: ScoreboardMonitorPreference) {
+    store.setCodableValue(preference, forKey: Self.monitorKey)
   }
 
   public func load() -> [SourceSelection] {
@@ -664,5 +741,6 @@ public struct SourceSelectionStore: Sendable {
 
   public func clear() {
     store.removeValue(forKey: Self.key)
+    store.removeValue(forKey: Self.monitorKey)
   }
 }

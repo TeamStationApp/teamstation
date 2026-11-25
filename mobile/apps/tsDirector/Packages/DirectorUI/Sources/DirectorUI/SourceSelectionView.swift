@@ -122,7 +122,7 @@ public struct SourceSelectionView: View {
                 .id(selection.id)
             }
           }
-          if environment.selections.isEmpty {
+          if environment.cameraListRows.isEmpty {
             emptyState
           }
         }
@@ -154,7 +154,7 @@ public struct SourceSelectionView: View {
   }
 
   private var displayRows: [SourceSelection] {
-    SourceSelectionRules.displayOrder(environment.selections)
+    SourceSelectionRules.displayOrder(environment.cameraListRows)
   }
 
   /// One-based row number of `id` as displayed, for identifiers and the `link=` value.
@@ -164,14 +164,24 @@ public struct SourceSelectionView: View {
 
   private func row(index: Int, selection: SourceSelection) -> some View {
     HStack(spacing: 14) {
-      previewBox(index: index, selection: selection)
+      if selection.kind == .scoreboard {
+        Image(systemName: "sportscourt")
+          .font(.title2)
+          .foregroundStyle(.white.opacity(0.7))
+          .frame(width: 128, height: 72)
+          .background(.black, in: RoundedRectangle(cornerRadius: 8))
+      } else {
+        previewBox(index: index, selection: selection)
+      }
 
       Circle()
         .fill(selection.isPresent ? Color.programGreen : Color.white.opacity(0.18))
         .frame(width: 8, height: 8)
 
       VStack(alignment: .leading, spacing: 2) {
-        if renamingID == selection.id {
+        if selection.kind == .scoreboard {
+          Text(selection.displayName).font(.headline).foregroundStyle(.white)
+        } else if renamingID == selection.id {
           renameField(index: index, selection: selection)
         } else {
           nameButton(index: index, selection: selection)
@@ -180,7 +190,11 @@ public struct SourceSelectionView: View {
         // A camera's address is what the operator checks against the label on its tripod when a
         // name looks wrong, so it takes the caption slot on live rows. Everything else keeps
         // showing the identifier the archive is keyed by.
-        if let endpoint = environment.endpoint(for: selection.id) {
+        if selection.kind == .scoreboard {
+          Text(environment.monitorPreference.enabled && !selection.isEnabled
+                 ? "Waiting for a free source" : "Preview only")
+            .font(.caption).foregroundStyle(.white.opacity(Self.captionOpacity))
+        } else if let endpoint = environment.endpoint(for: selection.id) {
           Text(identifierLine("\(endpoint.host):\(endpoint.port)", for: selection))
             .font(.system(size: 11, weight: .regular, design: .monospaced))
             .foregroundStyle(.white.opacity(Self.captionOpacity))
@@ -228,7 +242,7 @@ public struct SourceSelectionView: View {
               Button {
                 environment.assignSource(slot: index, to: selection.id)
               } label: {
-                if let other = environment.selections.first(where: {
+                if let other = environment.cameraListRows.first(where: {
                   $0.id != selection.id && $0.sourceIndex == index
                 }) {
                   Text("Source \(index + 1) · \(other.displayName)")
@@ -252,7 +266,7 @@ public struct SourceSelectionView: View {
         .accessibilityValue("source=\(slot + 1)")
       }
 
-      linkMenu(index: index, selection: selection)
+      if selection.kind != .scoreboard { linkMenu(index: index, selection: selection) }
 
       // Two independent decisions, so two switches: whether the camera gets a tile, and whether its
       // microphone is in the programme mix. Labelled, because an unlabelled pair of toggles is a
@@ -261,24 +275,26 @@ public struct SourceSelectionView: View {
         label: "VIDEO",
         identifier: "source-toggle-\(index + 1)",
         tint: .programGreen,
-        isOn: selection.isEnabled
+        isOn: selection.kind == .scoreboard ? environment.monitorPreference.enabled : selection.isEnabled
       ) { environment.setEnabled($0, for: selection.id) }
 
-      // Mid-take too: the old camera fades out and the new one fades in at the same picture.
-      toggle(
-        label: "AUDIO",
-        identifier: "source-audio-toggle-\(index + 1)",
-        tint: .replayAmber,
-        isOn: selection.usesAudio
-      ) { environment.setUsesAudio($0, for: selection.id) }
+      if selection.kind != .scoreboard {
+        // Mid-take too: the old camera fades out and the new one fades in at the same picture.
+        toggle(
+          label: "AUDIO",
+          identifier: "source-audio-toggle-\(index + 1)",
+          tint: .replayAmber,
+          isOn: selection.usesAudio
+        ) { environment.setUsesAudio($0, for: selection.id) }
 
-      SourceWaveformThumb(
-        index: index,
-        sourceID: selection.id,
-        gain: selection.inputGain,
-        monitor: environment.router.waveformMonitor
-      ) {
-        waveformID = selection.id
+        SourceWaveformThumb(
+          index: index,
+          sourceID: selection.id,
+          gain: selection.inputGain,
+          monitor: environment.router.waveformMonitor
+        ) {
+          waveformID = selection.id
+        }
       }
     }
     .padding(.horizontal, 16)
@@ -460,7 +476,7 @@ public struct SourceSelectionView: View {
   /// A disabled camera has no session and therefore nothing to report: the codec is in the SDP, which
   /// is only fetched once the toggle is on.
   private func formatLabel(for selection: SourceSelection) -> String? {
-    guard selection.isEnabled, let slot = selection.sourceIndex else { return nil }
+    guard selection.kind != .scoreboard, selection.isEnabled, let slot = selection.sourceIndex else { return nil }
     guard let tile = environment.snapshot.tiles.first(where: { $0.index == slot }) else { return nil }
     return SourceFormatLabel.text(for: tile)
   }
@@ -631,7 +647,7 @@ public struct SourceSelectionView: View {
     HStack(spacing: 16) {
       Spacer()
 
-      Text("\(environment.enabledSelections.count)/\(SourceSelectionRules.maximumEnabled) enabled")
+      Text("\(environment.cameraListRows.filter(\.isEnabled).count)/\(SourceSelectionRules.maximumEnabled) enabled")
         .font(.system(size: 12, weight: .semibold, design: .monospaced))
         .foregroundStyle(.white.opacity(0.5))
         .accessibilityIdentifier("enabled-count")

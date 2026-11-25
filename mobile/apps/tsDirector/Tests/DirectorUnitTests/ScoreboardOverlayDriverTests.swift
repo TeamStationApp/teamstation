@@ -1,6 +1,7 @@
 import CoreGraphics
 import DirectorCore
 import Foundation
+import SwiftUI
 import Testing
 import WebKit
 
@@ -228,5 +229,66 @@ struct WebOverlayLoadFailureTests {
       try? await Task.sleep(for: .milliseconds(10))
     }
     #expect(fired)
+  }
+}
+
+@Suite("Visible scoreboard monitor page")
+@MainActor
+struct ScoreboardMonitorPageTests {
+  private func webView(in view: UIView) -> WKWebView? {
+    if let web = view as? WKWebView { return web }
+    return view.subviews.lazy.compactMap { self.webView(in: $0) }.first
+  }
+
+  @Test func fitsTheBoardAtTheTopAndClosesItsPageOnRemoval() async throws {
+    let html = """
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <body style="margin:0"><div data-scoreboard="board" data-drawn="true" style="height:90px">
+      <div id="team" style="width:700px">Visitors</div></div></body>
+      """
+    let url = try #require(URL(string: "data:text/html;base64," + Data(html.utf8).base64EncodedString()))
+    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let window = UIWindow(windowScene: scene)
+    window.frame = CGRect(x: 0, y: 0, width: 350, height: 200)
+    let host = UIHostingController(rootView: ScoreboardMonitorPage(url: url))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true; window.rootViewController = nil }
+    host.view.layoutIfNeeded()
+    let web = try #require(webView(in: host.view))
+    #expect(!web.isUserInteractionEnabled)
+    #expect(web.configuration.mediaTypesRequiringUserActionForPlayback == .all)
+    let fit = """
+      (() => {
+        const b = document.querySelector('[data-scoreboard=board]')
+        if (!b || !b.style.transform) return false
+        const r = b.getBoundingClientRect()
+        return r.top === 0 && Math.abs(r.width-document.documentElement.clientWidth)<1 &&
+          r.height < window.innerHeight && r.height > 0
+      })()
+      """
+    func fitted() async -> Bool {
+      for _ in 0 ..< 120 {
+        if (try? await web.evaluateJavaScript(fit)) as? Bool == true { return true }
+        try? await Task.sleep(for: .milliseconds(50))
+      }
+      return false
+    }
+    #expect(await fitted())
+    _ = try await web.evaluateJavaScript("document.getElementById('team').style.width = '1100px'")
+    #expect(await fitted())
+    let coordinator = try #require(web.navigationDelegate as? ScoreboardMonitorPage.Coordinator)
+    let failure = URLError(.networkConnectionLost)
+    coordinator.webView(web, didFailProvisionalNavigation: nil, withError: failure)
+    let first = try #require(coordinator.retry)
+    coordinator.webView(web, didFail: nil, withError: failure)
+    #expect(first.isCancelled)
+    coordinator.webViewWebContentProcessDidTerminate(web)
+    await coordinator.retry?.value
+    #expect(await fitted())
+    coordinator.webViewWebContentProcessDidTerminate(web)
+    let pending = try #require(coordinator.retry)
+    ScoreboardMonitorPage.dismantleUIView(web, coordinator: coordinator)
+    #expect(pending.isCancelled && web.navigationDelegate == nil)
   }
 }

@@ -1790,6 +1790,72 @@ async function eventRecording(m: Device, e: Env): Promise<void> {
   }
 }
 
+/** The grid has four synthetic cameras, a game selected and a camera on Output. */
+export async function checkMonitorAssignments(m: Device): Promise<void> {
+  async function openCameraRow(): Promise<number> {
+    await m.tapOn({ id: 'cameras-button' })
+    await m.extendedWaitUntil({ visible: { id: 'start-directing' }, timeout: 10_000 })
+    await m.scrollUntilVisible({ element: { text: 'Scoreboard' }, direction: 'DOWN' })
+    const rows = flatten(await m.hierarchy()).filter(node => /^source-row-\d+$/.test(node.id ?? ''))
+    const board = rows.find(row => flatten(row).some(node => node.text === 'Scoreboard'))
+    assert(board?.id, 'the selected game has a Scoreboard row')
+    const n = Number(board.id.slice('source-row-'.length))
+    const controls = new Set(flatten(board).map(node => node.id))
+    assert(!controls.has(`source-audio-toggle-${n}`))
+    assert(!controls.has(`source-link-${n}`))
+    return n
+  }
+  async function program(): Promise<string> {
+    const output = flatten(await m.hierarchy()).find(node => node.id === 'output')
+    assert(output, 'Output is on the grid')
+    const labels = flatten(output).map(node => node.text ?? '')
+    const camera = labels.find(label => /^CAM\d+$/.test(label))
+      ?? /output src=(CAM\d+) mix=/.exec(labels.join(' '))?.[1]
+    assert(camera, 'Output has a synthetic camera picture')
+    return camera
+  }
+  const original = await program()
+  for (const slot of [1, 2, 3, 4, 5]) {
+    const row = await openCameraRow()
+    await m.tapOn({ id: `source-slot-${row}` })
+    const choice = { id: `source-assign-${slot}` }
+    await m.extendedWaitUntil({ visible: choice, timeout: 8_000 })
+    await m.tapOn(choice)
+    // UIKit completes a menu selection on dismissal. Wait for the numbered button in
+    // this row before dismissing its sheet, especially when moving the on-air camera.
+    const assigned = {
+      id: `source-row-${row}`,
+      containsDescendants: [{ text: `SOURCE ${slot}` }]
+    }
+    await m.extendedWaitUntil({ visible: assigned, timeout: 8_000 })
+    await m.tapOn({ id: 'start-directing' })
+    const tile = { id: `scoreboard-monitor-${slot}` }
+    await m.extendedWaitUntil({ visible: tile, timeout: 10_000 })
+    await m.tapOn(tile)
+    assert.equal(await program(), original, `assigning and tapping Source ${slot} keeps the camera on Output`)
+  }
+  const row = await openCameraRow()
+  await m.tapOn({ id: `source-toggle-${row}` })
+  await m.tapOn({ id: 'start-directing' })
+  await m.assertNotVisible({ id: 'scoreboard-monitor-5' })
+  const disabled = await openCameraRow()
+  await m.tapOn({ id: `source-toggle-${disabled}` })
+  await m.tapOn({ id: 'start-directing' })
+  await m.extendedWaitUntil({ visible: { id: 'scoreboard-monitor-5' }, timeout: 10_000 })
+}
+
+async function monitorAssignments(m: Device, e: Env): Promise<void> {
+  await launch(m)
+  await openSettings(m)
+  await signIn(m)
+  await pickEvent(m, game(e, '-10m'))
+  await showInSettings(m, 'settings-stream-destination-event')
+  await m.tapOn({ id: 'settings-stream-destination-event' })
+  await saveSettings(m)
+  await checkMonitorAssignments(m)
+  await m.shot('scoreboard-monitor')
+}
+
 /** D2: choosing the event destination claims it. */
 async function eventStream(m: Device, e: Env): Promise<void> {
   const id = game(e, '-10m')
@@ -2591,6 +2657,7 @@ async function regression(m: Device, e: Env): Promise<void> {
 const STEPS: Record<string, (m: Device, e: Env) => Promise<void>> = {
   eventRecording,
   eventStream,
+  monitorAssignments,
   placeSample,
   hiddenWithoutEvent,
   liveOnProgramme,

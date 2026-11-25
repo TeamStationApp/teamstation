@@ -126,7 +126,23 @@ public final class AppEnvironment {
   public private(set) var config: AppConfig
   /// What Settings edits and what survives a relaunch. Launch arguments never write here.
   public private(set) var persistedConfig: AppConfig
+  /// Media cameras only. The local monitor never enters discovery, the audio mixer or the router.
   public private(set) var selections: [SourceSelection] = []
+  private(set) var monitorPreference = ScoreboardMonitorPreference()
+
+  var monitorURL: URL? {
+    guard config.streamDestination == .event, let event = teamStation.chosen else { return nil }
+    return teamStation.scoreboardURL(for: event.gameId)
+  }
+
+  var cameraListRows: [SourceSelection] {
+    monitorURL == nil ? selections : selections + [monitorPreference.row(among: selections)]
+  }
+
+  func monitorURL(at index: Int) -> URL? {
+    let monitor = monitorPreference.row(among: selections)
+    return monitor.isEnabled && monitor.sourceIndex == index ? monitorURL : nil
+  }
   /// Every camera the operator has ever named. Survives relaunches so a name typed at the first
   /// game is still offered at the next one, whatever address the camera turns up on.
   public private(set) var cameraRecords: [CameraRecord] = []
@@ -581,6 +597,7 @@ public final class AppEnvironment {
       cameras.clear()
       telemetry.reset()
     }
+    monitorPreference = selectionStore.loadMonitor()
     audioSettings = audioStore.load()
     let restoredSelections = SourceSelectionRules.normalizingLinks(selectionStore.load())
     // The list first, because an iPad already in use has every audio decision the operator has ever
@@ -1067,6 +1084,7 @@ public final class AppEnvironment {
     audioSettings = [:]
     programSourceStore.clear()
     preferredProgramSourceID = nil
+    monitorPreference = ScoreboardMonitorPreference()
     selections = []
     cameraRecords = []
     rowEndpoints = [:]
@@ -1398,7 +1416,17 @@ public final class AppEnvironment {
 
   @discardableResult
   public func setEnabled(_ enabled: Bool, for id: SourceID) -> SourceSelectionRules.EnableResult {
-    let result = SourceSelectionRules.setEnabled(enabled, for: id, in: &selections)
+    let result: SourceSelectionRules.EnableResult
+    if monitorURL != nil {
+      result = monitorPreference.setEnabled(enabled, for: id, cameras: &selections)
+      if id == ScoreboardMonitorPreference.id {
+        selectionStore.saveMonitor(monitorPreference)
+        statusMessage = result == .rejectedAtCap ? "Five sources maximum — turn one off first" : nil
+        return result
+      }
+    } else {
+      result = SourceSelectionRules.setEnabled(enabled, for: id, in: &selections)
+    }
     if result == .rejectedAtCap {
       statusMessage = "Five sources maximum — turn one off first"
     } else if result == .linkedForControl {
@@ -1408,7 +1436,7 @@ public final class AppEnvironment {
       selectionStore.save(selections)
       refreshGridSnapshot()
       switch result {
-      case let .enabled(sourceIndex):
+      case .enabled:
         rememberProgramSource(id)
         if peekID == id {
           // The modal's temporary session is the camera's only connection. The tile has to
@@ -1420,7 +1448,7 @@ public final class AppEnvironment {
           peekStatus = Self.peekConnecting
         }
         Task {
-          await startSource(id: id, sourceIndex: sourceIndex)
+          await startSource(id: id)
           if peekPipelineHandoffID == id { peekPipelineHandoffID = nil }
           if peekID == id {
             if router.pipeline(for: id) == nil, peekStartError == nil,
@@ -1445,7 +1473,14 @@ public final class AppEnvironment {
   }
 
   public func assignSource(slot: Int, to id: SourceID) {
-    switch SourceSelectionRules.assign(slot: slot, to: id, in: &selections) {
+    let result: SourceSelectionRules.AssignResult
+    if monitorURL != nil {
+      result = monitorPreference.assign(slot: slot, to: id, cameras: &selections)
+      selectionStore.saveMonitor(monitorPreference)
+    } else {
+      result = SourceSelectionRules.assign(slot: slot, to: id, in: &selections)
+    }
+    switch result {
     case .unchanged, .unknownSource, .invalidSlot:
       return
     case let .applied(move):
@@ -1793,15 +1828,16 @@ public final class AppEnvironment {
       stopSource(pipeline.sourceID)
     }
     for selection in enabled {
-      guard let sourceIndex = selection.sourceIndex else { continue }
-      await startSource(id: selection.id, sourceIndex: sourceIndex)
+      await startSource(id: selection.id)
     }
     applyProgramSelection()
     applyAudioContributors()
     if peekID != nil { reconcilePeek() }
   }
 
-  private func startSource(id: SourceID, sourceIndex: Int) async {
+  private func startSource(id: SourceID) async {
+    guard let selection = selections.first(where: { $0.id == id }), selection.isEnabled,
+          let sourceIndex = selection.sourceIndex else { return }
     if let existing = router.pipeline(for: id) {
       if existing.sourceIndex != sourceIndex || !existing.sourceIsRunning {
         stopSource(id)
@@ -1814,7 +1850,6 @@ public final class AppEnvironment {
       return
     }
     guard let discovery else { return }
-    guard let selection = selections.first(where: { $0.id == id }), selection.isEnabled else { return }
     guard let discovered = SourceSelectionRules.startableSource(
       id: id,
       among: discovery.currentSources
@@ -4676,7 +4711,7 @@ public final class AppEnvironment {
     telemetry.recordConverter(converter.currentStatistics)
     let status = statusMessage ?? ""
     let cpu = ProcessLoad.cpuPercent()
-    let summaries = selections.enumerated().map { offset, selection in
+    let summaries = cameraListRows.enumerated().map { offset, selection in
       SourceSummary(
         index: offset + 1,
         name: selection.displayName,
@@ -5057,8 +5092,9 @@ public final class AppEnvironment {
       let rate: Float = speed == "slow" ? Float(config.replaySlowMotionRate) : 1
       startInstantReplay(sourceIndex: source, seconds: seconds, rate: rate)
     case let .assignSource(index, slot):
-      guard index >= 0, index < selections.count else { return false }
-      assignSource(slot: slot, to: selections[index].id)
+      let rows = cameraListRows
+      guard rows.indices.contains(index) else { return false }
+      assignSource(slot: slot, to: rows[index].id)
     case let .remoteChord(names):
       let ids = names.compactMap { ControlID(rawValue: $0) }
       guard !ids.isEmpty else { return false }
@@ -5074,8 +5110,9 @@ public final class AppEnvironment {
         closeCameraControl()
       }
     case let .enableSource(index, on):
-      guard index >= 0, index < selections.count else { return false }
-      setEnabled(on, for: selections[index].id)
+      let rows = cameraListRows
+      guard rows.indices.contains(index) else { return false }
+      setEnabled(on, for: rows[index].id)
     case let .sourceAudio(index, on):
       guard index >= 0, index < selections.count else { return false }
       setUsesAudio(on, for: selections[index].id)
