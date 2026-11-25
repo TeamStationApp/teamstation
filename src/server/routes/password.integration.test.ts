@@ -175,6 +175,44 @@ describe('password hashing and email-reset HTTP protocol', function () {
       ).equals(target)
     }
     expect(await rows()).equals(originalRows + 3)
+    await h.db
+      .updateTable('users')
+      .set({ merged_into: target })
+      .where('id', '=', actor)
+      .execute()
+    try {
+      const alias = await h.request(
+        'POST',
+        path,
+        { ...credentials, email: 'casey@example.com' },
+        101
+      )
+      expect(alias.status).equals(200)
+      expect(((await alias.json()) as { user: { id: string } }).user.id).equals(
+        target
+      )
+    } finally {
+      await h.db
+        .updateTable('users')
+        .set({ merged_into: null })
+        .where('id', '=', actor)
+        .execute()
+    }
+    const issued = await rows()
+    await h.db
+      .updateTable('users')
+      .set({ password_hash: null })
+      .where('id', '=', target)
+      .execute()
+    const expired = await h.request(
+      'POST',
+      path,
+      { ...credentials, confirmation },
+      102
+    )
+    expect(expired.status).equals(401)
+    expect(expired.headers.has('set-cookie')).equals(false)
+    expect(await rows()).equals(issued)
   })
   it('releases database locks during password hashing and rejects a superseded credential', async () => {
     await h.db

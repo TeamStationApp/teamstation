@@ -13,6 +13,8 @@ describe('password links in a web build', () => {
         ['master', 'master', '/api/v1', false],
         ['release', 'release', '/api/v1', false],
         ['develop', undefined, '/api/v1', true],
+        ['develop', 'develop', '/api/v1', true],
+        ['develop', 'master', '/api/v1', false],
         ['paul/example', 'paul/example', '/api/v1', true],
         ['paul/example', 'paul/other', '/api/v1', false],
         ['develop', undefined, 'https://example.test/api/v1', false]

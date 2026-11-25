@@ -36,12 +36,13 @@ export const developmentPasswordLinks = {
     const define = (initialOptions.define ??= {})
     const info = process.env.TS_BUILD_INFO
     const branch = info && JSON.parse(info).branch
+    const seat = process.env.TS_SEAT_BRANCH
     const enabled =
       define.TS_API_BASE_URL === JSON.stringify('/api/v1') &&
-      (branch === 'develop' ||
+      ((branch === 'develop' && (seat == null || seat === branch)) ||
         (typeof branch === 'string' &&
           branch.startsWith('paul/') &&
-          process.env.TS_SEAT_BRANCH === branch))
+          seat === branch))
     define.TS_PASSWORD_LINK_BUILD = JSON.stringify(Boolean(enabled))
   }
 }

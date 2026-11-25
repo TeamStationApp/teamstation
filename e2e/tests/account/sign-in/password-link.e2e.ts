@@ -116,10 +116,9 @@ async function exercise(ctx: E2eContext): Promise<void> {
   const framed = async (account: string | null) => {
     const before = requests
     await open(web, 'Embed link')
-    await web.page.waitForFunction(
-      () =>
-        document.querySelector('iframe')?.contentWindow?.location.pathname ===
-        '/sign-in'
+    await web.page.waitForFrame(
+      frame =>
+        frame.parentFrame() !== null && frame.url() === origin + '/sign-in'
     )
     assert.equal(requests, before)
     assert.equal(await activeAccount(web), account)
