@@ -4,6 +4,25 @@ These are the rules every screen follows, so a new screen looks like the
 ones already there. Read them before adding or changing a screen. The shared
 pieces they name live in [`src/app/components`](../src/app/components).
 
+## Animated screen-state transitions
+
+Animate every visible transition between screen states. Carry the interface from
+its current position and appearance to the next state when entering or leaving a
+screen, opening or closing an overlay, revealing or hiding controls, or resizing
+or repositioning content. Keep stationary elements anchored. When a gesture is
+interrupted or reversed, continue from the position visible on screen.
+
+As the keyboard rises or lowers, keep affected content synchronized with its
+frame throughout the transition, including interactive dismissal and reversal.
+With Reduce Motion enabled, use a restrained transition such as a brief
+crossfade for state changes and follow the system keyboard's own motion for
+layout.
+
+Whenever a task edits a screen for any reason, inspect its existing transitions
+before implementing the primary change. Exercise each applicable transition in
+both directions. If any state change snaps, repair and test it in the first
+commits for that screen, before the primary feature commit.
+
 ## Pickers
 
 ### Multi-row pickers are rows, never pills
