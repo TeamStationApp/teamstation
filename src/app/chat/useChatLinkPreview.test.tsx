@@ -35,7 +35,8 @@ async function show(
   engine: PreviewEngine,
   body: string,
   room = 'c1',
-  editing?: string
+  editing?: string,
+  active = true
 ): Promise<void> {
   if (root == null) {
     host = document.createElement('div')
@@ -44,7 +45,13 @@ async function show(
   }
   await act(async () => {
     root!.render(
-      <Draft engine={engine} body={body} room={room} editing={editing} />
+      <Draft
+        engine={engine}
+        body={body}
+        room={room}
+        editing={editing}
+        active={active}
+      />
     )
   })
 }
@@ -52,19 +59,21 @@ function Draft({
   engine,
   body,
   room,
-  editing
+  editing,
+  active
 }: {
   engine: PreviewEngine
   body: string
   room: string
   editing?: string
+  active: boolean
 }): React.ReactElement {
   latest = useChatLinkPreview(
     engine,
     room,
     editing,
     body,
-    true,
+    active,
     undefined,
     transport
   )
@@ -192,6 +201,49 @@ describe('chat link preview drafts', function () {
     } finally {
       Date.now = now
     }
+  })
+  it('resumes an interrupted thumbnail without reading the page again', async () => {
+    let reads = 0
+    let images = 0
+    let hold: AbortSignal | undefined
+    transport.readPreviewPage = async () => {
+      reads++
+      return '<title>Fixture</title><meta property="og:image" content="thumb.jpg">'
+    }
+    transport.previewThumbnail = async (_, signal) => {
+      images++
+      if (images === 1) {
+        hold = signal
+        await new Promise(resolve => {
+          signal.addEventListener('abort', resolve, { once: true })
+        })
+        return undefined
+      }
+      return {
+        fileName: ref.fileName,
+        contentType: ref.contentType,
+        bytes: Uint8Array.of(1, 2, 3)
+      }
+    }
+    const engine: PreviewEngine = {
+      uploadPreviewThumbnail: async () => ref
+    }
+    await show(engine, url)
+    await settled()
+    expect(latest.preview?.title).equals('Fixture')
+    expect(hold?.aborted).equals(false)
+    await show(engine, url, 'c1', undefined, false)
+    expect(hold?.aborted).equals(true)
+    expect(latest.preview?.thumbnail).equals(undefined)
+    await show(engine, url)
+    await settled()
+    expect(latest.preview?.thumbnail).equals(ref)
+    expect(latest.submit(url)?.thumbnail).equals(ref)
+    expect([reads, images]).deep.equals([1, 2])
+    await show(engine, url, 'c1', undefined, false)
+    await show(engine, url)
+    await settled()
+    expect([reads, images]).deep.equals([1, 2])
   })
   it('opens only the typed address from a received card, preserves holds and loads its encrypted thumbnail', async () => {
     host = document.createElement('div')

@@ -8,6 +8,7 @@ import {
   firstPreviewUrl,
   pageMetadata,
   PREVIEW_TIMEOUT,
+  type PreviewMetadata,
   type PreviewOrigins
 } from './linkPreview'
 import * as previewSource from './previewTransport'
@@ -19,6 +20,10 @@ interface Draft {
   ready?: ChatLinkPreview
   uploadedAt?: number
   controller?: AbortController
+  /** The page as read, so an interrupted image step resumes without it. */
+  page?: PreviewMetadata
+  /** The image step is over: uploaded, absent or refused. */
+  settled?: boolean
 }
 type PreviewEngine = Pick<ChatScreenEngine, 'uploadPreviewThumbnail'>
 const drafts = new WeakMap<PreviewEngine, Map<string, Draft>>()
@@ -59,7 +64,7 @@ export function useChatLinkPreview(
     const draft: Draft =
       previous?.url === url ? previous : { url, dismissed: false }
     cache.set(slot, draft)
-    if (draft.dismissed || draft.ready != null) return
+    if (draft.dismissed || draft.settled === true) return
     const controller = new AbortController()
     draft.controller = controller
     const signal = controller.signal
@@ -71,20 +76,29 @@ export function useChatLinkPreview(
       deadline = setTimeout(() => {
         controller.abort()
       }, PREVIEW_TIMEOUT)
-      const data = pageMetadata(
-        await source.readPreviewPage(url, signal),
-        url,
-        origin
-      )
-      if (data == null || !live()) return
-      const { imageUrl, ...metadata } = data
-      if (metadata.title !== '' || metadata.description !== '') {
+      const page =
+        draft.page ??
+        pageMetadata(await source.readPreviewPage(url, signal), url, origin)
+      if (page == null || !live()) return
+      draft.page = page
+      const { imageUrl, ...metadata } = page
+      if (
+        draft.ready == null &&
+        (metadata.title !== '' || metadata.description !== '')
+      ) {
         draft.ready = metadata
         refresh()
       }
-      if (imageUrl == null || engine.uploadPreviewThumbnail == null) return
+      if (imageUrl == null || engine.uploadPreviewThumbnail == null) {
+        draft.settled = true
+        return
+      }
       const file = await source.previewThumbnail(imageUrl, signal)
-      if (file == null || !live()) return
+      if (!live()) return
+      if (file == null) {
+        draft.settled = true
+        return
+      }
       clearTimeout(deadline)
       const thumbnail = await engine.uploadPreviewThumbnail(
         conversationId,
@@ -93,6 +107,7 @@ export function useChatLinkPreview(
       if (live()) {
         draft.ready = { ...metadata, thumbnail }
         draft.uploadedAt = Date.now()
+        draft.settled = true
         refresh()
       }
     }
