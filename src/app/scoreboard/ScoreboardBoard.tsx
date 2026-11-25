@@ -224,7 +224,6 @@ function Scoreboard(props: {
               <View style={styles.scoreBox}>
                 <Text
                   dataSet={{ scoreboard: 'awayScore' }}
-                  numberOfLines={1}
                   style={[
                     styles.scoreText,
                     phoneScoreText,
@@ -256,7 +255,6 @@ function Scoreboard(props: {
               <View style={styles.scoreBox}>
                 <Text
                   dataSet={{ scoreboard: 'homeScore' }}
-                  numberOfLines={1}
                   style={[
                     styles.scoreText,
                     phoneScoreText,
