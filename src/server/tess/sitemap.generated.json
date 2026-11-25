@@ -1214,6 +1214,13 @@
       "settings": []
     },
     {
+      "name": "sponsorFeatures",
+      "path": "/groups/league/:id/sponsors",
+      "title": "Sponsor features",
+      "tabs": [],
+      "settings": []
+    },
+    {
       "name": "sponsorLogos",
       "path": "/groups/league/:id/sponsors/logos",
       "title": "Sponsor logos",

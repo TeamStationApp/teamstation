@@ -44,3 +44,13 @@ export function SponsorEventStreamScreen(_props: {
 }): React.ReactElement {
   return <WebOnly />
 }
+
+export function SponsorFeaturesScreen(_props: {
+  client: unknown
+  league: string
+  onOpen?: (
+    name: 'sponsorReels' | 'sponsorLogos' | 'sponsorEventStream'
+  ) => void
+}): React.ReactElement {
+  return <WebOnly />
+}

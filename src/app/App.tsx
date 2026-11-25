@@ -237,6 +237,7 @@ import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import {
   SponsorEventStreamScreen,
+  SponsorFeaturesScreen,
   SponsorLogosScreen,
   SponsorReelsScreen
 } from './sponsors/SponsorScreens'
@@ -3230,6 +3231,15 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onApplied={pop}
       />
+    ) : top.name === 'sponsorFeatures' ? (
+      <SponsorFeaturesScreen
+        key={top.id}
+        client={client}
+        league={top.id}
+        onOpen={name => {
+          push({ name, id: top.id })
+        }}
+      />
     ) : top.name === 'sponsorLogos' ? (
       <SponsorLogosScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'sponsorReels' ? (
@@ -3247,6 +3257,9 @@ function Shell(props: AppProps): React.ReactElement {
               ? { name, id: top.id, view: 'league' }
               : { name, id: top.id }
           )
+        }}
+        onSponsors={() => {
+          push({ name: 'sponsorFeatures', id: top.id })
         }}
 
         onAddPeople={group => {

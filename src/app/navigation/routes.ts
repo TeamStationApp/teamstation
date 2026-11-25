@@ -48,6 +48,7 @@ export type CreationRoute =
         | 'umpireLevels'
         | 'umpireRequirements'
         /** The sponsor features demo's screens, for a league's id. */
+        | 'sponsorFeatures'
         | 'sponsorLogos'
         | 'sponsorReels'
         | 'sponsorEventStream'
@@ -132,6 +133,7 @@ export function isCreationRoute(route: {
     'umpireRequirements',
     'umpireRequirementEdit',
     'umpireSchedule',
+    'sponsorFeatures',
     'sponsorLogos',
     'sponsorReels',
     'sponsorEventStream',
@@ -396,6 +398,8 @@ export function parseRoute(path: string, search = ''): Route {
             seasonIds: (query.get('seasons') ?? '').split(',').filter(Boolean)
           }
         : { name: 'umpireRequirements', id }
+    if (parts[3] === 'sponsors' && (parts[4] ?? '') === '')
+      return { name: 'sponsorFeatures', id }
     if (parts[3] === 'sponsors' && parts[4] === 'logos')
       return { name: 'sponsorLogos', id }
     if (parts[3] === 'sponsors' && parts[4] === 'reels')
@@ -802,6 +806,8 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case 'leagueUmpires':
       return `/groups/league/${encodeURIComponent(route.id)}/umpires`
+    case 'sponsorFeatures':
+      return `/groups/league/${encodeURIComponent(route.id)}/sponsors`
     case 'sponsorLogos':
       return `/groups/league/${encodeURIComponent(route.id)}/sponsors/logos`
     case 'sponsorReels':

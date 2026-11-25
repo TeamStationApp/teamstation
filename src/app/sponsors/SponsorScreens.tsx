@@ -3,3 +3,4 @@
 export { SponsorLogosScreen } from './SponsorLogosScreen'
 export { SponsorReelsScreen } from './SponsorReelsScreen'
 export { SponsorEventStreamScreen } from './SponsorEventStreamScreen'
+export { SponsorFeaturesScreen } from './SponsorFeaturesScreen'
