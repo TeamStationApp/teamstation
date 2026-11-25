@@ -171,6 +171,11 @@ export function AppNavCapsule(
       testID="tab-bar-capsule"
       accessibilityRole="tablist"
       onLayout={event => onHeight?.(event.nativeEvent.layout.height)}
+      // The browser commits the banner's clearance once; the shell then
+      // slides each docked control from where it was (useOfflineBannerHeight).
+      dataSet={
+        Platform.OS === 'web' ? { offlineBannerDock: 'true' } : undefined
+      }
       style={{
         position: 'absolute',
         bottom,

@@ -104,7 +104,7 @@ describe('the UIKit tab bar bridge', () => {
           bannerHeight: 42
         })
         const native = bar.props.children.props
-        expect(bar.props.style.bottom).equals(55)
+        expect(bar.props.style.bottom).equals(42)
         expect(native.dark).equals(theme.isDark)
         expect(native.activeColor).equals(theme.navActiveColor)
         expect(native.inactiveColor).equals(theme.navInactiveColor)
@@ -133,6 +133,26 @@ describe('the UIKit tab bar bridge', () => {
         expect(heights).deep.equals([62])
       }
     )
+})
+
+describe('the native tab bar and the offline banner', () => {
+  it('rides on the banner from its first presented frame, compact or expanded', () => {
+    for (const compact of [false, true]) {
+      const bottoms = [0, 0.5, 1, 13, 14, 40].map(
+        bannerHeight =>
+          renderBar(tsBallpark, {
+            selected: 'home',
+            mode: 'floating',
+            onSelect: () => {},
+            compact,
+            bannerHeight
+          }).props.style.bottom
+      )
+      // The host's material starts on the banner's top edge, which itself
+      // starts at the resting glass edge: each frame of banner lifts it as much.
+      expect(bottoms, String(compact)).deep.equals([0, 0.5, 1, 13, 14, 40])
+    }
+  })
 })
 
 describe('the compact and opaque native tab bar', () => {
