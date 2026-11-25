@@ -506,6 +506,40 @@ describe('the scoreboard log', function () {
       startedAt: clock + 2900,
       receivedAt: clock + 2900
     })
+
+    // Live ran 55, then a reset timed later, then 56: the 56 starts afresh.
+    const restarted = await newGame()
+    await logScoreboard(db, {
+      ...row,
+      gameId: restarted,
+      version: 41,
+      at: clock + 1000,
+      publisher: { state: { exitVelocity: 55 }, receivedAt: clock + 1000 },
+      radar: { exitVelocity: 55 }
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: restarted,
+      cause: 'reset',
+      publisher: undefined,
+      version: 43,
+      at: clock + 1300
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: restarted,
+      version: 44,
+      at: clock + 1200,
+      publisher: { state: { exitVelocity: 56 }, receivedAt: clock + 1200 },
+      radar: { exitVelocity: 56 }
+    })
+    const afterRestart = await computeBoardTimeline(db, restarted)
+    expect(
+      afterRestart?.steps.flatMap(step => step.state.exitReading ?? [])
+    ).deep.equals([
+      { mph: 55, startedAt: clock + 1000, receivedAt: clock + 1000 },
+      { mph: 56, startedAt: clock + 1200, receivedAt: clock + 1200 }
+    ])
   })
 
   it('persists a late WebSocket radar reading on the current scored pitch', async function () {

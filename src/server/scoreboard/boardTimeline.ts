@@ -245,11 +245,17 @@ export async function computeBoardTimeline(
   let awayScore: number | null = null
   let homeScore: number | null = null
   let row: (typeof logged)[number] | undefined
-  let exitReading: ExitReading | undefined
-  // The versions of the write that set the reading and of the newest reset:
-  // live applied them in version order, whatever their times.
-  let readingVersion = -Infinity
-  let resetVersion = -Infinity
+  // Live ran the writes in version order, each timed by its own worker's
+  // clock: the reading after each write, folded in that order.
+  const readingAfter = new Map<(typeof logged)[number], ExitReading>()
+  let folded: ExitReading | undefined
+  for (const entry of [...logged].sort((a, b) => a.version - b.version)) {
+    if (entry.reset) folded = undefined
+    if (entry.exitMph != null)
+      folded = nextExitReading(folded, entry.exitMph, entry.at)
+    if (folded != null) readingAfter.set(entry, folded)
+  }
+  let newest: (typeof logged)[number] | undefined
   for (const at of moments) {
     for (; nextScoring < scoring.length; nextScoring++) {
       const step = scoring[nextScoring]
@@ -267,19 +273,11 @@ export async function computeBoardTimeline(
     for (; nextLogged < logged.length; nextLogged++) {
       const entry = logged[nextLogged]
       if (entry.at > at) break
-      // Rows are taken in time order for the readings' timing, but two
-      // workers racing can log the newer write (the higher version) with the
-      // earlier time. A reset clears only a reading written before it, a
-      // reading written before the newest reset is gone, and the board shown
-      // is the newest written so far: each as live showed it.
-      if (entry.reset) {
-        if (entry.version > readingVersion) exitReading = undefined
-        resetVersion = Math.max(resetVersion, entry.version)
-      }
-      if (entry.exitMph != null && entry.version > resetVersion) {
-        exitReading = nextExitReading(exitReading, entry.exitMph, entry.at)
-        readingVersion = Math.max(readingVersion, entry.version)
-      }
+      // Rows arrive in time order, but two workers racing can log the newer
+      // write (the higher version) with the earlier time. The reading and
+      // the board shown are those of the newest write so far, as live
+      // showed them.
+      if (newest == null || entry.version > newest.version) newest = entry
       if (
         !entry.measurementOnly &&
         (row == null || entry.version > row.version)
@@ -297,6 +295,7 @@ export async function computeBoardTimeline(
       watcher: row?.publisher,
       overrides: row?.overrides ?? NO_OVERRIDES
     })
+    const exitReading = newest == null ? undefined : readingAfter.get(newest)
     if (exitReading != null) final.exitReading = exitReading
     const last = steps.at(-1)
     if (last == null || !isDeepStrictEqual(last.state, final))
