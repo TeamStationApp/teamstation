@@ -89,6 +89,31 @@ describe('chat send failure messages', () => {
     owner.finish('chat', other, false, error)
     expect(owner.begin('chat')!.retry).equals(undefined)
   })
+  it('clears a draft whose card was dismissed while its post succeeded', () => {
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    owner.write('chat', {
+      text: 'See the schedule',
+      picked: [],
+      scrollOffset: 0
+    })
+    const posted = owner.begin('chat')!
+    owner.discardRetry('chat')
+    expect(owner.finish('chat', posted, true)?.text).equals('')
+    owner.write('chat', { text: 'And the map', picked: [], scrollOffset: 0 })
+    const lost = owner.begin('chat')!
+    owner.discardRetry('chat')
+    owner.finish(
+      'chat',
+      lost,
+      false,
+      new UnconfirmedChatPost(
+        new HttpError('offline', 'Lost reply'),
+        async () => {}
+      )
+    )
+    expect(owner.draft('chat').text).equals('And the map')
+    expect(owner.begin('chat')!.retry).equals(undefined)
+  })
   for (const [label, error, blocked] of [
     [
       'recipient block',

@@ -92,7 +92,12 @@ export class ChatDraftOwner {
   private readonly revisions = new Map<string, Record<DraftField, number>>()
   private readonly pending = new Map<
     string,
-    { token: ChatSubmission; phase: SubmissionPhase }
+    {
+      token: ChatSubmission
+      phase: SubmissionPhase
+      /** Its card was dismissed in flight: a failure keeps no signed retry. */
+      dismissed?: boolean
+    }
   >()
 
   private readonly uncertain = new Map<string, ChatSubmission>()
@@ -298,6 +303,7 @@ export class ChatDraftOwner {
     this.pull(id)
     const current = this.draft(id)
     const revisions = this.revisions.get(id)!
+    const dismissed = this.pending.get(id)?.dismissed === true
     if (success) {
       const unchanged =
         revisions.text === token.revisions.text &&
@@ -323,10 +329,12 @@ export class ChatDraftOwner {
           picked: []
         })
     } else if (token.draft.editing?.id === current.editing?.id) {
-      if (error instanceof UnconfirmedChatPost) {
+      // A signed retry would resend a card dismissed while it was posting.
+      if (!dismissed && error instanceof UnconfirmedChatPost) {
         token.retry = error.retry
         this.uncertain.set(id, token)
       } else if (
+        !dismissed &&
         token.retry != null &&
         this.submissionPhase(id) === 'findingEdit'
       ) {
@@ -353,9 +361,9 @@ export class ChatDraftOwner {
   }
 
   discardRetry(id: string): void {
-    // Dismissing a card while a post is pending also changes that draft.
-    const revisions = this.revisions.get(id)
-    if (revisions != null) revisions.text++
+    // A post already on its way keeps clearing the draft if it succeeds.
+    const pending = this.pending.get(id)
+    if (pending != null) pending.dismissed = true
     this.uncertain.delete(id)
   }
 
