@@ -53,6 +53,13 @@ const originalFetch = globalThis.fetch
 const delay = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 15))
 }
+function departureSignal(): { finish: () => void; finished: Promise<void> } {
+  let finish!: () => void
+  const finished = new Promise<void>(resolve => {
+    finish = resolve
+  })
+  return { finish, finished }
+}
 const text = (): string => document.body.textContent ?? ''
 // A control on show: none in the screen kept hidden beneath the top (Account,
 // under Create API key, has its own "Create API key").
@@ -1501,6 +1508,7 @@ describe('Account settings screen', () => {
       },
       passwordKdf: async () => 'ab'.repeat(32)
     })
+    const accountDeleted = departureSignal()
     let deleted = 0
     let signedOut = 0
     await render(
@@ -1512,6 +1520,7 @@ describe('Account settings screen', () => {
         }}
         onAccountDeleted={() => {
           deleted++
+          accountDeleted.finish()
         }}
       />
     )
@@ -1581,7 +1590,7 @@ describe('Account settings screen', () => {
       track.dispatchEvent(
         new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
       )
-      await delay()
+      await accountDeleted.finished
     })
     expect(deletes()).length(2)
     expect(deleted).equals(1)
@@ -1651,17 +1660,22 @@ describe('Account settings screen', () => {
       newRecord(f.session.user.id, 'cdv_gone', newDeviceKeys())
     )
     await keyStore.save(newRecord(otherId, 'cdv_kept', newDeviceKeys()))
+    const accountSignedOut = departureSignal()
     let signedOut = false
     await render(
       <AccountScreen
         {...f}
         onSignOut={() => {
           signedOut = true
+          accountSignedOut.finish()
         }}
       />
     )
     await press('Delete account')
     await drag(SLIDE_TRAVEL)
+    await act(async () => {
+      await accountSignedOut.finished
+    })
     expect(signedOut).equals(true)
     expect(await keyStore.load(f.session.user.id)).equals(undefined)
     expect((await keyStore.load(otherId))?.deviceId).equals('cdv_kept')
@@ -1676,13 +1690,23 @@ describe('Account settings screen', () => {
       calls.push(`${init?.method ?? 'GET'} ${address(input)}`)
       return await shell.fetcher(input, init)
     }
+    const tokenCleared = departureSignal()
     const tokens: Array<string | undefined> = []
     showRoute(parseRoute('/account'), true)
     await render(
-      <App initialToken="test-session" onToken={token => tokens.push(token)} />
+      <App
+        initialToken="test-session"
+        onToken={token => {
+          tokens.push(token)
+          if (token == null) tokenCleared.finish()
+        }}
+      />
     )
     await press('Delete account')
     await drag(SLIDE_TRAVEL)
+    await act(async () => {
+      await tokenCleared.finished
+    })
     expect(calls).includes('DELETE /api/v1/me/account')
     expect(calls.filter(call => call.includes('/auth/logout'))).length(0)
     expect(tokens).deep.equals([undefined])
@@ -1736,9 +1760,14 @@ describe('Account settings screen', () => {
       await wipe(userId)
     }
     try {
-      await render(<AccountScreen {...f} onSignOut={() => undefined} />)
+      const accountSignedOut = departureSignal()
+      const handleSignOut = accountSignedOut.finish
+      await render(<AccountScreen {...f} onSignOut={handleSignOut} />)
       await press('Delete account')
       await drag(SLIDE_TRAVEL)
+      await act(async () => {
+        await accountSignedOut.finished
+      })
       expect(released).equals(true)
       expect(await keyStore.load(f.session.user.id)).equals(undefined)
       expect((await keyStore.load(otherId))?.deviceId).equals('cdv_kept')
