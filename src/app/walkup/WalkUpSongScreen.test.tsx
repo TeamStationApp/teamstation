@@ -325,9 +325,14 @@ describe('the song picker’s search', function () {
       root?.unmount()
     })
     let fail = true
+    let finishRetry!: () => void
+    const retried = new Promise<void>(resolve => {
+      finishRetry = resolve
+    })
     const music = fakeMusic()
     music.search = async () => {
       if (fail) throw new Error('Failed to request developer token')
+      finishRetry()
       return [centerfield]
     }
     await render({ music })
@@ -335,6 +340,9 @@ describe('the song picker’s search', function () {
     expect(text()).includes('Failed to request developer token')
     fail = false
     await press('Retry')
+    await act(async () => {
+      await retried
+    })
     expect(text()).includes('Centerfield')
   })
 })

@@ -1,3 +1,5 @@
+import { mock } from 'node:test'
+
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
@@ -383,15 +385,27 @@ describe('PagedList in a browser', function () {
           <Keeper />
         </Scroller>
       )
-      await wheel()
-      await scroll(3000)
-      await act(async () => {
-        prepend(10)
-      })
-      await wait()
-      expect(page.scrollTop).equals(3000)
-      await wait(REST_MS + 40)
-      expect(page.scrollTop).equals(3000 + 10 * ROW)
+      mock.timers.enable({ apis: ['setTimeout'] })
+      try {
+        await wheel()
+        await act(async () => {
+          page.scrollTop = 3000
+          page.dispatchEvent(new window.Event('scroll'))
+        })
+        await act(async () => {
+          prepend(10)
+        })
+        await act(async () => {
+          mock.timers.tick(REST_MS - 1)
+        })
+        expect(page.scrollTop).equals(3000)
+        await act(async () => {
+          mock.timers.tick(1)
+        })
+        expect(page.scrollTop).equals(3000 + 10 * ROW)
+      } finally {
+        mock.timers.reset()
+      }
     })
   })
 
