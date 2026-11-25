@@ -134,6 +134,9 @@ async function visible(
   )
 }
 
+// The compact header and the desktop sidebar expose different signed-in controls.
+const SIGNED_IN_CONTROL = '^(TeamStation menu|Account, .+)$'
+
 /**
  * Types the address and password into fields that may still hold a previous try.
  * A phone keyboard sometimes drops or swaps a key under the driver.
@@ -147,10 +150,10 @@ async function typeCredentials(
   // iOS submits from the password field's Go key. Android leaves the keyboard
   // over the button, so it is dismissed and the button is tapped. Hiding the
   // keyboard on iOS sends Return, which submits that same field.
-  if (await visible(device, 'TeamStation menu', 2000)) return
+  if (await visible(device, SIGNED_IN_CONTROL, 2000)) return
   if (typeof device.hideKeyboard === 'function') {
     await device.hideKeyboard()
-    if (await visible(device, 'TeamStation menu', 2000)) return
+    if (await visible(device, SIGNED_IN_CONTROL, 2000)) return
   }
   await device.tapOn({ text: 'Sign in' })
 }
@@ -167,10 +170,10 @@ export async function signInWithPassword(
   for (let attempt = 1; attempt <= 3; attempt++) {
     await typeCredentials(device, account)
     if (attempt === 3) {
-      await device.assertVisible({ text: 'TeamStation menu', timeout: 20000 })
+      await device.assertVisible({ text: SIGNED_IN_CONTROL, timeout: 20000 })
       return
     }
-    if (await visible(device, 'TeamStation menu', 8000)) return
+    if (await visible(device, SIGNED_IN_CONTROL, 8000)) return
   }
 }
 

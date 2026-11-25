@@ -38,6 +38,10 @@ export async function recordBrowserCoverage(
         sourceMapRoot,
         basename(new URL(script.url).pathname)
       )
+      if (script.text !== (await readFile(generated, 'utf8')))
+        throw new Error(
+          'The web build does not match the bundle executed by Chromium'
+        )
       const converter = convert(generated, 0, {
         source: script.text,
         sourceMap: {
