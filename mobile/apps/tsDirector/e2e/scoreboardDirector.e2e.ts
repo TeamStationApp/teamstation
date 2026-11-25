@@ -1792,6 +1792,10 @@ async function eventRecording(m: Device, e: Env): Promise<void> {
 
 /** The grid has four synthetic cameras, a game selected and a camera on Output. */
 export async function checkMonitorAssignments(m: Device): Promise<void> {
+  const waitForMenu = async (): Promise<void> => {
+    assert('waitForAnimationToEnd' in m && typeof m.waitForAnimationToEnd === 'function')
+    await m.waitForAnimationToEnd({ timeout: 1500 })
+  }
   async function openCameraRow(): Promise<number> {
     await m.tapOn({ id: 'cameras-button' })
     await m.extendedWaitUntil({ visible: { id: 'start-directing' }, timeout: 10_000 })
@@ -1820,14 +1824,17 @@ export async function checkMonitorAssignments(m: Device): Promise<void> {
     await m.tapOn({ id: `source-slot-${row}` })
     const choice = { id: `source-assign-${slot}` }
     await m.extendedWaitUntil({ visible: choice, timeout: 8_000 })
-    await m.tapOn(choice)
-    // UIKit completes a menu selection on dismissal. Wait for the numbered button in
-    // this row before dismissing its sheet, especially when moving the on-air camera.
-    const assigned = {
-      id: `source-row-${row}`,
-      containsDescendants: [{ text: `SOURCE ${slot}` }]
+    // UIKit reports a menu item's bounds before its popover finishes opening. If the
+    // choice stays open after a tap, it has not committed; tap only that still-open item.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await waitForMenu()
+      await m.tapOn(choice)
+      await waitForMenu()
+      const nodes = flatten(await m.hierarchy())
+      if (!nodes.some(node => node.id === choice.id)) break
     }
-    await m.extendedWaitUntil({ visible: assigned, timeout: 8_000 })
+    const button = { id: `source-slot-${row}`, text: `SOURCE ${slot}` }
+    await m.extendedWaitUntil({ visible: button, timeout: 8_000 })
     await m.tapOn({ id: 'start-directing' })
     const tile = { id: `scoreboard-monitor-${slot}` }
     await m.extendedWaitUntil({ visible: tile, timeout: 10_000 })

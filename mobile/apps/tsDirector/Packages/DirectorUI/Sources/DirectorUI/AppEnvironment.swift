@@ -476,6 +476,7 @@ public final class AppEnvironment {
 
   public init(
     launch: LaunchConfiguration = .resolve(),
+    account: TeamStationAccount? = nil,
     cameras: CameraRegistry? = nil,
     discoveryFactory: (@Sendable (SourceKind) -> SourceDiscovery?)? = nil
   ) {
@@ -581,6 +582,7 @@ public final class AppEnvironment {
     // into anything main-actor isolated, and `ServerClock` is safe to read from any.
     let serverClock = self.serverClock
     programStreamer.setServerClockOffset { serverClock.offsetMs }
+    if let account { teamStation = account }
   }
 
   /// Called once from the app's `task` modifier.

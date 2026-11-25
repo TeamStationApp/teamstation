@@ -1,5 +1,7 @@
 import CoreGraphics
 import DirectorCore
+import DirectorTestHarness
+import TeamStationKit
 import Foundation
 import SwiftUI
 import Testing
@@ -238,6 +240,89 @@ struct ScoreboardMonitorPageTests {
   private func webView(in view: UIView) -> WKWebView? {
     if let web = view as? WKWebView { return web }
     return view.subviews.lazy.compactMap { self.webView(in: $0) }.first
+  }
+
+  @Test func selectedGameFollowsItsAssignedSourceWithoutSwitchingOutput() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let pages = directory.appending(path: "scoreboard")
+    try FileManager.default.createDirectory(at: pages, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let account = TeamStationAccount(serverURL: directory, deviceName: "Director", keychain: .inMemory())
+    var launch = LaunchConfiguration()
+    launch.isUITest = true
+    launch.sourceProfile = .synthetic4
+    launch.syntheticCount = 5
+    launch.syntheticWidth = 320
+    launch.syntheticHeight = 180
+    let model = AppEnvironment(launch: launch, account: account)
+    let original = model.persistedConfig
+    defer { ConfigStore().save(original) }
+    var config = original
+    config.streamDestination = .event
+    config.eventControlEnabled = false
+    config.useSimulatedCameras = true
+    model.update(config: config)
+    model.clearCameraMemory()
+    func command(_ path: String) -> Bool {
+      model.handle(url: URL(string: "tsdirector://test/" + path)!)
+    }
+    #expect(command("configure?sourceProfile=synthetic4&sourceCount=5"))
+    for _ in 0 ..< 100 where model.selections.count != 5 {
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(model.monitorURL == nil && model.cameraListRows.count == 5)
+    let cameras = model.selections.map(\.id)
+    let board = ScoreboardMonitorPreference.id
+    for camera in cameras.prefix(4) { model.setEnabled(true, for: camera) }
+    func choose(_ game: String) async throws {
+      try Data("<html>Scoreboard</html>".utf8).write(to: pages.appending(path: game))
+      let event = TeamStationEvent(gameId: game, startAt: Date(), venue: nil, homeTeamName: "Home",
+                                   awayTeamName: "Visitors", homeLogoURL: nil, awayLogoURL: nil, liveState: "idle")
+      #expect(await account.choose(event: event, claim: false))
+    }
+    try await choose("first.html")
+    #expect(model.cameraListRows.last?.id == board)
+    #expect(model.monitorURL(at: 4)?.lastPathComponent == "first.html")
+    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let window = UIWindow(windowScene: scene)
+    let host = UIHostingController(rootView: AnyView(DirectorGridView().environment(model)))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true; window.rootViewController = nil }
+    host.view.layoutIfNeeded()
+    #expect(webView(in: host.view) != nil)
+    host.rootView = AnyView(SourceSelectionView().environment(model))
+    host.view.layoutIfNeeded()
+    for _ in 0 ..< 100 where model.router.activePipelines.count != 4 {
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    model.selectProgram(sourceIndex: 0)
+    // The scoreboard is the sixth row, after the five discovered cameras.
+    #expect(command("assign-source?index=6&source=1"))
+    #expect(model.monitorURL(at: 0) != nil && model.router.currentProgramSource == 4)
+    model.selectProgram(sourceIndex: 0)
+    model.cutSourceLive(sourceIndex: 0)
+    model.startInstantReplay(sourceIndex: 0, seconds: 5, rate: 1)
+    #expect(model.router.currentProgramSource == 4)
+    #expect(command("enable-source?index=6&on=0"))
+    #expect(model.monitorURL(at: 0) == nil)
+    #expect(command("enable-source?index=6&on=1"))
+    #expect(model.monitorURL(at: 0) != nil)
+    let fifth = try #require(cameras.last)
+    model.setEnabled(true, for: fifth)
+    #expect((0 ..< 5).allSatisfy { model.monitorURL(at: $0) == nil })
+    model.setEnabled(false, for: fifth)
+    try await choose("second.html")
+    #expect(model.monitorURL(at: 0)?.lastPathComponent == "second.html")
+    config.streamDestination = .url
+    model.update(config: config)
+    #expect(model.monitorURL == nil && model.cameraListRows.count == 5)
+    model.assignSource(slot: 1, to: cameras[0])
+    account.forgetChosenEvent()
+    config.streamDestination = .event
+    model.update(config: config)
+    #expect(model.monitorURL == nil)
+    await model.shutdown()
   }
 
   @Test func fitsTheBoardAtTheTopAndClosesItsPageOnRemoval() async throws {
