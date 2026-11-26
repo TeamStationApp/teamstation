@@ -48,6 +48,7 @@ export default defineE2e({
           const timings: Array<{ path: string; ms: number; status: number }> =
             []
           const failures: string[] = []
+          const active = new Set<string>()
           const cdp = await session.page.createCDPSession()
           await cdp.send('Network.enable')
           cdp.on('Network.requestWillBeSent', event => {
@@ -56,17 +57,20 @@ export default defineE2e({
               event.request.method === 'GET' &&
               (url.pathname === PENDING ||
                 url.pathname === `${PENDING}/summary`)
-            )
+            ) {
+              active.add(event.requestId)
               requests.set(event.requestId, {
                 path: url.pathname + url.search,
                 at: event.timestamp
               })
+            }
           })
           cdp.on('Network.responseReceived', event => {
             const request = requests.get(event.requestId)
             if (request != null) request.status = event.response.status
           })
           cdp.on('Network.loadingFinished', event => {
+            active.delete(event.requestId)
             const request = requests.get(event.requestId)
             if (request != null)
               timings.push({
@@ -76,6 +80,7 @@ export default defineE2e({
               })
           })
           cdp.on('Network.loadingFailed', event => {
+            active.delete(event.requestId)
             if (requests.has(event.requestId)) failures.push(event.errorText)
           })
           try {
@@ -153,7 +158,14 @@ export default defineE2e({
                   { id: 'notification-pending-dot' }
                 ]
               })
-              await session.m.openLink({ link: `${ctx.stack.origin}/account` })
+              await eventually(async () => {
+                expect(active.size).equals(0)
+              })
+              await session.m.tapOn({ text: 'Account, .*' })
+              await session.m.tapOn({
+                text: '^Account$',
+                childOf: { id: 'header-menu-panel' }
+              })
               await open()
               await ctx.checkpoint('returned-to-pending', {
                 readBack: async () => {
@@ -204,6 +216,10 @@ export default defineE2e({
               })
             }
             await eventually(async () => {
+              expect(
+                active.size,
+                'all observed notification reads finished'
+              ).equals(0)
               expect(timings.some(row => row.path === PENDING)).equals(true)
               expect(
                 timings.some(row => row.path === `${PENDING}/summary`)
