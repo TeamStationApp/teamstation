@@ -165,9 +165,18 @@ export async function guardiansOf(
 export async function guardiansOfEach(
   db: Kysely<Database>,
   playerUserIds: readonly string[],
-  { signsIn = false }: { signsIn?: boolean } = {}
+  { signsIn = false }: { signsIn?: boolean } = {},
+  known: ReadonlyMap<string, OnePerson> = new Map()
 ): Promise<Map<string, string[]>> {
-  const players = [...(await onePeople(db, playerUserIds)).values()]
+  const missing = await onePeople(
+    db,
+    playerUserIds.filter(id => known.get(id)?.userIds.includes(id) !== true)
+  )
+  const players = [...new Set(playerUserIds)].map(id =>
+    known.get(id)?.userIds.includes(id) === true
+      ? known.get(id)!
+      : missing.get(id)!
+  )
   if (players.length === 0) return new Map()
   const links = await db
     .selectFrom('user_links')
@@ -180,9 +189,18 @@ export async function guardiansOfEach(
     .where('kind', 'in', ['guardian', 'family'])
     .execute()
   if (links.length === 0) return new Map()
-  const parents = await onePeople(
+  const parentIds = [...new Set(links.map(link => link.user_id))]
+  const missingParents = await onePeople(
     db,
-    links.map(link => link.user_id)
+    parentIds.filter(id => known.get(id)?.userIds.includes(id) !== true)
+  )
+  const parents = new Map(
+    parentIds.map(id => [
+      id,
+      known.get(id)?.userIds.includes(id) === true
+        ? known.get(id)!
+        : missingParents.get(id)!
+    ])
   )
   const guardians = new Map<string, string[]>()
   for (const player of players)

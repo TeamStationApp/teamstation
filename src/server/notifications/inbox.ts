@@ -20,7 +20,12 @@ import {
   UMPIRE_MISSING_SLOTS
 } from '../../common/notifications'
 import type { Role } from '../../common/roles'
-import { adminScopes, guardedRows, guardiansOf, roleScopes } from '../access'
+import {
+  adminScopes,
+  guardedPeopleOfEach,
+  guardiansOf,
+  roleScopes
+} from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type {
@@ -47,6 +52,7 @@ import {
   requestPages
 } from './inboxPage'
 import {
+  type InboxAuthorityFacts,
   InboxProjection,
   type InformationFacts,
   informationFacts,
@@ -535,6 +541,7 @@ export async function candidateRequests(
     'group_requests',
     Selectable<GroupRequestsTable>
   >
+  authority?: InboxAuthorityFacts
 }> {
   const fresh = await currentActor(db, actor)
   const scopes = await adminScopes(db, fresh.userId, fresh.isAdmin)
@@ -557,13 +564,19 @@ export async function candidateRequests(
       )
     )
       refs.push({ kind: 'team', id: team.id })
+  let authority: InboxAuthorityFacts | undefined
   let rows = db.selectFrom('group_requests').selectAll()
   if (!scopes.isAdmin) {
     // A guardian request asks the player's side: so the player's guardians,
     // and while there are none its coaching staff.
     const teamIds = await coachedTeams(db, fresh, refs)
-    const guarded = await guardedRows(db, fresh.userId)
-    const ownRows = (await onePerson(db, fresh.userId)).userIds
+    const reader = await onePerson(db, fresh.userId)
+    const guardedPeople = (
+      await guardedPeopleOfEach(db, new Map([[fresh.userId, reader]]))
+    ).get(fresh.userId)!
+    authority = { reader, guarded: guardedPeople }
+    const guarded = guardedPeople.flatMap(person => person.userIds)
+    const ownRows = reader.userIds
     const emails = await db
       .selectFrom('user_emails')
       .select('email')
@@ -599,9 +612,7 @@ export async function candidateRequests(
       .selectFrom('notification_events')
       .select('source_id')
       .where('source_type', '=', 'groupRequest')
-      .where(eb =>
-        eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
-      )
+      .where(sql<boolean>`recorded_recipients @> ${[fresh.userId]}::text[]`)
     const viewedIds = db
       .selectFrom('notification_events')
       .innerJoin(
@@ -695,7 +706,7 @@ export async function candidateRequests(
       ])
     )
   }
-  return { fresh, rows }
+  return { fresh, rows, authority }
 }
 
 /** SQL selects candidate requests; live side checks govern disclosure and the pending dot. */
@@ -719,8 +730,12 @@ export async function inbox(
   const now = clock.now()
   const frozen = { now: () => now }
   return await readInbox(db, async trx => {
-    const { fresh, rows } = await candidateRequests(trx, actor, frozen)
-    const projection = new InboxProjection(trx, fresh, frozen)
+    const { fresh, rows, authority } = await candidateRequests(
+      trx,
+      actor,
+      frozen
+    )
+    const projection = new InboxProjection(trx, fresh, frozen, authority)
     const { page, nextCursor } = await mergePage(
       [
         requestPages(rows, projection, mode, after),
@@ -1077,10 +1092,10 @@ async function pendingInRead(
   }
 ): Promise<PendingAnswer> {
   const now = clock.now()
-  const { fresh, rows } =
+  const { fresh, rows, authority } =
     prepared == null
       ? await candidateRequests(db, actor, clock)
-      : { fresh: actor, rows: prepared.rows }
+      : { fresh: actor, rows: prepared.rows, authority: undefined }
   const information = await db
     .selectFrom('notification_events')
     .leftJoin('chat_links', join =>
@@ -1094,9 +1109,7 @@ async function pendingInRead(
     ])
     .where('notification_events.source_type', '!=', 'groupRequest')
     .where(eb => pendingInformationWhere(eb, fresh.userId, now))
-    .where(eb =>
-      eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
-    )
+    .where(sql<boolean>`recorded_recipients @> ${[fresh.userId]}::text[]`)
     .executeTakeFirstOrThrow()
   const requestExpiry = await rows
     .clearSelect()
@@ -1111,7 +1124,7 @@ async function pendingInRead(
     expiries.length === 0 ? null : new Date(Math.min(...expiries)).toISOString()
   if (information.waiting > 0) return { hasPending: true, nextExpiry }
   const projection =
-    prepared?.projection ?? new InboxProjection(db, fresh, clock)
+    prepared?.projection ?? new InboxProjection(db, fresh, clock, authority)
   const pending = requestPages(rows, projection, 'pending', undefined, signal)
   try {
     return { hasPending: (await pending.next()).done !== true, nextExpiry }

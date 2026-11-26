@@ -15,6 +15,7 @@ import * as requests from '../groups/requests'
 import * as rights from '../groups/rights'
 import * as openAdds from '../openAdds'
 import {
+  type InboxAuthorityFacts,
   InboxProjection,
   informationFacts,
   type RequestState
@@ -77,6 +78,7 @@ describe('notification state classification without wording', () => {
       identities?: Record<string, { userId: string; userIds: string[] }>
       playerSignsIn?: boolean
       standInTeam?: boolean
+      authority?: InboxAuthorityFacts
     } = {}
   ): Promise<{
     state: RequestState | null | undefined
@@ -159,12 +161,6 @@ describe('notification state classification without wording', () => {
       'mayAnswerPlayerAdd',
       async () => options.player ?? true
     )
-    mock.method(
-      policy,
-      'supersededPlayerAdd',
-      async () => options.superseded ?? false
-    )
-    mock.method(policy, 'rejoinedSince', async () => options.rejoined ?? false)
     const sides = options.sides ?? [side()]
     const event = {
       id: 'event',
@@ -174,6 +170,11 @@ describe('notification state classification without wording', () => {
     let result: Awaited<ReturnType<InboxProjection['requests']>> = new Map()
     await withQueryReplies(
       q => {
+        if (q.sql.includes('with candidates as'))
+          return options.superseded === true || options.rejoined === true
+            ? [{ id: row.id }]
+            : []
+        if (q.sql.includes('from "user_emails"')) return []
         if (q.sql.includes('from "group_request_sides"')) return sides
         if (q.sql.includes('from "notification_events"'))
           return options.recorded === true || options.receipt === true
@@ -225,7 +226,8 @@ describe('notification state classification without wording', () => {
           const projection = new InboxProjection(
             db,
             { ...actor, isAdmin: options.siteAdmin === true },
-            { now: () => now }
+            { now: () => now },
+            options.authority
           )
           expect(await projection.requests([])).deep.equals(new Map())
           result = await projection.requests([row])
@@ -437,7 +439,15 @@ describe('notification state classification without wording', () => {
       guarded: true,
       sides: [side({ scope_type: 'user', scope_id: 'player' })]
     })
-    expect(person.eligible).equals(1)
+    expect(person.eligible).equals(0)
+    expect(person.state).equals(null)
+    mock.restoreAll()
+    const guardian = await classify(row, {
+      guarded: true,
+      guardianId: actor.userId,
+      sides: [side({ scope_type: 'user', scope_id: 'player' })]
+    })
+    expect(guardian.eligible).equals(1)
   })
   it('never grants resend for special one-shot request kinds', async () => {
     for (const kind of [
@@ -455,6 +465,75 @@ describe('notification state classification without wording', () => {
         ).state?.canResend
       ).equals(false)
     }
+  })
+  it('reuses candidate-selection guardian authority while retaining merged sender exclusion', async () => {
+    const authority = {
+      reader: { userId: 'reader', userIds: ['reader', 'reader-old'] },
+      guarded: [{ userId: 'player', userIds: ['player', 'player-old'] }]
+    }
+    const row = request({
+      kind: 'playerAdd',
+      terms: { userId: 'player-old', teamId: 'adding' }
+    })
+    expect((await classify(row, { authority })).state?.canAct).equals(true)
+    mock.restoreAll()
+    expect(
+      (
+        await classify(row, {
+          authority,
+          identities: {
+            sender: {
+              userId: 'reader',
+              userIds: ['sender', 'reader', 'reader-old']
+            }
+          }
+        })
+      ).state
+    ).equals(null)
+  })
+  it('reuses only matching known identities in the authoritative guardian batch', async () => {
+    const identity = { userId: 'player', userIds: ['player', 'old-player'] }
+    const calls: string[][] = []
+    mock.method(
+      people,
+      'onePeople',
+      async (...[_db, ids]: Parameters<typeof people.onePeople>) => {
+        calls.push([...ids])
+        return new Map(
+          ids.map(id => [
+            id,
+            id === 'guardian' ? { userId: id, userIds: [id] } : identity
+          ])
+        )
+      }
+    )
+    for (const known of [
+      new Map([
+        ['old-player', identity],
+        ['guardian', { userId: 'guardian', userIds: ['guardian'] }]
+      ]),
+      new Map([['old-player', { userId: 'other', userIds: ['other'] }]])
+    ]) {
+      await withQueryReplies(
+        q => {
+          if (q.sql.includes('from "user_links"'))
+            return [{ user_id: 'guardian', related_user_id: 'old-player' }]
+          if (q.sql.includes('from "users"')) return [{ id: 'guardian' }]
+          throw Error(q.sql)
+        },
+        async db => {
+          expect(
+            await access.guardiansOfEach(
+              db,
+              ['old-player'],
+              { signsIn: true },
+              known
+            )
+          ).deep.equals(new Map([['guardian', ['player']]]))
+        }
+      )
+    }
+    expect(calls).deep.equals([[], [], ['old-player'], ['guardian']])
   })
   it('reads information receipts and device facts in sets, including empty sets', async () => {
     await withQueryReplies([], async db => {

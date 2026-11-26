@@ -55,6 +55,7 @@ const paths = [
     !path.startsWith('src/server/dev/fixtures/')
 )
 const unit = [
+  'src/common/observability/errors.test.ts',
   'src/server/notifications/inboxPage.test.ts',
   'src/server/notifications/inboxProjection.test.ts',
   'src/server/notifications/inbox.unit.test.ts',
@@ -85,7 +86,8 @@ const integration = [
   'src/server/account/deleteAccount.integration.test.ts',
   'src/server/dev/fixtures/fixtures.integration.test.ts',
   'src/server/middleware/apiKeyCeiling.integration.test.ts',
-  'src/migrate/migrations/094notificationIds.integration.test.ts'
+  'src/migrate/migrations/094notificationIds.integration.test.ts',
+  'src/migrate/migrations/132notificationInboxIndexes.integration.test.ts'
 ]
 run(
   'node_modules/.bin/mocha',
@@ -134,6 +136,11 @@ run('node_modules/.bin/mocha', [
 ])
 run('node_modules/.bin/c8', [
   'report',
+  '--all',
+  '--extension',
+  '.ts',
+  '--extension',
+  '.tsx',
   '--reporter=text',
   '--reporter=json',
   '--reports-dir',
@@ -180,7 +187,7 @@ for (const [path, lines] of Object.entries(result.files)) {
   console.log(
     `${path}: ${percent.toFixed(2)}% (${lines.covered.length}/${total}); uncovered ${lines.uncovered.join(',')}`
   )
-  if (percent < minimum) failed.push(path)
+  if (combined && percent < minimum) failed.push(path)
 }
 console.log(
   `Notification tabs ${combined ? 'combined' : 'unit'} changed lines: ${result.percent.toFixed(2)}% (${result.covered}/${result.total})`
@@ -189,9 +196,12 @@ if (failed.length > 0 || result.percent < minimum || result.total === 0)
   throw Error(
     'Changed-line coverage below ' + minimum + '%: ' + failed.join(', ')
   )
-// The canonical committed-tree check remains the release gate. The working-tree
+// Unit coverage is an overall >=90% gate; SQL migrations remain honestly
+// uncovered until integration. Combined coverage is >=95% for every file and
+// overall. The canonical committed-tree check enforces that combined release
+// gate. The working-tree
 // check above includes new and uncommitted files during implementation too.
-if (git(['status', '--porcelain', '--', ...paths]) === '')
+if (combined && git(['status', '--porcelain', '--', ...paths]) === '')
   run('node', [
     'scripts/changed-line-check.cjs',
     '--base',

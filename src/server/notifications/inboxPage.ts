@@ -193,7 +193,7 @@ export async function* informationPages(
     .selectFrom('notification_events')
     .selectAll()
     .where('source_type', '!=', 'groupRequest')
-    .where(eb => eb(eb.val(userId), '=', eb.fn.any('recorded_recipients')))
+    .where(sql<boolean>`recorded_recipients @> ${[userId]}::text[]`)
     .where(eb =>
       mode === 'pending'
         ? pendingInformationWhere(eb, userId, now)
