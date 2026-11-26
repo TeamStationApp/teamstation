@@ -42,6 +42,8 @@ export interface Device {
     duration?: number
   }) => Promise<unknown>
   setNetworkConditions: (params: Record<string, unknown>) => Promise<unknown>
+  /** Any daemon command by name, such as `blockNetwork` and `clearNetworkMocks`. */
+  command: (name: string, params?: Record<string, unknown>) => Promise<unknown>
   startRecording: (params: Record<string, unknown>) => Promise<unknown>
   stopRecording: (params?: Record<string, unknown>) => Promise<unknown>
   detach: () => Promise<void>
