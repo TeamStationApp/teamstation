@@ -41,6 +41,7 @@ import {
   FLOATING_MARGIN,
   FLOATING_SIZE,
   floatingBottom,
+  SCORING_SIDE_WIDTH,
   topLift
 } from '../field/fieldSafeArea'
 import type { Insets } from '../platform/insets'
@@ -57,7 +58,6 @@ import {
   type ReplayClient,
   replayLayout,
   type ReplaySocket,
-  SIDE_DECK_WIDTH,
   tallDeck
 } from './GameReplayScreen'
 import {
@@ -1126,7 +1126,7 @@ describe('the replay screen', function () {
     await show(gameOf(), finalGame())
     await showCatcher()
     const side = node('replay-side')
-    expect(side.style.width).equals(`${SIDE_DECK_WIDTH}px`)
+    expect(side.style.width).equals(`${SCORING_SIDE_WIDTH}px`)
     const cards = document.querySelectorAll<HTMLElement>(
       '[data-testid="replay-play-card"]'
     )

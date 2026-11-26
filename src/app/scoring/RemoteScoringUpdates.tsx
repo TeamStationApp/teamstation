@@ -18,6 +18,7 @@ import { scoringPreferences } from './scoringPreferences'
 export interface RemoteScoringUpdatesProps {
   game: ScoringSession
   userId: string
+  placement?: 'stacked' | 'column'
   frame: { top: number; left: number; width: number; lines: number }
   /** Keep collecting updates while a scoring menu or sheet is in use. */
   obscured?: boolean
@@ -119,17 +120,26 @@ export function RemoteScoringUpdates(
   )
     return null
   const { top, left, lines } = props.frame
-  const width = collapsed ? Math.min(96, props.frame.width) : props.frame.width
+  const column = props.placement === 'column'
+  const visibleLines = column
+    ? Math.min(
+        lines,
+        entries.reduce((total, row) => total + row.lines.length, 0)
+      )
+    : lines
+  const width =
+    collapsed && !column ? Math.min(96, props.frame.width) : props.frame.width
   return (
     <View
       testID="remote-scoring-updates"
       style={{
-        position: 'absolute',
+        position: column ? 'relative' : 'absolute',
+        flexShrink: 0,
         zIndex: 10,
         elevation: 10,
         top,
         left: left + (props.frame.width - width) / 2,
-        width,
+        width: column ? '100%' : width,
         borderRadius: theme.rem(theme.radiusRem),
         backgroundColor: theme.scoringInstructionBackground,
         overflow: 'hidden'
@@ -235,7 +245,7 @@ export function RemoteScoringUpdates(
             }
             lastOffset.current = y
           }}
-          style={{ height: lines * LOG_LINE, flexGrow: 0 }}
+          style={{ height: visibleLines * LOG_LINE, flexGrow: 0 }}
           contentContainerStyle={{
             flexGrow: 1,
             justifyContent: 'flex-end',
