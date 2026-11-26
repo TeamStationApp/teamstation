@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +26,7 @@ import {
   dropOfferedRunner,
   groundPoint,
   installSceneProbe,
+  measuredBoard,
   placeFielder,
   placeOffered,
   puppeteerDriver,
@@ -36,8 +38,9 @@ import { defaultScoreboardSettings } from '../../common/nodeSettings'
 import { withNames, withoutNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
-import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
+import { DEMO_SCOREBOARD } from '../field/scoreboardModel'
+import { makeScoreboardPixels } from '../field/scoreboardTexture'
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { scoringSurface } from '../theme/scoringSurface'
 import { ROSTER_CARD_GAP } from './rosterLayout'
@@ -805,6 +808,22 @@ async function waitReady(page: Page): Promise<void> {
     { timeout: 30000 }
   )
 }
+/** A snapshot of the actual camera, for groups of synchronous gesture projections. */
+async function mountedCamera(page: Page): Promise<PerspectiveCamera> {
+  await captureScene(page)
+  const matrices = await page.evaluate(() => {
+    const camera = (window as unknown as SceneProbeWindow).qaCamera!
+    return {
+      view: camera.matrixWorldInverse.toArray(),
+      projection: camera.projectionMatrix.toArray()
+    }
+  })
+  const camera = new PerspectiveCamera()
+  camera.matrixWorldInverse.fromArray(matrices.view)
+  camera.projectionMatrix.fromArray(matrices.projection)
+  return camera
+}
+
 /** Where a base's point at height `y` sits on the canvas, in the home view. */
 async function projectBase(
   page: Page,
@@ -815,16 +834,7 @@ async function projectBase(
     const r = canvas.getBoundingClientRect()
     return { x: r.x, y: r.y, width: r.width, height: r.height }
   })
-  const camera = new PerspectiveCamera()
-  applyFieldCamera(camera, {
-    width: rect.width,
-    height: rect.height,
-    view: 'home',
-    zoom: 1.25,
-    tilt: (-11 * Math.PI) / 180,
-    heightOffset: 33,
-    bottomExtension: 112
-  })
+  const camera = await mountedCamera(page)
   const point = new Vector3(BASES[base].x, y, BASES[base].z).project(camera)
   return [
     rect.x + ((point.x + 1) * rect.width) / 2,
@@ -1169,7 +1179,17 @@ describe('scoring browser', function () {
             const done = document.querySelector(`[aria-label="${label}"]`)
             const row = done == null ? null : done.parentElement
             const toast = row == null ? null : row.parentElement
-            return toast != null && toast.getBoundingClientRect().width > 400
+            const menu = document.querySelector(
+              '[aria-label="Open scoring menu"]'
+            )
+            if (toast == null || menu == null) return false
+            const box = toast.getBoundingClientRect()
+            // The old portrait toast can also span 400 points. Wait for the
+            // compact toast to align with the menu at the new viewport size.
+            return (
+              box.width > 400 &&
+              Math.abs(box.top - menu.getBoundingClientRect().top) <= 1
+            )
           },
           {},
           label
@@ -1333,15 +1353,7 @@ describe('scoring browser', function () {
         const r = node.getBoundingClientRect()
         return { x: r.x, y: r.y, width: r.width, height: r.height }
       })
-      const camera = new PerspectiveCamera()
-      applyFieldCamera(camera, {
-        ...rect,
-        view: 'home',
-        zoom: 1.25,
-        tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33,
-        bottomExtension: 112
-      })
+      const camera = await mountedCamera(page)
       const project = (x: number, z: number): [number, number] => {
         const p = new Vector3(x, 6, z).project(camera)
         return [
@@ -2053,16 +2065,7 @@ describe('scoring browser', function () {
           const r = n.getBoundingClientRect()
           return { x: r.x, y: r.y, width: r.width, height: r.height }
         })
-        const camera = new PerspectiveCamera()
-        applyFieldCamera(camera, {
-          width: box.width,
-          height: box.height,
-          view: 'home',
-          zoom: 1.25,
-          tilt: (-11 * Math.PI) / 180,
-          heightOffset: 33,
-          bottomExtension: 112
-        })
+        const camera = await mountedCamera(page)
         const project = (x: number): [number, number] => {
           const p = new Vector3(x, 6, 0).project(camera)
           return [
@@ -2260,22 +2263,7 @@ describe('scoring browser', function () {
         const rect = canvas.getBoundingClientRect()
         return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
       })
-      const camera = new PerspectiveCamera(
-        43,
-        box.width / box.height,
-        0.1,
-        1000
-      )
-      applyFieldCamera(camera, {
-        width: box.width,
-        height: box.height,
-        view: 'home',
-        zoom: 1.25,
-        tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33,
-        bottomExtension: 112
-      })
-      camera.updateMatrixWorld()
+      const camera = await mountedCamera(page)
       const project = (x: number, y: number, z: number): [number, number] => {
         const point = new Vector3(x, y, z).project(camera)
         return [
@@ -3738,16 +3726,7 @@ describe('scoring browser', function () {
         const r = canvas.getBoundingClientRect()
         return { x: r.x, y: r.y, width: r.width, height: r.height }
       })
-      const camera = new PerspectiveCamera(43, box.width / box.height, 2, 1100)
-      applyFieldCamera(camera, {
-        width: box.width,
-        height: box.height,
-        view: 'home',
-        zoom: 1.25,
-        tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33,
-        bottomExtension: 112
-      })
+      const camera = await mountedCamera(page)
       const point = (x: number, z: number): [number, number] => {
         const p = new Vector3(x, 6, z).project(camera)
         return [
@@ -4193,16 +4172,7 @@ describe('scoring browser', function () {
           const r = node.getBoundingClientRect()
           return { x: r.x, y: r.y, width: r.width, height: r.height }
         })
-        const camera = new PerspectiveCamera()
-        applyFieldCamera(camera, {
-          width: rect.width,
-          height: rect.height,
-          view: 'home',
-          zoom: 1.25,
-          tilt: (-11 * Math.PI) / 180,
-          heightOffset: 33,
-          bottomExtension: 112
-        })
+        const camera = await mountedCamera(page)
         const project = (x: number, y: number, z: number): [number, number] => {
           const p = new Vector3(x, y, z).project(camera)
           return [
@@ -4305,16 +4275,7 @@ describe('scoring browser', function () {
         const r = canvas.getBoundingClientRect()
         return { x: r.x, y: r.y, width: r.width, height: r.height }
       })
-      const camera = new PerspectiveCamera()
-      applyFieldCamera(camera, {
-        width: rect.width,
-        height: rect.height,
-        view: 'home',
-        zoom: 1.25,
-        tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33,
-        bottomExtension: 112
-      })
+      const camera = await mountedCamera(page)
       const project = (base: number, y: number): [number, number] => {
         const point = new Vector3(BASES[base].x, y, BASES[base].z).project(
           camera
@@ -4530,8 +4491,16 @@ describe('scoring browser', function () {
         const target = await readGuide(page)
         expect(Math.hypot(target.x, target.z)).closeTo(113.5, 0.01)
         expect(target.bearing).closeTo(outside ? 15 : -15, 0.01)
-        // On the guide, or fifteen feet past it into the stands.
-        await aimLandingAt(page, target.x, target.z - (outside ? 15 : 0))
+        // The field moves the landing by the drag displacement.
+        await puppeteerDriver(page).drag(
+          await groundPoint(page, target.x, target.z, 0.7),
+          await groundPoint(
+            page,
+            target.x,
+            target.z + (outside ? -15 : 15),
+            outside ? 8 : 0.7
+          )
+        )
         await setTrajectory(puppeteerDriver(page))
         await page.waitForFunction(
           () =>
@@ -4540,9 +4509,26 @@ describe('scoring browser', function () {
             ) != null
         )
         expect(await page.$('[aria-label^="Ball trajectory:"]')).equals(null)
-        const samples = (await page.evaluate(async () => {
+        // The celebration mounts before the scoreboard redraws its texture.
+        const title = createHash('sha256')
+          .update(
+            makeScoreboardPixels({
+              ...DEMO_SCOREBOARD,
+              celebration: {
+                id: 'home-run',
+                kind: outside ? 'out-of-park' : 'in-park',
+                paused: false
+              }
+            })
+          )
+          .digest('hex')
+        const samples = await page.evaluate(async expected => {
           const scene = (window as unknown as SceneProbeWindow).qaScene!
-          const sample = (): unknown => {
+          const sample = async (): Promise<{
+            matrix: number[]
+            opacity: number
+            pixels: string
+          }> => {
             const lights = scene.getObjectByName(
               'home-run-fireworks'
             )! as unknown as { instanceMatrix: { array: ArrayLike<number> } }
@@ -4551,25 +4537,36 @@ describe('scoring browser', function () {
             )! as unknown as {
               material: {
                 opacity: number
-                map: { image: { data: ArrayLike<number> } }
+                map: { image: { data: Uint8Array<ArrayBuffer> } }
               }
             }
+            if (text == null || lights == null)
+              throw new Error(
+                'Home-run celebration ended before its title could be sampled'
+              )
+            const digest = await crypto.subtle.digest(
+              'SHA-256',
+              text.material.map.image.data
+            )
             return {
               matrix: Array.from(lights.instanceMatrix.array),
               opacity: text.material.opacity,
-              pixels: Array.from(text.material.map.image.data)
+              pixels: Array.from(new Uint8Array(digest), byte =>
+                byte.toString(16).padStart(2, '0')
+              ).join('')
             }
           }
-          const before = sample()
+          let before = await sample()
+          while (before.pixels !== expected) {
+            await new Promise(resolve => requestAnimationFrame(resolve))
+            before = await sample()
+          }
           await new Promise(resolve => setTimeout(resolve, 300))
-          return { before, after: sample() }
-        })) as {
-          before: { matrix: number[]; opacity: number; pixels: number[] }
-          after: { matrix: number[]; opacity: number; pixels: number[] }
-        }
+          return { before, after: await sample() }
+        }, title)
         expect(samples.before.matrix).not.deep.equals(samples.after.matrix)
         expect(samples.before.opacity).not.equals(samples.after.opacity)
-        expect(samples.before.pixels).deep.equals(samples.after.pixels)
+        expect(samples.after.pixels).equals(title)
         await page.screenshot({
           path: join(
             process.env.TS_SCORING_ARTIFACT_DIR!,
@@ -4722,15 +4719,7 @@ describe('scoring browser', function () {
             const r = node.getBoundingClientRect()
             return { x: r.x, y: r.y, width: r.width, height: r.height }
           })
-          const camera = new PerspectiveCamera()
-          applyFieldCamera(camera, {
-            ...rect,
-            view: 'home',
-            zoom: 1.25,
-            tilt: (-11 * Math.PI) / 180,
-            heightOffset: 33,
-            bottomExtension: 112
-          })
+          const camera = await mountedCamera(page)
           const project = (
             x: number,
             z: number,
@@ -5729,16 +5718,7 @@ describe('scoring browser', function () {
         const r = n.getBoundingClientRect()
         return { x: r.x, y: r.y, width: r.width, height: r.height }
       })
-      const camera = new PerspectiveCamera()
-      applyFieldCamera(camera, {
-        width: rect.width,
-        height: rect.height,
-        view: 'home',
-        zoom: 1.25,
-        tilt: (-11 * Math.PI) / 180,
-        heightOffset: 33,
-        bottomExtension: 112
-      })
+      const camera = await mountedCamera(page)
       const pt = new Vector3(BASES[1].x, 6, BASES[1].z).project(camera)
       await page.touchscreen.touchStart(
         rect.x + ((pt.x + 1) * rect.width) / 2,
@@ -5830,7 +5810,6 @@ describe('scoring browser', function () {
         await page.waitForSelector('canvas[data-field-ready="true"]')
         await captureScene(page)
         const actual = await page.evaluate(() => {
-          const camera = (window as unknown as SceneProbeWindow).qaCamera!
           const labels = [
             'More',
             'Nothing to undo',
@@ -5842,8 +5821,6 @@ describe('scoring browser', function () {
             'Bunt in Play'
           ]
           return {
-            matrix: camera.matrixWorld.toArray(),
-            projection: camera.projectionMatrix.toArray(),
             controls: labels.map(label => {
               const n = document.querySelector(`[aria-label="${label}"]`)!
               const r = n.getBoundingClientRect()
@@ -5878,37 +5855,20 @@ describe('scoring browser', function () {
             }
           }
         })
-        const camera = new PerspectiveCamera()
-        applyFieldCamera(camera, {
-          ...actual.canvas,
-          view: 'home',
-          zoom: 1.25,
-          tilt: (-11 * Math.PI) / 180,
-          heightOffset: 33,
-          bottomExtension: 112
+        const board = await measuredBoard(page)
+        const { menu, card, controlsTop } = await page.evaluate(() => {
+          const bounds = (selector: string): DOMRect =>
+            document.querySelector(selector)!.getBoundingClientRect()
+          return {
+            menu: bounds('[aria-label="Open scoring menu"]').bottom,
+            card: bounds('[data-position="C"]').bottom,
+            controlsTop: bounds(
+              '[data-testid="walk-up-row"], [aria-label="More"]'
+            ).top
+          }
         })
-        for (const [a, b] of [
-          [actual.matrix, camera.matrixWorld.toArray()],
-          [actual.projection, camera.projectionMatrix.toArray()]
-        ])
-          a.forEach((v, i) => expect(v).closeTo(b[i], 1e-8))
-        // Equal matrices preserve every projected landmark, including plate and scoreboard.
-        for (const point of [
-          new Vector3(0, 0, 0),
-          new Vector3(27, 0, -27),
-          new Vector3(0, 28.2, -135)
-        ]) {
-          const comparison = camera.clone()
-          comparison.matrixWorld.fromArray(actual.matrix)
-          comparison.matrixWorldInverse.copy(comparison.matrixWorld).invert()
-          comparison.projectionMatrix.fromArray(actual.projection)
-          expect(
-            point
-              .clone()
-              .project(comparison)
-              .distanceTo(point.clone().project(camera))
-          ).lessThan(1e-8)
-        }
+        expect(board.top).closeTo(menu + 8, 1)
+        expect(card).at.most(controlsTop)
         const swing = actual.controls.find(c => c.label === 'Swing in Play')!
         const bunt = actual.controls.find(c => c.label === 'Bunt in Play')!
         expect(swing.bottom - bunt.y).closeTo(120, 0.1)
@@ -8152,16 +8112,7 @@ describe('scorers leave the field', function () {
       const r = canvas.getBoundingClientRect()
       return { x: r.x, y: r.y, width: r.width, height: r.height }
     })
-    const camera = new PerspectiveCamera()
-    applyFieldCamera(camera, {
-      width: rect.width,
-      height: rect.height,
-      view: 'home',
-      zoom: 1.25,
-      tilt: (-11 * Math.PI) / 180,
-      heightOffset: 33,
-      bottomExtension: 112
-    })
+    const camera = await mountedCamera(page)
     const point = new Vector3(x, y, z).project(camera)
     return [
       rect.x + ((point.x + 1) * rect.width) / 2,
