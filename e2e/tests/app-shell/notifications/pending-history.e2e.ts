@@ -16,6 +16,8 @@ export default defineE2e({
   covers: [
     'src/server/notifications/inbox.ts',
     'src/server/notifications/pendingRequests.ts',
+    'src/server/notifications/inboxPage.ts',
+    'src/server/notifications/inboxProjection.ts',
     'src/app/screens/NotificationsScreen.tsx'
   ],
   stack: 'isolated',
@@ -248,6 +250,193 @@ export default defineE2e({
       } finally {
         writeFileSync(
           ctx.artifact('pending-history-requests.log'),
+          lines.join('\n') + '\n'
+        )
+      }
+    },
+    'sent-history': async ctx => {
+      const world = await ctx.fixture('pending-history')
+      const { signInTestAccount } =
+        await import('../../../../src/test/passwordFixtures')
+      const lines: string[] = []
+      try {
+        for (const role of ['sent', 'history', 'information', 'inaccessible']) {
+          await clearSignInLimits(ctx)
+          const session = await ctx.browser(PHONE_WINDOW)
+          const timings: Array<{ path: string; ms: number; status: number }> =
+            []
+          const pending = new Map<
+            string,
+            { path: string; at: number; status: number }
+          >()
+          const failures: string[] = []
+          const cdp = await session.page.createCDPSession()
+          await cdp.send('Network.enable')
+          cdp.on('Network.requestWillBeSent', event => {
+            const url = new URL(event.request.url)
+            if (
+              event.request.method === 'GET' &&
+              url.pathname.startsWith(PENDING)
+            )
+              pending.set(event.requestId, {
+                path: url.pathname + url.search,
+                at: event.timestamp,
+                status: 0
+              })
+          })
+          cdp.on('Network.responseReceived', event => {
+            const row = pending.get(event.requestId)
+            if (row != null) row.status = event.response.status
+          })
+          cdp.on('Network.loadingFinished', event => {
+            const row = pending.get(event.requestId)
+            if (row != null) {
+              timings.push({
+                path: row.path,
+                status: row.status,
+                ms: Math.round((event.timestamp - row.at) * 1000)
+              })
+              pending.delete(event.requestId)
+            }
+          })
+          cdp.on('Network.loadingFailed', event => {
+            if (pending.has(event.requestId)) {
+              failures.push(event.errorText)
+              pending.delete(event.requestId)
+            }
+          })
+          try {
+            await session.m.openLink({ link: ctx.stack.origin + '/' })
+            await ctx.signIn(role, session.m)
+            const token = await signInTestAccount(
+              ctx.stack.origin + '/api/v1',
+              world.accounts[role]
+            )
+            const headers = { authorization: `Bearer ${token}` }
+            const read = async (
+              query: string
+            ): Promise<{
+              items: Notification[]
+              hasPending: boolean
+              nextCursor: string | null
+            }> => {
+              const at = performance.now()
+              const value = (await readJson(ctx.stack.origin, PENDING + query, {
+                headers
+              })) as {
+                items: Notification[]
+                hasPending: boolean
+                nextCursor: string | null
+              }
+              const ms = Math.round(performance.now() - at)
+              lines.push(
+                JSON.stringify({
+                  role,
+                  kind: 'authenticated-http',
+                  query,
+                  ms,
+                  items: value.items.length,
+                  hasPending: value.hasPending,
+                  nextCursor: value.nextCursor != null
+                })
+              )
+              expect(ms, role + query).lessThan(5000)
+              const summary = (await readJson(
+                ctx.stack.origin,
+                PENDING + '/summary',
+                { headers }
+              )) as { hasPending: boolean }
+              expect(value.hasPending).equals(summary.hasPending)
+              return value
+            }
+            await session.m.tapOn({ text: 'Account, .*' })
+            await session.m.tapOn({
+              text: '^Notifications$',
+              childOf: { id: 'header-menu-panel' }
+            })
+            for (const mode of ['Sent', 'History', 'Pending']) {
+              await session.m.tapOn({ text: `^${mode}$` })
+              const query =
+                mode === 'Pending'
+                  ? ''
+                  : mode === 'Sent'
+                    ? '?sent=1'
+                    : '?history=1'
+              const first = await read(query)
+              await ctx.checkpoint(`${role}-${mode.toLowerCase()}`, {
+                expect: [
+                  { text: 'Cannot reach TeamStation.*', absent: true },
+                  { text: '^Retry notifications$', absent: true },
+                  ...(first.items.length === 0
+                    ? []
+                    : [{ id: `notification-row-${first.items[0].requestId}` }])
+                ]
+              })
+              if (first.nextCursor != null) {
+                const second = await read(
+                  query +
+                    (query === '' ? '?' : '&') +
+                    'cursor=' +
+                    encodeURIComponent(first.nextCursor)
+                )
+                const ids = [...first.items, ...second.items].map(
+                  r => r.requestId
+                )
+                expect(new Set(ids).size).equals(ids.length)
+                expect(second.items.length).greaterThan(0)
+                // Exercise actual list-driven pagination, not only an API cursor.
+                const secondId = second.items[0].requestId
+                for (let step = 0; step < 40; step++) {
+                  if (
+                    await session.page.evaluate(
+                      id =>
+                        document.querySelector(
+                          `[data-testid="notification-row-${id}"]`
+                        ) != null,
+                      secondId
+                    )
+                  )
+                    break
+                  await session.m.scroll({ direction: 'DOWN' })
+                }
+                await eventually(async () => {
+                  expect(
+                    timings.some(row => row.path.includes('cursor='))
+                  ).equals(true)
+                })
+              }
+              const late = await read(
+                query +
+                  (query === '' ? '?' : '&') +
+                  'cursor=' +
+                  encodeURIComponent('1|2999-01-01T00:00:00.000Z|z')
+              )
+              expect(late.items).deep.equals([])
+              expect(late.nextCursor).equals(null)
+            }
+            await eventually(async () => {
+              expect(pending.size).equals(0)
+            })
+            expect(failures).deep.equals([])
+            for (const row of timings) {
+              expect(row.status, row.path).equals(200)
+              expect(row.ms, row.path).lessThan(5000)
+            }
+          } finally {
+            lines.push(
+              JSON.stringify({
+                role,
+                kind: 'browser-network',
+                timings,
+                failures
+              })
+            )
+            await session.close()
+          }
+        }
+      } finally {
+        writeFileSync(
+          ctx.artifact('sent-history-requests.log'),
           lines.join('\n') + '\n'
         )
       }

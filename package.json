@@ -165,7 +165,9 @@
     "fixtures": "node -r sucrase/register src/server/dev/fixtures/cli.ts",
     "coverage.e2e": "c8 --all --check-coverage --lines 90 --reporter=text --include 'e2e/core/**/*.ts' --include 'e2e/faults/**/*.ts' --include 'e2e/rigs/app/keyboardMotion.ts' --include 'e2e/rigs/app/setServer.ts' --include src/buildWorker.mjs --exclude '**/*.test.ts' mocha --timeout 60000 --exit -r sucrase/register --extension ts --spec 'e2e/**/*.test.ts' --spec src/buildWorker.test.ts",
     "splash.assets": "node scripts/splash/buildSplashAssets.mjs",
-    "coverage.splash": "node scripts/splash-coverage.mjs"
+    "coverage.splash": "node scripts/splash-coverage.mjs",
+    "coverage.notificationTabs.unit": "node scripts/notification-tabs-coverage.mjs",
+    "coverage.notificationTabs.combined": "node scripts/notification-tabs-coverage.mjs --combined"
   },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "3.54.1-build1",
