@@ -16,36 +16,13 @@ import {
   RESET_AND_SWAP_REPORT,
   scoringSwapFixture
 } from '../../../rigs/scoringLayout'
+import { freshReading, type Reading } from '../../../rigs/scoringViewport'
 import {
   hideSafariToolbar,
   reopenSafariToolbar,
   signInViewportScorer
 } from '../../../rigs/scoringViewportPhone'
 
-interface Box {
-  top: number
-  bottom: number
-  height: number
-}
-interface Reading {
-  documentId: string
-  width: number
-  small: number
-  top: number
-  bottom: number
-  root?: Box
-  strip?: Box
-  deck?: Box
-  catcher?: number
-  logBand?: Box
-  notice?: Box
-  noticeText?: string
-  noticeTextBottom?: number
-  log?: Box
-  page: string
-  exposed?: string | null
-  insets: number[]
-}
 const grass = 'rgb(79, 121, 56)'
 const pause = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
@@ -73,36 +50,6 @@ function footColours(png: PNG): number[][] {
     }
     return result
   })
-}
-
-function freshReading(control: ReturnType<typeof faultControl>, run: string) {
-  const originPath = `/api/v1/viewport-observation/${run}/`
-  return async (
-    channel: string,
-    widthCheck: (r: Reading) => boolean
-  ): Promise<Reading> => {
-    const prefix = originPath + channel + '/'
-    const rows = async (): Promise<Array<{ at: number; path: string }>> => {
-      const rows = (await control.call(
-        'GET',
-        'requests?path=' + encodeURIComponent(prefix)
-      )) as { requests: Array<{ at: number; path: string }> }
-      return rows.requests
-    }
-    const previous = (await rows()).at(-1)?.at ?? 0
-    for (const end = Date.now() + 15000; Date.now() < end;) {
-      await pause(400)
-      const row = (await rows()).at(-1)
-      if (row == null || row.at <= previous) continue
-      const measurement = JSON.parse(
-        Buffer.from(row.path.slice(prefix.length), 'base64url').toString()
-      ) as Reading
-      if (widthCheck(measurement)) return measurement
-    }
-    throw new Error(
-      `No fresh ${channel} geometry; stage e2e/fixtures/viewportProbe/stage.mjs on the isolated web build`
-    )
-  }
 }
 
 async function bottomStrip(ctx: E2eContext): Promise<void> {
