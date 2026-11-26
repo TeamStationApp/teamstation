@@ -4510,6 +4510,41 @@
       "file": "e2e/tests/platform/browser/observation.integration.ts"
     },
     {
+      "id": "platform/dump-world/sign-in#coach-sees-team",
+      "title": "A dump world's committed account signs in and sees its team",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/HomeScreen.tsx",
+        "e2e/fixtures/dumps/coach-season-dump.dump",
+        "e2e/fixtures/dumps/coach-season-dump.accounts.json"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-season-dump"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/dump-world/sign-in",
+      "file": "e2e/tests/platform/dump-world/sign-in.e2e.ts"
+    },
+    {
       "id": "platform/node-admin/ios-app-banner-safari#native-safari",
       "title": "Safari offers the published app on a physical iPhone or iPad",
       "kind": "e2e",

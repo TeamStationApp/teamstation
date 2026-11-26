@@ -22,13 +22,44 @@ export interface DeviceNeed {
   role: string
   needs: string[]
   hardware: Hardware
+  /**
+   * Whether a simulator or emulator may stand in when no device with the
+   * needs is free (`e2e/core/capabilities.ts`). A role without it is treated
+   * as `'never'`; `camera`, `push` and `gpu` always make it `'never'`.
+   */
+  simulator?: 'allowed' | 'never'
+}
+
+/** What a web surface's page does: `video` (in `codecs`) or `gpu` put it on the Mac. */
+export interface BrowserNeed {
+  role: string
+  needs: string[]
+  codecs?: string[]
 }
 
 export interface SurfaceNeeds {
   devices: DeviceNeed[]
+  browser?: BrowserNeed
 }
 
 export type StackKind = 'seat' | 'isolated' | 'none'
+
+/** The stacks a harness run gets: a pool stack of its own, or none. */
+export type HarnessStackKind = 'isolated' | 'none'
+
+/** What a pool stack is asked to supply beside the ref's API and web build. */
+export const SERVICES = [
+  'mail-capture',
+  'push-capture',
+  'real-model',
+  'dictation-model',
+  'reverse-proxy',
+  'oauth-provider',
+  'log-collector'
+] as const
+
+/** The names specs used before `SERVICES`, valid until M4 converts them. */
+export const OLD_SERVICES = ['api', 'web', 'smtp', 'tess-model'] as const
 
 /** Services an isolated stack does not have, so a scenario needing one blocks. */
 export const SEAT_ONLY_SERVICES = [
@@ -141,6 +172,69 @@ export interface WebSession {
 
 export type Scenario = (ctx: E2eContext) => Promise<void>
 
+/** A dump world's committed testing account (`e2e/fixtures/dumps/<world>.accounts.json`). */
+export interface DumpAccount extends FixtureAccount {
+  /** The teams, games and people the account holds that a test relies on. */
+  teams: Array<{ id: string; name: string }>
+  games: Array<{ id: string; name: string }>
+  people: Array<{ id: string; name: string }>
+}
+
+/** The stack's fault-server control routes, over HTTPS. */
+export interface StackControl {
+  seed: (world: string) => Promise<FixtureManifest>
+  rateLimits: (body?: unknown) => Promise<unknown>
+  restartApi: () => Promise<unknown>
+  serverLog: (since: number) => Promise<ServerError[]>
+  setFault: (fault: string | null) => Promise<void>
+  jev: {
+    read: () => Promise<JevView>
+    set: (control: Partial<JevControl>) => Promise<JevView>
+  }
+  remux: (body: unknown) => Promise<unknown>
+  mail: (address: string, since: number) => Promise<unknown>
+  push: (since: number) => Promise<unknown>
+  pages: {
+    script: (pages: Record<string, unknown>) => Promise<unknown>
+    requests: (since: number) => Promise<unknown>
+  }
+}
+
+/** A stack under the harness: a handle with the control routes, when it has them. */
+export interface HarnessStackHandle extends StackHandle {
+  control?: StackControl
+  /** The stack's second origin, for pages outside the app. */
+  pagesOrigin?: string
+}
+
+/**
+ * What `runScenario` gives a scenario (`e2e/core/harness.ts`): an
+ * `E2eContext`, so an unconverted scenario runs on it, with the devices
+ * already attached and the caller's app ids.
+ */
+export interface HarnessContext extends E2eContext {
+  stack: HarnessStackHandle
+  /** The maestro-d device attached for `role`. */
+  attached: (role: string) => any
+  /** The app id the caller passed for `kind`. */
+  app: (kind: string) => string
+  /** A dump world's testing account for `role`. */
+  account: (role: string) => DumpAccount
+}
+
+export type HarnessScenario = (ctx: HarnessContext) => Promise<void>
+
+export interface HarnessSpec extends Omit<E2eSpec, 'scenarios'> {
+  scenarios: Record<string, HarnessScenario>
+}
+
+/** Whether a scenario is running under `runScenario`, given the caller's app ids. */
+export function isHarnessContext(
+  ctx: E2eContext | HarnessContext
+): ctx is HarnessContext {
+  return typeof (ctx as Partial<HarnessContext>).app === 'function'
+}
+
 export interface E2eSpec {
   id: string
   title: string
@@ -192,5 +286,10 @@ export function specProblems(spec: E2eSpec): string[] {
 }
 
 export function defineE2e(spec: E2eSpec): E2eSpec {
+  return spec
+}
+
+/** A spec whose scenarios run under `runScenario` alone. */
+export function defineHarness(spec: HarnessSpec): HarnessSpec {
   return spec
 }

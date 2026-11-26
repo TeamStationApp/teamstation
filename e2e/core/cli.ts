@@ -1,10 +1,12 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import { PNG } from 'pngjs'
 
+import { migrations } from '../../src/migrate/migrations'
 import {
   attachStack,
   baselineFile,
@@ -27,6 +29,7 @@ import {
 import { mergeCoverage } from './coverage'
 import { detectFault } from './detect'
 import { requireDropletHandle, seedOnStack } from './dropletStack'
+import { makeDump } from './dumps'
 import {
   acceptGolden,
   type GoldenManifest,
@@ -34,6 +37,7 @@ import {
   rotateStore,
   syncStore
 } from './goldens'
+import { normalizedNeeds } from './harness'
 import {
   Budget,
   createMessage,
@@ -46,7 +50,13 @@ import {
 import { type DetectRow, ledgerPath, readLedger } from './ledger'
 import { readLegacy } from './legacy'
 import { connectDaemon } from './maestro'
-import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
+import {
+  buildManifest,
+  loadSpec,
+  readManifest,
+  ROOT,
+  writeManifest
+} from './manifest'
 import { type PlanResource, planScenarios } from './plan'
 import { prepareApp, prepareAppOnHub, preparesOnHub } from './prepare'
 import { BlockedError, HarnessError } from './result'
@@ -130,6 +140,18 @@ function roleMap(values: string[] | undefined): Record<string, string> {
     out[value.slice(0, at)] = value.slice(at + 1)
   }
   return out
+}
+
+/**
+ * `needs <test file | spec id>`: the spec's needs as the devops runner
+ * reads them, through `normalizedNeeds`, every field.
+ */
+export function needsOf(target: string, root = ROOT): unknown {
+  const file = target.endsWith('.ts')
+    ? relative(root, resolve(target))
+    : buildManifest(root).scenarios.find(row => row.spec === target)?.file
+  if (file == null) throw new Error(`No spec "${target}"`)
+  return { file, ...normalizedNeeds(loadSpec(file, root)) }
 }
 
 /** A capture with the app's failure screen over it, drawn by a real browser. */
@@ -235,6 +257,40 @@ export async function main(argv: string[]): Promise<number> {
           }
         }
       }
+      return 0
+    }
+
+    case 'needs': {
+      if (subcommand == null) {
+        throw new Error('needs wants <test file | spec id> --json')
+      }
+      print(needsOf(subcommand))
+      return 0
+    }
+
+    case 'dump': {
+      // Seeds the world's source on a fresh pool stack, then dumps it there.
+      const world = subcommand
+      if (world == null || values.stack == null) {
+        throw new Error(
+          'dump wants <world> --stack <id of a fresh stack up stack>'
+        )
+      }
+      const entry = stackState(values.stack)
+      const handle = requireDropletHandle(
+        entry.handle ?? { version: 0, id: entry.id, origin: entry.origin }
+      )
+      print(
+        await makeDump({
+          root: ROOT,
+          world,
+          databaseUrl: handle.databaseUrl,
+          seed: async (source, mailbox) =>
+            await seedOnStack(handle, source, mailbox),
+          migrations: migrations.map(migration => migration.name),
+          scratch: mkdtempSync(join(tmpdir(), 'e2e-dump-'))
+        })
+      )
       return 0
     }
 

@@ -1,0 +1,7 @@
+{
+  "directory": "teamstation",
+  "parents": {
+    "develop": ["master"],
+    "*": ["develop", "master"]
+  }
+}

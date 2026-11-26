@@ -1,38 +1,8 @@
-import { FAULTS } from '../faults/catalogue'
-import type { CheckpointRecord } from './checkpoint'
-import { failedInvariants } from './invariants'
+import { detectRow } from './detectRow'
 import { appendLedger, type DetectRow } from './ledger'
-import type { RunResult } from './result'
 import { type RunOptions, runScenario } from './run'
 
-/**
- * Which layer turned the run red, read from what it recorded. A crash proves no layer
- * saw the fault, so it is named as what it is, and the catalogue never expects it.
- */
-export function caughtByLayer(result: RunResult, fault?: string): string {
-  for (const record of result.checkpoints as CheckpointRecord[]) {
-    if (
-      record.invariants != null &&
-      failedInvariants(record.invariants).length > 0
-    ) {
-      return 'invariant'
-    }
-    if (record.expect === 'fail') return 'expect'
-    if (record.readBack === 'fail') return 'read-back'
-    if (record.visual?.verdict === 'fail') return 'golden'
-    if (record.ask?.verdict === 'fail') return 'ai'
-  }
-  if (result.failureKind === 'crash') return 'test-crash'
-  // A direct assertion stopped the scenario before a checkpoint saw the screen. The
-  // proxy's record says when the server's failure is why, but only for a fault that
-  // makes one: a server the scenario shuts down answers 502s of its own afterwards.
-  const makesErrors =
-    fault != null && FAULTS[fault]?.caughtBy.includes('invariant')
-  if (makesErrors && (result.serverErrors ?? []).length > 0) {
-    return 'invariant'
-  }
-  return 'expect'
-}
+export { caughtByLayer } from './detectRow'
 
 export interface DetectOutcome {
   row: DetectRow
@@ -53,25 +23,14 @@ export async function detectFault(
     ...options,
     seat: undefined
   })
-  const failed = result.status === 'failed'
-  const caughtBy = failed ? caughtByLayer(result, options.fault) : 'none'
-  const caught = failed && caughtBy !== 'test-crash'
-  const row: DetectRow = {
-    kind: 'detect',
-    at: new Date().toISOString(),
+  const row = detectRow(result, {
     scenario: options.id,
     surface: options.surface,
-    fault: options.fault,
-    ref: result.ref,
-    caught,
-    caughtBy,
-    expectedLayer:
-      FAULTS[options.fault]?.caughtBy.includes(caughtBy as never) ?? false,
-    status: result.status
-  }
+    fault: options.fault
+  })
   if (result.status === 'blocked' || result.status === 'harness-error') {
     return { row, exitCode, runDir }
   }
   appendLedger(ledger, row)
-  return { row, exitCode: caught ? 0 : 1, runDir }
+  return { row, exitCode: row.caught ? 0 : 1, runDir }
 }

@@ -312,3 +312,57 @@ export function rotateStore(options: RotateOptions): {
     rmSync(scratch, { recursive: true, force: true })
   }
 }
+
+/**
+ * The suite's declaration, `e2e/goldens.json`: the folder its pins and its
+ * goldens on the testing Space sit under, and each stage's lookup chain.
+ */
+export interface GoldenSuite {
+  directory: string
+  parents: Record<string, string[]>
+}
+
+export function goldenSuitePath(root: string): string {
+  return join(root, 'e2e', 'goldens.json')
+}
+
+/** Reads `e2e/goldens.json`, naming what is wrong with one that is malformed. */
+export function readGoldenSuite(root: string): GoldenSuite {
+  const path = goldenSuitePath(root)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error) {
+    throw new Error(`e2e/goldens.json is not JSON: ${String(error)}`)
+  }
+  const suite = parsed as Partial<GoldenSuite> | null
+  if (
+    typeof suite?.directory !== 'string' ||
+    !/^[a-z0-9][a-z0-9-]*$/.test(suite.directory)
+  ) {
+    throw new Error('e2e/goldens.json: directory is a plain folder name')
+  }
+  const parents = suite.parents as unknown
+  if (
+    parents == null ||
+    typeof parents !== 'object' ||
+    Array.isArray(parents) ||
+    !Object.values(parents).every(
+      chain =>
+        Array.isArray(chain) && chain.every(stage => typeof stage === 'string')
+    )
+  ) {
+    throw new Error(
+      'e2e/goldens.json: parents maps each stage to a list of stages'
+    )
+  }
+  return {
+    directory: suite.directory,
+    parents: parents as Record<string, string[]>
+  }
+}
+
+/** A golden's committed pin, holding its image's SHA-256. */
+export function goldenPinPath(suiteDir: string, key: string): string {
+  return join('e2e', 'goldens', suiteDir, `${key}.sha256`)
+}
