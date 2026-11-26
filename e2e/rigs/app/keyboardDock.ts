@@ -179,8 +179,8 @@ export async function openSearch(
   // A launch can settle on Home after its first frame (signed out, the
   // sign-in card): a tap that lands before then is undone, so tap again.
   for (let attempt = 1; ; attempt++) {
-    await tapTab(device, 'search')
     try {
+      await tapTab(device, 'search')
       await device.assertVisible({ text: PLACEHOLDER, timeout: 8000 })
       return
     } catch (error) {

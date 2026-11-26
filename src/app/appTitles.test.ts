@@ -3,6 +3,8 @@ import { readFileSync } from 'fs'
 import { describe, it } from 'mocha'
 import { join } from 'path'
 
+import { NAV_TABS, navTabId } from './components/tabBarModel'
+
 /**
  * The header says as little as it can get away with.
  *
@@ -48,14 +50,16 @@ describe('app titles', function () {
     expect(header).match(/back: \{[\s\S]*?minHeight: theme\.rem\(3\)/)
   })
 
-  it('lists the five main destinations', function () {
-    // Read rather than imported: the component pulls in React Native, which
-    // does not load outside a bundler, and the list is the thing being
-    // asserted rather than the rendering of it.
-    const nav = readFileSync(join(__dirname, 'components/AppNav.tsx'), 'utf8')
+  it('lists the five main destinations with their labels, icons and stable IDs', function () {
     expect(
-      [...nav.matchAll(/\{ id: '(\w+)', label:/g)].map(match => match[1])
-    ).deep.equals(['home', 'videos', 'schedule', 'search', 'chat'])
+      NAV_TABS.map(tab => [navTabId(tab.id), tab.label, tab.icon])
+    ).deep.equals([
+      ['tab-home', 'Home', 'home'],
+      ['tab-videos', 'Videos', 'smart_display'],
+      ['tab-schedule', 'Schedule', 'event'],
+      ['tab-search', 'Search', 'search'],
+      ['tab-chat', 'Chat', 'chat']
+    ])
   })
 
   it('draws the destinations as icons alone', function () {

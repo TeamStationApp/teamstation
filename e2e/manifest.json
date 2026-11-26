@@ -1835,6 +1835,216 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "id": "app-shell/tab-bar/system#composer-clearance",
+      "title": "The iOS system tab bar selects labelled destinations by tap and drag",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSTabBarComponentView.mm",
+        "src/app/components/SystemTabBar.ios.tsx",
+        "src/app/components/AppNav.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/tab-bar/system",
+      "file": "e2e/tests/app-shell/tab-bar/system.e2e.ts"
+    },
+    {
+      "id": "app-shell/tab-bar/system#drag-lens",
+      "title": "The iOS system tab bar selects labelled destinations by tap and drag",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSTabBarComponentView.mm",
+        "src/app/components/SystemTabBar.ios.tsx",
+        "src/app/components/AppNav.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/tab-bar/system",
+      "file": "e2e/tests/app-shell/tab-bar/system.e2e.ts"
+    },
+    {
+      "id": "app-shell/tab-bar/system#five-tabs",
+      "title": "The iOS system tab bar selects labelled destinations by tap and drag",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSTabBarComponentView.mm",
+        "src/app/components/SystemTabBar.ios.tsx",
+        "src/app/components/AppNav.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/tab-bar/system",
+      "file": "e2e/tests/app-shell/tab-bar/system.e2e.ts"
+    },
+    {
+      "id": "app-shell/tab-bar/system#offline-banner-clearance",
+      "title": "The iOS system tab bar selects labelled destinations by tap and drag",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSTabBarComponentView.mm",
+        "src/app/components/SystemTabBar.ios.tsx",
+        "src/app/components/AppNav.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/tab-bar/system",
+      "file": "e2e/tests/app-shell/tab-bar/system.e2e.ts"
+    },
+    {
+      "id": "app-shell/tab-bar/system#unread-in-dark-appearance",
+      "title": "The iOS system tab bar selects labelled destinations by tap and drag",
+      "kind": "e2e",
+      "covers": [
+        "ios/TeamStation/TSTabBarComponentView.mm",
+        "src/app/components/SystemTabBar.ios.tsx",
+        "src/app/components/AppNav.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/tab-bar/system",
+      "file": "e2e/tests/app-shell/tab-bar/system.e2e.ts"
+    },
+    {
       "id": "assistant/chat/android-chat#bubble-closes-chat-and-opens-settings",
       "title": "On Android Tess is a full-screen chat that the hardware Back closes, with her links and her sheet",
       "kind": "e2e",

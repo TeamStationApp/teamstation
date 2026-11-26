@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, dirname, resolve } from 'node:path'
@@ -38,15 +39,27 @@ export async function recordBrowserCoverage(
         sourceMapRoot,
         basename(new URL(script.url).pathname)
       )
+      const map = await readFile(generated + '.map', 'utf8')
+      if (process.env.TS_TAB_COVERAGE_WEB_DIR === sourceMapRoot) {
+        // Fingerprints come from the collector's fresh local build. Verify
+        // both the executing script and the map used to attribute its lines.
+        const hashes = JSON.parse(
+          process.env.TS_TAB_COVERAGE_ASSETS ?? '{}'
+        ) as Record<string, string>
+        const hash = (text: string): string =>
+          createHash('sha256').update(text).digest('hex')
+        if (
+          hash(script.text) !== hashes[basename(generated)] ||
+          hash(map) !== hashes[basename(generated) + '.map']
+        )
+          throw new Error(
+            'Browser code or source map differs from the local coverage build'
+          )
+      }
       const converter = convert(generated, 0, {
         source: script.text,
         sourceMap: {
-          sourcemap: JSON.parse(
-            await readFile(
-              resolve(sourceMapRoot, basename(generated) + '.map'),
-              'utf8'
-            )
-          )
+          sourcemap: JSON.parse(map)
         }
       })
       await converter.load()

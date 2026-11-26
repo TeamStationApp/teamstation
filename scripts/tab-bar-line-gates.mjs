@@ -110,8 +110,6 @@ export function runGates(kind, source, unit, supplements, base, directory) {
         '--ext',
         '.tsx',
         '--exclude',
-        'src/app/components/TSTabBarNativeComponent.ts',
-        '--exclude',
         'src/app/theme/types.ts', // Theme interfaces have no runtime instructions.
         ...jsRoots
       ]

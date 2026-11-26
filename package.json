@@ -31,7 +31,8 @@
       },
       "componentProvider": {
         "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",
-        "TSQrScanner": "TSQrScannerComponentView"
+        "TSQrScanner": "TSQrScannerComponentView",
+        "TSTabBar": "TSTabBarComponentView"
       }
     }
   },

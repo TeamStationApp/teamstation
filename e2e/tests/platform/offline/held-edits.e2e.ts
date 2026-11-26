@@ -92,7 +92,13 @@ const sleep = async (ms: number): Promise<void> => {
 /** The Score screen of the game, from its address. */
 async function openScoring(app: CoachApp, world: World): Promise<void> {
   await app.m.openLink({ link: `teamstation://games/${world.game}/score` })
-  await app.m.extendedWaitUntil({ visible: { text: 'Ball' }, timeout: 60000 })
+  // The Undo row can describe a ball before the scoring control is ready.
+  await app.m.extendedWaitUntil({ visible: { id: 'Ball' }, timeout: 60000 })
+  // The action pad appears before the field loads the current game.
+  await app.m.extendedWaitUntil({
+    visible: { id: 'field-nameplate' },
+    timeout: 30000
+  })
 }
 
 /** Leaves the Score screen for the game's page. */
@@ -106,7 +112,7 @@ async function exitScoring(app: CoachApp, world: World): Promise<void> {
 type Act = (app: CoachApp) => Promise<void>
 
 const tapBall: Act = async app => {
-  await app.m.tapOn({ text: 'Ball' })
+  await app.m.tapOn({ id: 'Ball' })
   await sleep(1500)
 }
 
@@ -282,7 +288,28 @@ export default defineE2e({
       // The game's page as it opens, its hero first.
       await shot(ctx, app, 'game-held.png')
       // The banner on Home, a page of its own that says nothing held.
-      await app.m.tapOn({ id: navTabId('home') })
+      const nodes = await app.nodes()
+      const homeId = navTabId('home')
+      if (nodes.some(node => node.id === homeId))
+        await app.m.tapOn({ id: homeId })
+      else {
+        // The base build exposes only the accessible label. Match the tab in
+        // the bottom navigation row so game content named Home cannot win.
+        const window = await app.window()
+        const tab = nodes.find(
+          node =>
+            labelOf(node) === 'Home' &&
+            node.bounds != null &&
+            node.bounds.y > window.y + window.height * 0.75
+        )?.bounds
+        if (tab == null) throw new Error('Missing legacy Home tab')
+        await app.m.tapOn({
+          point:
+            Math.round(tab.x + tab.width / 2) +
+            ',' +
+            Math.round(tab.y + tab.height / 2)
+        })
+      }
       await ctx.checkpoint(
         'banner-held',
         { expect: [{ id: 'offlineBanner', timeout: 30000 }] },

@@ -9,43 +9,16 @@ import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
 import type { IconName } from './Icon'
 import { floatingNavBottom } from './navClearance'
-import { type NavTabId, navTabId } from './tabBarModel'
+import { supportsSystemTabBar } from './supportsSystemTabBar'
+import { SystemTabBar } from './SystemTabBar'
+import { NAV_TABS, type NavTabId, navTabId } from './tabBarModel'
 
-export type { NavTabId } from './tabBarModel'
-
+export { NAV_TABS, type NavTabId } from './tabBarModel'
 export interface NavTab {
   id: NavTabId
   label: string
   icon: IconName
 }
-
-/**
- * The three places the app goes.
- *
- * The designs disagreed: the home screen drew Teams / Videos / Schedule /
- * Seasons, the team hub drew Team Hub / Live Cams / League / Account. Picking
- * one meant deciding what the app is, so: Home carries both the teams and the
- * seasons, which is what Paul asked for on that screen, so a separate Seasons
- * tab would lead to the half of a screen the user just left. Live Cams is not
- * built.
- *
- * Account is **not** here. It is reached by tapping your own picture at the
- * top right, which is where every application with a signed-in person puts it,
- * and which frees a quarter of the bar for the three things you actually move
- * between. Signing out still lives on that screen; it is simply not a
- * destination you navigate to as often as the ones that are left.
- */
-export const NAV_TABS: NavTab[] = [
-  { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'videos', label: 'Videos', icon: 'smart_display' },
-  { id: 'schedule', label: 'Schedule', icon: 'event' },
-  // A place of its own, with its own stack like the others: what was found
-  // there stays there when you switch away and come back.
-  { id: 'search', label: 'Search', icon: 'search' },
-  // Chat, the fourth: every team, season and league chat and the person's
-  // direct messages, with a dot while anything in them is unread.
-  { id: 'chat', label: 'Chat', icon: 'chat' }
-]
 
 export type NavMode = 'floating' | 'header'
 
@@ -171,6 +144,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
 
   const capsule = theme.rem(2.5)
   if (visual?.keyboardOpen === true) return <></>
+  if (floating && supportsSystemTabBar()) return <SystemTabBar {...props} />
 
   return (
     <GlassView

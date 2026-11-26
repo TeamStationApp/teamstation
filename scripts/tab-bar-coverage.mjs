@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { parseArgs } from 'node:util'
 
 import {
   jsCounts,
@@ -9,6 +10,7 @@ import {
   runGates,
   sourceStamp
 } from './tab-bar-line-gates.mjs'
+import { measureNative } from './tab-bar-native-coverage.mjs'
 
 // Measure the PR's changes even when its target advances during development.
 const base = execFileSync(
@@ -16,12 +18,21 @@ const base = execFileSync(
   ['merge-base', process.env.TS_COVERAGE_BASE ?? 'origin/develop', 'HEAD'],
   { encoding: 'utf8' }
 ).trim()
+const { values } = parseArgs({
+  options: {
+    'js-only': { type: 'boolean' },
+    supplement: { type: 'string', multiple: true, default: [] }
+  }
+})
 const source = sourceStamp()
+const supplements = values.supplement.map(readJson)
 const report = resolve('coverage/tabBar')
 mkdirSync(report, { recursive: true })
 const specs = [
   'src/app/components/AppNav.test.tsx',
-  'src/app/components/AppSidebar.test.tsx'
+  'src/app/components/AppSidebar.test.tsx',
+  'src/app/components/navGeometry.test.ts',
+  'src/app/components/SystemTabBar.native.test.ts'
 ]
 const bundle = resolve('lib/tab-bar-tests.cjs')
 execFileSync(
@@ -52,6 +63,7 @@ execFileSync(
     '--exit',
     'e2e/rigs/refinementsMaestro.test.ts',
     'e2e/core/maestro.test.ts',
+    'scripts/tab-bar-native-coverage.test.mjs',
     'scripts/tab-bar-line-gates.test.mjs',
     'src/server/tess/sitemapNavigation.test.ts',
     bundle
@@ -59,4 +71,13 @@ execFileSync(
   { stdio: 'inherit' }
 )
 const unit = jsCounts(readJson(resolve(report, 'coverage-final.json')))
-runGates('js', source, unit, [], base, report)
+runGates('js', source, unit, supplements, base, report)
+if (!values['js-only'])
+  runGates(
+    'native',
+    source,
+    measureNative(base, report),
+    supplements,
+    base,
+    report
+  )

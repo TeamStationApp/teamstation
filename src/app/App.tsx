@@ -5245,7 +5245,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     position: 'absolute',
     left: 0,
     right: 0,
-    zIndex: 5
+    // UIKit's transparent lower inset overlaps the banner's touch target.
+    zIndex: 6
   }
 }))
 
