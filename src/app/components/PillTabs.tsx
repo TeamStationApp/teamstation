@@ -156,6 +156,7 @@ export function PillTabs<Id extends string = string>(
 }
 
 export interface PillFaceProps {
+  fitLabel?: boolean
   label: string
   badge?: string
   live?: boolean
@@ -177,6 +178,7 @@ export function PillFace({
   selected = true,
   size = 'compact',
   dense = false,
+  fitLabel = false,
   icon
 }: PillFaceProps): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -190,6 +192,7 @@ export function PillFace({
         compact && styles.pillCompact,
         small && styles.pillSmall,
         dense && styles.pillDense,
+        fitLabel && { paddingHorizontal: 4 },
         selected ? styles.pillActive : styles.pillIdle
       ]}
     >
@@ -198,7 +201,10 @@ export function PillFace({
       <Text
         selectable={false}
         numberOfLines={1}
+        adjustsFontSizeToFit={fitLabel}
+        minimumFontScale={fitLabel ? 0.8 : undefined}
         style={[
+          fitLabel && { flexShrink: 1 },
           styles.label,
           compact && styles.labelCompact,
           small && styles.labelSmall,
@@ -235,6 +241,7 @@ export function PillButton({
   selected = true,
   size = 'compact',
   dense = false,
+  fitLabel,
   role = 'button',
   onPress,
   disabled = false,
@@ -285,6 +292,7 @@ export function PillButton({
         size={size}
         dense={dense}
         icon={icon}
+        fitLabel={fitLabel}
       />
     </Pressable>
   )
