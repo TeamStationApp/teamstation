@@ -152,12 +152,15 @@ export const RESET_AND_SWAP_REPORT =
 /** Verify both sides and the emptied score from an independent reader. */
 export async function expectSwapped(
   ctx: E2eContext,
-  world: FixtureManifest
+  world: FixtureManifest,
+  observer?: string
 ): Promise<void> {
-  const token = await signInTestAccount(
-    ctx.stack.origin + '/api/v1',
-    world.accounts.coach
-  )
+  const token =
+    observer ??
+    (await signInTestAccount(
+      ctx.stack.origin + '/api/v1',
+      world.accounts.coach
+    ))
   const get = async (suffix: string): Promise<unknown> =>
     await readJson(
       ctx.stack.origin,
