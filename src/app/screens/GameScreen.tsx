@@ -2435,6 +2435,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           active={!showAngles}
           scoreboard={pictureBoard}
           sponsors={sponsors}
+          gameId={gameId}
           playable={playback?.url != null && playable}
           onOpen={
             playback?.url == null || !playable

@@ -89,6 +89,11 @@ export interface PlayerSurfaceProps {
    * first frame. Absent or null, none.
    */
   sponsors?: GameSponsors | null
+  /**
+   * The game the picture is of: with `sponsors`, five seconds of one of its
+   * reels played is recorded as a view of it.
+   */
+  gameId?: string
   /** The top-right square: opens the full-screen player. */
   onOpen?: () => void
   /**
@@ -137,6 +142,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     active = true,
     scoreboard,
     sponsors,
+    gameId,
     onOpen,
     playable = true,
     muted = true,
@@ -525,6 +531,11 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
           rect={reelSpace}
           muted={muted}
           paused={!playing}
+          game={
+            gameId == null
+              ? undefined
+              : { id: gameId, leagueId: sponsors?.leagueId ?? null, live }
+          }
         />
       ) : null}
       {scoreboard != null && active ? (

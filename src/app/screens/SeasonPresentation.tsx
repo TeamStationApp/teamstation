@@ -73,6 +73,7 @@ import {
   withSponsoredRows
 } from '../sponsors/sponsoredRows'
 import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
 import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { groupScope, seasonScope, storedSchedule } from '../sync/scheduleReads'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -1147,6 +1148,7 @@ function SeasonGames(props: {
   const { list, when, sponsored, footer, onOpenGame, nonMemberView } = props
   const { rows, loadMore, ends } = list
   const styles = getStyles(useTheme())
+  const rowViews = useSponsoredRowViews(sponsored)
   const items = useMemo(
     () =>
       withSponsoredRows(
@@ -1163,7 +1165,7 @@ function SeasonGames(props: {
     (game: WithSponsored<ScheduleGame>) =>
       isSponsored(game) ? (
         <View style={styles.row} testID="sponsored-row-cell">
-          <SponsoredScheduleRow {...game.row} />
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
         </View>
       ) : (
         <View
@@ -1181,6 +1183,7 @@ function SeasonGames(props: {
       keyOf={scheduleKey}
       renderItem={renderRow}
       estimatedItemSize={ROW_HEIGHT.schedule}
+      onViewableKeys={rowViews}
       // A list that could not be read says so above the pills.
       empty={
         <PagedListEmpty

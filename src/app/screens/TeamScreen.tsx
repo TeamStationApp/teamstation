@@ -93,6 +93,7 @@ import {
   withSponsoredRows
 } from '../sponsors/sponsoredRows'
 import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
 import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { rosterKey } from '../sync/documentKeys'
 import { storedSchedule, teamScope } from '../sync/scheduleReads'
@@ -927,6 +928,7 @@ export function ScheduleRows(props: {
   const { client, list, teamId, nonMemberView, nextRow, onOpen } = props
   const { rows, anchorId, loadMore, loadOlder, update, ends } = list
   const { onCreateGame, onRetry, sponsored = NO_ROWS } = props
+  const rowViews = useSponsoredRowViews(sponsored)
   const styles = getStyles(useTheme())
   const { height } = useWindowDimensions()
   // Every game of the team's, in the order they are played.
@@ -957,7 +959,7 @@ export function ScheduleRows(props: {
     (game: WithSponsored<GameSummary>) =>
       isSponsored(game) ? (
         <View style={styles.row} testID="sponsored-row-cell">
-          <SponsoredScheduleRow {...game.row} />
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
         </View>
       ) : (
         <ActiveView
@@ -1015,6 +1017,7 @@ export function ScheduleRows(props: {
       alwaysRenderKeys={alwaysRenderKeys}
       anchorKey={anchorId}
       onAnchorPosition={anchorMoved}
+      onViewableKeys={rowViews}
       header={<PagedListStart list={list} />}
       empty={
         // The screen says what failed, above the pills.

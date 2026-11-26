@@ -7,8 +7,10 @@ import { asSession, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { AnalyticsClient } from '../../common/observability/analyticsClient'
 import type { EventRecord } from '../../common/observability/contract'
+import type { QueueStorage } from '../../common/observability/queue'
 import { userIdOfGumbo } from '../../common/userId'
 import { fill, press } from '../../test/gameFormDom'
+import { deviceStorage } from '../platform/deviceStorage'
 import { NativeVideoHandle } from '../player/nativeVideoHandle'
 import { LoginScreen } from '../screens/LoginScreen'
 import { OnboardingScreen } from '../screens/OnboardingScreen'
@@ -31,13 +33,18 @@ function Probe(): null {
 async function render(
   children?: React.ReactNode,
   endpoint = '/api/analytics/events',
-  enabled = true
+  enabled = true,
+  storage: QueueStorage = deviceStorage
 ): Promise<void> {
   await act(async () => {
     root.render(
       <React.StrictMode>
         <ThemeProvider>
-          <AnalyticsProvider endpoint={endpoint} enabled={enabled}>
+          <AnalyticsProvider
+            endpoint={endpoint}
+            storage={storage}
+            enabled={enabled}
+          >
             <Probe />
             {children}
           </AnalyticsProvider>
@@ -123,6 +130,27 @@ describe('Analytics app lifecycle and funnel', () => {
     })
     globalThis.fetch = originalFetch
     document.body.replaceChildren()
+  })
+  it('keeps its unsent events in the storage it is given', async () => {
+    const kept = new Map<string, string>()
+    const storage: QueueStorage = {
+      getItem: async key => kept.get(key) ?? null,
+      setItem: async (key, value) => {
+        kept.set(key, value)
+      }
+    }
+    globalThis.fetch = (async (_url, _options: RequestInit) => ({
+      status: 503
+    })) as typeof fetch
+    await render(undefined, '/api/analytics/events', true, storage)
+    await analytics!.emit('page_viewed', { pg: 'team' })
+    const keys = [...kept.keys()]
+    expect(keys.some(key => key.startsWith('analytics-v1:'))).equals(true)
+    expect(
+      Object.keys(window.localStorage).some(key =>
+        key.startsWith('analytics-v1:')
+      )
+    ).equals(false)
   })
   it('has one session in StrictMode, follows visibility and disposes endpoint owners', async () => {
     await render()

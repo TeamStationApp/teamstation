@@ -22,4 +22,10 @@ export interface SponsorReelProps {
    * and below the controls. 3, the board's, unless said.
    */
   zIndex?: number
+  /**
+   * The game the reels are of, its sponsoring league and the player's live
+   * flag: five seconds of a reel played is recorded as a view of it
+   * (`useSponsorReelViews`). Absent, or with no league, nothing is.
+   */
+  game?: { id: string; leagueId: string | null; live: boolean }
 }

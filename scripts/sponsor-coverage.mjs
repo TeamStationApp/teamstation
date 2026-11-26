@@ -88,7 +88,13 @@ const tsSuites = [
   // Which league's sponsorship each viewer sees (M5).
   'src/server/sponsors/eligibility.test.ts',
   // Sponsored rows placed among a Schedule's games (M6).
-  'src/app/sponsors/sponsoredRows.test.ts'
+  'src/app/sponsors/sponsoredRows.test.ts',
+  // The sponsor events' contract, the row view timers and the random id the
+  // TV's analytics use without the device's storage (M7).
+  'src/common/observability/contract.test.ts',
+  'src/app/sponsors/viewTimers.test.ts',
+  'src/app/stream/randomUuid.test.ts',
+  'src/app/stream/deviceId.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -123,7 +129,15 @@ const appSuites = [
   'src/app/screens/teamSchedule.test.tsx',
   'src/app/screens/PublicTeamContent.test.tsx',
   'src/app/screens/SeasonPresentation.test.tsx',
-  'src/app/hooks/usePagedList.test.tsx'
+  'src/app/hooks/usePagedList.test.tsx',
+  // Reel views, row views and taps, the lists' viewable rows, the provider's
+  // store and the TV's provider (M7).
+  'src/app/player/sponsors/useReelViews.test.tsx',
+  'src/app/sponsors/sponsorRowEvents.test.tsx',
+  'src/app/components/PagedList.test.tsx',
+  'src/app/components/PagedList.native.test.tsx',
+  'src/app/observability/AnalyticsContext.test.tsx',
+  'src/app/tv/TvApp.test.tsx'
 ]
 
 /**
@@ -177,7 +191,9 @@ const integrationSuites = [
     grep: 'U21'
   },
   // The rows each Schedule reads, and who may read them (M6).
-  { spec: 'src/server/sponsors/rows.integration.test.ts' }
+  { spec: 'src/server/sponsors/rows.integration.test.ts' },
+  // The sponsor events stored, signed in and out (M7).
+  { spec: 'src/server/observability/analytics.integration.test.ts' }
 ]
 
 function argument(name) {

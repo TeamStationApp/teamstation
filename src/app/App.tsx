@@ -169,6 +169,7 @@ import {
   AnalyticsProvider,
   useAnalytics
 } from './observability/AnalyticsContext'
+import { deviceStorage } from './platform/deviceStorage'
 import { passwordKdf } from './platform/passwordKdf'
 import { askWhenWanted, pushDevice } from './platform/pushDevice'
 import { useInsets } from './platform/safeArea'
@@ -502,6 +503,7 @@ export function App(props: AppProps): React.ReactElement {
         <ErrorBoundary fallback={errorScreen}>
           <AnalyticsProvider
             endpoint={(props.apiBaseUrl ?? '/api/v1') + '/analytics/events'}
+            storage={deviceStorage}
             enabled={props.fieldPreview !== true}
           >
             <Shell {...props} />

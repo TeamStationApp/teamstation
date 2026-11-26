@@ -2,10 +2,12 @@ import React, { useEffect, useState } from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
 
 import { Badge } from '../components/Badge'
+import { useAnalytics } from '../observability/AnalyticsContext'
 import type { Size } from '../player/scoreboardOverlay/overlayLayout'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { coverRect } from './coverRect'
 import { openSponsorUrl } from './openSponsorUrl'
+import { sendRowEvent, type TrackedRow } from './sponsorRowEvents'
 import type { SponsoredTextColor } from './sponsorTypes'
 
 export interface SponsoredScheduleRowProps {
@@ -18,6 +20,11 @@ export interface SponsoredScheduleRowProps {
   textColor?: SponsoredTextColor
   /** For a test: how the website is opened. */
   onOpen?: (url: string) => void
+  /**
+   * The Schedule's row this is: given, each press is recorded
+   * (`sponsor_row_tapped`) before the website opens. A preview has none.
+   */
+  tracked?: TrackedRow
 }
 
 /** Each text colour and the shadow that keeps it legible on the image. */
@@ -63,9 +70,11 @@ export function SponsoredScheduleRow({
   message,
   url,
   textColor = 'dark',
-  onOpen = openSponsorUrl
+  onOpen = openSponsorUrl,
+  tracked
 }: SponsoredScheduleRowProps): React.ReactElement {
   const theme = useTheme()
+  const analytics = useAnalytics()
   const styles = getStyles(theme)
   const ink = TEXT_COLORS[textColor]
   const [box, setBox] = useState<Size>({ width: 0, height: 0 })
@@ -77,6 +86,10 @@ export function SponsoredScheduleRow({
       accessibilityLabel={`Sponsored: ${title}`}
       testID="sponsored-schedule-row"
       onPress={() => {
+        if (tracked != null)
+          sendRowEvent(analytics, 'sponsor_row_tapped', tracked).catch(
+            () => undefined
+          )
         onOpen(url)
       }}
       onLayout={event => {

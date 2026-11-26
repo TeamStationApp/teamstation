@@ -27,6 +27,7 @@ import {
   withSponsoredRows
 } from '../sponsors/sponsoredRows'
 import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
 import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { shortDate, shortTime } from './format'
@@ -262,6 +263,7 @@ function PublicSchedule(props: {
     [teamId]
   )
   const sponsored = useSponsoredRows(client, sponsorQuery)
+  const rowViews = useSponsoredRowViews(sponsored.rows)
   const list = usePublicGames(client, teamId, SCHEDULE_QUERY, sponsored.refresh)
   const { rows, loadMore, ends } = list
   const styles = getStyles(useTheme())
@@ -282,7 +284,7 @@ function PublicSchedule(props: {
     (game: WithSponsored<PublicGame>) =>
       isSponsored(game) ? (
         <View style={styles.row} testID="sponsored-row-cell">
-          <SponsoredScheduleRow {...game.row} />
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
         </View>
       ) : (
         <View style={styles.row} testID={`public-game-${game.id}`}>
@@ -299,6 +301,7 @@ function PublicSchedule(props: {
         keyOf={scheduleKey}
         renderItem={renderRow}
         estimatedItemSize={ROW_HEIGHT.schedule}
+        onViewableKeys={rowViews}
         empty={<NoRows list={list} none="No games scheduled." />}
         footer={<PagedListEnd list={list} />}
         onEndReached={() => {

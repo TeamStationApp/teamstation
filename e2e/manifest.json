@@ -4483,6 +4483,108 @@
       "file": "e2e/tests/people/search/reach.e2e.ts"
     },
     {
+      "id": "platform/analytics/sponsor-events#ios-app",
+      "title": "Sponsor reel views, sponsored row views and taps are recorded with the viewer, or the device when signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/common/observability/contract.ts",
+        "src/app/player/sponsors/useReelViews.ts",
+        "src/app/sponsors/viewTimers.ts",
+        "src/app/sponsors/sponsorRowEvents.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/components/usePagedFollow.ts",
+        "src/app/observability/AnalyticsContext.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/analytics/sponsor-events",
+      "file": "e2e/tests/platform/analytics/sponsor-events.e2e.ts"
+    },
+    {
+      "id": "platform/analytics/sponsor-events#web",
+      "title": "Sponsor reel views, sponsored row views and taps are recorded with the viewer, or the device when signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/common/observability/contract.ts",
+        "src/app/player/sponsors/useReelViews.ts",
+        "src/app/sponsors/viewTimers.ts",
+        "src/app/sponsors/sponsorRowEvents.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/components/usePagedFollow.ts",
+        "src/app/observability/AnalyticsContext.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/analytics/sponsor-events",
+      "file": "e2e/tests/platform/analytics/sponsor-events.e2e.ts"
+    },
+    {
       "id": "platform/browser/observation#network",
       "title": "Browser observations read the page without capturing network responses",
       "kind": "integration",

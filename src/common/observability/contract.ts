@@ -80,6 +80,10 @@ const uuid: Rule = (value): value is string =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value
   )
+/** A league sponsor's reel, reel placement or sponsored row. */
+const sponsorId: Rule = (value): value is string =>
+  typeof value === 'string' &&
+  /^(?:srl|srp|ser)_[A-Za-z0-9_-]{1,96}$/.test(value)
 // SDK event IDs are opaque 128-bit hex values; native crash IDs need not carry UUID variant bits.
 const eventId: Rule = (value): value is string =>
   typeof value === 'string' &&
@@ -492,7 +496,19 @@ export const EVENT_RULES = {
   playback_heartbeat: playback,
   playback_bitrate: playback,
   playback_detached: playback,
-  playback_fetch: playbackFetch
+  playback_fetch: playbackFetch,
+  /** Five seconds of one play of a placed reel: `rp` the placement, `rr` the reel. */
+  sponsor_reel_viewed: {
+    rp: sponsorId,
+    rr: sponsorId,
+    gm: id,
+    lg: id,
+    at: number(1e14),
+    lv: boolean
+  },
+  /** A sponsored row five seconds on screen; `dv` the device, signed out only. */
+  sponsor_row_viewed: { er: sponsorId, lg: id, dv: uuid },
+  sponsor_row_tapped: { er: sponsorId, lg: id, dv: uuid }
 } satisfies Record<string, Record<string, Rule>>
 export type EventName = keyof typeof EVENT_RULES
 export const ANONYMOUS_EVENTS = new Set<EventName>([
@@ -508,7 +524,10 @@ export const ANONYMOUS_EVENTS = new Set<EventName>([
   'signup_step_failed',
   'login_started',
   'login_failed',
-  'offline_changed'
+  'offline_changed',
+  // A signed-out visitor sees sponsored rows on a public team page.
+  'sponsor_row_viewed',
+  'sponsor_row_tapped'
 ])
 export const SERVER_EVENTS = new Set<EventName>([
   'account_created',
@@ -571,6 +590,11 @@ export const PROPERTY_TYPES: Readonly<
   rk: 'keyword',
   fk: 'keyword',
   oc: 'keyword',
+  rr: 'keyword',
+  er: 'keyword',
+  gm: 'keyword',
+  lg: 'keyword',
+  dv: 'keyword',
   ms: 'double',
   pos: 'double',
   dur: 'double',

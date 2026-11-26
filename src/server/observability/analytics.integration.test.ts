@@ -237,6 +237,63 @@ describe('analytics PostgreSQL and HTTP isolation', function () {
       ).rows[0].count
     ).equals(1)
   })
+  it('stores sponsor row views and taps signed out with the device, every sponsor event signed in, and refuses a signed-out reel view', async () => {
+    const device = randomUUID()
+    const row = { er: 'ser_analytics', lg: 'lea_analytics' }
+    const reel = {
+      rp: 'srp_analytics',
+      rr: 'srl_analytics',
+      gm: 'gam_analytics',
+      lg: 'lea_analytics',
+      at: Date.now(),
+      lv: false
+    }
+    const anonymous = [
+      event('sponsor_row_viewed', { ...row, dv: device }),
+      event('sponsor_row_tapped', { ...row, dv: device })
+    ]
+    expect((await post('/analytics/events', anonymous)).status).equals(202)
+    const signedIn = [
+      { ...event('sponsor_reel_viewed', reel), A: 'TS' as const },
+      event('sponsor_row_viewed', row),
+      event('sponsor_row_tapped', row)
+    ]
+    expect((await post('/analytics/events', signedIn, 101)).status).equals(202)
+    const stored = await owner.query<{
+      event_id: string
+      event_name: string
+      user_id: string | null
+      properties: Record<string, unknown>
+    }>(
+      'SELECT event_id,event_name,user_id,properties FROM analytics.events WHERE event_id = ANY($1::uuid[])',
+      [[...anonymous, ...signedIn].map(row => row.I)]
+    )
+    const byId = new Map(stored.rows.map(row => [row.event_id, row]))
+    for (const sent of anonymous) {
+      const kept = byId.get(sent.I)!
+      expect(kept.event_name).equals(sent.E)
+      expect(kept.user_id).equals(null)
+      expect(kept.properties).deep.equals({ ...row, dv: device })
+    }
+    for (const sent of signedIn) {
+      const kept = byId.get(sent.I)!
+      expect(kept.event_name).equals(sent.E)
+      expect(kept.user_id).equals(actor.userId)
+      expect(kept.properties).deep.equals(sent.P)
+    }
+    const signedOutReel = event('sponsor_reel_viewed', reel)
+    expect((await post('/analytics/events', [signedOutReel])).status).equals(
+      401
+    )
+    expect(
+      (
+        await owner.query(
+          'SELECT count(*) FROM analytics.events WHERE event_id=$1',
+          [signedOutReel.I]
+        )
+      ).rows[0].count
+    ).equals(0)
+  })
   it('rejects private properties, wrong identities/apps and unauthorized video references atomically', async () => {
     const denied: Array<[unknown, number, 101 | undefined]> = [
       [[{ ...event(), U: 'usr_forged' }], 400, 101],

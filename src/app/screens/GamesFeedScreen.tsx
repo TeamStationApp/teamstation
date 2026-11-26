@@ -52,6 +52,7 @@ import {
   withSponsoredRows
 } from '../sponsors/sponsoredRows'
 import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
 import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { ME_SCOPE, storedSchedule } from '../sync/scheduleReads'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
@@ -361,6 +362,7 @@ function GameCards(props: {
     props
   const { rows, loadMore, ends } = list
   const styles = getStyles(useTheme())
+  const rowViews = useSponsoredRowViews(sponsored)
   // Upcoming reads soonest first; Past and All newest first.
   const items = useMemo(
     () =>
@@ -378,7 +380,7 @@ function GameCards(props: {
     (game: WithSponsored<SeasonGame>) =>
       isSponsored(game) ? (
         <View style={styles.cell} testID="sponsored-row-cell">
-          <SponsoredScheduleRow {...game.row} />
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
         </View>
       ) : (
         <GameCardRow
@@ -404,6 +406,7 @@ function GameCards(props: {
         extraData={extraData}
         numColumns={columns}
         estimatedItemSize={ROW_HEIGHT[mode]}
+        onViewableKeys={rowViews}
         // A list that could not be read says so above, and does not spin.
         empty={
           <PagedListEmpty

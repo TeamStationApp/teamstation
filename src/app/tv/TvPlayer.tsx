@@ -1239,6 +1239,11 @@ export function TvPlayer({
         paused={state.paused}
         // Over a camera made full, which stacks at 4.
         zIndex={4}
+        game={{
+          id: request.game.id,
+          leagueId: sponsors?.leagueId ?? null,
+          live: angles?.some(angle => angle.video.status === 'live') === true
+        }}
       />
       {board != null && placement?.show === true && layout.board != null && (
         <View

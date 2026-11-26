@@ -8,6 +8,7 @@ import {
 } from '../scoreboardOverlay/usePlayheadStep'
 import { REEL_DRIFT_SEC, type SponsorReelProps } from './sponsorReelProps'
 import { useReelNow } from './useReelNow'
+import { useSponsorReelViews } from './useReelViews'
 
 export { REEL_DRIFT_SEC, type SponsorReelProps } from './sponsorReelProps'
 
@@ -33,6 +34,7 @@ export function SponsorReel(
     zIndex = 3
   } = props
   const reel = useReelNow({ reels, wallNow, frames })
+  useSponsorReelViews(props, reel)
   if (reel == null || rect == null || !(rect.w > 0 && rect.h > 0)) return null
   return (
     <View

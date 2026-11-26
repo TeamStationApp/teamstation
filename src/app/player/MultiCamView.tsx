@@ -521,6 +521,15 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         rect={layout.reel}
         muted={mc.soundOff || mc.soundBlocked || mc.slow !== 0}
         paused={!mc.playing}
+        game={
+          props.gameId == null
+            ? undefined
+            : {
+                id: props.gameId,
+                leagueId: sponsors?.leagueId ?? null,
+                live: props.videos.some(video => video.status === 'live')
+              }
+        }
       />
 
       <GridScoreboard board={board} layout={layoutFor} />

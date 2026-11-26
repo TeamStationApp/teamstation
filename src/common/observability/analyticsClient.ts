@@ -44,6 +44,11 @@ export class AnalyticsClient {
     return this.options.app
   }
 
+  /** Whether events now carry a signed-in user; false while anonymous. */
+  get identified(): boolean {
+    return this.identity != null
+  }
+
   constructor(private readonly options: AnalyticsOptions) {
     this.now = options.now ?? Date.now
     this.monotonic = options.monotonic ?? (() => performance.now())
