@@ -22,7 +22,7 @@ import {
 import { initialScoringState } from './scoringMachine'
 
 const BANNER =
-  'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.'
+  'Someone else edited this roster. Saving may overwrite their changes. Cancel takes theirs.'
 
 describe('hearing a game', function () {
   it('hears nothing, and stops cleanly, where the socket cannot be had', function () {
