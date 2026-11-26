@@ -750,6 +750,42 @@
       "file": "e2e/tests/app-shell/lists/list-screens.e2e.ts"
     },
     {
+      "id": "app-shell/notifications/pending-history#resolved-history",
+      "title": "Resolved history leaves Pending and the bell responsive",
+      "kind": "e2e",
+      "covers": [
+        "src/server/notifications/inbox.ts",
+        "src/server/notifications/pendingRequests.ts",
+        "src/app/screens/NotificationsScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "pending-history"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [
+        "api-500"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/notifications/pending-history",
+      "file": "e2e/tests/app-shell/notifications/pending-history.e2e.ts"
+    },
+    {
       "id": "app-shell/refresh/socket#badge-parity",
       "title": "Reads follow the socket’s notices, never a timer",
       "kind": "e2e",

@@ -584,6 +584,8 @@ describe('notifications in the finished web app', function () {
   let endpointHost: string
   let dmId: string
   let dmText: string
+  /** N4 sends a fresh DM with the same enrolled sender N3 used. */
+  let senderEngine: ChatEngine | undefined
 
   before(async () => {
     config = JSON.parse(
@@ -622,6 +624,7 @@ describe('notifications in the finished web app', function () {
     })
   })
   after(async () => {
+    senderEngine?.stop()
     const output = process.env.TS_NOTIFY_COVERAGE
     if (output != null && browser != null) await coverage.record(output)
     await browser?.close()
@@ -882,6 +885,7 @@ describe('notifications in the finished web app', function () {
 
     const sender = await clientOf(p1)
     const engine = await engineOf(p1, sender)
+    senderEngine = engine
     const dm = await sender.createDm([p2.userId])
     dmId = dm.id
     const group = await until('Eagles Members in P1’s chats', async () => {
@@ -1130,7 +1134,6 @@ describe('notifications in the finished web app', function () {
       'seen',
       `$ P2 reads the DM to seq ${seq} on another device: push.jsonl ${JSON.stringify(wakeOf(read))} to this browser; delivered, chat:${dmId} closed`
     )
-    engine.stop()
   })
 
   it('N4: a reminder for an RSVPed event, and taps that open it and the DM', async () => {
@@ -1257,20 +1260,43 @@ describe('notifications in the finished web app', function () {
       `$ tap the reminder (notificationclick in the worker): page at ${new URL(phone.page.url()).pathname}`
     )
 
-    // The DM's notification from N3; replayed if the live one never came.
-    if ((await shown(phone)).every(item => item.tag !== `chat:${dmId}`)) {
-      const dmRecord = (await records()).find(
-        record =>
-          record.userId === p2.userId &&
-          record.platform === 'web' &&
-          record.message.platform === 'web' &&
-          record.message.payload.includes(dmId)
-      )!
+    // N3 read its DMs and sent a read push. A delayed copy of that read can
+    // close an old wake replayed here, so use a new message beyond that read.
+    const dmFrom = (await records()).length
+    const navigationText = `Open this DM from its notification, ${Date.now()}`
+    const navigationPost = await senderEngine!.sendText(dmId, navigationText)
+    expect(navigationPost, 'the new navigation DM was sent').not.equals(
+      undefined
+    )
+    const dmRecord = await until('the new DM wake', async () =>
+      (await records()).slice(dmFrom).find(record => {
+        if (
+          record.userId !== p2.userId ||
+          record.platform !== 'web' ||
+          record.message.platform !== 'web'
+        )
+          return false
+        const wake = JSON.parse(record.message.payload) as ChatWake | ChatRead
+        return (
+          wake.t === 'chat' &&
+          wake.c === dmId &&
+          wake.seq === navigationPost!.seq
+        )
+      })
+    )
+    const isNavigationDm = (item: { tag: string; body: string }): boolean =>
+      item.tag === `chat:${dmId}` && item.body === navigationText
+    if (!(await shown(phone)).some(isNavigationDm)) {
       await deliver(control, dmRecord)
-      await until('the DM notification', async () =>
-        (await shown(phone)).find(item => item.tag === `chat:${dmId}`)
-      )
     }
+    const dmNote = await until('the DM notification', async () =>
+      (await shown(phone)).find(isNavigationDm)
+    )
+    expect(dmNote.body).equals(navigationText)
+    await line(
+      'n4',
+      `$ new DM seq ${navigationPost!.seq}: ${JSON.stringify(dmNote)} shown`
+    )
     await tap(`chat:${dmId}`)
     await until(
       'the conversation',
