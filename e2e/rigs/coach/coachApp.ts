@@ -1,5 +1,5 @@
 import type { Emulation } from '../../core/browserCdp'
-import type { FixtureManifest } from '../../core/fixtures'
+import type { FixtureAccount, FixtureManifest } from '../../core/fixtures'
 import { isHubDevice } from '../../core/maestro'
 import { iosIsSimulator } from '../../core/prepare'
 import { BlockedError } from '../../core/result'
@@ -9,7 +9,12 @@ import {
   type E2eSpec,
   type WebSession
 } from '../../core/spec'
-import { openInApp, serverLink, setServer } from '../app/setServer'
+import { appLink, openInApp, serverLink, setServer } from '../app/setServer'
+import {
+  FixtureEmailRateLimit,
+  scoringFixtureLink
+} from '../scoringFixtureLink'
+import { signOutApp } from '../streaming/soakSignIn'
 
 /**
  * The game plan's tests on any surface: the develop app on an iPhone or
@@ -71,6 +76,21 @@ export interface CoachApp {
   openCoach: (gameId: string, teamId: string) => Promise<void>
   /** The team's own page, from its address. */
   openTeam: (teamId: string) => Promise<void>
+}
+
+/** Enter from the game so scoring inherits the fixture team's active scope. */
+export async function openFullGameScoring(
+  app: CoachApp,
+  gameId: string
+): Promise<void> {
+  await app.openGame(gameId)
+  await app.m.tapOn({ text: '^Score$', timeout: 30000 })
+  await app.m.tapOn({
+    text: '^Full game scoring$',
+    optional: true,
+    timeout: 5000
+  })
+  await app.m.assertVisible({ id: 'Ball', timeout: 60000 })
 }
 
 /** A team page's address, as the app and the web route it. */
@@ -206,14 +226,17 @@ export async function serverKeptOnHubPhone(
 
 /**
  * Opens the surface on the stack's origin and signs `role` in through the
- * real password form. The app is installed with `prepare` beforehand; on a
+ * real sign-in flow. On a shared iPhone a supplied fixture account uses its
+ * one-use email link. The app is installed with `prepare` beforehand; on a
  * simulator it is cleared, pointed at the stack and launched fresh.
  */
 export async function openCoachApp(
   ctx: E2eContext,
-  role: string,
+  accountOrRole: string | FixtureAccount,
   web: { size?: { width: number; height: number }; emulation?: Emulation } = {}
 ): Promise<CoachApp> {
+  const role =
+    typeof accountOrRole === 'string' ? accountOrRole : accountOrRole.role
   const origin = ctx.stack.origin
   const size = web.size ?? PHONE_WINDOW
   await clearSignInLimits(ctx)
@@ -261,11 +284,21 @@ export async function openCoachApp(
   }
   const udid = ctx.device('device')
   const m = await ctx.attach('device', { platform: 'ios', appId: DEVELOP_APP })
-  await m.launchApp({ appId: DEVELOP_APP, clearState: true })
-  if (isHubDevice(udid)) {
+  const mesh = isHubDevice(udid)
+  if (mesh) {
+    await m.launchApp({ appId: DEVELOP_APP, stopApp: true })
+    // A cold launch returns before the previous scorer's Home has mounted.
+    await m.assertVisible({
+      text: 'Account, .*|Sign in to TeamStation',
+      timeout: 30000
+    })
+    const home = flatten((await m.hierarchy()) as Node)
+    if (home.some(node => labelOf(node).startsWith('Account, ')))
+      await signOutApp(m)
     // A hub's iPhone takes the server link through its lease.
     await serverKeptOnHubPhone(m, udid, origin)
-  } else
+  } else {
+    await m.launchApp({ appId: DEVELOP_APP, clearState: true })
     await setServer({
       platform: 'ios',
       udid,
@@ -274,10 +307,31 @@ export async function openCoachApp(
       device: m,
       simulator: iosIsSimulator(udid)
     })
-  await ctx.signIn(role, m)
+  }
+  if (mesh && typeof accountOrRole !== 'string') {
+    try {
+      const path = await scoringFixtureLink(ctx, accountOrRole.email, 'ios')
+      await openInApp({
+        platform: 'ios',
+        udid,
+        appId: DEVELOP_APP,
+        device: m,
+        hub: true,
+        link: appLink(path)
+      })
+      await m.tapOn({ id: 'signInLinkSignIn', optional: true, timeout: 4500 })
+    } catch (error) {
+      if (!(error instanceof FixtureEmailRateLimit)) throw error
+      await ctx.signIn(role, m)
+    }
+    await m.assertVisible({
+      text: 'Account, ' + accountOrRole.displayName,
+      timeout: 35000
+    })
+  } else await ctx.signIn(role, m)
   const nodes = async (): Promise<Node[]> => flatten(await m.hierarchy())
   const link = async (path: string): Promise<void> => {
-    await m.openLink({ link: `teamstation://${path}` })
+    await m.openLink({ link: appLink(path) })
     // The system asks once before a link opens the app it names.
     if ((await nodes()).some(node => labelOf(node) === 'Open'))
       await m.tapOn({ text: 'Open' })

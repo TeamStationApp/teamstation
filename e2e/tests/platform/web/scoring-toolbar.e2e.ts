@@ -7,9 +7,15 @@ import { PNG } from 'pngjs'
 import { signInTestAccount } from '../../../../src/test/passwordFixtures'
 import { faultControl, requireDropletHandle } from '../../../core/dropletStack'
 import { readJson } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineE2e, type E2eContext } from '../../../core/spec'
 import { clearSignInLimits } from '../../../rigs/coach/coachApp'
 import { browserAppOf } from '../../../rigs/mobileWeb'
+import {
+  expectSwapped,
+  remotePitch,
+  RESET_AND_SWAP_REPORT,
+  scoringSwapFixture
+} from '../../../rigs/scoringLayout'
 import {
   hideSafariToolbar,
   nativeFooterRows,
@@ -34,6 +40,10 @@ interface Reading {
   strip?: Box
   deck?: Box
   catcher?: number
+  logBand?: Box
+  notice?: Box
+  noticeText?: string
+  noticeTextBottom?: number
   log?: Box
   page: string
   exposed?: string | null
@@ -69,6 +79,155 @@ function footColours(png: PNG, rows: number): number[][] {
   })
 }
 
+function freshReading(control: ReturnType<typeof faultControl>, run: string) {
+  const originPath = `/api/v1/viewport-observation/${run}/`
+  return async (
+    channel: string,
+    widthCheck: (r: Reading) => boolean
+  ): Promise<Reading> => {
+    const prefix = originPath + channel + '/'
+    const rows = async (): Promise<Array<{ at: number; path: string }>> => {
+      const rows = (await control.call(
+        'GET',
+        'requests?path=' + encodeURIComponent(prefix)
+      )) as { requests: Array<{ at: number; path: string }> }
+      return rows.requests
+    }
+    const previous = (await rows()).at(-1)?.at ?? 0
+    for (const end = Date.now() + 15000; Date.now() < end;) {
+      await pause(400)
+      const row = (await rows()).at(-1)
+      if (row == null || row.at <= previous) continue
+      const measurement = JSON.parse(
+        Buffer.from(row.path.slice(prefix.length), 'base64url').toString()
+      ) as Reading
+      if (widthCheck(measurement)) return measurement
+    }
+    throw new Error(
+      `No fresh ${channel} geometry; stage e2e/fixtures/viewportProbe/stage.mjs on the isolated web build`
+    )
+  }
+}
+
+async function bottomStrip(ctx: E2eContext): Promise<void> {
+  const faults =
+    ctx.stack.attached == null
+      ? undefined
+      : requireDropletHandle(ctx.stack.attached).faults
+  if (faults == null)
+    throw new Error('The phone readings need the isolated stack')
+  const { platform, appId } = browserAppOf(ctx.surface)
+  const ios = platform === 'ios'
+  const layout = process.env.TS_SCORING_TOOLBAR_LAYOUT
+  if (!(ios ? ['top', 'bottom', 'compact'] : ['bottom']).includes(layout ?? ''))
+    throw new Error('Set TS_SCORING_TOOLBAR_LAYOUT to the browser setting')
+  const m = await ctx.attach('phone', { platform, appId })
+  await m.launchApp({ appId, stopApp: false })
+  const orientations =
+    process.env.TS_SCORING_PORTRAIT_ONLY === '1'
+      ? ['PORTRAIT']
+      : ['PORTRAIT', 'LANDSCAPE_LEFT']
+  const origin = ctx.stack.origin
+  try {
+    for (const orientation of orientations) {
+      for (const state of ['expanded', 'collapsed', 'expanded-again']) {
+        const world = await scoringSwapFixture(ctx)
+        const run = randomUUID()
+        const fresh = freshReading(faultControl(faults), run)
+        await m.setOrientation({ orientation: 'PORTRAIT' })
+        await clearSignInLimits(ctx)
+        await signInViewportScorer(ctx, m, world.accounts.scorekeeper)
+        await m.openLink({
+          link: `${origin}/viewportProbe/scoring.html?run=${run}&game=${world.ids.game}`,
+          browser: true
+        })
+        await m.setOrientation({ orientation })
+        const turned = (r: Reading): boolean =>
+          orientation === 'PORTRAIT' ? r.small > r.width : r.small < r.width
+        const expanded = await fresh('scoring', turned)
+        const peer = await remotePitch(ctx, world)
+        try {
+          await peer.pitch()
+          await fresh(
+            'scoring',
+            r => turned(r) && (r.log != null || (r.logBand?.height ?? 0) < 64)
+          )
+          if (state !== 'expanded') {
+            await m.swipe({ start: '50%,65%', end: '50%,25%' })
+            if (
+              ios &&
+              (await fresh('scoring', turned)).bottom <= expanded.bottom + 8
+            ) {
+              await hideSafariToolbar(m)
+            }
+            await fresh(
+              'scoring',
+              r =>
+                turned(r) &&
+                r.bottom - r.top > expanded.bottom - expanded.top + 8
+            )
+            if (state === 'expanded-again') {
+              for (let i = 0; i < 2; i++)
+                await m.swipe({ start: '50%,30%', end: '50%,75%' })
+              if (
+                ios &&
+                (await fresh('scoring', turned)).bottom > expanded.bottom + 8
+              )
+                await reopenSafariToolbar(m, orientation === 'PORTRAIT', layout)
+              await fresh(
+                'scoring',
+                r =>
+                  turned(r) &&
+                  Math.abs(
+                    r.bottom - r.top - (expanded.bottom - expanded.top)
+                  ) <= 2
+              )
+            }
+          }
+          const before = await fresh('scoring', turned)
+          const key = [layout, orientation, state].join('-')
+          writeFileSync(ctx.artifact(key + '-field.png'), await m.screenshot())
+          // Reset from the second scorer so opening menus cannot change the phone toolbar.
+          await peer.swap()
+          const during = await fresh(
+            'scoring',
+            r =>
+              turned(r) &&
+              r.noticeText === RESET_AND_SWAP_REPORT &&
+              Math.abs((r.notice?.bottom ?? 0) - (r.root?.bottom ?? -100)) <= 1
+          )
+          expect(during.deck).deep.equals(before.deck)
+          expect(during.logBand).deep.equals(before.logBand)
+          expect(during.bottom).closeTo(before.bottom, 1)
+          expect(during.notice!.bottom).at.most(during.bottom + 1)
+          expect(during.noticeTextBottom!).at.most(
+            during.notice!.bottom - during.insets[2] + 1
+          )
+          const png = await m.screenshot()
+          writeFileSync(ctx.artifact(key + '-notice.png'), png)
+          writeFileSync(
+            ctx.artifact(key + '-notice.json'),
+            JSON.stringify({ before, during }, null, 2)
+          )
+          if (
+            ios &&
+            layout === 'bottom' &&
+            orientation === 'PORTRAIT' &&
+            state === 'expanded'
+          )
+            writeFileSync(ctx.artifact('safari-notice-after.png'), png)
+          await expectSwapped(ctx, world)
+        } finally {
+          await peer.close()
+        }
+      }
+    }
+  } finally {
+    await m.setOrientation({ orientation: 'PORTRAIT' })
+    await m.openLink({ link: origin, browser: true })
+  }
+}
+
 export default defineE2e({
   id: 'platform/web/scoring-viewport',
   title: 'Scoring fits above the phone browser toolbar as it folds and opens',
@@ -99,6 +258,7 @@ export default defineE2e({
   manual: false,
   sendsNoMail: true,
   scenarios: {
+    'bottom-strip': bottomStrip,
     'above-toolbar': async ctx => {
       const stack =
         ctx.stack.attached == null
@@ -133,33 +293,7 @@ export default defineE2e({
         string,
         { reading: Reading; colours: number[][]; footerRows: number }
       > = {}
-      const originPath = `/api/v1/viewport-observation/${run}/`
-      const fresh = async (
-        channel: string,
-        widthCheck: (r: Reading) => boolean
-      ): Promise<Reading> => {
-        const prefix = originPath + channel + '/'
-        const rows = async (): Promise<Array<{ at: number; path: string }>> => {
-          const rows = (await control.call(
-            'GET',
-            'requests?path=' + encodeURIComponent(prefix)
-          )) as { requests: Array<{ at: number; path: string }> }
-          return rows.requests
-        }
-        const previous = (await rows()).at(-1)?.at ?? 0
-        for (const end = Date.now() + 15000; Date.now() < end;) {
-          await pause(400)
-          const row = (await rows()).at(-1)
-          if (row == null || row.at <= previous) continue
-          const measurement = JSON.parse(
-            Buffer.from(row.path.slice(prefix.length), 'base64url').toString()
-          ) as Reading
-          if (widthCheck(measurement)) return measurement
-        }
-        throw new Error(
-          `No fresh ${channel} geometry; stage e2e/fixtures/viewportProbe/stage.mjs on the isolated web build`
-        )
-      }
+      const fresh = freshReading(control, run)
       let documentId: string | undefined
       const game = world.ids.game
       try {

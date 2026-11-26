@@ -41,18 +41,16 @@ export function scoringFrame({
   width,
   height,
   insets,
-  platform,
-  topBand = 0
+  platform
 }: {
   width: number
   height: number
   insets: Insets
   platform: string
-  topBand?: number
 }): ScoringFrame {
   const layout = scoringLayout(width, height)
   const lift = topLift(insets.top, platform)
-  const offset = topBand > 0 ? topBand : -lift
+  const offset = -lift
   const boardTop =
     Math.max(FIELD_EDGE_GAP, insets.top) + offset + 48 + FIELD_EDGE_GAP
   const stripHeight = NOTICE_TEXT_AREA + insets.bottom
@@ -63,7 +61,7 @@ export function scoringFrame({
   const { cardLeft, cardRight } = scoringControlRow(layout.fieldWidth, insets)
   const camera = {
     top: boardTop - offset,
-    bottom: bottomReserve + lift + offset,
+    bottom: bottomReserve,
     cardInterval: { left: cardLeft, right: cardRight }
   }
   const card = applyFieldCamera(new PerspectiveCamera(), {
