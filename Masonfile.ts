@@ -594,11 +594,19 @@ function appVersion(ctx: Stage): string {
 }
 
 /**
+ * The Socket CLI a build installs through. Pinned: 1.17.0 (2026-11-26) turned
+ * away the public credential a worker with no token uses ("The retired public
+ * Socket API credential cannot be used for authentication"), and every build
+ * failed at `socket npm ci`. Move it only to a release a build has passed on.
+ */
+const SOCKET_CLI = '@socketsecurity/cli@1.16.1'
+
+/**
  * Installs dependencies through Socket. A quota refusal or a worker with no
  * Socket token installs with npm; any other Socket failure stops the build.
  */
 async function install(ctx: Stage, cwd?: string): Promise<void> {
-  await ctx.sh('npm install --prefix .mason-tools @socketsecurity/cli', { cwd })
+  await ctx.sh(`npm install --prefix .mason-tools ${SOCKET_CLI}`, { cwd })
   const scanned = await ctx.sh('.mason-tools/node_modules/.bin/socket npm ci', {
     cwd,
     env: { SOCKET_CLI_ACCEPT_RISKS: '1' },
