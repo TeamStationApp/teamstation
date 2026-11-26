@@ -139,50 +139,25 @@ export interface BaseballScreenProps {
    */
   sound?: { on: boolean; onToggle: () => void }
   onDismissHint?: () => void
-  /**
-   * Points kept clear across the top for a line drawn there (the scoring
-   * screen's offline line): the field, its scoreboard and the header row
-   * start that much lower. 0, the default, is the layout without one.
-   */
-  topBand?: number
 }
 
-/**
- * The field's holder under a band across the top: moved down, keeping its
- * size, so the GL canvas never lays itself out again (a resize blanks a
- * frame) and its bottom runs under the deck, which a phone has room for.
- * Moved up by a negative band, the lift into the top inset, it must still
- * reach the bottom of the screen where nothing covers it, as in the replay's
- * side layout, so it is `extend` taller (a negative bottom margin): by
- * default the lift itself. A screen whose band comes and goes over a lift
- * passes the full lift as `extend` whatever the band, so only the move
- * changes and the canvas keeps its size.
- */
-export function fieldHolderStyle(
-  band: number,
-  extend: number = Math.max(0, -band)
-): ViewStyle {
-  return {
-    flex: 1,
-    ...(band === 0 ? {} : { transform: [{ translateY: band }] }),
-    ...(extend > 0 ? { marginBottom: -extend } : {})
-  }
+/** Raise the field into the top inset and extend its canvas to the screen's foot. */
+export function fieldHolderStyle(offset: number): ViewStyle {
+  return offset === 0
+    ? { flex: 1 }
+    : {
+        flex: 1,
+        transform: [{ translateY: offset }],
+        marginBottom: Math.min(0, offset)
+      }
 }
 
-/**
- * The canvas's own callbacks, with every screen point they report moved down
- * by the band the canvas sits under: the bases, a runner's Safe and Out
- * targets and a held runner's anchor, which the controls over the field draw
- * from. Ground points are the field's own and need nothing.
- */
-export function bandedField(
-  field: FieldCanvasProps,
-  band: number
-): FieldCanvasProps {
-  if (band === 0) return field
-  const down = <T extends { y: number }>(point: T): T => ({
+/** Translate canvas-local points into the root coordinates that the controls use. */
+function rootField(field: FieldCanvasProps, offset: number): FieldCanvasProps {
+  if (offset === 0) return field
+  const toRoot = <T extends { y: number }>(point: T): T => ({
     ...point,
-    y: point.y + band
+    y: point.y + offset
   })
   const { onBaseProjection, onRunnerDrag, onRunnerHold, onRunnerPlacement } =
     field
@@ -194,13 +169,13 @@ export function bandedField(
           onBaseProjection: projection => {
             onBaseProjection({
               ...projection,
-              bases: projection.bases.map(down),
+              bases: projection.bases.map(toRoot),
               ...(projection.heads == null
                 ? {}
-                : { heads: projection.heads.map(down) }),
+                : { heads: projection.heads.map(toRoot) }),
               ...(projection.feet == null
                 ? {}
-                : { feet: projection.feet.map(down) })
+                : { feet: projection.feet.map(toRoot) })
             })
           }
         }),
@@ -211,7 +186,7 @@ export function bandedField(
             onRunnerDrag(
               view == null
                 ? null
-                : { ...view, safe: down(view.safe), out: down(view.out) }
+                : { ...view, safe: toRoot(view.safe), out: toRoot(view.out) }
             )
           }
         }),
@@ -219,36 +194,30 @@ export function bandedField(
       ? {}
       : {
           onRunnerPlacement: (id, point, anchor, generation) => {
-            onRunnerPlacement(id, point, down(anchor), generation)
+            onRunnerPlacement(id, point, toRoot(anchor), generation)
           }
         }),
     ...(onRunnerHold == null
       ? {}
       : {
           onRunnerHold: (id, anchor) => {
-            onRunnerHold(id, down(anchor))
+            onRunnerHold(id, toRoot(anchor))
           }
         })
   }
 }
 
-/** The board the canvas reports, moved down by the band its canvas sits under. */
-export function bandedBounds(
+function rootBounds(
   canvas: ScoreboardBounds,
-  band: number
+  offset: number
 ): ScoreboardBounds {
-  return band === 0 ? canvas : { ...canvas, y: canvas.y + band }
+  return offset === 0 ? canvas : { ...canvas, y: canvas.y + offset }
 }
 
-/**
- * The canvas's steady reports, its bases and its board, moved down by the
- * band. The canvas reports only when its own values change, and a band moves
- * the canvas without changing them, so the last of each, kept as the canvas
- * gave it, is moved again whenever the band comes or goes.
- */
-export function useBandedReports(
+/** Reproject the last canvas reports when a rotation changes the inset. */
+function useFieldReports(
   field: FieldCanvasProps,
-  band: number
+  offset: number
 ): {
   field: FieldCanvasProps
   bounds: ScoreboardBounds | undefined
@@ -260,25 +229,25 @@ export function useBandedReports(
   const onScoreboardBounds = useCallback(
     (canvas: ScoreboardBounds) => {
       canvasBoard.current = canvas
-      setBounds(bandedBounds(canvas, band))
+      setBounds(rootBounds(canvas, offset))
     },
-    [band]
+    [offset]
   )
-  const banded = bandedField(field, band)
-  const report = banded.onBaseProjection
+  const translated = rootField(field, offset)
+  const report = translated.onBaseProjection
   const latest = useRef(report)
   latest.current = report
   useEffect(() => {
     if (canvasBoard.current != null)
-      setBounds(bandedBounds(canvasBoard.current, band))
+      setBounds(rootBounds(canvasBoard.current, offset))
     if (canvasBases.current != null) latest.current?.(canvasBases.current)
-  }, [band])
+  }, [offset])
   return {
     field:
       report == null
-        ? banded
+        ? translated
         : {
-            ...banded,
+            ...translated,
             onBaseProjection: projection => {
               canvasBases.current = projection
               report(projection)
@@ -292,9 +261,8 @@ export function useBandedReports(
 /** What the screen on top of a kept field draws it with. */
 interface KeptFieldDraw {
   field: FieldCanvasProps
-  /** The field holder's move (`fieldHolderStyle`'s `band`) and extra height. */
+  /** The canvas's vertical offset in the screen. */
   offset: number
-  extend: number
   suspended: boolean
   /** Counts the screens that have taken the field, the first 1. */
   taken: number
@@ -380,7 +348,7 @@ function KeptField(props: {
   return (
     <View
       testID="scoring-field-holder"
-      style={fieldHolderStyle(draw?.offset ?? 0, draw?.extend)}
+      style={fieldHolderStyle(draw?.offset ?? 0)}
     >
       {field != null && draw?.suspended === false && (
         <FieldCanvas
@@ -411,7 +379,6 @@ function KeptField(props: {
 function useKeptField(
   field: FieldCanvasProps,
   offset: number,
-  extend: number,
   suspended: boolean
 ): boolean {
   const relay = useContext(KeptFieldContext)
@@ -421,7 +388,7 @@ function useKeptField(
     // This screen takes the field: the keeper tells it where the bases, the
     // board and the catcher are, as a field of its own tells it as it starts.
     if (taken.current === 0) taken.current = (relay.get()?.taken ?? 0) + 1
-    relay.set({ field, offset, extend, suspended, taken: taken.current })
+    relay.set({ field, offset, suspended, taken: taken.current })
   })
   return relay != null
 }
@@ -449,25 +416,17 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     if (props.historyLabel == null) closeHistory()
   }, [props.historyLabel, closeHistory])
   const theme = useTheme()
-  const band = props.topBand ?? 0
-  // The top controls and the scene rise half a button into the top inset
-  // (not on Android), except under the offline band, which ☰ and the speaker must not slide
-  // under. The field and its header move by the band less that lift.
   const insets = useFieldInsets()
-  // The holder is always the full lift taller, so the band coming or going
-  // only moves it and the canvas keeps its size.
-  const fullLift = topLift(insets.top, Platform.OS)
-  const lift = band > 0 ? 0 : fullLift
-  const offset = band - lift
+  const lift = topLift(insets.top, Platform.OS)
+  const offset = -lift
   const {
-    field: bandedCanvas,
+    field: translatedCanvas,
     bounds,
     onScoreboardBounds
-  } = useBandedReports({ ...props.field, frame: props.frame?.camera }, offset)
+  } = useFieldReports({ ...props.field, frame: props.frame?.camera }, offset)
   const kept = useKeptField(
-    { ...bandedCanvas, onScoreboardBounds },
+    { ...translatedCanvas, onScoreboardBounds },
     offset,
-    fullLift,
     props.suspended === true
   )
   const surface = useFieldSurface(
@@ -525,13 +484,10 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         />
       )}
       {!kept && (
-        <View
-          testID="scoring-field-holder"
-          style={fieldHolderStyle(offset, fullLift)}
-        >
+        <View testID="scoring-field-holder" style={fieldHolderStyle(offset)}>
           {props.suspended !== true && (
             <FieldCanvas
-              {...bandedCanvas}
+              {...translatedCanvas}
               {...SCORING_CAMERA}
               bottomExtension={SCORING_BOTTOM_EXTENSION}
               onScoreboardBounds={onScoreboardBounds}
@@ -915,16 +871,31 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         />
       )}
       {props.remoteUpdates != null && (
-        <RemoteScoringUpdates
-          key={`${props.remoteUpdates.game.gameId}:${props.remoteUpdates.userId}`}
-          {...props.remoteUpdates}
-          frame={{
+        <View
+          testID="scoring-log-band"
+          pointerEvents="box-none"
+          collapsable={false}
+          style={{
+            position: 'absolute',
             top: frame?.logTop ?? 0,
             left: row.left,
             width: (frame?.fieldWidth ?? viewportWidth) - row.left - row.right,
-            lines: frame?.logLines ?? 0
+            height: Math.max(0, (frame?.stripTop ?? 0) - (frame?.logTop ?? 0)),
+            zIndex: 10
           }}
-        />
+        >
+          <RemoteScoringUpdates
+            key={`${props.remoteUpdates.game.gameId}:${props.remoteUpdates.userId}`}
+            {...props.remoteUpdates}
+            frame={{
+              top: 0,
+              left: 0,
+              width:
+                (frame?.fieldWidth ?? viewportWidth) - row.left - row.right,
+              lines: frame?.logLines ?? 0
+            }}
+          />
+        </View>
       )}
     </View>
   )

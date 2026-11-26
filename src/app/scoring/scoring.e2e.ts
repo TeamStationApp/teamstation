@@ -1652,7 +1652,8 @@ describe('scoring browser', function () {
       // Saved: Back leaves without asking.
       await saved
       await page.waitForFunction(
-        () => document.querySelector('[aria-label="Save status"]') == null
+        () =>
+          document.querySelector('[data-testid="scoringSaveStatus"]') == null
       )
       /** Marks the field's canvas, to tell the same screen from a new one. */
       const mark = async (): Promise<void> => {

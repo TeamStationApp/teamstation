@@ -52,7 +52,7 @@ const ARTIFACTS = process.env.TS_LINEUP_ARTIFACTS
 const WIDTH = 402
 const HEIGHT = 874
 const BANNER =
-  'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.'
+  'Someone else edited this roster. Saving may overwrite their changes. Cancel takes theirs.'
 
 /** A new game, its rosters and the people who use it. */
 function lineupFixture(): LineupFixture {
@@ -164,7 +164,7 @@ class Scorer {
 
   async banner(): Promise<string | null> {
     return await this.page.evaluate(() => {
-      const node = document.querySelector('[data-testid="Roster conflict"]')
+      const node = document.querySelector('[data-testid="scoringNotice"]')
       return node == null ? null : String(node.textContent)
     })
   }
@@ -238,7 +238,7 @@ class Scorer {
   async waitSaved(): Promise<void> {
     await this.settled()
     await this.page.waitForFunction(
-      () => document.querySelector('[aria-label="Save status"]') == null,
+      () => document.querySelector('[data-testid="scoringSaveStatus"]') == null,
       { timeout: 30000 }
     )
   }
@@ -365,30 +365,20 @@ describe('two scorekeepers on one game', function () {
       hidden: true
     })
     await b.waitSaved()
-    await a.page.waitForSelector('[data-testid="Roster conflict"]', {
+    await a.page.waitForSelector('[data-testid="scoringNotice"]', {
       timeout: 15000
     })
     expect(await a.banner()).equals(BANNER)
     expect(await a.lineup()).deep.equals(mine)
     expect(await a.saveDisabled()).equals(false)
-    // The warning sits at the top of the screen, in the yellow outline.
-    const style = await a.page.$eval(
-      '[data-testid="Roster conflict"]',
-      node => {
-        const box = node.getBoundingClientRect()
-        const css = getComputedStyle(node)
-        return {
-          top: box.top,
-          width: box.width,
-          border: css.borderTopColor,
-          borderWidth: css.borderTopWidth
-        }
-      }
-    )
-    expect(style.top).lessThan(120)
-    expect(style.width).greaterThan(WIDTH - 80)
-    expect(style.borderWidth).equals('2px')
-    expect(style.border).equals('rgb(197, 161, 60)')
+    const bar = await a.page.$eval('[data-testid="scoringNotice"]', node => ({
+      bottom: node.getBoundingClientRect().bottom,
+      width: node.getBoundingClientRect().width,
+      fill: getComputedStyle(node).backgroundColor
+    }))
+    expect(bar.bottom).closeTo(HEIGHT, 1)
+    expect(bar.width).equals(WIDTH)
+    expect(bar.fill).equals('rgb(255, 211, 77)')
     await a.shot('roster-conflict-banner.png')
     await a.tap('Cancel')
     await a.page.waitForSelector('[aria-label="Save Rosters"]', {

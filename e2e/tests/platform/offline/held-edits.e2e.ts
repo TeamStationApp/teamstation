@@ -388,6 +388,7 @@ export default defineE2e({
       await network.outage(network.ip, 0, async () => {
         await tapBall(app)
         await tapBall(app)
+        await m.assertVisible({ id: 'scoringNotice', timeout: 30000 })
         await shot(ctx, app, 'offline-scoring.png')
         // Scoring is in front: nothing held, nothing to tap away.
         expect(await shownId(app, 'heldEditsSheet')).equals(false)
