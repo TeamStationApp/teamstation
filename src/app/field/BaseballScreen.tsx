@@ -41,6 +41,7 @@ import {
   ControlIcon,
   DICTATION_LOG_HEIGHT
 } from '../scoring/ScoringControlAppearance'
+import { DONE_WIDTH, scoringControlRow } from '../scoring/scoringControlStyle'
 import {
   type HistoryBounds,
   HistoryPopup,
@@ -52,7 +53,7 @@ import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
 import { SCORING_BOTTOM_EXTENSION, SCORING_CAMERA } from './cameraModel'
-import { coversCatcher, type ScreenRect } from './catcherBounds'
+import type { ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import { createRelay, type Relay, useRelay } from './fieldPropsRelay'
 import {
@@ -371,7 +372,10 @@ function KeptField(props: {
   }, [taken])
   const field = draw?.field
   return (
-    <View style={fieldHolderStyle(draw?.offset ?? 0, draw?.extend)}>
+    <View
+      testID="scoring-field-holder"
+      style={fieldHolderStyle(draw?.offset ?? 0, draw?.extend)}
+    >
       {field != null && draw?.suspended === false && (
         <FieldCanvas
           {...field}
@@ -438,12 +442,6 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   useEffect(() => {
     if (props.historyLabel == null) closeHistory()
   }, [props.historyLabel, closeHistory])
-  const [catcher, setCatcher] = useState<ScreenRect | null>(null)
-  const [undoSize, setUndoSize] = useState({ width: 96, y: 0 })
-  // The Done pill's row, in the window, and the pill's own size.
-  const doneRow = useRef<React.ComponentRef<typeof View>>(null)
-  const [doneRowRect, setDoneRowRect] = useState<ScreenRect | null>(null)
-  const [doneSize, setDoneSize] = useState({ width: 0, height: 0 })
   const surface = useFieldSurface()
   const theme = useTheme()
   const band = props.topBand ?? 0
@@ -461,18 +459,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     bounds,
     onScoreboardBounds
   } = useBandedReports({ ...props.field, frame: props.frame?.camera }, offset)
-  // Where the catcher is: the remote updates panel hangs beneath him, and a
-  // screen's own field hears it too.
-  const reportCatcher = bandedCanvas.onCatcherBounds
-  const onCatcherBounds = useCallback(
-    (bounds: ScreenRect): void => {
-      setCatcher(bounds)
-      reportCatcher?.(bounds)
-    },
-    [reportCatcher]
-  )
   const kept = useKeptField(
-    { ...bandedCanvas, onScoreboardBounds, onCatcherBounds },
+    { ...bandedCanvas, onScoreboardBounds },
     offset,
     fullLift,
     props.suspended === true
@@ -494,25 +482,16 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     ? compactToastBounds(header, props.sound != null)
     : bounds
   const button = { ...controlFrame, flex: 1 } as const
-  // Centred over its column the pill can sit on the catcher, whom a relay
-  // throws to: then it moves to the start of the column.
-  const doneAside =
-    catcher != null &&
-    doneRowRect != null &&
-    doneSize.width > 0 &&
-    coversCatcher(
-      {
-        x: doneRowRect.x + (doneRowRect.width - doneSize.width) / 2,
-        y: doneRowRect.y,
-        width: doneSize.width,
-        height: doneSize.height
-      },
-      { ...catcher, y: catcher.y + band }
-    )
+  const { frame } = props
+  const row = scoringControlRow(frame?.fieldWidth ?? viewportWidth, insets)
+  const showDone =
+    (props.instruction != null || props.remainingMs != null) &&
+    (props.onFinish != null || props.remainingMs != null)
   return (
     <View
       // Over a kept field, the field shows through, and takes the touches
       // nothing drawn over it takes.
+      testID="baseball-screen"
       pointerEvents={kept ? 'box-none' : 'auto'}
       style={[
         surface.root,
@@ -538,13 +517,15 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         />
       )}
       {!kept && (
-        <View style={fieldHolderStyle(offset, fullLift)}>
+        <View
+          testID="scoring-field-holder"
+          style={fieldHolderStyle(offset, fullLift)}
+        >
           {props.suspended !== true && (
             <FieldCanvas
               {...bandedCanvas}
               {...SCORING_CAMERA}
               bottomExtension={SCORING_BOTTOM_EXTENSION}
-              onCatcherBounds={onCatcherBounds}
               onScoreboardBounds={onScoreboardBounds}
             />
           )}
@@ -653,34 +634,68 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           <SwitchHitterHint bounds={bounds} onDismiss={props.onDismissHint} />
         )}
         {props.children}
-        <View pointerEvents="box-none">
-          {props.walkUpControl != null && (
+        <View
+          pointerEvents="box-none"
+          style={
+            frame == null
+              ? undefined
+              : {
+                  position: 'absolute',
+                  top: frame.deckTop,
+                  left: row.left,
+                  right: row.right
+                }
+          }
+        >
+          {(props.walkUpControl != null ||
+            props.dictationControl != null ||
+            showDone) && (
             <View
               pointerEvents="box-none"
               testID="walk-up-row"
               style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: CONTROL_DECK_HEIGHT + CONTROL_GAP,
                 flexDirection: 'row',
-                gap: 6,
-                height: CONTROL_HEIGHT,
-                marginBottom: CONTROL_GAP
+                alignItems: 'center',
+                height: CONTROL_HEIGHT
               }}
             >
-              <View
-                pointerEvents="box-none"
-                style={{
-                  flex: 4,
-                  flexBasis: 18,
-                  flexDirection: 'row',
-                  gap: 6,
-                  minWidth: 0
-                }}
-              >
-                <View pointerEvents="box-none" style={{ flex: 1, minWidth: 0 }}>
-                  {props.walkUpControl}
-                </View>
-                <View pointerEvents="none" style={{ flex: 3, flexBasis: 12 }} />
+              <View pointerEvents="box-none" style={{ width: row.buttonWidth }}>
+                {props.walkUpControl}
               </View>
-              <View pointerEvents="none" style={{ flex: 1, minWidth: 0 }} />
+              <View pointerEvents="none" style={{ flex: 1 }} />
+              {showDone && (
+                <View
+                  pointerEvents="box-none"
+                  style={{
+                    width: DONE_WIDTH,
+                    marginRight: props.dictationControl == null ? 0 : 6
+                  }}
+                >
+                  <PillButton
+                    testID="scoring-done-pill"
+                    fitLabel
+                    label={lstrings.common_done}
+                    accessibilityLabel={sprintf(
+                      lstrings.scoring_bottom_action,
+                      props.finishLabel ?? lstrings.scoring_finish_at_bat
+                    )}
+                    disabled={props.canFinish !== true}
+                    onPress={props.onFinish}
+                  />
+                </View>
+              )}
+              {props.dictationControl != null && (
+                <View
+                  pointerEvents="box-none"
+                  style={{ width: row.buttonWidth }}
+                >
+                  {props.dictationControl}
+                </View>
+              )}
             </View>
           )}
           <View
@@ -697,46 +712,6 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
               >
                 {props.moreControl}
                 <View style={{ flex: 3, flexBasis: 12 }}>
-                  {(props.instruction != null || props.remainingMs != null) &&
-                    (props.onFinish != null || props.remainingMs != null) && (
-                      <View
-                        ref={doneRow}
-                        pointerEvents="box-none"
-                        onLayout={() => {
-                          doneRow.current?.measureInWindow(
-                            (x, y, width, height) => {
-                              setDoneRowRect({ x, y, width, height })
-                            }
-                          )
-                        }}
-                        style={{
-                          position: 'absolute',
-                          bottom: '100%',
-                          left: 0,
-                          right: 0,
-                          alignItems: doneAside ? 'flex-start' : 'center'
-                        }}
-                      >
-                        <View
-                          pointerEvents="box-none"
-                          onLayout={event => {
-                            const { width, height } = event.nativeEvent.layout
-                            setDoneSize({ width, height })
-                          }}
-                        >
-                          <PillButton
-                            label={lstrings.common_done}
-                            accessibilityLabel={sprintf(
-                              lstrings.scoring_bottom_action,
-                              props.finishLabel ??
-                                lstrings.scoring_finish_at_bat
-                            )}
-                            disabled={props.canFinish !== true}
-                            onPress={props.onFinish}
-                          />
-                        </View>
-                      </View>
-                    )}
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={
@@ -745,12 +720,6 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                         : `Undo ${props.historyLabel}`
                     }
                     ref={undoButton}
-                    onLayout={event => {
-                      const width = event.nativeEvent.layout.width
-                      undoButton.current?.measureInWindow((_x, y) => {
-                        setUndoSize({ width, y })
-                      })
-                    }}
                     disabled={props.historyLabel == null}
                     delayLongPress={500}
                     onPressIn={handleUndoPressIn}
@@ -869,6 +838,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                 </View>
               </View>
               <View
+                pointerEvents={
+                  Platform.OS === 'web' && !props.canPitch ? 'none' : 'auto'
+                }
                 style={{ flexDirection: 'row', gap: 6, height: CONTROL_HEIGHT }}
               >
                 {PITCH_CONTROLS.filter(control => control.kind !== 'play').map(
@@ -905,19 +877,6 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
               </View>
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              {props.dictationControl != null && (
-                <View
-                  pointerEvents="box-none"
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: CONTROL_DECK_HEIGHT + CONTROL_GAP
-                  }}
-                >
-                  {props.dictationControl}
-                </View>
-              )}
               {props.ballInPlayControl ?? (
                 <Pressable
                   accessibilityRole="button"
@@ -936,21 +895,30 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           </View>
         </View>
       </View>
+      {frame != null && (
+        <View
+          testID="scoring-notice-strip"
+          pointerEvents="none"
+          collapsable={false}
+          style={{
+            position: 'absolute',
+            top: frame.stripTop,
+            left: 0,
+            width: frame.fieldWidth,
+            height: frame.stripHeight
+          }}
+        />
+      )}
       {props.remoteUpdates != null && (
         <RemoteScoringUpdates
           key={`${props.remoteUpdates.game.gameId}:${props.remoteUpdates.userId}`}
           {...props.remoteUpdates}
-          catcher={
-            catcher == null ? null : { ...catcher, y: catcher.y + offset }
-          }
-          width={viewportWidth}
-          height={viewportHeight}
-          undoWidth={undoSize.width}
-          undoTop={
-            undoSize.y > 0
-              ? undoSize.y
-              : viewportHeight - CONTROL_DECK_HEIGHT - 8
-          }
+          frame={{
+            top: frame?.logTop ?? 0,
+            left: row.left,
+            width: (frame?.fieldWidth ?? viewportWidth) - row.left - row.right,
+            lines: frame?.logLines ?? 0
+          }}
         />
       )}
     </View>
