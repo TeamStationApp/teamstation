@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -6,10 +5,12 @@ import { extname, join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import { PerspectiveCamera, Vector3 } from 'three'
+import { type WebSocket, WebSocketServer } from 'ws'
 
 import {
+  FIELD_SCENE_PROBE,
   maestroDriver,
+  playerAt,
   setTrajectory,
   tapFielder
 } from '../../../e2e/rigs/fieldPointer'
@@ -17,6 +18,7 @@ import { asGameDetail, asRosterEntry } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
+import { readLineups } from '../../common/scoring/lineupHistory'
 import { sameScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type SaveChange,
@@ -25,9 +27,9 @@ import {
 } from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
+import { playsDigest } from '../../server/events/postPlays'
+import { lineupsDigest as serverLineupsDigest } from '../../server/events/teamLineups'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
-import { applyFieldCamera } from '../field/cameraModel'
-import { createPlayers } from '../field/fieldModel'
 import {
   type DefaultLineups,
   startingSetup,
@@ -324,6 +326,7 @@ async function open(fixture: Fixture = {}): Promise<{
     away: [],
     home: []
   }
+  const guests: typeof created = { away: [], home: [] }
   const sideRoster = (
     side: 'away' | 'home'
   ): Array<{ gumboId: number | null; shortName: string }> => [
@@ -337,7 +340,12 @@ async function open(fixture: Fixture = {}): Promise<{
   /** The game as the API reads it back: every player named from his account. */
   const named = (): StoredGame => {
     const names = new Map<number, string>()
-    for (const entry of [...sideRoster('away'), ...sideRoster('home')])
+    for (const entry of [
+      ...sideRoster('away'),
+      ...sideRoster('home'),
+      ...guests.away,
+      ...guests.home
+    ])
       if (entry.gumboId != null) names.set(entry.gumboId, entry.shortName)
     return {
       ...held,
@@ -345,6 +353,11 @@ async function open(fixture: Fixture = {}): Promise<{
       currentPlay: withNames(held.currentPlay, names)
     }
   }
+  const digest = (): string =>
+    playsDigest(
+      held.plays.map(gumbo => ({ gumbo })),
+      held.currentPlay
+    )
   const fixtureGame = asGameDetail(game)
   const context = {
     gamePk: 'g1',
@@ -361,23 +374,16 @@ async function open(fixture: Fixture = {}): Promise<{
       false
     )
   }
-  // The lineups as held, as a digest: every lineup action of the game. A
-  // save naming an older one is refused, as the server refuses a post built
-  // on lineups somebody else has saved since.
-  const lineupsDigest = (): string =>
-    createHash('sha1')
-      .update(
-        JSON.stringify(
-          [...held.plays, held.currentPlay].flatMap(play =>
-            (
-              (play as { teamStation?: { actions?: unknown[] } } | null)
-                ?.teamStation?.actions ?? []
-            ).filter(action => (action as { type?: string }).type === 'lineup')
-          )
-        )
-      )
-      .digest('hex')
-      .slice(0, 16)
+  const lineupsDigest = (): string => {
+    const read = readLineups(held, context)
+    return serverLineupsDigest(
+      read.sides,
+      read.bench,
+      read.courtesy,
+      read.due,
+      read.deferred
+    )
+  }
   // The server's arbitration (`postPlays.ts`): a save built on a scoring base
   // somebody else has moved on is refused as stale when it carries no scoring
   // of its own, and answered with what is held, superseded, when it does.
@@ -451,6 +457,7 @@ async function open(fixture: Fixture = {}): Promise<{
     for (const action of actions)
       expect(other.apply(action).problems).deep.equals([])
     await other.flush()
+    if (actions.length > 0) publish()
     return other.state
   }
   const server = createServer((request, response) => {
@@ -481,7 +488,7 @@ async function open(fixture: Fixture = {}): Promise<{
           response.end(
             (await upstream.text()).replace(
               '<head>',
-              `<head><script>${preferences}window.__defensiveErrors=[];addEventListener('error',e=>{if(e.message)__defensiveErrors.push(e.message)});addEventListener('unhandledrejection',e=>__defensiveErrors.push(String(e.reason)));</script>`
+              `<head><script>${FIELD_SCENE_PROBE};${preferences}window.__defensiveErrors=[];addEventListener('error',e=>{if(e.message)__defensiveErrors.push(e.message)});addEventListener('unhandledrejection',e=>__defensiveErrors.push(String(e.reason)));</script>`
             )
           )
         } else response.end(Buffer.from(await upstream.arrayBuffer()))
@@ -491,7 +498,10 @@ async function open(fixture: Fixture = {}): Promise<{
       if (u.pathname.endsWith('/auth/me'))
         body = { id: userIdOfGumbo(999), displayName: 'Scorer', isAdmin: false }
       else if (u.pathname === '/api/v1/me/roles')
-        body = { teams: [], players: [] }
+        body = {
+          teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+          guardianOf: []
+        }
       else if (u.pathname === '/api/v1/me/notifications/summary')
         body = { hasPending: false }
       else if (u.pathname === '/api/v1/health')
@@ -517,9 +527,24 @@ async function open(fixture: Fixture = {}): Promise<{
         body = { leagues: [] }
       else if (u.pathname === '/api/v1/me/home')
         body = { teams: [], seasons: [], leagues: [] }
-      else if (u.pathname === '/api/v1/me/account/chat-age')
-        body = { confirmed: false, source: null, confirmedAt: null }
-      else if (u.pathname === '/api/v1/games/g1') body = game
+      else if (u.pathname === '/api/v1/me/account/age')
+        body = {
+          band: 'unknown',
+          birthYear: null,
+          birthMonth: null,
+          isAdult: false,
+          ageSource: null,
+          ageSetAt: null
+        }
+      else if (u.pathname === '/api/v1/games/g1')
+        body = {
+          ...game,
+          guestPlayers: guests,
+          guests: {
+            away: guests.away.map(player => player.gumboId),
+            home: guests.home.map(player => player.gumboId)
+          }
+        }
       // Nobody has planned the game, so no inning's column moves the defence.
       else if (
         /^\/api\/v1\/games\/g1\/plans\/[^/]+\/innings\/\d+$/.test(u.pathname)
@@ -527,6 +552,7 @@ async function open(fixture: Fixture = {}): Promise<{
         const [, , , , , , teamId, , inning] = u.pathname.split('/')
         body = { teamId, inning: Number(inning), column: [] }
       } else if (u.pathname.endsWith('/events')) {
+        const priorPlaysDigest = digest()
         let superseded: boolean | undefined
         let refused: HttpError | undefined
         if (request.method === 'POST') {
@@ -569,6 +595,9 @@ async function open(fixture: Fixture = {}): Promise<{
               gumbo: play
             })),
             currentPlay: read.currentPlay,
+            generation: 0,
+            playsDigest: digest(),
+            ...(request.method === 'POST' ? { priorPlaysDigest } : {}),
             lineupsDigest: lineupsDigest(),
             ...(held.scoringMutation == null
               ? {}
@@ -588,18 +617,20 @@ async function open(fixture: Fixture = {}): Promise<{
                 setAt: null
               }
       } else if (u.pathname === '/api/v1/games/g1/lineups') {
-        // Read as the roster sheet opens, for the digest it follows.
-        const side = (teamId: string, teamName: string): unknown => ({
-          teamId,
-          teamName,
-          start: null,
-          changes: [],
-          current: null
-        })
+        const read = readLineups(held, context)
         body = {
-          away: side('away', game.awayTeamName),
-          home: side('home', game.homeTeamName),
-          digest: lineupsDigest()
+          away: {
+            ...read.sides.away,
+            teamId: 'away',
+            teamName: game.awayTeamName
+          },
+          home: {
+            ...read.sides.home,
+            teamId: 'home',
+            teamName: game.homeTeamName
+          },
+          digest: lineupsDigest(),
+          generation: 0
         }
       } else if (u.pathname === '/api/v1/teams') body = []
       else if (u.pathname.endsWith('/live-streams'))
@@ -618,7 +649,8 @@ async function open(fixture: Fixture = {}): Promise<{
           ...input
         } = JSON.parse(bytes === '' ? '{}' : bytes) as Record<string, unknown>
         const entry = rosterEntryFromBody(input)
-        created[
+        const players = u.pathname.endsWith('/guest-players') ? guests : created
+        players[
           side === 'away' || u.pathname.includes('/teams/away/')
             ? 'away'
             : 'home'
@@ -638,12 +670,54 @@ async function open(fixture: Fixture = {}): Promise<{
       response.end('{}')
     })
   })
+  const sockets = new WebSocketServer({ server, path: '/socket' })
+  const watchers = new Set<WebSocket>()
+  sockets.on('connection', socket => {
+    socket.on('message', (bytes, binary) => {
+      if (binary || !Buffer.isBuffer(bytes)) return
+      const frame = JSON.parse(bytes.toString('utf8')) as {
+        type: string
+        gameId?: string
+        scope?: string
+        id: string
+      }
+      if (frame.type === 'subscribe') {
+        if (frame.gameId === 'g1' && frame.scope == null) watchers.add(socket)
+        socket.send(JSON.stringify({ ...frame, type: 'subscribed' }))
+      } else if (
+        frame.type === 'unsubscribe' &&
+        frame.gameId === 'g1' &&
+        frame.scope == null
+      )
+        watchers.delete(socket)
+    })
+    socket.on('close', () => watchers.delete(socket))
+  })
+  const publish = (): void => {
+    // Peer saves reach the scoring screen through its game subscription.
+    const frame = JSON.stringify({
+      type: 'change',
+      gameId: 'g1',
+      at: new Date().toISOString(),
+      kind: 'playEdits',
+      data: {
+        generation: 0,
+        fromDigest: null,
+        digest: digest(),
+        namesDigest: null,
+        edits: null
+      }
+    })
+    for (const socket of watchers) socket.send(frame)
+  }
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (address == null || typeof address === 'string')
     throw new Error('Fixture server did not start')
   const url = `http://127.0.0.1:${address.port}/games/g1/score`
   const dispose = async (): Promise<void> => {
+    for (const socket of sockets.clients) socket.terminate()
+    sockets.close()
     server.closeAllConnections()
     await new Promise<void>((resolve, reject) =>
       server.close(error => {
@@ -775,35 +849,9 @@ async function picture(page: Page, name: string): Promise<void> {
   }
 }
 async function tapField(page: Page, slot: Position): Promise<void> {
-  const rect = await page.$eval('canvas', canvas => {
-    const r = canvas.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })
-  const empty = await page.$(`[data-nameplate="empty-${slot}"]`)
-  if (empty != null) {
-    // Nameplate overlays pass pointers through to the actual canvas.
-    const box = await empty.boundingBox()
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-  } else {
-    const player = createPlayers().find(p => p.id === slot)!
-    const camera = new PerspectiveCamera()
-    applyFieldCamera(camera, {
-      width: rect.width,
-      height: rect.height,
-      view: 'home',
-      zoom: 1.25,
-      tilt: (-11 * Math.PI) / 180,
-      heightOffset: 33,
-      bottomExtension: 112
-    })
-    const v = new Vector3(player.position.x, 5, player.position.z).project(
-      camera
-    )
-    await page.mouse.click(
-      rect.x + ((v.x + 1) * rect.width) / 2,
-      rect.y + ((1 - v.y) * rect.height) / 2
-    )
-  }
+  // A filled pitcher has no nameplate. Tap his torso above the mound.
+  const [x, y] = await playerAt(maestroDriver(page.driver), slot, 5)
+  await page.mouse.click(x, y)
 }
 async function tapSlot(page: Page, slot: Position): Promise<void> {
   await tapField(page, slot)
@@ -1287,6 +1335,18 @@ describe('current defensive scoring setup browser', function () {
       await page.waitForSelector('[aria-label*="2 balls"]')
       // The eight on the roster, the two placeholders made here and the
       // peer's Julio Rodriguez.
+      // The game has acknowledged both provisional guests and the peer's player.
+      await page.waitForFunction(() => {
+        const rows = Array.from(
+          document.querySelectorAll('[aria-label^="Assign RF "]')
+        ).map(node => node.getAttribute('aria-label'))
+        return (
+          rows.length === 11 &&
+          rows.includes('Assign RF HAWKS A') &&
+          rows.includes('Assign RF HAWKS B') &&
+          rows.includes('Assign RF #10 Julio R')
+        )
+      })
       const choices = await page.$$eval('[aria-label^="Assign RF "]', nodes =>
         nodes.map(node => node.getAttribute('aria-label'))
       )
@@ -1342,7 +1402,7 @@ describe('current defensive scoring setup browser', function () {
         }
         await peer([{ type: 'gameFlow', kind: 'endGame' }])
         if (opening === 'completed') await page.reload()
-        else await click(page, 'Create Player')
+        // A live completion dismisses the form while the scorer is typing.
         await page.waitForSelector('[aria-label="Game over"]')
         await tapField(page, 'P')
         expect(
@@ -1406,7 +1466,23 @@ describe('current defensive scoring setup browser', function () {
         await page.waitForFunction(
           () => document.querySelector('[aria-label="Save status"]') == null
         )
-        const persisted = await peer([])
+        // The field updates optimistically. Reopen only after its queued roster
+        // edit has reached the game other devices can read.
+        const deadline = Date.now() + 10000
+        let persisted = await peer([])
+        const setupSaved = (): boolean =>
+          persisted.pending == null &&
+          (problem === 'defense'
+            ? persisted.liveData.boxscore.teams.away.defense.P != null
+            : persisted.liveData.boxscore.teams.home.battingOrder.length === 9)
+        while (!setupSaved() && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+          persisted = await peer([])
+        }
+        expect(
+          setupSaved(),
+          'the repaired setup is saved for another scorer'
+        ).equals(true)
         expect(persisted.pending).equals(null)
         expect(persisted.liveData.linescore.isTopInning).equals(false)
         expect(savedPlays()).equals(3)

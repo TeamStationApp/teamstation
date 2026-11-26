@@ -108,7 +108,11 @@ function Nameplate({
       <View style={{ position: 'absolute', ...frame }}>
         <View
           accessibilityLabel={
-            face.emptyPosition === true ? `Assign ${face.name}` : undefined
+            face.emptyPosition === true
+              ? `Assign ${face.name}`
+              : face.fittedSize != null
+                ? face.name
+                : undefined
           }
           style={{
             padding: NAMEPLATE_PAD,
@@ -125,6 +129,7 @@ function Nameplate({
               face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
             height:
               face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
+            ...face.fittedSize,
             justifyContent: 'center',
             alignItems: 'center'
           }}
