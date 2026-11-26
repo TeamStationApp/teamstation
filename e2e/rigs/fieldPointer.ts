@@ -144,7 +144,8 @@ export async function atRest(field: FieldDriver): Promise<void> {
  */
 export async function playerAt(
   field: FieldDriver,
-  position: string
+  position: string,
+  bodyHeight = 1
 ): Promise<Point> {
   const selector = scriptLiteral(
     `[data-nameplate][data-position="${position}"]`
@@ -156,7 +157,7 @@ export async function playerAt(
   const read =
     spot == null || position.startsWith('R')
       ? plate
-      : `(${plate} || (() => { ${THREE_STATE}; if (three == null) return null; let best; three.scene.traverse(o => { if (!o.name.startsWith('player-') || o.name.startsWith('player-offense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${spot.x}) ** 2 + (at.z - ${spot.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, 1, best.at.z) })())`
+      : `(${plate} || (() => { ${THREE_STATE}; if (three == null) return null; let best; three.scene.traverse(o => { if (!o.name.startsWith('player-') || o.name.startsWith('player-offense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${spot.x}) ** 2 + (at.z - ${spot.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, ${bodyHeight}, best.at.z) })())`
   // A press while players still run to their places is lost to the motion.
   await atRest(field)
   try {
@@ -234,8 +235,7 @@ export async function setTrajectory(
  * Keeps React's fiber roots on `window.qaRoots`, through a stand-in for the
  * devtools hook, so `dropRunner` can read where the bases draw.
  */
-export async function installSceneProbe(page: Page): Promise<void> {
-  await page.evaluateOnNewDocument(`(() => {
+export const FIELD_SCENE_PROBE = `(() => {
     window.qaRoots = []
     window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
       supportsFiber: true,
@@ -246,7 +246,35 @@ export async function installSceneProbe(page: Page): Promise<void> {
       },
       onCommitFiberUnmount() {}
     }
-  })()`)
+  })()`
+
+export async function installSceneProbe(page: Page): Promise<void> {
+  await page.evaluateOnNewDocument(FIELD_SCENE_PROBE)
+}
+
+/** Project the corners of the rendered scoreboard meshes through the mounted camera. */
+export async function measuredBoard(
+  page: Page
+): Promise<{ top: number; width: number }> {
+  return (await page.evaluate(`(() => {
+    ${THREE_STATE}
+    const board = three.scene.getObjectByName('vintage-scoreboard')
+    const xs = [], ys = []
+    board.traverseVisible(mesh => {
+      if (!mesh.geometry) return
+      mesh.geometry.computeBoundingBox()
+      const {min, max} = mesh.geometry.boundingBox
+      for (const x of [min.x, max.x])
+        for (const y of [min.y, max.y])
+          for (const z of [min.z, max.z]) {
+            const v = mesh.localToWorld(mesh.position.clone().set(x, y, z))
+            const [px, py] = project(v.x, v.y, v.z)
+            xs.push(px)
+            ys.push(py)
+          }
+    })
+    return {top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs)}
+  })()`)) as { top: number; width: number }
 }
 
 /** Where ground point (x, z), `y` up, draws on the page, through the live camera. */
