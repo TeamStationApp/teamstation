@@ -45,6 +45,7 @@
 - changed: A guardian must be an adult, and coaches no longer see or set players' birth months
 - changed: The 13+ consent sheet is gone, along with the account setting behind it
 - changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
+- fixed: Scoring: the field fits between the scoreboard and the pitch buttons on every screen size; home plate is never under the buttons.
 - fixed: The scoreboard keeps its width as scores, player names and radar speeds change
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"

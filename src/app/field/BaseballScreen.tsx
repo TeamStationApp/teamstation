@@ -51,6 +51,7 @@ import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
+import { SCORING_BOTTOM_EXTENSION, SCORING_CAMERA } from './cameraModel'
 import { coversCatcher, type ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import { createRelay, type Relay, useRelay } from './fieldPropsRelay'
@@ -64,21 +65,11 @@ import {
   WEB_MENU_BUTTON
 } from './fieldSafeArea'
 import type { BaseProjection, FieldCanvasProps } from './fieldTypes'
+import type { ScoringFrame } from './scoringFrame'
 import { useFieldInsets, useFieldSurface } from './useFieldSurface'
 import { VolumeButton } from './VolumeButton'
 
-/** The scoring screen's camera, which the replay frames its field with too. */
-export const SCORING_CAMERA = {
-  zoom: 1.25,
-  cameraTilt: (-11 * Math.PI) / 180,
-  cameraHeight: 33
-} as const
-
-/**
- * What the scoring camera frames below the catcher, which the replay frames
- * with too.
- */
-export const SCORING_BOTTOM_EXTENSION = 112
+export { SCORING_CAMERA, SCORING_BOTTOM_EXTENSION } from './cameraModel'
 
 export const PITCH_CONTROLS = [
   { kind: 'ball', label: 'Ball' },
@@ -88,6 +79,8 @@ export const PITCH_CONTROLS = [
   { kind: 'play', label: 'Ball in Play' }
 ] as const
 export interface BaseballScreenProps {
+  frame?: ScoringFrame
+  onRootSize?: (size: { width: number; height: number }) => void
   remoteUpdates?: Pick<
     RemoteScoringUpdatesProps,
     'game' | 'userId' | 'obscured'
@@ -190,7 +183,8 @@ export function bandedField(
     ...point,
     y: point.y + band
   })
-  const { onBaseProjection, onRunnerDrag, onRunnerHold } = field
+  const { onBaseProjection, onRunnerDrag, onRunnerHold, onRunnerPlacement } =
+    field
   return {
     ...field,
     ...(onBaseProjection == null
@@ -218,6 +212,13 @@ export function bandedField(
                 ? null
                 : { ...view, safe: down(view.safe), out: down(view.out) }
             )
+          }
+        }),
+    ...(onRunnerPlacement == null
+      ? {}
+      : {
+          onRunnerPlacement: (id, point, anchor, generation) => {
+            onRunnerPlacement(id, point, down(anchor), generation)
           }
         }),
     ...(onRunnerHold == null
@@ -459,7 +460,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     field: bandedCanvas,
     bounds,
     onScoreboardBounds
-  } = useBandedReports(props.field, offset)
+  } = useBandedReports({ ...props.field, frame: props.frame?.camera }, offset)
   // Where the catcher is: the remote updates panel hangs beneath him, and a
   // screen's own field hears it too.
   const reportCatcher = bandedCanvas.onCatcherBounds
@@ -518,6 +519,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         { backgroundColor: kept ? 'transparent' : theme.backgroundColor }
       ]}
       onLayout={event => {
+        const { width, height } = event.nativeEvent.layout
+        props.onRootSize?.({ width, height })
         setViewportHeight(event.nativeEvent.layout.height)
         setViewportWidth(event.nativeEvent.layout.width)
       }}
@@ -681,6 +684,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
             </View>
           )}
           <View
+            testID="scoring-deck"
             style={{
               flexDirection: 'row',
               gap: 6,

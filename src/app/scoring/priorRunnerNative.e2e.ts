@@ -2,19 +2,14 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import { topLift } from '../field/fieldSafeArea'
+import type { BaseProjection } from '../field/fieldTypes'
+import { runnerTargets } from './runnerDrag'
 const { MaestroD } = require(process.env.MAESTRO_D_CLIENT_ROOT ?? 'maestro-d')
 const required = (name: string): string => {
   const value = process.env[name]
   assert(value != null && value !== '', `Missing ${name}`)
   return value
 }
-/**
- * How far the scoring field rises into the phone's top inset (`topLift`), and
- * with it every fixed screen point below: 24 points under an iPhone's 59
- * point island. SCORING_TOP_INSET names another phone's inset.
- */
-const LIFT = topLift(Number(process.env.SCORING_TOP_INSET ?? 59), 'ios')
 async function main(): Promise<void> {
   const device = required('SCORING_DEVICE_UDID')
   const artifacts = resolve(required('SCORING_ARTIFACT_DIR'))
@@ -25,7 +20,7 @@ async function main(): Promise<void> {
   const m = await daemon.attach({
     device,
     platform: 'ios',
-    appId: 'app.teamstation.app',
+    appId: process.env.SCORING_APP_ID ?? 'app.teamstation.app',
     artifacts: 'on-failure'
   })
   await mkdir(artifacts, { recursive: true })
@@ -121,6 +116,10 @@ async function main(): Promise<void> {
     })
   }
 
+  interface Point {
+    x: number
+    y: number
+  }
   interface Bounds {
     x: number
     y: number
@@ -128,6 +127,7 @@ async function main(): Promise<void> {
     height: number
   }
   interface Node {
+    id?: string
     text?: string
     bounds?: Bounds
     children?: Node[]
@@ -164,6 +164,7 @@ async function main(): Promise<void> {
   // The field plate is the short label on the dirt. The lineup card and the
   // play toast sit outside this band.
   const runnerPlate = async (name: string): Promise<Bounds | undefined> => {
+    const { feet, bodies } = await landmarks()
     const found = (await nodes()).filter(node => {
       const bounds = node.bounds
       return (
@@ -171,8 +172,8 @@ async function main(): Promise<void> {
         bounds != null &&
         bounds.height <= 40 &&
         bounds.width <= 120 &&
-        bounds.y >= 400 - LIFT &&
-        bounds.y <= 620 - LIFT
+        bounds.y >= Math.min(...bodies.map(p => p.y)) - 20 &&
+        bounds.y <= Math.max(...feet.map(p => p.y)) + 40
       )
     })
     return found.sort((a, b) => b.bounds!.y - a.bounds!.y)[0]?.bounds
@@ -193,31 +194,69 @@ async function main(): Promise<void> {
     x: Math.round(plate.x + plate.width / 2),
     y: Math.round(plate.y - 14)
   })
-  const first = [
-    { x: 196, y: 452 - LIFT },
-    { x: 287, y: 528 - LIFT }
-  ]
-  const second = [
-    { x: 106, y: 520 - LIFT },
-    { x: 196, y: 453 - LIFT }
-  ]
+  async function landmarks(): Promise<{
+    feet: Point[]
+    bodies: Point[]
+    safe: Point
+  }> {
+    const tree = await nodes()
+    const root = tree.find(node => node.id === 'fixture-field')?.bounds
+    const reported = tree.find(
+      node => node.text?.startsWith('Fixture bases ') === true
+    )?.text
+    assert(
+      root != null && reported != null,
+      'Mounted field and its base projection are accessible'
+    )
+    const projection = JSON.parse(
+      reported.slice('Fixture bases '.length)
+    ) as BaseProjection
+    assert(
+      projection?.feet != null && projection.heads != null,
+      'The mounted camera projected all bases'
+    )
+    const inWindow = (p: Point): Point => ({ x: p.x + root.x, y: p.y + root.y })
+    const feet = projection.feet.map(inWindow)
+    const bodies = feet.map((foot, i) => ({
+      x: foot.x,
+      y: (foot.y + inWindow(projection.heads![i]).y) / 2
+    }))
+    const { safe } = runnerTargets(
+      projection.bases[3],
+      projection.width,
+      projection.height,
+      3
+    )
+    return {
+      feet,
+      bodies,
+      safe: inWindow({
+        x: safe.x + safe.width / 2,
+        y: safe.y + safe.height / 2
+      })
+    }
+  }
   console.log(
     '$ node -r sucrase/register src/app/scoring/priorRunnerNative.e2e.ts (one attached iPhone)'
   )
   try {
+    await m.launchApp({ stopApp: true })
     for (const scenario of (
       process.env.SCENARIOS ?? 'first,second,pitched,home,timed'
     )
       .split(',')
       .filter(name => name.length > 0)) {
       await fixture(scenario)
+      const { feet, bodies } = await landmarks()
+      const first = [bodies[2], feet[1]]
+      const second = [bodies[3], feet[2]]
       if (scenario === 'timed') {
         await tap('Swing in Play')
         await tap('Single')
         await tap('Juan S')
         // One tap places the fielder. The next tap, with no vertical travel,
         // accepts the trajectory the play started at.
-        await gesture([{ x: 196, y: 450 - LIFT }])
+        await gesture([feet[2]])
         await waitFor(
           'The single never offered a trajectory',
           async () =>
@@ -226,7 +265,7 @@ async function main(): Promise<void> {
           20000
         )
         if (await screenHas('Drag up and down for ball trajectory'))
-          await gesture([{ x: 196, y: 420 - LIFT }], 80)
+          await gesture([bodies[2]], 80)
         await waitFor(
           'The Done countdown never opened',
           async () => await screenHas('Time to edit play'),
@@ -241,7 +280,14 @@ async function main(): Promise<void> {
           'Mookie never stood still at third',
           async () => {
             const plate = await runnerPlate('Mookie')
-            if (plate == null || plate.y < 510 - LIFT) return false
+            if (
+              plate == null ||
+              Math.hypot(
+                plate.x + plate.width / 2 - feet[3].x,
+                plate.y - feet[3].y
+              ) > 30
+            )
+              return false
             await sleep(400)
             const settled = await runnerPlate('Mookie')
             return (
@@ -348,11 +394,14 @@ async function main(): Promise<void> {
     }
     if (process.env.BASELINE !== '1') {
       await fixture('occupied')
+      const occupiedLandmarks = await landmarks()
+      const first = [occupiedLandmarks.bodies[2], occupiedLandmarks.feet[1]]
       const occupied = await proof()
       await gesture(first)
       assert.deepEqual(await proof(), occupied, 'Occupied retreat is inert')
       console.log('S5: occupied target rejected')
       await fixture('open')
+      const { feet, bodies, safe } = await landmarks()
       assert.equal((await proof()).open, true, 'Fixture is still an open play')
       await waitFor(
         'Mookie never arrived at third on the open play',
@@ -361,14 +410,17 @@ async function main(): Promise<void> {
           return (
             (await proof()).bases[2] === 100 &&
             plate != null &&
-            plate.y >= 510 - LIFT
+            Math.hypot(
+              plate.x + plate.width / 2 - feet[3].x,
+              plate.y - feet[3].y
+            ) <= 30
           )
         },
         20000
       )
       const arrived = await runnerPlate('Mookie')
       assert(arrived != null, 'Mookie is on the field')
-      await gesture([bodyOf(arrived), second[1]])
+      await gesture([bodyOf(arrived), feet[2]])
       assert.equal((await proof()).bases[1], 100)
       // Forward again only counts when the finger finishes on Safe. That chip
       // sits on the calibrated third-base point, so wait until he is standing
@@ -379,15 +431,11 @@ async function main(): Promise<void> {
           const plate = await runnerPlate('Mookie')
           if (plate == null) return false
           const body = bodyOf(plate)
-          return Math.hypot(body.x - 196, body.y - (452 - LIFT)) <= 30
+          return Math.hypot(body.x - bodies[2].x, body.y - bodies[2].y) <= 30
         },
         15000
       )
-      await gesture([
-        { x: 196, y: 452 - LIFT },
-        { x: 106, y: 528 - LIFT },
-        { x: 46, y: 491 - LIFT }
-      ])
+      await gesture([bodies[2], feet[3], safe])
       assert.equal((await proof()).bases[2], 100)
       console.log('S1: open return and re-advance remain immediate')
       await shot('open-return-forward-after')

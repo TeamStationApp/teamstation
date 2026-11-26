@@ -19,6 +19,7 @@ export function nameplateColor(plate: {
  * without React (`NativeNameplates.tsx`).
  */
 export interface NameplateFace {
+  fittedSize?: { width: number; height: number }
   emptyPosition?: boolean
   id: string
   name: string
@@ -39,6 +40,9 @@ export interface NameplateSpot {
 export function nameplateFaces(plates: NameplatePlacement[]): NameplateFace[] {
   return plates.map(plate => ({
     id: plate.id,
+    ...(plate.fitted === true
+      ? { fittedSize: { width: plate.width, height: plate.height } }
+      : {}),
     name: plate.name,
     number: plate.number,
     color: nameplateColor(plate),

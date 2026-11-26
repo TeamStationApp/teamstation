@@ -1725,6 +1725,31 @@ describe('scoring screen field wiring', function () {
     container = undefined
   })
 
+  for (const [width, height] of [
+    [393, 852],
+    [1000, 742]
+  ]) {
+    it(`sizes the scoring camera from the measured ${width}×${height} root above the existing deck`, async function () {
+      await mount()
+      await act(async () => {
+        props().onRootSize!({ width, height })
+      })
+      const frame = props().frame!
+      expect(frame.fieldWidth).equals(width)
+      expect(frame.camera).deep.equals({ top: 64, bottom: 200 })
+      expect(componentProps<FieldProps>('FieldCanvas').frame).deep.equals(
+        frame.camera
+      )
+      const deck = container!.querySelector<HTMLElement>(
+        '[data-testid="scoring-deck"]'
+      )!
+      expect(deck.style.height).equals('120px')
+      expect(deck.style.top).equals('')
+      expect(deck.parentElement!.parentElement!.style.justifyContent).equals(
+        'space-between'
+      )
+    })
+  }
   for (const top of [0, 59])
     for (const band of [0, SCORING_OFFLINE_BAND])
       it(`moves the canvas and every point it reports by band − lift: inset ${top}, band ${band}`, async function () {

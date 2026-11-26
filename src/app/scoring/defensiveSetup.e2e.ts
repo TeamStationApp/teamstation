@@ -6,10 +6,11 @@ import { extname, join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import { PerspectiveCamera, Vector3 } from 'three'
 
 import {
+  FIELD_SCENE_PROBE,
   maestroDriver,
+  playerAt,
   setTrajectory,
   tapFielder
 } from '../../../e2e/rigs/fieldPointer'
@@ -26,8 +27,6 @@ import {
 import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
-import { applyFieldCamera } from '../field/cameraModel'
-import { createPlayers } from '../field/fieldModel'
 import {
   type DefaultLineups,
   startingSetup,
@@ -481,7 +480,7 @@ async function open(fixture: Fixture = {}): Promise<{
           response.end(
             (await upstream.text()).replace(
               '<head>',
-              `<head><script>${preferences}window.__defensiveErrors=[];addEventListener('error',e=>{if(e.message)__defensiveErrors.push(e.message)});addEventListener('unhandledrejection',e=>__defensiveErrors.push(String(e.reason)));</script>`
+              `<head><script>${FIELD_SCENE_PROBE};${preferences}window.__defensiveErrors=[];addEventListener('error',e=>{if(e.message)__defensiveErrors.push(e.message)});addEventListener('unhandledrejection',e=>__defensiveErrors.push(String(e.reason)));</script>`
             )
           )
         } else response.end(Buffer.from(await upstream.arrayBuffer()))
@@ -517,8 +516,15 @@ async function open(fixture: Fixture = {}): Promise<{
         body = { leagues: [] }
       else if (u.pathname === '/api/v1/me/home')
         body = { teams: [], seasons: [], leagues: [] }
-      else if (u.pathname === '/api/v1/me/account/chat-age')
-        body = { confirmed: false, source: null, confirmedAt: null }
+      else if (u.pathname === '/api/v1/me/account/age')
+        body = {
+          band: 'adult',
+          birthYear: null,
+          birthMonth: null,
+          isAdult: true,
+          ageSource: 'self',
+          ageSetAt: '2027-04-10T12:00:00.000Z'
+        }
       else if (u.pathname === '/api/v1/games/g1') body = game
       // Nobody has planned the game, so no inning's column moves the defence.
       else if (
@@ -775,35 +781,8 @@ async function picture(page: Page, name: string): Promise<void> {
   }
 }
 async function tapField(page: Page, slot: Position): Promise<void> {
-  const rect = await page.$eval('canvas', canvas => {
-    const r = canvas.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })
-  const empty = await page.$(`[data-nameplate="empty-${slot}"]`)
-  if (empty != null) {
-    // Nameplate overlays pass pointers through to the actual canvas.
-    const box = await empty.boundingBox()
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-  } else {
-    const player = createPlayers().find(p => p.id === slot)!
-    const camera = new PerspectiveCamera()
-    applyFieldCamera(camera, {
-      width: rect.width,
-      height: rect.height,
-      view: 'home',
-      zoom: 1.25,
-      tilt: (-11 * Math.PI) / 180,
-      heightOffset: 33,
-      bottomExtension: 112
-    })
-    const v = new Vector3(player.position.x, 5, player.position.z).project(
-      camera
-    )
-    await page.mouse.click(
-      rect.x + ((v.x + 1) * rect.width) / 2,
-      rect.y + ((1 - v.y) * rect.height) / 2
-    )
-  }
+  const [x, y] = await playerAt(maestroDriver(page.driver), slot)
+  await page.mouse.click(x, y)
 }
 async function tapSlot(page: Page, slot: Position): Promise<void> {
   await tapField(page, slot)
