@@ -6,6 +6,7 @@ import { afterEach, describe, it } from 'mocha'
 
 import { withQueryReplies } from '../../test/queryReplies'
 import * as access from '../access'
+import * as people from '../admin/people'
 import type { GroupRequestSidesTable } from '../db/database'
 import { withRolesRead } from '../db/readOnce'
 import * as policy from '../groups/noticePolicy'
@@ -68,6 +69,8 @@ describe('notification state classification without wording', () => {
       player?: boolean
       superseded?: boolean
       rejoined?: boolean
+      guarded?: boolean
+      siteAdmin?: boolean
     } = {}
   ): Promise<{
     state: RequestState | null | undefined
@@ -97,6 +100,18 @@ describe('notification state classification without wording', () => {
       async () => options.sender ?? false
     )
     mock.method(access, 'roleScopesForUsers', async () => new Map())
+    mock.method(
+      people,
+      'onePeople',
+      async (...[_db, ids]: Parameters<typeof people.onePeople>) =>
+        new Map(ids.map(id => [id, { userId: id, userIds: [id] }]))
+    )
+    mock.method(
+      access,
+      'guardiansOfEach',
+      async (...[_db, ids]: Parameters<typeof access.guardiansOfEach>) =>
+        options.guarded === true ? new Map([['guardian', [...ids]]]) : new Map()
+    )
     mock.method(
       policy,
       'mayAnswerPlayerAdd',
@@ -159,7 +174,11 @@ describe('notification state classification without wording', () => {
       },
       async db => {
         await withRolesRead(db, async () => {
-          const projection = new InboxProjection(db, actor, { now: () => now })
+          const projection = new InboxProjection(
+            db,
+            { ...actor, isAdmin: options.siteAdmin === true },
+            { now: () => now }
+          )
           expect(await projection.requests([])).deep.equals(new Map())
           result = await projection.requests([row])
           expect(projection.hasPending).equals(
@@ -289,6 +308,29 @@ describe('notification state classification without wording', () => {
     expect(
       (await classify(request({ expires_at: now }), { sender: true })).state
     ).include({ status: 'expired', canResend: true, canAct: false })
+  })
+  it('batch-denies guarded player team sides without granting or denying other guardian sides', async () => {
+    const row = request({
+      kind: 'guardian',
+      terms: {
+        kind: 'guardian',
+        playerUserId: 'player',
+        guardian: { userId: 'parent' }
+      }
+    })
+    const denied = await classify(row, { guarded: true })
+    expect(denied.state).equals(null)
+    expect(denied.eligible).equals(0)
+    mock.restoreAll()
+    const admin = await classify(row, { guarded: true, siteAdmin: true })
+    expect(admin.state?.canAct).equals(true)
+    expect(admin.eligible).equals(1)
+    mock.restoreAll()
+    const person = await classify(row, {
+      guarded: true,
+      sides: [side({ scope_type: 'user', scope_id: 'player' })]
+    })
+    expect(person.eligible).equals(1)
   })
   it('never grants resend for special one-shot request kinds', async () => {
     for (const kind of [

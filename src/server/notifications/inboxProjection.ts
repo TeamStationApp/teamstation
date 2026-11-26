@@ -1,7 +1,12 @@
 import type { Kysely, Selectable } from 'kysely'
 
-import type { Notification, PlayerAddTerms } from '../../common/notifications'
-import { roleScopesForUsers } from '../access'
+import type {
+  GuardianTerms,
+  Notification,
+  PlayerAddTerms
+} from '../../common/notifications'
+import { guardiansOfEach, roleScopesForUsers } from '../access'
+import { onePeople } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type {
   Database,
@@ -49,6 +54,7 @@ export class InboxProjection {
 
   private readonly decisions = new Map<string, Promise<boolean>>()
   private readonly teams = new Set<string>()
+  private readonly guardedPlayers = new Map<string, boolean>()
   constructor(
     readonly db: Kysely<Database>,
     readonly actor: Actor,
@@ -99,6 +105,22 @@ export class InboxProjection {
             .map(t => t.custodian_id!)
         )
       ].filter(id => !this.teams.has(id))
+    }
+    const players = [
+      ...new Set(
+        requests
+          .filter(request => request.kind === 'guardian')
+          .map(request => (request.terms as GuardianTerms).playerUserId)
+      )
+    ].filter(id => !this.guardedPlayers.has(id))
+    if (players.length > 0) {
+      const people = await onePeople(this.db, players)
+      const guardians = await guardiansOfEach(this.db, players, {
+        signsIn: true
+      })
+      const guarded = new Set([...guardians.values()].flat())
+      for (const id of players)
+        this.guardedPlayers.set(id, guarded.has(people.get(id)!.userId))
     }
     const pendingIds = new Set(
       requests
@@ -189,6 +211,19 @@ export class InboxProjection {
     side: Side,
     request: StoredRequest
   ): Promise<boolean> {
+    // A team's guardian invitation loses its say once the player has a
+    // guardian who can sign in. Batch that authoritative exclusion before
+    // checking distinct requests; it never grants authority. Other guardian
+    // sides and site administrators still use approvesSide unchanged.
+    if (
+      request.kind === 'guardian' &&
+      side.scope_type === 'team' &&
+      actor.userId === this.actor.userId &&
+      !this.actor.isAdmin &&
+      this.guardedPlayers.get((request.terms as GuardianTerms).playerUserId) ===
+        true
+    )
+      return false
     const ref = { kind: side.scope_type, id: side.scope_id }
     // These rules depend on the player/game terms; keep the authoritative rule
     // and include every input in its memo key. Ordinary group sides depend only

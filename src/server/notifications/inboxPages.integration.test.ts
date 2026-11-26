@@ -334,4 +334,88 @@ describe('bounded notification tab pages', function () {
     }
     expect(budgets).deep.equals(budgets.map(() => budgets[0]))
   })
+  for (const count of [1000, 10000])
+    it(`batches History eligibility for ${count} distinct guarded players and sees guardian revocation`, async () => {
+      const template = await f.h.db
+        .selectFrom('users')
+        .selectAll()
+        .where('id', '=', userIdOfGumbo(103))
+        .executeTakeFirstOrThrow()
+      for (let at = 0; at < count; at += 100) {
+        const players = Array.from({ length: 100 }, (_, i) =>
+          userIdOfGumbo(100000 + at + i)
+        )
+        await f.h.db
+          .insertInto('users')
+          .values(
+            players.map(id => ({
+              ...template,
+              id,
+              legacyId: null,
+              username: null
+            }))
+          )
+          .execute()
+        await f.h.db
+          .insertInto('user_links')
+          .values(
+            players.map(id => ({
+              id: randomUUID(),
+              user_id: userIdOfGumbo(104),
+              related_user_id: id,
+              kind: 'guardian' as const,
+              created_at: f.clock.now()
+            }))
+          )
+          .execute()
+        const rows = players.map(id => ({
+          id: randomUUID(),
+          kind: 'guardian' as const,
+          sender_id: userIdOfGumbo(102),
+          sender_scope_type: null,
+          sender_scope_id: null,
+          terms: JSON.stringify({
+            kind: 'guardian',
+            playerUserId: id,
+            guardian: { userId: userIdOfGumbo(104) }
+          }),
+          status: 'accepted' as const,
+          sent_at: new Date(f.clock.now().getTime() - 200000),
+          expires_at: f.clock.now()
+        }))
+        await f.h.db.insertInto('group_requests').values(rows).execute()
+        await f.h.db
+          .insertInto('group_request_sides')
+          .values(
+            rows.map(row => ({
+              request_id: row.id,
+              scope_type: 'team' as const,
+              scope_id: f.teamA
+            }))
+          )
+          .execute()
+      }
+      const visible = await requests(1, 'accepted')
+      const read = measured()
+      await read({ history: true }, 101, 'cold')
+      const result = await read({ history: true }, 101, 'warm')
+      expect(result.page.items.map(row => row.requestId)).deep.equals(visible)
+      expect(result.page).include({ nextCursor: null, hasPending: false })
+      expect(result.queries).lessThan(1300)
+      expect(result.ms).lessThan(2000)
+      await f.h.db
+        .updateTable('users')
+        .set({ disabled_at: f.clock.now() })
+        .where('id', '=', userIdOfGumbo(104))
+        .execute()
+      const changed = await inbox(
+        f.h.db,
+        actor(101),
+        { history: true, limit: 1 },
+        f.clock
+      )
+      expect(changed.items[0].type).equals('guardian')
+      expect(changed.items[0].requestId).not.equals(visible[0])
+      expect(changed.nextCursor).not.equals(null)
+    })
 })
