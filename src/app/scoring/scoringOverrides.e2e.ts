@@ -7,6 +7,7 @@ import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
+import { emptyPitcherTarget } from '../../../e2e/rigs/emptyPitcherTarget'
 import { modalFixture } from '../../../e2e/fixtures/scoringModalsFixture'
 import { recordOf, replayPlays } from '../../common/scoring/gumbo'
 import { baseIds } from '../../common/scoring/rules'
@@ -53,7 +54,32 @@ async function main(): Promise<void> {
   }
   const tap = async (text: string): Promise<void> => {
     console.log('Tap', text)
+    if (text === 'Assign P') {
+      const window = flat(await m.hierarchy()).find(
+        node => node.type === 'Window'
+      )?.bounds
+      assert(window != null)
+      const { x, y } = emptyPitcherTarget(await m.screenshot(), window.width)
+      await m.tapOn({ point: `${Math.round(x)},${Math.round(y)}` })
+      return
+    }
     await m.waitForAnimationToEnd({ timeout: 3000 })
+    if (
+      /^(Batter|First base|Second base|Third base|(?:Balls|Strikes|Outs) \d+|Inning|Owls score|Hawks score|Bottom|Top)$/.test(
+        text
+      )
+    ) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const tree = flat(await m.hierarchy())
+        const row = tree.filter(node => node.text === text).at(-1)?.bounds
+        const apply = tree
+          .filter(node => node.text === 'Apply Override')
+          .at(-1)?.bounds
+        if (row == null || apply == null || row.y + row.height < apply.y) break
+        await m.swipe({ start: '50%,65%', end: '50%,35%', duration: 200 })
+        await m.waitForAnimationToEnd({ timeout: 3000 })
+      }
+    }
     const hierarchy = await m.hierarchy()
     const nodes = flat(
       flat(hierarchy).find(node => node.type === 'WebView') ?? hierarchy

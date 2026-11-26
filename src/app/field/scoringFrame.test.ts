@@ -96,21 +96,19 @@ describe('scoring field frame', function () {
       }
     })
   }
-  for (const [top, bottom, platform, band, offset] of [
-    [0, 0, 'web', 0, 0],
-    [59, 34, 'ios', 0, -24],
-    [59, 34, 'android', 0, 0],
-    [59, 34, 'ios', 48, 48]
+  for (const [top, bottom, platform, offset] of [
+    [0, 0, 'web', 0],
+    [59, 34, 'ios', -24],
+    [59, 34, 'android', 0]
   ] as const) {
-    it(`places the roof and card in root coordinates on ${platform} with inset ${top} and band ${band}`, function () {
+    it(`places the roof and card in root coordinates on ${platform} with inset ${top}`, function () {
       const width = 393
       const height = 852
       const frame = scoringFrame({
         width,
         height,
         insets: { top, bottom, left: 0, right: 0 },
-        platform,
-        topBand: band
+        platform
       })
       expect(frame.side).equals(false)
       expect(frame.fieldWidth).equals(width)
