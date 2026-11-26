@@ -1,4 +1,4 @@
-import type { Kysely, Selectable } from 'kysely'
+import { type Kysely, type Selectable, sql } from 'kysely'
 
 import type {
   GuardianTerms,
@@ -14,11 +14,7 @@ import type {
   NotificationEventsTable
 } from '../db/database'
 import { accountReadOnce, readOnce } from '../db/readOnce'
-import {
-  mayAnswerPlayerAdd,
-  rejoinedSince,
-  supersededPlayerAdd
-} from '../groups/noticePolicy'
+import { mayAnswerPlayerAdd } from '../groups/noticePolicy'
 import {
   approvesSide,
   type Clock,
@@ -26,7 +22,7 @@ import {
   speaksForSender,
   type StoredRequest
 } from '../groups/requests'
-import { canAdminister, canScheduleFor } from '../groups/rights'
+import { canAdminister, canScheduleFor, currentActor } from '../groups/rights'
 import { openAddsOf } from '../openAdds'
 
 export type RequestState = Omit<Notification, 'title' | 'description'> & {
@@ -56,12 +52,19 @@ export class InboxProjection {
   private readonly decisions = new Map<string, Promise<boolean>>()
   private readonly inaccessible = new Set<string>()
   private readonly teams = new Set<string>()
+  private readonly guardianPlayers = new Map<
+    string,
+    { userId: string; guardians: string[] }
+  >()
+
   private readonly guardedPlayers = new Map<string, boolean>()
   private readonly people = new Map<string, OnePerson>()
   private readonly playerGuardians = new Map<string, string[]>()
   private readonly playerSignIn = new Map<string, boolean>()
   private readonly playerTeams = new Map<string, string[]>()
   private standInTeams: Set<string> | undefined
+  private readonly rejectionBlocked = new Set<string>()
+  private readonly verifiedEmails = new Map<string, Set<string>>()
   private readonly heldPlayers = new Map<string, Set<string>>()
   constructor(
     readonly db: Kysely<Database>,
@@ -122,23 +125,25 @@ export class InboxProjection {
       )
     ].filter(id => !this.guardedPlayers.has(id))
     if (players.length > 0) {
-      const guardians = await guardiansOfEach(this.db, players, {
-        signsIn: true
-      })
-      const guarded = new Set([...guardians.values()].flat())
-      // guardiansOfEach already returns each player's current identity. Only
-      // unresolved aliases need another merge walk; ordinary guarded players
-      // must not repeat the same recursive query for every window.
-      const unresolved = players.filter(id => !guarded.has(id))
-      const people =
-        unresolved.length === 0
-          ? new Map()
-          : await onePeople(this.db, unresolved)
-      for (const id of players)
-        this.guardedPlayers.set(
-          id,
-          guarded.has(id) || guarded.has(people.get(id)!.userId)
-        )
+      const identities = await onePeople(this.db, players)
+      const guardians = await guardiansOfEach(
+        this.db,
+        players,
+        {
+          signsIn: true
+        },
+        identities
+      )
+      const byPlayer = new Map<string, string[]>()
+      for (const [guardian, guarded] of guardians)
+        for (const player of guarded)
+          byPlayer.set(player, [...(byPlayer.get(player) ?? []), guardian])
+      for (const id of players) {
+        const person = identities.get(id)!
+        const guardians = byPlayer.get(person.userId) ?? []
+        this.guardianPlayers.set(id, { userId: person.userId, guardians })
+        this.guardedPlayers.set(id, guardians.length > 0)
+      }
     }
     const adds = requests.filter(request => request.kind === 'playerAdd')
     if (adds.length > 0) {
@@ -164,9 +169,14 @@ export class InboxProjection {
         )
       ].filter(id => !this.playerGuardians.has(id))
       if (players.length > 0) {
-        const guardians = await guardiansOfEach(this.db, players, {
-          signsIn: true
-        })
+        const guardians = await guardiansOfEach(
+          this.db,
+          players,
+          {
+            signsIn: true
+          },
+          this.people
+        )
         for (const id of players) this.playerGuardians.set(id, [])
         for (const [guardian, guarded] of guardians)
           for (const id of guarded) this.playerGuardians.get(id)!.push(guardian)
@@ -258,6 +268,26 @@ export class InboxProjection {
           .map(s => s.approved_by!)
       )
     ]
+    if (
+      sides.some(
+        s => s.scope_type === 'user' && s.scope_id.startsWith('email:')
+      )
+    ) {
+      const emailUsers = [this.actor.userId, ...users].filter(
+        id => !this.verifiedEmails.has(id)
+      )
+      if (emailUsers.length > 0) {
+        const emails = await this.db
+          .selectFrom('user_emails')
+          .select(['user_id', sql<string>`lower(email)`.as('email')])
+          .where('user_id', 'in', emailUsers)
+          .where('verified_at', 'is not', null)
+          .execute()
+        for (const id of emailUsers) this.verifiedEmails.set(id, new Set())
+        for (const email of emails)
+          this.verifiedEmails.get(email.user_id)!.add(email.email)
+      }
+    }
     if (users.length > 0) {
       const accounts = await this.db
         .selectFrom('users')
@@ -274,6 +304,51 @@ export class InboxProjection {
       for (const id of users)
         await accountReadOnce(this.db, id, async () => byId.get(id))
       await roleScopesForUsers(this.db, users)
+    }
+  }
+
+  private async prepareRejections(requests: StoredRequest[]): Promise<void> {
+    // Return only candidate ids, even when a person has many subsequent adds
+    // or memberships. Joining the window's merge aliases lets PostgreSQL batch
+    // both rejection exclusions without materializing that person's history.
+    const notices = requests
+    if (notices.length > 0) {
+      const candidates = notices.flatMap(request => {
+        const terms = request.terms as PlayerAddTerms
+        return this.people.get(terms.userId)!.userIds.map(userId => ({
+          id: request.id,
+          user_id: userId,
+          team_id: terms.teamId,
+          mode: terms.mode,
+          game_id: terms.gameId ?? null,
+          membership_id: terms.membershipId ?? null,
+          sent_at: request.sent_at.toISOString()
+        }))
+      })
+      const blocked = await sql<{ id: string }>`
+        with candidates as (
+          select * from jsonb_to_recordset(${JSON.stringify(candidates)}::jsonb)
+          as c(id text, user_id text, team_id text, mode text, game_id text,
+               membership_id text, sent_at timestamptz)
+        )
+        select distinct c.id from candidates c
+        join group_requests later
+          on later.terms->>'userId' = c.user_id
+          and later.terms->>'teamId' = c.team_id
+          and later.terms->>'mode' = c.mode
+        where later.kind = 'playerAdd'
+          and later.status in ('applied', 'accepted')
+          and later.terms->>'userId' = any(${[...new Set(candidates.map(c => c.user_id))]}::text[])
+          and later.sent_at > ${new Date(Math.min(...notices.map(r => r.sent_at.getTime())))}
+          and later.id != c.id and later.sent_at > c.sent_at
+          and (c.mode != 'pool' or later.terms->>'gameId' = c.game_id)
+        union
+        select distinct c.id from candidates c
+        join memberships m on m.user_id = c.user_id and m.team_id = c.team_id
+        where c.mode = 'roster' and c.membership_id is not null
+          and m.id != c.membership_id and m.is_player
+      `.execute(this.db)
+      for (const row of blocked.rows) this.rejectionBlocked.add(row.id)
     }
   }
 
@@ -330,9 +405,21 @@ export class InboxProjection {
         event,
         event == null ? undefined : byEvent.get(event.id)
       )
-      if (state != null && (state.canAct || state.news)) this.waiting = true
       if (state == null) this.inaccessible.add(request.id)
       answer.set(request.id, state)
+    }
+    // Ineligible applied adds cannot be rejected. Delay the set query until
+    // eligibility is known, so denied prefixes pay no rejection-state cost.
+    await this.prepareRejections(
+      requests.filter(r => answer.get(r.id)?.canReject === true)
+    )
+    for (const [id, state] of answer) {
+      if (state == null) continue
+      if (this.rejectionBlocked.has(id)) {
+        state.canReject = false
+        state.news = false
+      }
+      if (state.canAct || state.news) this.waiting = true
     }
     return answer
   }
@@ -355,6 +442,25 @@ export class InboxProjection {
         true
     )
       return false
+    if (
+      request.kind === 'guardian' &&
+      side.scope_type === 'user' &&
+      actor.userId === this.actor.userId &&
+      !this.actor.isAdmin
+    ) {
+      const terms = request.terms as GuardianTerms
+      const player = this.guardianPlayers.get(terms.playerUserId)
+      // The player's side now belongs to a signing-in guardian. A former
+      // guardian cannot approve it; namesPerson may only deny further.
+      if (
+        side.scope_id === terms.playerUserId &&
+        player != null &&
+        player.userId !== actor.userId &&
+        player.guardians.length > 0 &&
+        !player.guardians.includes(actor.userId)
+      )
+        return false
+    }
     const ref = { kind: side.scope_type, id: side.scope_id }
     // These rules depend on the player/game terms; keep the authoritative rule
     // and include every input in its memo key. Ordinary group sides depend only
@@ -365,6 +471,16 @@ export class InboxProjection {
     return await this.once(
       ['side', actor.userId, request.kind, ref, special ? request.terms : null],
       async () => {
+        if (
+          request.kind !== 'guardian' &&
+          ref.kind === 'user' &&
+          ref.id.startsWith('email:')
+        ) {
+          const fresh = await currentActor(this.db, actor)
+          return this.verifiedEmails
+            .get(fresh.userId)!
+            .has(ref.id.slice(6).toLowerCase())
+        }
         if (special || ref.kind === 'user')
           return await approvesSide(this.db, actor, ref, request)
         if (ref.kind === 'team') {
@@ -496,11 +612,7 @@ export class InboxProjection {
     if (!senderOnly && !eligible && !senderAdmin && !historical) return null
     const notice = request.kind === 'playerAdd' && status === 'applied'
     const canReject =
-      notice &&
-      eligible &&
-      request.expires_at.getTime() > clock.now().getTime() &&
-      !(await supersededPlayerAdd(db, request)) &&
-      !(await rejoinedSince(db, request.terms as PlayerAddTerms))
+      notice && eligible && request.expires_at.getTime() > clock.now().getTime()
     return {
       news: canReject && receipt?.dismissed_at == null,
       senderOnly,
