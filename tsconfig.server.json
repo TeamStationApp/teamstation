@@ -3,6 +3,8 @@
   "compilerOptions": {
     "module": "commonjs",
     "outDir": "lib",
+    "sourceMap": true,
+    "inlineSources": true,
     "noEmit": false
   },
   "include": [

@@ -13,6 +13,8 @@ export const NODE_SETTINGS: Record<string, unknown> = {
 
 /** Keys the server reads that need no row, and why. */
 export const UNSET_SETTINGS: Record<string, string> = {
+  'distribution.iosAppStoreUrl':
+    'An absent link turns off the Safari app banner',
   'highlights.':
     'Each falls back to its default, the same as a production node',
   'radar.': 'Each falls back to its default, the same as a production node',

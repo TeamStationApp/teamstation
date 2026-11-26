@@ -419,7 +419,13 @@ export default defineE2e({
         element: { text: 'Sign out' },
         direction: 'DOWN'
       })
-      await clearOfBar(app.m)
+      // A mouse drag selects account text in Chromium. Scroll the button
+      // above the floating navigation bar before tapping it.
+      if (ctx.surface === 'web-chromium') {
+        await app.m.scroll({ direction: 'DOWN' })
+      } else {
+        await clearOfBar(app.m)
+      }
       await app.m.tapOn({ text: 'Sign out' })
       await checkpoint(
         ctx,

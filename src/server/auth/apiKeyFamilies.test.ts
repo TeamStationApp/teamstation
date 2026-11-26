@@ -12,7 +12,14 @@ import { chatKeyRoutes } from '../routes/chatKeys'
 import { chatMessageRoutes } from '../routes/chatMessages'
 import { followRoutes } from '../routes/follows'
 import { guardianRoutes } from '../routes/guardians'
-import { API_KEY_FAMILIES, KEYLESS, keyNeeds } from './apiKeyFamilies'
+import {
+  API_KEY_FAMILIES,
+  belowApiPrefix,
+  ignoresSession,
+  KEYLESS,
+  keyNeeds,
+  SESSIONLESS
+} from './apiKeyFamilies'
 
 const db = {} as unknown as Kysely<Database>
 const media: MediaContext = {
@@ -128,6 +135,7 @@ describe('what an API key may call', function () {
       /^\w+ \/me\/builds/
     ]
     const leaked = routes.filter(route => {
+      if (route === 'GET /node/ios-app-banner') return false
       if (!outside.some(rule => rule.test(route))) return false
       const [method, path] = route.split(' ')
       const needs = keyNeeds(method, concrete(path))
@@ -189,7 +197,27 @@ describe('what an API key may call', function () {
     expect(keyNeeds('OPTIONS', '/me/account')).equals(null)
   })
 
+  it('skips the session only for a sessionless read below the API prefix', function () {
+    for (const route of SESSIONLESS) expect(KEYLESS).includes(route)
+    for (const [method, path, skips] of [
+      ['GET', '/api/v1/node/ios-app-banner', true],
+      ['get', '/api/v1/node/ios-app-banner/', true],
+      ['HEAD', '/api/v1/node/ios-app-banner', true],
+      ['PUT', '/api/v1/node/ios-app-banner', false],
+      ['GET', '/node/ios-app-banner', false],
+      ['GET', '/api/v2/node/ios-app-banner', false],
+      ['GET', '/api/v1/node/settings', false],
+      ['GET', '/api/v1/health', false]
+    ] as const)
+      expect(ignoresSession(method, path), `${method} ${path}`).equals(skips)
+    expect(belowApiPrefix('/api/v1')).equals('')
+    expect(belowApiPrefix('/api/v1/time')).equals('/time')
+    expect(belowApiPrefix('/api/v10/time')).equals(null)
+  })
+
   it('lets every key read health, the time and the API document', function () {
+    expect(keyNeeds('GET', '/node/ios-app-banner')).equals('keyless')
+    expect(keyNeeds('PUT', '/node/ios-app-banner')).equals(null)
     expect(keyNeeds('GET', '/health')).equals('keyless')
     expect(keyNeeds('HEAD', '/time')).equals('keyless')
     expect(keyNeeds('GET', '/openapi.json')).equals('keyless')

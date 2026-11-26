@@ -66,7 +66,7 @@ export interface HighlightTimings {
   tailSec: number
 }
 
-/** Where the about screen sends someone: Android and iOS beta builds, and iOS TestFlight. */
+/** The beta download and TestFlight links on About, and the published app offered in Safari. */
 export interface DistributionSettings {
   /**
    * Where beta builds are downloaded. Empty hides that button. A node
@@ -77,6 +77,8 @@ export interface DistributionSettings {
    * The iOS TestFlight download. Empty hides that button.
    */
   appStoreUrl: string
+  /** Published product offered by Safari on the website. Empty hides the banner. */
+  iosAppStoreUrl: string
 }
 
 export interface NodeSettings {
@@ -110,7 +112,8 @@ export const defaultReplaySettings: ReplaySettings = {
 
 export const defaultDistributionSettings: DistributionSettings = {
   betaBuildsUrl: '',
-  appStoreUrl: ''
+  appStoreUrl: '',
+  iosAppStoreUrl: ''
 }
 
 export interface RadarSettings {
@@ -194,7 +197,7 @@ export function asNodeSettings(raw: unknown): NodeSettings {
         rest.scoreboard.tvLandscape ?? defaultScoreboardSettings.tvLandscape
     },
     replay: replay ?? defaultReplaySettings,
-    distribution: distribution ?? defaultDistributionSettings,
+    distribution: { ...defaultDistributionSettings, ...distribution },
     // A server from before Jev says nothing: no key.
     jev: jev == null ? defaultJevSettings : asJevSettings(jev)
   }
@@ -219,7 +222,9 @@ export type NodeSettingsUpdate = Omit<
   'replay' | 'distribution' | 'jev'
 > & {
   replay?: ReplaySettings
-  distribution?: DistributionSettings
+  distribution?: Omit<DistributionSettings, 'iosAppStoreUrl'> & {
+    iosAppStoreUrl?: string
+  }
 }
 
 /** A save, checked as `asNodeSettings` checks a document, `replay` optional. */
@@ -232,7 +237,7 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
     ...(value.replay == null ? {} : { replay: asReplaySettings(value.replay) }),
     ...(value.distribution == null
       ? {}
-      : { distribution: asDistributionSettings(value.distribution) }),
+      : { distribution: asDistributionUpdate(value.distribution) }),
     scoreboard: {
       overlayStartDate: asDate(
         scoreboard.overlayStartDate,
@@ -279,16 +284,68 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
   }
 }
 
-/** An empty string hides the button. Anything else is an HTTPS URL with no credentials. */
-export function asDistributionSettings(raw: unknown): DistributionSettings {
+/** The two About links accept HTTPS URLs without credentials. Safari requires
+ * an App Store product link. An empty string hides the corresponding control. */
+function asDistributionUpdate(
+  raw: unknown
+): NonNullable<NodeSettingsUpdate['distribution']> {
   const value = record(raw, 'distribution')
+  if (!('betaBuildsUrl' in value) || !('appStoreUrl' in value))
+    throw new TypeError(
+      'distribution requires both betaBuildsUrl and appStoreUrl'
+    )
   return {
     betaBuildsUrl: asOptionalHttps(
       value.betaBuildsUrl,
       'distribution.betaBuildsUrl'
     ),
-    appStoreUrl: asOptionalHttps(value.appStoreUrl, 'distribution.appStoreUrl')
+    appStoreUrl: asOptionalHttps(value.appStoreUrl, 'distribution.appStoreUrl'),
+    ...('iosAppStoreUrl' in value
+      ? {
+          iosAppStoreUrl: asDistributionUrl(
+            'iosAppStoreUrl',
+            value.iosAppStoreUrl
+          )
+        }
+      : {})
   }
+}
+
+/** An App Store product has an optional storefront and app name before its ID. */
+export function appStoreProduct(
+  raw: unknown
+): { url: string; appId: string } | undefined {
+  if (typeof raw !== 'string') return
+  const url = raw.trim()
+  const path = /^https:\/\/apps\.apple\.com(?::0*443)?(\/[^?#]*)/i.exec(
+    url
+  )?.[1]
+  if (
+    path == null ||
+    /[\uD800-\uDFFF]/u.test(url) || // Unicode mode matches only unpaired surrogates.
+    /[\s\\\x00-\x1f\x7f-\x9f]|%(?![0-9a-f]{2})/i.test(url) // eslint-disable-line no-control-regex -- URL parsing silently strips control characters.
+  )
+    return
+  // App names must be real path segments, including when percent-encoded.
+  if (/%(?:2f|5c)|\/(?:\.|%2e){1,2}(?:\/|$)/i.test(path)) return
+  const match = /^\/(?:[a-zA-Z]{2}\/)?app\/(?:[^/]+\/)?id([0-9]+)\/*$/.exec(
+    path
+  )
+  if (match != null) return { url, appId: match[1] }
+}
+
+export function asDistributionUrl(
+  key: keyof DistributionSettings,
+  raw: unknown
+): string {
+  if (key !== 'iosAppStoreUrl')
+    return asOptionalHttps(raw, `distribution.${key}`)
+  if (typeof raw === 'string' && raw.trim() === '') return ''
+  const product = appStoreProduct(raw)
+  if (product != null) return product.url
+  throw new TypeError(
+    'iOS App Store link must be an App Store product URL such as https://apps.apple.com/us/app/teamstation/id6824597245'
+  )
 }
 
 function asOptionalHttps(raw: unknown, name: string): string {

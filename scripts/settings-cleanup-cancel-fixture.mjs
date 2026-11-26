@@ -15,7 +15,9 @@ if (base == null)
   )
 const map = JSON.parse(
   readFileSync(
-    base + '/' + readdirSync(base).find(f => /^app-.*\.js\.map$/.test(f)),
+    base +
+      '/' +
+      readdirSync(base).find(f => /^app-[A-Z0-9]+\.js\.map$/.test(f)),
     'utf8'
   )
 )

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
 import { build, context } from 'esbuild'
-import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'fs/promises'
 import { createRequire } from 'module'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -19,6 +19,7 @@ import {
   withCsp,
   withIntegrity
 } from './buildCsp.mjs'
+import { buildIosAppBanner } from './buildIosAppBanner.mjs'
 import { workerOutDir, workerUrl } from './buildWorker.mjs'
 import { ASSET_LOADER } from './esbuildLoaders.mjs'
 
@@ -88,7 +89,8 @@ const policy = cspFor(
     apiBaseUrl,
     process.env.TS_MEDIA_ORIGINS ?? '',
     process.env.TS_SENTRY_DSN ?? ''
-  )
+  ),
+  apiBaseUrl.replace(/\/+$/, '') + '/node/ios-app-banner'
 )
 
 /**
@@ -289,9 +291,11 @@ await mkdir(out, { recursive: true })
 // The notifications' service worker, as `sw.js`, with the bundle's defines
 // (`scripts/serviceWorkerBuild.mjs`).
 await buildServiceWorker({ out, serve, define: options.define })
+const banner = await buildIosAppBanner(out, serve, apiBaseUrl)
 const template = withCsp(
   await readFile('src/app/web/index.html', 'utf8'),
-  policy
+  policy,
+  banner.tag
 )
 const mark = await readFile('src/app/assets/teamStationMark.svg', 'utf8')
 const viewBox = /viewBox="([^"]+)"/.exec(mark)
@@ -397,11 +401,6 @@ if (serve) {
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)
 } else {
-  // Old hashed bundles would otherwise pile up, one per deploy, for ever.
-  for (const name of await readdirSafe(out)) {
-    if (/^app-[A-Z0-9]+\.js(\.map)?$/i.test(name)) await rm(`${out}/${name}`)
-  }
-
   const result = await build({ ...options, metafile: true })
   const script = Object.keys(result.metafile.outputs).find(
     name => name.endsWith('.js') && !name.endsWith('.map')
@@ -413,14 +412,26 @@ if (serve) {
   // that is what its `no-cache` header is for. It is small and it is the
   // only thing that has to be fetched to learn the current bundle's name.
   // The script tag carries the bundle's hash too (Subresource Integrity).
+  const pendingIndex = `${out}/index-${process.pid}.tmp`
   await writeFile(
-    `${out}/index.html`,
+    pendingIndex,
     withFonts(
       withIntegrity(template.replace('src="/app.js"', `src="/${file}"`), {
         [`/${file}`]: await readFile(`${out}/${file}`)
       })
     )
   )
+  await rename(pendingIndex, `${out}/index.html`)
+  // A failed build must leave the published index and its scripts usable.
+  for (const name of await readdirSafe(out)) {
+    const scriptName = name.replace(/\.map$/, '')
+    if (
+      /^(?:app-|(?:app-)?ios-app-banner-)[A-Z0-9]+\.js$/.test(scriptName) &&
+      scriptName !== file &&
+      scriptName !== banner.name
+    )
+      await rm(`${out}/${name}`)
+  }
   await writeEncodedCopies(out)
   console.log(`built ${out}/${file}`)
 }

@@ -1,7 +1,9 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { installedNativeUrl } from '../test/installedNativeUrl'
 import {
+  appStoreProduct,
   asNodeSettings,
   asNodeSettingsUpdate,
   asScoreboardOverlay,
@@ -44,9 +46,115 @@ describe('node settings', function () {
         mergeWithinSec: 5,
         tailSec: 5
       },
-      distribution: { betaBuildsUrl: '', appStoreUrl: '' },
+      distribution: { betaBuildsUrl: '', appStoreUrl: '', iosAppStoreUrl: '' },
       jev: { configured: false }
     })
+  })
+
+  it('reads the saved full settings document with the native URL implementation', () => {
+    const url = 'HTTPS://APPS.APPLE.COM/us/app/test/id00123/?ref=1#store'
+    const saved = asNodeSettingsUpdate({
+      ...defaultNodeSettings,
+      distribution: { ...defaultNodeSettings.distribution, iosAppStoreUrl: url }
+    })
+    const webUrl = globalThis.URL
+    try {
+      globalThis.URL = installedNativeUrl()
+      expect(asNodeSettings(saved).distribution.iosAppStoreUrl).equals(url)
+      expect(appStoreProduct(url)?.appId).equals('00123')
+    } finally {
+      globalThis.URL = webUrl
+    }
+  })
+
+  it('keeps the full product link and extracts only the final literal path ID', () => {
+    const id = '000123456789012345678901'
+    const base = 'https://apps.apple.com:443/us/app/teamstation/id' + id
+    for (const suffix of [
+      '',
+      '/',
+      '?id=999',
+      '#id333',
+      '/?id=02#id44',
+      '?name=⚾🏟️'
+    ]) {
+      const url = base + suffix
+      expect(appStoreProduct('  ' + url + ' ')).deep.equals({ appId: id, url })
+      expect(
+        asNodeSettingsUpdate({
+          ...defaultNodeSettings,
+          distribution: {
+            ...defaultNodeSettings.distribution,
+            iosAppStoreUrl: url
+          }
+        }).distribution?.iosAppStoreUrl
+      ).equals(url)
+    }
+    for (const port of ['0443', '00000443']) {
+      const url = `https://apps.apple.com:${port}/app/id123`
+      expect(appStoreProduct(url)).deep.equals({ appId: '123', url })
+    }
+    const legacy = {
+      ...defaultNodeSettings,
+      distribution: { appStoreUrl: '', betaBuildsUrl: '' }
+    }
+    expect(asNodeSettings(legacy).distribution.iosAppStoreUrl).equals('')
+    expect(asNodeSettingsUpdate(legacy).distribution).not.have.property(
+      'iosAppStoreUrl'
+    )
+    expect(
+      asNodeSettingsUpdate({ ...legacy, distribution: undefined })
+    ).not.have.property('distribution')
+    for (const blank of ['', '   '])
+      expect(
+        asNodeSettingsUpdate({
+          ...legacy,
+          distribution: {
+            ...defaultNodeSettings.distribution,
+            iosAppStoreUrl: blank
+          }
+        }).distribution?.iosAppStoreUrl
+      ).equals('')
+    for (const value of [
+      null,
+      123,
+      {},
+      'apps.apple.com/app/id123',
+      'https:apps.apple.com/id1',
+      'http://apps.apple.com/app/id1',
+      'https://u@apps.apple.com/app/id1',
+      'https://@apps.apple.com/app/id1',
+      'https://apps.apple.com.example.test/id1',
+      'https://apps.apple.com:444/app/id1',
+      'https://apps.apple.com:000444/app/id1',
+      'https://apps.apple.com/app/name?id=123',
+      'https://apps.apple.com/us/developer/example/id123',
+      'https://apps.apple.com/story/id123',
+      'https://apps.apple.com/id123',
+      base + '/more',
+      base + 'x',
+      base + '?x=%z',
+      base + '?x=a\u0085b',
+      base + '?x=a\u009fb',
+      base + '?x=\uD800',
+      base + '#\uDFFF',
+      'https://apps.apple.com/a\\b/id1',
+      'https://apps.apple.com/a%2Fb/id1',
+      'https://apps.apple.com/a\nb/id1',
+      'https://apps.apple.com/app/%2E%2e/id1',
+      'https://apps.apple.com/%69d1'
+    ]) {
+      expect(appStoreProduct(value)).equals(undefined)
+      expect(() =>
+        asNodeSettingsUpdate({
+          ...legacy,
+          distribution: {
+            ...defaultNodeSettings.distribution,
+            iosAppStoreUrl: value
+          }
+        })
+      ).to.throw(/iOS App Store link.*https:\/\/apps.apple.com/)
+    }
   })
 
   it('says whether a Jev key is set, and nothing from a server before Jev', function () {
@@ -128,7 +236,8 @@ describe('node settings', function () {
     const { distribution: _links, ...withoutLinks } = defaultNodeSettings
     expect(asNodeSettings(withoutLinks).distribution).deep.equals({
       betaBuildsUrl: '',
-      appStoreUrl: ''
+      appStoreUrl: '',
+      iosAppStoreUrl: ''
     })
     expect(
       asNodeSettings({
@@ -140,7 +249,8 @@ describe('node settings', function () {
       }).distribution
     ).deep.equals({
       betaBuildsUrl: 'https://builds.example.test/mason',
-      appStoreUrl: ''
+      appStoreUrl: '',
+      iosAppStoreUrl: ''
     })
     expect(
       refused(

@@ -163,9 +163,20 @@ const NEVER: readonly string[] = ['GET /teams/search']
  */
 export const ANY_READ: readonly string[] = ['POST /graphql']
 
+/** Where the API mounts. The route lists here are below it. */
+export const API_PREFIX = '/api/v1'
+
+/**
+ * Public reads that answer everybody alike, so `withActor` does not look up
+ * whoever is signed in: the parsing Safari page reads the banner with its
+ * cookie.
+ */
+export const SESSIONLESS: readonly string[] = ['GET /node/ios-app-banner']
+
 /** Routes any key may call, whatever it holds: they ignore the key. */
 export const KEYLESS: readonly string[] = [
   'GET /health',
+  ...SESSIONLESS,
   'GET /time',
   'GET /openapi.json'
 ]
@@ -191,6 +202,7 @@ function entryOf(route: string, area: ApiKeyArea | null): Entry {
 
 const NEVER_ENTRIES = NEVER.map(route => entryOf(route, null))
 const KEYLESS_ENTRIES = KEYLESS.map(route => entryOf(route, null))
+const SESSIONLESS_ENTRIES = SESSIONLESS.map(route => entryOf(route, null))
 const ANY_READ_ENTRIES = ANY_READ.map(route => entryOf(route, null))
 const ENTRIES: Entry[] = (
   Object.entries(API_KEY_FAMILIES) as Array<[ApiKeyArea, readonly string[]]>
@@ -199,6 +211,27 @@ const ENTRIES: Entry[] = (
 /** Read for `GET` and `HEAD`, write for anything else. */
 function accessOf(method: string): 'read' | 'write' {
   return method === 'GET' || method === 'HEAD' ? 'read' : 'write'
+}
+
+/** A request path below `API_PREFIX`, or null for one outside the API. */
+export function belowApiPrefix(path: string): string | null {
+  return path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)
+    ? path.slice(API_PREFIX.length)
+    : null
+}
+
+/** Whether a request (its whole path) is a `SESSIONLESS` read. */
+export function ignoresSession(method: string, path: string): boolean {
+  const below = belowApiPrefix(path)
+  // Express answers HEAD with the GET route, as `keyNeeds` reads it too.
+  const upper = method.toUpperCase()
+  const asGet = upper === 'HEAD' ? 'GET' : upper
+  return (
+    below != null &&
+    SESSIONLESS_ENTRIES.some(
+      entry => entry.method === asGet && entry.pattern.test(below)
+    )
+  )
 }
 
 /**

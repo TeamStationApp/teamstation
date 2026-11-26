@@ -3,11 +3,12 @@ import { Pressable, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import {
-  asDistributionSettings,
+  asDistributionUrl,
   type BoardPlacement,
   defaultDistributionSettings,
   defaultJevSettings,
   defaultNodeSettings,
+  type DistributionSettings,
   type NodeSettings
 } from '../../common/nodeSettings'
 import { Button, Card, ListCard, SectionHeader, TextField } from '../components'
@@ -85,7 +86,7 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
       portraitHeight: nearest(HEIGHTS, s.portraitHeight * 100) / 100,
       speedHoldSec: nearest(HOLDS, s.speedHoldSec)
     },
-    distribution: settings.distribution ?? defaultDistributionSettings,
+    distribution: { ...defaultDistributionSettings, ...settings.distribution },
     jev: settings.jev ?? defaultJevSettings,
     highlights: {
       ...h,
@@ -119,6 +120,7 @@ type Picker =
   | { kind: 'date' }
   | {
       kind: 'url'
+      key: keyof DistributionSettings
       title: string
       value: string
       choose: (value: string) => NodeSettings
@@ -311,11 +313,12 @@ export function NodeSettingsCard({
   const links = settings.distribution ?? defaultDistributionSettings
   const urlRow = (
     label: string,
-    key: 'betaBuildsUrl' | 'appStoreUrl'
+    key: keyof DistributionSettings
   ): React.ReactElement =>
     row(label, links[key] === '' ? 'Not set' : links[key], () => {
       setPicker({
         kind: 'url',
+        key,
         title: label,
         value: links[key],
         choose: value => ({
@@ -528,13 +531,14 @@ export function NodeSettingsCard({
       <View style={styles.section}>
         <SectionHeader title="App links" />
         <Text style={styles.hint}>
-          The about screen&apos;s buttons. Leave one blank to hide it.
-          Android/iOS Beta Builds is where testers install a build. iOS
-          TestFlight is Apple&apos;s download.
+          About shows the beta build and TestFlight links. The iOS App Store
+          link offers the published app in Safari on iPhone and iPad. Leave a
+          link blank to hide it.
         </Text>
         <ListCard>
           {urlRow('Android/iOS Beta Builds', 'betaBuildsUrl')}
           {urlRow('iOS TestFlight', 'appStoreUrl')}
+          {urlRow('iOS App Store link', 'iosAppStoreUrl')}
         </ListCard>
       </View>
       <View style={styles.section}>
@@ -695,15 +699,8 @@ function UrlPicker({
       <Button
         label="Use"
         onPress={() => {
-          const field =
-            picker.title === 'iOS TestFlight' ? 'appStoreUrl' : 'betaBuildsUrl'
           try {
-            const parsed = asDistributionSettings({
-              betaBuildsUrl: '',
-              appStoreUrl: '',
-              [field]: value
-            })
-            onChoose(parsed[field])
+            onChoose(asDistributionUrl(picker.key, value))
           } catch (error) {
             setProblem(
               error instanceof Error ? error.message : 'Enter an HTTPS URL'

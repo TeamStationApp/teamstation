@@ -1,7 +1,6 @@
 import { asBoolean, asObject } from 'cleaners'
 import { Router } from 'express'
 import { rateLimit } from 'express-rate-limit'
-import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
 import { asNodeAccountChange } from '../../common/nodeAdministration'
@@ -22,7 +21,7 @@ import {
   directorySearch,
   personAdministration
 } from '../admin/userDirectory'
-import type { Database } from '../db/database'
+import type { PooledDatabase } from '../db/database'
 import { accountMailEnabled, setAccountMailEnabled } from '../email/accountMail'
 import { cleanBody } from '../jsonBody'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -30,6 +29,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import {
   clearJevKey,
+  iosAppBannerId,
   JEV_KEY_MAX,
   nodeSettings,
   setJevKey,
@@ -59,7 +59,7 @@ const asJevKeyBody = asObject({
 export const USER_MANAGEMENT_LIMIT = { windowMs: 60_000, limit: 120 }
 
 export function nodeAdministrationRoutes(
-  db: Kysely<Database>,
+  db: PooledDatabase,
   space?: SpaceSettings
 ): Router {
   const router = Router()
@@ -184,6 +184,19 @@ export function nodeAdministrationRoutes(
       const body = cleanBody(asAccountMail, req.body)
       await setAccountMailEnabled(db, req.actor, body.accountMessages)
       res.json({ accountMessages: body.accountMessages })
+    })
+  )
+  router.get(
+    '/node/ios-app-banner',
+    withAsync(async (req, res) => {
+      res.set('Cache-Control', 'no-store')
+      res.vary('Accept')
+      const appId = await iosAppBannerId(db)
+      if (req.accepts(['application/json', 'text/css']) === 'text/css')
+        res
+          .type('text/css')
+          .send(appId == null ? '' : `:root{--teamstation-ios-app-id:${appId}}`)
+      else res.json({ appId })
     })
   )
   router.get(

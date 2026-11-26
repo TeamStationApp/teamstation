@@ -51,8 +51,11 @@ export function originsFor(apiBaseUrl, mediaOrigins = '', logDsn = '') {
   }
 }
 
+// Runs only a callback installed by the eligible browser's parser-blocking bootstrap.
+export const finishAppBannerScript = 'document.teamStationFinishAppBanner?.()'
+
 /** The policy for these origins, as the `<meta>` carries it. */
-export function cspFor(origins) {
+export function cspFor(origins, bannerStylesheet = undefined) {
   const media = origins.media ?? []
   const list = (...parts) =>
     [...new Set(parts.flat().filter(part => part != null && part !== ''))].join(
@@ -60,8 +63,8 @@ export function cspFor(origins) {
     )
   return [
     "default-src 'self'",
-    "script-src 'self' 'wasm-unsafe-eval'",
-    `style-src ${list("'self'", "'unsafe-inline'", 'https://fonts.googleapis.com')}`,
+    `script-src ${list("'self'", "'wasm-unsafe-eval'", bannerStylesheet && `'${integrityOf(finishAppBannerScript)}'`)}`,
+    `style-src ${list("'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', origins.api && bannerStylesheet)}`,
     "font-src 'self' https://fonts.gstatic.com",
     `img-src ${list("'self'", 'data:', 'blob:', media)}`,
     `media-src ${list("'self'", 'blob:', media)}`,
@@ -78,14 +81,20 @@ const escapeAttribute = text =>
 
 /**
  * The page with the policy in a `<meta http-equiv>` right after its
- * `<meta charset>`, before anything the policy governs.
+ * `<meta charset>`, before anything the policy governs. A head script goes
+ * last in the head, so the viewport, title, icons and font preloads are
+ * parsed before it can hold the parser.
  */
-export function withCsp(html, policy) {
+export function withCsp(html, policy, headScript = '') {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policy)}" />`
   const charset = /<meta charset="[^"]*"\s*\/?>/i.exec(html)
   if (charset == null) throw new Error('index.html has no <meta charset>')
   const at = charset.index + charset[0].length
-  return `${html.slice(0, at)}\n    ${meta}${html.slice(at)}`
+  const page = `${html.slice(0, at)}\n    ${meta}${html.slice(at)}`
+  if (!headScript) return page
+  const end = page.search(/<\/head>/i)
+  if (end < 0) throw new Error('index.html has no </head>')
+  return `${page.slice(0, end)}  ${headScript}\n  ${page.slice(end)}`
 }
 
 /** `sha384-<base64>` of some bytes, as an `integrity` attribute holds it. */

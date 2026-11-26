@@ -971,6 +971,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
       }),
       { mode: 0o600 }
     )
+    await db
+      .updateTable('users')
+      .set({ is_admin: true })
+      .where('id', '=', userIdOfGumbo(123))
+      .execute()
+    const storeLink =
+      'https://apps.apple.com/us/app/test/id00123/?source=web#listing'
     let previous: { token: string; sub: string } | undefined
     for (const compiled of [false, true]) {
       const args = compiled
@@ -1008,6 +1015,31 @@ describe('OAuth provider and native approval over HTTPS', function () {
           betaBuildsUrl: 'https://builds.example.test'
         })
         expect((await fetcher(`${origin}/api/v1/me/builds`)).status).equals(401)
+        const settingsUrl = origin + '/api/v1/node/settings'
+        const bannerUrl = origin + '/api/v1/node/ios-app-banner'
+        const headers = {
+          authorization: `Bearer ${session.token}`,
+          'content-type': 'application/json'
+        }
+        const read = await fetcher(settingsUrl, { headers })
+        expect(read.status).equals(200)
+        const document = await read.json()
+        expect(document.distribution.iosAppStoreUrl).equals(
+          compiled ? storeLink : ''
+        )
+        expect(await (await fetcher(bannerUrl)).json()).deep.equals({
+          appId: compiled ? '00123' : null
+        })
+        document.distribution.iosAppStoreUrl = compiled ? '' : storeLink
+        const saved = await fetcher(settingsUrl, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(document)
+        })
+        expect(saved.status).equals(200)
+        expect(await (await fetcher(bannerUrl)).json()).deep.equals({
+          appId: compiled ? null : '00123'
+        })
         const discovered = await client.discovery(
           new URL(`${origin}/oauth`),
           'fixture-client',

@@ -1,9 +1,11 @@
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { defaultNodeSettings, type NodeSettings } from '../common/nodeSettings'
 import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
+import { SESSION_COOKIE } from './auth/tokens'
 import {
   distributionSettings,
   forgetScoreboardSettings,
@@ -51,7 +53,8 @@ describe('node settings', function () {
     },
     distribution: {
       betaBuildsUrl: 'https://builds.example.test',
-      appStoreUrl: 'https://apps.example.test/app'
+      appStoreUrl: 'https://apps.example.test/app',
+      iosAppStoreUrl: 'https://apps.apple.com/us/app/test/id00123/?src=🏟️#store'
     },
     jev: { configured: false }
   }
@@ -265,6 +268,126 @@ describe('node settings', function () {
     expect(await distributionSettings(f.h.db, Date.now(), true)).deep.equals(
       changed.distribution
     )
+  })
+
+  it('returns one fresh public ID across settings writes, omissions and malformed storage', async () => {
+    const check = async (appId: string | null): Promise<void> => {
+      const response = await f.h.request(
+        'GET',
+        '/node/ios-app-banner',
+        undefined,
+        null
+      )
+      expect(response.status).equals(200)
+      expect(response.headers.get('cache-control')).equals('no-store')
+      expect(await response.json()).deep.equals({ appId })
+      const css = await fetch(f.h.origin + '/api/v1/node/ios-app-banner', {
+        headers: { accept: 'text/css,*/*;q=0.1' }
+      })
+      expect(css.headers.get('content-type')).matches(/^text\/css/)
+      expect(css.headers.get('vary')).contains('Accept')
+      expect(css.headers.get('cache-control')).equals('no-store')
+      expect(await css.text()).equals(
+        appId == null ? '' : `:root{--teamstation-ios-app-id:${appId}}`
+      )
+    }
+    const save = async (body: unknown): Promise<Response> =>
+      await f.h.request('PUT', '/node/settings', body, 105)
+    await check(null)
+    expect((await save(changed)).status).equals(200)
+    await check('00123')
+    await f.h.db.transaction().execute(async trx => {
+      await sql`lock table auth_sessions in access exclusive mode`.execute(trx)
+      const response = await fetch(f.h.origin + '/api/v1/node/ios-app-banner', {
+        headers: { cookie: `${SESSION_COOKIE}=${f.h.tokens.get(105)!}` },
+        signal: AbortSignal.timeout(3000)
+      })
+      expect(response.status).equals(200)
+      expect(await response.json()).deep.equals({ appId: '00123' })
+    })
+    await f.h.db.transaction().execute(async trx => {
+      await sql`lock table system_settings in access exclusive mode`.execute(
+        trx
+      )
+      const busy = await f.h.request(
+        'GET',
+        '/node/ios-app-banner',
+        undefined,
+        null
+      )
+      expect(busy.status).equals(503)
+      expect(busy.headers.get('cache-control')).equals('no-store')
+      const waiters = sql`select pid from pg_locks
+        where relation = 'system_settings'::regclass and not granted
+          and database = (select oid from pg_database where datname = current_database())`
+      const until = Date.now() + 1500
+      let result = await waiters.execute(trx)
+      while (result.rows.length > 0 && Date.now() < until) {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        result = await waiters.execute(trx)
+      }
+      expect(result.rows).deep.equals([])
+    })
+    await check('00123')
+    const { iosAppStoreUrl, ...legacy } = changed.distribution
+    expect(
+      (await save({ ...changed, distribution: { iosAppStoreUrl: '' } })).status
+    ).equals(400)
+    expect(await distributionSettings(f.h.db, Date.now(), true)).deep.equals(
+      changed.distribution
+    )
+    for (const distribution of [legacy, undefined]) {
+      expect((await save({ ...changed, distribution })).status).equals(200)
+      await check('00123')
+    }
+    for (const invalid of [null, iosAppStoreUrl + '\uD800']) {
+      const bad = await save({
+        ...changed,
+        distribution: { ...legacy, iosAppStoreUrl: invalid }
+      })
+      expect(bad.status).equals(400)
+      expect(JSON.stringify(await bad.json())).contains('iOS App Store link')
+    }
+    await check('00123')
+    const row = await f.h.db
+      .selectFrom('system_settings')
+      .select(['value', 'updated_by'])
+      .where('key', '=', 'distribution.iosAppStoreUrl')
+      .executeTakeFirstOrThrow()
+    expect(row).deep.equals({
+      value: iosAppStoreUrl,
+      updated_by: userIdOfGumbo(105)
+    })
+    const current = await (
+      await f.h.request('GET', '/node/settings', undefined, 105)
+    ).json()
+    current.scoreboard.tvLandscape = { x: 0.2, y: 0.3, height: 0.5 }
+    expect((await save(current)).status).equals(200)
+    expect(
+      await (await f.h.request('GET', '/node/settings', undefined, 105)).json()
+    ).deep.equals(current)
+    expect(
+      (
+        await save({
+          ...changed,
+          distribution: { ...legacy, iosAppStoreUrl: '' }
+        })
+      ).status
+    ).equals(200)
+    await check(null)
+    await f.h.db
+      .updateTable('system_settings')
+      .set({
+        value: JSON.stringify(
+          'https://apps.apple.com/us/developer/example/id999'
+        )
+      })
+      .where('key', '=', 'distribution.iosAppStoreUrl')
+      .execute()
+    await check(null)
+    expect(
+      (await distributionSettings(f.h.db, Date.now(), true)).iosAppStoreUrl
+    ).equals('')
   })
 
   it('falls back to the default for each value a row holds badly, and caches', async () => {

@@ -4510,6 +4510,80 @@
       "file": "e2e/tests/platform/browser/observation.integration.ts"
     },
     {
+      "id": "platform/node-admin/ios-app-banner-safari#native-safari",
+      "title": "Safari offers the published app on a physical iPhone or iPad",
+      "kind": "e2e",
+      "covers": [
+        "src/app/web/iosAppBanner.ts",
+        "src/server/routes/nodeAdministration.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/node-admin/ios-app-banner-safari",
+      "file": "e2e/tests/platform/node-admin/ios-app-banner-safari.e2e.ts"
+    },
+    {
+      "id": "platform/node-admin/ios-app-banner-settings#saved-setting",
+      "title": "The saved App Store link controls the next eligible page load",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/app/web/iosAppBanner.ts",
+        "src/server/nodeSettings.ts",
+        "src/build.mjs"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/node-admin/ios-app-banner-settings",
+      "file": "e2e/tests/platform/node-admin/ios-app-banner-settings.e2e.ts"
+    },
+    {
       "id": "platform/node-admin/jev-key#set-and-clear",
       "title": "The node administrator sets and removes the Jev key, which no route or log shows",
       "kind": "e2e",

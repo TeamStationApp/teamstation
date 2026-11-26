@@ -785,7 +785,7 @@
         "Where each highlight starts and stops in the video, in seconds.",
         "Rewind length",
         "App links",
-        "The about screen&apos;s buttons. Leave one blank to hide it. Android/iOS Beta Builds is where testers install a build. iOS TestFlight is Apple&apos;s download.",
+        "About shows the beta build and TestFlight links. The iOS App Store link offers the published app in Safari on iPhone and iPad. Leave a link blank to hide it.",
         "Jev ranking",
         "Jev API key",
         "A new key",

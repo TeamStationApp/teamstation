@@ -316,7 +316,7 @@ async function rosterChatHarness(): Promise<AccountHarness> {
   })
   // The app's own page, its fonts and icons, with the fixture for the app.
   const page = (await readFile('dist/index.html', 'utf8')).replace(
-    /<script src="\/app-[^"]*"[^>]*><\/script>/,
+    /<script src="\/app-[A-Z0-9]+\.js"[^>]*><\/script>/,
     '<script src="/roster-chat-overlay-fixture.js"></script>'
   )
   if (!page.includes('roster-chat-overlay-fixture.js'))

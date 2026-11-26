@@ -155,6 +155,58 @@ describe('NodeSettingsCard', function () {
     }
   }
 
+  it('edits each distribution link separately, rejects bad products and clears the saved link on Reset', async () => {
+    const server = fake()
+    const settings = structuredClone(defaultNodeSettings)
+    Reflect.deleteProperty(settings.distribution, 'iosAppStoreUrl')
+    server.store(settings)
+    await render(server.client)
+    const product =
+      'https://apps.apple.com/us/app/teamstation/id00042/?ref=website#store'
+    const links = [
+      [
+        'Android/iOS Beta Builds',
+        'betaBuildsUrl',
+        'https://builds.example.test/beta'
+      ],
+      ['iOS TestFlight', 'appStoreUrl', 'https://testflight.example.test/app'],
+      ['iOS App Store link', 'iosAppStoreUrl', product]
+    ] as const
+    for (const [label, key, value] of links) {
+      expect(shown(label)).equals('Not set')
+      await press(label + ': Not set')
+      if (key === 'iosAppStoreUrl') {
+        await type(label, 'https://example.test/app/id42')
+        await press('Use')
+        expect(text()).contains(
+          'iOS App Store link must be an App Store product URL'
+        )
+        expect(shown(label)).equals('Not set')
+      }
+      await type(label, value)
+      await press('Use')
+      expect(shown(label)).equals(value)
+    }
+    await press('iOS App Store link: ' + product)
+    await type('iOS App Store link', '')
+    await press('Cancel')
+    expect(shown('iOS App Store link')).equals(product)
+    await press('Save')
+    expect(server.saved.at(-1)?.distribution).deep.equals(
+      Object.fromEntries(links.map(([, key, value]) => [key, value]))
+    )
+    await act(async () => {
+      root!.unmount()
+    })
+    await render(server.client)
+    expect(shown('iOS App Store link')).equals(product)
+    await press('Reset to defaults')
+    await press('Save')
+    expect(server.saved.at(-1)?.distribution).deep.equals(
+      defaultNodeSettings.distribution
+    )
+  })
+
   it('shows every value as a row, in percent and seconds, at the nearest stop', async function () {
     const server = fake()
     // Stored off the wheels' stops, as the server allows.
