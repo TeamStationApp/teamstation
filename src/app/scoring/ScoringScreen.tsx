@@ -9,6 +9,8 @@ import React, {
 } from 'react'
 import {
   ActivityIndicator,
+  Dimensions,
+  NativeModules,
   Platform,
   Pressable,
   ScrollView,
@@ -67,6 +69,7 @@ import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { scoringRotation } from '../player/multiCam/orientationLock'
 import { CachingClient, type QueuedSwap } from '../sync/cachingClient'
 import { supersededTag, type TagAcknowledgment } from '../sync/tagRevisions'
 import {
@@ -145,6 +148,7 @@ import {
   type RosterMode
 } from './RosterEditor'
 import { type GameChanges, listen, useRosterLive } from './rosterLive'
+import { RotateToPortrait } from './RotateToPortrait'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
@@ -275,6 +279,15 @@ export const PERSISTENT_NEEDS_QUEUE =
   'Persistent scoring needs the queued client'
 
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
+  useEffect(() => {
+    if (props.active === false) return
+    const rotation = scoringRotation(
+      NativeModules.TSOrientation,
+      Dimensions.get('screen')
+    )
+    rotation.allow()
+    return rotation.restore
+  }, [props.active])
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
   const [visibleDefaults, setVisibleDefaults] = useState<DefaultLineups>({})
@@ -4399,6 +4412,7 @@ function ScoringPanel(props: {
           )}
         </View>
       )}
+      {props.active && <RotateToPortrait />}
       <PlanSyncNotice
         cards={planCards}
         onRetry={retryPlan}

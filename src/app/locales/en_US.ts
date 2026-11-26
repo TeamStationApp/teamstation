@@ -1325,6 +1325,7 @@ export const enUs = {
   scoring_plan_sync_retry: 'Try again',
   scoring_plan_sync_accept: 'Accept',
   scoring_place_runner: 'Place a Runner',
+  scoring_rotate_to_portrait: 'Rotate to portrait to continue scoring.',
   scoring_roster_tab: 'Roster',
   scoring_edit_roster_instruction: 'Tap player to edit.',
   scoring_roster_empty: 'No players on this team.',

@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Dimensions, NativeModules } from 'react-native'
 
 import {
   asRosterEntry,
@@ -1725,18 +1726,161 @@ describe('scoring screen field wiring', function () {
     container = undefined
   })
 
+  for (const microphone of [false, true]) {
+    it(`places Done beside the catcher with microphone present = ${microphone}`, async function () {
+      await mount()
+      await act(async () => {
+        props().onRootSize!({ width: 393, height: 852 })
+      })
+      const args = props()
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <BaseballScreen
+              {...args}
+              instruction="Finish"
+              onFinish={() => undefined}
+              canFinish
+              walkUpControl={<button aria-label="Walk up" />}
+              dictationControl={
+                microphone ? <button aria-label="Microphone" /> : undefined
+              }
+            />
+          </ThemeProvider>
+        )
+      })
+      const row = container!.querySelector<HTMLElement>(
+        '[data-testid="walk-up-row"]'
+      )!
+      const pill = row.querySelector<HTMLElement>(
+        '[data-testid="scoring-done-pill"]'
+      )!
+      const deck = container!.querySelector<HTMLElement>(
+        '[data-testid="scoring-deck"]'
+      )!
+      expect(row.style.bottom).equals('128px')
+      expect(row.style.height).equals('56px')
+      expect(deck.parentElement!.style.top).equals(`${args.frame!.deckTop}px`)
+      expect(pill.parentElement!.style.marginRight).equals(
+        microphone ? '6px' : '0px'
+      )
+      const { cardInterval } = args.frame!.camera
+      const rightPadding = parseFloat(deck.parentElement!.style.right)
+      const doneRight =
+        393 -
+        rightPadding -
+        (microphone
+          ? parseFloat((row.lastElementChild as HTMLElement).style.width) + 6
+          : 0)
+      expect(
+        doneRight -
+          parseFloat(pill.parentElement!.style.width) -
+          cardInterval!.right
+      ).at.least(8 - 0.01)
+    })
+  }
+  it('lets dimmed pitch controls catch a tap, as Ball in Play does, so nothing under the deck gets it', async function () {
+    await mount()
+    await act(async () => {
+      props().onRootSize!({ width: 393, height: 852 })
+    })
+    const pitched: string[] = []
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <BaseballScreen
+            {...props()}
+            canPitch={false}
+            ballInPlayControl={undefined}
+            onPitch={kind => pitched.push(kind)}
+          />
+        </ThemeProvider>
+      )
+    })
+    const deck = container!.querySelector<HTMLElement>(
+      '[data-testid="scoring-deck"]'
+    )!
+    const control = (label: string): HTMLElement =>
+      deck.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+    // Each control takes the tap as the disabled Ball in Play beside it
+    // does: nothing between it and the deck lets the tap through.
+    const swing = control('Swing in Play')
+    for (const label of [
+      'Ball',
+      'Called Strike',
+      'Swing and Miss',
+      'Foul Ball',
+      'Swing in Play'
+    ]) {
+      const each = control(label)
+      expect(getComputedStyle(each).pointerEvents, label).equals(
+        getComputedStyle(swing).pointerEvents
+      )
+      for (
+        let node = each.parentElement;
+        node != null && node !== deck.parentElement;
+        node = node.parentElement
+      )
+        expect(getComputedStyle(node).pointerEvents, label).not.equals('none')
+      await act(async () => {
+        each.click()
+      })
+    }
+    expect(pitched).deep.equals([])
+  })
+  for (const [title, screen, expected] of [
+    [
+      'allows native rotation on a tablet only while scoring is the active route',
+      { width: 834, height: 1194 },
+      ['allow', 'portrait', 'allow', 'portrait']
+    ],
+    [
+      'keeps a phone upright while scoring, as it always was',
+      { width: 393, height: 852 },
+      []
+    ]
+  ] as const)
+    it(title, async function () {
+      const calls: string[] = []
+      const original = NativeModules.TSOrientation
+      const saved = Object.getOwnPropertyDescriptor(Dimensions, 'get')!
+      const get = Dimensions.get.bind(Dimensions)
+      NativeModules.TSOrientation = {
+        allowRotation: () => calls.push('allow'),
+        lockPortrait: () => calls.push('portrait')
+      }
+      Dimensions.get = dimension =>
+        dimension === 'screen'
+          ? { ...get(dimension), ...screen }
+          : get(dimension)
+      try {
+        const render = await mount(undefined, undefined, { active: false })
+        await render({ active: true })
+        await render({ active: false })
+        await render({ active: true })
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+        expect(calls).deep.equals(expected)
+      } finally {
+        NativeModules.TSOrientation = original
+        Object.defineProperty(Dimensions, 'get', saved)
+      }
+    })
+
   for (const [width, height] of [
     [393, 852],
     [1000, 742]
   ]) {
-    it(`sizes the scoring camera from the measured ${width}×${height} root above the existing deck`, async function () {
+    it(`sizes the scoring camera from the measured ${width}×${height} root with the deck directly beneath its catcher`, async function () {
       await mount()
       await act(async () => {
         props().onRootSize!({ width, height })
       })
       const frame = props().frame!
       expect(frame.fieldWidth).equals(width)
-      expect(frame.camera).deep.equals({ top: 64, bottom: 200 })
+      expect(frame.camera).to.include({ top: 64, bottom: 172 })
       expect(componentProps<FieldProps>('FieldCanvas').frame).deep.equals(
         frame.camera
       )
@@ -1744,10 +1888,8 @@ describe('scoring screen field wiring', function () {
         '[data-testid="scoring-deck"]'
       )!
       expect(deck.style.height).equals('120px')
-      expect(deck.style.top).equals('')
-      expect(deck.parentElement!.parentElement!.style.justifyContent).equals(
-        'space-between'
-      )
+      expect(parseFloat(deck.parentElement!.style.top)).equals(frame.deckTop)
+      expect(frame.deckTop).equals(frame.catcherCardBottom + 4)
     })
   }
   for (const top of [0, 59])
@@ -1835,8 +1977,8 @@ describe('scoring screen field wiring', function () {
           ).equals(60 + offset)
           expect(
             componentProps<RemoteScoringUpdatesProps>('RemoteScoringUpdates')
-              .catcher?.y
-          ).equals(500 + offset)
+              .frame.lines
+          ).equals(0)
         } finally {
           restore()
         }

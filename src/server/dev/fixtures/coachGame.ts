@@ -9,6 +9,7 @@ import {
 const PEOPLE = {
   coach: { first: 'Aaron', last: 'Boone' },
   assistant: { first: 'Don', last: 'Mattingly' },
+  peer: { first: 'Score', last: 'Peer' },
   scorekeeper: { first: 'Alex', last: 'Cora' }
 }
 
@@ -37,11 +38,13 @@ export async function runCoachGame(
     'scorekeeper',
     PEOPLE.scorekeeper
   )
+  const peer = await createAccount(context, world, 'peer', PEOPLE.peer)
   const game = await context.db.transaction().execute(async trx => {
     const made = await createLineupGame(trx)
     await joinTeam(trx, coach.userId, made.teams.home, 'coach')
     await joinTeam(trx, assistant.userId, made.teams.home, 'assistant')
     await joinTeam(trx, scorekeeper.userId, made.teams.home, 'scorekeeper')
+    await joinTeam(trx, peer.userId, made.teams.home, 'scorekeeper')
     return made
   })
   const lineup = Object.fromEntries(
@@ -52,7 +55,7 @@ export async function runCoachGame(
   return {
     world,
     nonce: context.nonce,
-    accounts: { coach, assistant, scorekeeper },
+    accounts: { coach, assistant, scorekeeper, peer },
     ids: {
       game: game.gameId,
       homeTeam: game.teams.home,

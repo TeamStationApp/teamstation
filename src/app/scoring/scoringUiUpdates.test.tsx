@@ -97,11 +97,14 @@ describe('scoring UI updates', () => {
         'borderRadius',
         'boxShadow',
         'minHeight',
-        'paddingLeft',
         'backgroundColor'
       ] as const)
         expect(style(bottom.firstElementChild!)[property], property).equals(
           style(schedule.firstElementChild!)[property]
+        )
+      for (const side of ['paddingLeft', 'paddingRight'] as const)
+        expect(style(bottom.firstElementChild!)[side]).equals(
+          style(schedule.firstElementChild!)[side]
         )
       expect(style(bottom.querySelector('[dir="auto"]')!).color).equals(
         style(schedule.querySelector('[dir="auto"]')!).color

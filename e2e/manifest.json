@@ -9116,6 +9116,130 @@
       "file": "e2e/tests/scoring/layout/framing.e2e.ts"
     },
     {
+      "id": "scoring/layout/stacked#done-pill",
+      "title": "Pitch controls and remote updates beneath the catcher",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/scoring/RemoteScoringUpdates.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 7,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/stacked",
+      "file": "e2e/tests/scoring/layout/stacked.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/stacked#native",
+      "title": "The native scoring deck sits above its remote updates and bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/NativeNameplates.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/stacked",
+      "file": "e2e/tests/scoring/layout/stackedNative.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/stacked#web-sizes",
+      "title": "Pitch controls and remote updates beneath the catcher",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/scoring/RemoteScoringUpdates.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 7,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/stacked",
+      "file": "e2e/tests/scoring/layout/stacked.e2e.ts"
+    },
+    {
       "id": "scoring/offline/eligible#cold-offline-open",
       "title": "A phone keeps its nearest three scorable games ready offline",
       "kind": "e2e",

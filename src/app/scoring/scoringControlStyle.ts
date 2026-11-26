@@ -1,5 +1,39 @@
 import type { ViewStyle } from 'react-native'
 
+import { FIELD_EDGE_GAP } from '../field/fieldSafeArea'
+import type { Insets } from '../platform/insets'
+
+export const LOG_HEADER = 44
+export const LOG_LINE = 20
+export const NOTICE_TEXT_AREA = 40
+/**
+ * The Done pill's width: its 14-point label between the compact pill's
+ * semicircular ends, each half of its 36-point height (docs/ui-rules.md).
+ */
+export const DONE_WIDTH = 72
+/** The five equal pitch columns determine the buttons beside the catcher. */
+export function scoringControlRow(
+  width: number,
+  insets: Insets
+): {
+  left: number
+  right: number
+  buttonWidth: number
+  cardLeft: number
+  cardRight: number
+} {
+  const left = Math.max(FIELD_EDGE_GAP, insets.left)
+  const right = Math.max(FIELD_EDGE_GAP, insets.right)
+  const buttonWidth = Math.max(0, (width - left - right - 4 * 6) / 5)
+  return {
+    left,
+    right,
+    buttonWidth,
+    cardLeft: left + buttonWidth + 8,
+    cardRight: width - right - buttonWidth - 6 - DONE_WIDTH - 8
+  }
+}
+
 export type ControlKind =
   'more' | 'undo' | 'ball' | 'called' | 'swing' | 'foul' | 'contact' | 'music'
 /** Any button's colors, the deck's controls and the dictation microphone. */

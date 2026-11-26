@@ -39,6 +39,7 @@
 - added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can give a first age, make an adult a minor, or clear an age
 - added: The web page describes TeamStation ("where a team keeps its games, scores, and video") to search engines, web filters and browsers without JavaScript
 - changed: A game's sponsor logo and reels follow the viewer's team, and neutral viewers keep one stable pick
+- changed: Scoring: the pitch buttons sit right under the catcher, with the remote scoring log beneath them.
 - changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: Tess shows how long a rate-limited change must wait before it can be confirmed again
