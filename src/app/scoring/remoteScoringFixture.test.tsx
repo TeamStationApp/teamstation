@@ -174,9 +174,9 @@ export function fixture(_withState = true): {
 export async function render(
   game: ScoringSession,
   userId = 'remote-panel-test',
-  height = 620,
+  lines = 5,
   obscured = false,
-  catcherY = 350
+  top = 280
 ): Promise<void> {
   if (root == null) {
     host = document.createElement('div')
@@ -189,12 +189,8 @@ export async function render(
         <RemoteScoringUpdates
           game={game}
           userId={userId}
-          width={393}
-          height={height}
+          frame={{ top, left: 12, width: 369, lines }}
           obscured={obscured}
-          undoWidth={150}
-          undoTop={height - 64}
-          catcher={{ x: 170, y: catcherY, width: 40, height: 30 }}
         />
       </ThemeProvider>
     )

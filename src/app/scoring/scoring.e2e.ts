@@ -1221,41 +1221,32 @@ describe('scoring browser', function () {
         }, label)
         expect(measured.bottom).lessThan(measured.footerTop)
         expect(measured.hit).equals(label)
-        // The lower pill lays itself out over Undo a frame or more after the
-        // resize: on a droplet, which draws slowly, it can be read mid-move.
-        await page
-          .waitForFunction(
-            label => {
-              const pill = document.querySelector(
-                `[aria-label="Bottom ${label}"]`
-              )
-              const undo = document.querySelector('[aria-label^="Undo "]')
-              if (pill == null || undo == null) return false
-              const a = pill.getBoundingClientRect()
-              const b = undo.getBoundingClientRect()
-              return (
-                Math.abs(a.x + a.width / 2 - (b.x + b.width / 2)) < 0.1 &&
-                Math.abs(a.bottom - b.top) < 0.1
-              )
-            },
-            { timeout: 15000 },
-            label
-          )
-          .catch(() => undefined)
-        const lower = await page.$eval(`[aria-label="Bottom ${label}"]`, n => {
-          const r = n.getBoundingClientRect()
-          const undo = document
-            .querySelector('[aria-label^="Undo "]')!
+        const pill = await page.waitForSelector(
+          `[data-testid="scoring-done-pill"][aria-label="Bottom ${label}"]`,
+          { visible: true }
+        )
+        const lower = await pill!.evaluate(node => {
+          const box = node.getBoundingClientRect()
+          const card = document
+            .querySelector('[data-position="C"]')!
+            .getBoundingClientRect()
+          const deck = document
+            .querySelector('[data-testid="scoring-deck"]')!
             .getBoundingClientRect()
           return {
-            bottom: r.bottom,
-            top: undo.top,
-            center: r.x + r.width / 2,
-            undoCenter: undo.x + undo.width / 2
+            gapAfterCard: box.left - card.right,
+            gapAboveDeck: deck.top - box.bottom,
+            receivesTap: node.contains(
+              document.elementFromPoint(
+                box.left + box.width / 2,
+                box.top + box.height / 2
+              )
+            )
           }
         })
-        expect(lower.bottom).closeTo(lower.top, 0.1)
-        expect(lower.center).closeTo(lower.undoCenter, 0.1)
+        expect(lower.gapAfterCard).at.least(8 - 0.1)
+        expect(lower.gapAboveDeck).at.least(0)
+        expect(lower.receivesTap).equals(true)
         await click(page, `Bottom ${label}`)
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
           timeout: 30000
@@ -1437,13 +1428,28 @@ describe('scoring browser', function () {
   it('recovers a lost WebGL context during a pitch without replaying the scoring action', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
-      await page.waitForSelector('canvas[data-field-ready="true"]')
+      const first = await page.waitForSelector(
+        'canvas[data-field-ready="true"]'
+      )
       await click(page, 'Ball')
-      await page.evaluate(() => {
-        const canvas = document.querySelector('canvas')!
+      const loseContext = (canvas: HTMLCanvasElement): void => {
         const gl = canvas.getContext('webgl2')!
         gl.getExtension('WEBGL_lose_context')!.loseContext()
-      })
+      }
+      await page.$eval('canvas', loseContext)
+      // A sustained first loss remounts the field automatically. A second
+      // sustained loss on the replacement offers the scorer a manual retry.
+      await page.waitForFunction(
+        old => {
+          const field = document.querySelector(
+            'canvas[data-field-ready="true"]'
+          )
+          return field != null && field !== old
+        },
+        {},
+        first
+      )
+      await page.$eval('canvas', loseContext)
       await page.waitForSelector('canvas', { hidden: true })
       await page.locator('::-p-text(Try again)').click()
       await page.waitForSelector('canvas[data-field-ready="true"]')
