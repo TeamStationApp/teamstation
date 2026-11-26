@@ -150,6 +150,14 @@ export interface StandIns {
   delay: { prefix: string; ms: number } | null
   /** Hits on `/__tess/beacon`, which a remote load from rich HTML makes. */
   beaconHits: number
+  eventGates: Map<
+    string,
+    {
+      mode: 'hold' | 'stale'
+      arrivals: number
+      pending: Set<() => void>
+    }
+  >
   forwarded: Forwarded[]
   speechUrl: string
   close: () => Promise<void>
@@ -177,6 +185,7 @@ export async function startStandIns(
     delay: null,
     beaconHits: 0,
     forwarded: [],
+    eventGates: new Map(),
     speechUrl: recogniser.url,
     close: async () => {
       await model.close()
@@ -195,6 +204,33 @@ export async function startStandIns(
 export function delayFor(standIns: StandIns, path: string): number {
   const delay = standIns.delay
   return delay != null && path.startsWith(delay.prefix) ? delay.ms : 0
+}
+
+/** Hold only the targeted game's writes. Reads, health checks and other games pass. */
+export function gateEvent(
+  standIns: StandIns,
+  req: IncomingMessage,
+  res: ServerResponse,
+  resume: () => void
+): boolean {
+  const game = /^\/api\/v1\/games\/([\w-]+)\/events$/.exec(
+    new URL(req.url ?? '/', 'http://faults').pathname
+  )?.[1]
+  const gate = game == null ? undefined : standIns.eventGates.get(game)
+  if (req.method !== 'POST' || gate == null) return false
+  gate.arrivals++
+  if (gate.mode === 'stale') {
+    req.resume()
+    json(res, 409, {
+      code: 'conflict',
+      message: 'Somebody else changed the lineups',
+      details: { stale: true }
+    })
+  } else {
+    gate.pending.add(resume)
+    res.once('close', () => gate.pending.delete(resume))
+  }
+  return true
 }
 
 /** Logs a request the proxy forwards, keeping the newest. */
@@ -253,7 +289,26 @@ export function standInRoute(
         })
       })
   }
-  if (route === 'model/script' && req.method === 'PUT') {
+  const game = /^event-gate\/([\w-]+)$/.exec(route)?.[1]
+  if (game != null) {
+    const gate = standIns.eventGates.get(game)
+    if (req.method === 'PUT')
+      put(body => {
+        const mode = (body as { mode?: unknown } | null)?.mode
+        if (mode !== 'hold' && mode !== 'stale')
+          throw new Error('Expected hold or stale')
+        if (gate != null) throw new Error('The game already has a gate')
+        standIns.eventGates.set(game, { mode, arrivals: 0, pending: new Set() })
+        return { mode }
+      })
+    else if (req.method === 'DELETE') {
+      standIns.eventGates.delete(game)
+      for (const resume of gate?.pending ?? []) resume()
+      json(res, 200, { released: true })
+    } else if (req.method === 'GET')
+      json(res, 200, { arrivals: gate?.arrivals ?? 0 })
+    else return false
+  } else if (route === 'model/script' && req.method === 'PUT') {
     put(body => {
       standIns.model.setScript(fromWire(body))
       return { entries: (body as unknown[]).length }

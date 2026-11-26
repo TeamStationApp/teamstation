@@ -1683,9 +1683,7 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     await changes.lineups('d2')
     expect(order()).deep.equals(theirs)
     expect(shown('Save Rosters')).equals(true)
-    expect(document.querySelector('[data-testid="Roster conflict"]')).equals(
-      null
-    )
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
     // Its echo, heard again, changes nothing.
     await changes.lineups('d2')
     expect(order()).deep.equals(theirs)
@@ -1748,9 +1746,7 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     await settle()
     expect(shown(sheet)).equals(false)
     expect(order()).deep.equals(theirs)
-    expect(document.querySelector('[data-testid="Roster conflict"]')).equals(
-      null
-    )
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
   })
 
   it('warns over a dirty draft and keeps it; Cancel takes theirs', async function () {
@@ -1768,10 +1764,19 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     await changes.lineups('d2')
     expect(order()).deep.equals(mine)
     expect(
-      document.querySelector('[data-testid="Roster conflict"]')?.textContent
+      document.querySelector('[data-testid="scoringNotice"]')?.textContent
     ).equals(lstrings.scoring_roster_conflict)
+    expect(document.querySelector('[data-testid="Roster conflict"]')).equals(
+      null
+    )
+    expect(document.querySelectorAll('[data-testid="scoringNotice"]')).length(1)
+    expect(
+      document.querySelector(
+        '[aria-modal="true"] [data-testid="scoringNotice"]'
+      )
+    ).not.equals(null)
     expect(lstrings.scoring_roster_conflict).equals(
-      'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.'
+      'Someone else edited this roster. Saving may overwrite their changes. Cancel takes theirs.'
     )
     await click('Cancel')
     await settle()
@@ -1780,9 +1785,7 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     await click('Set Team Rosters')
     await settle()
     expect(order()).deep.equals(theirs)
-    expect(document.querySelector('[data-testid="Roster conflict"]')).equals(
-      null
-    )
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
     await click('Cancel')
   })
 
@@ -1797,9 +1800,9 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     await swapLeadoff(await other())
     digest.value = 'd2'
     await changes.lineups('d2')
-    expect(
-      document.querySelector('[data-testid="Roster conflict"]')
-    ).not.equals(null)
+    expect(document.querySelector('[data-testid="scoringNotice"]')).not.equals(
+      null
+    )
     await click('Save Rosters')
     await settle()
     const stored = await other()
@@ -2086,10 +2089,28 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.session().state.liveData.linescore.offense.batter?.id).equals(
       1
     )
+    const geometry = (): string[] =>
+      [
+        '[data-testid="scoring-field-holder"]',
+        '[aria-label="Open scoring menu"]',
+        '[data-testid="scoring-deck"]',
+        '[data-testid="scoring-log-band"]',
+        '[data-testid="scoring-notice-strip"]'
+      ].map(id => document.querySelector<HTMLElement>(id)!.style.cssText)
+    const before = geometry()
     screen.swap()
     await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
     await settle()
     expect(screen.opens()).equals(2)
+    expect(geometry()).deep.equals(before)
+    expect(
+      document.querySelector('[data-testid="scoringNotice"]')?.textContent
+    ).equals('Home and away were swapped.')
+    expect(
+      [...document.querySelectorAll<HTMLElement>('div')].some(
+        n => n.style.top === '30%'
+      )
+    ).equals(false)
     const state = screen.session().state
     expect(state.gameData.teams.home.id).equals('away')
     expect(state.gameData.teams.away.id).equals('home')
@@ -2157,7 +2178,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
     await settle()
     await settle()
     expect(screen.opens()).equals(2)
-    expect(document.body.textContent).includes(
+    expect(
+      document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getAttribute('aria-label')
+    ).includes(
       'Home and away were swapped, so changes not yet saved before the swap were not kept.'
     )
     expect(screen.session().state.gameData.teams.home.id).equals('away')
@@ -2224,7 +2249,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
       // not wait for one: it reopens at once, the pitch counted as lost.
       expect(screen.rebaseReads()).equals(0)
       expect(screen.opens()).equals(2)
-      expect(document.body.textContent).includes(
+      expect(
+        document
+          .querySelector('[data-testid="scoringNotice"] [aria-label]')
+          ?.getAttribute('aria-label')
+      ).includes(
         'Home and away were swapped, so changes not yet saved before the swap were not kept.'
       )
       expect(screen.session().state.gameData.teams.home.id).equals('away')
@@ -2252,7 +2281,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
       })
       await settle()
       expect(screen.opens()).equals(2)
-      expect(document.body.textContent).includes(
+      expect(
+        document
+          .querySelector('[data-testid="scoringNotice"] [aria-label]')
+          ?.getAttribute('aria-label')
+      ).includes(
         'Home and away were swapped, so changes not yet saved before the swap may not have been kept.'
       )
       expect(screen.session().state.gameData.teams.home.id).equals('away')
@@ -2275,9 +2308,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.opens()).equals(2)
     expect(screen.session()).not.equals(before)
     expect(screen.session().readOnly).equals(false)
-    expect(document.body.textContent).includes(
-      'changes not yet saved before the swap were not kept'
-    )
+    expect(
+      document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getAttribute('aria-label')
+    ).includes('changes not yet saved before the swap were not kept')
   })
 
   it('on a phone with nothing queued, gives up nothing on another device’s swap', async function () {
@@ -2374,7 +2409,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
     await settle()
     await settle()
     expect(refused.opens()).equals(2)
-    expect(document.body.textContent).includes(
+    expect(
+      document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getAttribute('aria-label')
+    ).includes(
       'This game was reset, so 1 change not yet saved before the reset was not kept.'
     )
   })
@@ -2391,7 +2430,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
     await settle()
     await settle()
     expect(screen.opens()).equals(2)
-    expect(document.body.textContent).includes(
+    expect(
+      document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getAttribute('aria-label')
+    ).includes(
       'Home and away were swapped and the game was reset, so 1 change not yet saved before the reset was not kept.'
     )
     expect(screen.session().state.gameData.teams.home.id).equals('away')
@@ -2408,7 +2451,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
     await settle()
     expect(screen.discarded).deep.equals(['g1'])
     expect(screen.opens()).equals(2)
-    expect(document.body.textContent).includes(
+    expect(
+      document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getAttribute('aria-label')
+    ).includes(
       'This game was reset, so 1 change not yet saved before the reset was not kept.'
     )
   })

@@ -181,7 +181,8 @@ async function main(): Promise<void> {
     const saved = async (): Promise<void> => {
       await pause(1500)
       await page.waitForFunction(
-        () => document.querySelector('[aria-label="Save status"]') == null,
+        () =>
+          document.querySelector('[data-testid="scoringSaveStatus"]') == null,
         { timeout: 30000 }
       )
     }

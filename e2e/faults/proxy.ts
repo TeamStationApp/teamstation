@@ -24,6 +24,12 @@ export interface FaultProxyOptions {
   port?: number
   /** Answers a request first; true when it did, so the proxy leaves it. */
   control?: (req: IncomingMessage, res: ServerResponse) => boolean
+  /** A game-specific test gate may answer or resume a single event POST. */
+  gate?: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    resume: () => void
+  ) => boolean
   /** How long to hold a request for this path before handling it; none by default. */
   delay?: (path: string) => number
   /** Told of each request the proxy handles, with its path. */
@@ -151,6 +157,12 @@ export async function startFaultProxy(
     if (options.control?.(req, res) === true) return
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
     options.onRequest?.(req.method ?? 'GET', path)
+    if (
+      options.gate?.(req, res, () => {
+        handle(req, res, path)
+      }) === true
+    )
+      return
     const ms = options.delay?.(path) ?? 0
     if (ms > 0) {
       setTimeout(() => {

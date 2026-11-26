@@ -140,7 +140,7 @@ export default defineE2e({
           step,
           at: new Date().toISOString(),
           board: await board(app),
-          heldGameNotice: await shownId(app, 'heldGameNotice'),
+          heldGameNotice: await shownId(app, 'heldGameMessage'),
           saveStatus: (await app.nodes())
             .filter(node => node.id === 'scoringSaveStatus')
             .map(labelOf)
@@ -232,6 +232,9 @@ export default defineE2e({
         'every pitch, in order, on the server'
       ).deep.equals(['B', 'B', 'C'])
       expect(at('after-send')?.heldGameNotice, 'nothing refused').equals(false)
+      expect(at('after-send')?.saveStatus, 'the queue has drained').deep.equals(
+        []
+      )
     }
   }
 })

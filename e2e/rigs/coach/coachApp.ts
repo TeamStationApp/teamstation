@@ -9,7 +9,8 @@ import {
   type E2eSpec,
   type WebSession
 } from '../../core/spec'
-import { openInApp, serverLink, setServer } from '../app/setServer'
+import { appLink, openInApp, serverLink, setServer } from '../app/setServer'
+import { signOutApp } from '../streaming/soakSignIn'
 
 /**
  * The game plan's tests on any surface: the develop app on an iPhone or
@@ -261,11 +262,18 @@ export async function openCoachApp(
   }
   const udid = ctx.device('device')
   const m = await ctx.attach('device', { platform: 'ios', appId: DEVELOP_APP })
-  await m.launchApp({ appId: DEVELOP_APP, clearState: true })
   if (isHubDevice(udid)) {
+    await m.launchApp({ appId: DEVELOP_APP, stopApp: true })
+    if (
+      flatten((await m.hierarchy()) as Node).some(n =>
+        labelOf(n).startsWith('Account, ')
+      )
+    )
+      await signOutApp(m)
     // A hub's iPhone takes the server link through its lease.
     await serverKeptOnHubPhone(m, udid, origin)
-  } else
+  } else {
+    await m.launchApp({ appId: DEVELOP_APP, clearState: true })
     await setServer({
       platform: 'ios',
       udid,
@@ -274,10 +282,11 @@ export async function openCoachApp(
       device: m,
       simulator: iosIsSimulator(udid)
     })
+  }
   await ctx.signIn(role, m)
   const nodes = async (): Promise<Node[]> => flatten(await m.hierarchy())
   const link = async (path: string): Promise<void> => {
-    await m.openLink({ link: `teamstation://${path}` })
+    await m.openLink({ link: appLink(path) })
     // The system asks once before a link opens the app it names.
     if ((await nodes()).some(node => labelOf(node) === 'Open'))
       await m.tapOn({ text: 'Open' })
