@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 
 import { expect } from 'chai'
-import type { Request, Response } from 'express'
+import type { Request, Response as ExpressResponse } from 'express'
 import { describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
@@ -460,7 +460,7 @@ describe('API traffic budgets', () => {
       set: (key: string, value: string) => {
         if (key === 'Retry-After') retrySeconds = Number(value)
       }
-    } as unknown as Response
+    } as unknown as ExpressResponse
     const importRows = async (
       userId: string | undefined,
       games: unknown
@@ -535,7 +535,7 @@ describe('API traffic budgets', () => {
     const headers = new Map<string, string>()
     const res = {
       set: (k: string, v: string) => headers.set(k, v)
-    } as unknown as Response
+    } as unknown as ExpressResponse
     const run = async (
       handler: typeof limits.beforeAuth
     ): Promise<HttpError | undefined> =>
@@ -593,7 +593,7 @@ describe('API traffic budgets', () => {
           path: '/teams/fixture/games',
           body: { games: Array(10) }
         } as unknown as Request
-        const res = { set: () => undefined } as unknown as Response
+        const res = { set: () => undefined } as unknown as ExpressResponse
         const charges: string[] = []
         const decisions: string[] = []
         const limits = apiRateLimits(
@@ -660,7 +660,7 @@ describe('API traffic budgets', () => {
         headers,
         header: (name: string) => headers[name]
       }) as unknown as Request
-    const res = { set: () => undefined } as unknown as Response
+    const res = { set: () => undefined } as unknown as ExpressResponse
     const run = async (
       mode: 'observe' | 'enforce',
       req: Request
