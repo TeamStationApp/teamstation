@@ -62,7 +62,8 @@ export default defineE2e({
               if (canvas == null) return false
               const rect = canvas.getBoundingClientRect()
               return (
-                rect.width === width &&
+                rect.width ===
+                  (width >= 820 && height >= 640 ? width - 360 : width) &&
                 rect.height === height &&
                 document.querySelector('[data-position="C"]') != null
               )
