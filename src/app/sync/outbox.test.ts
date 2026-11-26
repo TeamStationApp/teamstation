@@ -8256,7 +8256,7 @@ describe('the phone outbox', function () {
       ])
     })
 
-    it('sends a run a crash cut off again as it went, though the run has grown since, and never reuses a key', async function () {
+    it('lands the saves a send lost in a crash took, when the run has grown since, and never reuses a key', async function () {
       const s = scoringServer()
       const first = phone(s.handler)
       const [k1, k2] = await offline(first, s, 2)
@@ -8276,8 +8276,8 @@ describe('the phone outbox', function () {
       const [, , k3, , k5] = keysOf(p)
       const sent = p.posts().length
       await reconnect(p, s)
-      // The first two again, answered as they were taken, then the rest.
-      expect(keysSent(p, sent)).deep.equals([`m-${k1}-${k2}`, `m-${k3}-${k5}`])
+      // The grown run finds the first two taken, and the rest go on them.
+      expect(keysSent(p, sent)).deep.equals([`m-${k1}-${k5}`, `m-${k3}-${k5}`])
       expect(p.posts().some(call => call.key === k1 || call.key === k2)).equals(
         false
       )
@@ -8314,8 +8314,13 @@ describe('the phone outbox', function () {
         s.game('g1').mutation = peer
         const sent = p.posts().length
         await reconnect(p, s)
-        // The run as it went, answered as it was taken; then the third alone.
-        expect(keysSent(p, sent)).deep.equals([`m-${k1}-${k2}`, k3])
+        // The grown run finds the other scorer's write; the run sent before
+        // goes again, answered as it was taken; then the third alone.
+        expect(keysSent(p, sent)).deep.equals([
+          `m-${k1}-${k3}`,
+          `m-${k1}-${k2}`,
+          k3
+        ])
         expect(p.rows()).deep.equals([])
         expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
           {
@@ -8640,6 +8645,111 @@ describe('the phone outbox', function () {
       expect(keysSent(p, 1)).deep.equals([k1])
       expect(p.posts()[1].body).deep.equals(body)
       expect(p.rows()).deep.equals([])
+    })
+
+    it('sends a real session’s offline pitches through a walk as one run, though the drain tried the first of them during the outage', async function () {
+      const teams = {
+        away: { id: gameFixture.awayTeamId, name: gameFixture.awayTeamName },
+        home: { id: gameFixture.homeTeamId, name: gameFixture.homeTeamName }
+      }
+      let online = true
+      let held: Record<string, unknown> = {
+        plays: [],
+        currentPlay: null,
+        playsDigest: 'plays-0',
+        lineupsDigest: 'D0',
+        generation: 1,
+        scoringMutation: null
+      }
+      const handler: Handler = sent => {
+        if (sent.method === 'GET') {
+          if (sent.path === '/games/g1')
+            return { body: { ...gameFixture, generation: 1 } }
+          if (sent.path === '/games/g1/lineups')
+            return {
+              body: {
+                away: side('away'),
+                home: side('home'),
+                digest: 'D0',
+                generation: 1
+              }
+            }
+          if (sent.path === '/games/g1/events') return { body: held }
+          return refusal(404, 'notFound', 'Not found')
+        }
+        if (!online) return 'offline'
+        // Taken as it comes: no other scorer writes.
+        const body = sent.body as SaveChange
+        const plays = new Map(
+          (held.plays as Array<{ gumbo: GumboPlay }>).map(row => [
+            row.gumbo.about.atBatIndex,
+            row.gumbo
+          ])
+        )
+        for (const index of body.remove) plays.delete(index)
+        for (const taken of body.plays) plays.set(taken.about.atBatIndex, taken)
+        held = {
+          ...held,
+          plays: [...plays.values()].map((gumbo, index) => ({
+            id: `e${index}`,
+            gameId: 'g1',
+            gumbo
+          })),
+          currentPlay: body.currentPlay ?? held.currentPlay,
+          playsDigest: `plays-${String(body.scoringMutation?.id)}`,
+          scoringMutation: body.scoringMutation ?? held.scoringMutation
+        }
+        return { body: held }
+      }
+      const p = phone(handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      const session = await ScoringSession.open(
+        {
+          load: async id => await p.client.gameEvents(id),
+          save: async (id, change) => await p.client.saveGameEvents(id, change)
+        },
+        'g1',
+        { gamePk: 'g1', teams, setup: setupOf(scoringSession(gameFixture)) },
+        { setTimer: () => null, clearTimer: () => undefined }
+      )
+      const score = async (
+        action: Parameters<typeof session.apply>[0]
+      ): Promise<void> => {
+        expect(session.apply(action).problems).deep.equals([])
+        await session.flush()
+      }
+      await score({
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupOf(session.state),
+        confirmed: ['away', 'home']
+      })
+      for (const call of ['B', 'B', 'C'] as const)
+        await score({ type: 'pitch', call })
+      // Ball three, a foul, ball four (a walk) and the next batter's first
+      // pitch, with no signal. Between them the backoff runs out, and the
+      // drain tries what is queued.
+      online = false
+      const sent = p.posts().length
+      for (const call of ['B', 'F', 'B', 'C'] as const) {
+        await score({ type: 'pitch', call })
+        p.clock.now += 2 * BACKOFF_MS[1]
+        p.client.wakeOutbox()
+        await p.client.drainOutbox()
+      }
+      const keys = keysOf(p)
+      expect(keys).has.length(4)
+      expect(keysSent(p, sent)).includes(`m-${keys[0]}-${keys[1]}`)
+      const outage = p.posts().length
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      // One update for the live view: every save of the outage at once.
+      expect(keysSent(p, outage)).deep.equals([`m-${keys[0]}-${keys[3]}`])
+      expect(p.rows()).deep.equals([])
+      expect(held.scoringMutation).deep.equals(session.observedScoringMutation)
     })
 
     it('tells the scoring the head of a run carried was rejected', async function () {

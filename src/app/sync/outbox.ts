@@ -1090,25 +1090,40 @@ const runKey = (rows: OutboxRow[]): string =>
   `m-${rows[0].idempotencyKey}-${rows[rows.length - 1].idempotencyKey}`
 
 /**
- * The run a save of plays heads was last sent with, when no answer came to
- * say whether the server took it: its key, and the id of its last row.
+ * A run a save of plays headed, sent with no answer to say whether the
+ * server took it: its key, and the id of its last row.
  */
 interface MergedSend {
   key: string
   last: string
 }
 
-/** A body without the run it was last sent with. */
+/** A body without the runs it was sent with. */
 function withoutMerged(body: Json): Json {
   if (!('merged' in body)) return body
   const { merged: _merged, ...rest } = body
   return rest
 }
 
-/** The run's head's body, marked with the run as it went under `key`. */
+/** The runs a head's body was sent with and not answered, oldest first. */
+function marksOf(body: Json): MergedSend[] {
+  return Array.isArray(body.merged) ? (body.merged as MergedSend[]) : []
+}
+
+/** `body` marked with `marks`, or with none. */
+function withMarks(body: Json, marks: MergedSend[]): string {
+  return JSON.stringify(
+    marks.length === 0 ? withoutMerged(body) : { ...body, merged: marks }
+  )
+}
+
+/** The run's head's body, marked with the run as it goes under `key` too. */
 function markedHead(run: OutboxRow[], key: string): string {
-  const merged: MergedSend = { key, last: run[run.length - 1].id }
-  return JSON.stringify({ ...parsed(run[0].body), merged })
+  const body = parsed(run[0].body)
+  return withMarks(body, [
+    ...marksOf(body).filter(mark => mark.key !== key),
+    { key, last: run[run.length - 1].id }
+  ])
 }
 
 export class Outbox {
@@ -1203,6 +1218,13 @@ export class Outbox {
    * goes alone, as it was queued, until the chain is empty.
    */
   private readonly unmerged = new Set<string>()
+  /**
+   * Chains whose run was answered as built on another scorer's write while
+   * its head still holds runs sent before with no answer: those go again
+   * first, newest first, as they went, since one may have landed before
+   * that write.
+   */
+  private readonly recovering = new Set<string>()
   /**
    * Each chain's requests still out, direct, released or the drain's, by
    * chain, with the key each was sent under: `giveUp` aborts them at its
@@ -1348,6 +1370,7 @@ export class Outbox {
     this.paused = undefined
     this.idle = false
     this.unmerged.clear()
+    this.recovering.clear()
   }
 
   /**
@@ -3876,6 +3899,8 @@ export class Outbox {
     // A chain with nothing left sends its saves together again.
     for (const chain of this.unmerged)
       if (!heads.has(chain)) this.unmerged.delete(chain)
+    for (const chain of this.recovering)
+      if (!heads.has(chain)) this.recovering.delete(chain)
     const row = ready.sort((a, b) => a.seq - b.seq)[0]
     if (row == null) return { changed, leaseEnds }
     const call = callOfRow(row)
@@ -3889,30 +3914,34 @@ export class Outbox {
     let run = [{ ...row, body: text }]
     let key: string | undefined
     const head = parsed(row.body)
-    // Sent together with no answer, the run may have landed under its key:
-    // it goes again as it went, with nothing queued since, while every row
-    // of it is still queued after the head. Otherwise the mark is dropped.
-    const merged = head.merged as MergedSend | undefined
-    if (merged != null) {
-      const own = rows.filter(
-        other => other.chain === row.chain && other.seq >= row.seq
-      )
-      const end = own.findIndex(other => other.id === merged.last)
-      if (
-        end > 0 &&
+    // The runs the head was sent with and not answered, each kept while
+    // every row of it is still queued after the head, as it went.
+    const own = rows.filter(
+      other => other.chain === row.chain && other.seq >= row.seq
+    )
+    const endOf = (mark: MergedSend): number => {
+      const end = own.findIndex(other => other.id === mark.last)
+      return end > 0 &&
         own
           .slice(1, end + 1)
           .every(
             other => other.state === 'pending' && !this.direct.has(other.id)
           )
-      ) {
-        run = own.slice(0, end + 1)
-        key = merged.key
-      } else {
-        text = JSON.stringify(withoutMerged(parsed(text)))
-        run = [{ ...row, body: text }]
-      }
+        ? end
+        : -1
     }
+    const marks = marksOf(head).filter(mark => endOf(mark) > 0)
+    if (marks.length !== marksOf(head).length) {
+      text = withMarks(parsed(text), marks)
+      run = [{ ...row, body: text }]
+    }
+    // Answered as built on another scorer's write: the newest of them goes
+    // again as it went, under its key, and grows by nothing queued since.
+    const replayed = this.recovering.has(row.chain) ? marks.at(-1) : undefined
+    if (replayed != null) {
+      run = [{ ...row, body: text }, ...own.slice(1, endOf(replayed) + 1)]
+      key = replayed.key
+    } else this.recovering.delete(row.chain)
     if (
       key == null &&
       call.kind === 'events' &&
@@ -3959,10 +3988,11 @@ export class Outbox {
         run.push({ ...next, body: prepared })
       }
     }
-    // Marked before it goes: should no answer ever come, not even after the
-    // app stops, the run goes again as it went.
-    if (run.length > 1) {
-      key ??= runKey(run)
+    // Marked before it goes, beside the runs sent before it: should no
+    // answer ever come, not even after the app stops, the server may hold
+    // any of them.
+    if (run.length > 1 && key == null) {
+      key = runKey(run)
       run[0] = { ...run[0], body: markedHead(run, key) }
     }
     for (const sent of run) {
@@ -4126,7 +4156,7 @@ export class Outbox {
       }
       const go =
         run.length > 1
-          ? await this.settleRun(store, run, call, picked.body, outcome)
+          ? await this.settleRun(store, run, key, call, picked.body, outcome)
           : await this.settle(store, row, call, picked.body, outcome)
       // Answered under its key, the row's own send says what the server did.
       if (outcome.kind !== 'retry') {
@@ -4603,20 +4633,16 @@ export class Outbox {
   private async settleRun(
     store: DocumentStore,
     run: OutboxRow[],
+    key: string,
     call: QueuedCall,
     sent: unknown,
     outcome: Outcome
   ): Promise<boolean> {
     const chain = run[0].chain
-    // Back to pending. With no answer, the head keeps the mark of the run
-    // as it went (`pick`), which may have landed; answered, it drops it.
-    const back = async (
-      answered: boolean,
-      attempted = false
-    ): Promise<void> => {
-      const head = answered
-        ? JSON.stringify(withoutMerged(parsed(run[0].body)))
-        : run[0].body
+    const marks = marksOf(parsed(run[0].body))
+    // Back to pending, the head keeping `head`: with no answer, every run it
+    // was sent with (`pick`), any of which may have landed.
+    const back = async (head: string, attempted = false): Promise<void> => {
       await store.atomically(async tx => {
         for (const row of run)
           await tx.update(row.id, {
@@ -4642,8 +4668,16 @@ export class Outbox {
             )
           )
           if (landing < 0) {
-            await back(true)
-            this.unmerged.add(chain)
+            // This send's answer is known. A run sent before it with none may
+            // have landed before that write: each goes again first, newest
+            // first. With none left, each row goes alone.
+            const left = marks.filter(mark => mark.key !== key)
+            await back(withMarks(parsed(run[0].body), left))
+            if (left.length > 0) this.recovering.add(chain)
+            else {
+              this.recovering.delete(chain)
+              this.unmerged.add(chain)
+            }
             return true
           }
           const { superseded: _superseded, ...answer } = response
@@ -4654,6 +4688,8 @@ export class Outbox {
           }
         }
         this.succeeded(chain)
+        // The head lands or goes, and the runs it was sent with with it.
+        this.recovering.delete(chain)
         const row = run[landing]
         // The last refusal of scoring a landed row carried is the one told.
         const rejectedScoring =
@@ -4683,19 +4719,20 @@ export class Outbox {
         return true
       }
       case 'retry':
-        await back(false, true)
+        await back(run[0].body, true)
         this.failed(outcome, chain)
         return false
       case 'auth':
-        await back(false)
+        await back(run[0].body)
         this.paused = { token: this.options.token() }
         return false
       case 'update':
-        await back(false)
+        await back(run[0].body)
         this.outdated.add(chain)
         return true
       default:
-        await back(true)
+        await back(withMarks(parsed(run[0].body), []))
+        this.recovering.delete(chain)
         this.unmerged.add(chain)
         return true
     }
