@@ -1,10 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import type { Insets } from '../platform/insets'
-import { useFieldInsets } from './useFieldSurface'
+import { useFieldInsets, useFieldSurface } from './useFieldSurface'
 
 /**
  * What the browser computes for the probe's `env()` padding: jsdom knows no
@@ -173,5 +176,96 @@ describe('field insets', function () {
     root = undefined
     // Gone with the screen, and deaf to the window.
     expect(document.querySelector('[data-field-insets]')).equals(null)
+  })
+})
+
+describe('the surface that owns the scoring viewport', function () {
+  it('keeps the scoring root on the small viewport, restoring the page on navigation', async function () {
+    const host = document.createElement('div')
+    const meta = document.createElement('meta')
+    meta.name = 'viewport'
+    meta.content = 'width=device-width'
+    const toolbar = document.createElement('meta')
+    toolbar.name = 'theme-color'
+    toolbar.content = '#2b4221'
+    const previousToolbar = document.querySelector('meta[name="theme-color"]')
+    previousToolbar?.replaceWith(toolbar)
+    if (previousToolbar == null) document.head.append(toolbar)
+    const previousMeta = document.querySelector('meta[name="viewport"]')
+    previousMeta?.replaceWith(meta)
+    if (previousMeta == null) document.head.append(meta)
+    const html = document.documentElement
+    const background = html.style.backgroundColor
+    html.style.backgroundColor = 'maroon'
+    document.body.append(host)
+    const root = createRoot(host)
+    function Surface({
+      mode,
+      active = true
+    }: {
+      mode: 'field' | 'scoring' | 'contained'
+      active?: boolean
+    }): React.ReactElement {
+      const { root: style } = useFieldSurface(mode, active)
+      return <div style={style as React.CSSProperties} />
+    }
+    try {
+      await act(async () => {
+        root.render(
+          <>
+            <Surface mode="scoring" />
+            <Surface mode="contained" />
+          </>
+        )
+      })
+      const outer = host.firstElementChild as HTMLElement
+      const panel = host.lastElementChild as HTMLElement
+      expect(outer.style.height).equals(
+        'var(--scoring-viewport-height, 100svh)'
+      )
+      expect(panel.style.height).equals('100%')
+      expect(panel.style.position).equals('absolute')
+      expect(html.classList.contains('scoring-viewport')).equals(true)
+      expect(html.style.backgroundColor).equals('rgb(79, 121, 56)')
+      expect(toolbar.content).equals('#4f7938')
+      expect(meta.content).includes('viewport-fit=cover')
+      // A retained scoring scene gives the viewport back when a page covers it.
+      await act(async () => {
+        root.render(<Surface mode="scoring" active={false} />)
+      })
+      expect(html.classList.contains('scoring-viewport')).equals(false)
+      expect(html.style.backgroundColor).equals('maroon')
+      expect(toolbar.content).equals('#2b4221')
+      expect(meta.content).equals('width=device-width')
+      await act(async () => {
+        root.render(<Surface mode="field" />)
+      })
+      expect((host.firstElementChild as HTMLElement).style.height).equals(
+        '100dvh'
+      )
+      expect(html.style.backgroundColor).equals('maroon')
+      expect(toolbar.content).equals('#2b4221')
+      expect(meta.content).includes('viewport-fit=cover')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      if (previousToolbar == null) toolbar.remove()
+      else toolbar.replaceWith(previousToolbar)
+      html.style.backgroundColor = background
+      if (previousMeta != null) meta.replaceWith(previousMeta)
+      else meta.remove()
+      host.remove()
+    }
+  })
+
+  it('supplies the dynamic-viewport fallback only where the browser lacks small viewport units', function () {
+    const template = readFileSync(resolve('src/app/web/index.html'), 'utf8')
+    expect(template).matches(
+      /html\.scoring-viewport\s*\{\s*--scoring-viewport-height: 100svh;/
+    )
+    expect(template).matches(
+      /@supports not \(height: 100svh\)\s*\{\s*html\.scoring-viewport\s*\{\s*--scoring-viewport-height: 100dvh;/
+    )
   })
 })

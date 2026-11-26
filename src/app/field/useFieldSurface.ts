@@ -2,6 +2,7 @@ import { useLayoutEffect, useState } from 'react'
 import type { ViewStyle } from 'react-native'
 
 import type { Insets } from '../platform/insets'
+import { fieldPalette } from './fieldPalette'
 
 export const glassStyle: ViewStyle & {
   backdropFilter: string
@@ -12,30 +13,52 @@ export const glassStyle: ViewStyle & {
 }
 
 /** Cover only this route; restore the rest of the app's viewport policy on exit. */
-export function useFieldSurface(): { root: ViewStyle; safe: ViewStyle } {
+export function useFieldSurface(
+  mode: 'field' | 'scoring' | 'contained' = 'field',
+  active = true
+): { root: ViewStyle; safe: ViewStyle } {
   useLayoutEffect(() => {
+    if (!active || mode === 'contained') return
+    const html = document.documentElement
     const meta = document.querySelector('meta[name="viewport"]')
-    const previous = meta?.getAttribute('content') ?? ''
+    const previous = meta?.getAttribute('content')
+    const theme = document.querySelector('meta[name="theme-color"]')
+    const previousTheme = theme?.getAttribute('content')
     const overflow = document.body.style.overflow
-    const overscroll = document.documentElement.style.overscrollBehavior
+    const overscroll = html.style.overscrollBehavior
+    const background = html.style.backgroundColor
     meta?.setAttribute(
       'content',
       'width=device-width, initial-scale=1, viewport-fit=cover'
     )
     document.body.style.overflow = 'hidden'
-    document.documentElement.style.overscrollBehavior = 'none'
-    return () => {
-      meta?.setAttribute('content', previous)
-      document.body.style.overflow = overflow
-      document.documentElement.style.overscrollBehavior = overscroll
+    html.style.overscrollBehavior = 'none'
+    if (mode === 'scoring') {
+      html.classList.add('scoring-viewport')
+      html.style.backgroundColor = fieldPalette.grass
+      theme?.setAttribute('content', fieldPalette.grass)
     }
-  }, [])
+    return () => {
+      if (previous != null) meta?.setAttribute('content', previous)
+      else meta?.removeAttribute('content')
+      document.body.style.overflow = overflow
+      html.style.overscrollBehavior = overscroll
+      if (mode === 'scoring') {
+        html.classList.remove('scoring-viewport')
+        html.style.backgroundColor = background
+        if (previousTheme == null) theme?.removeAttribute('content')
+        else theme?.setAttribute('content', previousTheme)
+      }
+    }
+  }, [active, mode])
+  const height =
+    mode === 'scoring' ? 'var(--scoring-viewport-height, 100svh)' : '100dvh'
   return {
     root: {
-      position: 'fixed',
+      position: mode === 'contained' ? 'absolute' : 'fixed',
       inset: 0,
       width: '100%',
-      height: '100dvh',
+      height: mode === 'contained' ? '100%' : height,
       overflow: 'hidden',
       touchAction: 'none'
     } as unknown as ViewStyle,
