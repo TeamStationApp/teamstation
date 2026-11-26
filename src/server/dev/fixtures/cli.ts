@@ -6,6 +6,7 @@ import { splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runPendingHistory } from './pendingHistory'
 import { runRefreshNotices } from './refreshNotices'
 import { runSearch } from './search'
 import { runStreaming } from './streaming'
@@ -31,6 +32,7 @@ export const WORLDS: Record<
   'packed-league': runPackedLeague,
   'packed-league-limit': runPackedLeagueLimit,
   'refresh-notices': runRefreshNotices,
+  'pending-history': runPendingHistory,
   search: runSearch,
   tess: runTess
 }
