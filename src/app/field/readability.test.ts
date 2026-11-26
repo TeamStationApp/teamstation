@@ -18,6 +18,7 @@ import {
   NAMEPLATE_NUMBER_FONT,
   NAMEPLATE_PAD,
   nameplateLabel,
+  type NameplatePlacement,
   PLAYER_SCALE,
   projectPlayerLabel
 } from './playerPresentation'
@@ -25,6 +26,68 @@ import { battingLine, DEMO_SCOREBOARD } from './scoreboardModel'
 import { makeScoreboardPixels } from './scoreboardTexture'
 
 describe('responsive field readability', function () {
+  it('pins the rendered scoring catcher to the fixed slot across substitutions and restores the unframed projection', async function () {
+    let plates: NameplatePlacement[] = []
+    let camera: PerspectiveCamera | undefined
+    const width = 600
+    const height = 700
+    const players = createPlayers()
+    const catcher = players.find(player => player.label === 'C')!
+    const props = {
+      players,
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1.25,
+      cameraHeight: 33,
+      cameraTilt: (-11 * Math.PI) / 180,
+      bottomExtension: 112,
+      frame: { top: 64, bottom: 200 },
+      onNameplates: (next: NameplatePlacement[]) => {
+        plates = next
+      }
+    }
+    const renderer = await create(React.createElement(FieldScene, props), {
+      width,
+      height,
+      onCreated: state => {
+        camera = state.camera as PerspectiveCamera
+      }
+    })
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      const card = (): NameplatePlacement =>
+        plates.find(p => p.position === 'C')!
+      expect(card().y).closeTo(height - props.frame.bottom, 0.01)
+      const original = { ...card() }
+      const changed = {
+        ...catcher,
+        jersey: '',
+        hasBall: true,
+        position: { x: 10, z: -12 }
+      }
+      await renderer.update(
+        React.createElement(FieldScene, {
+          ...props,
+          players: players.map(p => (p === catcher ? changed : p))
+        })
+      )
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(card().y).equals(original.y)
+      expect(card().x).greaterThan(original.x)
+      expect(card().height).lessThan(original.height)
+      expect(card().name).includes('⚾')
+      await renderer.update(
+        React.createElement(FieldScene, { ...props, frame: undefined })
+      )
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(card()).deep.equals(
+        projectPlayerLabel(catcher, camera!, width, height)
+      )
+    } finally {
+      await renderer.unmount()
+    }
+  })
   it('colors a nameplate with the uniform', function () {
     expect(nameplateColor({ team: 'runner', uniformSide: 'away' })).equals(
       'rgba(16, 40, 72, 0.94)'

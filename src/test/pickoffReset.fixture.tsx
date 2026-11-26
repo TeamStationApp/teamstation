@@ -89,6 +89,24 @@ function Root(): React.ReactElement {
             gameId={game.id}
             userId="pickoff-fixture"
             source={source}
+            onBaseProjection={projection => {
+              const button = document
+                .querySelector('[aria-label="Open scoring menu"]')!
+                .getBoundingClientRect()
+              fetch('/layout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  projection,
+                  menu: {
+                    x: button.x + button.width / 2,
+                    y: button.y + button.height / 2
+                  }
+                })
+              }).catch((error: unknown) => {
+                console.error(error)
+              })
+            }}
             onExit={() => undefined}
           />
         </View>
