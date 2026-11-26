@@ -772,7 +772,10 @@ describe('tab pages', function () {
     })
 
     it('lets go of a Screen’s scroll and layout handlers in a leaving page', async function () {
-      const onScroll = (): void => undefined
+      let scrollCalls = 0
+      const onScroll = (): void => {
+        scrollCalls++
+      }
       const onLayout = (): void => undefined
       const element = (page: string, index: number): React.ReactElement => (
         <ThemeProvider>
@@ -813,7 +816,17 @@ describe('tab pages', function () {
       expect(frame('info')!.dataset.pageRole).equals('outgoing')
       expect(scroller('info').onScroll).equals(undefined)
       expect(scroller('info').onLayout).equals(undefined)
-      expect(scroller('watch').onScroll).equals(onScroll)
+      const activeScroll = scroller('watch').onScroll as (
+        event: unknown
+      ) => void
+      activeScroll({
+        nativeEvent: {
+          contentOffset: { y: 140 },
+          contentSize: { height: 800 },
+          layoutMeasurement: { height: 250 }
+        }
+      })
+      expect(scrollCalls).equals(1)
       expect(scroller('watch').onLayout).equals(onLayout)
     })
 

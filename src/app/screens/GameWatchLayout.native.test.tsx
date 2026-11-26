@@ -7,6 +7,10 @@ import { useSharedValue } from 'react-native-reanimated'
 import { mount, settle, unmount } from '../../test/gameFormDom'
 import type { Handoff } from '../components/handoff'
 import {
+  scrollState,
+  withNavScroll
+} from '../components/navScroll.test.helpers'
+import {
   PageScrollContext,
   type PageScrollSource
 } from '../components/pageScroll'
@@ -111,7 +115,7 @@ describe('native event section and picture pinning', () => {
             />
           )
         }
-        await mount(<Harness />)
+        await mount(withNavScroll(<Harness />))
         const body = document.querySelector('[data-testid="eventTabContent"]')!
         const band = document.querySelector('[data-testid="event-pill-band"]')!
         const video = document.querySelector(
@@ -166,6 +170,7 @@ describe('native event section and picture pinning', () => {
           }
           scroll.workletEventHandler.worklet({
             ...event,
+            contentOffset: { x: 0, y: 0 },
             eventName: 'onScrollBeginDrag'
           })
           scroll.workletEventHandler.worklet({
@@ -175,6 +180,7 @@ describe('native event section and picture pinning', () => {
         })
         await settle()
         expect(scrolled - beforeScroll).equals(1)
+        expect(scrollState()).equals('compact')
         expect(handoff.progress.value).equals(layout.short ? 1 : 0.5)
         expect(measured === 0).equals(layout.short)
         // The sections' band in the same column as the video, and before it,
@@ -474,9 +480,31 @@ describe('native event section and picture pinning', () => {
       expect(list).not.equals(undefined)
       expect(list).equals(page)
       await unmount()
-      await mount(<Watch sideways pagedList />)
+      await mount(withNavScroll(<Watch sideways pagedList />))
       expect(list).not.equals(undefined)
       expect(list).not.equals(page)
+      const highlights = document.querySelector('[data-testid="highlights"]')!
+      const scroll = handler(highlights, 'onScroll') as {
+        workletEventHandler: { worklet: (event: unknown) => void }
+      }
+      await act(async () => {
+        const event = {
+          contentOffset: { x: 0, y: 0 },
+          contentSize: { width: 400, height: 1600 },
+          layoutMeasurement: { width: 400, height: 600 }
+        }
+        scroll.workletEventHandler.worklet({
+          ...event,
+          eventName: 'onScrollBeginDrag'
+        })
+        scroll.workletEventHandler.worklet({
+          ...event,
+          eventName: 'onScroll',
+          contentOffset: { x: 0, y: 1000 }
+        })
+      })
+      await settle()
+      expect(scrollState()).equals('compact')
     })
 
     it('has no scroller to follow without `pagedList`', async () => {

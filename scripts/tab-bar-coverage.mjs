@@ -29,9 +29,15 @@ const supplements = values.supplement.map(readJson)
 const report = resolve('coverage/tabBar')
 mkdirSync(report, { recursive: true })
 const specs = [
+  'src/app/App.navbarPop.test.tsx',
   'src/app/App.offlineBanner.test.tsx',
   'src/app/chat/chat2ActionsView.test.tsx',
   'src/app/chat/chat2ViewportView.test.tsx',
+  'src/app/walkup/DjGameScreen.test.tsx',
+  'src/app/screens/LocationScreen.test.tsx',
+  'src/app/scoreboard/ScoreboardOverrideScreen.test.tsx',
+  'src/app/screens/GameWatchLayout.test.tsx',
+  'src/app/screens/GameWatchLayout.native.test.tsx',
   'src/app/theme/navContrast.test.ts',
   'src/app/components/AppNav.test.tsx',
   'src/app/components/AppSidebar.test.tsx',
@@ -42,6 +48,8 @@ const specs = [
   'src/app/components/navGeometry.test.ts',
   'src/app/components/SystemTabBar.native.test.ts',
   'src/app/components/reducedTransparency.test.tsx',
+  'src/app/components/navCompactProvider.test.tsx',
+  'src/app/components/navCompact.test.tsx',
   'src/app/components/tabBarModel.test.ts',
   'src/app/components/navClearance.test.ts',
   'src/app/components/SuccessToast.test.tsx',

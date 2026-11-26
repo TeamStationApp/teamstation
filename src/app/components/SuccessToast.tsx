@@ -16,9 +16,11 @@ export interface SuccessNotice {
 /** Shell-level confirmation survives the screen that submitted the change. */
 export function SuccessToast({
   notice,
-  bannerHeight = 0
+  bannerHeight = 0,
+  navigationHeight
 }: {
   notice?: SuccessNotice
+  navigationHeight?: number
   /** The offline banner's height while it shows: the toast rides above it. */
   bannerHeight?: number
 }): React.ReactElement | null {
@@ -58,7 +60,7 @@ export function SuccessToast({
         {
           opacity,
           bottom: phone
-            ? theme.rem(FLOATING_HEIGHT_REM) +
+            ? (navigationHeight ?? theme.rem(FLOATING_HEIGHT_REM)) +
               navContentBottom(
                 Platform.OS,
                 theme.rem(FLOATING_BOTTOM_REM),

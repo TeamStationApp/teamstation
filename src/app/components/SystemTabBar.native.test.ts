@@ -45,7 +45,7 @@ type RenderedBar = React.ReactElement<{
 
 function renderBar(
   theme: Theme,
-  options: AppNavProps & { reduced?: boolean }
+  options: AppNavProps & { reduced?: boolean; compact?: boolean }
 ): RenderedBar {
   const mocks: Record<string, unknown> = {
     react: React,
@@ -135,16 +135,17 @@ describe('the UIKit tab bar bridge', () => {
     )
 })
 
-describe('the opaque native tab bar', () => {
+describe('the compact and opaque native tab bar', () => {
   it('uses the app colors for the opaque platter and keeps Chat accessible', () => {
     const bar = renderBar(tsBallpark, {
       selected: 'chat',
       mode: 'floating',
+      compact: true,
       reduced: true,
       dots: { chat: true },
       onSelect: () => {}
     }).props.children.props
-    expect(bar.compact).equals(false)
+    expect(bar.compact).equals(true)
     expect(bar.opaqueBackgroundColor).equals(
       tsBallpark.navOpaqueBackgroundColor
     )

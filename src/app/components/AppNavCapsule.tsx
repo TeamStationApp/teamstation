@@ -4,12 +4,13 @@ import {
   Platform,
   Pressable,
   StyleSheet,
-  Text,
   useWindowDimensions,
   View
 } from 'react-native'
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler'
 import Animated, {
+  FadeIn,
+  FadeOut,
   type SharedValue,
   useAnimatedStyle,
   useSharedValue
@@ -22,7 +23,13 @@ import { useTheme } from '../theme/ThemeContext'
 import type { AppNavProps } from './AppNav'
 import { capsuleMotion } from './capsuleMotion'
 import { GlassView } from './GlassView'
-import { NAV_HEIGHT, NAV_PILL_PAD, NAV_SIDE_INSET } from './navGeometry'
+import {
+  NAV_COMPACT_HEIGHT,
+  NAV_COMPACT_WIDTH,
+  NAV_HEIGHT,
+  NAV_PILL_PAD,
+  NAV_SIDE_INSET
+} from './navGeometry'
 import {
   capsuleLabels,
   highlightWidth,
@@ -45,32 +52,33 @@ import { useMotionPreference } from './useMotionPreference'
 let current: SharedValue<number> | undefined
 
 export function AppNavCapsule(
-  props: AppNavProps & { bottom: number; reduced: boolean }
+  props: AppNavProps & { bottom: number; reduced: boolean; compact: boolean }
 ): React.ReactElement {
-  const { selected, onSelect, dots, bottom, reduced, onHeight } = props
+  const { selected, onSelect, dots, bottom, compact, reduced, onHeight } = props
   const theme = useTheme()
   const reducedMotion = useMotionPreference(true)
   const window = useWindowDimensions()
-  const width = Math.max(0, window.width - 2 * NAV_SIDE_INSET)
-  const height = NAV_HEIGHT
+  const expandedWidth = Math.max(0, window.width - 2 * NAV_SIDE_INSET)
+  const width = compact
+    ? Math.min(expandedWidth, NAV_COMPACT_WIDTH)
+    : expandedWidth
+  const height = compact ? NAV_COMPACT_HEIGHT : NAV_HEIGHT
   const labels = capsuleLabels(
-    width,
+    expandedWidth,
     NAV_HEIGHT - 2 * NAV_PILL_PAD,
     window.fontScale
   )
-  const separate = labels.separate
+  const separate = !compact && labels.separate
   const pillBottom = separate
     ? labels.lineHeight + 2 * NAV_PILL_PAD
     : NAV_PILL_PAD
   const pillRadius = (height - NAV_PILL_PAD - pillBottom) / 2
+  const labelSpace = compact ? 0 : labels.lineHeight
   const maxIconSize = Math.max(
     0,
     Math.min(
       width / NAV_TABS.length - 2 * NAV_PILL_PAD,
-      height -
-        2 * NAV_PILL_PAD -
-        labels.lineHeight -
-        (separate ? NAV_PILL_PAD : 0)
+      height - 2 * NAV_PILL_PAD - labelSpace - (separate ? NAV_PILL_PAD : 0)
     )
   )
   const rtl = I18nManager.isRTL
@@ -88,10 +96,32 @@ export function AppNavCapsule(
   const index = dragged ?? initialIndex
   const animatedIndex = useSharedValue(current?.value ?? index)
   const scale = useSharedValue(1)
-  // A label on its own row leaves the highlight to its equal slot.
-  const highlight = separate
+  const shellWidth = useSharedValue(width)
+  const shellHeight = useSharedValue(height)
+  // A label on its own row leaves the highlight to its equal slot. The width
+  // eases with the shell, so it shrinks or grows steadily through a resize
+  // even where UIKit's rule would jump between its two spacings.
+  const highlightTarget = separate
     ? Math.max(0, width / NAV_TABS.length - 2 * NAV_PILL_PAD)
     : highlightWidth(width, NAV_TABS.length, NAV_PILL_PAD)
+  const highlight = useSharedValue(highlightTarget)
+  useEffect(() => {
+    shellWidth.value = capsuleMotion(width, reducedMotion)
+    shellHeight.value = capsuleMotion(height, reducedMotion)
+    highlight.value = capsuleMotion(highlightTarget, reducedMotion)
+  }, [
+    height,
+    width,
+    highlightTarget,
+    reducedMotion,
+    shellHeight,
+    shellWidth,
+    highlight
+  ])
+  const shellStyle = useAnimatedStyle(() => ({
+    width: shellWidth.value,
+    height: shellHeight.value
+  }))
   useEffect(() => {
     current = animatedIndex
     return () => {
@@ -106,8 +136,8 @@ export function AppNavCapsule(
   const animated = useAnimatedStyle(() => {
     const frame = pillFrame(
       animatedIndex.value,
-      width,
-      highlight,
+      shellWidth.value,
+      highlight.value,
       NAV_TABS.length,
       NAV_PILL_PAD,
       rtl
@@ -166,14 +196,15 @@ export function AppNavCapsule(
             }
           }}
           style={[
-            { justifyContent: 'center', width, height },
+            { justifyContent: 'center' },
             android && {
               borderRadius: height / 2,
               backgroundColor: reduced
                 ? theme.navOpaqueBackgroundColor
                 : theme.glassFallbackColor,
               elevation: elevationFor(12)
-            }
+            },
+            shellStyle
           ]}
         >
           <Surface
@@ -240,11 +271,13 @@ export function AppNavCapsule(
                 active={selected === tab.id}
                 dot={dots?.[tab.id] === true}
                 reduced={reduced}
+                compact={compact}
                 separate={separate}
                 labels={labels}
                 pillBottom={pillBottom}
                 maxIconSize={maxIconSize}
-                shellWidth={width}
+                reducedMotion={reducedMotion}
+                shellWidth={shellWidth}
                 highlight={highlight}
                 rtl={rtl}
                 onPress={press}
@@ -264,31 +297,34 @@ function CapsuleTab(props: {
   active: boolean
   dot: boolean
   reduced: boolean
+  compact: boolean
   separate: boolean
   labels: { points: number; lineHeight: number }
   pillBottom: number
   maxIconSize: number
-  shellWidth: number
-  highlight: number
+  reducedMotion: boolean
+  shellWidth: SharedValue<number>
+  highlight: SharedValue<number>
   rtl: boolean
   onPress: (id: NavTabId) => void
 }): React.ReactElement {
-  const { tab, index, active, reduced, separate, labels } = props
+  const { tab, index, active, reduced, compact, separate, labels } = props
+  const { shellWidth, highlight, rtl, reducedMotion } = props
   const theme = useTheme()
-  const offset = {
+  const offset = useAnimatedStyle(() => ({
     transform: [
       {
         translateX: tabContentOffset(
           index,
-          props.shellWidth,
-          props.highlight,
+          shellWidth.value,
+          highlight.value,
           NAV_TABS.length,
           NAV_PILL_PAD,
-          props.rtl
+          rtl
         )
       }
     ]
-  }
+  }))
   const color = reduced
     ? active
       ? theme.navOpaqueActiveColor
@@ -318,38 +354,42 @@ function CapsuleTab(props: {
         }}
         style={{ flex: 1, minHeight: 44, ...slot }}
       >
-        <View style={offset}>
+        <Animated.View style={offset}>
           <TabGlyph
             d={TAB_GLYPHS[tab.id][active ? 'filled' : 'outlined']}
             points={glyph}
             color={color}
           />
-        </View>
-        <Text
-          allowFontScaling={false}
-          numberOfLines={1}
-          style={[
-            {
-              color,
-              // The shared layout already applies the user's type scale.
-              fontSize: labels.points,
-              lineHeight: labels.lineHeight,
-              ...(separate && {
-                position: 'absolute',
-                bottom: NAV_PILL_PAD,
-                start: tab.id === 'home' ? 3 * NAV_PILL_PAD : 0,
-                end: tab.id === 'chat' ? 3 * NAV_PILL_PAD : 0,
-                textAlign: 'center'
-              }),
-              // UIKit sets every label in the same medium weight.
-              fontWeight: '500',
-              fontFamily: theme.regularTextFont
-            },
-            !separate && offset
-          ]}
-        >
-          {tab.label}
-        </Text>
+        </Animated.View>
+        {!compact && (
+          <Animated.Text
+            entering={reducedMotion ? undefined : FadeIn.duration(160)}
+            exiting={reducedMotion ? undefined : FadeOut.duration(120)}
+            allowFontScaling={false}
+            numberOfLines={1}
+            style={[
+              {
+                color,
+                // The shared layout already applies the user's type scale.
+                fontSize: labels.points,
+                lineHeight: labels.lineHeight,
+                ...(separate && {
+                  position: 'absolute',
+                  bottom: NAV_PILL_PAD,
+                  start: tab.id === 'home' ? 3 * NAV_PILL_PAD : 0,
+                  end: tab.id === 'chat' ? 3 * NAV_PILL_PAD : 0,
+                  textAlign: 'center'
+                }),
+                // UIKit sets every label in the same medium weight.
+                fontWeight: '500',
+                fontFamily: theme.regularTextFont
+              },
+              !separate && offset
+            ]}
+          >
+            {tab.label}
+          </Animated.Text>
+        )}
       </Pressable>
       {props.dot && (
         // The unread dot, over this tab's slot of the row and laid out as the
@@ -368,7 +408,7 @@ function CapsuleTab(props: {
             slot
           ]}
         >
-          <View style={offset}>
+          <Animated.View style={offset}>
             <View style={{ width: glyph, height: glyph }}>
               <View
                 testID={tab.id + '-unread'}
@@ -383,8 +423,10 @@ function CapsuleTab(props: {
                 }}
               />
             </View>
-          </View>
-          {!separate && <View style={{ height: labels.lineHeight }} />}
+          </Animated.View>
+          {!compact && !separate && (
+            <View style={{ height: labels.lineHeight }} />
+          )}
         </View>
       )}
     </>

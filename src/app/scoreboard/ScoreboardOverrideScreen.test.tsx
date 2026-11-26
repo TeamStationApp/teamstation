@@ -10,6 +10,11 @@ import {
   type ScoreboardState
 } from '../../common/scoreboard'
 import { fakeClock, fakeSockets } from '../../test/fakeScoreboardSocket'
+import {
+  scrollFrom,
+  scrollState,
+  withNavScroll
+} from '../components/navScroll.test.helpers'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ScoreboardOverrideScreen } from './ScoreboardOverrideScreen'
 import { RECONNECT_MS } from './scoreboardSocket'
@@ -48,7 +53,7 @@ function state(overrides: DashboardOverrides = NO_OVERRIDES): object {
 }
 
 async function dashboard(
-  options: { load?: boolean; token?: string } = {}
+  options: { load?: boolean; token?: string; navigation?: boolean } = {}
 ): Promise<{
   sockets: ReturnType<typeof fakeSockets>
   clock: ReturnType<typeof fakeClock>
@@ -62,17 +67,20 @@ async function dashboard(
   document.body.appendChild(node)
   root = createRoot(node)
   await act(async () => {
+    const screen = (
+      <ScoreboardOverrideScreen
+        apiBaseUrl="/api/v1"
+        gameId="g1"
+        origin={{ protocol: 'https:', host: 'app.teamstation.app' }}
+        onSignIn={next => signIns.push(next)}
+        token={options.token}
+        WebSocketImpl={sockets.Impl}
+        schedule={clock.schedule}
+      />
+    )
     root?.render(
       <ThemeProvider>
-        <ScoreboardOverrideScreen
-          apiBaseUrl="/api/v1"
-          gameId="g1"
-          origin={{ protocol: 'https:', host: 'app.teamstation.app' }}
-          onSignIn={next => signIns.push(next)}
-          token={options.token}
-          WebSocketImpl={sockets.Impl}
-          schedule={clock.schedule}
-        />
+        {options.navigation === true ? withNavScroll(screen) : screen}
       </ThemeProvider>
     )
   })
@@ -165,6 +173,13 @@ async function longPress(
 }
 
 describe('ScoreboardOverrideScreen', function () {
+  it('compacts for one downward wheel gesture on the dashboard', async () => {
+    await dashboard({ navigation: true })
+    await scrollFrom(byTestId('override-dashboard'), 'wheel', 900)
+    expect(scrollState()).equals('compact')
+    await scrollFrom(byTestId('override-dashboard'), 870)
+    expect(scrollState()).equals('expanded')
+  })
   it('signs its socket in with the session it is given, as a phone must', async function () {
     const { sockets } = await dashboard({ load: false, token: 'tok_phone' })
     expect(sockets.latest().url).equals(

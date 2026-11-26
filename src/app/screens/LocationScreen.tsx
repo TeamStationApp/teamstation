@@ -16,6 +16,7 @@ import type { TeamStationClient } from '../../common/api'
 import type { CitySuggestion, Locality } from '../../common/locality'
 import { Button, DangerText, Screen, TextField } from '../components'
 import { ButtonIcon } from '../components/ButtonIcon'
+import { useNavListScroll } from '../components/navCompact'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -66,6 +67,8 @@ export function LocationScreen({
   const beginSave = useLatestRequest()
   const working = useRef(false)
   const open = query.trim().length >= 2 && chosen == null
+  const bodyNav = useNavListScroll(!open, body)
+  const listNav = useNavListScroll(open)
   useEffect(() => {
     setViewport(height)
     const show = Keyboard.addListener('keyboardDidShow', event => {
@@ -180,7 +183,8 @@ export function LocationScreen({
     >
       <Screen scroll={false} contentStyle={styles.page}>
         <ScrollView
-          ref={body}
+          {...bodyNav}
+          scrollEventThrottle={bodyNav.onScroll == null ? undefined : 16}
           contentContainerStyle={{ minHeight: height + fieldY }}
           scrollEnabled={!open}
           keyboardShouldPersistTaps="handled"
@@ -247,8 +251,14 @@ export function LocationScreen({
                 style={{
                   height: cityListHeight(viewport, fieldBottom, footer)
                 }}
-                onScrollBeginDrag={dismiss}
-                onScroll={() => {
+                {...listNav}
+                scrollEventThrottle={listNav.onScroll == null ? undefined : 16}
+                onScrollBeginDrag={event => {
+                  listNav.onScrollBeginDrag?.(event)
+                  dismiss()
+                }}
+                onScroll={event => {
+                  listNav.onScroll?.(event)
                   if (
                     Platform.OS === 'web' &&
                     input.current?.isFocused() === true

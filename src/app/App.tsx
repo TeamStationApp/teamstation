@@ -92,6 +92,7 @@ import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { HeldEditsSheet } from './components/HeldEditsSheet'
 import { ModalPresenceProvider } from './components/modalPresence'
+import { NavCompactProvider, useNavScroll } from './components/navCompact'
 import { OfflineBanner } from './components/OfflineBanner'
 import { useSidebarWidth } from './components/sidebarLayout'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
@@ -506,7 +507,9 @@ export function App(props: AppProps): React.ReactElement {
             storage={deviceStorage}
             enabled={props.fieldPreview !== true}
           >
-            <Shell {...props} />
+            <NavCompactProvider>
+              <Shell {...props} />
+            </NavCompactProvider>
           </AnalyticsProvider>
         </ErrorBoundary>
       </ThemeProvider>
@@ -1555,6 +1558,20 @@ function Shell(props: AppProps): React.ReactElement {
         : frameKey(tab, stack, index, screenIdentity)
   }
   const topKey = sceneKeyOf(stack.length - 1)
+  const navScroll = useNavScroll()
+  const canCompact =
+    !isWide &&
+    sidebarWidth === 0 &&
+    !tessLayer &&
+    !immersiveField &&
+    (top == null
+      ? tab !== 'search'
+      : top.name !== 'discover' &&
+        top.name !== 'teamAddPlayer' &&
+        top.name !== 'conversation')
+  React.useLayoutEffect(() => {
+    navScroll.setEnabled(canCompact)
+  }, [navScroll, topKey, canCompact])
   // The tab shown before Chat, where Not Now on the age sheet returns.
   const beforeChat = useRef<NavTabId>('home')
   useEffect(() => {
@@ -1983,6 +2000,7 @@ function Shell(props: AppProps): React.ReactElement {
 
   /** The tab, or — pressed on the tab already showing — that tab's root. */
   const selectTab = (next: NavTabId): void => {
+    navScroll.reset()
     if (
       guardUmpireLeave(() => {
         selectTab(next)
@@ -4518,6 +4536,7 @@ function Shell(props: AppProps): React.ReactElement {
                   banner in it, is not drawn: nothing to clear. */}
                   <SuccessToast
                     notice={successNotice}
+                    navigationHeight={navigationHeight}
                     bannerHeight={immersiveTop ? 0 : bottomBanner}
                   />
                   {chatOn && <DeviceApprovalPrompt />}

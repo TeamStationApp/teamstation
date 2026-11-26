@@ -16,7 +16,14 @@ import {
   requireSystemTabBar,
   withIosAppearance
 } from '../../../rigs/app/tabBar'
+import { controlBox, longHome, windowBox } from '../../../rigs/app/tabBarLayout'
+import {
+  assertCompactSnap,
+  recordCompact,
+  withReduceMotion
+} from '../../../rigs/app/tabBarMotion'
 import { DEVELOP_APP } from '../../../rigs/coach/coachApp'
+import { within } from '../../../rigs/search/searchRig'
 
 export default defineE2e({
   id: 'app-shell/tab-bar/system',
@@ -44,6 +51,37 @@ export default defineE2e({
   faults: [],
   manual: false,
   scenarios: {
+    'reduce-motion-compact': async ctx => {
+      const udid = ctx.device('device')
+      assert(
+        !isHubDevice(udid) && iosIsSimulator(udid),
+        'needs simulator frame recording'
+      )
+      const handset = await longHome(ctx)
+      await withReduceMotion(
+        handset,
+        process.env.TS_TAB_APP_ID ?? DEVELOP_APP,
+        async () => {
+          const window = await windowBox(handset)
+          const full = await controlBox(handset, 'tab-home')
+          const file = ctx.artifact('reduce-motion-compact.mp4')
+          const compact = await recordCompact(udid, file, async () => {
+            await handset.swipe({
+              start: '50%, 76%',
+              end: '50%, 18%',
+              duration: 600
+            })
+            await within(6000, async () => {
+              assert(
+                (await controlBox(handset, 'tab-home')).width < full.width - 3
+              )
+            })
+            return await controlBox(handset, 'tab-home')
+          })
+          assertCompactSnap(file, window, full, compact)
+        }
+      )
+    },
     'unread-in-dark-appearance': async ctx => {
       const udid = ctx.device('device')
       const { person, roomId } = await chatFixture(ctx)

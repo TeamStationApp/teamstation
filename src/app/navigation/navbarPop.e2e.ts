@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { verifyWebTransparency } from '../../../e2e/rigs/app/tabBarContrast'
+import { verifyWebTabLabels } from '../../../e2e/rigs/app/tabBarLayout'
 import {
   type BrowserSession,
   browserSession,
@@ -62,6 +63,19 @@ async function seed(): Promise<OwnedNavigationFixture<NavigationFixture>> {
     )
     assert.equal(owls.status, 201)
     const owlId = ((await owls.json()) as { id: string }).id
+    for (let index = 0; index < 12; index++) {
+      const team = await f.h.request(
+        'POST',
+        '/teams',
+        {
+          name: 'Navigation team ' + index,
+          locality: demoLocality,
+          idempotencyKey: 'navbar-scroll-team-' + index
+        },
+        101
+      )
+      assert.equal(team.status, 201)
+    }
     const players = await f.h.request(
       'POST',
       `/teams/${f.teamA}/players`,
@@ -147,6 +161,7 @@ async function verifyCapsule({ page, m }: BrowserSession): Promise<void> {
     )
     await m.tapOn({ css: selector })
     await selected(id)
+    if (id === 'schedule') await verifyWebTabLabels(page)
   }
   const slot = async (
     id: (typeof tabs)[number]
@@ -182,6 +197,33 @@ async function verifyCapsule({ page, m }: BrowserSession): Promise<void> {
       String(target === 'search')
     )
   }
+  const homeTab = navTabCss('home')
+  const home = await slot('home')
+  // A single downward gesture from the top must compact even if it reaches the end.
+  await m.scroll({ direction: 'DOWN' })
+  await page.waitForFunction(
+    (sel, full) => {
+      const button = document.querySelector<HTMLElement>(sel)
+      return (
+        button != null &&
+        !button.innerText.includes('Home') &&
+        button.getBoundingClientRect().height < full - 3
+      )
+    },
+    {},
+    homeTab,
+    home.height
+  )
+  await m.scroll({ direction: 'UP' })
+  await m.scroll({ direction: 'UP' })
+  await page.waitForFunction(
+    sel => {
+      const button = document.querySelector<HTMLElement>(sel)
+      return button instanceof HTMLElement && button.innerText.includes('Home')
+    },
+    {},
+    homeTab
+  )
 }
 
 async function drive(data: NavigationFixture): Promise<void> {

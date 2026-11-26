@@ -18,7 +18,7 @@ afterEach(async () => {
   document.body.replaceChildren()
 })
 describe('Search navigation', () => {
-  it('keeps scaled native artwork above every label', async () => {
+  it('keeps scaled native artwork above every label and inside the compact slots', async () => {
     const host = document.body.appendChild(document.createElement('div'))
     root = createRoot(host)
     const originalGet = Dimensions.get.bind(Dimensions)
@@ -27,37 +27,44 @@ describe('Search navigation', () => {
     Dimensions.get = () => window
     Platform.OS = 'android'
     try {
-      await act(async () => {
-        root!.render(
-          <ThemeProvider>
-            <GestureHandlerRootView>
-              <AppNavCapsule
-                mode="floating"
-                selected="schedule"
-                onSelect={() => {}}
-                bottom={21}
-                reduced
-              />
-            </GestureHandlerRootView>
-          </ThemeProvider>
-        )
-      })
-      const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
-      expect(tabs.length).equals(5)
-      for (const tab of tabs) {
-        const icon = tab.firstElementChild!.firstElementChild as HTMLElement
-        const size = parseFloat(icon.style.height)
-        expect(parseFloat(icon.style.width)).equals(size)
-        expect(size).to.be.greaterThan(theme.rem(1.3))
-        {
-          const label = tab.lastElementChild as HTMLElement
-          expect(label.style.position).equals('absolute')
-          const top = parseFloat(tab.style.paddingTop)
-          const bottom = parseFloat(tab.style.paddingBottom)
-          expect(size).to.be.at.most(62 - top - bottom)
-          expect(bottom).to.be.at.least(
-            parseFloat(label.style.lineHeight) + parseFloat(label.style.bottom)
+      for (const compact of [false, true]) {
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <GestureHandlerRootView>
+                <AppNavCapsule
+                  mode="floating"
+                  selected="schedule"
+                  onSelect={() => {}}
+                  bottom={21}
+                  compact={compact}
+                  reduced
+                />
+              </GestureHandlerRootView>
+            </ThemeProvider>
           )
+        })
+        const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
+        expect(tabs.length).equals(5)
+        for (const tab of tabs) {
+          const icon = tab.firstElementChild!.firstElementChild as HTMLElement
+          const size = parseFloat(icon.style.height)
+          expect(parseFloat(icon.style.width)).equals(size)
+          expect(size).to.be.greaterThan(theme.rem(1.3))
+          if (compact) {
+            expect(size).to.be.at.most(228 / 5 - 8)
+            expect(size).to.be.at.most(52 - 8)
+          } else {
+            const label = tab.lastElementChild as HTMLElement
+            expect(label.style.position).equals('absolute')
+            const top = parseFloat(tab.style.paddingTop)
+            const bottom = parseFloat(tab.style.paddingBottom)
+            expect(size).to.be.at.most(62 - top - bottom)
+            expect(bottom).to.be.at.least(
+              parseFloat(label.style.lineHeight) +
+                parseFloat(label.style.bottom)
+            )
+          }
         }
       }
     } finally {
@@ -86,6 +93,7 @@ describe('Search navigation', () => {
                     selected="schedule"
                     onSelect={() => {}}
                     bottom={21}
+                    compact={false}
                     reduced={reduced}
                   />
                 </GestureHandlerRootView>
@@ -128,6 +136,7 @@ describe('Search navigation', () => {
                     selected="schedule"
                     onSelect={() => {}}
                     bottom={21}
+                    compact={false}
                     reduced={reduced}
                   />
                 </GestureHandlerRootView>
@@ -162,7 +171,7 @@ describe('Search navigation', () => {
   it('says Chat is unread on the tab itself and keeps its dot findable beside it', async () => {
     const host = document.body.appendChild(document.createElement('div'))
     root = createRoot(host)
-    const draw = async (unread: boolean): Promise<void> => {
+    const draw = async (unread: boolean, separate = false): Promise<void> => {
       await act(async () => {
         root!.render(
           <ThemeProvider>
@@ -173,6 +182,7 @@ describe('Search navigation', () => {
                 onSelect={() => {}}
                 bottom={21}
                 reduced={false}
+                compact={separate}
                 dots={unread ? { chat: true } : {}}
               />
             </GestureHandlerRootView>
@@ -195,6 +205,10 @@ describe('Search navigation', () => {
     expect(tab('chat').contains(dot())).equals(false)
     expect(tab('chat').parentElement!.contains(dot())).equals(true)
     expect(getComputedStyle(dot()!).pointerEvents).not.equals('auto')
+
+    await draw(true, true)
+    expect(tab('chat').getAttribute('aria-valuetext')).equals(UNREAD)
+    expect(dot()).not.equals(null)
 
     await draw(false)
     expect(tab('chat').getAttribute('aria-valuetext')).equals(null)
@@ -305,6 +319,12 @@ describe('Search navigation', () => {
         'Search',
         'Chat'
       ])
+      for (const tab of tabs) {
+        const label = tab.getAttribute('aria-label')!
+        // Header tabs identify their icons to screen readers. Expanded phone
+        // tabs also display the label beneath the icon.
+        expect(tab.textContent?.includes(label)).equals(mode === 'floating')
+      }
       expect(host.querySelectorAll('[role="button"]')).length(0)
       await act(async () => {
         tabs[3].click()

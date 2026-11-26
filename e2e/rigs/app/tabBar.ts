@@ -13,7 +13,12 @@ import { isHubDevice } from '../../core/maestro'
 import { iosIsSimulator } from '../../core/prepare'
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
-import { DEVELOP_APP, flatten, type Node } from '../coach/coachApp'
+import {
+  clearSignInLimits,
+  DEVELOP_APP,
+  flatten,
+  type Node
+} from '../coach/coachApp'
 import { setServer } from './setServer'
 
 /** Launch the signed-in simulator with the same renderer after visiting Settings. */
@@ -79,6 +84,7 @@ export async function openTabBar(
     baseUrl: ctx.stack.origin + '/api/v1',
     passwordKdf: testPasswordKdf
   })
+  if (ctx.stack.attached != null) await clearSignInLimits(ctx)
   await client.signInWithPassword(person.email, person.password)
   if ((await client.myAge()).band === 'unknown')
     await client.setMyAge({ adult: true })

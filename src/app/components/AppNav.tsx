@@ -9,6 +9,7 @@ import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
 import type { IconName } from './Icon'
 import { floatingNavBottom } from './navClearance'
+import { useNavCompact } from './navCompact'
 import { NAV_BOTTOM_GAP, NAV_HEIGHT } from './navGeometry'
 import { supportsSystemTabBar } from './supportsSystemTabBar'
 import { SystemTabBar } from './SystemTabBar'
@@ -47,6 +48,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   const { selected, onSelect, mode, dots } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const compact = useNavCompact()
   const reduced = useNavTransparency()
   const floating = mode === 'floating'
   const visual = useChatVisualViewport(
@@ -58,14 +60,21 @@ export function AppNav(props: AppNavProps): React.ReactElement {
   if (floating) {
     if (visual?.keyboardOpen === true) return <></>
     if (supportsSystemTabBar())
-      return <SystemTabBar {...props} reduced={reduced} />
+      return <SystemTabBar {...props} reduced={reduced} compact={compact} />
     const bottom = floatingNavBottom(
       Platform.OS,
       NAV_BOTTOM_GAP,
       insets.bottom,
       props.bannerHeight
     )
-    return <AppNavCapsule {...props} reduced={reduced} bottom={bottom} />
+    return (
+      <AppNavCapsule
+        {...props}
+        reduced={reduced}
+        bottom={bottom}
+        compact={compact}
+      />
+    )
   }
   const Surface = reduced ? View : GlassView
   return (

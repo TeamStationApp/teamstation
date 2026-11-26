@@ -1,17 +1,19 @@
 import React from 'react'
 import { View } from 'react-native'
 import Animated, {
-  runOnJS,
   useAnimatedScrollHandler,
   useAnimatedStyle,
+  useComposedEventHandler,
   useSharedValue
 } from 'react-native-reanimated'
+import { scheduleOnRN } from 'react-native-worklets'
 
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
+import { useNavAnimatedScroll, useNavCompactScroll } from './navCompact'
 import { pageScroller } from './PageScrollView'
 import { useScreenBottom } from './Screen'
 import type { StickySectionLayoutProps } from './stickySectionLayoutProps'
@@ -42,11 +44,14 @@ export function StickySectionLayout({
     right: Math.max(margin, insets.right)
   }
   const bottom = useScreenBottom()
+  const observeNavScroll = useNavCompactScroll()
+  const forNav = useNavAnimatedScroll(observeNavScroll)
   const handleScroll = useAnimatedScrollHandler(event => {
     scrollY.value = event.contentOffset.y
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- same handoff bridge as GameWatchLayout
-    runOnJS(onScroll)()
+
+    scheduleOnRN(onScroll)
   })
+  const pageScroll = useComposedEventHandler([handleScroll, forNav])
   const pegStyle = useAnimatedStyle(() => ({
     transform: [
       {
@@ -65,7 +70,7 @@ export function StickySectionLayout({
     <Scroller
       ref={scrollRef}
       style={{ flex: 1, backgroundColor: theme.backgroundColor }}
-      onScroll={handleScroll}
+      onScroll={forNav == null ? handleScroll : pageScroll}
       scrollEventThrottle={16}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"

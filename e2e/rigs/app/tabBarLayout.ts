@@ -9,9 +9,11 @@ import {
   capsuleLabels,
   highlightWidth
 } from '../../../src/app/components/tabBarModel'
-import { defineE2e, type E2eSpec } from '../../core/spec'
+import { defineE2e, type E2eContext, type E2eSpec } from '../../core/spec'
 import type { BrowserSession } from '../refinementsMaestro'
+import { apiClient } from '../search/searchRig'
 import { type Box, boxOf, flatten } from './keyboardDock'
+import { openTabBar } from './tabBar'
 
 export function phoneTabSpec(
   spec: Pick<E2eSpec, 'id' | 'title' | 'covers' | 'scenarios'>
@@ -41,6 +43,27 @@ export function phoneTabSpec(
     manual: false,
     ...spec
   })
+}
+
+export async function longHome(
+  ctx: E2eContext
+): ReturnType<E2eContext['attach']> {
+  const { demoLocality } = await import('../../../src/test/groupFixtures')
+  const world = await ctx.fixture('team-with-roster')
+  const account = world.accounts.coach
+  const client = await apiClient(ctx, account)
+  for (let i = 0; i < 12; i++) {
+    await client.createGroup({
+      kind: 'team',
+      name: 'Navigation team ' + i,
+      locality: demoLocality,
+      idempotencyKey: 'tab-' + world.nonce + '-' + i
+    })
+  }
+  const handset = await openTabBar(ctx, 'coach', undefined, account)
+  await handset.assertVisible({ text: 'More teams', timeout: 16000 })
+  await handset.tapOn({ text: 'More teams' })
+  return handset
 }
 
 export async function windowBox(handset: any): Promise<Box> {

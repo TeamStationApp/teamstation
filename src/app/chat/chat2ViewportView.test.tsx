@@ -8,7 +8,9 @@ import { userIdOfGumbo } from '../../common/userId'
 import { AppHeader } from '../components/AppHeader'
 import { AppNav } from '../components/AppNav'
 import { HeaderSlotProvider } from '../components/headerSlot'
+import { NavCompactProvider } from '../components/navCompact'
 import { NAV_BOTTOM_GAP } from '../components/navGeometry'
+import { scrollFrom } from '../components/navScroll.test.helpers'
 import { Screen } from '../components/Screen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -48,6 +50,66 @@ async function render(element: React.ReactElement): Promise<HTMLElement> {
 }
 
 describe('chat measured chrome and explicit focus', function () {
+  it('compacts from the inbox list, leaving a hidden inbox unable to move navigation', async function () {
+    const item = chat()
+    const engine = {
+      refresh: async () => [item],
+      conversations: () => [item],
+      subscribe: () => () => {}
+    }
+    const inbox = (selectedVisible: boolean): React.ReactElement => (
+      <NavCompactProvider>
+        <ChatListScreen
+          embedded
+          narrow
+          selectedVisible={selectedVisible}
+          engine={engine}
+          onOpen={() => {}}
+          onNewMessage={() => {}}
+        />
+        <AppNav selected="chat" mode="floating" onSelect={() => {}} />
+      </NavCompactProvider>
+    )
+    const node = await render(inbox(false))
+    const scroll = node.querySelector('[data-testid="chat-conversation-list"]')!
+    const label = (): string =>
+      node.querySelector('[data-testid="tab-chat"]')!.textContent!
+    // Send DOM wheel and scroll events faster than the inbox's 100 ms RN callback.
+    const wheelBurst = async (delta: number, count: number): Promise<void> => {
+      await act(async () => {
+        for (let i = 0; i < count; i++) {
+          scroll.scrollTop += delta
+          scroll.dispatchEvent(
+            new window.WheelEvent('wheel', { bubbles: true, deltaY: delta })
+          )
+          scroll.dispatchEvent(new window.Event('scroll'))
+        }
+        await new Promise(resolve => setTimeout(resolve, 110))
+      })
+    }
+    await scrollFrom(scroll, 160)
+    expect(label(), 'the restored inbox position').includes('Chat')
+    await wheelBurst(8, 3)
+    expect(label(), '24 points downward').includes('Chat')
+    await wheelBurst(8, 3)
+    expect(
+      label(),
+      '48 points downward across two callback windows'
+    ).not.includes('Chat')
+    await wheelBurst(-6, 4)
+    expect(label(), '24 points upward inside a callback window').includes(
+      'Chat'
+    )
+    await scrollFrom(scroll, 0, 160)
+    expect(label()).not.includes('Chat')
+    await render(inbox(true))
+    await scrollFrom(scroll, 30)
+    expect(label()).not.includes('Chat')
+    await render(inbox(false))
+    await scrollFrom(scroll, 20)
+    expect(label()).includes('Chat')
+  })
+
   it('shares visual keyboard clearance with navigation through scroll, zoom and rotation', async function () {
     const saved = Object.getOwnPropertyDescriptor(window, 'visualViewport')
     const width = Object.getOwnPropertyDescriptor(window, 'innerWidth')

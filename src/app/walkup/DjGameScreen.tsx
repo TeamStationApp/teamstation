@@ -11,6 +11,7 @@ import type {
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { Button, Screen } from '../components'
+import { useNavListScroll } from '../components/navCompact'
 import { useScreenBottom } from '../components/Screen'
 import { lstrings, sprintf } from '../locales/strings'
 import { RosterSelector } from '../scoring/RosterSelector'
@@ -123,6 +124,7 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
   // The list runs under the floating tabs and the offline banner, and ends
   // clear of them.
   const clearance = useScreenBottom()
+  const nav = useNavListScroll()
 
   const [shown, setShown] = useState<DjGame | undefined>(undefined)
   const [error, setError] = useState(false)
@@ -411,6 +413,8 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
       >
         <FlatList
           data={team.batters}
+          {...nav}
+          scrollEventThrottle={nav.onScroll == null ? undefined : 16}
           keyExtractor={(batter, index) =>
             `${showing}:${index}:${batter.userId ?? batter.name}`
           }

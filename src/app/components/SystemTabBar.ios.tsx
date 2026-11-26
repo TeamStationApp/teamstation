@@ -18,7 +18,7 @@ const symbols: Record<NavTabId, readonly [string, string]> = {
 }
 
 export function SystemTabBar(
-  props: AppNavProps & { reduced?: boolean }
+  props: AppNavProps & { reduced?: boolean; compact?: boolean }
 ): React.ReactElement {
   const theme = useTheme()
   const { bottom } = useInsets()
@@ -67,7 +67,7 @@ export function SystemTabBar(
         }
         badgeColor={theme.liveColor}
         dark={theme.isDark}
-        compact={false}
+        compact={props.compact ?? false}
         onSelectTab={({ nativeEvent: { id } }) => {
           const tab = NAV_TABS.find(tab => tab.id === id)
           if (tab != null) props.onSelect(tab.id)

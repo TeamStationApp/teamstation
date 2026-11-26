@@ -14,6 +14,7 @@ import { applyOverrides } from '../../common/scoreboard'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { useHeaderSlot } from '../components/headerSlot'
 import { Modal } from '../components/Modal'
+import { useNavListScroll } from '../components/navCompact'
 import { lstrings, sprintf } from '../locales/strings'
 import { routePath } from '../navigation/routes'
 import { cacheStyles } from '../theme/ThemeContext'
@@ -105,6 +106,7 @@ export function ScoreboardOverrideScreen(
   const theme = dashboardTheme
   const styles = getStyles(theme)
   const { headerHeight } = useHeaderSlot()
+  const nav = useNavListScroll()
   const window = useWindowDimensions()
   const [model, setModel] = useState<OverrideModel | undefined>(undefined)
   const [refused, setRefused] = useState(false)
@@ -174,6 +176,8 @@ export function ScoreboardOverrideScreen(
 
   const page = (children: React.ReactNode): React.ReactElement => (
     <ScrollView
+      {...nav}
+      scrollEventThrottle={nav.onScroll == null ? undefined : 16}
       style={styles.page}
       contentContainerStyle={{ paddingTop: headerHeight }}
       keyboardShouldPersistTaps="handled"
