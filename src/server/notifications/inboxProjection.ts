@@ -114,13 +114,23 @@ export class InboxProjection {
       )
     ].filter(id => !this.guardedPlayers.has(id))
     if (players.length > 0) {
-      const people = await onePeople(this.db, players)
       const guardians = await guardiansOfEach(this.db, players, {
         signsIn: true
       })
       const guarded = new Set([...guardians.values()].flat())
+      // guardiansOfEach already returns each player's current identity. Only
+      // unresolved aliases need another merge walk; ordinary guarded players
+      // must not repeat the same recursive query for every window.
+      const unresolved = players.filter(id => !guarded.has(id))
+      const people =
+        unresolved.length === 0
+          ? new Map()
+          : await onePeople(this.db, unresolved)
       for (const id of players)
-        this.guardedPlayers.set(id, guarded.has(people.get(id)!.userId))
+        this.guardedPlayers.set(
+          id,
+          guarded.has(id) || guarded.has(people.get(id)!.userId)
+        )
     }
     const pendingIds = new Set(
       requests

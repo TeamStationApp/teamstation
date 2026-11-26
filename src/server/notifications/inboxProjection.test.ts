@@ -70,6 +70,7 @@ describe('notification state classification without wording', () => {
       superseded?: boolean
       rejoined?: boolean
       guarded?: boolean
+      mergedPlayer?: boolean
       siteAdmin?: boolean
     } = {}
   ): Promise<{
@@ -104,13 +105,28 @@ describe('notification state classification without wording', () => {
       people,
       'onePeople',
       async (...[_db, ids]: Parameters<typeof people.onePeople>) =>
-        new Map(ids.map(id => [id, { userId: id, userIds: [id] }]))
+        new Map(
+          ids.map(id => [
+            id,
+            {
+              userId: options.mergedPlayer === true ? 'survivor' : id,
+              userIds: [id]
+            }
+          ])
+        )
     )
     mock.method(
       access,
       'guardiansOfEach',
       async (...[_db, ids]: Parameters<typeof access.guardiansOfEach>) =>
-        options.guarded === true ? new Map([['guardian', [...ids]]]) : new Map()
+        options.guarded === true
+          ? new Map([
+              [
+                'guardian',
+                options.mergedPlayer === true ? ['survivor'] : [...ids]
+              ]
+            ])
+          : new Map()
     )
     mock.method(
       policy,
@@ -321,6 +337,10 @@ describe('notification state classification without wording', () => {
     const denied = await classify(row, { guarded: true })
     expect(denied.state).equals(null)
     expect(denied.eligible).equals(0)
+    mock.restoreAll()
+    const merged = await classify(row, { guarded: true, mergedPlayer: true })
+    expect(merged.state).equals(null)
+    expect(merged.eligible).equals(0)
     mock.restoreAll()
     const admin = await classify(row, { guarded: true, siteAdmin: true })
     expect(admin.state?.canAct).equals(true)
