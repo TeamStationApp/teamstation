@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 
 import { log, maestro } from '../../e2e/rigs/refinementsMaestro'
+import { navTabId } from '../test/navTab.e2e'
 
 interface Node {
   type?: string
@@ -322,7 +323,7 @@ async function main(): Promise<void> {
         'ios-qa.log',
         'N2 PASS: gear-only management, Back without mutation, individual name save and tab return, visitor public/restricted sections'
       )
-      await m.tapOn({ text: 'Search' })
+      await m.tapOn({ id: navTabId('search') })
       await show('Discover')
       await visit(`/groups/league/${manifest.league}`)
       await show('League settings')

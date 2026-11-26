@@ -23,6 +23,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
+import { navTab } from '../../../src/test/navTab.e2e'
+
 const APP_ID = 'app.teamstation.app'
 const FIXTURE_FILE =
   process.env.TS_E2E_FIXTURE ??
@@ -249,7 +251,7 @@ async function signOut(): Promise<void> {
 }
 
 async function openRosters(): Promise<void> {
-  await tap('Schedule')
+  await navTab(m, 'schedule')
   await tap('Lakeside Herons @ Ridgeview Falcons.*')
   await tap('Score')
   await tap('Full game scoring')
@@ -341,7 +343,7 @@ async function home(): Promise<void> {
 /** From Home to the Falcons' team settings. */
 async function openFalconsSettings(): Promise<void> {
   await home()
-  await tap('Home')
+  await navTab(m, 'home')
   if (!(await onScreen(/Ridgeview Falcons/))) await tap('More teams')
   await tap('Ridgeview Falcons')
   await settle(3000)
@@ -395,7 +397,7 @@ async function n2(): Promise<void> {
 async function n3(): Promise<void> {
   console.log('N3 Player Settings')
   await home()
-  await tap('Home')
+  await navTab(m, 'home')
   if (!(await onScreen(/Ridgeview Falcons/))) await tap('More teams')
   await tap('Ridgeview Falcons')
   await settle(3000)

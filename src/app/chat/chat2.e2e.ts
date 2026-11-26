@@ -53,6 +53,7 @@ import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
 import { blobLength } from '../../common/chatCrypto/stream'
 import { HttpError } from '../../common/errors'
 import { gumboOfUserId } from '../../common/userId'
+import { navTabId } from '../../test/navTab.e2e'
 import {
   decodeRaster,
   type Raster,
@@ -517,24 +518,11 @@ export const SHELL_TABS = ['Home', 'Videos', 'Schedule', 'Search', 'Chat']
 
 /** E9's shared-shell return journey, also runnable in the navigation fixture. */
 export async function sharedChromeReturnsToChat(
-  ui: Pick<Chat2UI, 'nodes' | 'native' | 'tapObserved' | 'present' | 'notNow'>
+  ui: Pick<Chat2UI, 'id' | 'present' | 'notNow'>
 ): Promise<void> {
-  const tab = async (label: string): Promise<PublicNode> => {
-    const nodes = await ui.nodes()
-    const tabs = ui.native ? nodes : nodes.filter(n => n.type === 'tab')
-    if (label === 'Chat' && tabs.some(n => n.text === 'Messages'))
-      label = 'Messages'
-    // A native tab list carries the selected tab's label too.
-    if (ui.native)
-      return { text: label, bounds: innermostLabelled(nodes, label) }
-    return need(
-      tabs.find(n => n.text === label && n.bounds != null),
-      'Public shared-shell tab fixture missing: ' + label
-    )
-  }
-  for (const label of ['Home', 'Videos', 'Schedule']) {
-    await ui.tapObserved(await tab(label))
-    await ui.tapObserved(await tab('Chat'))
+  for (const tab of ['home', 'videos', 'schedule'] as const) {
+    await ui.id(navTabId(tab))
+    await ui.id(navTabId('chat'))
     await ui.present('chat-message-history')
     await ui.notNow()
   }
@@ -2421,10 +2409,8 @@ export class Scenarios {
       ui.native &&
       !(await ui.visible({ id: 'chat-conversation-list' }, 1000))
     ) {
-      const tab = (await ui.nodes())
-        .filter(n => n.text === 'Chat' && n.bounds != null)
-        .sort((a, b) => (b.bounds?.y ?? 0) - (a.bounds?.y ?? 0))[0]
-      if (tab != null) await ui.tapObserved(tab)
+      if (await ui.visible({ id: navTabId('chat') }, 1000))
+        await ui.id(navTabId('chat'))
       await ui.notNow()
     }
     const lockedViewer = this.f.lockedCases?.[ui.surface]?.viewer === key

@@ -51,7 +51,7 @@ export interface SitemapOptions {
 
 const ROUTES_FILE = 'src/app/navigation/routes.ts'
 const SHELL_FILE = 'src/app/App.tsx'
-const NAV_FILE = 'src/app/components/AppNav.tsx'
+const NAV_FILE = 'src/app/components/tabBarModel.ts'
 
 /**
  * A value `parseRoute` accepts for each parameter whose format it checks.

@@ -9,8 +9,9 @@ import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
 import type { IconName } from './Icon'
 import { floatingNavBottom } from './navClearance'
+import { type NavTabId, navTabId } from './tabBarModel'
 
-export type NavTabId = 'home' | 'videos' | 'schedule' | 'search' | 'chat'
+export type { NavTabId } from './tabBarModel'
 
 export interface NavTab {
   id: NavTabId
@@ -208,6 +209,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
         return (
           <Pressable
             key={tab.id}
+            testID={navTabId(tab.id)}
             accessibilityRole="tab"
             accessibilityState={{ selected: isSelected }}
             accessibilityLabel={tab.label}

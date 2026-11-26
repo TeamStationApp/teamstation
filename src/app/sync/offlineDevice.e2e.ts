@@ -58,6 +58,7 @@ import { promisify } from 'node:util'
 import { PNG } from 'pngjs'
 
 import { hashEmailCode } from '../../server/auth/tokens'
+import { navTab } from '../../test/navTab.e2e'
 
 /**
  * The commands that reach the seat and the phone's network: an untracked
@@ -415,6 +416,7 @@ interface Node {
   children?: Node[]
 }
 interface Device {
+  assertVisible: (o: unknown) => Promise<unknown>
   launchApp: (o: unknown) => Promise<unknown>
   openLink: (o: unknown) => Promise<unknown>
   stopApp: (o: unknown) => Promise<unknown>
@@ -545,12 +547,11 @@ const upper =
   (n: Node): boolean =>
     (n.bounds?.y ?? 0) < screen.height * share
 
-async function tab(name: 'Home' | 'Videos' | 'Schedule'): Promise<void> {
-  await tap(new RegExp(`^${name}$`), SLOW, inTabBar)
+async function openTabRoot(id: 'home' | 'videos' | 'schedule'): Promise<void> {
+  await navTab(m, id)
   // A second tap pops the tab's stack to its root (a game opened from
   // Schedule stays on Schedule's stack).
-  if ((await find(/^Back$/)) != null)
-    await tap(new RegExp(`^${name}$`), 5000, inTabBar)
+  if ((await find(/^Back$/)) != null) await navTab(m, id)
 }
 async function type(text: string): Promise<void> {
   if (PLATFORM === 'android') {
@@ -744,7 +745,7 @@ async function openFromHome(
   section?: string,
   link?: string
 ): Promise<Node | undefined> {
-  await tab('Home')
+  await openTabRoot('home')
   if ((await waitFor(name, link == null ? SLOW : 8000, aboveTabBar)) == null)
     await m
       .scrollUntilVisible({
@@ -807,7 +808,7 @@ async function openFromHome(
 }
 
 async function openUpcomingEvent(): Promise<boolean> {
-  await tab('Schedule')
+  await openTabRoot('schedule')
   await tryTap(/^Upcoming$/, 10000, upper(0.4))
   const row = await waitFor(/Offline Owls @ Offline Falcons/, SLOW, aboveTabBar)
   if (row == null) return false
@@ -1327,7 +1328,7 @@ function pictureDrawn(
  * Videos section; answers whether the poster is drawn there.
  */
 async function openPastGameVideos(name: string): Promise<boolean> {
-  await tab('Schedule')
+  await openTabRoot('schedule')
   await tryTap(/^Past$/, 10000, upper(0.4))
   const row = await waitFor(/Offline Owls @ Offline Falcons/, SLOW, aboveTabBar)
   if (row == null) {
@@ -1662,7 +1663,7 @@ async function step2(): Promise<void> {
   )
   await signIn()
   if (MODE === 'after') recorderMark = recorded().length
-  await tab('Schedule')
+  await openTabRoot('schedule')
   await tryTap(/^Upcoming$/, 10000, upper(0.4))
   check(
     'Upcoming shows a row online',
@@ -1787,7 +1788,7 @@ async function step5(): Promise<void> {
   await dumpHierarchy('home')
   await checkBanner(homePng)
   // Schedule: Upcoming, Past, All
-  await tab('Schedule')
+  await openTabRoot('schedule')
   for (const [pill, name] of [
     ['Upcoming', 'upcoming'],
     ['Past', 'past'],
@@ -1821,7 +1822,7 @@ async function step5(): Promise<void> {
     await dumpHierarchy(name)
   }
   // Videos
-  await tab('Videos')
+  await openTabRoot('videos')
   const video = await waitFor(
     /video/,
     SLOW,

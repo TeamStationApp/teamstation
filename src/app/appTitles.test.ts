@@ -48,15 +48,14 @@ describe('app titles', function () {
     expect(header).match(/back: \{[\s\S]*?minHeight: theme\.rem\(3\)/)
   })
 
-  it('has three destinations, and Account is not one of them', function () {
+  it('lists the five main destinations', function () {
     // Read rather than imported: the component pulls in React Native, which
     // does not load outside a bundler, and the list is the thing being
     // asserted rather than the rendering of it.
     const nav = readFileSync(join(__dirname, 'components/AppNav.tsx'), 'utf8')
-    expect(nav).contains(
-      "export type NavTabId = 'home' | 'videos' | 'schedule'"
-    )
-    expect(nav).not.contains("id: 'account'")
+    expect(
+      [...nav.matchAll(/\{ id: '(\w+)', label:/g)].map(match => match[1])
+    ).deep.equals(['home', 'videos', 'schedule', 'search', 'chat'])
   })
 
   it('draws the destinations as icons alone', function () {

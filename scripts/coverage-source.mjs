@@ -3,12 +3,21 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-export function coverageSource() {
+export function coverageSource(pathspec = []) {
   const hash = createHash('sha256')
   const git = args => execFileSync('git', args, { maxBuffer: 64 * 1024 * 1024 })
   hash.update(git(['rev-parse', 'HEAD']))
-  hash.update(git(['diff', '--binary', '--no-ext-diff', 'HEAD']))
-  const files = git(['ls-files', '--others', '--exclude-standard', '-z'])
+  hash.update(
+    git(['diff', '--binary', '--no-ext-diff', 'HEAD', '--', ...pathspec])
+  )
+  const files = git([
+    'ls-files',
+    '--others',
+    '--exclude-standard',
+    '-z',
+    '--',
+    ...pathspec
+  ])
     .toString()
     .split('\0')
     .filter(Boolean)

@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { navTabId } from '../../../../src/test/navTab.e2e'
 import { defineE2e } from '../../../core/spec'
 import {
   aboveKeyboard,
@@ -72,7 +73,7 @@ export default defineE2e({
         await device.tapOn({ text: 'Password' })
         await typeKeys(device, ios, account.password)
         await device.tapOn({ text: 'Sign in' })
-        await device.tapOn({ text: 'Chat' })
+        await device.tapOn({ id: navTabId('chat') })
         await device.tapOn({ id: 'chat-conversation-.*' })
         let composer: ReturnType<typeof boxOf>
         let above: Awaited<ReturnType<typeof aboveKeyboard>> = null

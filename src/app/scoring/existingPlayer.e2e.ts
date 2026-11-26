@@ -376,8 +376,10 @@ describe('adding an existing player from Set Team Rosters', function () {
     await tap('Jersey Number')
     await browser.inputText({ text: '50' })
     await tap('Add to Roster')
+    // The outbox confirms the local addition before the guardian receives the notice.
+    // Verify delivery below in the guardian’s own notification list.
     await browser.assertVisible({
-      text: '.*Their guardians were notified.*',
+      text: '.*Mookie B was added.*',
       timeout: 15000
     })
     expect(
@@ -441,15 +443,11 @@ describe('adding an existing player from Set Team Rosters', function () {
       timeout: 15000
     })
     await shot('web-approval-needed')
-    // Back out of Add to Roster and the search.
-    for (let sheet = 0; sheet < 2; sheet++)
-      await browser.evalBrowserScript({
-        script: `const all = document.querySelectorAll('[aria-label="Cancel"]'); all[all.length - 1].click(); return ''`,
-        output: 'cancelled'
-      })
   })
 
   it('W7 adds Freeman to the Herons for this game only, and opens his page to no Heron', async function () {
+    await openAs(fixture.emails.coach, `/games/${fixture.gameId}/score`)
+    await openRosters()
     await tap('Away Team')
     await tap('Add Existing Player')
     await tap('Search players')

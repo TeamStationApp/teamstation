@@ -18,6 +18,7 @@ import {
   pointInMapFrame,
   waitInMapFrame
 } from '../../test/mapFrameProbe'
+import { navTabCss } from '../../test/navTab.e2e'
 
 /** An RSVP pill's test id, by the fixture person's legacy number. */
 const rsvpId = (gumbo: number): string => `event-rsvp-${userIdOfGumbo(gumbo)}`
@@ -617,7 +618,7 @@ async function main(): Promise<void> {
       timeout: 10000
     })
     await m.tapOn({
-      css: '[role="tab"][aria-label="Videos"]:not([data-testid="navigation-sidebar"] *)'
+      css: `${navTabCss('videos')}:not([data-testid="navigation-sidebar"] *)`
     })
     await m.assertVisible({ text: 'No videos', timeout: 10000 })
     await m.back()

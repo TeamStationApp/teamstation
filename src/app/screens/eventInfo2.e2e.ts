@@ -24,6 +24,7 @@ import {
   pointInMapFrame,
   waitInMapFrame
 } from '../../test/mapFrameProbe'
+import { navTabCss } from '../../test/navTab.e2e'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Browser {
@@ -1466,7 +1467,7 @@ async function main(): Promise<void> {
     })
     await tap(
       {
-        css: '[role="tab"][aria-label="Videos"]:not([data-testid="navigation-sidebar"] *)'
+        css: `${navTabCss('videos')}:not([data-testid="navigation-sidebar"] *)`
       },
       'UP'
     )

@@ -9,6 +9,8 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import { navTab } from '../../test/navTab.e2e'
+
 interface Element {
   text?: string
   bounds?: { x: number; y: number; width: number; height: number }
@@ -18,11 +20,14 @@ interface Device {
   hierarchy: () => Promise<Element>
   tapOn: (selector: {
     text?: string
+    id?: string
     point?: string
     timeout?: number
   }) => Promise<unknown>
   assertVisible: (selector: {
-    text: string
+    text?: string
+    id?: string
+    selected?: boolean
     timeout?: number
   }) => Promise<unknown>
   assertNotVisible: (selector: { text: string }) => Promise<unknown>
@@ -92,7 +97,14 @@ async function main(): Promise<void> {
     await m.stopApp({ appId })
     await m.launchApp({ appId })
     if (safari) await m.openLink({ link: required('TEST_URL') })
-    const tab = async (label: string): Promise<void> => {
+    const tab = async (id: 'schedule' | 'videos'): Promise<void> => {
+      if (!safari && phase !== 'before') {
+        await navTab(m, id)
+        return
+      }
+      // Safari exposes the website through native accessibility, and the
+      // historical before build predates the native identifiers.
+      const label = id === 'schedule' ? 'Schedule' : 'Videos'
       await visible(`^${label}$`)
       const flatten = (node: Element): Element[] => [
         node,
@@ -108,7 +120,7 @@ async function main(): Promise<void> {
         point: `${Math.round(target.x + target.width / 2)},${Math.round(target.y + target.height / 2)}`
       })
     }
-    await tab('Schedule')
+    await tab('schedule')
     const enter = async (): Promise<void> => {
       await visible('^Upcoming$')
       await tap(gameLabel)
@@ -121,8 +133,8 @@ async function main(): Promise<void> {
       await tap('^Exit Current Game$')
     }
     const revisit = async (): Promise<void> => {
-      await tab('Videos')
-      await tab('Schedule')
+      await tab('videos')
+      await tab('schedule')
     }
     const schedule = async (): Promise<void> => {
       await visible('^Upcoming$')

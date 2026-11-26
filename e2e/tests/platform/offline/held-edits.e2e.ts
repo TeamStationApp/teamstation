@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { navTabId } from '../../../../src/test/navTab.e2e'
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
 import { loadSettings } from '../../../core/settings'
@@ -281,7 +282,7 @@ export default defineE2e({
       // The game's page as it opens, its hero first.
       await shot(ctx, app, 'game-held.png')
       // The banner on Home, a page of its own that says nothing held.
-      await app.m.tapOn({ text: 'Home' })
+      await app.m.tapOn({ id: navTabId('home') })
       await ctx.checkpoint(
         'banner-held',
         { expect: [{ id: 'offlineBanner', timeout: 30000 }] },

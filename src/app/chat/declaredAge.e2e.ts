@@ -72,6 +72,7 @@ import {
 } from '../../../e2e/rigs/iosWheel'
 import { TeamStationClient } from '../../common/api'
 import { readSeedTable, type SeedTablePerson } from '../../test/chatSeedTable'
+import { navTabCss, navTabId } from '../../test/navTab.e2e'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
 import { testPasswordKdf } from '../../test/passwordFixtures'
 import { lstrings } from '../locales/strings'
@@ -233,15 +234,10 @@ async function notNow(m: Device): Promise<void> {
   if (await dismissNotificationAskOn(m)) step('notification ask: Not Now')
 }
 
-async function webTab(m: Device, label: string): Promise<void> {
-  step(`tap the ${label} tab`)
-  await m.tapOn({ css: `[role="tab"][aria-label="${label}"]` })
-}
-
 async function webAge(m: Device): Promise<void> {
   await webSignIn(m, 'C')
   assert.equal((await age(m)).band, 'unknown', 'C starts with no age')
-  await webTab(m, 'Chat')
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.assertVisible({ text: 'Your Age' })
   await m.assertVisible({ text: 'Enter Birth Year and Month' })
@@ -264,7 +260,7 @@ async function webAge(m: Device): Promise<void> {
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   assert.match(await address(m), /tab=schedule/, 'back on the tab before Chats')
 
-  await webTab(m, 'Chat')
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   step('Enter Birth Year and Month')
   await m.tapOn(enter)
@@ -293,7 +289,7 @@ async function webAge(m: Device): Promise<void> {
   assert.equal(given.ageSource, 'self')
   step('reload, and Chat again')
   await m.openBrowser({ url: web() + '/' })
-  await webTab(m, 'Chat')
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
   await notNow(m)
@@ -301,7 +297,7 @@ async function webAge(m: Device): Promise<void> {
 
 async function webAdult(m: Device): Promise<void> {
   await webSignIn(m, 'C')
-  await webTab(m, 'Chat')
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   step('I’m 18 or Older')
   await m.tapOn(agree)
@@ -315,7 +311,7 @@ async function webAdult(m: Device): Promise<void> {
 
 async function webApple(m: Device): Promise<void> {
   await webSignIn(m, 'C')
-  await webTab(m, 'Chat')
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
   await notNow(m)
@@ -324,7 +320,7 @@ async function webApple(m: Device): Promise<void> {
 
 async function webAppleMinor(m: Device): Promise<void> {
   await webSignIn(m, 'C')
-  await webTab(m, 'Chat')
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.assertNotVisible({ ...agree, timeout: 2000 })
   await shot(m, 'web-apple-minor.png')
@@ -346,8 +342,8 @@ async function webAppleMinor(m: Device): Promise<void> {
 
 async function webUnder13(m: Device): Promise<void> {
   await webSignIn(m, 'F')
-  await m.assertVisible({ css: '[role="tab"][aria-label="Chat"]' })
-  await webTab(m, 'Chat')
+  await m.assertVisible({ css: navTabCss('chat') })
+  await m.tapOn({ css: navTabCss('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.assertVisible({ text: 'Chat Is for Ages 13 and Up' })
   await m.assertNotVisible({ ...agree, timeout: 2000 })
@@ -564,7 +560,7 @@ async function phoneAge(
     step("Apple's age prompt declined, had it shown")
   }
   await navigation(m)
-  await m.tapOn({ text: 'Chat' })
+  await m.tapOn({ id: navTabId('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.assertVisible({ text: 'Your Age' })
   await m.assertVisible({ text: 'Enter Birth Year and Month' })
@@ -572,7 +568,7 @@ async function phoneAge(
   await answerModal(m, decline)
   // Closing returns to the tab before Chat: Home, signed in.
   await m.assertVisible({ text: 'Your Home', timeout: 10000 })
-  await m.tapOn({ text: 'Chat' })
+  await m.tapOn({ id: navTabId('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await answerModal(m, enter, enter)
   const start = tenYearsAgo()
@@ -625,7 +621,7 @@ async function phoneAge(
   // another device. A tap while the relaunched app settles can be lost: once
   // more if so.
   for (const attempt of [1, 2]) {
-    await m.tapOn({ text: 'Chat' })
+    await m.tapOn({ id: navTabId('chat') })
     await notNow(m)
     try {
       await m.assertVisible({
@@ -661,7 +657,7 @@ async function ios(m: Device, minor: string, adult: string): Promise<void> {
   await shot(m, 'ios-under13-nav-after.png')
   await phoneSignIn(m, 'F', { TS_DECLARED_AGE_LOWER: '12' })
   await navigation(m)
-  await m.tapOn({ text: 'Chat' })
+  await m.tapOn({ id: navTabId('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.assertVisible({ text: 'Chat Is for Ages 13 and Up' })
   await m.assertNotVisible({ ...agree, timeout: 2000 })
@@ -671,7 +667,7 @@ async function ios(m: Device, minor: string, adult: string): Promise<void> {
 
   const range = { TS_DECLARED_AGE_LOWER: '13', TS_DECLARED_AGE_UPPER: '15' }
   await phoneSignIn(m, minor, range)
-  await m.tapOn({ text: 'Chat' })
+  await m.tapOn({ id: navTabId('chat') })
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.assertVisible({ text: 'Your Age' })
   await m.assertNotVisible({ ...agree, timeout: 2000 })
@@ -729,7 +725,7 @@ async function ios(m: Device, minor: string, adult: string): Promise<void> {
   assert.equal(given.ageSource, 'apple')
 
   await phoneSignIn(m, adult, { TS_DECLARED_AGE_LOWER: '18' })
-  await m.tapOn({ text: 'Chat' })
+  await m.tapOn({ id: navTabId('chat') })
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 30000 })
   await notNow(m)

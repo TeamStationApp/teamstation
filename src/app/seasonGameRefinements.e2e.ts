@@ -25,6 +25,7 @@ import {
 } from '../../e2e/rigs/refinementsMaestro'
 import { userIdOfGumbo } from '../common/userId'
 import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
+import { navTabCss } from '../test/navTab.e2e'
 import { refinementsFixture } from '../test/seasonGameRefinementsFixture'
 
 /**
@@ -450,7 +451,7 @@ async function main(): Promise<void> {
       timeout: 15000
     })
     await capture(admin.m, artifacts, 'home-leagues-after.png')
-    await tap(admin.m, 'Search', 'tab')
+    await admin.m.tapOn({ css: navTabCss('search') })
     // The Search tab finds every kind; only Home's "find something to
     // follow" opens it with the following hint.
     await contains(
@@ -465,7 +466,7 @@ async function main(): Promise<void> {
     const mobile = await make('web-refinements-mobile', 390, 844, 101)
     await contains(mobile.page, 'YOUR TEAMS')
     await capture(mobile.m, artifacts, 'mobile-nav-after.png')
-    await tap(mobile.m, 'Search', 'tab')
+    await mobile.m.tapOn({ css: navTabCss('search') })
     await contains(mobile.page, 'Discover')
     await pass(
       'B1',

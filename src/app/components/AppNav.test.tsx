@@ -31,6 +31,13 @@ describe('Search navigation', () => {
         )
       })
       const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
+      expect(tabs.map(tab => tab.getAttribute('data-testid'))).deep.equals([
+        'tab-home',
+        'tab-videos',
+        'tab-schedule',
+        'tab-search',
+        'tab-chat'
+      ])
       expect(tabs.map(node => node.getAttribute('aria-label'))).deep.equals([
         'Home',
         'Videos',

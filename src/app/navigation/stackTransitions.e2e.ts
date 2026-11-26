@@ -10,10 +10,18 @@ import {
   contains,
   log,
   maestro,
+  navigationDaemonName,
   tap
 } from '../../../e2e/rigs/refinementsMaestro'
 import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { groupFixture } from '../../test/groupFixtures'
+import {
+  navigationCookies,
+  type NavigationFixture,
+  navigationFixture,
+  type OwnedNavigationFixture
+} from '../../test/navigationFixture.e2e'
+import { navTabCss } from '../../test/navTab.e2e'
 import { stackBrowserCoverage } from '../../test/stackBrowserCoverage'
 import { seedStack } from '../../test/stackTransitionsSeed'
 
@@ -34,7 +42,8 @@ import { seedStack } from '../../test/stackTransitionsSeed'
 const artifacts = process.env.TS_STACK_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_STACK_ARTIFACTS')
 const before = process.argv.includes('before')
-const daemonName = process.env.TS_STACK_DAEMON ?? 'stackTransitions'
+const daemonName =
+  process.env.TS_STACK_DAEMON ?? navigationDaemonName('stackTransitions')
 const chosen = new Set(
   (process.env.TS_STACK_CASES ?? 'W1,W2,W3,W4,W5,W6,W7,W8')
     .split(',')
@@ -129,9 +138,33 @@ function installGate(): void {
   }
 }
 
-async function main(): Promise<void> {
-  await mkdir(join(artifacts!, 'support'), { recursive: true })
+async function seed(): Promise<
+  OwnedNavigationFixture<
+    NavigationFixture & { gameId: string; seasonId: string }
+  >
+> {
   const f = await groupFixture(resolve('dist'))
+  try {
+    const { gameId } = await seedStack(f)
+    return {
+      data: {
+        origin: f.h.origin,
+        token: f.h.tokens.get(101)!,
+        gameId,
+        seasonId: f.seasonA
+      },
+      close: f.h.close
+    }
+  } catch (error) {
+    await f.h.close()
+    throw error
+  }
+}
+
+async function drive(
+  data: NavigationFixture & { gameId: string; seasonId: string }
+): Promise<void> {
+  await mkdir(join(artifacts!, 'support'), { recursive: true })
   const daemon = await maestro(daemonName)
   const { m, page, browser } = await browserSession(
     daemon,
@@ -149,9 +182,6 @@ async function main(): Promise<void> {
   const tapCss = async (css: string): Promise<void> => {
     await page.waitForSelector(css, { timeout: 15000 })
     await m.tapOn({ css, timeout: 15000 })
-  }
-  const tapTab = async (label: string): Promise<void> => {
-    await tapCss(`[role="tablist"]:not([aria-label]) [aria-label="${label}"]`)
   }
   const settle = async (text: string): Promise<void> => {
     await contains(page, text)
@@ -173,7 +203,7 @@ async function main(): Promise<void> {
     await note(
       `$ TS_STACK_CASES=${[...chosen].join(',')} node -r sucrase/register src/app/navigation/stackTransitions.e2e.ts${before ? ' before' : ''}`
     )
-    const { gameId } = await seedStack(f)
+    const { gameId } = data
     await page.evaluateOnNewDocument(installGate)
     // The motion is the point; a browser that prefers less would settle it.
     await page.emulateMediaFeatures([
@@ -186,17 +216,11 @@ async function main(): Promise<void> {
       hasTouch: true,
       isMobile: true
     })
-    await browser.setCookie({
-      name: SESSION_COOKIE,
-      value: f.h.tokens.get(101)!,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true
-    })
+    await browser.setCookie(...navigationCookies(data, SESSION_COOKIE))
     const scenes = '[data-scene]'
     const pages = '[data-page]'
     const home = async (): Promise<void> => {
-      await m.openLink({ link: f.h.origin + '/' })
+      await m.openLink({ link: data.origin + '/' })
       await settle('Your Home')
       await settle('Demo Hawks')
       await note(
@@ -370,7 +394,7 @@ async function main(): Promise<void> {
 
     if (!before && chosen.has('W3')) {
       await home()
-      await tapTab('Schedule')
+      await tapCss(navTabCss('schedule'))
       await settle('Upcoming')
       await measured('W3 schedule → game', scenes, async () => {
         await tapCss('[aria-label*="Demo Owls"]')
@@ -417,7 +441,7 @@ async function main(): Promise<void> {
     }
 
     if (chosen.has('W4')) {
-      await m.openLink({ link: `${f.h.origin}/games/${gameId}` })
+      await m.openLink({ link: `${data.origin}/games/${gameId}` })
       await settle('Demo Owls')
       // Score is the game hero's action for an assigned scorekeeper.
       await tap(m, 'Score')
@@ -507,7 +531,7 @@ async function main(): Promise<void> {
     }
 
     if (!before && chosen.has('W6')) {
-      await m.openLink({ link: `${f.h.origin}/seasons/${f.seasonA}` })
+      await m.openLink({ link: `${data.origin}/seasons/${data.seasonId}` })
       await settle('Demo Regular')
       const strip = await page.$$eval(
         '[aria-label="Season sections"] [role="tab"]',
@@ -525,7 +549,7 @@ async function main(): Promise<void> {
               `[aria-label="Season sections"] [aria-label="${name}"]`
             )
           })
-      await tapTab('Schedule')
+      await tapCss(navTabCss('schedule'))
       await settle('Upcoming')
       await measured('W6 schedule Past', pages, async () => {
         await tapCss('[role="tab"][aria-label="Past"]')
@@ -533,7 +557,7 @@ async function main(): Promise<void> {
     }
 
     if (!before && chosen.has('W7')) {
-      await m.openLink({ link: `${f.h.origin}/games/${gameId}` })
+      await m.openLink({ link: `${data.origin}/games/${gameId}` })
       await settle('Demo Owls')
       // Videos is a layout of its own, with the same hero and pills: crossing
       // it slides only what is under the pills, as Info and Box score do, and
@@ -692,7 +716,7 @@ async function main(): Promise<void> {
     if (!before && process.env.TS_COVERAGE_BASE != null)
       await stackBrowserCoverage(
         page,
-        f.h.origin,
+        data.origin,
         join(artifacts!, 'support', 'browser-coverage.json'),
         tests
       )
@@ -700,8 +724,11 @@ async function main(): Promise<void> {
     await m.detach()
     await browser.close().catch(() => undefined)
     await daemon.shutdown()
-    await f.h.close()
   }
+}
+
+async function main(): Promise<void> {
+  await navigationFixture('stackTransitions', seed, drive)
 }
 
 main().catch((error: unknown) => {

@@ -1,3 +1,4 @@
+import { navTabId } from '../../src/test/navTab.e2e'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import {
@@ -554,7 +555,7 @@ async function dismissLogBox(m: AttachedDevice): Promise<void> {
  */
 async function chatTab(m: AttachedDevice): Promise<void> {
   for (let tries = 1; tries <= 3; tries++) {
-    await m.tapOn({ text: 'Chat' })
+    await m.tapOn({ id: navTabId('chat') })
     const deadline = Date.now() + 20000
     while (Date.now() < deadline) {
       const nodes = flatten(await m.hierarchy())
@@ -822,7 +823,7 @@ async function askSteps(
   if (!IOS) await m.assertNotVisible({ id: ALLOW_ID })
   if (await onScreen(m, 'notification-ask-continue'))
     throw new Error('Not Now left the ask up')
-  await m.tapOn({ text: 'Home' })
+  await m.tapOn({ id: navTabId('home') })
   await chatTab(m)
   if (await askAfter(m, 5000)) throw new Error(`${fresh.name} was asked again`)
   await sayAsk(

@@ -2924,7 +2924,7 @@
       "label": "android",
       "env": {
         "TS_STACK_PLATFORM": "android",
-        "TS_STACK_CASES": "N1,N2,N3,N4"
+        "TS_STACK_CASES": "N1,N4,N6,N7"
       },
       "needs": "android-phone"
     }

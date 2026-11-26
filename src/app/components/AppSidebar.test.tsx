@@ -60,6 +60,17 @@ describe('wide navigation sidebar', () => {
     )
     const sidebar = byTestId('navigation-sidebar')!
     expect(
+      [...sidebar.querySelectorAll('[role="tab"]')].map(tab =>
+        tab.getAttribute('data-testid')
+      )
+    ).deep.equals([
+      'tab-home',
+      'tab-videos',
+      'tab-schedule',
+      'tab-search',
+      'tab-chat'
+    ])
+    expect(
       [...sidebar.querySelectorAll('[role="button"], [role="tab"]')].map(n =>
         n.getAttribute('aria-label')
       )

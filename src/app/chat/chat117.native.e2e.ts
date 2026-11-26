@@ -8,6 +8,7 @@ import {
   maestroClient,
   type MaestroDevice
 } from '../../test/chat117Maestro.e2e'
+import { navTab } from '../../test/navTab.e2e'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 const required = (name: string): string => {
@@ -82,7 +83,7 @@ async function main(): Promise<void> {
     if (!flatten(await d.hierarchy()).some(n => n.text === 'Back')) break
     await tap('Back')
   }
-  await tap('Chat')
+  await navTab(d, 'chat')
   await visible('New message')
   await visible('Spring 2027 - Harbor League.*')
   // Entering messaging asks about notifications once per person per device.

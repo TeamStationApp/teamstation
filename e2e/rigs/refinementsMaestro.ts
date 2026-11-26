@@ -6,6 +6,9 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { hubDaemon, routingDaemon } from '../core/maestro'
+import { loadSettings } from '../core/settings'
+
 export interface MaestroHandle {
   launchApp: (args?: Record<string, unknown>) => Promise<unknown>
   tapOn: (args: Record<string, unknown>) => Promise<unknown>
@@ -28,21 +31,72 @@ export interface MaestroHandle {
   detach: () => Promise<void>
 }
 interface MaestroDaemon {
+  readonly info?: { runDir: string }
   attach: (args: Record<string, unknown>) => Promise<MaestroHandle>
   shutdown: () => Promise<void>
 }
+/** Child processes reuse the run's explicitly named daemon. */
+export function navigationDaemonName(label: string): string {
+  const prefix = process.env.E2E_DAEMON_PREFIX ?? `nav-${process.pid}`
+  return `${prefix}-${label}`
+}
 export async function maestro(name: string): Promise<MaestroDaemon> {
-  const entry = process.env.TS_MAESTRO_D_CLIENT
-  if (entry == null) throw new Error('Supply TS_MAESTRO_D_CLIENT')
-  if (process.env.MAESTRO_D_BIN == null)
-    throw new Error('Supply MAESTRO_D_BIN from the locally built Maestro D')
-  execFileSync(process.env.MAESTRO_D_BIN, ['ps'], { stdio: 'ignore' })
+  const settings = loadSettings()
+  const entry = process.env.TS_MAESTRO_D_CLIENT ?? settings.maestroClientRoot
+  const bin = process.env.MAESTRO_D_BIN ?? settings.maestroBin
+  if (entry == null || bin == null)
+    throw new Error('Configure the maestro-d client and binary for this run')
   const { MaestroD } = createRequire(resolve('package.json'))(entry)
-  return await MaestroD.connect({
-    name,
-    bin: process.env.MAESTRO_D_BIN,
-    idleTimeout: 0
-  })
+  let localInfo: MaestroDaemon['info']
+  const daemon = routingDaemon(
+    async () => {
+      const config = settings.maestroHub
+      const address = process.env.MAESTRO_D_HUB ?? config?.address
+      if (address == null || address === '')
+        throw new Error('A hub device needs a maestro-d hub address')
+      const token =
+        process.env.MAESTRO_D_TOKEN ??
+        (config == null
+          ? ''
+          : (await readFile(config.tokenFile, 'utf8')).trim())
+      if (token === '')
+        throw new Error('A hub device needs a maestro-d client token')
+      const teamId = process.env.MAESTRO_TEAM_ID ?? config?.teamId
+      const hub = await MaestroD.connect({ hub: address, token, bin })
+      return hubDaemon(
+        {
+          lease: async options => await hub.lease({ ...options, holder: name }),
+          close: async () => await hub.close()
+        },
+        teamId == null ? {} : { teamId }
+      )
+    },
+    async () => {
+      execFileSync(bin, ['ps'], { stdio: 'ignore' })
+      // connect() selects the transport synchronously. An explicitly local
+      // browser or simulator must use its own named Unix socket even during
+      // a mixed run whose hub was specified in the environment.
+      const hub = process.env.MAESTRO_D_HUB
+      try {
+        delete process.env.MAESTRO_D_HUB
+        return MaestroD.connect({ name, bin, idleTimeout: 0 }).then(
+          (local: MaestroDaemon) => {
+            localInfo = local.info
+            return local
+          }
+        )
+      } finally {
+        if (hub != null) process.env.MAESTRO_D_HUB = hub
+      }
+    }
+  )
+  // The JS client loaded above supplies these legacy flow commands.
+  return {
+    ...(daemon as unknown as MaestroDaemon),
+    get info() {
+      return localInfo
+    }
+  }
 }
 export interface BrowserSession {
   m: MaestroHandle
