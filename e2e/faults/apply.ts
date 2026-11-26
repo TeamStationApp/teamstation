@@ -56,3 +56,11 @@ export function killApp(
     exec('adb', ['-s', udid, 'shell', 'am', 'force-stop', appId])
   }
 }
+
+/** Stops the app under test through maestro-d, the way a native crash would. */
+export async function crashApp(
+  device: { stopApp: (appId: string) => Promise<unknown> },
+  appId: string
+): Promise<void> {
+  await device.stopApp(appId)
+}

@@ -1,13 +1,16 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { EventEmitter } from 'node:events'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import {
+  fixtureSeeder,
   hostPort,
   parseFaultServerArgs,
   PROXY_FAULTS,
@@ -221,16 +224,19 @@ describe('the fault server’s command line', function () {
     const file = join(mkdtempSync(join(tmpdir(), 'e2e-faults-')), 'token')
     writeFileSync(file, `${TOKEN}\n`)
     expect(
-      parseFaultServerArgs([
-        '--listen',
-        '127.0.0.1:9200',
-        '--target',
-        'http://127.0.0.1:9100',
-        '--places',
-        '127.0.0.1:9300',
-        '--token-file',
-        file
-      ])
+      parseFaultServerArgs(
+        [
+          '--listen',
+          '127.0.0.1:9200',
+          '--target',
+          'http://127.0.0.1:9100',
+          '--places',
+          '127.0.0.1:9300',
+          '--token-file',
+          file
+        ],
+        {}
+      )
     ).deep.equals({
       listen: { host: '127.0.0.1', port: 9200 },
       target: 'http://127.0.0.1:9100',
@@ -263,5 +269,166 @@ describe('the fault server’s command line', function () {
       failure = error
     }
     expect(String(failure)).includes('too short')
+  })
+})
+
+describe('the fault server’s seed route', function () {
+  const seeded: string[] = []
+  let started: Awaited<ReturnType<typeof startFaultServer>>
+  before(async function () {
+    started = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: 'http://127.0.0.1:1',
+      token: TOKEN,
+      seed: async (world, mailbox) => {
+        seeded.push(`${world} ${mailbox}`)
+        if (world === 'broken') throw new Error('the world failed')
+        return { world, nonce: 'n', accounts: {}, ids: {} }
+      }
+    })
+  })
+  after(async function () {
+    await started.close()
+  })
+  const seed = async (
+    body: unknown,
+    token: string | null = TOKEN
+  ): Promise<{ status: number; body: any }> => {
+    const reply = await fetch(`${started.proxy.url}/__e2e/seed`, {
+      method: 'POST',
+      headers: {
+        ...(token == null ? {} : { authorization: `Bearer ${token}` }),
+        'content-type': 'application/json'
+      },
+      body: typeof body === 'string' ? body : JSON.stringify(body)
+    })
+    return { status: reply.status, body: await reply.json() }
+  }
+
+  it('seeds the world on the mailbox and answers its manifest', async function () {
+    const reply = await seed({
+      world: 'coach-game',
+      mailbox: 'e2e@example.test'
+    })
+    expect(reply.status).equals(200)
+    expect(reply.body.world).equals('coach-game')
+    expect(seeded).deep.equals(['coach-game e2e@example.test'])
+  })
+
+  it('refuses a request without the token, and a bad world or mailbox', async function () {
+    seeded.length = 0
+    expect(
+      (await seed({ world: 'coach-game', mailbox: 'e2e@example.test' }, null))
+        .status
+    ).equals(401)
+    expect(
+      (await seed({ world: '../x', mailbox: 'e2e@example.test' })).status
+    ).equals(400)
+    expect(
+      (await seed({ world: 'w', mailbox: 'e+x@example.test' })).status
+    ).equals(400)
+    expect((await seed('not json')).status).equals(400)
+    expect(seeded).deep.equals([])
+    const failed = await seed({ world: 'broken', mailbox: 'e2e@example.test' })
+    expect(failed.status).equals(500)
+    expect(failed.body.error).equals('the world failed')
+  })
+
+  it('answers 501 on a fault server with no database', async function () {
+    const bare = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: 'http://127.0.0.1:1',
+      token: TOKEN
+    })
+    try {
+      const reply = await fetch(`${bare.proxy.url}/__e2e/seed`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: '{}'
+      })
+      expect(reply.status).equals(501)
+    } finally {
+      await bare.close()
+    }
+  })
+
+  it('runs the fixtures CLI with the world and mailbox against the stack database', async function () {
+    const ran: Array<{
+      file: string
+      args: string[]
+      cwd: string
+      config: string
+    }> = []
+    const spawnFn = ((
+      file: string,
+      args: string[],
+      options: { cwd: string }
+    ) => {
+      ran.push({
+        file,
+        args,
+        cwd: options.cwd,
+        config: readFileSync(join(options.cwd, 'serverConfig.json'), 'utf8')
+      })
+      const child: any = new EventEmitter()
+      child.stdout = new PassThrough()
+      child.stderr = new PassThrough()
+      setImmediate(() => {
+        child.stdout.end(args[3] === 'broken' ? '' : '{"world":"coach-game"}')
+        child.stderr.end(args[3] === 'broken' ? 'no such world' : '')
+        setImmediate(() => child.emit('close', args[3] === 'broken' ? 1 : 0))
+      })
+      return child
+    }) as any
+    const seed = fixtureSeeder(
+      '/srv/checkout',
+      'postgres://127.0.0.1/ts',
+      spawnFn
+    )
+    expect(await seed('coach-game', 'e2e@example.test')).deep.equals({
+      world: 'coach-game'
+    })
+    expect(ran[0].file).equals(process.execPath)
+    expect(ran[0].args).deep.equals([
+      '-r',
+      '/srv/checkout/node_modules/sucrase/register',
+      '/srv/checkout/src/server/dev/fixtures/cli.ts',
+      'coach-game',
+      '--json',
+      '--mailbox',
+      'e2e@example.test'
+    ])
+    expect(JSON.parse(ran[0].config)).deep.equals({
+      testSettings: true,
+      databaseUrl: 'postgres://127.0.0.1/ts'
+    })
+    // The config names the database's password: gone once the seed is.
+    expect(existsSync(ran[0].cwd)).equals(false)
+    let message = ''
+    try {
+      await seed('broken', 'e2e@example.test')
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).contains('no such world')
+  })
+
+  it('gives the seed route a seeder only when DATABASE_URL is set', function () {
+    const file = join(mkdtempSync(join(tmpdir(), 'e2e-faults-')), 'token')
+    writeFileSync(file, TOKEN)
+    const args = [
+      '--listen',
+      '127.0.0.1:1',
+      '--target',
+      'http://x',
+      '--token-file',
+      file
+    ]
+    expect(parseFaultServerArgs(args, {}).seed).equals(undefined)
+    expect(
+      typeof parseFaultServerArgs([...args, '--checkout', '/srv/c'], {
+        DATABASE_URL: 'postgres://x/y'
+      }).seed
+    ).equals('function')
   })
 })

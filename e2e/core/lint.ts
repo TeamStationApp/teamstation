@@ -44,11 +44,13 @@ export function lintFile(file: string, text: string): LintProblem[] {
   if (!file.endsWith('/visual.ts') && text.includes('.assertScreenshot(')) {
     add('no-direct-screenshot', 'use ctx.checkpoint, not assertScreenshot')
   }
+  // A checkpoint's `compare: 'ai'` asks maestro-d, with the run's budget and
+  // the bar's authority; nothing else calls its AI commands.
   if (
     /\b(?:assertWithAI|assertNoDefectsWithAI|extractTextWithAI)\b/.test(text)
   ) {
-    if (!/\/lint(?:\.test)?\.ts$/.test(file)) {
-      add('no-maestro-ai', 'maestro-d has no handler for its AI commands')
+    if (!/\/(?:lint|checkpoint)(?:\.test)?\.ts$/.test(file)) {
+      add('no-maestro-ai', "ask through a checkpoint with compare: 'ai'")
     }
   }
   if (

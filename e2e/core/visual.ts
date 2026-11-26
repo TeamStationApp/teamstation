@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 import { type GoldenManifest, readGolden, requireStore } from './goldens'
 import { HarnessError } from './result'
@@ -154,4 +154,103 @@ export async function compareGolden(
     }
     return { ...read(data), verdict: 'fail', detail: failure.message }
   }
+}
+
+export interface DirCompareInputs {
+  device: CompareInputs['device']
+  runDir: string
+  key: string
+  golden: GoldenOptions
+  /** The runner's folder of goldens, `<goldensDir>/<goldenKey>.png`. */
+  goldensDir: string
+  drawn?: (css: string) => Promise<number[]>
+}
+
+/** Where a screen that differs from its golden, or has none, is written for the caller. */
+export function goldensOutPath(runDir: string, key: string): string {
+  return join(runDir, 'goldens-out', `${key}.png`)
+}
+
+/**
+ * Compares against `<goldensDir>/<goldenKey>.png`, the golden the runner
+ * fetched and checked against its pin. A screen that differs, or has no
+ * golden, is written to `<runDir>/goldens-out/<goldenKey>.png` for the
+ * caller to look at and accept.
+ */
+export async function compareGoldenInDir(
+  inputs: DirCompareInputs
+): Promise<VisualVerdict> {
+  const { device, runDir, key, golden, goldensDir } = inputs
+  const expected = join(goldensDir, `${key}.png`)
+  const capture = join(runDir, 'captures', `${key}.png`)
+  mkdirSync(dirname(capture), { recursive: true })
+  const mask = await expandMasks(golden.mask ?? [], inputs.drawn)
+  const has = existsSync(expected)
+  const base: VisualVerdict = {
+    verdict: 'unbaselined',
+    key,
+    mask,
+    capturePath: capture
+  }
+  const read = (data: ScreenshotData | undefined): VisualVerdict => ({
+    ...base,
+    verdict: 'pass',
+    ...(has ? { goldenPath: expected } : {}),
+    ...(data?.diffPath == null ? {} : { diffPath: data.diffPath }),
+    ...(data?.matchPercentage == null
+      ? {}
+      : { matchPercentage: data.matchPercentage }),
+    ...(data?.differingPixels == null
+      ? {}
+      : { differingPixels: data.differingPixels }),
+    ...(data?.totalPixels == null ? {} : { totalPixels: data.totalPixels })
+  })
+  const writeOut = (verdict: VisualVerdict): VisualVerdict => {
+    if (existsSync(capture)) {
+      const out = goldensOutPath(runDir, key)
+      mkdirSync(dirname(out), { recursive: true })
+      copyFileSync(capture, out)
+    }
+    return verdict
+  }
+  try {
+    const reply = await device.assertScreenshot({
+      path: expected,
+      mask,
+      requireBaseline: true,
+      captureOut: capture,
+      thresholdPercentage:
+        100 - (golden.maxDifferingPercent ?? DEFAULT_MAX_DIFFERING_PERCENT)
+    })
+    return read(reply.data)
+  } catch (error) {
+    const failure = error as CommandError
+    if (failure.code !== 'COMMAND_FAILED') {
+      throw new HarnessError(`assertScreenshot: ${failure.message}`)
+    }
+    const data = failure.result?.data
+    if (data?.code === 'BASELINE_MISSING' || !has) {
+      return writeOut({
+        ...read(data),
+        verdict: 'unbaselined',
+        detail: `no golden for ${key}`
+      })
+    }
+    return writeOut({ ...read(data), verdict: 'fail', detail: failure.message })
+  }
+}
+
+/** The differing and missing goldens of a run's checkpoints, for `result.json`. */
+export function goldensOf(records: ReadonlyArray<{ visual?: VisualVerdict }>): {
+  differs: string[]
+  missing: string[]
+} {
+  const differs: string[] = []
+  const missing: string[] = []
+  for (const record of records) {
+    if (record.visual?.verdict === 'fail') differs.push(record.visual.key)
+    if (record.visual?.verdict === 'unbaselined')
+      missing.push(record.visual.key)
+  }
+  return { differs, missing }
 }

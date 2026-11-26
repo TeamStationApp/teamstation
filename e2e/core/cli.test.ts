@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { handleOf, runProvider } from './cli'
+import { handleOf, main, needsOf, runProvider } from './cli'
 import { BlockedError, HarnessError } from './result'
 
 /** A provider that prints `out` and exits with `code`, recording how it was run. */
@@ -76,5 +76,63 @@ describe('the stack provider', function () {
     expect(failed).instanceOf(HarnessError)
     expect(String(failed)).includes('every name of the pool (16) is held')
     expect(() => handleOf(['up failed'])).to.throw('printed no handle')
+  })
+})
+
+describe('needs --json', function () {
+  it('prints every field of the normalized needs, by file or by spec id', async function () {
+    const byFile = needsOf(
+      'e2e/tests/platform/dump-world/sign-in.e2e.ts'
+    ) as Record<string, unknown>
+    expect(Object.keys(byFile).sort()).deep.equals(
+      [
+        'apps',
+        'costUsd',
+        'exclusive',
+        'faults',
+        'file',
+        'fixtures',
+        'id',
+        'manual',
+        'minutes',
+        'scenarios',
+        'secrets',
+        'services',
+        'stack',
+        'surfaces'
+      ].sort()
+    )
+    expect(byFile).deep.include({
+      id: 'platform/dump-world/sign-in',
+      file: 'e2e/tests/platform/dump-world/sign-in.e2e.ts',
+      stack: 'isolated',
+      fixtures: ['coach-season-dump'],
+      scenarios: ['coach-sees-team'],
+      surfaces: {
+        'web-chromium': {
+          devices: [],
+          browser: { role: 'browser', needs: [], placement: 'droplet' }
+        }
+      }
+    })
+    expect(needsOf('platform/dump-world/sign-in')).deep.equals(byFile)
+    expect(() => needsOf('no/such/spec')).to.throw('No spec "no/such/spec"')
+    const printed: string[] = []
+    const log = console.log
+    console.log = (line: string) => printed.push(line)
+    try {
+      expect(
+        await main(['needs', 'platform/dump-world/sign-in', '--json'])
+      ).equals(0)
+    } finally {
+      console.log = log
+    }
+    expect(JSON.parse(printed.join('\n'))).deep.equals(byFile)
+    expect(String(await failure(async () => await main(['needs'])))).contains(
+      'needs wants <test file | spec id>'
+    )
+    expect(
+      String(await failure(async () => await main(['dump', 'x'])))
+    ).contains('dump wants <world> --stack')
   })
 })

@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import type { DetectRow } from './ledger'
+
 /** A scenario's outcome. Inconclusive is never read as a pass. */
 export type Status =
   | 'passed'
@@ -50,6 +52,13 @@ export interface RunResult {
   unattributedServerErrors?: unknown[]
   /** How many times the scenario ran, when a retry was needed: a flaky pass shows. */
   attempts?: number
+  /**
+   * Under `runScenario`: the goldens whose screens differ or that have none,
+   * by key, each with its candidate in `<runDir>/goldens-out/`.
+   */
+  goldens?: { differs: string[]; missing: string[] }
+  /** Under `runScenario` with a fault: the fault-detection row for the ledger. */
+  detect?: DetectRow
 }
 
 export function writeResult(runDir: string, result: RunResult): string {
