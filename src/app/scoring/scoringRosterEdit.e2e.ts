@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { rosterEditFixture } from '../../../e2e/fixtures/scoringRosterEditFixture'
 import { recordOf, storedRecordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 
 const required = (name: string): string => {
   const value = process.env[name]
@@ -35,11 +36,21 @@ async function main(): Promise<void> {
   const surface = required('SCORING_MODAL_SURFACE')
   assert(['safari', 'native'].includes(surface))
   const native = surface === 'native'
+  const nativeAppId = process.env.SCORING_APP_ID ?? 'app.teamstation.app'
   const phase = process.env.SCORING_ROSTER_PHASE ?? 'after'
   const section = process.env.SCORING_ROSTER_SECTION ?? 'all'
+  const afterReturn = [
+    'afterReturn',
+    'pendingSave',
+    'failedSave',
+    'permissions'
+  ].includes(section)
+  const fullRoster = section === 'all' || afterReturn
   assert(['before', 'after'].includes(phase))
   const artifacts = resolve(required('SCORING_ARTIFACT_DIR'))
   const device = required('SCORING_DEVICE_UDID')
+  const awaySettings = `/api/v1/teams/away/players/${userIdOfGumbo(100)}/settings`
+  const homeSettings = `/api/v1/teams/home/players/${userIdOfGumbo(200)}/settings`
   await mkdir(artifacts, { recursive: true })
   const fixture = await rosterEditFixture(
     required('SCORING_ASSET_URL'),
@@ -68,7 +79,7 @@ async function main(): Promise<void> {
     .attach({
       device,
       platform: 'ios',
-      appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari',
+      appId: native ? nativeAppId : 'com.apple.mobilesafari',
       artifacts: 'on-failure',
       waitForIdleTimeout: 500,
       stepDelay: 250
@@ -101,7 +112,7 @@ async function main(): Promise<void> {
     await pause()
   }
   const shown = async (label: string): Promise<void> => {
-    const until = Date.now() + 30000
+    const until = Date.now() + (label === 'JERSEY NUMBER' ? 60000 : 30000)
     while (Date.now() < until) {
       if (
         flat(await m.hierarchy()).some(
@@ -161,15 +172,23 @@ async function main(): Promise<void> {
     const nodes = native
       ? all
       : flat(all.find(node => node.type === 'WebView') ?? hierarchy)
-    const node = nodes
-      .filter(
-        node =>
-          (node.text === label ||
-            node.id === label ||
-            node.text?.startsWith(label + ',') === true) &&
-          node.bounds != null
-      )
-      .at(-1)
+    const matches = nodes.filter(
+      node =>
+        (node.text === label ||
+          node.id === label ||
+          node.text?.startsWith(label + ',') === true) &&
+        node.bounds != null
+    )
+    const segment = ['Roster', 'Lineup', 'Defense'].includes(label)
+      ? matches.find(node => node.type !== 'StaticText')
+      : undefined
+    const node =
+      segment ??
+      matches.find(node => node.text?.endsWith(', edit settings') === true) ??
+      matches
+        .filter(node => node.type === 'Button' || node.type === 'TextField')
+        .at(-1) ??
+      matches.at(-1)
     assert(node?.bounds != null)
     console.log('Tap', label, node.bounds)
     await point(
@@ -204,7 +223,7 @@ async function main(): Promise<void> {
       ? `teamstation://${path}`
       : `${required('SCORING_TEST_URL')}/${path}`
     const result = await m.eval(
-      `http.post(${JSON.stringify((await driver()) + '/url')},{body:${JSON.stringify({ url: link, bundleId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari', idleTimeoutMs: 1500 })}})`
+      `http.post(${JSON.stringify((await driver()) + '/url')},{body:${JSON.stringify({ url: link, bundleId: native ? nativeAppId : 'com.apple.mobilesafari', idleTimeoutMs: 1500 })}})`
     )
     assert.equal(result.status, 200)
     assert(JSON.parse(result.body).value?.error == null)
@@ -229,11 +248,47 @@ async function main(): Promise<void> {
     console.log('Captured', name)
   }
   const input = async (label: string, value: string): Promise<void> => {
-    await tap(label)
-    await m.eraseText()
-    if (value !== '') await m.inputText({ text: value })
-    if (native) await m.hideKeyboard()
-    else await m.tapOn({ text: '^Done$', timeout: 10000 })
+    await reach(label)
+    if (native) {
+      await tap(label)
+      await m.eraseText()
+      if (value !== '') await m.inputText({ text: value })
+      await m.hideKeyboard()
+      return
+    }
+    // Safari scrolls the form again as the keyboard opens. Address the actual
+    // accessibility element so this cannot type into a neighboring field.
+    const session = await driver()
+    const query = {
+      using: 'predicate string',
+      value: `type == "XCUIElementTypeTextField" AND (name == ${JSON.stringify(label)} OR label == ${JSON.stringify(label)})`
+    }
+    const elements = await m.eval(
+      `http.post(${JSON.stringify(session + '/elements')},{body:${JSON.stringify(query)}})`
+    )
+    assert.equal(elements.status, 200)
+    const targets = JSON.parse(elements.body).value
+    assert.equal(targets.length, 1, `Expected one field named ${label}`)
+    const id =
+      targets[0]['element-6066-11e4-a52e-4f735466cecf'] ?? targets[0].ELEMENT
+    assert.equal(typeof id, 'string')
+    const field = session + '/element/' + id
+    const clear = await m.eval(
+      `http.post(${JSON.stringify(field + '/clear')},{body:{}})`
+    )
+    assert.equal(clear.status, 200)
+    if (value !== '') {
+      const entered = await m.eval(
+        `http.post(${JSON.stringify(field + '/value')},{body:${JSON.stringify({ text: value })}})`
+      )
+      assert.equal(entered.status, 200)
+      const stored = await m.eval(
+        `http.get(${JSON.stringify(field + '/attribute/value')})`
+      )
+      assert.equal(JSON.parse(stored.body).value, value, `Entered ${label}`)
+    }
+    if (flat(await m.hierarchy()).some(node => node.type === 'Keyboard'))
+      await m.tapOn({ text: '^Done$', timeout: 10000 })
   }
   const reach = async (label: string): Promise<void> => {
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -248,42 +303,113 @@ async function main(): Promise<void> {
         )
         .at(-1)?.bounds
       assert(screen != null)
+      const bottomNavigation = nodes.find(
+        node =>
+          node.text === 'Home' &&
+          node.type === 'Button' &&
+          node.bounds != null &&
+          node.bounds.y > screen.height * 0.5
+      )?.bounds
+      const rosterFooter = nodes.find(
+        node => node.text === 'Save Rosters' && node.bounds != null
+      )?.bounds
+      const playerForm = nodes.some(
+        node => node.text === 'First Name' && node.type === 'TextField'
+      )
+      const nativePlayerRow =
+        native &&
+        nodes.some(
+          node =>
+            node.text?.startsWith(label + ',') === true &&
+            node.text.endsWith(', edit settings')
+        )
+      const limit = Math.min(
+        screen.height -
+          ([
+            'Create Placeholder Player',
+            'Create Player',
+            'Save Player'
+          ].includes(label)
+            ? native
+              ? 12
+              : 100
+            : 120),
+        bottomNavigation == null || playerForm
+          ? screen.height
+          : bottomNavigation.y - 4,
+        rosterFooter == null || playerForm ? screen.height : rosterFooter.y - 4
+      )
+      // The native roster rows scroll behind the fixed Roster / Lineup /
+      // Defense tabs. A row under that strip activates the tab at its center.
+      const segment = nativePlayerRow
+        ? nodes.find(node => node.text === 'Lineup' && node.bounds != null)
+            ?.bounds
+        : undefined
+      const lower = Math.max(
+        130,
+        (segment?.y ?? 0) + (segment?.height ?? 0) + 8
+      )
+      const center = target == null ? undefined : target.y + target.height / 2
       if (
         target != null &&
-        target.y > 110 &&
-        target.y + target.height <
-          screen.height -
-            ([
-              'Create Placeholder Player',
-              'Create Player',
-              'Save Player'
-            ].includes(label)
-              ? native
-                ? 35
-                : 100
-              : 120)
+        center != null &&
+        center > lower &&
+        center < limit - 8
       )
         return
-      await m.swipe({ start: '65%,75%', end: '65%,35%', duration: 400 })
+      const above = center != null && center <= lower
+      if (native && !nativePlayerRow) {
+        await m.swipe({
+          start: above ? '65%,35%' : '65%,75%',
+          end: above ? '65%,75%' : '65%,35%',
+          duration: 400
+        })
+        continue
+      }
+      const x = Math.round(screen.width * (playerForm ? 0.65 : 0.25))
+      const travel = Math.round(
+        Math.min(
+          120,
+          Math.max(
+            50,
+            Math.abs((center ?? limit + 100) - (lower + limit) / 2) / 2
+          )
+        )
+      )
+      const fromY = playerForm
+        ? above
+          ? 270
+          : Math.round(screen.height - 200)
+        : Math.round(screen.height * (above ? 0.35 : 0.62))
+      const toY = playerForm
+        ? above
+          ? Math.round(screen.height - 200)
+          : 270
+        : fromY + (above ? travel : -travel)
+      const endpoint = await driver()
+      const dragged = await m.eval(
+        `http.post(${JSON.stringify(endpoint + '/wda/dragfromtoforduration')}, {body:${JSON.stringify({ fromX: x, toX: x, fromY, toY, duration: playerForm ? 0.001 : 0.45 })}})`
+      )
+      assert.equal(dragged.status, 200)
+      await pause()
+      if (nativePlayerRow) await m.waitForAnimationToEnd({ timeout: 3000 })
     }
     assert.fail(`Action must be reachable: ${label}`)
   }
   const regressions = async (): Promise<void> => {
     // Earlier Settings visits can move this player below the first viewport.
     // Give standalone E6 the same ordering so it tests scrolling too.
-    const seeded = await fetch(
-      `${fixture.backendUrl}/api/v1/teams/away/players/100/settings`,
-      {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jersey: '14' })
-      }
-    )
+    const seeded = await fetch(`${fixture.backendUrl}${awaySettings}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jersey: '14' })
+    })
     assert(seeded.ok, 'The regression roster must contain the edited jersey')
     await open(`games/${fixture.gameId}/score`)
     await shown('Open scoring menu')
     await tap('Open scoring menu')
     await tap('Set Team Rosters')
+    await tap('Lineup')
     // The fixture's actor keeps score for both teams, so the roster editor,
     // its Defense bench and the team roster name its players in full.
     const nodes = flat(await m.hierarchy())
@@ -313,10 +439,12 @@ async function main(): Promise<void> {
     ])
     await tap('Defense')
     await shown('CF')
-    await tap('Lineup')
+    await tap('Roster')
+    await reach('Create Player')
     await tap('Create Player')
     if (native) await m.hideKeyboard()
-    else await m.tapOn({ text: '^Done$', timeout: 10000 })
+    else if (flat(await m.hierarchy()).some(node => node.type === 'Keyboard'))
+      await m.tapOn({ text: '^Done$', timeout: 10000 })
     if (native)
       for (
         let count = 0;
@@ -334,10 +462,13 @@ async function main(): Promise<void> {
     await input('Jersey Number', '11')
     await reach('Create Player')
     await tap('Create Player')
-    await shown('Jose Ramirez')
+    await reach('Jose Ramirez')
+    await shown('Jose Ramirez, jersey 11')
+    await reach('Create Player')
     await tap('Create Player')
     if (native) await m.hideKeyboard()
-    else await m.tapOn({ text: '^Done$', timeout: 10000 })
+    else if (flat(await m.hierarchy()).some(node => node.type === 'Keyboard'))
+      await m.tapOn({ text: '^Done$', timeout: 10000 })
     if (native)
       for (
         let count = 0;
@@ -349,8 +480,7 @@ async function main(): Promise<void> {
     await reach('Create Placeholder Player')
     await tap('Create Placeholder Player')
     await tap('Create')
-    await tap('Cancel')
-    await tap('Roster')
+    // A successful placeholder save returns directly to the roster.
     await shown('game-only player')
     await tap('Defense')
     await tap('Clear P')
@@ -371,8 +501,9 @@ async function main(): Promise<void> {
     })
     await shown('Clear P')
     await tap('Cancel')
-    fixture.pauseWrites(true)
+    fixture.refuseWrites(true)
     await tap('Ball')
+    await shown('Fixture scoring edit refused')
     await shown('Undo Ball')
     await tap('Open scoring menu')
     await tap('Set Team Rosters')
@@ -387,12 +518,15 @@ async function main(): Promise<void> {
     await shown('JERSEY NUMBER')
     await tap('Back')
     await shown('Tap player to edit.')
-    fixture.pauseWrites(false)
+    fixture.refuseWrites(false)
+    await tap('Cancel')
+    await tap('Undo Ball')
+    await shown('Nothing to undo')
+    await tap('Ball')
     const until = Date.now() + 15000
     while (fixture.stored().currentPlay == null && Date.now() < until)
       await pause()
     assert(fixture.stored().currentPlay != null)
-    await tap('Cancel')
     await shown('Undo Ball')
     await m.waitForAnimationToEnd({ timeout: 3000 })
     const undo = flat(await m.hierarchy()).find(
@@ -414,6 +548,16 @@ async function main(): Promise<void> {
       'PASS E6 placeholder/player creation and cancellation, lineup drag, defense, history and dirty exit'
     )
   }
+  const teamPlayerSettings = async (): Promise<void> => {
+    await open('teams/away?tab=roster')
+    await shown('Mookie Betts')
+    await reach('Mookie Betts')
+    await tapStarts('Mookie Betts')
+    await tap('Player settings')
+    await shown('JERSEY NUMBER')
+    await shown('Mookie Betts')
+    await tap('Back')
+  }
   try {
     if (native) await m.stopApp()
     await m.launchApp()
@@ -429,17 +573,40 @@ async function main(): Promise<void> {
       )
         await pause()
     }
+    if (section === 'links') {
+      await teamPlayerSettings()
+      await open(`players/${userIdOfGumbo(100)}?tab=settings&onTeam=away`)
+      await shown('JERSEY NUMBER')
+      await shown('Mookie Betts')
+      console.log(
+        'PASS team roster Settings navigation and direct player Settings link'
+      )
+      return
+    }
     if (section === 'e6') {
       await regressions()
       console.log('PASS', surface, 'E6')
       return
+    }
+    if (section === 'afterReturn' || section === 'permissions') {
+      // Start the remaining Settings round trips with the previous accepted
+      // jersey and position already stored, on a fresh app and fixture.
+      const seeded = await fetch(`${fixture.backendUrl}${awaySettings}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jersey: section === 'permissions' ? '14' : '12',
+          positions: ['SS']
+        })
+      })
+      assert(seeded.ok)
     }
     await open(`games/${fixture.gameId}/score`)
     await shown('Open scoring menu')
     await new Promise(resolve => setTimeout(resolve, 1500))
     if (
       phase === 'after' &&
-      ['all', 'namesPersisted', 'names'].includes(section)
+      (fullRoster || ['namesPersisted', 'names'].includes(section))
     ) {
       const until = Date.now() + 45000
       const accepted = async (): Promise<boolean> =>
@@ -644,9 +811,13 @@ async function main(): Promise<void> {
       )
       return
     }
+    await tap('Lineup')
     await capture(`lineup-${phase}`)
-    if (phase === 'after' && section === 'all') await tap('Remove Aaron Judge')
     await tap('Defense')
+    if (phase === 'after' && fullRoster) {
+      await tap('Clear RF')
+      await shown('Assign RF')
+    }
     await capture(`defense-${phase}`)
     if (phase === 'after') {
       await tap('Roster')
@@ -657,45 +828,43 @@ async function main(): Promise<void> {
       await shown('Mookie Betts')
       await tap('Away Team')
       if (section !== 'm1') {
-        const before = JSON.stringify(fixture.stored())
-        await tap('Mookie Betts')
-        await shown('JERSEY NUMBER')
-        await shown('Mookie Betts')
-        await capture('player-settings-after')
-        await input('Jersey number', '12')
-        await tap('P')
-        await tap('SS')
-        // Settings beside a team edits the jersey and positions; how a player
-        // bats and throws is edited away from a team.
-        await reach('Save')
-        await tap('Save')
-        const until = Date.now() + 15000
-        while (
-          !fixture.trace.some(
-            line =>
-              line.startsWith('PUT /api/v1/teams/away/players/100/settings') &&
-              line.includes('-> 200')
-          ) &&
-          Date.now() < until
-        )
-          await pause()
-        assert(
-          fixture.trace.some(
-            line =>
-              line.includes('PUT /api/v1/teams/away/players/100/settings') &&
-              line.includes('-> 200')
+        if (!afterReturn) {
+          const before = JSON.stringify(fixture.stored())
+          await tap('Mookie Betts')
+          await shown('JERSEY NUMBER')
+          await shown('Mookie Betts')
+          await capture('player-settings-after')
+          await input('Jersey number', '12')
+          await reach('Player position P')
+          await tap('Player position P')
+          await reach('Player position SS')
+          await tap('Player position SS')
+          // Settings beside a team edits the jersey and positions; how a player
+          // bats and throws is edited away from a team.
+          await reach('Save')
+          await tap('Save')
+          await waitForState(
+            async () =>
+              fixture.trace.some(
+                line =>
+                  line.startsWith(`PUT ${awaySettings} `) &&
+                  line.includes('"jersey":"12"') &&
+                  line.includes('"positions":["SS"]') &&
+                  line.includes(' -> 200 ')
+              ),
+            'The away player must save jersey 12 and position SS'
           )
-        )
-        await tap('Back')
-        await shown('Tap player to edit.')
-        await shown('Mookie Betts, jersey 12, bats right, throws right')
-        assert.equal(
-          JSON.stringify(fixture.stored()),
-          before,
-          'Settings typing and saves must not change scoring events'
-        )
-        await reach('Mookie Betts')
-        await capture('roster-return')
+          await tap('Back')
+          await shown('Tap player to edit.')
+          await shown('Mookie Betts, jersey 12, bats right, throws right')
+          assert.equal(
+            JSON.stringify(fixture.stored()),
+            before,
+            'Settings typing and saves must not change scoring events'
+          )
+          await reach('Mookie Betts')
+          await capture('roster-return')
+        }
         if (native && section === 'all') {
           await tap('Mookie Betts')
           await shown('JERSEY NUMBER')
@@ -703,9 +872,9 @@ async function main(): Promise<void> {
           await tap('Back')
           await shown('Tap player to edit.')
         }
-        if (section === 'all') {
+        if (fullRoster && (!afterReturn || section === 'afterReturn')) {
           // Forward can reopen the child; its own tabs remain part of the visit.
-          if (!native) {
+          if (!native && !afterReturn) {
             await browserStep('Forward')
             await shown('JERSEY NUMBER')
             await browserStep('Back')
@@ -727,9 +896,8 @@ async function main(): Promise<void> {
           while (
             !fixture.trace.some(
               line =>
-                line.startsWith(
-                  'PUT /api/v1/teams/home/players/200/settings'
-                ) && line.includes('-> 200')
+                line.startsWith(`PUT ${homeSettings}`) &&
+                line.includes('-> 200')
             ) &&
             Date.now() < until
           )
@@ -737,105 +905,129 @@ async function main(): Promise<void> {
           assert(
             fixture.trace.some(
               line =>
-                line.startsWith(
-                  'PUT /api/v1/teams/home/players/200/settings'
-                ) && line.includes('-> 200')
+                line.startsWith(`PUT ${homeSettings}`) &&
+                line.includes('-> 200')
             )
           )
           await tap('Back')
           await shown('Mookie Betts, jersey 0')
           await tap('Away Team')
           await reach('Mookie Betts')
-        }
-        await tap('Mookie Betts')
-        await shown('JERSEY NUMBER')
-        await input('Jersey number', '14')
-        fixture.pauseSettings(true)
-        await reach('Save')
-        await tap('Save')
-        const pending = Date.now() + 15000
-        while (
-          !fixture.trace.some(line =>
-            line.startsWith('Pending settings PUT')
-          ) &&
-          Date.now() < pending
-        )
-          await pause()
-        assert(
-          fixture.trace.some(line => line.startsWith('Pending settings PUT'))
-        )
-        await tap('Back')
-        await shown('Tap player to edit.')
-        fixture.pauseSettings(false)
-        await shown('Mookie Betts, jersey 14')
-        await reach('Mookie Betts')
-        // Failed edits stay on the light form; Back keeps the dark draft.
-        await tap('Mookie Betts')
-        await shown('JERSEY NUMBER')
-        await input('Jersey number', '13')
-        fixture.saveFailure(true)
-        await reach('Save')
-        await tap('Save')
-        await shown('Fixture request temporarily unavailable')
-        await capture('settings-save-error')
-        fixture.saveFailure(false)
-        fixture.rosterFailure(true)
-        await tap('Back')
-        await shown('Unable to refresh the roster.')
-        await capture('roster-refresh-error')
-        fixture.rosterFailure(false)
-        await tap('Retry loading roster')
-        await shown('Mookie Betts, jersey 14')
-        if (section === 'all') {
-          await waitForState(
-            async () =>
-              !flat(await m.hierarchy()).some(
-                node =>
-                  node.text === 'Loading team roster' ||
-                  node.id === 'Loading team roster'
-              ),
-            'Roster refresh must finish before saving the draft'
-          )
-          await tap('Lineup')
-          assert(
-            !flat(await m.hierarchy()).some(
-              node => node.text === 'Remove Aaron Judge'
-            ),
-            'Staged lineup must survive every player visit'
-          )
-          await tap('Save Rosters')
-          await waitForState(async () => {
-            const nodes = flat(await m.hierarchy())
-            return (
-              !nodes.some(
-                node =>
-                  node.text === 'Save Rosters' || node.id === 'Save Rosters'
-              ) && nodes.some(node => node.text?.startsWith('Undo ') === true)
+          if (section === 'afterReturn') {
+            await shown('Mookie Betts, jersey 12')
+            console.log(
+              'PASS same-name player on the other team, saved jersey 0 and retained away jersey 12'
             )
-          }, 'The roster sheet must close before Undo')
-          await tapStarts('Undo ')
-          await tapStarts('Undo ')
-          await shown('Nothing to undo')
-          const cleared = Date.now() + 15000
-          while (hasPitch() && Date.now() < cleared) await pause()
-          assert(
-            !hasPitch(),
-            'Undo must clear the pitch after undoing the roster change'
+            return
+          }
+        }
+        if (!afterReturn || section === 'pendingSave') {
+          await tap('Mookie Betts')
+          await shown('JERSEY NUMBER')
+          await input('Jersey number', '14')
+          fixture.pauseSettings(true)
+          await reach('Save')
+          await tap('Save')
+          const pending = Date.now() + 15000
+          while (
+            !fixture.trace.some(line =>
+              line.startsWith('Pending settings PUT')
+            ) &&
+            Date.now() < pending
           )
-          await tap('Open scoring menu')
-          await tap('Set Team Rosters')
-          await tap('Roster')
+            await pause()
+          assert(
+            fixture.trace.some(line => line.startsWith('Pending settings PUT'))
+          )
+          await tap('Back')
+          await shown('Tap player to edit.')
+          fixture.pauseSettings(false)
+          await shown('Mookie Betts, jersey 14')
+          await reach('Mookie Betts')
+          if (section === 'pendingSave') {
+            console.log(
+              'PASS pending Settings save, Back and committed jersey 14'
+            )
+            return
+          }
+        }
+        if (!afterReturn || section === 'failedSave') {
+          // Failed edits stay on the light form; Back keeps the dark draft.
+          await tap('Mookie Betts')
+          await shown('JERSEY NUMBER')
+          await input('Jersey number', '13')
+          fixture.saveFailure(true)
+          await reach('Save')
+          await tap('Save')
+          await shown('Fixture request temporarily unavailable')
+          await capture('settings-save-error')
+          fixture.saveFailure(false)
+          fixture.rosterFailure(true)
+          await tap('Back')
+          await shown('Unable to refresh the roster.')
+          await capture('roster-refresh-error')
+          fixture.rosterFailure(false)
+          await tap('Retry loading roster')
+          // A standalone refused save retains the original fixture jersey.
+          // The uninterrupted run retains the 14 written in the previous case.
+          await shown(
+            `Mookie Betts, jersey ${section === 'failedSave' ? '1,' : '14,'}`
+          )
+          if (fullRoster) {
+            await waitForState(
+              async () =>
+                !flat(await m.hierarchy()).some(
+                  node =>
+                    node.text === 'Loading team roster' ||
+                    node.id === 'Loading team roster'
+                ),
+              'Roster refresh must finish before saving the draft'
+            )
+            await tap('Defense')
+            await shown('Assign RF')
+            await tap('Save Rosters')
+            await waitForState(async () => {
+              const nodes = flat(await m.hierarchy())
+              return (
+                !nodes.some(
+                  node =>
+                    node.text === 'Save Rosters' || node.id === 'Save Rosters'
+                ) && nodes.some(node => node.text?.startsWith('Undo ') === true)
+              )
+            }, 'The roster sheet must close before Undo')
+            await tapStarts('Undo ')
+            await tapStarts('Undo ')
+            await shown('Nothing to undo')
+            const cleared = Date.now() + 15000
+            while (hasPitch() && Date.now() < cleared) await pause()
+            assert(
+              !hasPitch(),
+              'Undo must clear the pitch after undoing the roster change'
+            )
+            await tap('Open scoring menu')
+            await tap('Set Team Rosters')
+            await tap('Roster')
+          }
+          if (section === 'failedSave') {
+            console.log(
+              'PASS refused save, failed refresh, retry, retained roster draft and both Undos'
+            )
+            return
+          }
         }
         await reach('Mookie Betts')
         await fixture.roles([])
         await tap('Mookie Betts')
         await shown('Videos')
+        // The fixture now denies the player detail as well. On iOS the
+        // navigation transition must finish before its Back arrow can pop.
+        if (native) await shown('Profile not available')
         await waitForState(
           async () =>
             !flat(await m.hierarchy()).some(
               node =>
-                node.text === 'Settings' ||
-                node.id === 'Settings' ||
+                node.text === 'Player settings' ||
+                node.id === 'Player settings' ||
                 node.text?.includes('JERSEY NUMBER') === true ||
                 node.id === 'JERSEY NUMBER' ||
                 node.text?.includes('Mookie Betts') === true
@@ -865,28 +1057,24 @@ async function main(): Promise<void> {
         await shown('No players on this team.')
         await capture('roster-empty')
         fixture.emptyRoster(false)
+        if (section === 'permissions') {
+          console.log('PASS revoked Settings, restored access and empty roster')
+          return
+        }
       }
     }
-    if (phase === 'after' && section === 'all') {
+    if (phase === 'after' && fullRoster) {
       await tap('Cancel')
-      await open('teams/away?tab=roster')
-      await shown('Mookie Betts')
-      await reach('Mookie Betts')
-      await tapStarts('Mookie Betts')
-      await shown('Settings')
-      await tap('Settings')
-      await shown('JERSEY NUMBER')
-      await shown('Mookie Betts')
-      await tap('Back')
+      await teamPlayerSettings()
     } else await tap('Cancel')
-    await open('players/100?tab=settings&onTeam=away')
+    await open(`players/${userIdOfGumbo(100)}?tab=settings&onTeam=away`)
     await shown(phase === 'before' ? 'Videos' : 'JERSEY NUMBER')
     if (phase === 'after') await shown('Mookie Betts')
     if (phase === 'before' || section === 'm1')
       await capture(`player-settings-${phase}`)
     if (
       phase === 'after' &&
-      section === 'all' &&
+      fullRoster &&
       process.env.SCORING_ROSTER_REGRESSIONS === '1'
     )
       await regressions()

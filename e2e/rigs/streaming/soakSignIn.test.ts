@@ -300,13 +300,21 @@ describe('the account page', function () {
         children: [
           { text: 'Account, X' },
           { text: 'Account', bounds: { x: 0, y: 10, width: 2, height: 2 } },
+          { bounds: { x: 0, y: -1000, width: 400, height: 2300 } },
+          { id: 'Schedule', bounds: { x: 170, y: 740, width: 60, height: 50 } },
           {
             text: 'Sign out',
-            bounds: { x: 0, y: swipes >= 3 ? 700 : 1600, width: 2, height: 2 }
+            bounds: {
+              x: 180,
+              y: swipes >= 3 ? 700 : 760,
+              width: 40,
+              height: 20
+            }
           }
         ]
       }),
-      swipe: () => {
+      swipe: (arg: unknown) => {
+        expect(arg).includes({ startX: 200, startY: 640, endY: 200 })
         swipes++
       }
     })
