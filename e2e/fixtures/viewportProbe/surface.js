@@ -19,12 +19,14 @@
   probe.style.cssText =
     'position:fixed;top:0;left:0;height:100svh;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);box-sizing:border-box'
   document.body.append(probe)
-  const box = id => {
-    const rect = document
-      .querySelector('[data-testid="' + id + '"]')
-      ?.getBoundingClientRect()
-    return rect && { top: rect.top, bottom: rect.bottom, height: rect.height }
+  const rectOf = selector => {
+    const rect = document.querySelector(selector)?.getBoundingClientRect()
+    if (!rect) return undefined
+    const { top, bottom, left, right, width, height } = rect
+    return { top, bottom, left, right, width, height }
   }
+  const box = id => rectOf('[data-testid="' + id + '"]')
+  const matrix = query.has('geometry')
   const timer = setInterval(() => {
     if (document.hidden) return
     const root = box('scoring-viewport')
@@ -56,6 +58,38 @@
       exposed = el && window.getComputedStyle(el).backgroundColor
     }
     const data = {
+      ...(matrix && {
+        holder: box('scoring-field-holder'),
+        face: rectOf('[data-position="C"]'),
+        side: box('scoring-side'),
+        boxScore: box('replay-box-score'),
+        menu: rectOf('[aria-label="Open scoring menu"]'),
+        logText: document.querySelector(
+          '[data-testid="remote-scoring-update-lines"]'
+        )?.textContent,
+        undo: document
+          .querySelector('[aria-label^="Undo "]')
+          ?.getAttribute('aria-label'),
+        collapsed: !!document.querySelector(
+          '[aria-label="Expand scoring updates"]'
+        ),
+        landmarks: window.scoringLandmarks?.(
+          Number(query.get('radius')),
+          Number(query.get('angle'))
+        ),
+        buttons: Object.fromEntries(
+          [
+            'Ball',
+            'Called Strike',
+            'Collapse scoring updates',
+            'Expand scoring updates',
+            'Dismiss scoring updates',
+            'Open scoring menu',
+            'Set Team Rosters',
+            'Cancel'
+          ].map(label => [label, rectOf('[aria-label="' + label + '"]')])
+        )
+      }),
       documentId,
       width: window.innerWidth,
       small: probe.getBoundingClientRect().height,

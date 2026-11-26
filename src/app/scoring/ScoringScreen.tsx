@@ -3365,6 +3365,7 @@ function ScoringPanel(props: {
   )
   const field = (
     <BaseballScreen
+      boxState={session}
       frame={frame}
       onRootSize={setRootSize}
       remoteUpdates={
