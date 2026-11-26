@@ -5,8 +5,8 @@ import type {
   Notification,
   PlayerAddTerms
 } from '../../common/notifications'
-import { guardiansOfEach, roleScopesForUsers } from '../access'
-import { onePeople } from '../admin/people'
+import { guardiansOfEach, hierarchyReady, roleScopesForUsers } from '../access'
+import { onePeople, type OnePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type {
   Database,
@@ -27,6 +27,7 @@ import {
   type StoredRequest
 } from '../groups/requests'
 import { canAdminister, canScheduleFor } from '../groups/rights'
+import { openAddsOf } from '../openAdds'
 
 export type RequestState = Omit<Notification, 'title' | 'description'> & {
   news: boolean
@@ -53,8 +54,15 @@ export class InboxProjection {
   }
 
   private readonly decisions = new Map<string, Promise<boolean>>()
+  private readonly inaccessible = new Set<string>()
   private readonly teams = new Set<string>()
   private readonly guardedPlayers = new Map<string, boolean>()
+  private readonly people = new Map<string, OnePerson>()
+  private readonly playerGuardians = new Map<string, string[]>()
+  private readonly playerSignIn = new Map<string, boolean>()
+  private readonly playerTeams = new Map<string, string[]>()
+  private standInTeams: Set<string> | undefined
+  private readonly heldPlayers = new Map<string, Set<string>>()
   constructor(
     readonly db: Kysely<Database>,
     readonly actor: Actor,
@@ -132,6 +140,112 @@ export class InboxProjection {
           guarded.has(id) || guarded.has(people.get(id)!.userId)
         )
     }
+    const adds = requests.filter(request => request.kind === 'playerAdd')
+    if (adds.length > 0) {
+      const ids = [
+        ...new Set([
+          this.actor.userId,
+          ...adds.flatMap(request => [
+            request.sender_id,
+            (request.terms as PlayerAddTerms).userId
+          ])
+        ])
+      ].filter(id => !this.people.has(id))
+      if (ids.length > 0)
+        for (const [id, person] of await onePeople(this.db, ids))
+          for (const alias of new Set([id, ...person.userIds]))
+            this.people.set(alias, person)
+      const players = [
+        ...new Set(
+          adds.map(
+            request =>
+              this.people.get((request.terms as PlayerAddTerms).userId)!.userId
+          )
+        )
+      ].filter(id => !this.playerGuardians.has(id))
+      if (players.length > 0) {
+        const guardians = await guardiansOfEach(this.db, players, {
+          signsIn: true
+        })
+        for (const id of players) this.playerGuardians.set(id, [])
+        for (const [guardian, guarded] of guardians)
+          for (const id of guarded) this.playerGuardians.get(id)!.push(guardian)
+        const unguarded = players.filter(
+          id => this.playerGuardians.get(id)!.length === 0
+        )
+        if (unguarded.length > 0) {
+          const accounts = await this.db
+            .selectFrom('users')
+            .select(['id', 'login_enabled'])
+            .where('id', 'in', unguarded)
+            .execute()
+          for (const id of unguarded) this.playerSignIn.set(id, false)
+          for (const account of accounts)
+            this.playerSignIn.set(account.id, account.login_enabled)
+          const standIns = unguarded.filter(
+            id => this.playerSignIn.get(id) !== true
+          )
+          if (standIns.length > 0) {
+            if (this.standInTeams == null) {
+              const scopes = (
+                await roleScopesForUsers(this.db, [this.actor.userId])
+              ).get(this.actor.userId)!
+              const direct = await this.db
+                .selectFrom('scope_roles')
+                .select('scope_id')
+                .where('user_id', '=', this.actor.userId)
+                .where('scope_type', '=', 'team')
+                .where('role', 'in', ['admin', 'coach', 'assistant'])
+                .execute()
+              const owned = await this.db
+                .selectFrom('memberships')
+                .select('team_id')
+                .where('user_id', '=', this.actor.userId)
+                .where('role', 'in', ['owner', 'manager'])
+                .execute()
+              // A stand-in coach must hold a direct team role. Inherited
+              // administrators count only after the ownership cutover, just
+              // as effectiveAdminIds requires.
+              this.standInTeams = new Set([
+                ...direct.map(row => row.scope_id),
+                ...owned.map(row => row.team_id),
+                ...((await hierarchyReady(this.db)) ? scopes.admin.teamIds : [])
+              ])
+            }
+            const aliasToPlayer = new Map(
+              standIns.flatMap(id =>
+                this.people.get(id)!.userIds.map(alias => [alias, id] as const)
+              )
+            )
+            const memberships = await this.db
+              .selectFrom('memberships')
+              .select(['user_id', 'team_id'])
+              .where('user_id', 'in', [...aliasToPlayer.keys()])
+              .where('is_player', '=', true)
+              .execute()
+            const teams = [
+              ...new Set(memberships.map(row => row.team_id))
+            ].filter(
+              id => this.standInTeams!.has(id) && !this.heldPlayers.has(id)
+            )
+            if (teams.length > 0)
+              for (const [team, held] of await openAddsOf(this.db, teams))
+                this.heldPlayers.set(team, held)
+            for (const id of standIns) this.playerTeams.set(id, [])
+            for (const membership of memberships)
+              if (
+                this.standInTeams.has(membership.team_id) &&
+                !this.heldPlayers
+                  .get(membership.team_id)!
+                  .has(membership.user_id)
+              )
+                this.playerTeams
+                  .get(aliasToPlayer.get(membership.user_id)!)!
+                  .push(membership.team_id)
+          }
+        }
+      }
+    }
     const pendingIds = new Set(
       requests
         .filter(r => requestStatus(r, this.clock) === 'pending')
@@ -166,7 +280,14 @@ export class InboxProjection {
   async requests(
     requests: StoredRequest[]
   ): Promise<Map<string, RequestState | null>> {
-    if (requests.length === 0) return new Map()
+    const answer = new Map<string, RequestState | null>()
+    // Sent and independent Pending existence can encounter the same rejected
+    // candidate. Retain only its negative permission result for this read,
+    // avoiding a second fetch of its sides, event and receipt.
+    for (const request of requests)
+      if (this.inaccessible.has(request.id)) answer.set(request.id, null)
+    requests = requests.filter(request => !this.inaccessible.has(request.id))
+    if (requests.length === 0) return answer
     const ids = requests.map(r => r.id)
     const sides = await this.db
       .selectFrom('group_request_sides')
@@ -201,7 +322,6 @@ export class InboxProjection {
       ])
     const bySource = new Map(events.map(e => [e.source_id, e]))
     const byEvent = new Map(receipts.map(r => [r.event_id, r]))
-    const answer = new Map<string, RequestState | null>()
     for (const request of requests) {
       const event = bySource.get(request.id)
       const state = await this.request(
@@ -211,6 +331,7 @@ export class InboxProjection {
         event == null ? undefined : byEvent.get(event.id)
       )
       if (state != null && (state.canAct || state.news)) this.waiting = true
+      if (state == null) this.inaccessible.add(request.id)
       answer.set(request.id, state)
     }
     return answer
@@ -297,7 +418,33 @@ export class InboxProjection {
     if (request.kind === 'playerAdd') {
       eligible = await this.once(
         ['playerAdd', request.sender_id, request.terms],
-        async () => await mayAnswerPlayerAdd(db, fresh, request)
+        async () => {
+          const player = this.people.get(
+            (request.terms as PlayerAddTerms).userId
+          )!
+          const guardians = this.playerGuardians.get(player.userId)!
+          const reader = this.people.get(fresh.userId)!.userIds
+          const sender = this.people.get(request.sender_id)!.userIds
+          const canAnswer = (ids: string[]): boolean =>
+            ids.some(id => reader.includes(id) && !sender.includes(id))
+          // Same live, merge-aware precedence as playerAddApprovers: acting
+          // guardians, then the player if they can sign in, then stand-ins.
+          if (guardians.length > 0) return canAnswer(guardians)
+          if (this.playerSignIn.get(player.userId) === true)
+            return canAnswer([player.userId])
+          if (reader.every(id => sender.includes(id))) return false
+          // Prepared teams include every direct/durable administrator and
+          // direct coach/assistant the stand-in rule can use. This is only an
+          // exclusion: possible stand-ins still use the authoritative rule,
+          // including open-add holds and durable inheritance restrictions.
+          if (
+            !this.playerTeams
+              .get(player.userId)!
+              .some(team => team !== (request.terms as PlayerAddTerms).teamId)
+          )
+            return false
+          return await mayAnswerPlayerAdd(db, fresh, request)
+        }
       )
       actionable = eligible
     }

@@ -13,6 +13,7 @@ import * as policy from '../groups/noticePolicy'
 import type { StoredRequest } from '../groups/requests'
 import * as requests from '../groups/requests'
 import * as rights from '../groups/rights'
+import * as openAdds from '../openAdds'
 import {
   InboxProjection,
   informationFacts,
@@ -72,11 +73,16 @@ describe('notification state classification without wording', () => {
       guarded?: boolean
       mergedPlayer?: boolean
       siteAdmin?: boolean
+      guardianId?: string
+      identities?: Record<string, { userId: string; userIds: string[] }>
+      playerSignsIn?: boolean
+      standInTeam?: boolean
     } = {}
   ): Promise<{
     state: RequestState | null | undefined
     eligible: number
     sender: number
+    playerChecks: number
   }> {
     const eligible = mock.method(
       requests,
@@ -95,12 +101,32 @@ describe('notification state classification without wording', () => {
         options.eligible ?? ref.id === 'receiving'
     )
     mock.method(rights, 'canScheduleFor', async () => true)
+    mock.method(access, 'hierarchyReady', async () => true)
+    mock.method(
+      openAdds,
+      'openAddsOf',
+      async () => new Map([['other-team', new Set()]])
+    )
     const sender = mock.method(
       requests,
       'speaksForSender',
       async () => options.sender ?? false
     )
-    mock.method(access, 'roleScopesForUsers', async () => new Map())
+    mock.method(
+      access,
+      'roleScopesForUsers',
+      async () =>
+        new Map([
+          [
+            actor.userId,
+            {
+              admin: { teamIds: new Set(['other-team']) },
+              coach: { teamIds: new Set() },
+              assistant: { teamIds: new Set() }
+            }
+          ]
+        ])
+    )
     mock.method(
       people,
       'onePeople',
@@ -108,7 +134,7 @@ describe('notification state classification without wording', () => {
         new Map(
           ids.map(id => [
             id,
-            {
+            options.identities?.[id] ?? {
               userId: options.mergedPlayer === true ? 'survivor' : id,
               userIds: [id]
             }
@@ -122,13 +148,13 @@ describe('notification state classification without wording', () => {
         options.guarded === true
           ? new Map([
               [
-                'guardian',
+                options.guardianId ?? 'guardian',
                 options.mergedPlayer === true ? ['survivor'] : [...ids]
               ]
             ])
           : new Map()
     )
-    mock.method(
+    const playerChecks = mock.method(
       policy,
       'mayAnswerPlayerAdd',
       async () => options.player ?? true
@@ -162,14 +188,20 @@ describe('notification state classification without wording', () => {
                 }
               ]
             : []
+        if (q.sql.includes('from "scope_roles"'))
+          return [{ scope_id: 'other-team' }]
+        if (q.sql.includes('from "memberships"'))
+          return options.standInTeam === false
+            ? []
+            : [{ user_id: 'player', team_id: 'other-team' }]
         if (q.sql.includes('from "users"'))
           return [
             {
-              id: 'approver',
+              id: row.kind === 'playerAdd' ? 'player' : 'approver',
               is_admin: false,
               disabled_at: null,
               merged_into: null,
-              login_enabled: true
+              login_enabled: options.playerSignsIn ?? false
             }
           ]
         if (q.sql.includes('from "teams"'))
@@ -208,7 +240,8 @@ describe('notification state classification without wording', () => {
     return {
       state: result.get(row.id),
       eligible: eligible.mock.callCount(),
-      sender: sender.mock.callCount()
+      sender: sender.mock.callCount(),
+      playerChecks: playerChecks.mock.callCount()
     }
   }
   it('permits live sides and does not call the wording functions', async () => {
@@ -302,7 +335,11 @@ describe('notification state classification without wording', () => {
     ]) {
       mock.restoreAll()
       const result = await classify(
-        request({ kind: 'playerAdd', status: 'applied' }),
+        request({
+          kind: 'playerAdd',
+          terms: { userId: 'player' },
+          status: 'applied'
+        }),
         options
       )
       const reject = options.superseded !== true && options.rejoined !== true
@@ -316,7 +353,12 @@ describe('notification state classification without wording', () => {
     expect(
       (
         await classify(
-          request({ kind: 'playerAdd', status: 'applied', expires_at: now })
+          request({
+            kind: 'playerAdd',
+            terms: { userId: 'player' },
+            status: 'applied',
+            expires_at: now
+          })
         )
       ).state?.canReject
     ).equals(false)
@@ -324,6 +366,51 @@ describe('notification state classification without wording', () => {
     expect(
       (await classify(request({ expires_at: now }), { sender: true })).state
     ).include({ status: 'expired', canResend: true, canAct: false })
+  })
+  it('uses batched player-add identities for guardian precedence, self and sender exclusion', async () => {
+    const row = request({
+      kind: 'playerAdd',
+      terms: { userId: 'player', teamId: 'adding' }
+    })
+    for (const options of [
+      { guarded: true, guardianId: 'reader' },
+      { guarded: true, guardianId: 'someone-else' },
+      {
+        guarded: true,
+        guardianId: 'reader',
+        identities: {
+          sender: { userId: 'reader', userIds: ['sender', 'reader'] }
+        }
+      },
+      { playerSignsIn: true },
+      {
+        identities: {
+          sender: { userId: 'reader', userIds: ['sender', 'reader'] }
+        }
+      },
+      { standInTeam: false }
+    ]) {
+      mock.restoreAll()
+      const answer = await classify(row, options)
+      expect(answer.state?.canAct ?? false).equals(
+        options.guardianId === 'reader' && options.identities == null
+      )
+      expect(answer.playerChecks).equals(0)
+    }
+    mock.restoreAll()
+    const self = await classify(
+      request({ ...row, terms: { userId: 'old-player', teamId: 'adding' } }),
+      {
+        playerSignsIn: true,
+        identities: {
+          'old-player': {
+            userId: 'player',
+            userIds: ['player', 'old-player', 'reader']
+          }
+        }
+      }
+    )
+    expect(self.state?.canAct).equals(true)
   })
   it('batch-denies guarded player team sides without granting or denying other guardian sides', async () => {
     const row = request({

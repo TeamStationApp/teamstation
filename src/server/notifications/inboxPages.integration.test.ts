@@ -11,6 +11,7 @@ import {
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
+import { mayAnswerPlayerAdd } from '../groups/noticePolicy'
 import { hasPendingNotifications, inbox, notificationDetail } from './inbox'
 import { InboxProjection } from './inboxProjection'
 import * as wording from './requestInformation'
@@ -405,6 +406,353 @@ describe('bounded notification tab pages', function () {
     )
     expect(legacy.items).deep.equals([])
   })
+  it('matches live player-add authority across player, guardian and sender merges and held teams', async () => {
+    const template = await f.h.db
+      .selectFrom('users')
+      .selectAll()
+      .where('id', '=', userIdOfGumbo(103))
+      .executeTakeFirstOrThrow()
+    const player = userIdOfGumbo(300001)
+    const guardian = userIdOfGumbo(300002)
+    const sender = userIdOfGumbo(300003)
+    await f.h.db
+      .insertInto('users')
+      .values(
+        [
+          [player, userIdOfGumbo(103)],
+          [guardian, userIdOfGumbo(101)],
+          [sender, userIdOfGumbo(102)]
+        ].map(([id, mergedInto]) => ({
+          ...template,
+          id,
+          merged_into: mergedInto,
+          legacyId: null,
+          username: null
+        }))
+      )
+      .execute()
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: randomUUID(),
+        user_id: guardian,
+        related_user_id: player,
+        kind: 'guardian',
+        created_at: f.clock.now()
+      })
+      .execute()
+    const request = await f.h.db
+      .insertInto('group_requests')
+      .values({
+        id: randomUUID(),
+        kind: 'playerAdd',
+        sender_id: sender,
+        sender_scope_type: 'team',
+        sender_scope_id: f.teamB,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          userId: player,
+          teamId: f.teamB,
+          mode: 'roster'
+        }),
+        status: 'pending',
+        sent_at: f.clock.now(),
+        expires_at: new Date(f.clock.now().getTime() + 86400000)
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    const check = async (expected: boolean, reader = 101): Promise<void> => {
+      expect(await mayAnswerPlayerAdd(f.h.db, actor(reader), request)).equals(
+        expected
+      )
+      const states = await new InboxProjection(
+        f.h.db,
+        actor(reader),
+        f.clock
+      ).requests([request])
+      expect(states.get(request.id)?.canAct ?? false).equals(expected)
+    }
+    await check(true)
+    await f.h.db
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(101) })
+      .where('id', '=', sender)
+      .execute()
+    await check(false)
+    await f.h.db
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(102) })
+      .where('id', '=', sender)
+      .execute()
+    await f.h.db
+      .deleteFrom('user_links')
+      .where('user_id', '=', guardian)
+      .execute()
+    await check(false)
+    await f.h.db
+      .updateTable('users')
+      .set({ login_enabled: false })
+      .where('id', '=', userIdOfGumbo(103))
+      .execute()
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: randomUUID(),
+        user_id: player,
+        team_id: f.teamA,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await check(true)
+    const hold = await f.h.db
+      .insertInto('group_requests')
+      .values({
+        id: randomUUID(),
+        kind: 'playerAdd',
+        sender_id: userIdOfGumbo(101),
+        sender_scope_type: 'team',
+        sender_scope_id: f.teamA,
+        initiating_team_id: f.teamA,
+        terms: JSON.stringify({
+          kind: 'playerAdd',
+          userId: player,
+          teamId: f.teamA,
+          mode: 'roster'
+        }),
+        status: 'applied',
+        sent_at: f.clock.now(),
+        expires_at: new Date(f.clock.now().getTime() + 86400000)
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
+    await check(false)
+    await f.h.db
+      .updateTable('group_requests')
+      .set({ status: 'accepted' })
+      .where('id', '=', hold.id)
+      .execute()
+    await check(true)
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: randomUUID(),
+        user_id: userIdOfGumbo(106),
+        scope_type: 'season',
+        scope_id: f.seasonA,
+        role: 'admin',
+        granted_by: userIdOfGumbo(101)
+      })
+      .execute()
+    await check(true, 106)
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: false })
+      .where('key', '=', 'creation.hierarchyReady')
+      .execute()
+    await check(false, 106)
+    await check(true)
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: true })
+      .where('key', '=', 'creation.hierarchyReady')
+      .execute()
+    await check(true, 106)
+  })
+  for (const variant of [
+    'guardian',
+    'self',
+    'standIn',
+    'held',
+    'inheritedCoach'
+  ] as const)
+    for (const count of [1000, 10000])
+      it(`batches ${count} distinct inaccessible player adds (${variant})`, async () => {
+        const reader = ['held', 'inheritedCoach'].includes(variant) ? 106 : 101
+        if (variant === 'held' || variant === 'inheritedCoach')
+          await f.h.db
+            .insertInto('scope_roles')
+            .values({
+              id: randomUUID(),
+              user_id: userIdOfGumbo(reader),
+              scope_type: variant === 'held' ? 'team' : 'season',
+              scope_id: variant === 'held' ? f.teamA : f.seasonA,
+              role: 'coach',
+              granted_by: userIdOfGumbo(101)
+            })
+            .execute()
+        const template = await f.h.db
+          .selectFrom('users')
+          .selectAll()
+          .where('id', '=', userIdOfGumbo(103))
+          .executeTakeFirstOrThrow()
+        const ids: string[] = []
+        for (let at = 0; at < count; at += 100) {
+          const players = Array.from({ length: 100 }, (_, i) =>
+            userIdOfGumbo(200000 + at + i)
+          )
+          await f.h.db
+            .insertInto('users')
+            .values(
+              players.map(id => ({
+                ...template,
+                id,
+                legacyId: null,
+                username: null,
+                login_enabled: variant === 'self'
+              }))
+            )
+            .execute()
+          // The reader's team used to stand in. A signing-in guardian now has
+          // the say, while the original recipients still select every request.
+          await f.h.db
+            .insertInto('memberships')
+            .values(
+              players.map(id => ({
+                id: randomUUID(),
+                user_id: id,
+                team_id: variant === 'standIn' ? f.standaloneTeam : f.teamA,
+                role: 'member' as const,
+                is_player: true
+              }))
+            )
+            .execute()
+          if (variant === 'guardian')
+            await f.h.db
+              .insertInto('user_links')
+              .values(
+                players.map(id => ({
+                  id: randomUUID(),
+                  user_id: userIdOfGumbo(104),
+                  related_user_id: id,
+                  kind: 'guardian' as const,
+                  created_at: f.clock.now()
+                }))
+              )
+              .execute()
+          const rows = players.map((id, i) => ({
+            id: randomUUID(),
+            kind: 'playerAdd' as const,
+            sender_id: userIdOfGumbo(102),
+            sender_scope_type: 'team' as const,
+            sender_scope_id: f.teamB,
+            terms: JSON.stringify({
+              kind: 'playerAdd',
+              userId: id,
+              teamId: f.teamB,
+              mode: 'roster'
+            }),
+            status: 'pending' as const,
+            sent_at: new Date(f.clock.now().getTime() - 200000 - at - i),
+            expires_at: new Date(f.clock.now().getTime() + 86400000)
+          }))
+          await f.h.db.insertInto('group_requests').values(rows).execute()
+          if (variant === 'held')
+            await f.h.db
+              .insertInto('group_requests')
+              .values(
+                players.map(id => ({
+                  id: randomUUID(),
+                  kind: 'playerAdd' as const,
+                  sender_id: userIdOfGumbo(101),
+                  sender_scope_type: 'team' as const,
+                  sender_scope_id: f.teamA,
+                  initiating_team_id: f.teamA,
+                  terms: JSON.stringify({
+                    kind: 'playerAdd',
+                    userId: id,
+                    teamId: f.teamA,
+                    mode: 'roster'
+                  }),
+                  status: 'applied' as const,
+                  sent_at: new Date(f.clock.now().getTime() - 300000),
+                  expires_at: new Date(f.clock.now().getTime() + 86400000)
+                }))
+              )
+              .execute()
+
+          await f.h.db
+            .insertInto('notification_events')
+            .values(
+              rows.map(row => ({
+                id: randomUUID(),
+                source_type: 'groupRequest',
+                source_id: row.id,
+                revision: 1,
+                metadata: '{}',
+                recorded_recipients: [userIdOfGumbo(reader)],
+                created_at: row.sent_at
+              }))
+            )
+            .execute()
+          ids.push(...rows.map(row => row.id))
+        }
+        const read = measured()
+        for (const options of [{ sent: true }, { history: true }]) {
+          await read(options, reader, 'cold')
+          const result = await read(options, reader, 'warm')
+          expect(result.page).deep.equals({
+            items: [],
+            nextCursor: null,
+            hasPending: false
+          })
+          // At most 16 reads per 100-row window plus read setup, never per-player
+          // identity/guardian queries. History must independently scan Pending.
+          expect(result.queries).lessThan((16 * count) / 100 + 100)
+          expect(result.classified).equals(
+            variant === 'held'
+              ? 3 * count
+              : 'sent' in options
+                ? 2 * count
+                : count
+          )
+          withinLocalBudget(result.ms)
+        }
+        if (variant === 'held') return
+        // An accessible request at the very end must still be found by Pending
+        // existence on an empty History page, without trusting recorded access.
+        await f.h.db
+          .deleteFrom('user_links')
+          .where('related_user_id', '=', userIdOfGumbo(200000 + count - 1))
+          .execute()
+        await f.h.db
+          .insertInto('user_links')
+          .values({
+            id: randomUUID(),
+            user_id: userIdOfGumbo(reader),
+            related_user_id: userIdOfGumbo(200000 + count - 1),
+            kind: 'guardian',
+            created_at: f.clock.now()
+          })
+          .execute()
+        const history = await inbox(
+          f.h.db,
+          actor(reader),
+          { history: true },
+          f.clock
+        )
+        expect(history).deep.equals({
+          items: [],
+          nextCursor: null,
+          hasPending: true
+        })
+        const pending = await inbox(f.h.db, actor(reader), undefined, f.clock)
+        expect(pending.items.map(row => row.requestId)).deep.equals([
+          ids[count - 1]
+        ])
+        expect(pending.items[0].canAct).equals(true)
+        if (variant !== 'guardian') return
+        // With the guardian removed the original stand-in rule applies again.
+        await f.h.db
+          .deleteFrom('user_links')
+          .where('related_user_id', '=', userIdOfGumbo(200000 + count - 1))
+          .execute()
+        const standIn = await inbox(f.h.db, actor(reader), undefined, f.clock)
+        expect(standIn.items.map(row => row.requestId)).deep.equals([
+          ids[count - 1]
+        ])
+        expect(standIn.items[0].canAct).equals(true)
+      })
   for (const count of [1000, 10000])
     it(`batches History eligibility for ${count} distinct guarded players and sees guardian revocation`, async () => {
       const template = await f.h.db
