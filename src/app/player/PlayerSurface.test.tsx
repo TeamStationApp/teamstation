@@ -995,7 +995,8 @@ describe('the game page’s player', function () {
 
   async function page(
     videos: Array<ReturnType<typeof asVideoSummary>>,
-    angles?: string[]
+    angles?: string[],
+    signedIn = true
   ): Promise<ReturnType<typeof overlayServer>> {
     const server = overlayServer()
     for (const one of videos)
@@ -1017,7 +1018,7 @@ describe('the game page’s player', function () {
     // the page is opened on Videos the way `?video=` or `?angles=` opens it.
     await render(
       <GameScreen
-        signedIn
+        signedIn={signedIn}
         client={client}
         gameId={gameFixture.id}
         initialTab="watch"
@@ -1051,6 +1052,16 @@ describe('the game page’s player', function () {
         one => one.path.includes('timeline') || one.path.endsWith('/box-score')
       )
     ).deep.equals([])
+  })
+
+  it('asks for the game’s sponsorship signed in, and never signed out (U30)', async function () {
+    const sponsorsAsked = (server: ReturnType<typeof overlayServer>): number =>
+      server.asked.filter(
+        one => one.path === `/games/${gameFixture.id}/sponsors`
+      ).length
+    expect(sponsorsAsked(await page([video('v1')]))).equals(1)
+    await unmount()
+    expect(sponsorsAsked(await page([video('v1')], undefined, false))).equals(0)
   })
 
   it('hands the grid its game', async function () {

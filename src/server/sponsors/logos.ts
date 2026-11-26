@@ -301,20 +301,19 @@ export async function settleGameLogos(
 }
 
 /**
- * What a game's players draw. In this version the sponsorship is the home
- * team's league's, or the away team's when home is in no league: the logo
- * that league gave the game, if any, and its track of reels in start order.
- * A league that gave the game neither answers none.
+ * What a game's players draw for one of its sponsoring leagues, the one the
+ * viewer's side gives (`sponsorLeagueFor`): the logo that league gave the
+ * game, if any, and its track of reels in start order. No league, or one
+ * that gave the game neither, answers none.
  */
 export async function gameSponsorsFor(
   db: Kysely<Database>,
   space: SpaceSettings,
   gameId: string,
+  leagueId: string | null,
   overlay: SponsorOverlay = DEFAULT_SAMPLE_SETTINGS.overlay
 ): Promise<GameSponsors> {
   const none: GameSponsors = { leagueId: null, logo: null, reels: [], overlay }
-  const leagues = await gameLeagues(db, gameId)
-  const leagueId = leagues?.home ?? leagues?.away ?? null
   if (leagueId == null) return none
   const logo = await db
     .selectFrom('game_sponsor_logos')

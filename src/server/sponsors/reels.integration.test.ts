@@ -548,9 +548,7 @@ describe('U20 sponsor reel placements', function () {
       expect(await placeDueReels(f.h.db, new Date(T + 8 * SEC))).not.include(
         gameId
       )
-      expect(await placeDueReels(f.h.db, new Date(T + 9 * SEC))).include(
-        gameId
-      )
+      expect(await placeDueReels(f.h.db, new Date(T + 9 * SEC))).include(gameId)
       expect(await placements(gameId)).deep.equals([
         {
           league_id: id,
@@ -926,7 +924,7 @@ describe('U20 sponsor reel placements', function () {
           .where('game_id', '=', gameId)
           .executeTakeFirstOrThrow()
       ).id
-      expect(await gameSponsorsFor(f.h.db, f.h.space, gameId)).deep.equals({
+      expect(await gameSponsorsFor(f.h.db, f.h.space, gameId, id)).deep.equals({
         leagueId: id,
         logo: null,
         reels: [
@@ -952,7 +950,7 @@ describe('U20 sponsor reel placements', function () {
         .where('id', '=', placementId)
         .execute()
       expect(
-        (await gameSponsorsFor(f.h.db, f.h.space, gameId)).reels[0].reelId
+        (await gameSponsorsFor(f.h.db, f.h.space, gameId, id)).reels[0].reelId
       ).equals('')
     })
 
@@ -975,7 +973,7 @@ describe('U20 sponsor reel placements', function () {
             { slot: 'half', inning, half: 'top' },
             new Date(START + inning * MIN)
           )
-      const read = await gameSponsorsFor(f.h.db, f.h.space, gameId)
+      const read = await gameSponsorsFor(f.h.db, f.h.space, gameId, american)
       expect(read.leagueId).equals(american)
       expect(read.reels.map(each => each.startMs)).deep.equals([
         START + MIN,

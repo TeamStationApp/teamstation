@@ -357,3 +357,67 @@ describe('U18 useGameSponsors', function () {
     expect(socket.closedWith).equals(1000)
   })
 })
+
+/** U30: the read is the viewer's own, asked for signed in, and asked again. */
+describe('U30 useGameSponsors per viewer', function () {
+  it('reads nothing while its caller has no signed-in viewer, and reads once there is one', async function () {
+    const { server, client, out, options } = setup()
+    // A signed-out caller asks for no game.
+    await render(
+      <Probe
+        client={client}
+        gameId={null}
+        live={false}
+        options={options}
+        out={out}
+      />
+    )
+    await flush()
+    expect(server.asked).deep.equals([])
+    expect(out.current?.sponsors).equals(null)
+    await render(
+      <Probe
+        client={client}
+        gameId="g1"
+        live={false}
+        options={options}
+        out={out}
+      />
+    )
+    await flush()
+    expect(server.asked).deep.equals(['g1'])
+    expect(out.current?.sponsors).deep.equals(SPONSORED)
+  })
+
+  it('replaces the overlay with a changed answer for the same game on the next open', async function () {
+    const { server, client, out, options } = setup()
+    const open = async (): Promise<void> => {
+      await render(
+        <Probe
+          client={client}
+          gameId="g1"
+          live={false}
+          options={options}
+          out={out}
+        />
+      )
+      await flush()
+    }
+    await open()
+    expect(out.current?.sponsors?.leagueId).equals('lea_al')
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    // The viewer's membership moved to the other team: its league answers.
+    const moved: GameSponsors = {
+      ...SPONSORED,
+      leagueId: 'lea_nl',
+      logo: { url: 'https://cdn.example.test/nl.png', width: 480, height: 120 }
+    }
+    server.answers.set('g1', moved)
+    await open()
+    expect(server.asked).deep.equals(['g1', 'g1'])
+    expect(out.current?.sponsors).deep.equals(moved)
+  })
+})

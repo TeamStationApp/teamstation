@@ -28,6 +28,7 @@ import {
   setCreditAllocation,
   sponsorState
 } from '../sponsors/credits'
+import { sponsorGame, sponsorLeagueFor } from '../sponsors/eligibility'
 import { gameSponsorsFor } from '../sponsors/logos'
 import { storeSponsorMedia } from '../sponsors/media'
 import {
@@ -326,21 +327,22 @@ export function sponsorRoutes(
     withAsync(async (req, res) => {
       const actor = actorOf(req)
       const gameId = pathParam(req.params.gameId)
-      const game = await db
-        .selectFrom('games')
-        .select([
-          'home_team_id as homeTeamId',
-          'away_team_id as awayTeamId',
-          'season_id as seasonId'
-        ])
-        .where('id', '=', gameId)
-        .executeTakeFirst()
+      const game = await sponsorGame(db, gameId)
       if (
         game == null ||
         !canSeeGame(await visibleScopes(db, actor.userId, actor.isAdmin), game)
       )
         throw notFound()
-      res.json(await gameSponsorsFor(db, media.space, gameId))
+      // The viewer's own team's league, read again on every open, so a
+      // membership moved since changes what the next one sees.
+      res.json(
+        await gameSponsorsFor(
+          db,
+          media.space,
+          gameId,
+          await sponsorLeagueFor(db, game, actor.userId)
+        )
+      )
     })
   )
 

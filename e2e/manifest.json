@@ -5657,6 +5657,44 @@
       "file": "e2e/tests/playback/recordings/segmented-seek.e2e.ts"
     },
     {
+      "id": "playback/sponsors/eligibility#viewers",
+      "title": "Each viewer sees the sponsorship of their own team’s league, neutral viewers a stable hash’s, and signed-out visitors none",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/eligibility.ts",
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/player/sponsors/useGameSponsors.ts",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/eligibility",
+      "file": "e2e/tests/playback/sponsors/eligibility.e2e.ts"
+    },
+    {
       "id": "playback/sponsors/logo#before-accept",
       "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
       "kind": "e2e",

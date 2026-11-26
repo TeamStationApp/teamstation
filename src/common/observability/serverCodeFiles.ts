@@ -435,6 +435,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/socket/upgradePaths.js',
   'server/socket/userNotices.js',
   'server/sponsors/credits.js',
+  'server/sponsors/eligibility.js',
   'server/sponsors/imageHeader.js',
   'server/sponsors/logos.js',
   'server/sponsors/media.js',

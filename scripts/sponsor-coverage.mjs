@@ -84,7 +84,9 @@ const tsSuites = [
   'src/app/tv/tvLayout.test.ts',
   'src/app/tv/playbackState.test.ts',
   'src/app/player/nativeVideoHandle.test.ts',
-  'src/server/routes/gameWritten.test.ts'
+  'src/server/routes/gameWritten.test.ts',
+  // Which league's sponsorship each viewer sees (M5).
+  'src/server/sponsors/eligibility.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -154,6 +156,8 @@ const integrationSuites = [
   // Reels placed before games and after half-innings, and the hook the
   // scoring and lineup posts call (M4).
   { spec: 'src/server/sponsors/reels.integration.test.ts' },
+  // Each viewer's league: their team's, or the hash's for a neutral one (M5).
+  { spec: 'src/server/sponsors/eligibility.integration.test.ts' },
   {
     spec: 'src/server/routes/events.integration.test.ts',
     grep: 'U21 the half-inning'

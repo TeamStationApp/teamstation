@@ -509,7 +509,7 @@ describe('U15 game sponsor logos', function () {
         charged: false
       })
       expect(
-        (await gameSponsorsFor(f.h.db, f.h.space, second.gameId)).logo
+        (await gameSponsorsFor(f.h.db, f.h.space, second.gameId, id)).logo
       ).not.equals(null)
     })
 
@@ -705,15 +705,7 @@ describe('U15 game sponsor logos', function () {
       expect((await placements(gameId))[0]?.settled).equals(false)
     })
 
-    it('takes the away team’s league when home is in none, and answers none for a league that gave the game no logo', async function () {
-      const id = await league()
-      await logo(id, 1)
-      const away = await team(id)
-      const gameId = await game(await team(null), away)
-      await assignGameLogos(f.h.db, gameId, NOW)
-      const answer = (await (await read(gameId)).json()) as GameSponsors
-      expect(answer.leagueId).equals(id)
-      expect(answer.logo).not.equals(null)
+    it('answers none for a league that gave the game no logo, and for a game of teams in no league', async function () {
       const bare = await leagueGame(await league())
       expect(await (await read(bare.gameId)).json()).deep.include({
         leagueId: null,
