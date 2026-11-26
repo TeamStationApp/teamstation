@@ -5547,6 +5547,59 @@
       "file": "e2e/tests/platform/web/main-flows.e2e.ts"
     },
     {
+      "id": "platform/web/scoring-viewport#above-toolbar",
+      "title": "Scoring fits above the phone browser toolbar as it folds and opens",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/useFieldSurface.ts",
+        "src/app/web/index.html",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/web/scoring-viewport",
+      "file": "e2e/tests/platform/web/scoring-toolbar.e2e.ts"
+    },
+    {
       "id": "platform/web/scoring-viewport#toolbar-probe",
       "title": "What a phone browser’s bottom toolbar leaves the web scoring screen: paint, strip, taps and the deck",
       "kind": "e2e",
