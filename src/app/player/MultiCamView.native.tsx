@@ -5,6 +5,7 @@ import {
   LayoutAnimation,
   NativeModules,
   PanResponder,
+  Platform,
   StatusBar,
   Text,
   useWindowDimensions,
@@ -171,7 +172,9 @@ function MultiCamGrid(
       settings: board.settings,
       board: board.hasBoard ? natural : null,
       line: board.hasLine,
-      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
+      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null,
+      singleHiddenTopInset:
+        Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0
     })
   const layout = layoutFor(board.natural)
   // The controls go on the block of videos, kept inside the safe area: the
