@@ -5,13 +5,18 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import type { PlayerAddTerms } from '../../common/notifications'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
-import { mayAnswerPlayerAdd } from '../groups/noticePolicy'
+import {
+  mayAnswerPlayerAdd,
+  rejoinedSince,
+  supersededPlayerAdd
+} from '../groups/noticePolicy'
 import { hasPendingNotifications, inbox, notificationDetail } from './inbox'
 import { InboxProjection } from './inboxProjection'
 import * as wording from './requestInformation'
@@ -559,6 +564,346 @@ describe('bounded notification tab pages', function () {
       .execute()
     await check(true, 106)
   })
+  it('matches rejection policy across merged aliases, rejoining, pool games and exact deadlines', async () => {
+    const player = userIdOfGumbo(103)
+    const alias = userIdOfGumbo(399999)
+    const template = await f.h.db
+      .selectFrom('users')
+      .selectAll()
+      .where('id', '=', player)
+      .executeTakeFirstOrThrow()
+    await f.h.db
+      .insertInto('users')
+      .values({
+        ...template,
+        id: alias,
+        legacyId: null,
+        username: null,
+        merged_into: player
+      })
+      .execute()
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: randomUUID(),
+        user_id: userIdOfGumbo(101),
+        related_user_id: alias,
+        kind: 'guardian',
+        created_at: f.clock.now()
+      })
+      .execute()
+    for (const variant of [
+      'sameTime',
+      'later',
+      'accepted',
+      'pending',
+      'otherTeam',
+      'otherMode',
+      'otherGame',
+      'sameGame',
+      'rejoined',
+      'ownMembership',
+      'expired'
+    ] as const) {
+      const member = randomUUID()
+      const pool = variant === 'sameGame' || variant === 'otherGame'
+      const terms = {
+        kind: 'playerAdd' as const,
+        userId: alias,
+        teamId: f.teamB,
+        mode: pool ? ('pool' as const) : ('roster' as const),
+        gameId: pool ? 'game-one' : undefined,
+        membershipId: pool ? undefined : member
+      }
+      const row = await f.h.db
+        .insertInto('group_requests')
+        .values({
+          id: randomUUID(),
+          kind: 'playerAdd',
+          sender_id: userIdOfGumbo(102),
+          sender_scope_type: 'team',
+          sender_scope_id: f.teamB,
+          terms: JSON.stringify(terms),
+          status: 'applied',
+          sent_at: new Date(f.clock.now().getTime() - 10000),
+          expires_at: new Date(
+            f.clock.now().getTime() + (variant === 'expired' ? 0 : 86400000)
+          )
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow()
+      if (variant === 'rejoined' || variant === 'ownMembership')
+        await f.h.db
+          .insertInto('memberships')
+          .values({
+            id: variant === 'rejoined' ? randomUUID() : member,
+            user_id: player,
+            team_id: f.teamB,
+            role: 'member',
+            is_player: true
+          })
+          .execute()
+      else if (variant !== 'expired')
+        await f.h.db
+          .insertInto('group_requests')
+          .values({
+            id: randomUUID(),
+            kind: 'playerAdd',
+            sender_id: userIdOfGumbo(102),
+            sender_scope_type: 'team',
+            sender_scope_id: f.teamB,
+            terms: JSON.stringify({
+              ...terms,
+              userId: player,
+              teamId: variant === 'otherTeam' ? f.teamA : f.teamB,
+              mode: variant === 'otherMode' ? 'pool' : terms.mode,
+              gameId: variant === 'otherGame' ? 'game-two' : terms.gameId
+            }),
+            status:
+              variant === 'pending'
+                ? 'pending'
+                : variant === 'accepted'
+                  ? 'accepted'
+                  : 'applied',
+            sent_at: new Date(
+              row.sent_at.getTime() + (variant === 'sameTime' ? 0 : 1)
+            ),
+            expires_at: row.expires_at
+          })
+          .execute()
+      const expected =
+        variant !== 'expired' &&
+        !(await supersededPlayerAdd(f.h.db, row)) &&
+        !(await rejoinedSince(f.h.db, row.terms as PlayerAddTerms))
+      const state = (
+        await new InboxProjection(f.h.db, actor(101), f.clock).requests([row])
+      ).get(row.id)
+      expect(state?.canReject, variant).equals(expected)
+      expect(expected, variant).equals(
+        !['later', 'accepted', 'sameGame', 'rejoined', 'expired'].includes(
+          variant
+        )
+      )
+      await f.h.db
+        .deleteFrom('group_requests')
+        .where('kind', '=', 'playerAdd')
+        .execute()
+      await f.h.db
+        .deleteFrom('memberships')
+        .where('user_id', '=', player)
+        .where('team_id', '=', f.teamB)
+        .execute()
+    }
+  })
+  for (const count of [1000, 10000])
+    for (const variant of ['applied', 'email', 'guardian'] as const)
+      it(`batches ${count} distinct ${variant} candidates excluded from the tab`, async () => {
+        const template = await f.h.db
+          .selectFrom('users')
+          .selectAll()
+          .where('id', '=', userIdOfGumbo(103))
+          .executeTakeFirstOrThrow()
+        const ids: string[] = []
+        for (let at = 0; at < count; at += 100) {
+          const players = Array.from({ length: 100 }, (_, i) =>
+            userIdOfGumbo(300000 + at + i)
+          )
+          const memberships = players.map(() => randomUUID())
+          if (variant !== 'email') {
+            await f.h.db
+              .insertInto('users')
+              .values(
+                players.map(id => ({
+                  ...template,
+                  id,
+                  legacyId: null,
+                  username: null
+                }))
+              )
+              .execute()
+            await f.h.db
+              .insertInto('user_links')
+              .values(
+                players.map(id => ({
+                  id: randomUUID(),
+                  user_id: userIdOfGumbo(variant === 'applied' ? 101 : 104),
+                  related_user_id: id,
+                  kind: 'guardian' as const,
+                  created_at: f.clock.now()
+                }))
+              )
+              .execute()
+            await f.h.db
+              .insertInto('memberships')
+              .values(
+                players.map((id, i) => ({
+                  id: memberships[i],
+                  user_id: id,
+                  team_id: f.teamB,
+                  role: 'member' as const,
+                  is_player: true
+                }))
+              )
+              .execute()
+          }
+          const rows = players.map((id, i) => ({
+            id: randomUUID(),
+            kind:
+              variant === 'applied'
+                ? ('playerAdd' as const)
+                : variant === 'guardian'
+                  ? ('guardian' as const)
+                  : ('person' as const),
+            sender_id: userIdOfGumbo(102),
+            sender_scope_type: 'team' as const,
+            sender_scope_id: f.teamB,
+            terms: JSON.stringify(
+              variant === 'applied'
+                ? {
+                    kind: 'playerAdd',
+                    userId: id,
+                    teamId: f.teamB,
+                    mode: 'roster',
+                    membershipId: memberships[i]
+                  }
+                : variant === 'guardian'
+                  ? {
+                      kind: 'guardian',
+                      playerUserId: id,
+                      guardian: { userId: userIdOfGumbo(102) }
+                    }
+                  : {
+                      kind: 'person',
+                      scope: { kind: 'team', id: f.teamB },
+                      recipientEmail: `${id}@example.test`,
+                      recipientUserId: null,
+                      admin: false,
+                      flags: []
+                    }
+            ),
+            status:
+              variant === 'applied'
+                ? ('applied' as const)
+                : ('pending' as const),
+            sent_at: new Date(f.clock.now().getTime() - 200000 - at - i),
+            expires_at: new Date(f.clock.now().getTime() + 86400000)
+          }))
+          await f.h.db.insertInto('group_requests').values(rows).execute()
+          if (variant !== 'applied')
+            await f.h.db
+              .insertInto('group_request_sides')
+              .values(
+                rows.map((row, i) => ({
+                  request_id: row.id,
+                  scope_type: 'user' as const,
+                  scope_id:
+                    variant === 'email'
+                      ? `email:${players[i]}@example.test`
+                      : players[i]
+                }))
+              )
+              .execute()
+          await f.h.db
+            .insertInto('notification_events')
+            .values(
+              rows.map(row => ({
+                id: randomUUID(),
+                source_type: 'groupRequest',
+                source_id: row.id,
+                revision: 1,
+                metadata: '{}',
+                recorded_recipients: [userIdOfGumbo(101)],
+                created_at: row.sent_at
+              }))
+            )
+            .execute()
+          ids.push(...rows.map(r => r.id))
+        }
+        const read = measured()
+        const options =
+          variant === 'applied' ? { history: true } : { sent: true }
+        await read(options, 101, 'cold')
+        const result = await read(options, 101, 'warm')
+        expect(result.page).deep.equals({
+          items: [],
+          nextCursor: null,
+          hasPending: variant === 'applied'
+        })
+        expect(result.queries).lessThan((12 * count) / 100 + 100)
+        expect(result.worded).equals(0)
+        expect(result.maximumWindow).at.most(100)
+        withinLocalBudget(result.ms)
+        // A dismissed notice behind the entire rejectable prefix remains in
+        // History, and independently witnessed Pending remains true.
+        if (variant === 'applied') {
+          const event = await f.h.db
+            .selectFrom('notification_events')
+            .select('id')
+            .where('source_id', '=', ids[0])
+            .executeTakeFirstOrThrow()
+          await f.h.db
+            .insertInto('notification_receipts')
+            .values({
+              event_id: event.id,
+              user_id: userIdOfGumbo(101),
+              viewed_at: f.clock.now(),
+              dismissed_at: f.clock.now()
+            })
+            .execute()
+          const page = await inbox(
+            f.h.db,
+            actor(101),
+            { history: true },
+            f.clock
+          )
+          expect(page.items.map(row => row.requestId)).deep.equals([
+            ids[0]
+          ])
+          expect(page.items[0].canReject).equals(true)
+          expect(page.hasPending).equals(true)
+          expect(page.nextCursor).equals(null)
+        } else if (variant === 'guardian') {
+          await f.h.db
+            .insertInto('user_links')
+            .values({
+              id: randomUUID(),
+              user_id: userIdOfGumbo(101),
+              related_user_id: userIdOfGumbo(300000 + count - 1),
+              kind: 'guardian',
+              created_at: f.clock.now()
+            })
+            .execute()
+          const page = await inbox(f.h.db, actor(101), undefined, f.clock)
+          expect(
+            page.items.find(row => row.requestId === ids[count - 1])?.canAct
+          ).equals(true)
+        } else {
+          const email = `${userIdOfGumbo(300000 + count - 1)}@example.test`
+          await f.h.db
+            .insertInto('user_emails')
+            .values({
+              id: randomUUID(),
+              user_id: userIdOfGumbo(101),
+              email: email.toUpperCase(),
+              verified_at: null
+            })
+            .execute()
+          expect(
+            (await hasPendingNotifications(f.h.db, actor(101), f.clock))
+              .hasPending
+          ).equals(false)
+          await f.h.db
+            .updateTable('user_emails')
+            .set({ verified_at: f.clock.now() })
+            .where('user_id', '=', userIdOfGumbo(101))
+            .where('email', '=', email.toUpperCase())
+            .execute()
+          const page = await inbox(f.h.db, actor(101), undefined, f.clock)
+          expect(
+            page.items.find(row => row.requestId === ids[count - 1])?.canAct
+          ).equals(true)
+        }
+      })
   for (const variant of [
     'guardian',
     'self',
