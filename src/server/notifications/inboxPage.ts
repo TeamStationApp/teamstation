@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import {
   type Kysely,
   type RawBuilder,
@@ -114,36 +116,64 @@ export async function* requestPages(
       eb.or([eb('status', '!=', 'pending'), eb('expires_at', '<=', now)])
     )
   const stopped = (): boolean => signal?.aborted === true
-  while (!stopped()) {
-    const found = await query
-      .where(afterWhere(sql<number>`1::integer`, requestTime, requestId, after))
-      .orderBy(requestTime)
-      .orderBy(requestId)
-      .limit(100)
-      .execute()
-    if (found.length === 0) return
-    const states = await projection.requests(found)
-    for (const request of found) {
-      if (stopped()) return
-      const key = {
-        rank: 1,
-        sentAt: request.sent_at.toISOString(),
-        requestId: request.id
+  if (stopped()) return
+  const cursor = sql.id(`notification_page_${randomUUID().replaceAll('-', '')}`)
+  const selected = query
+    .where(afterWhere(sql<number>`1::integer`, requestTime, requestId, after))
+    .orderBy(requestTime)
+    .orderBy(requestId)
+  let declared = false
+  let failed = false
+  try {
+    // readInbox owns this transaction. A server cursor evaluates the exact
+    // keyset/order once, instead of repeating its authorization subqueries and
+    // sort for every rejected window. Only 100 rows enter application memory.
+    await sql`declare ${cursor} no scroll cursor for ${selected}`.execute(
+      projection.db
+    )
+    declared = true
+    while (!stopped()) {
+      const found = (
+        await sql<StoredRequest>`fetch forward 100 from ${cursor}`.execute(
+          projection.db
+        )
+      ).rows
+      if (stopped() || found.length === 0) return
+      const states = await projection.requests(found)
+      for (const request of found) {
+        if (stopped()) return
+        const state = states.get(request.id)
+        if (state == null) continue
+        const pending = state.canAct || state.news
+        if (
+          mode === 'pending'
+            ? pending
+            : mode === 'sent'
+              ? state.canWithdraw
+              : state.status !== 'pending' && !pending
+        )
+          yield {
+            rank: 1,
+            sentAt: request.sent_at.toISOString(),
+            requestId: request.id,
+            kind: 'request',
+            request,
+            state
+          }
       }
-      after = key
-      const state = states.get(request.id)
-      if (state == null) continue
-      const pending = state.canAct || state.news
-      if (
-        mode === 'pending'
-          ? pending
-          : mode === 'sent'
-            ? state.canWithdraw
-            : state.status !== 'pending' && !pending
-      )
-        yield { ...key, kind: 'request', request, state }
+      if (found.length < 100) return
     }
-    if (found.length < 100) return
+  } catch (error) {
+    failed = true
+    throw error
+  } finally {
+    if (declared) {
+      const close = sql`close ${cursor}`.execute(projection.db)
+      // A failed statement can already have aborted the transaction. Preserve
+      // that original failure; rollback releases its cursor in that case.
+      if (failed) await close.catch(() => undefined)
+      else await close
+    }
   }
 }
 
@@ -220,11 +250,12 @@ export async function mergePage<T extends PageKey>(
   streams: Array<AsyncIterator<T>>,
   limit: number
 ): Promise<{ page: T[]; nextCursor: string | null }> {
-  const heads = await Promise.all(
-    streams.map(async stream => await stream.next())
-  )
   const found: T[] = []
+  let failed = false
   try {
+    const heads = await Promise.all(
+      streams.map(async stream => await stream.next())
+    )
     while (found.length <= limit) {
       let selected = -1
       for (let i = 0; i < heads.length; i++)
@@ -244,7 +275,14 @@ export async function mergePage<T extends PageKey>(
       page,
       nextCursor: found.length > limit ? cursorOf(page[page.length - 1]) : null
     }
+  } catch (error) {
+    failed = true
+    throw error
   } finally {
-    await Promise.all(streams.map(async stream => await stream.return?.()))
+    const closing = Promise.all(
+      streams.map(async stream => await stream.return?.())
+    )
+    if (failed) await closing.catch(() => undefined)
+    else await closing
   }
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mock } from 'node:test'
 
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
@@ -333,6 +334,65 @@ describe('bounded notification tab pages', function () {
       })
     }
     expect(budgets).deep.equals(budgets.map(() => budgets[0]))
+  })
+  it('releases server cursors before returning a page inside an existing transaction', async () => {
+    await requests(150, 'accepted')
+    await f.h.db.transaction().execute(async db => {
+      const first = await inbox(db, actor(101), { history: true }, f.clock)
+      expect(first.items).length(25)
+      expect(first.nextCursor).not.equals(null)
+      const cursors = await sql<{
+        name: string
+      }>`select name from pg_cursors where name like 'notification_page_%'`.execute(
+        db
+      )
+      expect(cursors.rows).deep.equals([])
+      const second = await inbox(
+        db,
+        actor(101),
+        { history: true, cursor: first.nextCursor! },
+        f.clock
+      )
+      expect(second.items).length(25)
+      expect(
+        new Set([...first.items, ...second.items].map(row => row.id)).size
+      ).equals(50)
+    })
+  })
+  it('preserves millisecond ties and legacy cursor spelling across pages', async () => {
+    const ids = (await requests(3, 'accepted')).sort()
+    const time = new Date(Math.floor(f.clock.now().getTime() / 1000) * 1000)
+    for (let i = 0; i < ids.length; i++)
+      await f.h.db
+        .updateTable('group_requests')
+        .set({
+          sent_at: sql<Date>`${time.toISOString()}::timestamptz + ${(3 - i) * 200} * interval '1 microsecond'`
+        })
+        .where('id', '=', ids[i])
+        .execute()
+    let cursor: string | null = null
+    const seen: string[] = []
+    do {
+      const page = await inbox(
+        f.h.db,
+        actor(101),
+        { history: true, limit: 1, ...(cursor == null ? {} : { cursor }) },
+        f.clock
+      )
+      seen.push(...page.items.map(row => row.requestId))
+      cursor = page.nextCursor
+    } while (cursor != null)
+    expect(seen).deep.equals(ids)
+    // The original comparison is textual: omitting milliseconds sorts after
+    // these canonical keys even though it describes the same instant.
+    const alternate = time.toISOString().replace('.000Z', 'Z')
+    const legacy = await inbox(
+      f.h.db,
+      actor(101),
+      { history: true, cursor: `${alternate}|${ids[0]}` },
+      f.clock
+    )
+    expect(legacy.items).deep.equals([])
   })
   for (const count of [1000, 10000])
     it(`batches History eligibility for ${count} distinct guarded players and sees guardian revocation`, async () => {
