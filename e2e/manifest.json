@@ -6577,6 +6577,118 @@
       "file": "e2e/tests/scoring/game-plan/share-print.e2e.ts"
     },
     {
+      "id": "scoring/layout/device-matrix#desktop-widths",
+      "title": "The scoring layout follows a continuous desktop resize across its breakpoints",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/device-matrix",
+      "file": "e2e/tests/scoring/layout/desktopMatrix.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/device-matrix#mesh-devices",
+      "title": "Score from a leased device online, offline and during reconnect",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/scoring/ScoringNoticeBar.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/device-matrix",
+      "file": "e2e/tests/scoring/layout/meshMatrix.e2e.ts"
+    },
+    {
       "id": "scoring/layout/framing#web-sizes",
       "title": "The scoreboard sits beneath the menu and the catcher clears the pitch controls",
       "kind": "e2e",
@@ -6611,6 +6723,96 @@
       "sendsNoMail": true,
       "spec": "scoring/layout/framing",
       "file": "e2e/tests/scoring/layout/framing.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/side-column#ipad",
+      "title": "Rotate the iPad scoring field and retain its live log",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/scoring/ScoringNoticeBar.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-tablet"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-tablet"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/side-column",
+      "file": "e2e/tests/scoring/layout/sideIpad.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/side-column#web",
+      "title": "The side column frames both outfield corners and shows the live box score",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/side-column",
+      "file": "e2e/tests/scoring/layout/sideWeb.e2e.ts"
     },
     {
       "id": "scoring/layout/stacked#done-pill",

@@ -14,6 +14,48 @@ import {
 
 describe('field camera controls', function () {
   for (const [width, height] of [
+    [474, 1194],
+    [773, 744],
+    [834, 834]
+  ]) {
+    it(`fits the outfield wall and roof within 90 percent of the ${width}-point side field`, function () {
+      const camera = new PerspectiveCamera()
+      const frame = { top: 64, bottom: 172, corners: true }
+      applyFieldCamera(camera, {
+        width,
+        height,
+        view: 'home',
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33,
+        bottomExtension: 112,
+        frame
+      })
+      const roofTops: number[] = []
+      for (const side of [-1, 1]) {
+        for (const a of [Math.PI / 4, Math.PI / 3.5]) {
+          const wall = new Vector3(
+            side * 118 * Math.sin(a),
+            0,
+            -118 * Math.cos(a)
+          ).project(camera)
+          expect(Math.abs(wall.x)).at.most(0.90001)
+          expect(Math.abs(wall.y)).lessThan(1)
+        }
+        for (const depth of [-2.1, 2.9]) {
+          const roof = new Vector3(
+            side * 34.5 * 1.8,
+            28.2 + 9.95 * 1.8,
+            -135 + depth * 1.8
+          ).project(camera)
+          expect(Math.abs(roof.x)).at.most(0.90001)
+          roofTops.push(((1 - roof.y) * height) / 2)
+        }
+      }
+      expect(Math.min(...roofTops)).closeTo(frame.top, 0.1)
+    })
+  }
+  for (const [width, height] of [
     [393, 852],
     [600, 700],
     [1000, 742]

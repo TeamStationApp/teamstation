@@ -10,6 +10,7 @@
 import type { Page } from 'puppeteer'
 
 import { BASES, createPlayers } from '../../src/app/field/fieldModel'
+import { BOARD_BOUNDS, FIELD_SCENE_PROBE, THREE_STATE } from './fieldScene.cjs'
 import { scriptLiteral } from './pageScript'
 
 type Point = [number, number]
@@ -104,26 +105,6 @@ async function until(
 
 // Page-side, as plain script: the field's three.js state through the scene
 // probe's fiber roots, and `project(x, y, z)` in page pixels.
-const THREE_STATE = `
-  const find = fiber => {
-    for (let at = fiber; at != null; at = at.sibling) {
-      const value = at.memoizedProps == null ? undefined : at.memoizedProps.value
-      const state = value == null || value.getState == null ? undefined : value.getState()
-      if (state != null && state.scene != null) return state
-      const inner = find(at.child)
-      if (inner != null) return inner
-    }
-    return undefined
-  }
-  let three
-  for (const root of window.qaRoots || []) three = three || find(root.current)
-  const project = (x, y, z) => {
-    const canvas = three.gl.domElement.getBoundingClientRect()
-    const v = three.camera.position.clone().set(x, y, z).project(three.camera)
-    return [canvas.x + ((v.x + 1) * canvas.width) / 2, canvas.y + ((1 - v.y) * canvas.height) / 2]
-  }
-`
-
 /** Waits until no player on the field is moving and no play is being shown. */
 export async function atRest(field: FieldDriver): Promise<void> {
   await until(
@@ -235,18 +216,7 @@ export async function setTrajectory(
  * Keeps React's fiber roots on `window.qaRoots`, through a stand-in for the
  * devtools hook, so `dropRunner` can read where the bases draw.
  */
-export const FIELD_SCENE_PROBE = `(() => {
-    window.qaRoots = []
-    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
-      supportsFiber: true,
-      renderers: new Map(),
-      inject() { return 1 },
-      onCommitFiberRoot(_id, root) {
-        if (!window.qaRoots.includes(root)) window.qaRoots.push(root)
-      },
-      onCommitFiberUnmount() {}
-    }
-  })()`
+export { FIELD_SCENE_PROBE }
 
 export async function installSceneProbe(page: Page): Promise<void> {
   await page.evaluateOnNewDocument(FIELD_SCENE_PROBE)
@@ -258,22 +228,7 @@ export async function measuredBoard(
 ): Promise<{ top: number; width: number }> {
   return (await page.evaluate(`(() => {
     ${THREE_STATE}
-    const board = three.scene.getObjectByName('vintage-scoreboard')
-    const xs = [], ys = []
-    board.traverseVisible(mesh => {
-      if (!mesh.geometry) return
-      mesh.geometry.computeBoundingBox()
-      const {min, max} = mesh.geometry.boundingBox
-      for (const x of [min.x, max.x])
-        for (const y of [min.y, max.y])
-          for (const z of [min.z, max.z]) {
-            const v = mesh.localToWorld(mesh.position.clone().set(x, y, z))
-            const [px, py] = project(v.x, v.y, v.z)
-            xs.push(px)
-            ys.push(py)
-          }
-    })
-    return {top: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs)}
+    ${BOARD_BOUNDS}
   })()`)) as { top: number; width: number }
 }
 

@@ -10,7 +10,7 @@ import { SSH_OPTIONS } from '../core/streamingStack'
 export async function scoringFixtureLink(
   ctx: E2eContext,
   email: string,
-  platform: 'ios' | 'android'
+  platform: 'ios' | 'android' | 'web'
 ): Promise<string> {
   if (ctx.stack.attached == null)
     throw new Error('Fixture sign-in needs an isolated stack')
@@ -38,7 +38,8 @@ export async function scoringFixtureLink(
       ],
       { timeout: 10000 }
     )
-    const found = /link: https?:\/\/[^/\s]+\/signin\/([\w-]+)/.exec(stdout)
+    const found =
+      /link: https?:\/\/[^/\s]+\/signin(?:-browser)?\/([\w-]+)/.exec(stdout)
     if (found != null) return 'signin/' + found[1]
     await pause(300)
   }
