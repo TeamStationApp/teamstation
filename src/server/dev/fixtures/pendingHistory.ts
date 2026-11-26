@@ -13,7 +13,7 @@ import {
   type WorldContext
 } from './accounts'
 
-/** Three independent inboxes, each with a thousand resolved synthetic requests. */
+/** Independent synthetic inboxes for empty, paged and large-history tab reads. */
 export async function runPendingHistory(
   context: WorldContext
 ): Promise<FixtureManifest> {
@@ -26,7 +26,15 @@ export async function runPendingHistory(
   const accounts: FixtureManifest['accounts'] = { sender }
   const ids: Record<string, string> = {}
   const now = new Date()
-  for (const role of ['small', 'empty', 'paged']) {
+  for (const role of [
+    'small',
+    'empty',
+    'paged',
+    'sent',
+    'history',
+    'information',
+    'inaccessible'
+  ]) {
     const reader = await createAccount(context, world, role, {
       first: 'Mookie',
       last: 'Betts'
@@ -39,54 +47,102 @@ export async function runPendingHistory(
       { userId: reader.userId, isAdmin: false }
     )
     ids[`${role}Team`] = team.id
-    const rows = Array.from(
-      { length: 1000 + (role === 'paged' ? 30 : 0) },
-      (_, i) => ({
-        id: randomUUID(),
-        kind: 'membership' as const,
-        sender_id: sender.userId,
-        sender_scope_type: null,
-        sender_scope_id: null,
-        terms: JSON.stringify({
-          kind: 'membership',
-          teamId: team.id,
-          userId: sender.userId
-        }),
-        status:
-          i >= 1000
-            ? ('pending' as const)
-            : (['accepted', 'declined', 'cancelled', 'expired'] as const)[
-                i % 4
-              ],
-        sent_at: new Date(now.getTime() - 60_000),
-        expires_at: new Date(now.getTime() + 86_400_000),
-        resolved_at: i >= 1000 ? null : now,
-        resolved_by: i >= 1000 ? null : reader.userId,
-        game_id: null,
-        initiating_team_id: null,
-        supersedes_id: null
-      })
-    )
+    if (role === 'information') {
+      for (let at = 0; at < 10000; at += 100) {
+        await db
+          .insertInto('notification_events')
+          .values(
+            Array.from({ length: 100 }, (_, i) => ({
+              id: randomUUID(),
+              source_type: 'schedulePublished',
+              source_id: randomUUID(),
+              revision: 1,
+              actor_id: null,
+              metadata: JSON.stringify({
+                title: 'Synthetic schedule update',
+                description: 'Historical notification fixture'
+              }),
+              recorded_recipients: [reader.userId],
+              created_at: new Date(now.getTime() - 60000 + at + i)
+            }))
+          )
+          .execute()
+      }
+      ids.informationCount = '10000'
+      continue
+    }
+    const resolved = ['sent', 'history', 'inaccessible'].includes(role)
+      ? 10000
+      : 1000
+    const active =
+      role === 'paged' || role === 'sent' ? 30 : role === 'inaccessible' ? 1 : 0
+    const rows = Array.from({ length: resolved + active }, (_, i) => ({
+      id: randomUUID(),
+      kind: 'membership' as const,
+      sender_id: role === 'sent' ? reader.userId : sender.userId,
+      sender_scope_type: null,
+      sender_scope_id: null,
+      terms: JSON.stringify({
+        kind: 'membership',
+        teamId: team.id,
+        userId: sender.userId
+      }),
+      status:
+        i >= resolved || role === 'inaccessible'
+          ? ('pending' as const)
+          : (['accepted', 'declined', 'cancelled', 'expired'] as const)[i % 4],
+      sent_at: new Date(
+        now.getTime() -
+          60_000 +
+          (role === 'inaccessible' && i >= resolved ? 10000 : 0)
+      ),
+      expires_at: new Date(now.getTime() + 86_400_000),
+      resolved_at: i >= resolved || role === 'inaccessible' ? null : now,
+      resolved_by:
+        i >= resolved || role === 'inaccessible' ? null : reader.userId,
+      game_id: null,
+      initiating_team_id: null,
+      supersedes_id: null
+    }))
     for (let at = 0; at < rows.length; at += 100) {
       const batch = rows.slice(at, at + 100)
       await db.insertInto('group_requests').values(batch).execute()
       await db
         .insertInto('group_request_sides')
         .values(
-          batch.map(row => ({
+          batch.map((row, i) => ({
             request_id: row.id,
             scope_type: 'team' as const,
-            scope_id: team.id,
+            scope_id:
+              role === 'inaccessible' && at + i < resolved
+                ? randomUUID()
+                : team.id,
             approved_by: null,
             approved_at: null
           }))
         )
         .execute()
+      if (role === 'inaccessible')
+        await db
+          .insertInto('notification_events')
+          .values(
+            batch.map(row => ({
+              id: randomUUID(),
+              source_type: 'groupRequest',
+              source_id: row.id,
+              revision: 1,
+              metadata: '{}',
+              recorded_recipients: [reader.userId],
+              created_at: row.sent_at
+            }))
+          )
+          .execute()
     }
     ids[`${role}Active`] = rows
-      .slice(1000)
+      .slice(resolved)
       .map(row => row.id)
       .join(',')
+    ids[`${role}HistoryCount`] = String(role === 'inaccessible' ? 0 : resolved)
     if (role !== 'small') continue
     for (const [type, title] of [
       [RECORDING_UPLOAD, 'Upload your recording'],
