@@ -1,31 +1,29 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import express from 'express'
 
 import { maestro, type MaestroHandle } from '../../e2e/rigs/refinementsMaestro'
+import type { BaseProjection } from '../app/field/fieldTypes'
+import { runnerTargets } from '../app/scoring/runnerDrag'
 
-/** Repeated body drags after failed pickoffs on the real scoring screen. */
-async function main(): Promise<void> {
-  const device = process.env.SCORING_DEVICE_UDID
-  const output = process.env.SCORING_ARTIFACT_DIR
-  assert(
-    device != null && output != null,
-    'Supply simulator and artifact directory'
-  )
-  const booted = JSON.parse(
-    execFileSync('xcrun', ['simctl', 'list', 'devices', 'booted', '-j'], {
-      encoding: 'utf8'
-    })
-  ) as { devices: Record<string, Array<{ udid: string }>> }
-  assert(
-    Object.values(booted.devices)
-      .flat()
-      .some(simulator => simulator.udid === device),
-    'Use an already-running iOS simulator'
-  )
+interface FixtureState {
+  actions: Array<{ call?: string; reason?: string }>
+  line: {
+    offense: { first?: { fullName?: string }; second?: unknown }
+    balls: number
+    strikes: number
+    outs: number
+  }
+}
+interface FixtureLayout {
+  projection: BaseProjection
+  menu: { x: number; y: number }
+}
+
+/** Run this fixture process on the test server; the simulator connects to its URL. */
+async function serve(output: string): Promise<void> {
   const directory = path.join(output, 'fixture')
   await mkdir(directory, { recursive: true })
   const { build } = await import('esbuild')
@@ -56,44 +54,66 @@ async function main(): Promise<void> {
   )
   await writeFile(path.join(directory, 'index.html'), html)
   const app = express()
-  let latest:
-    | {
-        actions: Array<{ reason?: string }>
-        line: {
-          offense: { second?: unknown }
-          balls: number
-          strikes: number
-          outs: number
-        }
-      }
-    | undefined
+  let latest: FixtureState | undefined
+  let layout: FixtureLayout | undefined
   app.use(express.json())
   app.post('/state', (req, res) => {
     latest = req.body
     res.sendStatus(204)
   })
+  app.get('/state', (_req, res) => {
+    res.json(latest ?? null)
+  })
+  app.post('/layout', (req, res) => {
+    layout = req.body
+    res.sendStatus(204)
+  })
+  app.get('/layout', (_req, res) => {
+    res.json(layout ?? null)
+  })
   app.use(express.static(directory))
-  const server = app.listen(0, '127.0.0.1')
+  const port = Number(process.env.SCORING_FIXTURE_PORT)
+  assert(
+    Number.isInteger(port) && port > 0,
+    'Supply SCORING_FIXTURE_PORT on the test server'
+  )
+  app.listen(port, process.env.SCORING_FIXTURE_HOST ?? '127.0.0.1')
+}
+
+/** Repeated body drags after failed pickoffs on the real scoring screen. */
+async function main(): Promise<void> {
+  const output = process.env.SCORING_ARTIFACT_DIR
+  assert(output != null, 'Supply a run artifact directory')
+  if (process.argv.includes('--serve')) {
+    await serve(output)
+    return
+  }
+  const device = process.env.SCORING_DEVICE_UDID
+  const origin = process.env.SCORING_FIXTURE_URL
+  assert(
+    device != null && origin != null,
+    'Supply simulator and reachable pickoff fixture URL'
+  )
+  await mkdir(output, { recursive: true })
+  let latest: FixtureState | null = null
   let daemon: Awaited<ReturnType<typeof maestro>> | undefined
   let m: MaestroHandle | undefined
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.once('listening', resolve)
-      server.once('error', reject)
-    })
-    const address = server.address()
-    assert(address != null && typeof address !== 'string')
-    daemon = await maestro('pickoff-reset-regression')
+    daemon = await maestro(process.env.MAESTRO_D ?? 'pickoff-reset-regression')
     m = await daemon.attach({
       device,
       platform: 'ios',
       appId: 'com.apple.mobilesafari',
       artifacts: 'on-failure'
     })
-    await m.openLink({ link: `http://127.0.0.1:${address.port}` })
+    await m.openLink({ link: origin })
     const waitFor = async (check: () => boolean): Promise<void> => {
       const deadline = Date.now() + 12000
-      while (!check()) {
+      for (;;) {
+        latest = (await (
+          await fetch(new URL('/state', origin))
+        ).json()) as FixtureState | null
+        if (check()) return
         assert(Date.now() < deadline, 'Scoring did not accept the runner drag')
         await new Promise(resolve => setTimeout(resolve, 100))
       }
@@ -108,11 +128,51 @@ async function main(): Promise<void> {
       )
       await m.waitForAnimationToEnd()
     }
-    await m.assertVisible({ text: '^Visitor 01$', timeout: 15000 })
+    await waitFor(() => latest?.line.offense.first?.fullName === 'Visitor 01')
+    const { projection, menu } = (await (
+      await fetch(new URL('/layout', origin))
+    ).json()) as FixtureLayout
+    assert(projection.feet != null && projection.heads != null)
+    interface Node {
+      text?: string
+      bounds?: { x: number; y: number; width: number; height: number }
+      children?: Node[]
+    }
+    const flatten = (node: Node): Node[] => [
+      node,
+      ...(node.children ?? []).flatMap(flatten)
+    ]
+    const button = flatten(await m.hierarchy()).find(
+      node => node.text === 'Open scoring menu'
+    )?.bounds
+    assert(button != null, 'Locate Safari’s scoring menu in device points')
+    const offset = {
+      x: button.x + button.width / 2 - menu.x,
+      y: button.y + button.height / 2 - menu.y
+    }
+    const devicePoint = ({ x, y }: { x: number; y: number }): string =>
+      `${Math.round(x + offset.x)},${Math.round(y + offset.y)}`
+    const first = projection.feet[1]
+    const runner = devicePoint({
+      x: first.x,
+      y: (first.y + projection.heads[1].y) / 2
+    })
+    const safePoint = (base: number): string => {
+      const { safe } = runnerTargets(
+        projection.bases[base],
+        projection.width,
+        projection.height,
+        base
+      )
+      return devicePoint({
+        x: safe.x + safe.width / 2,
+        y: safe.y + safe.height / 2
+      })
+    }
     await writeFile(path.join(output, 'before.png'), await m.screenshot())
     await m.command('dragAndDrop', {
-      from: { text: '^Visitor 01$', index: 0 },
-      to: { point: '88%,49%' },
+      from: { point: runner },
+      to: { point: safePoint(1) },
       holdDuration: 500,
       duration: 1800
     })
@@ -135,8 +195,8 @@ async function main(): Promise<void> {
     // intercepted precisely this touch before the reset fix.
     for (let attempt = 2; attempt <= 3; attempt++) {
       await m.command('dragAndDrop', {
-        from: { point: '74%,54.8%' },
-        to: { point: '88%,49%' },
+        from: { point: runner },
+        to: { point: safePoint(1) },
         holdDuration: 500,
         duration: 1800
       })
@@ -156,8 +216,8 @@ async function main(): Promise<void> {
       count
     )
     await m.command('dragAndDrop', {
-      from: { point: '74%,54.8%' },
-      to: { point: '39%,44.5%' },
+      from: { point: runner },
+      to: { point: safePoint(2) },
       holdDuration: 500,
       duration: 1800
     })
@@ -173,7 +233,6 @@ async function main(): Promise<void> {
       'PASS simulator Safari: repeated body drags record failed pickoffs and advance the runner without Undo or another pitch'
     )
   } finally {
-    server.closeAllConnections()
     const cleanup = await Promise.allSettled([
       writeFile(
         path.join(output, 'scoring-state.json'),
@@ -185,12 +244,7 @@ async function main(): Promise<void> {
         } finally {
           await daemon?.shutdown()
         }
-      })(),
-      new Promise<void>(resolve => {
-        server.close(() => {
-          resolve()
-        })
-      })
+      })()
     ])
     const failures = cleanup.filter(result => result.status === 'rejected')
     if (failures.length > 0) {

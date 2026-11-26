@@ -52,64 +52,78 @@ console.log('Scoring coverage includes:', includes.join('\n'))
 const temp = resolve('coverage/tmp')
 rmSync(temp, { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
-const test = spawnSync(
-  'node_modules/.bin/mocha',
-  [
-    '--timeout',
-    '20000',
-    '-r',
-    'sucrase/register',
-    '-r',
-    './src/test/scoringDomSetup.cjs',
-    '--extension',
-    'ts',
-    ...(currentSetupScope
+const env = { ...process.env, NODE_V8_COVERAGE: temp }
+let testFailed = false
+if (currentSetupScope) {
+  const specs = [
+    'src/common/scoring/*.test.ts',
+    'src/app/scoring/*.test.ts',
+    'src/app/field/*.test.ts',
+    'src/server/scoring/*.test.ts',
+    'src/server/statsBuilder/*.test.ts',
+    'src/server/events/*.test.ts',
+    'src/server/dev/livePitch.integration.test.ts',
+    'src/server/routes/events.integration.test.ts',
+    'src/server/middleware/withCors.test.ts',
+    'src/server/openapi.test.ts',
+    'src/server/games/*.test.ts',
+    'src/common/api.test.ts',
+    'src/common/gumboPlay.test.ts',
+    'src/migrate/migrations/115scoringMutation.integration.test.ts',
+    'src/common/replay/*.test.ts',
+    'src/app/replay/*.test.ts',
+    'src/server/routes/lineups.integration.test.ts',
+    'src/app/sync/*.test.ts',
+    ...(rosterEdit
       ? [
-          'src/common/scoring/*.test.ts',
-          'src/app/scoring/*.test.ts',
-          'src/app/field/*.test.ts',
-          'src/server/scoring/*.test.ts',
-          'src/server/statsBuilder/*.test.ts',
-          'src/server/events/*.test.ts',
-          'src/server/dev/livePitch.integration.test.ts',
-          'src/server/routes/events.integration.test.ts',
-          'src/server/middleware/withCors.test.ts',
-          'src/server/openapi.test.ts',
-          'src/server/games/*.test.ts',
+          'src/app/navigation/*.test.ts',
           'src/common/api.test.ts',
-          'src/common/gumboPlay.test.ts',
-          'src/migrate/migrations/115scoringMutation.integration.test.ts',
-          'src/common/replay/*.test.ts',
-          'src/app/replay/*.test.ts',
-          'src/server/routes/lineups.integration.test.ts',
-          'src/app/sync/*.test.ts',
-          ...(rosterEdit
-            ? [
-                'src/app/navigation/*.test.ts',
-                'src/common/api.test.ts',
-                'src/common/roles.test.ts',
-                'src/common/playerSettings.test.ts',
-                'src/common/names.test.ts',
-                'src/common/rosterFullName.test.ts',
-                'src/server/access.integration.test.ts',
-                'src/server/routes/players.integration.test.ts',
-                'src/server/routes/rosterManagement.integration.test.ts',
-                'src/server/routes/teams.integration.test.ts',
-                'src/server/teams/teamRoster.integration.test.ts',
-                'src/server/openapi.test.ts'
-              ]
-            : [])
+          'src/common/roles.test.ts',
+          'src/common/playerSettings.test.ts',
+          'src/common/names.test.ts',
+          'src/common/rosterFullName.test.ts',
+          'src/server/access.integration.test.ts',
+          'src/server/routes/players.integration.test.ts',
+          'src/server/routes/rosterManagement.integration.test.ts',
+          'src/server/routes/teams.integration.test.ts',
+          'src/server/teams/teamRoster.integration.test.ts',
+          'src/server/openapi.test.ts'
         ]
-      : ['src/**/*.test.ts']
-    ).flatMap(spec => ['--spec', spec]),
-    '--spec',
-    currentSetupScope ? 'lib/current-setup-tests.cjs' : 'lib/scoring-tests.cjs',
-    '--ignore',
-    '**/node_modules/**'
-  ],
-  { stdio: 'inherit', env: { ...process.env, NODE_V8_COVERAGE: temp } }
-)
-let extraFailed = false
+      : [])
+  ]
+  const test = spawnSync(
+    'node_modules/.bin/mocha',
+    [
+      '--timeout',
+      '20000',
+      '-r',
+      'sucrase/register',
+      '-r',
+      './src/test/scoringDomSetup.cjs',
+      '--extension',
+      'ts',
+      ...specs.flatMap(spec => ['--spec', spec]),
+      '--spec',
+      'lib/current-setup-tests.cjs',
+      '--ignore',
+      '**/node_modules/**'
+    ],
+    { stdio: 'inherit', env }
+  )
+  testFailed = test.status !== 0
+} else {
+  // Use the same isolated processes and fixtures as the repository's test
+  // commands. A single Mocha process leaks suite state and never flushes
+  // the main V8 profile when a suite leaves a handle open.
+  for (const tier of ['unit', 'integration']) {
+    const test = spawnSync(
+      process.execPath,
+      ['scripts/run-unit-tests.mjs', '--tier', tier],
+      { stdio: 'inherit', env }
+    )
+    if (test.status !== 0) testFailed = true
+  }
+}
 if (rosterEdit) {
   for (const file of readdirSync('lib')
     .filter(file => /^roster-edit-\d+-tests\.cjs$/.test(file))
@@ -123,9 +137,9 @@ if (rosterEdit) {
         './src/test/scoringDomSetup.cjs',
         'lib/' + file
       ],
-      { stdio: 'inherit', env: { ...process.env, NODE_V8_COVERAGE: temp } }
+      { stdio: 'inherit', env }
     )
-    if (result.status !== 0) extraFailed = true
+    if (result.status !== 0) testFailed = true
   }
 }
 // Node caches multi-source bundle maps as file URLs. c8's exclusion callback
@@ -165,8 +179,7 @@ const report = spawnSync(
   ],
   { stdio: 'inherit' }
 )
-process.exitCode =
-  test.status !== 0 || extraFailed ? test.status || 1 : (report.status ?? 1)
+process.exitCode = testFailed ? 1 : (report.status ?? 1)
 
 const summary = JSON.parse(
   readFileSync('coverage/coverage-summary.json', 'utf8')
