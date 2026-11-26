@@ -115,6 +115,34 @@ describe('the bell answers what the inbox answers, without building it', functio
     expect(await summary(103)).deep.equals({ hasPending: false })
   })
 
+  it('uses the request fallback without projecting resolved history or extending expiry', async () => {
+    const id = await send('resolved-fallback')
+    await f.h.db
+      .updateTable('group_requests')
+      .set({ status: 'accepted' })
+      .where('id', '=', id)
+      .execute()
+    const queries: string[] = []
+    const watched = f.h.db.withPlugin({
+      transformQuery: args => {
+        queries.push(JSON.stringify(args.node))
+        return args.node
+      },
+      transformResult: async args => await Promise.resolve(args.result)
+    })
+    expect(
+      await hasPendingNotifications(watched, actorOf(101), f.clock)
+    ).deep.equals({ hasPending: false, nextExpiry: null })
+    expect(
+      queries.some(query => query.includes('"value":"' + id + '"')),
+      'no per-request projection of resolved rows'
+    ).equals(false)
+    expect(await summary(101)).deep.equals({ hasPending: false })
+    expect((await inbox(f.h.db, actorOf(101), {}, f.clock)).items).deep.equals(
+      []
+    )
+  })
+
   it('lights for whoever may answer a request, through viewing, a role given and taken, acceptance and expiry', async () => {
     const id = await send('pending-bell')
     const sent = await bells()
