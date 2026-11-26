@@ -56,9 +56,10 @@ export function leaveUpgrade(
  */
 export function bindUpgrades(
   server: Server,
-  claims: readonly UpgradeClaim[]
+  claims: readonly UpgradeClaim[],
+  admit?: (req: IncomingMessage) => Promise<number>
 ): () => void {
-  const onUpgrade = (
+  const dispatch = (
     req: IncomingMessage,
     socket: Duplex,
     head: Buffer
@@ -70,6 +71,40 @@ export function bindUpgrades(
       }
     }
     socket.destroy()
+  }
+  const onUpgrade = (
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer
+  ): void => {
+    if (admit == null) {
+      dispatch(req, socket, head)
+      return
+    }
+    claimUpgrade(socket)
+    socket.on('error', () => socket.destroy())
+    admit(req)
+      .then(
+        wait => {
+          if (socket.destroyed) return
+          if (wait === 0) {
+            dispatch(req, socket, head)
+            return
+          }
+          socket.once('finish', () => socket.destroy())
+          socket.end(
+            `HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${wait}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`
+          )
+        },
+        () => {
+          // A credential lookup can fail before the protocol handler gets the socket.
+          socket.once('finish', () => socket.destroy())
+          socket.end(
+            'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
+          )
+        }
+      )
+      .catch(() => socket.destroy())
   }
   server.on('upgrade', onUpgrade)
   return () => {

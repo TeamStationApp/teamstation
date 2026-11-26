@@ -311,6 +311,25 @@ describe('SearchSocket', function () {
     expect(timers.delays.at(-1)).equals(1000)
   })
 
+  it('honors 1013 across reopened sockets and makes room for both the handshake and search', function () {
+    const { socket, timers, results } = makeSocket()
+    last().open()
+    socket.search(ask('ballpark'))
+    const limited = (reason?: string): void => {
+      last().onclose?.({ code: 1013, reason })
+      timers.fire()
+      last().open()
+    }
+    limited('Try again in 3 seconds')
+    limited('Try again in 1 seconds')
+    limited()
+    expect(timers.delays).deep.equals([6000, 2000, 4000])
+    last().receive(answer(socket.latestSeq))
+    expect(results).length(1)
+    last().drop()
+    expect(timers.delays.at(-1)).equals(1000)
+  })
+
   it('reconnects after an error, once, though the close follows it', function () {
     const { timers } = makeSocket()
     const first = last()

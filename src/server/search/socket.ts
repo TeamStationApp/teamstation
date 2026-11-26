@@ -1,7 +1,9 @@
 import type { IncomingMessage } from 'node:http'
+import { isIP } from 'node:net'
 import type { Duplex } from 'node:stream'
 
 import { asObject, asOptional } from 'cleaners'
+import ipaddr from 'ipaddr.js'
 import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
@@ -21,6 +23,7 @@ import { bearerToken, sessionToken } from '../auth/tokens'
 import { type Database, isConnectionUnavailable } from '../db/database'
 import type { IpLookup, IpPlace } from '../location/ipPlaces'
 import type { UpgradeClaim } from '../socket/bindUpgrades'
+import { apiSocketPath as pathOf } from '../socket/upgradePaths'
 import {
   asksAnything,
   type SearchContext,
@@ -76,6 +79,12 @@ export const SIGNED_OUT_CLOSE = 4401
 const HARD_FRAME_MAX_BYTES = 4 * SEARCH_FRAME_MAX_BYTES
 
 export interface SearchSocketOptions {
+  /** Charge a search shared with this caller’s other sockets and HTTP requests. */
+  spendSearch?: (
+    ip: string | null,
+    userId: string | undefined,
+    socket: object
+  ) => Promise<number>
   db: Kysely<Database>
   deps: SearchDeps
   /**
@@ -97,11 +106,11 @@ export interface SearchSocketOptions {
   ipPlaces?: IpLookup
 }
 
-const isLoopback = (address: string): boolean =>
-  address === '::1' || address.startsWith('127.')
-
 const unmapped = (address: string): string =>
-  address.toLowerCase().startsWith('::ffff:') ? address.slice(7) : address
+  isIP(address) === 0 ? address : ipaddr.process(address).toString()
+
+const isLoopback = (address: string): boolean =>
+  isIP(address) !== 0 && ipaddr.process(address).range() === 'loopback'
 
 /**
  * The client's address for an upgrade, as Express's `trust proxy:
@@ -121,7 +130,7 @@ export function upgradeClientIp(request: IncomingMessage): string | null {
     .filter(entry => entry !== '')
   for (let at = forwarded.length - 1; at >= 0; --at)
     if (!isLoopback(forwarded[at])) return forwarded[at]
-  return direct
+  return forwarded[0] ?? direct
 }
 
 export interface SearchSocketHandle {
@@ -143,6 +152,8 @@ interface Waiting {
 
 /** One open search socket. */
 interface Connection {
+  socket: object
+  ip: string | null
   ws: WebSocket
   /** The session token it opened with; null when signed out. */
   token: string | null
@@ -294,7 +305,24 @@ export function attachSearchSocket(
     frame: SearchFrame,
     arrival: number
   ): Promise<SearchContext | null> => {
-    if (!(await stillSignedIn(connection))) return null
+    if (
+      !(await stillSignedIn(connection)) ||
+      connection.ws.readyState !== connection.ws.OPEN
+    )
+      return null
+    const wait = await options.spendSearch?.(
+      connection.ip,
+      connection.actor?.userId,
+      connection.socket
+    )
+    if (wait != null && wait > 0) {
+      cancelJev(connection)
+      connection.waiting?.settle(null)
+      connection.waiting = undefined
+      connection.ws.close(1013, `Try again in ${wait} seconds`)
+      return null
+    }
+    if (connection.ws.readyState !== connection.ws.OPEN) return null
     const answer = await searchOnce(
       db,
       connection.actor,
@@ -320,6 +348,7 @@ export function attachSearchSocket(
     data: RawData,
     isBinary: boolean
   ): void => {
+    if (connection.ws.readyState !== connection.ws.OPEN) return
     const bytes = byteLength(data)
     if (bytes > SEARCH_FRAME_MAX_BYTES) {
       refuse(
@@ -366,7 +395,8 @@ export function attachSearchSocket(
   /** Searches the waiting frame, and then whichever waits after it. */
   const next = (connection: Connection): void => {
     const waiting = connection.waiting
-    if (waiting == null) return
+    if (waiting == null || connection.ws.readyState !== connection.ws.OPEN)
+      return
     connection.waiting = undefined
     connection.searching = true
     const { frame, arrival, settle } = waiting
@@ -389,7 +419,8 @@ export function attachSearchSocket(
     ws: WebSocket,
     actor: Actor | null,
     token: string | null,
-    ip: string | null
+    ip: string | null,
+    socket: object
   ): void => {
     const reader = readerCache()
     // The reader's own places are read once for the connection, whose
@@ -417,6 +448,8 @@ export function attachSearchSocket(
       return place == null ? [] : [ipPoint(place)]
     }
     const connection: Connection = {
+      socket,
+      ip,
       ws,
       token,
       actor,
@@ -466,14 +499,14 @@ export function attachSearchSocket(
     actor.then(
       found => {
         wss.handleUpgrade(request, socket, head, ws => {
-          if (found != null) connected(ws, found, token, ip)
+          if (found != null) connected(ws, found, token, ip, socket)
           // A bearer token that signs nobody in (expired, or revoked before
           // the socket opened) is refused: the client is told to sign in
           // again. A session cookie that signs nobody in is read as signed
           // out, as `withActor` reads it: the browser keeps a revoked
           // cookie it cannot clear, and its reader is signed out.
           else if (bearer) ws.close(SIGNED_OUT_CLOSE, 'Sign in again')
-          else connected(ws, null, null, ip)
+          else connected(ws, null, null, ip, socket)
         })
       },
       (error: unknown) => {
@@ -528,11 +561,6 @@ function originAllowed(
   if (origin == null || allowedOrigins == null) return true
   const bare = (url: string): string => url.replace(/\/+$/, '')
   return allowedOrigins.some(allowed => bare(allowed) === bare(origin))
-}
-
-function pathOf(url: string | undefined): string {
-  const path = (url ?? '').split('?')[0]
-  return path.replace(/\/+$/, '')
 }
 
 function refuseUpgrade(

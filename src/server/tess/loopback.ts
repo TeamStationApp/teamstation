@@ -1,6 +1,11 @@
 import type { Request } from 'express'
 
 import { bearerToken, cookieValue, SESSION_COOKIE } from '../auth/tokens'
+import {
+  API_ADMISSION_HEADER,
+  OBSERVE_PARENT_HEADER,
+  observedParent
+} from '../middleware/apiRateLimits'
 import { TESS_HEADER } from '../middleware/withAuth'
 import { type ApiMethod, checkApiRequest } from './denyList'
 
@@ -29,6 +34,7 @@ export interface Credentials {
   cookie?: string
   /** Where they called from, so the API's limits and logs see them. */
   forwardedFor?: string
+  observedParent?: () => string
 }
 
 /** What the API answered: its status, and the body as text, maybe cut. */
@@ -36,13 +42,18 @@ export interface ApiAnswer {
   status: number
   body: string
   truncated: boolean
+  /** Present only when the API admission gate confirmed the write never began. */
+  retryAfterSec?: number
 }
 
 /** The credentials a request to Tess carried, as `withActor` read them. */
 export function credentialsOf(req: Request): Credentials {
   const authorization = req.header('authorization')
   const ip = req.ip
-  const forwardedFor = ip == null || ip === '' ? {} : { forwardedFor: ip }
+  const parent = observedParent(req)
+  const forwardedFor: Credentials =
+    ip == null || ip === '' ? {} : { forwardedFor: ip }
+  if (parent != null) forwardedFor.observedParent = parent
   if (bearerToken(authorization) != null)
     return { authorization: authorization?.trim(), ...forwardedFor }
   const session = cookieValue(req.header('cookie'), SESSION_COOKIE)
@@ -114,6 +125,8 @@ export async function apiCall(
     accept: 'application/json',
     [TESS_HEADER]: '1'
   }
+  if (credentials.observedParent != null)
+    headers[OBSERVE_PARENT_HEADER] = credentials.observedParent()
   if (credentials.authorization != null)
     headers.authorization = credentials.authorization
   if (credentials.cookie != null) headers.cookie = credentials.cookie
@@ -141,7 +154,18 @@ export async function apiCall(
         truncated: false
       }
     }
-    return { status: response.status, ...cut(await response.text()) }
+    const answer: ApiAnswer = {
+      status: response.status,
+      ...cut(await response.text())
+    }
+    if (
+      response.status === 429 &&
+      response.headers.get(API_ADMISSION_HEADER) === 'refused'
+    ) {
+      const wait = Number(response.headers.get('retry-after'))
+      if (Number.isSafeInteger(wait) && wait > 0) answer.retryAfterSec = wait
+    }
+    return answer
   } catch {
     return {
       status: 0,

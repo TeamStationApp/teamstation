@@ -354,6 +354,23 @@ const playbackFetch = {
   n: number(1e6)
 }
 
+const rateTier = choice(
+  'none',
+  'ordinary',
+  'aggregate',
+  'expensive',
+  'rows',
+  'arrival'
+)
+const rateScope = choice(
+  'arrivalIp',
+  'signedInIp',
+  'guestIp',
+  'account',
+  'store'
+)
+const rateCount = number(Number.MAX_SAFE_INTEGER)
+
 /** The property dictionary is positive: unknown fields never leave a client. */
 export const EVENT_RULES = {
   session_started: {},
@@ -419,6 +436,43 @@ export const EVENT_RULES = {
   stream_stopped: system,
   stream_failed: system,
   request_completed: system,
+  api_rate_decisions: {
+    mode: choice('observe', 'enforce'),
+    tier: rateTier,
+    transport: choice('http', 'upgrade', 'search'),
+    backend: choice('shared', 'local'),
+    scope: rateScope,
+    limitingTier: rateTier,
+    decision: choice('refused', 'admitted'),
+    fault: choice(
+      'none',
+      'unavailable',
+      'timeout',
+      'permissions',
+      'readOnly',
+      'cluster',
+      'storeError'
+    ),
+    n: rateCount,
+    units: rateCount,
+    admittedUnits: rateCount,
+    le1: rateCount,
+    le5: rateCount,
+    le20: rateCount,
+    le100: rateCount
+  },
+  api_rate_demand: {
+    mode: choice('observe', 'enforce'),
+    scope: rateScope,
+    tier: rateTier,
+    windowSec: number(60),
+    n: rateCount,
+    p50: rateCount,
+    p95: rateCount,
+    max: rateCount
+  },
+  api_rate_upgrade_identity_missed: { n: rateCount },
+  api_rate_store: { mode: choice('observe', 'enforce'), degradedMs: rateCount },
   export_started: system,
   export_completed: system,
   export_failed: system,
@@ -460,7 +514,11 @@ export const SERVER_EVENTS = new Set<EventName>([
   'account_created',
   'processing_ready',
   'processing_failed',
-  'tess_request'
+  'tess_request',
+  'api_rate_decisions',
+  'api_rate_demand',
+  'api_rate_upgrade_identity_missed',
+  'api_rate_store'
 ])
 /**
  * How OpenSearch stores each property any event may carry. The collector's
@@ -470,6 +528,25 @@ export const SERVER_EVENTS = new Set<EventName>([
 export const PROPERTY_TYPES: Readonly<
   Record<string, 'keyword' | 'double' | 'boolean'>
 > = {
+  mode: 'keyword',
+  tier: 'keyword',
+  transport: 'keyword',
+  backend: 'keyword',
+  scope: 'keyword',
+  limitingTier: 'keyword',
+  decision: 'keyword',
+  fault: 'keyword',
+  units: 'double',
+  admittedUnits: 'double',
+  le1: 'double',
+  le5: 'double',
+  le20: 'double',
+  le100: 'double',
+  windowSec: 'double',
+  p50: 'double',
+  p95: 'double',
+  max: 'double',
+  degradedMs: 'double',
   pg: 'keyword',
   mt: 'keyword',
   sp: 'keyword',

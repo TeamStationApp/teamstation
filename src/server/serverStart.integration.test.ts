@@ -1,4 +1,5 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { once } from 'node:events'
 import {
   mkdirSync,
   mkdtempSync,
@@ -15,16 +16,22 @@ import { gzipSync } from 'node:zlib'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
+import { createClient } from 'redis'
 import { generateVAPIDKeys } from 'web-push'
 import WebSocket from 'ws'
 
+import { SCOREBOARD_CLOSE } from '../common/scoreboard'
 import { SEARCH_SOCKET_PATH } from '../common/search/types'
 import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { dropScratchDatabase, testDatabaseUrl } from '../migrate/testDatabase'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import { pushTestPrefix } from '../test/pushQueueKit'
 import { testRedisUrl } from '../test/scoreboardKit'
+import { createSession } from './auth/sessions'
+import { makeDatabase } from './db/database'
+import { ratePrefix } from './valkey/apiBudgets'
 
 /**
  * The server as `npm start` runs it, in its own process on a scratch
@@ -198,6 +205,637 @@ describe('the server process', function () {
     }
     return await exited
   }
+
+  it('recovers shared budgets across two workers, a local fallback, a writer restart and ACL changes', async function () {
+    this.timeout(180000)
+    const binary = ['valkey-server', 'redis-server'].find(
+      bin => spawnSync(bin, ['--version']).status === 0
+    )
+    if (binary == null) return this.skip()
+    const port = await freePort()
+    const url = 'redis://127.0.0.1:' + port
+    const prefix = pushTestPrefix()
+    const db = makeDatabase(scratchUrl)
+    const userId = userIdOfGumbo(4858)
+    let token: string
+    try {
+      await insertFixtureUsers(db, {
+        id: userId,
+        legacyId: 'usr_recovery_fixture',
+        login_enabled: true,
+        display_name: 'Demo Staff'
+      })
+      token = (await createSession(db, userId, undefined)).token
+    } finally {
+      await db.destroy()
+    }
+    // A full row allowance takes 200 seconds to recover. A replaced worker
+    // starts with a fresh local allowance while its sibling still holds debt.
+    async function batches(base: string): Promise<number[]> {
+      const results: number[] = []
+      for (let i = 0; i < 4; i++) {
+        const r = await fetch(base + '/api/v1/teams/missing-fixture/games', {
+          method: 'POST',
+          headers: {
+            connection: 'close',
+            'content-type': 'application/json',
+            authorization: 'Bearer ' + token
+          },
+          body: JSON.stringify({ games: Array(200).fill({}) })
+        })
+        await r.arrayBuffer()
+        results.push(r.status)
+      }
+      return results
+    }
+    const storeDirectory = mkdtempSync(join(dir, 'rate-store-'))
+    let child: ChildProcess | undefined
+    let stopped: Promise<unknown> | undefined
+    async function boot(): Promise<void> {
+      child = spawn(
+        binary!,
+        [
+          '--port',
+          String(port),
+          '--bind',
+          '127.0.0.1',
+          '--dir',
+          storeDirectory,
+          '--save',
+          '',
+          '--appendonly',
+          'no'
+        ],
+        {
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
+      stopped = once(child, 'exit')
+      const output = child.stdout!
+      await Promise.race([
+        new Promise<void>(resolve => {
+          let tail = ''
+          const listen = (chunk: Buffer): void => {
+            tail = (tail + chunk.toString().toLowerCase()).slice(-1024)
+            if (tail.includes('ready to accept connections')) {
+              output.off('data', listen)
+              resolve()
+            }
+          }
+          output.on('data', listen)
+        }),
+        stopped.then(() => {
+          throw new Error('Test store exited before it was ready')
+        })
+      ])
+    }
+    async function halt(): Promise<void> {
+      child?.kill('SIGTERM')
+      await stopped
+      child = undefined
+    }
+    const admin = async (): Promise<ReturnType<typeof createClient>> => {
+      const c = createClient({ url, socket: { reconnectStrategy: false } })
+      c.on('error', () => {})
+      await c.connect()
+      return c
+    }
+    async function getWorkers(
+      base: string,
+      readiness: string,
+      expected = 2
+    ): Promise<number[]> {
+      const pids = new Set<number>()
+      const deadline = Date.now() + 35000
+      while (pids.size < expected && Date.now() < deadline) {
+        const r = await fetch(base + '/api/v1/health', {
+          headers: { connection: 'close', 'x-forwarded-for': '192.0.2.49' }
+        })
+        expect(r.status).equals(200)
+        const body = await r.json()
+        if (body.apiRateLimits.readiness === readiness) {
+          expect(body.apiRateLimits.mode).equals('enforce')
+          if (readiness === 'ready')
+            expect(body.apiRateLimits.degradedMs).equals(0)
+          else expect(body.apiRateLimits.degradedMs).to.be.at.least(0)
+          if (readiness === 'failed')
+            expect(body.apiRateLimits.fault).equals('permissions')
+          pids.add(body.pid)
+        }
+        // The readiness monitor is a guest too. Keep it below its 240/minute budget.
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+      expect(pids.size, 'workers reporting ' + readiness).equals(expected)
+      return [...pids]
+    }
+    async function burst(
+      base: string,
+      ip: string,
+      count: number
+    ): Promise<number[]> {
+      const statuses: number[] = []
+      for (let i = 0; i < count; i++) {
+        const r = await fetch(base + '/api/v1/graphql', {
+          method: 'POST',
+          headers: {
+            connection: 'close',
+            'x-forwarded-for': ip,
+            'content-type': 'application/json'
+          },
+          body: '{"query":"{ __typename }"}'
+        })
+        await r.arrayBuffer()
+        statuses.push(r.status)
+      }
+      return statuses
+    }
+    const config = {
+      apiRateLimitMode: 'enforce',
+      backgroundJobs: false,
+      redis: { url, prefix }
+    }
+    try {
+      await boot()
+      let c = await admin()
+      await c.sendCommand(['ACL', 'SETUSER', 'default', '-evalsha'])
+      await c.close()
+      await start(
+        2,
+        async (base, said) => {
+          await getWorkers(base, 'failed')
+          expect(said()).includes('check writer credentials and ACLs')
+          c = await admin()
+          await c.sendCommand([
+            'ACL',
+            'SETUSER',
+            'default',
+            '+evalsha',
+            'resetkeys',
+            '~*:expensive'
+          ])
+          // The script can write expensive keys, but the remaining families are still forbidden.
+          await new Promise(resolve => setTimeout(resolve, 5500))
+          await getWorkers(base, 'failed')
+          await c.sendCommand(['ACL', 'SETUSER', 'default', 'allkeys'])
+          const pids = await getWorkers(base, 'ready')
+          expect(await c.info('replication')).matches(/role:master/)
+          const clients = await c.clientList()
+          for (const pid of pids)
+            expect(
+              clients.some(row => row.name === 'live-playlists-' + pid)
+            ).equals(true)
+          // A distinct deployment on the very same writable primary has its own four.
+          await start(
+            1,
+            async other => {
+              await getWorkers(other, 'ready', 1)
+              expect(await burst(base, '192.0.2.41', 5)).deep.equals([
+                401, 401, 401, 401, 429
+              ])
+              expect(await burst(other, '192.0.2.41', 5)).deep.equals([
+                401, 401, 401, 401, 429
+              ])
+            },
+            { ...config, redis: { url, prefix: prefix + '-other' } }
+          )
+          await c.sendCommand(['SCRIPT', 'FLUSH'])
+          expect(await burst(base, '192.0.2.42', 1)).deep.equals([401])
+          // Give one guest fixture debt long enough to outlast worker and store restarts.
+          const key =
+            ratePrefix(prefix, 'enforce') + 'guest:192.0.2.43:expensive'
+          const debtMs = 300000 // Outlast even an instrumented run's 180-second deadline.
+          await c.set(key, String(Date.now() + debtMs), { PX: debtMs })
+          await c.sendCommand(['SAVE'])
+          await c.close()
+          await halt()
+          const previous = await getWorkers(base, 'degraded')
+          const local = await burst(base, '192.0.2.43', 16)
+          expect(local.filter(s => s === 401)).has.length(8)
+          expect(local.filter(s => s === 429)).has.length(8)
+          const charged = await batches(base)
+          expect(charged.filter(s => s === 404)).has.length(2)
+          expect(charged.filter(s => s === 429)).has.length(2)
+          // The verified PID belongs to a worker the fixture itself just forked.
+          process.kill(previous[0], 'SIGTERM')
+          const deadline = Date.now() + 35000
+          let restarted = false
+          while (!restarted && Date.now() < deadline) {
+            const pids = await getWorkers(base, 'degraded', 1)
+            restarted = !previous.includes(pids[0])
+          }
+          expect(restarted).equals(true)
+          const afterRestart = await batches(base)
+          expect(afterRestart.filter(s => s === 404)).has.length(1)
+          expect(afterRestart.filter(s => s === 429)).has.length(3)
+          await boot()
+          await getWorkers(base, 'ready')
+          expect(await burst(base, '192.0.2.43', 1)).deep.equals([429])
+          c = await admin()
+          try {
+            await c.sendCommand(['ACL', 'SETUSER', 'default', '-evalsha'])
+            await getWorkers(base, 'failed') // The HTTP health read itself uses admission.
+            const restricted = await burst(base, '192.0.2.45', 16)
+            expect(restricted.filter(s => s === 401)).has.length(8)
+            expect(restricted.filter(s => s === 429)).has.length(8)
+            await c.sendCommand(['ACL', 'SETUSER', 'default', '+evalsha'])
+            await getWorkers(base, 'ready')
+            expect(await burst(base, '192.0.2.45', 5)).deep.equals([
+              401, 401, 401, 401, 429
+            ])
+            expect(said()).includes('shared enforcement is ready again')
+          } finally {
+            await c.close()
+          }
+        },
+        config
+      )
+    } finally {
+      if (child != null) await halt()
+    }
+  })
+
+  it('shares API limits between workers, sessions, HTTP and the search socket', async function () {
+    const prefix = pushTestPrefix()
+    const userId = userIdOfGumbo(4851)
+    const db = makeDatabase(scratchUrl)
+    const client = createClient({ url: testRedisUrl })
+    await client.connect()
+    try {
+      await insertFixtureUsers(db, {
+        id: userId,
+        legacyId: 'usr_budget_fixture',
+        login_enabled: true,
+        display_name: 'Demo Reader'
+      })
+      const a = await createSession(db, userId, undefined)
+      const b = await createSession(db, userId, undefined)
+      const code = await start(
+        2,
+        async base => {
+          const call = async (ip: string, token?: string): Promise<Response> =>
+            await fetch(base + '/api/v1/graphql', {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-forwarded-for': ip,
+                ...(token == null ? {} : { authorization: 'Bearer ' + token })
+              },
+              body: JSON.stringify({ query: '{ __typename }' })
+            })
+          const ip = '192.0.2.7'
+          const guests = await Promise.all(
+            Array.from({ length: 6 }, async () => await call(ip))
+          )
+          expect(guests.filter(r => r.status === 401)).has.length(4)
+          const refused = guests.filter(r => r.status === 429)
+          expect(refused).has.length(2)
+          expect(await refused[0].json()).deep.includes({
+            code: 'rateLimited',
+            details: {
+              retryAfterSec: Number(refused[0].headers.get('retry-after'))
+            }
+          })
+          expect((await call(ip, 'expired-fixture')).status).equals(429)
+          expect((await call('192.0.2.8')).status).equals(401)
+          const accounts = await Promise.all(
+            Array.from(
+              { length: 8 },
+              async (_, i) => await call(ip, i % 2 === 0 ? a.token : b.token)
+            )
+          )
+          expect(accounts.map(r => r.status)).deep.equals(Array(8).fill(200))
+          expect((await call('198.51.100.4', b.token)).status).equals(429)
+          expect(
+            (
+              await fetch(base + '/api/v1/time', {
+                headers: { authorization: 'Bearer ' + a.token }
+              })
+            ).status
+          ).equals(200)
+
+          // Only release this fixture's GraphQL allowance. The import has a
+          // separate row budget, shared across team IDs and sessions.
+          await client.del(
+            ratePrefix(prefix, 'enforce') + 'account:' + userId + ':expensive'
+          )
+          const batch = async (team: string): Promise<Response> =>
+            await fetch(base + '/api/v1/teams/' + team + '/games', {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                authorization: 'Bearer ' + a.token,
+                'x-forwarded-for': ip
+              },
+              body: JSON.stringify({ games: Array(200).fill({}) })
+            })
+          expect((await batch('missing-one')).status).equals(404)
+          const nextBatch = await batch('missing-two')
+          expect(nextBatch.status).equals(429)
+          expect(Number(nextBatch.headers.get('retry-after'))).greaterThan(190)
+
+          // Admission leads to the configured dictation handler's own authentication.
+          const dictation = new WebSocket(
+            base.replace(/^http/, 'ws') + '/api/v1/dictation'
+          )
+          const dictationStatus = await new Promise<number>(
+            (resolve, reject) => {
+              dictation.once('error', reject)
+              dictation.once('open', () => {
+                dictation.close()
+                reject(
+                  new Error('Expected the dictation route to require a session')
+                )
+              })
+              dictation.once('unexpected-response', (_, res) => {
+                res.resume()
+                resolve(res.statusCode!)
+              })
+            }
+          )
+          expect(dictationStatus).equals(401)
+
+          // A guest can still reach the scoreboard's own admission check.
+          const board = new WebSocket(
+            base.replace(/^http/, 'ws') + '/api/v1/scoreboard/missing/socket'
+          )
+          const boardClose = await new Promise<number>((resolve, reject) => {
+            board.once('error', reject)
+            board.once('close', resolve)
+          })
+          expect(boardClose).equals(SCOREBOARD_CLOSE.closed)
+
+          const url = base.replace(/^http/, 'ws') + SEARCH_SOCKET_PATH
+          const headers = {
+            'x-forwarded-for': ip,
+            authorization: 'Bearer ' + b.token
+          }
+          // A mistyped upgrade path closes without spending a signed operation.
+          const aggregateKey =
+            ratePrefix(prefix, 'enforce') + 'account:' + userId + ':aggregate'
+          const before = await client.get(aggregateKey)
+          const unknown = new WebSocket(
+            base.replace(/^http/, 'ws') + '/unknown-protocol',
+            { headers }
+          )
+          unknown.on('error', () => undefined)
+          await new Promise<void>(resolve =>
+            unknown.once('close', () => {
+              resolve()
+            })
+          )
+          expect(await client.get(aggregateKey)).equals(before)
+          const ws = new WebSocket(url, { headers })
+          try {
+            await new Promise<void>((resolve, reject) => {
+              ws.once('open', resolve)
+              ws.once('error', reject)
+            })
+            // A frame uses the same account budget as an aggregate HTTP read.
+            // Place that one fixture key at its burst limit on the shared clock.
+            await client.set(
+              ratePrefix(prefix, 'enforce') +
+                'account:' +
+                userId +
+                ':aggregate',
+              String(Date.now() + 48 * 400 + 5000),
+              { PX: 30000 }
+            )
+            const closed = new Promise<number>(resolve =>
+              ws.once('close', resolve)
+            )
+            ws.send(
+              JSON.stringify({
+                type: 'search',
+                seq: 1,
+                text: 'demo',
+                location: null,
+                mode: 'all'
+              })
+            )
+            expect(await closed).equals(1013)
+          } finally {
+            ws.terminate()
+          }
+
+          // An exhausted arrival budget refuses an upgrade before reading credentials.
+          await client.set(
+            ratePrefix(prefix, 'enforce') + 'ip:' + ip,
+            String(Date.now() + 20000),
+            { PX: 30000 }
+          )
+          const status = await new Promise<number | undefined>(
+            (resolve, reject) => {
+              const denied = new WebSocket(url, { headers })
+              denied.on('error', reject)
+              denied.once('unexpected-response', (_, res) => {
+                res.resume()
+                resolve(res.statusCode)
+                denied.terminate()
+              })
+            }
+          )
+          expect(status).equals(429)
+        },
+        {
+          apiRateLimitMode: 'enforce',
+          redis: { url: testRedisUrl, prefix },
+          dictation: { apiKey: 'fixture-placeholder' }
+        }
+      )
+      expect(code).equals(0)
+    } finally {
+      await client.close()
+      await db.destroy()
+    }
+  })
+
+  it('replays the same gated HTTP, upgrade and open-search trace across modes', async function () {
+    const db = makeDatabase(scratchUrl)
+    const client = createClient({ url: testRedisUrl })
+    await client.connect()
+    try {
+      const userId = userIdOfGumbo(4861)
+      await insertFixtureUsers(db, {
+        id: userId,
+        legacyId: 'usr_mode_fixture',
+        login_enabled: true,
+        display_name: 'Demo Reader'
+      })
+      const session = await createSession(db, userId, undefined)
+      const email = 'budget-fixture@example.test'
+      await db
+        .insertInto('rate_events')
+        .values(
+          Array.from({ length: 10 }, (_, i) => ({
+            id: 'rate-fixture-' + i,
+            scope: 'passwordParameters.address',
+            key: email
+          }))
+        )
+        .execute()
+      const prefix = pushTestPrefix()
+      const ip = '192.0.2.40'
+      const headers = {
+        authorization: 'Bearer ' + session.token,
+        'x-forwarded-for': ip,
+        'content-type': 'application/json'
+      }
+      const reports = new Map<string, string[]>()
+      for (const mode of ['off', 'observe', 'enforce'] as const) {
+        const ns = ratePrefix(prefix, mode)
+        const prefill = async (key: string): Promise<void> => {
+          // The fixture's controlled debt gives both modes identical decisions
+          // despite different process startup and dispatch times.
+          if (mode !== 'off')
+            await client.set(ns + key, String(Date.now() + 400000), {
+              PX: 500000
+            })
+        }
+        let output: () => string = () => ''
+        const exit = await start(
+          1,
+          async (base, said) => {
+            output = said
+            const enforcing = mode === 'enforce'
+            const arrival = 'ip:' + ip
+            const account = 'account:' + userId
+            const aggregate = account + ':aggregate'
+            const rows = account + ':schedule-rows'
+            const batch = async (): Promise<Response> =>
+              await fetch(base + '/api/v1/teams/missing/games', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ games: [{}] })
+              })
+            const open = (): WebSocket =>
+              new WebSocket(base.replace(/^http/, 'ws') + SEARCH_SOCKET_PATH, {
+                headers
+              })
+            const frame = async (
+              ws: WebSocket,
+              seq: number
+            ): Promise<string> => {
+              const answer = new Promise<string>((resolve, reject) => {
+                const closed = (code: number): void => {
+                  ws.off('message', message)
+                  resolve(String(code))
+                }
+                const message = (data: Buffer): void => {
+                  ws.off('close', closed)
+                  resolve(JSON.parse(data.toString()).type)
+                }
+                ws.once('close', closed)
+                ws.once('message', message)
+                ws.once('error', reject)
+              })
+              ws.send(
+                JSON.stringify({
+                  type: 'search',
+                  seq,
+                  text: '',
+                  location: null,
+                  mode: 'all'
+                })
+              )
+              return await answer
+            }
+            await prefill(arrival)
+            expect((await batch()).status).equals(enforcing ? 429 : 404)
+            expect(await client.exists(ns + rows)).equals(0)
+            const denied = open()
+            try {
+              const outcome = await new Promise<number>((resolve, reject) => {
+                denied.once('error', reject)
+                denied.once('open', () => {
+                  resolve(101)
+                })
+                denied.once('unexpected-response', (_, res) => {
+                  res.resume()
+                  resolve(res.statusCode!)
+                })
+              })
+              expect(outcome).equals(enforcing ? 429 : 101)
+              await client.del(ns + arrival)
+              if (!enforcing) expect(await frame(denied, 1)).equals('results')
+              expect(await client.exists(ns + aggregate)).equals(0)
+            } finally {
+              denied.terminate()
+            }
+            await prefill(account + ':expensive')
+            const query = await fetch(base + '/api/v1/graphql', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ query: '{ teams { id } }' })
+            })
+            expect(query.status).equals(enforcing ? 429 : 200)
+            if (!enforcing)
+              expect((await query.json()).data.teams).to.be.an('array')
+            expect(await client.exists(ns + aggregate)).equals(0)
+            expect((await batch()).status).equals(enforcing ? 429 : 404)
+            expect(await client.exists(ns + rows)).equals(0)
+            await client.del(ns + account + ':expensive')
+            await prefill(rows)
+            expect((await batch()).status).equals(enforcing ? 429 : 404)
+            const ws = open()
+            try {
+              await new Promise<void>((resolve, reject) => {
+                ws.once('open', resolve)
+                ws.once('error', reject)
+              })
+              await prefill(aggregate)
+              expect(await frame(ws, 1)).equals(enforcing ? '1013' : 'results')
+              await client.del(ns + aggregate)
+              if (!enforcing) expect(await frame(ws, 2)).equals('results')
+              expect(await client.exists(ns + aggregate)).equals(0)
+              expect(
+                (await fetch(base + '/api/v1/me/roles', { headers })).status
+              ).equals(200)
+              expect(await client.exists(ns + aggregate)).equals(
+                mode === 'off' ? 0 : 1
+              )
+            } finally {
+              ws.terminate()
+            }
+            const login = await fetch(
+              base + '/api/v1/auth/password/parameters',
+              {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ email })
+              }
+            )
+            expect(login.status).equals(429)
+            if (mode === 'off')
+              expect(await client.keys(ns + '*')).deep.equals([])
+          },
+          { apiRateLimitMode: mode, redis: { url: testRedisUrl, prefix } }
+        )
+        expect(exit).equals(0)
+        const refusals = output()
+          .split('\n')
+          .filter(s => s.includes('api_rate_decisions '))
+          .map(s => JSON.parse(s.split('api_rate_decisions ')[1]))
+          .filter(s => s.decision === 'refused')
+          .map(s => [s.tier, s.transport, s.scope, s.n].join('/'))
+          .sort()
+        reports.set(mode, refusals)
+      }
+      expect(reports.get('off')).deep.equals([])
+      expect(reports.get('observe')).deep.equals(
+        [
+          'arrival/http/arrivalIp/1',
+          'arrival/upgrade/arrivalIp/1',
+          'expensive/http/account/2',
+          'rows/http/account/1',
+          'aggregate/search/account/1'
+        ].sort()
+      )
+      expect(reports.get('enforce')).deep.equals(reports.get('observe'))
+    } finally {
+      await client.close()
+      await db.destroy()
+    }
+  })
 
   it('registers production TV links implicitly and excludes companion-only origins', async function () {
     const code = await start(

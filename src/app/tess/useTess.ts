@@ -126,6 +126,7 @@ export interface TessLive {
 }
 
 export interface TessChatState {
+  retryAt: ReadonlyMap<string, number>
   /** The conversation is still being read. */
   loading: boolean
   messages: TessMessage[]
@@ -357,6 +358,25 @@ export function useTess(
 ): TessChatState {
   const [loading, setLoading] = useState(true)
   const [messages, setMessages] = useState<TessMessage[]>([])
+  // The same pending change can arrive in both a streamed update and the final
+  // report. Count its wait once, including when first opened from history.
+  const [waits, setWaits] = useState({
+    messages,
+    retryAt: new Map<string, number>()
+  })
+  if (waits.messages !== messages) {
+    const received = Date.now()
+    const retryAt = new Map<string, number>()
+    for (const message of messages)
+      for (const change of message.changes)
+        if (change.status === 'pending' && change.retryAfterSec != null)
+          retryAt.set(
+            change.id,
+            waits.retryAt.get(change.id) ??
+              received + change.retryAfterSec * 1000
+          )
+    setWaits({ messages, retryAt })
+  }
   const [error, setError] = useState<string | null>(null)
   const mounted = useRef(true)
   const waiter = useRef(new AnswerWaiter())
@@ -789,7 +809,10 @@ export function useTess(
 
   const confirmAll = useCallback(
     async (changeIds: string[]) => {
-      if (busy() || changeIds.length === 0) return
+      if (busy()) return
+      const now = Date.now()
+      changeIds = changeIds.filter(id => (waits.retryAt.get(id) ?? 0) <= now)
+      if (changeIds.length === 0) return
       begin()
       const clientId = newClientId()
       store.running = clientId
@@ -848,7 +871,7 @@ export function useTess(
         end()
       }
     },
-    [api, begin, busy, end, store, tell, stopTelling]
+    [api, begin, busy, end, store, tell, stopTelling, waits.retryAt]
   )
 
   // The message or confirm out, though a chat since closed sent it, or
@@ -926,6 +949,7 @@ export function useTess(
     thinking: inFlight > 0,
     live,
     thoughtSeconds,
+    retryAt: waits.retryAt,
     error,
     send,
     queued,

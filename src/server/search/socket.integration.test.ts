@@ -29,6 +29,7 @@ import type { Database } from '../db/database'
 import type { IpPlace } from '../location/ipPlaces'
 import { bindUpgrades, claimUpgrade } from '../socket/bindUpgrades'
 import { attachGameSocket } from '../socket/gameSocket'
+import { localBudgets } from '../valkey/apiBudgets'
 import {
   attachSearchSocket,
   type SearchSocketHandle,
@@ -614,7 +615,10 @@ describe('search socket', function () {
     })
   })
 
-  it('closes with 4401 once the session is revoked', async () => {
+  it('closes with 4401 before charging a session that was revoked', async () => {
+    let charges = 0
+    mount({ spendSearch: async () => (++charges === 1 ? 0 : 30) })
+
     const { token } = await createSession(
       f.h.db,
       fixtureUserId(101),
@@ -626,7 +630,51 @@ describe('search socket', function () {
     await revokeSession(f.h.db, token)
     search(client, 2, 'mookie betts')
     expect(await client.closed).equals(SIGNED_OUT_CLOSE)
-    expect(client.frames).length(1)
+    expect(charges).equals(1)
+    // The first search may also deliver its ranked results before revocation.
+    expect(client.frames.every(({ frame }) => frame.seq === 1)).equals(true)
+  })
+
+  it('recovers a constrained handshake and search after the server tells the app to wait', async () => {
+    let at = 0
+    const spend = localBudgets(() => at)
+    const charge = async (): Promise<number> =>
+      (
+        await spend([
+          {
+            key: 'fixture',
+            budget: [1000, 2],
+            scope: 'guestIp',
+            tier: 'aggregate'
+          }
+        ])
+      ).retryAfterSec
+    await charge()
+    mount({ spendSearch: charge })
+    detach()
+    detach = bindUpgrades(f.h.server, [handle.acceptUpgrade], charge)
+    const waits: number[] = []
+    const client = new SearchSocket({
+      url: socketUrl,
+      WebSocketImpl: WebSocket as unknown as WebSocketConstructor,
+      setTimer: (run, ms) => {
+        at += ms
+        waits.push(ms)
+        return setTimeout(run, 0)
+      }
+    })
+    try {
+      const result = new Promise<void>(resolve => {
+        client.onResults(() => {
+          resolve()
+        })
+      })
+      client.search(ask('fixture'))
+      await result
+      expect(waits).deep.equals([2000])
+    } finally {
+      client.close()
+    }
   })
 
   it('leaves the app’s client unauthorized at 4401, with no reconnect on the dead token, until a new sign-in', async () => {

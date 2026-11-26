@@ -1,5 +1,6 @@
 import type { Request } from 'express'
 
+import { OBSERVE_PARENT_HEADER } from '../middleware/apiRateLimits'
 import { TESS_HEADER } from '../middleware/withAuth'
 import { credentialsOf } from '../tess/loopback'
 
@@ -22,7 +23,11 @@ const READ_DEADLINE_MS = 30000
 /** A refusal or failure from the REST route behind a field. */
 export class RestError extends Error {
   readonly status: number
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    readonly retryAfterSec?: number
+  ) {
     super(message)
     this.status = status
   }
@@ -40,6 +45,8 @@ export interface RestReader {
 export function readerHeaders(req: Request): Record<string, string> {
   const credentials = credentialsOf(req)
   const headers: Record<string, string> = { accept: 'application/json' }
+  if (credentials.observedParent != null)
+    headers[OBSERVE_PARENT_HEADER] = credentials.observedParent()
   if (credentials.authorization != null)
     headers.authorization = credentials.authorization
   if (credentials.cookie != null) headers.cookie = credentials.cookie
@@ -161,7 +168,14 @@ export function restReader(
         const body = JSON.parse(text) as { message?: unknown }
         if (typeof body.message === 'string') message = body.message
       } catch {}
-      throw new RestError(response.status, message)
+      const wait = Number(response.headers.get('retry-after'))
+      throw new RestError(
+        response.status,
+        message,
+        response.status === 429 && Number.isSafeInteger(wait) && wait > 0
+          ? wait
+          : undefined
+      )
     }
     return text === '' ? null : (JSON.parse(text) as unknown)
   }

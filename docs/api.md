@@ -5,6 +5,8 @@ The REST API under `/api/v1` is described route by route in
 `/api/v1/openapi.json`. This page holds the rules every route follows, so a
 new one looks like the ones already there.
 
+The [API rate-limit report](api-rate-limits.md) lists the account and IP allowances, burst sizes, endpoint tiers and measured database costs.
+
 ## Paths name things
 
 A path names a resource or a collection of them:

@@ -25,6 +25,7 @@ import type { TessLive } from './useTess'
 export function TessMessage({
   message,
   changes = [],
+  retryAt,
   onNavigate,
   onConfirmAll,
   holdDisabled = false,
@@ -33,6 +34,7 @@ export function TessMessage({
   message: Message
   /** The turn's changes, on its last reply; none on any other message. */
   changes?: TessChange[]
+  retryAt?: ReadonlyMap<string, number>
   onNavigate: (path: string) => void
   onConfirmAll: (changeIds: string[]) => void
   /** Tess is answering: the batch takes no hold until she has. */
@@ -75,6 +77,7 @@ export function TessMessage({
       {changes.length > 0 && (
         <ChangeBatch
           changes={changes}
+          retryAt={retryAt}
           onConfirmAll={onConfirmAll}
           holdDisabled={holdDisabled}
         />

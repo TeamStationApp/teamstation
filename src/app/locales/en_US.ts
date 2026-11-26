@@ -1659,6 +1659,7 @@ export const enUs = {
   tess_resize: 'Resize Tess',
   tess_thinking_live: 'Thinking',
   tess_thought_for: 'Thought for %ss',
+  tess_change_retry_in: 'Retry in %ss',
   tess_step_running: '%s, in progress',
   tess_step_done: '%s, done',
   tess_step_failed: '%s, failed'

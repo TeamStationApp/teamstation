@@ -149,6 +149,7 @@ export function TessChat({
             message={message}
             changes={batches.get(message.id)}
             onNavigate={navigate}
+            retryAt={tess.retryAt}
             onConfirmAll={confirmAll}
             holdDisabled={tess.thinking}
             thoughtSeconds={tess.thoughtSeconds[message.id]}

@@ -206,7 +206,11 @@ describe('ChangeBatch', function () {
     await render(
       <TessOverlayProvider>
         <View testID="chat">
-          <ChangeBatch changes={GAMES} onConfirmAll={() => undefined} />
+          <ChangeBatch
+            changes={GAMES}
+            retryAt={new Map([[GAMES[0].id, Date.now() + 6500]])}
+            onConfirmAll={() => undefined}
+          />
         </View>
         <View testID="pane">
           <TessOverlayHost />
@@ -220,6 +224,10 @@ describe('ChangeBatch', function () {
     expect(frame.getAttribute('sandbox')).equals('')
     const page = frame.getAttribute('srcdoc')!
     expect(page).includes('<th>Opponent</th><th>Date</th><th>Field</th>')
+    expect(page).includes('<th>Status</th>')
+    const retry = texts('Tess change status')[0]
+    expect(retry).matches(/Retry in [67]s/)
+    expect(page).includes(`<td>${retry}</td>`)
     expect(page).includes('<td>Sat Jun 5</td>')
     await click(byLabel('Close'))
     expect(byTestId('Tess overlay')).equals(null)

@@ -17,6 +17,7 @@ import type { TessChatState } from './useTess'
 afterEach(unmount)
 
 const tess: TessChatState = {
+  retryAt: new Map(),
   loading: false,
   messages: [],
   thinking: false,

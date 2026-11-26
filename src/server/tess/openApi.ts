@@ -31,6 +31,12 @@ const change = {
       description:
         "On a pending change: when it expires unconfirmed, by the server's clock. Absent otherwise"
     },
+    retryAfterSec: {
+      type: 'integer',
+      minimum: 1,
+      description:
+        'Seconds to wait before confirming a pending change again after admission refused its write'
+    },
     expiresInMs: {
       type: 'integer',
       minimum: 0,

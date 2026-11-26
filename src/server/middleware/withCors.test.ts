@@ -50,13 +50,15 @@ describe('withCors', function () {
     expect(response.headers.get('access-control-allow-origin')).equals(ORIGIN)
   })
 
-  it('exposes no revision header to a cross-origin GET (CORS)', async function () {
+  it('exposes the retry delay to a cross-origin GET (CORS)', async function () {
     const response = await fetch(`${base}/teams`, {
       headers: { origin: ORIGIN }
     })
     expect(response.status).equals(200)
     expect(response.headers.get('access-control-allow-origin')).equals(ORIGIN)
-    expect(response.headers.get('access-control-expose-headers')).equals(null)
+    expect(response.headers.get('access-control-expose-headers')).equals(
+      'Retry-After'
+    )
     expect(response.headers.get('x-teamstation-revision')).equals(null)
   })
 
