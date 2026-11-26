@@ -4,6 +4,8 @@ import type { Insets } from '../platform/insets'
 
 /** The space the web leaves between its controls and the window's edge. */
 export const FIELD_EDGE_GAP = 8
+/** Width of the shared scoring and replay side column. */
+export const SCORING_SIDE_WIDTH = 360
 /**
  * The field's padding on a phone. Each edge keeps the web's 8 point gap
  * *beyond* whatever the hardware takes, never inside it: `max(8, inset)`, as
