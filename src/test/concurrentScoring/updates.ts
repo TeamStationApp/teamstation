@@ -160,10 +160,14 @@ export async function remoteUpdates(rig: ConcurrentScoringRig): Promise<void> {
       content: el.scrollHeight,
       top: el.scrollTop,
       x: bounds.x + bounds.width / 2,
+      expectedHeight: Math.max(0, Math.min(5, Math.floor((
+        document.querySelector('[data-testid="scoring-notice-strip"]')!.getBoundingClientRect().top
+        - 8 - bounds.y + 0.01
+      ) / 20))) * 20,
       y: bounds.y
     }
   })
-  assert(scroll.height >= 100 && scroll.height <= 140)
+  assert.equal(scroll.height, scroll.expectedHeight)
   assert(scroll.content > scroll.height)
   // Maestro's desktop swipe is a mouse drag, not a touch-scroll gesture.
   // Exercise keyboard scrolling here; Safari verifies the touch gesture.
@@ -237,22 +241,15 @@ export async function remoteUpdates(rig: ConcurrentScoringRig): Promise<void> {
   await rig.capture('updates-collapsed')
   const geometry = await b.page!.evaluate(selector => {
     const panel = document.querySelector(selector)!.getBoundingClientRect()
-    const undo = document
-      .querySelector('[aria-label^="Undo "]')!
-      .getBoundingClientRect()
-    return {
-      width: panel.width,
-      height: panel.height,
-      undoWidth: undo.width,
-      bottom: panel.bottom,
-      undoTop: undo.top
-    }
+    const deck = document.querySelector('[data-testid="scoring-deck"]')!.getBoundingClientRect()
+    const strip = document.querySelector('[data-testid="scoring-notice-strip"]')!.getBoundingClientRect()
+    return { panel: panel.toJSON(), deckBottom: deck.bottom, stripTop: strip.top }
   }, card)
-  assert(geometry.width <= geometry.undoWidth)
-  assert(geometry.height <= 48)
-  assert(geometry.bottom <= geometry.undoTop)
-  // Short viewports intentionally let the expanded stream overlap controls.
-  // Collapse first, as a scorekeeper would, before opening a scoring menu.
+  assert(geometry.panel.width <= 96)
+  assert.equal(geometry.panel.height, 44)
+  assert(Math.abs(geometry.panel.top - geometry.deckBottom - 8) <= 1)
+  assert(geometry.panel.bottom <= geometry.stripTop)
+  // Menus obscure the log while its controller continues collecting.
   await rig.tap(1, '^More$')
   assert.equal(await panelText(1), '', 'The panel must yield to scoring menus')
   await b.m.assertVisible({ text: '^Intentional Walk$', timeout: 10000 })
