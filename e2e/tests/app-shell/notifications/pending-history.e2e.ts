@@ -112,7 +112,10 @@ export default defineE2e({
             await ctx.checkpoint(`${role}-pending`, {
               expect:
                 role === 'empty'
-                  ? [{ text: 'No approvals are waiting for you.' }]
+                  ? [
+                      { text: 'No approvals are waiting for you.' },
+                      { id: 'notification-pending-dot', absent: true }
+                    ]
                   : [{ id: `notification-row-${first.items[0].requestId}` }],
               readBack: async () => {
                 const summary = (await readJson(
@@ -161,10 +164,26 @@ export default defineE2e({
             if (role === 'paged') {
               expect(first.nextCursor).not.equals(null)
               const last = world.ids.pagedActive.split(',').sort().at(-1)!
-              await session.m.scrollUntilVisible({
-                element: { id: `notification-row-${last}` },
-                timeout: 60000
-              })
+              // The browser driver's scrollUntilVisible stops at ten scrolls;
+              // a page of full invitation cards takes more than that.
+              for (let step = 0; step < 40; step++) {
+                const visible = await session.page.evaluate((id: string) => {
+                  const row = document.querySelector(
+                    `[data-testid="notification-row-${id}"]`
+                  )
+                  if (row == null) return false
+                  const rect = row.getBoundingClientRect()
+                  return (
+                    rect.top >= 50 && rect.bottom <= window.innerHeight - 90
+                  )
+                }, last)
+                if (visible) break
+                await session.m.scroll({ direction: 'DOWN' })
+              }
+              expect(
+                timings.some(row => row.path.includes('cursor=')),
+                'the browser fetched its second page'
+              ).equals(true)
               const next = (await readJson(
                 ctx.stack.origin,
                 `${PENDING}?cursor=${encodeURIComponent(first.nextCursor!)}`,
@@ -173,6 +192,13 @@ export default defineE2e({
               expect(
                 [...first.items, ...next.items].map(row => row.requestId).sort()
               ).deep.equals(world.ids.pagedActive.split(',').sort())
+              lines.push(
+                JSON.stringify({
+                  role,
+                  firstPage: first.items.length,
+                  secondPage: next.items.length
+                })
+              )
               await ctx.checkpoint('second-page', {
                 expect: [{ id: `notification-row-${last}` }]
               })
@@ -191,10 +217,15 @@ export default defineE2e({
               expect(timing.status, timing.path).equals(200)
               expect(timing.ms, timing.path).lessThan(2000)
             }
+          } catch (error) {
+            await session.m
+              .takeScreenshot({ path: ctx.artifact(`${role}-failed.png`) })
+              .catch(() => undefined)
+            throw error
+          } finally {
             lines.push(
               JSON.stringify({ role, resolved: 1000, timings, failures })
             )
-          } finally {
             await session.close()
           }
         }
