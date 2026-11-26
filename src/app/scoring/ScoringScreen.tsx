@@ -374,7 +374,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       setRetry(value => value + 1)
     heldBefore.current = { gameId: props.gameId, held: heldHere }
   }, [props.gameId, heldHere, props.active])
-  const surface = useFieldSurface()
+  const surface = useFieldSurface('scoring', props.active !== false)
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
   const source: ScoringSource = props.source ?? fallback
   // A game that saves goes through the queue, on the web as on the phone.
@@ -1114,7 +1114,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   return (
     // The field stays on screen while a game opened again replaces the
     // panel: a swap's own exchanged sides are drawn on it in the next frame.
-    <FieldKeeper>
+    <FieldKeeper rootStyle={surface.root}>
       {swapNotice != null && (
         <View
           pointerEvents="none"

@@ -37,6 +37,8 @@ export interface BaseProjection {
   height: number
 }
 export interface FieldCanvasProps {
+  /** Use the basic shadow sampler for a touch scoring surface. */
+  basicTouchShadows?: boolean
   frame?: CameraFrame
   /** Setup taps use field picking without starting a placement gesture. */
   tapIds?: readonly string[]

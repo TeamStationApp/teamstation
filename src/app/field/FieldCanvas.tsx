@@ -10,6 +10,13 @@ import { fieldPixelRatioRange } from './fieldResolution'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
 import type { NameplatePlacement } from './playerPresentation'
+import { watchFieldContext } from './watchFieldContext'
+
+/**
+ * How long a replacement renderer must keep its WebGL context before a later
+ * loss counts as a new one rather than the same failure again.
+ */
+export const FIELD_RESTART_SETTLE_MS = 10_000
 
 /** R3F's async renderer setup does not always reach a React error boundary. */
 function supportsWebGL(): boolean {
@@ -135,7 +142,12 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
     cancelGesture.current = cancel
   }, [])
   const [generation, setGeneration] = useState(0)
+  const stopWatching = useRef<() => void>(undefined)
+  const restarted = useRef(false)
+  useEffect(() => () => stopWatching.current?.(), [])
   const retry = (): void => {
+    stopWatching.current?.()
+    restarted.current = false
     setAvailable(supportsWebGL())
     setGeneration(value => value + 1)
   }
@@ -171,7 +183,9 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
           <Canvas
             eventSource={eventHost}
             frameloop="demand"
-            shadows
+            shadows={
+              mobileInput && props.basicTouchShadows === true ? 'basic' : true
+            }
             dpr={fieldPixelRatioRange(phone)}
             camera={{ position: [0, 100, 114], fov: 43 }}
             gl={{
@@ -179,15 +193,50 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
               alpha: false,
               powerPreference: 'high-performance'
             }}
-            onCreated={({ gl }) => {
-              gl.domElement.addEventListener(
-                'webglcontextlost',
+            onCreated={({ gl, invalidate }) => {
+              stopWatching.current?.()
+              // A replacement renderer that keeps its context this long has
+              // recovered, so a later, separate loss may restart it again. A
+              // loss before then is a crash loop and shows the fallback. A
+              // loss the browser restores starts the wait over, since the
+              // renderer is still the replacement and has not restarted.
+              let settling: number | undefined
+              const settle = (): void => {
+                window.clearTimeout(settling)
+                settling = undefined
+              }
+              const arm = (): void => {
+                settle()
+                if (!restarted.current) return
+                settling = window.setTimeout(() => {
+                  settling = undefined
+                  restarted.current = false
+                }, FIELD_RESTART_SETTLE_MS)
+              }
+              arm()
+              const stop = watchFieldContext(
+                gl.domElement,
                 () => {
+                  settle()
                   cancelGesture.current?.()
-                  setAvailable(false)
                 },
-                { once: true }
+                () => {
+                  arm()
+                  invalidate()
+                },
+                () => {
+                  stopWatching.current?.()
+                  if (restarted.current || !supportsWebGL()) setAvailable(false)
+                  else {
+                    restarted.current = true
+                    setGeneration(value => value + 1)
+                  }
+                }
               )
+              stopWatching.current = () => {
+                settle()
+                stop()
+              }
             }}
             style={{
               touchAction: 'none',
