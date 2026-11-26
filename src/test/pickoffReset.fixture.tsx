@@ -10,6 +10,7 @@ import { POSITIONS } from '../app/scoring/scoringTypes'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail, asRosterEntry, TeamStationClient } from '../common/api'
 import { ScoringSession } from '../common/scoring/session'
+import { userIdOfGumbo } from '../common/userId'
 
 const game = asGameDetail({
   id: 'pickoff-reset',
@@ -32,7 +33,7 @@ const game = asGameDetail({
 const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
   POSITIONS.map((position, i) =>
     asRosterEntry({
-      userId: (side === 'home' ? 200 : 100) + i,
+      userId: userIdOfGumbo((side === 'home' ? 200 : 100) + i),
       gumboId: (side === 'home' ? 200 : 100) + i,
       shortName: `${side === 'home' ? 'Host' : 'Visitor'} ${String(i + 1).padStart(2, '0')}`,
       jersey: String(i + 1),
@@ -87,8 +88,26 @@ function Root(): React.ReactElement {
           <ScoringScreen
             client={client}
             gameId={game.id}
-            userId="pickoff-fixture"
+            userId={userIdOfGumbo(123)}
             source={source}
+            onBaseProjection={projection => {
+              const button = document
+                .querySelector('[aria-label="Open scoring menu"]')!
+                .getBoundingClientRect()
+              fetch('/layout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  projection,
+                  menu: {
+                    x: button.x + button.width / 2,
+                    y: button.y + button.height / 2
+                  }
+                })
+              }).catch((error: unknown) => {
+                console.error(error)
+              })
+            }}
             onExit={() => undefined}
           />
         </View>

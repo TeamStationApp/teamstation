@@ -74,6 +74,15 @@ describe('the phone’s nameplates over the field', function () {
     expect(getComputedStyle(node).backgroundColor).equals(
       'rgba(255, 190, 190, 0.22)'
     )
+    // Assigning the catcher replaces the empty-position prompt with the
+    // player's name, including on a phone that uses a fitted card.
+    await act(async () => {
+      report?.([plate('C', { fitted: true })])
+    })
+    expect(host.querySelector('[aria-label="Assign P"]')).equals(null)
+    expect(host.querySelector('[aria-label="Name C"]')?.textContent).contains(
+      'Name C'
+    )
   })
   it('draws what the scene reports, and moves it without rendering again', async function () {
     let report: ((plates: NameplatePlacement[]) => void) | undefined
