@@ -12,6 +12,90 @@ import { nameplateContains, projectPlayerLabel } from './playerPresentation'
 import { scoringFrame } from './scoringFrame'
 
 describe('scoring field frame', function () {
+  for (const [width, height, top, bottom, platform, lines] of [
+    [320, 568, 0, 0, 'web', 0],
+    [375, 667, 20, 0, 'ios', 1],
+    [390, 844, 0, 0, 'web', 4],
+    [393, 852, 59, 34, 'ios', 1],
+    [412, 915, 24, 24, 'android', 4],
+    [852, 393, 0, 0, 'ios', 1]
+  ] as const) {
+    it(`fits ${lines} log lines on the ${width}×${height} ${platform} screen`, function () {
+      const input = {
+        width,
+        height,
+        insets: { top, bottom, left: 0, right: 0 },
+        platform
+      }
+      const frame = scoringFrame(input)
+      expect(frame.logLines).equals(lines)
+      expect(frame.stripHeight).equals(40 + bottom)
+      expect(frame.stripTop).equals(height - 40 - bottom)
+      expect(frame.logTop).at.most(frame.stripTop + 0.01)
+      if (lines > 0)
+        expect(frame.logTop + 44 + lines * 20).at.most(frame.stripTop + 0.01)
+      const camera = new PerspectiveCamera()
+      const catcher = createPlayers().find(p => p.label === 'C')!
+      const interval = frame.camera.cardInterval!
+      for (const variant of [
+        catcher,
+        {
+          ...catcher,
+          jersey: '',
+          displayName: 'Extraordinarilylongcatchername',
+          position: { x: 100, z: -20 }
+        },
+        { ...catcher, emptyPosition: true, position: { x: -100, z: -20 } }
+      ]) {
+        const slot = applyFieldCamera(camera, {
+          view: 'home',
+          zoom: SCORING_CAMERA.zoom,
+          tilt: SCORING_CAMERA.cameraTilt,
+          heightOffset: SCORING_CAMERA.cameraHeight,
+          width,
+          height,
+          bottomExtension: SCORING_BOTTOM_EXTENSION,
+          frame: frame.camera
+        })!
+        const face = projectPlayerLabel(
+          variant,
+          camera,
+          width,
+          height,
+          slot,
+          undefined,
+          interval
+        )
+        expect(face.x - face.width / 2).at.least(interval.left - 0.001)
+        expect(face.x + face.width / 2).at.most(interval.right + 0.001)
+        expect(
+          nameplateContains(
+            variant,
+            camera,
+            width,
+            height,
+            face.x,
+            slot - 1,
+            slot,
+            interval
+          )
+        ).equals(true)
+        expect(
+          nameplateContains(
+            variant,
+            camera,
+            width,
+            height,
+            face.x + face.width / 2 + 1,
+            slot - 1,
+            slot,
+            interval
+          )
+        ).equals(false)
+        expect(scoringFrame(input)).deep.equals(frame)
+      }
+    })
+  }
   for (const [top, bottom, platform, band, offset] of [
     [0, 0, 'web', 0, 0],
     [59, 34, 'ios', 0, -24],
@@ -33,7 +117,16 @@ describe('scoring field frame', function () {
       expect(frame.boardTop).equals(Math.max(8, top) + offset + 56)
       const drawableHeight = height + (platform === 'ios' ? 24 : 0)
       expect(drawableHeight - frame.camera.bottom + offset).equals(
-        height - bottom - 200
+        height - bottom - 172 - (platform === 'web' ? 0 : 64)
+      )
+      expect(frame.deckTop).equals(frame.catcherCardBottom + 4)
+      expect(frame.logTop).equals(frame.deckTop + 128)
+      expect(frame.stripTop).equals(height - 40 - bottom)
+      expect(frame.logLines).equals(
+        Math.max(
+          platform === 'web' ? 0 : 1,
+          Math.min(5, Math.floor((frame.stripTop - 8 - frame.logTop - 44) / 20))
+        )
       )
       const camera = new PerspectiveCamera()
       const slot = applyFieldCamera(camera, {

@@ -124,7 +124,8 @@ export function projectPlayerLabel(
   width: number,
   height: number,
   cardBottom?: number,
-  measuredSize?: { width: number; height: number }
+  measuredSize?: { width: number; height: number },
+  cardInterval?: { left: number; right: number }
 ): NameplatePlacement {
   const { offset, anchorX, anchorY } = labelAnchor(player, camera)
   const world = offset.add(
@@ -143,6 +144,10 @@ export function projectPlayerLabel(
   const y = (0.5 - ndc.y * 0.5) * height
   const fitted =
     cardBottom != null && player.label === 'C' && player.team === 'defense'
+  const faceWidth =
+    fitted && cardInterval != null
+      ? Math.min(box.width, Math.max(0, cardInterval.right - cardInterval.left))
+      : box.width
   const edgeInset = EMPTY_POSITION_SIZE / 2 + 2
   return {
     id: player.id,
@@ -153,9 +158,14 @@ export function projectPlayerLabel(
     uniformSide: player.uniformSide,
     emptyPosition: player.emptyPosition,
     x:
-      player.emptyPosition === true
-        ? Math.max(edgeInset, Math.min(width - edgeInset, x))
-        : x,
+      fitted && cardInterval != null
+        ? Math.max(
+            cardInterval.left + faceWidth / 2,
+            Math.min(cardInterval.right - faceWidth / 2, x)
+          )
+        : player.emptyPosition === true
+          ? Math.max(edgeInset, Math.min(width - edgeInset, x))
+          : x,
     y:
       player.emptyPosition === true
         ? Math.max(edgeInset, Math.min(height - edgeInset, y))
@@ -163,7 +173,7 @@ export function projectPlayerLabel(
     anchorX,
     anchorY: fitted ? 1 : anchorY,
     ...(fitted ? { y: cardBottom, fitted: true } : {}),
-    width: box.width,
+    width: faceWidth,
     height: box.height,
     visible: viewZ < -camera.near && ndc.z >= -1 && ndc.z <= 1
   }
@@ -175,10 +185,19 @@ export function nameplateContains(
   height: number,
   x: number,
   y: number,
-  cardBottom?: number
+  cardBottom?: number,
+  cardInterval?: { left: number; right: number }
 ): boolean {
   if (player.suppressed === true || !hasPlayerLabel(player)) return false
-  const plate = projectPlayerLabel(player, camera, width, height, cardBottom)
+  const plate = projectPlayerLabel(
+    player,
+    camera,
+    width,
+    height,
+    cardBottom,
+    undefined,
+    cardInterval
+  )
   if (!plate.visible) return false
   const left = plate.x - plate.anchorX * plate.width
   const top = plate.y - plate.anchorY * plate.height
