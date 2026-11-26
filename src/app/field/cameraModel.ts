@@ -6,6 +6,7 @@ import {
   nameplateSize,
   projectPlayerLabel
 } from './playerPresentation'
+import { OUTFIELD_HALF_ANGLE, OUTFIELD_RADIUS } from './stadiumBoundary'
 
 export const SCOREBOARD_SCALE = 1.8
 export const SCOREBOARD_Y = 28.2
@@ -36,6 +37,7 @@ export const SCORING_BOTTOM_EXTENSION = 112
 
 /** Clearances in the drawable canvas's own points. */
 export interface CameraFrame {
+  corners?: boolean
   cardInterval?: { left: number; right: number }
   top: number
   bottom: number
@@ -75,6 +77,22 @@ export function catcherCardBottom(
   )
   return plate.y + plate.height
 }
+
+// The wall endpoints, near edge of the roof and home apron. The home camera
+// is centered on x = 0, so the opposite points have equal projected widths.
+const sideExtents = [
+  new Vector3(
+    OUTFIELD_RADIUS * Math.sin(OUTFIELD_HALF_ANGLE),
+    0,
+    -OUTFIELD_RADIUS * Math.cos(OUTFIELD_HALF_ANGLE)
+  ),
+  new Vector3(
+    34.5 * SCOREBOARD_SCALE,
+    SCOREBOARD_Y + 9.95 * SCOREBOARD_SCALE,
+    SCOREBOARD_Z + 2.9 * SCOREBOARD_SCALE
+  ),
+  new Vector3(12, 0, 10)
+]
 
 /** Pin the top of the physical scoreboard roof, including its depth. */
 function fitScoringCamera(
@@ -120,17 +138,27 @@ function fitScoringCamera(
   }
 
   const limit = height - frame.bottom
+  const overflow = (bottom: number): number => {
+    let excess = bottom - limit
+    if (frame.corners === true)
+      for (const point of sideExtents) {
+        const projected = point.clone().project(camera)
+        excess = Math.max(excess, ((Math.abs(projected.x) - 0.9) * width) / 2)
+      }
+    return excess
+  }
   let bottom = place(distance)
-  if (bottom <= limit) return bottom
+  if (overflow(bottom) <= 0) return bottom
   let low = distance
   let high = distance * 2
   // A transient zero-height layout can leave less than the card's own height.
-  while (place(high) > limit && high < 1e7) high *= 2
+  while (overflow(place(high)) > 0 && high < 1e7) high *= 2
   for (let i = 0; i < 24; i++) {
     const middle = (low + high) / 2
     bottom = place(middle)
-    if (bottom > limit) low = middle
-    else if (limit - bottom < 0.001) return bottom
+    const excess = overflow(bottom)
+    if (excess > 0) low = middle
+    else if (-excess < 0.001) return bottom
     else high = middle
   }
   return place(high)
