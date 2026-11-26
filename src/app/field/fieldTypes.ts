@@ -1,6 +1,7 @@
 import type { RunnerDecision, RunnerDragView } from '../scoring/runnerDrag'
 import type { PresentationSequence } from '../scoring/scoringPresentation'
 import type { ArcMode, BallArcState } from './ballArcModel'
+import type { CameraFrame } from './cameraModel'
 import type { ScreenRect } from './catcherBounds'
 import type { CameraView, FieldPlayer, GroundPoint } from './fieldModel'
 import type { NameplatePlacement } from './playerPresentation'
@@ -36,6 +37,7 @@ export interface BaseProjection {
   height: number
 }
 export interface FieldCanvasProps {
+  frame?: CameraFrame
   /** Setup taps use field picking without starting a placement gesture. */
   tapIds?: readonly string[]
   onPlayerTap?: (id: string) => void

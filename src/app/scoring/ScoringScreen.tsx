@@ -61,8 +61,9 @@ import type { FieldPlayer } from '../field/fieldModel'
 import { createRelay, type Relay, useRelay } from '../field/fieldPropsRelay'
 import { scoringMenuFrame, WEB_MENU_BUTTON } from '../field/fieldSafeArea'
 import type { BaseProjection } from '../field/fieldTypes'
+import { scoringFrame } from '../field/scoringFrame'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
-import { useFieldSurface } from '../field/useFieldSurface'
+import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
@@ -224,6 +225,8 @@ import { useScoringExit } from './useScoringExit'
 import { useTiebreakerSetup } from './useTiebreakerSetup'
 
 export interface ScoringScreenProps {
+  /** Projected field landmarks in scoring-root points. */
+  onBaseProjection?: (value: BaseProjection) => void
   active?: boolean
   onEditPlayer?: (userId: string, name: string, teamId: string) => void
   onSettingsRefresh?: (refresh: () => void) => () => void
@@ -1157,6 +1160,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         gameId={props.gameId}
         persistent={source.persistent === true}
         source={source}
+        onBaseProjection={props.onBaseProjection}
         onExit={props.onExit}
         userId={String(props.userId ?? 'local-scorer')}
         rosters={
@@ -1285,6 +1289,7 @@ function reduceVisible(
 }
 
 function ScoringPanel(props: {
+  onBaseProjection?: ScoringScreenProps['onBaseProjection']
   active: boolean
   onEditPlayer?: ScoringScreenProps['onEditPlayer']
   onBeforeLeave?: ScoringScreenProps['onBeforeLeave']
@@ -1808,7 +1813,22 @@ function ScoringPanel(props: {
     if ((model.appliedOverrides ?? 0) > 0)
       setSheet(current => (current === 'overrides' ? undefined : current))
   }, [model.appliedOverrides])
-  const { height: windowHeight } = useWindowDimensions()
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions()
+  const [rootSize, setRootSize] = useState<{ width: number; height: number }>()
+  const fieldInsets = useFieldInsets()
+  const width = rootSize?.width ?? windowWidth
+  const height = rootSize?.height ?? windowHeight
+  const frame = useMemo(
+    () =>
+      scoringFrame({
+        width,
+        height,
+        insets: fieldInsets,
+        platform: Platform.OS,
+        topBand
+      }),
+    [width, height, fieldInsets, topBand]
+  )
   const [swapProblem, setSwapProblem] = useState<string>()
   /** What the open swap sheet says will be lost. */
   const [swapLoses, setSwapLoses] = useState<PlaysLost>(NOTHING_LOST)
@@ -3389,6 +3409,8 @@ function ScoringPanel(props: {
   )
   const field = (
     <BaseballScreen
+      frame={frame}
+      onRootSize={setRootSize}
       remoteUpdates={
         props.persistent
           ? {
@@ -3439,7 +3461,10 @@ function ScoringPanel(props: {
             })
             .catch(() => undefined)
         },
-        onBaseProjection: setBaseProjection,
+        onBaseProjection: projection => {
+          setBaseProjection(projection)
+          props.onBaseProjection?.(projection)
+        },
         ...battedBallField(
           state,
           angle,
