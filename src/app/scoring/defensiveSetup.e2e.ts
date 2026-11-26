@@ -1295,7 +1295,8 @@ describe('current defensive scoring setup browser', function () {
         )
       ).equals('true')
       await page.waitForFunction(
-        () => document.querySelector('[aria-label="Save status"]') == null
+        () =>
+          document.querySelector('[data-testid="scoringSaveStatus"]') == null
       )
       await new Promise(resolve => setTimeout(resolve, 150))
       expect(savedPlays()).equals(3)
@@ -1383,7 +1384,8 @@ describe('current defensive scoring setup browser', function () {
           )
         })
         await page.waitForFunction(
-          () => document.querySelector('[aria-label="Save status"]') == null
+          () =>
+            document.querySelector('[data-testid="scoringSaveStatus"]') == null
         )
         const persisted = await peer([])
         expect(persisted.pending).equals(null)
@@ -1420,7 +1422,8 @@ describe('current defensive scoring setup browser', function () {
         () => document.querySelector('[data-nameplate="empty-C"]') == null
       )
       await page.waitForFunction(
-        () => document.querySelector('[aria-label="Save status"]') == null
+        () =>
+          document.querySelector('[data-testid="scoringSaveStatus"]') == null
       )
       const team = (await peer([])).liveData.boxscore.teams.home
       expect(team.defense.P).equals(200)

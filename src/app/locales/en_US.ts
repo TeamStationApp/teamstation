@@ -1329,7 +1329,7 @@ export const enUs = {
   scoring_edit_roster_instruction: 'Tap player to edit.',
   scoring_roster_empty: 'No players on this team.',
   scoring_roster_conflict:
-    'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.',
+    'Someone else edited this roster. Saving may overwrite their changes. Cancel takes theirs.',
   scoring_game_only_player: 'Game-only player',
   scoring_roster_edit_unavailable:
     'Player settings are unavailable for this team.',
