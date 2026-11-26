@@ -199,12 +199,52 @@ async function main(): Promise<void> {
       await tap('Set Team Rosters')
       await shot('lineup')
       await tap('Defense')
-      await m.assertVisible({ text: '^Drag player into defensive position$' })
+      await m.assertVisible({ text: '^Defense help$' })
+      await m.assertVisible({ text: '^Roster players$' })
       await shot('defense')
       await tap('Clear P')
       await m.assertVisible({ text: actionPattern('Assign P') })
     }
     let readValues: (() => Promise<string>) | undefined
+    let iosAction: ((data: unknown) => Promise<unknown>) | undefined
+    if (platform === 'ios') {
+      const daemonLog = await readFile(
+        join(daemon.info.runDir, 'daemon.log'),
+        'utf8'
+      )
+      const port = daemonLog
+        .split('\n')
+        .filter(line =>
+          line.includes(`Starting WDA on device ${device} (port:`)
+        )
+        .at(-1)
+        ?.match(/\(port: (\d+)\)/)?.[1]
+      assert(port != null, 'Owned WDA endpoint')
+      const url = `http://127.0.0.1:${port}`
+      const request = async (
+        path: string,
+        body?: unknown
+      ): Promise<{ sessionId?: string; value?: string }> => {
+        const script =
+          body == null
+            ? `http.get(${JSON.stringify(url + path)})`
+            : `http.post(${JSON.stringify(url + path)}, {body:${JSON.stringify(body)}})`
+        const result = (await m.eval(script)) as {
+          status: number
+          body: string
+        }
+        assert.equal(result.status, 200)
+        return JSON.parse(result.body) as {
+          sessionId?: string
+          value?: string
+        }
+      }
+      const session = (await request('/status')).sessionId
+      readValues = async () =>
+        (await request(`/session/${session}/source`)).value ?? ''
+      iosAction = async data =>
+        await request(`/session/${session}/actions`, data)
+    }
     const drag = async (fromName: string, toName: string): Promise<void> => {
       const from = await bounds(fromName)
       const to = await bounds(toName)
@@ -215,40 +255,6 @@ async function main(): Promise<void> {
       const start = center(from)
       const end = center(to)
       if (platform === 'ios') {
-        const daemonLog = await readFile(
-          join(daemon.info.runDir, 'daemon.log'),
-          'utf8'
-        )
-        const port = daemonLog
-          .split('\n')
-          .filter(line =>
-            line.includes(`Starting WDA on device ${device} (port:`)
-          )
-          .at(-1)
-          ?.match(/\(port: (\d+)\)/)?.[1]
-        assert(port != null, 'Owned WDA endpoint')
-        const url = `http://127.0.0.1:${port}`
-        const request = async (
-          path: string,
-          body?: unknown
-        ): Promise<{ sessionId?: string; value?: string }> => {
-          const script =
-            body == null
-              ? `http.get(${JSON.stringify(url + path)})`
-              : `http.post(${JSON.stringify(url + path)}, {body:${JSON.stringify(body)}})`
-          const result = (await m.eval(script)) as {
-            status: number
-            body: string
-          }
-          assert.equal(result.status, 200)
-          return JSON.parse(result.body) as {
-            sessionId?: string
-            value?: string
-          }
-        }
-        const session = (await request('/status')).sessionId
-        readValues = async () =>
-          (await request(`/session/${session}/source`)).value ?? ''
         const move = (
           point: { x: number; y: number },
           duration: number
@@ -259,7 +265,8 @@ async function main(): Promise<void> {
           x: Math.round(point.x),
           y: Math.round(point.y)
         })
-        await request(`/session/${session}/actions`, {
+        assert(iosAction != null)
+        await iosAction({
           actions: [
             {
               type: 'pointer',
@@ -320,21 +327,47 @@ async function main(): Promise<void> {
     if (platform === 'ios') {
       const roster = await bounds('Roster players')
       let visible = false
-      for (let attempt = 0; attempt < 8; attempt++) {
-        visible = (await all()).some(
-          node =>
-            label(node) === 'Player 14' &&
-            node.bounds != null &&
-            node.bounds.y >= roster.y &&
-            node.bounds.y + node.bounds.height <= roster.y + roster.height
-        )
+      for (let attempt = 0; attempt < 16; attempt++) {
+        const player = (await all()).find(
+          node => label(node) === 'Player 14'
+        )?.bounds
+        visible =
+          player != null &&
+          player.y >= roster.y &&
+          player.y + player.height <= roster.y + roster.height
         if (visible) break
-        await m.swipe({
-          startX: Math.round(roster.x + roster.width / 2),
-          startY: Math.round(roster.y + roster.height * 0.8),
-          endX: Math.round(roster.x + roster.width / 2),
-          endY: Math.round(roster.y + roster.height * 0.2),
-          duration: 250
+        const middle = roster.y + roster.height / 2
+        const offset =
+          player == null ? roster.height : player.y + player.height / 2 - middle
+        const travel =
+          Math.sign(offset) * Math.min(Math.abs(offset), roster.height * 0.6)
+        assert(iosAction != null)
+        // Hold at the end to stop iOS momentum before releasing in this short list.
+        const x = Math.round(roster.x + roster.width / 2)
+        const start = Math.round(middle + travel / 2)
+        const end = Math.round(middle - travel / 2)
+        const move = (y: number, duration: number): unknown => ({
+          type: 'pointerMove',
+          origin: 'viewport',
+          x,
+          y,
+          duration
+        })
+        await iosAction({
+          actions: [
+            {
+              type: 'pointer',
+              id: 'roster-scroll',
+              parameters: { pointerType: 'touch' },
+              actions: [
+                move(start, 0),
+                { type: 'pointerDown', button: 0 },
+                move(end, 600),
+                { type: 'pause', duration: 500 },
+                { type: 'pointerUp', button: 0 }
+              ]
+            }
+          ]
         })
         await pause(500)
       }
@@ -356,15 +389,86 @@ async function main(): Promise<void> {
     await tap('Defense')
     await m.assertVisible({ text: actionPattern('Clear P') })
     log('PASS Cancel restores original defense')
+    await tap('Roster')
+    if (browser != null && platform === 'ios') {
+      const footer = await bounds('Save Rosters')
+      const tabs = await bounds('Roster')
+      const yTop = Math.round(tabs.y + tabs.height + 24)
+      const yBottom = Math.round(footer.y - 24)
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const create = await bounds('Create Player')
+        if (create.y >= yTop && create.y + create.height <= footer.y) break
+        const x = Math.round(create.x + create.width / 2)
+        await m.swipe({
+          startX: x,
+          endX: x,
+          startY: yBottom,
+          endY: yTop,
+          duration: 350
+        })
+        await pause(400)
+      }
+    } else {
+      await m.scrollUntilVisible({
+        element: { text: '^Create Player$' },
+        direction: 'DOWN',
+        timeout: 15000
+      })
+    }
     await tap('Create Player')
     await m.assertVisible({ text: '^First Name$' })
-    await m.assertVisible({ text: '^Create Placeholder Player$' })
+    const revealPlayerAction = async (
+      name: string,
+      direction: 'up' | 'down'
+    ): Promise<void> => {
+      if (browser != null && platform === 'ios') {
+        const header = await bounds('Create Player, web dialog')
+        const upper = header.y + header.height * 0.35
+        const lower = header.y + header.height * 0.85
+        const x = Math.round(header.x + header.width / 2)
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const item = (await all()).find(
+            node =>
+              label(node) === name &&
+              node.bounds != null &&
+              node.bounds.width > 100
+          )?.bounds
+          if (
+            item != null &&
+            item.y >= header.y + 80 &&
+            item.y + item.height < header.y + header.height - 8
+          )
+            break
+          const from = direction === 'up' ? upper : lower
+          const to = direction === 'up' ? lower : upper
+          await m.swipe({
+            startX: x,
+            endX: x,
+            startY: Math.round(from),
+            endY: Math.round(to),
+            duration: 350
+          })
+          await pause(350)
+        }
+      } else
+        await m.scrollUntilVisible({
+          element: { text: actionPattern(name) },
+          direction: direction === 'up' ? 'UP' : 'DOWN',
+          timeout: 15000
+        })
+      await m.assertVisible({ text: actionPattern(name) })
+    }
+    await revealPlayerAction('Create Placeholder Player', 'down')
+    await revealPlayerAction('First Name', 'up')
     if (readValues != null)
       assert(
         !(await readValues()).includes('<XCUIElementTypeKeyboard'),
         'Creating a player does not open the keyboard automatically'
       )
-    await tap('First Name')
+    const input = await bounds('First Name')
+    await m.tapOn({
+      point: `${Math.round(input.x + input.width / 2)},${Math.round(input.y + input.height / 2)}`
+    })
     await m.inputText({ text: 'Alex' })
     if (platform === 'android') {
       await tap('Next')
@@ -397,18 +501,9 @@ async function main(): Promise<void> {
         'Keyboard dismissed after jersey submit'
       )
     await shot('player')
-    await m.scrollUntilVisible({
-      element: { text: '^Create Placeholder Player$' },
-      direction: 'DOWN',
-      timeout: 15000
-    })
-    await m.assertVisible({ text: '^Create Placeholder Player$' })
+    await revealPlayerAction('Create Placeholder Player', 'down')
     log('PASS sequential keyboard entry and placeholder action available')
-    await m.scrollUntilVisible({
-      element: { text: '^Save and Create Another Player$' },
-      direction: 'DOWN',
-      timeout: 15000
-    })
+    await revealPlayerAction('Save and Create Another Player', 'down')
     await tap('Save and Create Another Player')
     await m.assertVisible({ text: '^First Name$' })
     if (readValues != null)
@@ -426,6 +521,7 @@ async function main(): Promise<void> {
       )
     await tap('Cancel')
     await tap('Create Player')
+    await revealPlayerAction('Create Placeholder Player', 'down')
     await tap('Create Placeholder Player')
     await m.assertVisible({ text: '^Select number of players to create.$' })
     await tap('Create')

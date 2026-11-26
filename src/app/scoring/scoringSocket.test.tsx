@@ -346,6 +346,29 @@ describe('comparing logs', function () {
 })
 
 describe('the scoring screen on the game socket', function () {
+  for (const kind of ['endHalf', 'endGame'] as const)
+    it(`closes the defensive player form after another scorer's ${kind}`, async function () {
+      const { changes, other } = await scoring()
+      const pitcher = field().players.find(player => player.label === 'P')!
+      await act(async () => field().onPlayerTap?.(pitcher.id))
+      await settle()
+      await click('Create Player')
+      expect(document.querySelector('[aria-label="First Name"]')).not.equals(
+        null
+      )
+
+      const peer = await other()
+      expect(peer.apply({ type: 'gameFlow', kind }).problems).deep.equals([])
+      await peer.flush()
+      await changes.plays()
+
+      expect(document.querySelector('[aria-label="Defensive roster"]')).equals(
+        null
+      )
+      expect(document.querySelector('[aria-label="First Name"]')).equals(null)
+      expect((await other()).actions).deep.equals([{ type: 'gameFlow', kind }])
+    })
+
   it('accepts a pitch immediately after its own echoed save without waiting for a read', async function () {
     const { changes, store, other, reloads } = await scoring({ digests: true })
     await click('Ball')
