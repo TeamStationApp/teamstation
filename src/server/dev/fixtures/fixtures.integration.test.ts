@@ -17,6 +17,7 @@ import { readPasswordRecord } from '../../auth/passwords'
 import { preparePreview } from '../../autoScheduler/previews'
 import { type Database, makeDatabase } from '../../db/database'
 import { accountMailEnabled } from '../../email/accountMail'
+import { hasPendingNotifications, inbox } from '../../notifications/inbox'
 import { serverConfig } from '../../serverConfig'
 import { createAccount, type FixtureManifest, makeNonce } from './accounts'
 import { isTestAddress, splitMailbox, testAddress } from './address'
@@ -31,6 +32,7 @@ import {
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runPendingHistory } from './pendingHistory'
 import { runRefreshNotices } from './refreshNotices'
 import {
   hasGroupCoordinates,
@@ -398,6 +400,39 @@ describe('fixture worlds', function () {
       'First Base',
       'Home Plate'
     ])
+  })
+
+  it('pending-history isolates small, empty and paginated inboxes behind resolved history', async function () {
+    const world = await runPendingHistory({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    for (const [role, expected] of [
+      ['small', 3],
+      ['empty', 0],
+      ['paged', 30]
+    ] as const) {
+      const actor = {
+        userId: world.accounts[role].userId,
+        isAdmin: false,
+        scopes: []
+      }
+      const page = await inbox(the(), actor, { limit: 100 })
+      expect(page.items).has.length(expected)
+      if (role === 'small') {
+        const removed = page.items.find(
+          row => row.type === 'playerAddRejected'
+        )!
+        expect(removed.title).equals(
+          `A coach of another of their teams removed Mike T from Fixture Owls ${world.nonce} small`
+        )
+        expect(removed.description).equals('Mike T is no longer on it.')
+      }
+      expect((await hasPendingNotifications(the(), actor)).hasPending).equals(
+        expected > 0
+      )
+    }
   })
 
   it('refresh-notices gives a spectator 320 games on four teams, and a scorekeeper four soon on three of them', async function () {
