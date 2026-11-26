@@ -1197,9 +1197,22 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       })
       await settle(50)
       expect(await rows()).deep.equals([])
-      expect(net.writes.slice(before)).deep.equals(
-        queued.map(row => `${String(row.method)} ${String(row.path)}`)
+      const events = 'POST /games/g1/events'
+      const queuedWrites = queued.map(
+        row => `${String(row.method)} ${String(row.path)}`
       )
+      const create = queuedWrites.indexOf('POST /teams/home/roster-players')
+      expect(create).greaterThan(0)
+      expect(new Set(queuedWrites.slice(0, create))).deep.equals(
+        new Set([events])
+      )
+      // In order: the saves of plays queued before the player's create, each
+      // on the one before, go together; the lineup change and the pitch
+      // after it go alone.
+      expect(net.writes.slice(before)).deep.equals([
+        events,
+        ...queuedWrites.slice(create)
+      ])
     })
 
     it('opens again at once, with every request held, though the opponent’s default lineup was never stored (#358)', async function () {
