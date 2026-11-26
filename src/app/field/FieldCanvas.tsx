@@ -10,6 +10,7 @@ import { fieldPixelRatioRange } from './fieldResolution'
 import { FieldScene } from './FieldScene'
 import type { FieldCanvasProps } from './fieldTypes'
 import type { NameplatePlacement } from './playerPresentation'
+import { watchFieldContext } from './watchFieldContext'
 
 /** R3F's async renderer setup does not always reach a React error boundary. */
 function supportsWebGL(): boolean {
@@ -135,7 +136,12 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
     cancelGesture.current = cancel
   }, [])
   const [generation, setGeneration] = useState(0)
+  const stopWatching = useRef<() => void>(undefined)
+  const restarted = useRef(false)
+  useEffect(() => () => stopWatching.current?.(), [])
   const retry = (): void => {
+    stopWatching.current?.()
+    restarted.current = false
     setAvailable(supportsWebGL())
     setGeneration(value => value + 1)
   }
@@ -171,7 +177,9 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
           <Canvas
             eventSource={eventHost}
             frameloop="demand"
-            shadows
+            shadows={
+              mobileInput && props.basicTouchShadows === true ? 'basic' : true
+            }
             dpr={fieldPixelRatioRange(phone)}
             camera={{ position: [0, 100, 114], fov: 43 }}
             gl={{
@@ -179,14 +187,20 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
               alpha: false,
               powerPreference: 'high-performance'
             }}
-            onCreated={({ gl }) => {
-              gl.domElement.addEventListener(
-                'webglcontextlost',
+            onCreated={({ gl, invalidate }) => {
+              stopWatching.current?.()
+              stopWatching.current = watchFieldContext(
+                gl.domElement,
+                () => cancelGesture.current?.(),
+                invalidate,
                 () => {
-                  cancelGesture.current?.()
-                  setAvailable(false)
-                },
-                { once: true }
+                  stopWatching.current?.()
+                  if (restarted.current || !supportsWebGL()) setAvailable(false)
+                  else {
+                    restarted.current = true
+                    setGeneration(value => value + 1)
+                  }
+                }
               )
             }}
             style={{
