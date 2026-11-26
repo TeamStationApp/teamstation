@@ -433,6 +433,23 @@ describe('fixture worlds', function () {
         expected > 0
       )
     }
+    for (const role of ['sent', 'history', 'information', 'inaccessible']) {
+      const actor = {
+        userId: world.accounts[role].userId,
+        isAdmin: false,
+        scopes: []
+      }
+      const pending = await inbox(the(), actor)
+      expect(pending.items.length).equals(
+        role === 'sent' ? 25 : role === 'inaccessible' ? 1 : 0
+      )
+      const sent = await inbox(the(), actor, { sent: true })
+      expect(sent.items.length).equals(role === 'sent' ? 25 : 0)
+      const history = await inbox(the(), actor, { history: true })
+      expect(history.items.length).equals(role === 'inaccessible' ? 0 : 25)
+      expect(history.hasPending).equals(pending.hasPending)
+      expect(history.nextCursor != null).equals(role !== 'inaccessible')
+    }
   })
 
   it('refresh-notices gives a spectator 320 games on four teams, and a scorekeeper four soon on three of them', async function () {
