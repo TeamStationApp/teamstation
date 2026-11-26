@@ -36,6 +36,7 @@
   "src/server/teams/teamRoster.ts",
   "src/app/field/movePreview.ts",
   "src/app/field/FieldCanvas.tsx",
+  "src/app/field/watchFieldContext.ts",
   "src/app/field/scoreboardTexture.ts",
   "src/app/field/scoreboardPalette.ts",
   "src/app/field/fieldKeyboard.ts",
