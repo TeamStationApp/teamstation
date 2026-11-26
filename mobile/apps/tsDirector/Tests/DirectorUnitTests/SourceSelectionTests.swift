@@ -444,3 +444,147 @@ struct SingleAudioSourceTests {
     #expect(settings["k:CAM1"]?.chosenAt == nil)
   }
 }
+
+@Suite("Assignable scoreboard monitor")
+struct ScoreboardMonitorTests {
+  let monitorID = ScoreboardMonitorPreference.id
+
+  private func cameras(_ count: Int) -> [SourceSelection] {
+    (0 ..< count).map { i in
+      SourceSelection(id: SourceID("camera-\(i)"), kind: .file, advertisedName: "Camera \(i + 1)",
+                      isEnabled: true, sourceIndex: i)
+    }
+  }
+
+  @Test("A real camera keeps its program and audio identity when it swaps with the monitor")
+  func cameraSwaps() {
+    var cameras = cameras(4)
+    let program = cameras[0].id
+    cameras[0].usesAudio = true
+    var monitor = ScoreboardMonitorPreference()
+    #expect(monitor.row(among: cameras).sourceIndex == 4)
+    for slot in 0 ..< 5 {
+      let previous = monitor.row(among: cameras)
+      let move = monitor.assign(slot: slot, to: monitorID, cameras: &cameras)
+      #expect(move == .applied(reassign: .init(from: previous.sourceIndex!, to: slot)))
+      let board = monitor.row(among: cameras)
+      #expect(board.isEnabled && board.sourceIndex == slot && !board.usesAudio)
+      var rows = cameras + [board]
+      #expect(SourceSelectionRules.occupiedSlots(in: rows) == Set(0 ..< 5))
+      SourceSelectionRules.setUsesAudio(true, for: monitorID, in: &rows)
+      #expect(SourceSelectionRules.audioSource(in: rows)?.id == program)
+      let onAir = SourceSelectionRules.programSourceIndex(preferring: program, among: rows)
+      #expect(onAir == cameras.first { $0.id == program }?.sourceIndex)
+      #expect(onAir != slot)
+      #expect(SourceSelectionRules.programSourceIndex(preferring: monitorID, among: [board]) == nil)
+    }
+    let from = cameras[0].sourceIndex!
+    #expect(monitor.assign(slot: 4, to: program, cameras: &cameras) ==
+              .applied(reassign: .init(from: from, to: 4)))
+    #expect(monitor.preferredSlot == from)
+  }
+
+  @Test("A fifth enabled camera takes the monitor slot until a slot is available")
+  func fifthCameraAndRestore() {
+    var cameras = cameras(3)
+    var monitor = ScoreboardMonitorPreference()
+    #expect(monitor.assign(slot: 0, to: monitorID, cameras: &cameras) == .applied(reassign: .init(from: 4, to: 0)))
+    let fourth = SourceID("fourth"), fifth = SourceID("fifth")
+    cameras.append(.init(id: fourth, kind: .file, advertisedName: "Fourth", sourceIndex: 0))
+    cameras.append(.init(id: fifth, kind: .file, advertisedName: "Fifth", isPresent: false))
+    #expect(monitor.setEnabled(true, for: fourth, cameras: &cameras) == .enabled(sourceIndex: 3))
+    #expect(monitor.setEnabled(true, for: fifth, cameras: &cameras) == .enabled(sourceIndex: 0))
+    #expect(!monitor.row(among: cameras).isEnabled)
+    #expect(monitor.setEnabled(true, for: monitorID, cameras: &cameras) == .rejectedAtCap)
+    #expect(monitor.setEnabled(false, for: fourth, cameras: &cameras) == .disabled)
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+    #expect(monitor.setEnabled(false, for: fifth, cameras: &cameras) == .disabled)
+    #expect(monitor.row(among: cameras).sourceIndex == 0)
+    #expect(monitor.setEnabled(false, for: monitorID, cameras: &cameras) == .disabled)
+    #expect(!monitor.row(among: cameras).isEnabled)
+    #expect(monitor.assign(slot: 2, to: monitorID, cameras: &cameras) == .applied(reassign: nil))
+    #expect(monitor.setEnabled(false, for: cameras[2].id, cameras: &cameras) == .disabled)
+    #expect(!monitor.row(among: cameras).isEnabled)
+    #expect(monitor.setEnabled(true, for: monitorID, cameras: &cameras) == .enabled(sourceIndex: 2))
+    #expect(monitor.assign(slot: 5, to: monitorID, cameras: &cameras) == .invalidSlot)
+  }
+
+  @Test("An unplaced monitor stays in its tile when a camera beside it is turned off")
+  func unplacedMonitorStays() {
+    var cameras = cameras(5)
+    cameras.remove(at: 3)
+    var monitor = ScoreboardMonitorPreference()
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+    let last = cameras[3].id
+    #expect(monitor.setEnabled(false, for: last, cameras: &cameras) == .disabled)
+    #expect(monitor.preferredSlot == 3)
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+    #expect(monitor.setEnabled(true, for: last, cameras: &cameras) == .enabled(sourceIndex: 4))
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+  }
+
+  @Test("An unplaced monitor leaves a turned-off camera's remembered number to that camera")
+  func unplacedMonitorSkipsRememberedSlot() {
+    var cameras = cameras(3)
+    let returning = SourceID("returning")
+    cameras.append(.init(id: returning, kind: .file, advertisedName: "Returning", sourceIndex: 4))
+    var monitor = ScoreboardMonitorPreference()
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+    #expect(monitor.setEnabled(true, for: returning, cameras: &cameras) == .enabled(sourceIndex: 4))
+    #expect(monitor.row(among: cameras).sourceIndex == 3)
+  }
+
+  @Test("A turned-off camera can take the monitor's number when no other is free")
+  func assignOntoMonitorAtCap() {
+    var cameras = cameras(4)
+    let spare = SourceID("spare")
+    cameras.append(.init(id: spare, kind: .file, advertisedName: "Spare"))
+    var monitor = ScoreboardMonitorPreference()
+    #expect(monitor.row(among: cameras).sourceIndex == 4)
+    #expect(monitor.assign(slot: 4, to: spare, cameras: &cameras) == .applied(reassign: nil))
+    #expect(cameras.last?.sourceIndex == 4 && cameras.last?.isEnabled == false)
+    let shown = monitor.row(among: cameras)
+    #expect(shown.isEnabled && shown.sourceIndex == 4)
+    #expect(monitor.setEnabled(true, for: spare, cameras: &cameras) == .enabled(sourceIndex: 4))
+    #expect(!monitor.row(among: cameras).isEnabled)
+  }
+
+  @Test("A disabled camera with a stale preferred slot cannot displace two enabled sources")
+  func occupiedPreviousSlot() {
+    var cameras = cameras(2)
+    var monitor = ScoreboardMonitorPreference()
+    let stale = SourceID("disabled")
+    cameras.insert(.init(id: stale, kind: .file, advertisedName: "Disabled", sourceIndex: 1), at: 0)
+    // The cameras occupy 0 and 1 and the board occupies 4. Move the board onto the enabled 1.
+    #expect(monitor.assign(slot: 1, to: monitorID, cameras: &cameras) ==
+              .applied(reassign: .init(from: 4, to: 1)))
+    #expect(cameras.filter(\.isEnabled).map(\.sourceIndex) == [0, 4])
+    #expect(monitor.assign(slot: 0, to: stale, cameras: &cameras) ==
+              .applied(reassign: .init(from: 0, to: 2)))
+    #expect(monitor.row(among: cameras).sourceIndex == 1)
+    #expect(cameras.filter(\.isEnabled).map(\.sourceIndex) == [2, 4])
+  }
+
+  @Test("Camera discovery and persisted take rows remain independent of monitor preferences")
+  func monitorStore() {
+    let suite = "app.teamstation.director.tests.scoreboard.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = SourceSelectionStore(store: ConfigStore(defaults: defaults))
+    var cameras = cameras(2)
+    var monitor = store.loadMonitor()
+    #expect(monitor.enabled && monitor.preferredSlot == nil)
+    #expect(monitor.setEnabled(false, for: monitorID, cameras: &cameras) == .disabled)
+    #expect(monitor.preferredSlot == 4)
+    #expect(monitor.assign(slot: 3, to: monitorID, cameras: &cameras) == .applied(reassign: nil))
+    let moved = monitor.assign(slot: 2, to: cameras[0].id, cameras: &cameras)
+    #expect(moved == .applied(reassign: .init(from: 0, to: 2)))
+    store.saveMonitor(monitor)
+    store.save(cameras + [monitor.row(among: cameras)])
+    #expect(store.load() == cameras)
+    #expect(store.loadMonitor() == monitor)
+    store.clear()
+    #expect(store.load().isEmpty && store.loadMonitor() == ScoreboardMonitorPreference())
+    #expect(!SourceKind.scoreboard.isLive && !SourceKind.scoreboard.needsEncodeToArchive)
+  }
+}

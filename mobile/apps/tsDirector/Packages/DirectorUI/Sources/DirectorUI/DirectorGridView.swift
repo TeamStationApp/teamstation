@@ -455,12 +455,27 @@ public struct DirectorGridView: View {
     dragGrabOffset = .zero
   }
 
+  @ViewBuilder
   private func tile(_ index: Int) -> some View {
-    TileView(
-      sourceIndex: index,
-      pipeline: environment.router.pipeline(at: index),
-      telemetry: environment.snapshot.tiles.first { $0.index == index } ?? TileTelemetry(index: index)
-    )
+    if let url = environment.monitorURL(at: index) {
+      ZStack {
+        Color.black
+        ScoreboardMonitorPage(url: url)
+          .id(url)
+          .allowsHitTesting(false)
+      }
+      .clipped()
+      .contentShape(Rectangle())
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("Scoreboard, Source \(index + 1), preview only")
+      .accessibilityIdentifier("scoreboard-monitor-\(index + 1)")
+    } else {
+      TileView(
+        sourceIndex: index,
+        pipeline: environment.router.pipeline(at: index),
+        telemetry: environment.snapshot.tiles.first { $0.index == index } ?? TileTelemetry(index: index)
+      )
+    }
   }
 }
 

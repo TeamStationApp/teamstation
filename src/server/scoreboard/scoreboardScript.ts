@@ -1,3 +1,5 @@
+import { EXIT_HOLD_MS, EXIT_WIPE_MS } from '../../common/scoreboard'
+
 /**
  * Every write to a game's scoreboard, in one atomic step.
  *
@@ -76,6 +78,19 @@ if mode == 'clearGame' then
   value = nil
 elseif field ~= 'overrides' then
   local state = cjson.decode(json)
+  local reading = nil
+  if field == 'watcher' then
+    -- nextExitReading and exitReturnAt (common/scoreboard.ts) time playback
+    -- by this same rule; the store's integration test runs both.
+    if previous ~= nil then reading = previous.exitReading end
+    if type(state.exitVelocity) == 'number' and state.exitVelocity > 0 then
+      local startedAt = now
+      if reading ~= nil and now < math.max(reading.startedAt + ${EXIT_WIPE_MS}, reading.receivedAt) + ${EXIT_HOLD_MS} then
+        startedAt = reading.startedAt
+      end
+      reading = { mph = state.exitVelocity, startedAt = startedAt, receivedAt = now }
+    end
+  end
   if mode ~= 'replace' then
     local merged = {}
     if previous ~= nil and type(previous.state) == 'table' then
@@ -91,7 +106,7 @@ elseif field ~= 'overrides' then
       receivedAt = previous.receivedAt
     end
   end
-  local entry = { state = state, receivedAt = receivedAt }
+  local entry = { state = state, receivedAt = receivedAt, exitReading = reading }
   if field == 'game' and sourceVersion ~= '' then
     entry.sourceVersion = sourceVersion
   end

@@ -6,7 +6,9 @@ import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import {
   composeScoreboard,
   type DashboardOverrides,
+  type ExitReading,
   type GameScoreboard,
+  nextExitReading,
   NO_OVERRIDES,
   type ScoreboardState,
   type SourceState
@@ -14,6 +16,7 @@ import {
 import { finishedPlateLine } from '../../common/scoring/credits'
 import { replayPlays, storedRecordOf } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
+import { radarPacket } from '../../common/scoring/radarSpeeds'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { GamePlay } from '../../common/scoring/state'
 import type { NameOf } from '../../common/scoring/storedNames'
@@ -58,8 +61,8 @@ export interface BoardStep {
 
 export interface BoardTimeline {
   /**
-   * `"<game update>:<newest log>:<team names>:<account merges>:<names>"`,
-   * the third a hash of the two teams' names and the last of the game's
+   * `"<game update>:<newest log>:exit1:<late exits and resets>:<team names>:<account merges>:<names>"`,
+   * including team names and the digest of the game's
    * players' names: what changes whenever anything the timeline reads does.
    */
   version: string
@@ -131,13 +134,14 @@ export async function computeBoardTimeline(
         : await contextOf(trx, gameId, game, stored)
     const rows = await trx
       .selectFrom('scoreboard_log')
-      .select(['at', 'publisher', 'overrides'])
+      .select(['at', 'version', 'publisher', 'overrides', 'cause', 'radar'])
       .where('game_id', '=', gameId)
-      // An older packet accepted only for radar does not replace historical
-      // board snapshots or invalidate the newest-version cache key.
+      // A late pitch alone does not change the board. An explicit exit
+      // reading always participates in the batter-row timeline.
       .where(
-        sql<boolean>`radar -> 'measurementOnly' is distinct from 'true'::jsonb`
+        sql<boolean>`(radar -> 'measurementOnly' is distinct from 'true'::jsonb or radar ? 'exitVelocity')`
       )
+      .orderBy('at')
       .orderBy('version')
       .execute()
     return {
@@ -215,6 +219,12 @@ export async function computeBoardTimeline(
 
   const logged = read.rows.map(row => ({
     at: msOf(row.at) ?? 0,
+    version: row.version,
+    reset: row.cause === 'reset',
+    measurementOnly:
+      (row.radar as { measurementOnly?: boolean } | null)?.measurementOnly ===
+      true,
+    exitMph: radarPacket(row.radar)?.exitVelocity,
     publisher: (row.publisher ?? undefined) as SourceState | undefined,
     overrides: (row.overrides ?? NO_OVERRIDES) as DashboardOverrides
   }))
@@ -235,6 +245,17 @@ export async function computeBoardTimeline(
   let awayScore: number | null = null
   let homeScore: number | null = null
   let row: (typeof logged)[number] | undefined
+  // Live ran the writes in version order, each timed by its own worker's
+  // clock: the reading after each write, folded in that order.
+  const readingAfter = new Map<(typeof logged)[number], ExitReading>()
+  let folded: ExitReading | undefined
+  for (const entry of [...logged].sort((a, b) => a.version - b.version)) {
+    if (entry.reset) folded = undefined
+    if (entry.exitMph != null)
+      folded = nextExitReading(folded, entry.exitMph, entry.at)
+    if (folded != null) readingAfter.set(entry, folded)
+  }
+  let newest: (typeof logged)[number] | undefined
   for (const at of moments) {
     for (; nextScoring < scoring.length; nextScoring++) {
       const step = scoring[nextScoring]
@@ -250,8 +271,18 @@ export async function computeBoardTimeline(
       homeScore = play.home ?? homeScore
     }
     for (; nextLogged < logged.length; nextLogged++) {
-      if (logged[nextLogged].at > at) break
-      row = logged[nextLogged]
+      const entry = logged[nextLogged]
+      if (entry.at > at) break
+      // Rows arrive in time order, but two workers racing can log the newer
+      // write (the higher version) with the earlier time. The reading and
+      // the board shown are those of the newest write so far, as live
+      // showed them.
+      if (newest == null || entry.version > newest.version) newest = entry
+      if (
+        !entry.measurementOnly &&
+        (row == null || entry.version > row.version)
+      )
+        row = entry
     }
     const { final } = composeScoreboard({
       baseline: {
@@ -264,6 +295,8 @@ export async function computeBoardTimeline(
       watcher: row?.publisher,
       overrides: row?.overrides ?? NO_OVERRIDES
     })
+    const exitReading = newest == null ? undefined : readingAfter.get(newest)
+    if (exitReading != null) final.exitReading = exitReading
     const last = steps.at(-1)
     if (last == null || !isDeepStrictEqual(last.state, final))
       steps.push({ at, state: final })
@@ -274,8 +307,10 @@ export async function computeBoardTimeline(
 /**
  * What the database works out of a game's timeline version in one query:
  * the game's `updated_at`, which every play post moves (and which the game
- * source writes as its `sourceVersion`), the newest log row's version, and
- * the two teams' names, which every step shows and which a rename or a
+ * source writes as its `sourceVersion`), the newest log row's version, the
+ * count of resets and late exit readings, which are logged without a newer
+ * version (read through `scoreboard_log_late_rows`, whose predicate this
+ * repeats), and the two teams' names, which every step shows and which a rename or a
  * merge changes without touching the game, and the merge graph, which
  * invalidates cached player identities even when no new play follows a
  * merge; and, beside them, the stamp the game's scope is kept under
@@ -290,7 +325,7 @@ async function versionParts(
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
     .innerJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
-      sql<string>`(extract(epoch from games.updated_at) * 1000000)::bigint::text || ':' || coalesce((select max(version) from scoreboard_log where game_id = games.id), 0)::text || ':' || left(md5(home.name || chr(10) || away.name), 16) || ':' || (select md5(coalesce(string_agg(id::text || ':' || merged_into::text, ',' order by id), '')) from users where merged_into is not null)`.as(
+      sql<string>`(extract(epoch from games.updated_at) * 1000000)::bigint::text || ':' || coalesce((select max(version) from scoreboard_log where game_id = games.id), 0)::text || ':exit1:' || (select count(*) from scoreboard_log where game_id = games.id and (cause = 'reset' or (radar @> '{"measurementOnly":true}'::jsonb and radar ? 'exitVelocity')))::text || ':' || left(md5(home.name || chr(10) || away.name), 16) || ':' || (select md5(coalesce(string_agg(id::text || ':' || merged_into::text, ',' order by id), '')) from users where merged_into is not null)`.as(
         'base'
       ),
       scopeStampOf('games').as('stamp')

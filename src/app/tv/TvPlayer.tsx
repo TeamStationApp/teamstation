@@ -36,7 +36,7 @@ import {
   battingTotals,
   pitchingTotals
 } from '../../common/replay/replayBoxScore'
-import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
+import { exitWipes, SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
 import { livePlaybackRetryDelay } from '../player/liveRejoin'
@@ -45,6 +45,7 @@ import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
+import { usePictureClock } from '../scoreboard/boardClock'
 import {
   replayBattingLabels,
   replayBoxLabels,
@@ -180,6 +181,7 @@ export function TvPlayer({
   const [clips, setClips] = useState<TvHighlight[]>([])
   const [clipError, setClipError] = useState(false)
   const [stats, setStats] = useState<Statistics>(EMPTY_STATS)
+  const boardClock = usePictureClock()
   const [wall, setWall] = useState<number | null>(null)
   const [failures, setFailures] = useState<number[]>([])
   const [buffering, setBuffering] = useState<number[]>([])
@@ -195,6 +197,9 @@ export function TvPlayer({
   const refs = useRef<Array<VideoRef | null>>([])
   const seekQueues = useRef<NativeSeekQueue[]>([])
   const clock = useRef(new PlaybackClock())
+  useLayoutEffect(() => {
+    boardClock.sample(clock.current.wall)
+  }, [boardClock, wall])
   const [transportState, setTransportState] = useState({
     visible: false,
     rate: 1,
@@ -867,12 +872,13 @@ export function TvPlayer({
   const progress = (index: number, seconds: number): void => {
     const next = clock.current.progress(index, seconds)
     if (index !== clock.current.master || next === null) return
-    setWall(previous =>
-      previous !== null &&
-      Math.floor(previous / 1000) === Math.floor(next / 1000)
-        ? previous
-        : next
+    boardClock.sample(next)
+    if (
+      wall === null ||
+      Math.floor(wall / 1000) !== Math.floor(next / 1000) ||
+      boardAt(stats.board?.steps ?? [], next) !== boardStep
     )
+      setWall(next)
     if (
       transport.current?.scrubbing !== true &&
       current.current.clipEnd !== null &&
@@ -880,7 +886,27 @@ export function TvPlayer({
     )
       dispatch({ type: 'progress', wall: next })
   }
-  const board = boardAt(stats.board?.steps ?? [], wall)?.state
+  // Draw the step of the current native frame, even within one second.
+  const boardStep = boardAt(stats.board?.steps ?? [], clock.current.wall)
+  const board = boardStep?.state
+  // Native progress is normally reported four times a second. Request finer
+  // samples from the master around a hit, including the next second of
+  // playback so a recorded hit starts on its frame.
+  const picture = clock.current.wall
+  const lookAhead = 1000 * Math.max(1, transportState.rate)
+  const upcoming =
+    picture == null
+      ? null
+      : boardAt(stats.board?.steps ?? [], picture + lookAhead)
+  const radarMotion =
+    picture != null &&
+    [board?.exitReading, upcoming?.state.exitReading].some(
+      reading =>
+        reading != null &&
+        exitWipes(reading).some(
+          wipe => picture < wipe.to && picture + lookAhead >= wipe.from
+        )
+    )
   const { box, message: statsMessage } = statisticsAt(stats, wall)
   const line =
     boardAt(stats.lines ?? [], wall)?.line ??
@@ -1041,7 +1067,13 @@ export function TvPlayer({
                       index !== clock.current.master)
                   }
                   resizeMode="contain"
-                  progressUpdateInterval={250}
+                  progressUpdateInterval={
+                    index === clock.current.master &&
+                    placement?.show === true &&
+                    radarMotion
+                      ? 33
+                      : 250
+                  }
                   onLoad={event => {
                     loaded(index, event.duration)
                     // Its retries start over only once it plays on: a camera
@@ -1128,7 +1160,8 @@ export function TvPlayer({
           style={[styles.placedScore, frameStyle(layout.board)]}
         >
           <PlacedScoreboard
-            step={boardAt(stats.board?.steps ?? [], wall) ?? null}
+            step={boardStep}
+            clock={boardClock}
             onNaturalSize={measureBoard}
             place={() => ({ ...layout.board!, x: 0, y: 0 })}
           />

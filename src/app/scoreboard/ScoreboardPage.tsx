@@ -6,6 +6,7 @@ import {
   type ScoreboardState
 } from '../../common/scoreboard'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { type BoardClock, liveBoardClock } from './boardClock'
 import { ScoreboardBoard } from './ScoreboardBoard'
 import { ScoreboardNotFound } from './ScoreboardNotFound'
 import {
@@ -42,7 +43,10 @@ export interface ScoreboardPageProps {
  */
 export function ScoreboardPage(props: ScoreboardPageProps): React.ReactElement {
   const { page, apiBaseUrl, origin, WebSocketImpl, schedule } = props
-  const [state, setState] = useState<ScoreboardState | undefined>(undefined)
+  const [snapshot, setSnapshot] = useState<{
+    state: ScoreboardState
+    clock?: BoardClock
+  }>()
   const [closed, setClosed] = useState(false)
   const gameId = page.kind === 'live' ? page.gameId : undefined
   // By value, so a caller that builds the origin afresh on every render does
@@ -58,7 +62,13 @@ export function ScoreboardPage(props: ScoreboardPageProps): React.ReactElement {
         apiBaseUrl,
         gameId
       ),
-      onState: setState,
+      onState: state => {
+        const clock =
+          state.serverNow != null && state.exitReading != null
+            ? liveBoardClock(state.serverNow, state.exitReading)
+            : undefined
+        setSnapshot({ state, clock })
+      },
       onClosed: () => {
         setClosed(true)
       },
@@ -82,7 +92,11 @@ export function ScoreboardPage(props: ScoreboardPageProps): React.ReactElement {
     )
   if (!closed)
     return (
-      <ScoreboardBoard state={state} minWidth={SCOREBOARD_BOARD_SIZE.width} />
+      <ScoreboardBoard
+        state={snapshot?.state}
+        clock={snapshot?.clock}
+        minWidth={SCOREBOARD_BOARD_SIZE.width}
+      />
     )
   if (page.quiet) return <ScoreboardBoard />
   return (

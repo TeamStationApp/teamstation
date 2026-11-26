@@ -247,6 +247,301 @@ describe('the scoreboard log', function () {
     expect(found[2].publisher.state.pitchSpeed).equals(88)
   })
 
+  it('carries a timed exit reading across workers, updates and reconnects, and reconstructs it on the video clock', async () => {
+    const origin = await startWorker()
+    const viewerWorker = await startWorker()
+    const gameId = await newGame()
+    const phone = await publisher(origin, gameId)
+    const board = connect(`${viewerWorker.url}/${gameId}/socket`)
+    const timeline = connect(
+      `${viewerWorker.url}/${gameId}/socket?timeline=1`,
+      runner
+    )
+    await Promise.all([board.opened, timeline.opened])
+    await until('initial board', () => board.messages.length > 0)
+    const t0 = clock
+    const sequence = [
+      { after: 0, packet: { exitVelocity: 55 }, onset: 0, latest: 0, mph: 55 },
+      {
+        after: 250,
+        packet: { exitVelocity: 56 },
+        onset: 0,
+        latest: 250,
+        mph: 56
+      },
+      {
+        after: 3000,
+        packet: { exitVelocity: 56 },
+        onset: 0,
+        latest: 3000,
+        mph: 56
+      },
+      {
+        after: 4500,
+        packet: { pitchSpeed: 70 },
+        onset: 0,
+        latest: 3000,
+        mph: 56
+      },
+      {
+        after: 8001,
+        packet: { exitVelocity: 77 },
+        onset: 8001,
+        latest: 8001,
+        mph: 77
+      }
+    ]
+    const proof = []
+    for (const { after, packet, onset, latest, mph } of sequence) {
+      clock = t0 + after
+      const count = board.messages.length
+      send(phone, packet)
+      await until('updated viewer', () => board.messages.length > count)
+      await rowCount(gameId, proof.length + 1)
+      const { exitReading, serverNow } = board.messages.at(-1)
+      const reading = { mph, startedAt: t0 + onset, receivedAt: t0 + latest }
+      expect(exitReading).deep.equals(reading)
+      expect(serverNow).equals(clock)
+      const historical = (await computeBoardTimeline(db, gameId))!.steps.at(-1)!
+      expect(historical.state.exitReading).deep.equals(reading)
+      expect(historical.state).not.to.have.property('serverNow')
+      proof.push({
+        publisher: packet,
+        viewer: { exitReading, serverNow },
+        historical: {
+          at: historical.at,
+          exitReading: historical.state.exitReading
+        }
+      })
+    }
+    await until('radar correction notice', () =>
+      timeline.messages.some(n => n.fromMs === t0 + 8001)
+    )
+    clock += 10_000
+    const reconnect = connect(`${viewerWorker.url}/${gameId}/socket`)
+    await until('reconnected board', () => reconnect.messages.length > 0)
+    expect(reconnect.messages[0]).includes({ serverNow: clock })
+    expect(reconnect.messages[0].exitReading).deep.equals(
+      proof.at(-1)!.viewer.exitReading
+    )
+    const controls = await dashboard(origin, gameId)
+    send(controls, { type: 'reset' })
+    await rowCount(gameId, sequence.length + 1)
+    await until(
+      'reset viewer',
+      () => board.messages.at(-1)?.exitReading == null
+    )
+    expect(
+      (await computeBoardTimeline(db, gameId))!.steps.at(-1)!.state
+    ).not.to.have.property('exitReading')
+    if (process.env.SCOREBOARD_EXIT_PROOF === '1') {
+      for (const exchange of proof) console.log(JSON.stringify(exchange))
+    }
+  })
+
+  it('announces a committed exit reading when refreshing the scored pitch fails', async () => {
+    let failRefresh = false
+    const brokenRefresh = new Proxy(db, {
+      get(target, name) {
+        if (name === 'transaction' && failRefresh)
+          return () => {
+            throw new Error('radar refresh failed')
+          }
+        const value = Reflect.get(target, name)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+    const worker = await startWorker({ db: brokenRefresh })
+    const announce = worker.store.announceTimeline
+    worker.store.announceTimeline = async (gameId, fromMs) => {
+      await announce(gameId, fromMs)
+      failRefresh = true
+    }
+    const gameId = await newGame()
+    const phone = await publisher(worker, gameId)
+    const listener = connect(
+      `${worker.url}/${gameId}/socket?timeline=1`,
+      runner
+    )
+    await listener.opened
+    send(phone, { exitVelocity: 55 })
+    await until('timeline notice', () =>
+      listener.messages.some(message => message.fromMs === clock)
+    )
+    await until('refresh failure', () =>
+      logged.some(line =>
+        line.includes('refresh radar speeds: radar refresh failed')
+      )
+    )
+    expect(
+      (await computeBoardTimeline(db, gameId))?.steps.at(-1)?.state.exitReading
+        ?.mph
+    ).equals(55)
+  })
+
+  it('invalidates cached playback when an earlier exit arrives without replacing newer board snapshots', async () => {
+    const gameId = await newGame()
+    const cache = makeBoardTimelineCache(2)
+    const row = {
+      gameId,
+      cause: 'publisher' as const,
+      actorId: null,
+      overrides: NO_OVERRIDES
+    }
+    await logScoreboard(db, {
+      ...row,
+      version: 3,
+      at: clock + 2000,
+      publisher: {
+        state: { balls: 2, exitVelocity: 88 },
+        receivedAt: clock + 2000
+      },
+      radar: { exitVelocity: 88 }
+    })
+    const before = await cache.get(db, gameId)
+    await logScoreboard(db, {
+      ...row,
+      version: 1,
+      at: clock + 1000,
+      publisher: {
+        state: { balls: 1, exitVelocity: 77 },
+        receivedAt: clock + 1000
+      },
+      radar: { exitVelocity: 77 }
+    })
+    const after = await cache.get(db, gameId)
+    expect(after?.version).not.equals(before?.version)
+    expect(after?.steps.map(s => s.state.balls)).deep.equals([0, 2])
+    expect(after?.steps.map(s => s.state.exitReading)).deep.equals([
+      { mph: 77, startedAt: clock + 1000, receivedAt: clock + 1000 },
+      { mph: 88, startedAt: clock + 1000, receivedAt: clock + 2000 }
+    ])
+    expect(after).deep.equals(await computeBoardTimeline(db, gameId))
+    await logScoreboard(db, {
+      ...row,
+      cause: 'reset',
+      publisher: undefined,
+      version: 2,
+      at: clock + 1500
+    })
+    const reset = await cache.get(db, gameId)
+    expect(reset?.version).not.equals(after?.version)
+    expect(reset?.steps.map(s => s.state.exitReading)).deep.equals([
+      { mph: 77, startedAt: clock + 1000, receivedAt: clock + 1000 },
+      undefined,
+      { mph: 88, startedAt: clock + 2000, receivedAt: clock + 2000 }
+    ])
+    expect(reset).deep.equals(await computeBoardTimeline(db, gameId))
+  })
+
+  it('replays the board, resets and exits as live ran them when two writers log versions and times in opposite orders', async () => {
+    const gameId = await newGame()
+    const row = {
+      gameId,
+      cause: 'publisher' as const,
+      actorId: null,
+      overrides: NO_OVERRIDES
+    }
+    // The second script to run took its time first: the higher version has
+    // the earlier time.
+    await logScoreboard(db, {
+      ...row,
+      version: 10,
+      at: clock + 2000,
+      publisher: { state: { balls: 1 }, receivedAt: clock + 2000 }
+    })
+    await logScoreboard(db, {
+      ...row,
+      version: 11,
+      at: clock + 1000,
+      publisher: { state: { balls: 2 }, receivedAt: clock + 1000 }
+    })
+    const timeline = await computeBoardTimeline(db, gameId)
+    expect(timeline?.steps.at(-1)?.state.balls).equals(2)
+
+    // A reset that ran after an exit, with an earlier time, cleared it.
+    const cleared = await newGame()
+    await logScoreboard(db, {
+      ...row,
+      gameId: cleared,
+      version: 20,
+      at: clock + 1100,
+      publisher: { state: { exitVelocity: 55 }, receivedAt: clock + 1100 },
+      radar: { exitVelocity: 55 }
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: cleared,
+      cause: 'reset',
+      publisher: undefined,
+      version: 21,
+      at: clock + 1000
+    })
+    const afterReset = await computeBoardTimeline(db, cleared)
+    expect(afterReset?.steps.map(step => step.state.exitReading)).deep.equals(
+      afterReset?.steps.map(() => undefined)
+    )
+
+    // An exit that ran after a reset, with an earlier time, stays.
+    const kept = await newGame()
+    await logScoreboard(db, {
+      ...row,
+      gameId: kept,
+      cause: 'reset',
+      publisher: undefined,
+      version: 30,
+      at: clock + 3000
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: kept,
+      version: 31,
+      at: clock + 2900,
+      publisher: { state: { exitVelocity: 70 }, receivedAt: clock + 2900 },
+      radar: { exitVelocity: 70 }
+    })
+    const afterExit = await computeBoardTimeline(db, kept)
+    expect(afterExit?.steps.at(-1)?.state.exitReading).deep.equals({
+      mph: 70,
+      startedAt: clock + 2900,
+      receivedAt: clock + 2900
+    })
+
+    // Live ran 55, then a reset timed later, then 56: the 56 starts afresh.
+    const restarted = await newGame()
+    await logScoreboard(db, {
+      ...row,
+      gameId: restarted,
+      version: 41,
+      at: clock + 1000,
+      publisher: { state: { exitVelocity: 55 }, receivedAt: clock + 1000 },
+      radar: { exitVelocity: 55 }
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: restarted,
+      cause: 'reset',
+      publisher: undefined,
+      version: 43,
+      at: clock + 1300
+    })
+    await logScoreboard(db, {
+      ...row,
+      gameId: restarted,
+      version: 44,
+      at: clock + 1200,
+      publisher: { state: { exitVelocity: 56 }, receivedAt: clock + 1200 },
+      radar: { exitVelocity: 56 }
+    })
+    const afterRestart = await computeBoardTimeline(db, restarted)
+    expect(
+      afterRestart?.steps.flatMap(step => step.state.exitReading ?? [])
+    ).deep.equals([
+      { mph: 55, startedAt: clock + 1000, receivedAt: clock + 1000 },
+      { mph: 56, startedAt: clock + 1200, receivedAt: clock + 1200 }
+    ])
+  })
+
   it('persists a late WebSocket radar reading on the current scored pitch', async function () {
     const context = await addScorableTeams(db, {
       home: 'Comets',

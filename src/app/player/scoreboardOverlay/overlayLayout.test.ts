@@ -89,6 +89,14 @@ describe('the board over a single picture (U31)', function () {
     near(unnamed.h, (named.h * UNNAMED.height) / FULL_BOARD_HEIGHT)
   })
 
+  it('retains the same width near a lower edge when the player rows disappear', function () {
+    const placement = { x: 0, y: 0.95, height: 0.25 }
+    const full = placedBoardRect(picture, placement, SHORT)!
+    const short = placedBoardRect(picture, placement, UNNAMED)!
+    near(full.w, short.w)
+    expect(short.h).lessThan(full.h)
+  })
+
   it('counts from the picture, not its bars', function () {
     const letterboxed = { x: 0, y: 100, w: 1280, h: 520 }
     const board = singleBoardRect({

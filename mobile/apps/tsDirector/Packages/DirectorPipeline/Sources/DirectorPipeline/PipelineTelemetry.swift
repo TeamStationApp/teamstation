@@ -61,6 +61,9 @@ public struct SourceSummary: Sendable, Codable, Equatable {
   public var linkedControlIndex: Int?
   /// True when this row is some other row's control link and so never gets a tile of its own.
   public var isLinkedControl = false
+  /// True for the selected game's scoreboard monitor: listed and assignable like a camera, but
+  /// not one. A caller that turns off cameras it does not know should leave it alone.
+  public var isMonitor = false
 
   public init(
     index: Int,
@@ -74,7 +77,8 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     advertisedHost: String? = nil,
     controlVersion: String? = nil,
     linkedControlIndex: Int? = nil,
-    isLinkedControl: Bool = false
+    isLinkedControl: Bool = false,
+    isMonitor: Bool = false
   ) {
     self.index = index
     self.name = name
@@ -88,6 +92,7 @@ public struct SourceSummary: Sendable, Codable, Equatable {
     self.controlVersion = controlVersion
     self.linkedControlIndex = linkedControlIndex
     self.isLinkedControl = isLinkedControl
+    self.isMonitor = isMonitor
   }
 }
 

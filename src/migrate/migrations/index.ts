@@ -148,6 +148,7 @@ import { migration129DropChatAgeConfirmations } from './129dropChatAgeConfirmati
 import { migration129UmpireSort } from './129umpireSort'
 import { migration130RefreshNotices } from './130refreshNotices'
 import { migration130UmpireNotifications } from './130umpireNotifications'
+import { migration131ScoreboardLateRows } from './131scoreboardLateRows'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -299,5 +300,6 @@ export const migrations: Migration[] = [
   migration129DropChatAgeConfirmations,
   migration129UmpireSort,
   migration130RefreshNotices,
-  migration130UmpireNotifications
+  migration130UmpireNotifications,
+  migration131ScoreboardLateRows
 ]

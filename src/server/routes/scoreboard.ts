@@ -215,6 +215,7 @@ async function openBoard(
   const overrides = hash?.overrides ?? NO_OVERRIDES
   const composed = composeScoreboard({
     baseline: record,
+    serverNow: store.now(),
     game: hash?.game,
     watcher: hash?.watcher,
     overrides

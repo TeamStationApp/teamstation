@@ -9,7 +9,10 @@ import {
   carriesContested,
   composeScoreboard,
   type DashboardOverrides,
+  exitReturnAt,
+  exitWipes,
   mergeScoreboard,
+  nextExitReading,
   NO_OVERRIDES,
   SAMPLE_SCOREBOARD,
   SCOREBOARD_CLOSE,
@@ -266,5 +269,36 @@ describe('a scoreboard', function () {
       ).equals(false)
       expect(scoreboardOpen(undefined, true, S)).equals(false)
     })
+  })
+})
+
+describe('scoreboard exit readings', () => {
+  it('finishes entry, holds for five seconds and starts a new entry during return', () => {
+    const first = nextExitReading(undefined, 55, 1000)
+    expect(exitReturnAt(first)).equals(6500)
+    const entering = nextExitReading(first, 56, 1200)
+    expect(entering.startedAt).equals(1000)
+    expect(exitReturnAt(entering)).equals(6500)
+    const held = nextExitReading(entering, 56, 6499)
+    expect(held.startedAt).equals(1000)
+    expect(exitReturnAt(held)).equals(11499)
+    expect(nextExitReading(held, 80, 11499).startedAt).equals(11499)
+  })
+
+  it('times both wipes from the reading: entry from its start, return from its expiry', () => {
+    const held = nextExitReading(nextExitReading(undefined, 55, 1000), 56, 3000)
+    expect(exitWipes(held)).deep.equals([
+      { from: 1000, to: 1500 },
+      { from: 8000, to: 8500 }
+    ])
+  })
+
+  it('keeps display timing read-only and accepts a legacy viewer state', () => {
+    const reading = nextExitReading(undefined, 55, 1000)
+    const wire = { ...SAMPLE_SCOREBOARD, exitReading: reading, serverNow: 1030 }
+    expect(asScoreboardState(wire)).deep.equals(wire)
+    expect(asScoreboardUpdate(wire)).not.to.have.property('exitReading')
+    expect(asScoreboardUpdate(wire)).not.to.have.property('serverNow')
+    expect(asScoreboardState(SAMPLE_SCOREBOARD)).deep.equals(SAMPLE_SCOREBOARD)
   })
 })

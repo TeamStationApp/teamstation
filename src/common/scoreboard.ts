@@ -21,7 +21,7 @@ import { asLiteral } from './asLiteral'
 
 const asHalf = asLiteral('top', 'bottom', 'mid')
 
-export const asScoreboardState = asObject({
+const asScoreboardFields = asObject({
   inGame: asBoolean,
   pitcherName: asString,
   batterName: asString,
@@ -44,7 +44,72 @@ export const asScoreboardState = asObject({
   pitchSpeed: asNumber,
   exitVelocity: asNumber
 })
-export type ScoreboardState = ReturnType<typeof asScoreboardState>
+export const EXIT_WIPE_MS = 500
+export const EXIT_HOLD_MS = 5000
+
+export const asExitReading = asObject({
+  mph: asNumber,
+  startedAt: asNumber,
+  receivedAt: asNumber
+})
+export type ExitReading = ReturnType<typeof asExitReading>
+
+/** A second hit during entry or hold extends the same display. */
+export function exitReturnAt(reading: ExitReading): number {
+  return (
+    Math.max(reading.startedAt + EXIT_WIPE_MS, reading.receivedAt) +
+    EXIT_HOLD_MS
+  )
+}
+
+/**
+ * The entry wipe and the return wipe, each from its start to its end on the
+ * server's wall clock: what the batter row draws and what wakes it.
+ */
+export function exitWipes(
+  reading: ExitReading
+): [{ from: number; to: number }, { from: number; to: number }] {
+  const back = exitReturnAt(reading)
+  return [
+    { from: reading.startedAt, to: reading.startedAt + EXIT_WIPE_MS },
+    { from: back, to: back + EXIT_WIPE_MS }
+  ]
+}
+
+/**
+ * The reading after a hit of `mph` at `at`. Live writes apply the same rule
+ * in the scoreboard script (server/scoreboard/scoreboardScript.ts); the
+ * store's integration test runs one sequence through both.
+ */
+export function nextExitReading(
+  previous: ExitReading | undefined,
+  mph: number,
+  at: number
+): ExitReading {
+  const startedAt =
+    previous != null && at < exitReturnAt(previous) ? previous.startedAt : at
+  return { mph, startedAt, receivedAt: at }
+}
+
+export type ScoreboardState = ReturnType<typeof asScoreboardFields> & {
+  /** The last explicit radar hit, timed on the server's wall clock in ms. */
+  exitReading?: ExitReading
+  /** Live delivery time for mapping that clock to the viewer's monotonic clock. */
+  serverNow?: number
+}
+
+const asDisplayTiming = asObject({
+  exitReading: asOptional(asExitReading),
+  serverNow: asOptional(asNumber)
+})
+
+export const asScoreboardState: Cleaner<ScoreboardState> = raw => {
+  const board: ScoreboardState = asScoreboardFields(raw)
+  const { exitReading, serverNow } = asDisplayTiming(raw)
+  if (exitReading != null) board.exitReading = exitReading
+  if (serverNow != null) board.serverNow = serverNow
+  return board
+}
 
 /** What one packet may say: any of the fields, and only those. */
 export const asScoreboardUpdate = asObject({
@@ -70,7 +135,7 @@ export const asScoreboardUpdate = asObject({
   pitchSpeed: asOptional(asNumber),
   exitVelocity: asOptional(asNumber)
 })
-export type ScoreboardUpdate = Partial<ScoreboardState>
+export type ScoreboardUpdate = Partial<ReturnType<typeof asScoreboardFields>>
 
 /** `state` with every field `update` defines copied over it. */
 export function mergeScoreboard<T extends ScoreboardUpdate>(
@@ -190,6 +255,7 @@ export type DashboardCommand = ReturnType<typeof asDashboardCommand>
 
 /** One source's latest word, and when (milliseconds) it last contested. */
 export interface SourceState {
+  exitReading?: ExitReading
   state: ScoreboardUpdate
   receivedAt: number
 }
@@ -238,6 +304,7 @@ export const SCOREBOARD_DEFAULTS: ScoreboardState = {
  */
 export function composeScoreboard(input: {
   baseline: ScoreboardBaseline
+  serverNow?: number
   game?: SourceState
   watcher?: SourceState
   overrides?: DashboardOverrides
@@ -260,6 +327,10 @@ export function composeScoreboard(input: {
     ...automated,
     homeTeam: baseline.homeTeam,
     awayTeam: baseline.awayTeam
+  }
+  if (watcher?.exitReading != null) {
+    automated.exitReading = watcher.exitReading
+    if (input.serverNow != null) automated.serverNow = input.serverNow
   }
   return {
     automated,

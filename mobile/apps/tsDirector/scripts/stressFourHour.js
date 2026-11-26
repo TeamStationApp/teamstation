@@ -211,6 +211,8 @@ function matchCameraName(label) {
 
 async function enforceCameras(host, state, wantedNames, actionLog) {
   for (const source of state.sources ?? []) {
+    // The scoreboard monitor is the operator's, not a stray camera.
+    if (pick(source, 'isMonitor') === true) continue
     const label = pick(source, 'name', 'displayName')
     const name = matchCameraName(label)
     const index = pick(source, 'index')

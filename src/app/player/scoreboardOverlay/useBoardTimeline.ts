@@ -118,11 +118,14 @@ export function useBoardTimeline(
     // never lands on top of a newer one — and of those asked for while one is
     // out only the newest, as a scrub asks around every frame it passes.
     const queue = latestQueue()
+    let invalidFrom = Infinity
     const load = (from: number): void => {
       queue(async () => {
         if (done) return
         const whole = held == null
-        const start = whole ? fromMs : from
+        const pending = invalidFrom
+        invalidFrom = Infinity
+        const start = whole ? fromMs : Math.max(fromMs, Math.min(from, pending))
         try {
           const answer = await client.scoreboardTimeline(gameId, {
             fromMs: start
@@ -134,6 +137,7 @@ export function useBoardTimeline(
           kept.current = { gameId, steps: held }
           setSteps(held)
         } catch {
+          invalidFrom = Math.min(invalidFrom, pending)
           // The next notice, poll or seek asks again.
         }
       })
@@ -161,10 +165,17 @@ export function useBoardTimeline(
             changed.current?.()
           },
           onClose: () => {
+            // A notice with an older correction can be missed while
+            // disconnected: the next fetch reads the whole window, once a
+            // drop, and not again for each reconnect that fails.
+            if (open) invalidFrom = fromMs
             open = false
           },
           onMessage: data => {
-            if (!isChangeNotice(data)) return
+            const notice = changeNotice(data)
+            if (notice == null) return
+            if (notice.fromMs != null)
+              invalidFrom = Math.min(invalidFrom, notice.fromMs)
             gathering?.()
             gathering = schedule(() => {
               gathering = undefined
@@ -212,12 +223,20 @@ export function useBoardTimeline(
 
 /** `{"type":"changed"}`, and nothing else the socket might send. */
 export function isChangeNotice(data: unknown): boolean {
+  return changeNotice(data) != null
+}
+
+function changeNotice(data: unknown): { fromMs?: number } | undefined {
   try {
-    const message = JSON.parse(String(data)) as { type?: unknown } | null
-    return message?.type === 'changed'
+    const message = JSON.parse(String(data))
+    if (message?.type === 'changed')
+      return Number.isSafeInteger(message.fromMs)
+        ? { fromMs: message.fromMs }
+        : {}
   } catch {
-    return false
+    // Ignore malformed notices.
   }
+  return undefined
 }
 
 /** The page's own origin, where there is a page. */

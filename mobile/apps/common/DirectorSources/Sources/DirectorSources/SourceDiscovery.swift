@@ -6,13 +6,15 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable {
   case file
   case rtsp
   case ndi
+  /// A local monitor of the selected game, with no media transport.
+  case scoreboard
 
   /// Whether this kind represents real cameras on the network. Drives the HUD's availability
   /// readout and tells the operator that an empty source list means a network problem rather
   /// than a configuration one.
   public var isLive: Bool {
     switch self {
-    case .synthetic, .file: false
+    case .synthetic, .file, .scoreboard: false
     case .rtsp, .ndi: true
     }
   }
@@ -25,7 +27,7 @@ public enum SourceKind: String, Sendable, Codable, CaseIterable {
   /// what this app runs out of.
   public var needsEncodeToArchive: Bool {
     switch self {
-    case .rtsp, .file: false
+    case .rtsp, .file, .scoreboard: false
     case .synthetic, .ndi: true
     }
   }

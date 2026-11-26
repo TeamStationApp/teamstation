@@ -17,6 +17,7 @@ import {
   BOARD_POLL_MS,
   type BoardTimelineHandle,
   type BoardTimelineOptions,
+  isChangeNotice,
   LOOK_BACK_MS,
   NOTICE_DEBOUNCE_MS,
   useBoardTimeline
@@ -258,7 +259,7 @@ describe('the live wall timeline (U36)', function () {
   })
 })
 
-describe('the live board timeline (U36)', function () {
+describe('the live scoreboard timeline (U36)', function () {
   interface Harness {
     server: ReturnType<typeof overlayServer>
     clock: ReturnType<typeof fakeClock>
@@ -321,6 +322,13 @@ describe('the live board timeline (U36)', function () {
     return { server, clock, sockets, out, playhead, socketsAtAsk, rerender }
   }
 
+  it('recognizes both legacy and timed change notices for the line score', () => {
+    expect(isChangeNotice('{"type":"changed"}')).equals(true)
+    expect(isChangeNotice('{"type":"changed","fromMs":42}')).equals(true)
+    expect(isChangeNotice('{"type":"other"}')).equals(false)
+    expect(isChangeNotice('malformed')).equals(false)
+  })
+
   it('opens the change socket first, then fetches the window', async function () {
     const steps = [
       boardStep(OVERLAY_T0 - 5000, 0),
@@ -364,6 +372,25 @@ describe('the live board timeline (U36)', function () {
     expect(h.out.current?.steps).deep.equals(corrected)
     // The steps before that point are the ones already held.
     expect(h.out.current?.steps?.[0]).equals(heldEarly)
+  })
+
+  it('refetches from the earliest delayed exit in a burst of notices', async () => {
+    const h = await setup({}, [boardStep(OVERLAY_T0)])
+    h.sockets.latest().open()
+    await flush()
+    h.playhead.wall = OVERLAY_T0 + 150_000
+    const corrected = OVERLAY_T0 + 5000
+    h.server.fail.add('/games/g1/box-score')
+    h.sockets.latest().receive({ type: 'changed', fromMs: corrected })
+    h.sockets.latest().receive({ type: 'changed', fromMs: corrected + 1000 })
+    h.sockets.latest().receive({ type: 'changed' })
+    await advance(h.clock, NOTICE_DEBOUNCE_MS)
+    expect(boardAsks(h.server).at(-1)).equals(corrected)
+
+    h.server.fail.clear()
+    h.sockets.latest().receive({ type: 'changed' })
+    await advance(h.clock, NOTICE_DEBOUNCE_MS)
+    expect(boardAsks(h.server).slice(-2)).deep.equals([corrected, corrected])
   })
 
   it('never refetches from before the window', async function () {
@@ -412,6 +439,27 @@ describe('the live board timeline (U36)', function () {
     h.sockets.latest().drop(1006)
     await advance(h.clock, BOARD_POLL_MS)
     expect(asks()).greaterThan(opened + 2)
+  })
+
+  it('reads the whole window once after its socket drops, however many reconnects fail', async function () {
+    const h = await setup({}, [boardStep(OVERLAY_T0)])
+    h.playhead.wall = OVERLAY_T0 + 120_000
+    h.sockets.latest().open()
+    await flush()
+    const asked = boardAsks(h.server).length
+    h.sockets.latest().drop(1006)
+    let tried = h.sockets.sockets.length
+    for (let elapsed = 0; elapsed < BOARD_POLL_MS * 2; elapsed += 1000) {
+      await advance(h.clock, 1000)
+      if (h.sockets.sockets.length === tried) continue
+      tried = h.sockets.sockets.length
+      h.sockets.latest().drop(1006)
+    }
+    expect(tried).greaterThan(3)
+    expect(boardAsks(h.server).slice(asked)).deep.equals([
+      OVERLAY_T0,
+      OVERLAY_T0 + 120_000 - LOOK_BACK_MS
+    ])
   })
 
   it('keeps polling when the board is gone for good, and when the request fails', async function () {

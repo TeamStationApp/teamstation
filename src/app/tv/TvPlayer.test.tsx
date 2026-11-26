@@ -930,6 +930,58 @@ describe('TV game playback entry', () => {
     expect(border()).equals('4px')
     expect([...document.querySelectorAll('video')]).deep.equals(streams)
   })
+  it('plays the scoreboard exit velocity at the master frame, including a seek into an expired wipe', async function () {
+    const stats = client.gameStatistics.bind(client)
+    const base = Date.parse('2026-10-01T00:00:00Z')
+    const hit = boardStep(base + 1000)
+    hit.state.exitReading = { mph: 55, startedAt: hit.at, receivedAt: hit.at }
+    client.gameStatistics = async id => {
+      const data = await stats(id)
+      data.board.steps = [boardStep(base), hit]
+      return data
+    }
+    try {
+      viewport = await windowSize(1920, 1080)
+      await render()
+      const videos = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of videos) {
+          Object.defineProperty(video, 'duration', {
+            configurable: true,
+            value: 60
+          })
+          video.dispatchEvent(new window.Event('durationchange'))
+        }
+        await pause()
+      })
+      const show = async (seconds: number): Promise<void> => {
+        await act(async () => {
+          for (const video of videos) {
+            video.currentTime = seconds
+            video.dispatchEvent(new window.Event('seeked'))
+            video.dispatchEvent(new window.Event('timeupdate'))
+          }
+          await pause()
+        })
+      }
+      const caption = (): HTMLElement | null =>
+        document.querySelector('[data-scoreboard="exitSpeed"]')
+      await show(0)
+      await show(1.25)
+      expect(caption()?.textContent).equals('Exit: 55 MPH')
+      const mask = (): HTMLElement => caption()!.parentElement!.parentElement!
+      expect(parseFloat(getComputedStyle(mask()).width)).equals(96.5)
+      await show(8)
+      expect(caption()).equals(null)
+      await show(6.75)
+      expect(parseFloat(getComputedStyle(mask()).left)).equals(96.5)
+      await pause()
+      expect(parseFloat(getComputedStyle(mask()).left)).equals(96.5)
+    } finally {
+      client.gameStatistics = stats
+    }
+  })
+
   for (const reduced of [false, true]) {
     it(`schedules TV layout transitions only when motion is allowed (reduce motion ${reduced})`, async () => {
       const tvFlag = Object.getOwnPropertyDescriptor(Platform, 'isTV')

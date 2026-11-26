@@ -45,6 +45,7 @@ export function usePlayheadStep<
   steps: readonly Step[] | null
   wallNow: () => number | null
   onSeek?: (wallMs: number) => void
+  onFrame?: (wall: number | null) => void
   frames?: FrameLoop
   now?: () => number
 }): Step | null {
@@ -60,6 +61,7 @@ export function usePlayheadStep<
     const tick = (): void => {
       const { steps, wallNow, onSeek } = latest.current
       const wallMs = wallNow()
+      latest.current.onFrame?.(wallMs)
       const at = now()
       if (wallMs != null) {
         if (last != null) {

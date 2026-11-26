@@ -11,6 +11,8 @@ import {
   SCOREBOARD_BOARD_SIZE,
   type ScoreboardState
 } from '../../common/scoreboard'
+import { BatterStats } from './BatterStats'
+import type { BoardClock } from './boardClock'
 import LinearGradient from './linearGradient'
 import { type ScoreboardTheme, scoreboardTheme } from './scoreboardTheme'
 
@@ -18,7 +20,7 @@ import { type ScoreboardTheme, scoreboardTheme } from './scoreboardTheme'
  * The scoreboard as OBS and TS Director draw it over video: 1.0's
  * `src/client/Scoreboard.tsx` at 25f9496e, copied. The same React Native components,
  * drawn on the web by react-native-web as 1.0's were, with 1.0's style
- * sheet, fonts and gradients unchanged, and its theme values copied into
+ * sheet, fonts and gradients, and its theme values copied into
  * `scoreboardTheme`.
  *
  * It draws the `state` prop, where 1.0 kept its own socket and state. 1.0's
@@ -46,6 +48,7 @@ declare module 'react-native' {
 export interface ScoreboardBoardProps {
   /** What to draw; nothing but the empty root while it is undefined. */
   state?: ScoreboardState
+  clock?: BoardClock
   /**
    * The least width the drawn board takes, for a board laid out at its own
    * size, as the overlay over a video lays it out. On a phone a `flex: 1`
@@ -67,7 +70,9 @@ export function ScoreboardBoard(
       <View dataSet={{ scoreboard: 'board', drawn: 'false' }} style={empty} />
     )
   }
-  return <Scoreboard scoreState={state} minWidth={minWidth} />
+  return (
+    <Scoreboard scoreState={state} minWidth={minWidth} clock={props.clock} />
+  )
 }
 
 /**
@@ -114,8 +119,19 @@ const fromContent = {
   flexBasis: 'auto'
 } as const
 
+/** Fit unusually long numeric values inside their reserved slots. */
+function fitDigits(
+  value: number,
+  digits: number,
+  size: number
+): { fontSize: number } | undefined {
+  const length = String(value).length
+  if (length > digits) return { fontSize: (theme.rem(size) * digits) / length }
+}
+
 function Scoreboard(props: {
   scoreState: ScoreboardState
+  clock?: BoardClock
   minWidth?: number
 }): React.ReactElement {
   const { scoreState, minWidth } = props
@@ -135,17 +151,17 @@ function Scoreboard(props: {
             {/* Header Row: Batter abbreviation and inning */}
             <View style={styles.headerRow}>
               <Text
+                numberOfLines={1}
                 dataSet={{ scoreboard: 'batter' }}
                 style={styles.batterAbbrev}
               >
                 {scoreState.batterName.toUpperCase()}
               </Text>
-              <Text
-                dataSet={{ scoreboard: 'batterLine' }}
-                style={styles.batterAtBatsText}
-              >
-                {scoreState.batterNumHits}-{scoreState.batterAtBats}
-              </Text>
+              <BatterStats
+                line={`${scoreState.batterNumHits}-${scoreState.batterAtBats}`}
+                reading={scoreState.exitReading}
+                clock={props.clock}
+              />
             </View>
 
             {/* Separator line */}
@@ -154,6 +170,7 @@ function Scoreboard(props: {
             {/* Pitcher Row */}
             <View style={styles.pitcherRow}>
               <Text
+                numberOfLines={1}
                 dataSet={{ scoreboard: 'pitcher' }}
                 style={styles.pitcherName}
               >
@@ -161,7 +178,11 @@ function Scoreboard(props: {
               </Text>
               <Text
                 dataSet={{ scoreboard: 'pitches' }}
-                style={styles.pitchCount}
+                numberOfLines={1}
+                style={[
+                  styles.pitchCount,
+                  fitDigits(scoreState.numPitches, 3, 1.25)
+                ]}
               >
                 P: {scoreState.numPitches}
               </Text>
@@ -203,7 +224,11 @@ function Scoreboard(props: {
               <View style={styles.scoreBox}>
                 <Text
                   dataSet={{ scoreboard: 'awayScore' }}
-                  style={[styles.scoreText, phoneScoreText]}
+                  style={[
+                    styles.scoreText,
+                    phoneScoreText,
+                    fitDigits(scoreState.awayScore, 2, 3)
+                  ]}
                 >
                   {scoreState.awayScore}
                 </Text>
@@ -230,7 +255,11 @@ function Scoreboard(props: {
               <View style={styles.scoreBox}>
                 <Text
                   dataSet={{ scoreboard: 'homeScore' }}
-                  style={[styles.scoreText, phoneScoreText]}
+                  style={[
+                    styles.scoreText,
+                    phoneScoreText,
+                    fitDigits(scoreState.homeScore, 2, 3)
+                  ]}
                 >
                   {scoreState.homeScore}
                 </Text>
@@ -265,7 +294,11 @@ function Scoreboard(props: {
               </View>
               <Text
                 dataSet={{ scoreboard: 'inning' }}
-                style={styles.inningCount}
+                numberOfLines={1}
+                style={[
+                  styles.inningCount,
+                  fitDigits(scoreState.inning, 2, 2.25)
+                ]}
               >
                 {scoreState.inning}
               </Text>
@@ -377,7 +410,13 @@ function Scoreboard(props: {
                   scoreState.pitchSpeed === 0 && styles.pitchSpeedHidden
                 ]}
               >
-                <Text style={styles.pitchSpeedNumber}>
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.pitchSpeedNumber,
+                    fitDigits(scoreState.pitchSpeed, 3, 2.75)
+                  ]}
+                >
                   {scoreState.pitchSpeed}
                 </Text>
                 <View style={styles.pitchSpeedLettersColumn}>
@@ -432,16 +471,12 @@ export const getStyles = (theme: ScoreboardTheme) => {
       paddingBottom: theme.rem(0.25)
     },
     batterAbbrev: {
+      width: 0,
+      flexGrow: 1,
       color: theme.primaryTextColor,
       fontSize: theme.rem(1.25),
       fontWeight: 'bold',
       letterSpacing: 1,
-      fontFamily: theme.secondaryTextFont
-    },
-    batterAtBatsText: {
-      color: theme.primaryTextColor,
-      fontSize: theme.rem(1.25),
-      fontWeight: 'bold',
       fontFamily: theme.secondaryTextFont
     },
     // Separator Line
@@ -468,6 +503,8 @@ export const getStyles = (theme: ScoreboardTheme) => {
       paddingVertical: theme.rem(0.25)
     },
     pitcherName: {
+      width: 0,
+      flexGrow: 1,
       color: theme.primaryTextColor,
       fontSize: theme.rem(1.25),
       fontWeight: 'bold',
@@ -475,6 +512,8 @@ export const getStyles = (theme: ScoreboardTheme) => {
       fontFamily: theme.secondaryTextFont
     },
     pitchCount: {
+      width: theme.rem(6),
+      textAlign: 'right',
       color: theme.primaryTextColor,
       fontSize: theme.rem(1.25),
       fontWeight: 'bold',
@@ -537,6 +576,7 @@ export const getStyles = (theme: ScoreboardTheme) => {
     },
     // Arrows and Outs Column
     arrowsOutsColumn: {
+      width: theme.rem(3.4),
       alignItems: 'center',
       marginRight: gapScoreToInning
     },
@@ -621,6 +661,7 @@ export const getStyles = (theme: ScoreboardTheme) => {
     },
     // Count and Outs Container
     countOutsContainer: {
+      width: theme.rem(4.6),
       alignItems: 'center',
       marginRight: theme.rem(1.25)
     },
@@ -651,6 +692,7 @@ export const getStyles = (theme: ScoreboardTheme) => {
     },
     // Bases + Pitch Speed column
     basesAndSpeedColumn: {
+      width: theme.rem(6.8),
       alignItems: 'center',
       justifyContent: 'flex-start'
     },

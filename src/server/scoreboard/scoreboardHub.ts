@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 
 import { captureException } from '@sentry/node'
-import { asObject, asString } from 'cleaners'
+import { asNumber, asObject, asOptional, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, WebSocket, WebSocketServer } from 'ws'
 
@@ -246,7 +246,6 @@ export function makeScoreboardHub(
         publisher: result.message.watcher,
         overrides: result.message.overrides ?? NO_OVERRIDES
       })
-      if (radar != null) await refreshRadarSpeeds(db, gameId)
     } catch (error) {
       log(`scoreboard ${gameId}: scoreboard log: ${describe(error)}`)
       captureException(error)
@@ -255,10 +254,22 @@ export function makeScoreboardHub(
     // The row has committed, or was not needed: either way a timeline read
     // from now on holds this write.
     try {
-      await store.announceTimeline(gameId)
+      const fromMs =
+        radar?.exitVelocity != null || cause === 'reset'
+          ? result.now
+          : undefined
+      await store.announceTimeline(gameId, fromMs)
     } catch (error) {
       if (!(error instanceof ScoreboardUnavailable))
         log(`scoreboard ${gameId}: timeline notice: ${describe(error)}`)
+    }
+    if (radar != null) {
+      try {
+        await refreshRadarSpeeds(db, gameId)
+      } catch (error) {
+        log(`scoreboard ${gameId}: refresh radar speeds: ${describe(error)}`)
+        captureException(error)
+      }
     }
   }
 
@@ -297,6 +308,7 @@ export function makeScoreboardHub(
     const overrides = hash.overrides ?? NO_OVERRIDES
     const { automated, final } = composeScoreboard({
       baseline: room.record,
+      serverNow: store.now(),
       game: hash.game,
       watcher: hash.watcher,
       overrides
@@ -354,22 +366,24 @@ export function makeScoreboardHub(
 
   /** A game's timeline changed: each of its `timeline=1` sockets is told. */
   function onTimeline(text: string): void {
-    let gameId: string
+    let notice: ReturnType<typeof asTimelineNotice>
     try {
-      gameId = asTimelineNotice(JSON.parse(text)).gameId
+      notice = asTimelineNotice(JSON.parse(text))
     } catch (error) {
       log(`scoreboard: unreadable timeline notice: ${describe(error)}`)
       return
     }
-    const room = rooms.get(gameId)
-    if (room != null) noticeTimeline(room)
+    const room = rooms.get(notice.gameId)
+    if (room != null) noticeTimeline(room, notice.fromMs)
   }
 
-  function noticeTimeline(room: Room): void {
+  function noticeTimeline(room: Room, fromMs?: number): void {
+    const message =
+      fromMs == null ? CHANGED : JSON.stringify({ type: 'changed', fromMs })
     for (const member of room.members) {
       if (!member.timeline) continue
       if (member.socket.readyState !== WebSocket.OPEN) continue
-      member.socket.send(CHANGED)
+      member.socket.send(message)
     }
   }
 
@@ -378,11 +392,13 @@ export function makeScoreboardHub(
    * with sockets is read once whenever either connection is ready again. A
    * timeline notice lost the same way cannot be read back, so each
    * `timeline=1` socket is told its timeline may have changed: its socket
-   * stayed open throughout, so nothing else would make it fetch again.
+   * stayed open throughout, so nothing else would make it fetch again. The
+   * lost notice's `fromMs` is unknown, so the socket reads its whole window,
+   * once for each reconnect of this worker's connection.
    */
   function resync(): void {
     for (const room of rooms.values()) {
-      noticeTimeline(room)
+      noticeTimeline(room, 0)
       enqueue(room, async () => {
         await catchUp(room)
       })
@@ -941,7 +957,10 @@ function refuseUpgrade(socket: Duplex, response: string): void {
   socket.end(response)
 }
 
-const asTimelineNotice = asObject({ gameId: asString })
+const asTimelineNotice = asObject({
+  gameId: asString,
+  fromMs: asOptional(asNumber)
+})
 
 function shut(socket: WebSocket, code: number, reason: string): void {
   if (

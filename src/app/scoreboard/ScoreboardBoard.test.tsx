@@ -10,19 +10,24 @@ import {
   type ScoreboardState
 } from '../../common/scoreboard'
 import { fonts } from '../theme/fonts'
+import type { BoardClock } from './boardClock'
 import { ScoreboardBoard, styles } from './ScoreboardBoard'
+import { scoreboardTheme } from './scoreboardTheme'
 import v1Styles from './v1ScoreboardStyles.json'
 
 let root: Root | undefined
 async function draw(
   state?: ScoreboardState,
-  minWidth?: number
+  minWidth?: number,
+  clock?: BoardClock
 ): Promise<HTMLElement> {
   const node = document.createElement('div')
   document.body.appendChild(node)
   root = createRoot(node)
   await act(async () => {
-    root?.render(<ScoreboardBoard state={state} minWidth={minWidth} />)
+    root?.render(
+      <ScoreboardBoard state={state} minWidth={minWidth} clock={clock} />
+    )
   })
   return part('board')
 }
@@ -140,7 +145,7 @@ describe('ScoreboardBoard', function () {
     expect(SCOREBOARD_BOARD_SIZE).deep.equals({ width: 607, height: 247 })
   })
 
-  it("uses 1.0's styles, style for style", function () {
+  it('preserves 1.0 styling outside the reserved slots', function () {
     // Recorded from 1.0's own `getStyles(tsDark)` (`src/client/Scoreboard.tsx` at 25f9496e
     // at v1.0.0) in a 1920 × 1080 window. Only the "waiting for game data"
     // card's styles are gone, with the card, and 1.0's Helvetica Neue is the
@@ -153,7 +158,30 @@ describe('ScoreboardBoard', function () {
     const named = JSON.parse(
       JSON.stringify(drawn).replaceAll('"Inter"', JSON.stringify(fonts.inter))
     ) as typeof drawn
-    expect(JSON.parse(JSON.stringify(styles))).deep.equals(named)
+    const { batterAtBatsText, ...expected } = named
+    expect(batterAtBatsText.fontSize).equals(scoreboardTheme.rem(1.25))
+    expect(JSON.parse(JSON.stringify(styles))).deep.equals({
+      ...expected,
+      batterAbbrev: { ...expected.batterAbbrev, width: 0, flexGrow: 1 },
+      pitcherName: { ...expected.pitcherName, width: 0, flexGrow: 1 },
+      pitchCount: {
+        ...expected.pitchCount,
+        width: scoreboardTheme.rem(6),
+        textAlign: 'right'
+      },
+      arrowsOutsColumn: {
+        ...expected.arrowsOutsColumn,
+        width: scoreboardTheme.rem(3.4)
+      },
+      countOutsContainer: {
+        ...expected.countOutsContainer,
+        width: scoreboardTheme.rem(4.6)
+      },
+      basesAndSpeedColumn: {
+        ...expected.basesAndSpeedColumn,
+        width: scoreboardTheme.rem(6.8)
+      }
+    })
   })
 
   it('keeps its team bars from their names, never narrower than asked, for the overlay', async function () {
@@ -201,6 +229,102 @@ describe('ScoreboardBoard', function () {
     visit(fiber)
     expect(texts.length).greaterThan(8)
     expect(texts.filter(one => one.allowFontScaling !== false)).deep.equals([])
+  })
+
+  it('wipes both captions across one stationary slot on entry, return and replay seeks', async function () {
+    let time = 900
+    const ticks = new Set<() => void>()
+    const clock = {
+      now: () => time,
+      subscribe: (tick: () => void) => {
+        ticks.add(tick)
+        return () => {
+          ticks.delete(tick)
+        }
+      }
+    }
+    const state = {
+      ...SAMPLE_SCOREBOARD,
+      exitReading: { mph: 55, startedAt: 1000, receivedAt: 1000 }
+    }
+    await draw(state, 607, clock)
+    const slot = scoreboardTheme.rem(9.5)
+    const seek = async (to: number): Promise<void> => {
+      time = to
+      await act(async () => {
+        for (const tick of ticks) tick()
+      })
+    }
+    const checkMask = (name: string, left: number, width: number): void => {
+      const caption = part(name).parentElement!
+      const mask = caption.parentElement!
+      expect(parseFloat(css(mask, 'left'))).equals(left)
+      expect(parseFloat(css(mask, 'width'))).equals(width)
+      expect(parseFloat(css(caption, 'left'))).equals(-left)
+      expect(parseFloat(css(caption, 'width'))).equals(slot)
+      expect(css(part(name), 'text-align')).equals('right')
+    }
+    expect(document.querySelector('[data-scoreboard="exitSpeed"]')).equals(null)
+    await seek(1250)
+    checkMask('exitSpeed', 0, slot / 2)
+    checkMask('batterLine', slot / 2, slot / 2)
+    expect(part('exitSpeed').textContent).equals('Exit: 55 MPH')
+    expect(css(part('exitSpeed'), 'color')).equals('rgb(255, 211, 77)')
+    for (const held of [1500, 6499]) {
+      await seek(held)
+      checkMask('exitSpeed', 0, slot)
+    }
+    await seek(6750)
+    checkMask('batterLine', 0, slot / 2)
+    checkMask('exitSpeed', slot / 2, slot / 2)
+    await seek(7000)
+    expect(document.querySelector('[data-scoreboard="exitSpeed"]')).equals(null)
+    await seek(1250)
+    checkMask('exitSpeed', 0, slot / 2)
+    await act(async () => {
+      root?.render(
+        <ScoreboardBoard
+          state={{
+            ...state,
+            batterNumHits: 3,
+            exitReading: { mph: 72, startedAt: 1000, receivedAt: 4000 }
+          }}
+          clock={clock}
+        />
+      )
+    })
+    await seek(7000)
+    checkMask('exitSpeed', 0, slot)
+    expect(part('exitSpeed').textContent).equals('Exit: 72 MPH')
+    await seek(9500)
+    expect(part('batterLine').textContent).equals('3-3')
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    expect(ticks.size).equals(0)
+  })
+
+  it('fits extreme numbers and truncates only overlong player names', async function () {
+    await draw({
+      ...SAMPLE_SCOREBOARD,
+      inning: 100,
+      homeScore: 888,
+      awayScore: 99,
+      pitchSpeed: 128,
+      numPitches: 1000
+    })
+    expect(css(part('batter'), 'text-overflow')).equals('ellipsis')
+    expect(css(part('pitcher'), 'text-overflow')).equals('ellipsis')
+    expect(parseFloat(css(part('homeScore'), 'font-size'))).lessThan(
+      parseFloat(css(part('awayScore'), 'font-size'))
+    )
+    expect(parseFloat(css(part('inning'), 'font-size'))).lessThan(
+      scoreboardTheme.rem(2.25)
+    )
+    expect(parseFloat(css(part('pitches'), 'font-size'))).lessThan(
+      scoreboardTheme.rem(1.25)
+    )
   })
 
   it('paints nothing but keeps the box with no state', async function () {

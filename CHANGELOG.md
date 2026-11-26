@@ -4,6 +4,8 @@
 
 - added: Scorers can end a live game during any play, see what will go in the scorebook, and undo the final after reopening the game
 - changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
+- added: TS Director can show the selected game’s scoreboard in any camera window while the primary output stays on a camera
+- added: Radar exit velocity wipes across the batter’s stats for five seconds and follows the play during replay. On TS Director’s own stream output the wipe moves in steps; OBS and the web player draw it smoothly
 - added: Chat senders can include a removable link preview. Recipients see its encrypted copy, and reporting the message shares the original content while keeping the preview private.
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.
@@ -31,6 +33,7 @@
 - changed: The web keeps the phone's copy of what its screens read and queues edits as the phone does, in the tab: it scores without waiting on the server, keeps every play across browser Back and while offline, shows the offline banner and the "edits not sent" banner and sheet, and warns before the tab is left while edits wait
 - changed: On the web, Coach Game keeps a refused lineup or rostered change and holds it in "edits not sent", as the phone does
 - changed: The web build writes brotli and gzip copies of its scripts, styles and WebAssembly for the server to send, about a quarter of the bytes on a first visit
+- fixed: The scoreboard keeps its width as scores, player names and radar speeds change
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 - fixed: A ball scored on the web just before browser Back is no longer lost

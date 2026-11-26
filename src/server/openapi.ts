@@ -11443,11 +11443,14 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A game's scoreboard as a WebSocket",
           description:
             'No sign-in. Sends the board as it is drawn, `ScoreState` JSON, ' +
-            'on open and after every change from any source. Inbound ' +
+            'on open and after every change from any source. After a radar hit, ' +
+            '`exitReading` holds mph, startedAt and receivedAt (server epoch milliseconds). ' +
+            '`serverNow` is the live delivery time. Historical board states retain ' +
+            'the reading for playback at the corresponding video time. Inbound ' +
             'messages are ignored. Closes with 4404 when there is no such ' +
             'game or its scoreboard is closed, and 1011 while the store is ' +
             'unreachable. With `timeline=1` it sends no boards: it sends ' +
-            "`{ type: 'changed' }` each time the game's board timeline " +
+            "`{ type: 'changed' }` (an exit reading or reset also carries its server time in fromMs) each time the game's board timeline " +
             '(`GET /games/{gameId}/scoreboard-timeline`) changes, once the ' +
             'change has been stored, and it stays open for as long as the ' +
             'game exists, whether or not its scoreboard is open. **Who may ' +
