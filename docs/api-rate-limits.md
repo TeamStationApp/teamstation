@@ -316,6 +316,7 @@ The following table groups the published API contract by path and method. A cell
 | `/me/tess/stop` | POST | — | — |
 | `/me/tess/usage` | GET | — | — |
 | `/me/umpire-leagues` | GET | — | — |
+| `/node/ios-app-banner` | GET | — | — |
 | `/node/jev-key` | PUT, DELETE | — | — |
 | `/node/logins` | GET | — | — |
 | `/node/mail` | GET, PUT | — | — |
@@ -396,4 +397,4 @@ The following table groups the published API contract by path and method. A cell
 | `/videos/{videoId}/highlights` | — | GET | — |
 | `/videos/{videoId}/wall-timeline` | GET | — | — |
 
-The published document contains 328 method/path operations on 272 paths. The messaging reach and proxy reads resolve affiliations and share the aggregate tier. Saving umpire season priority can process 500 seasons and rebuild the requirements response, so it uses the expensive tier. These classifications come from the handlers. The source scan also found ordinary GETs for player names, playback, stills and HLS files, and an aggregate GET for the API document itself. OAuth interaction and provider requests use the ordinary budget in addition to their dedicated limits. The scoreboard dashboard supports both an ordinary HTTP read and an aggregate WebSocket upgrade.
+The published document contains 329 method/path operations on 273 paths. The messaging reach and proxy reads resolve affiliations and share the aggregate tier. Saving umpire season priority can process 500 seasons and rebuild the requirements response, so it uses the expensive tier. These classifications come from the handlers. The source scan also found ordinary GETs for player names, playback, stills and HLS files, and an aggregate GET for the API document itself. OAuth interaction and provider requests use the ordinary budget in addition to their dedicated limits. The scoreboard dashboard supports both an ordinary HTTP read and an aggregate WebSocket upgrade.
