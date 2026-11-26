@@ -59,6 +59,7 @@ async function main(): Promise<void> {
       ? undefined
       : provenance.coverageSource(process.cwd(), coverageBase)
   const pages: Page[] = []
+  const subscriptions: Array<Promise<void>> = []
   const artifacts = resolve(required('TS_CONCURRENT_ARTIFACTS'))
   await mkdir(artifacts, { recursive: true })
   const fixture: FixtureManifest = JSON.parse(
@@ -102,6 +103,28 @@ async function main(): Promise<void> {
           : size.height,
         artifacts
       )
+      if (coverageOutput == null) await b.page.coverage.stopJSCoverage()
+      if (scenario === 'updates') {
+        const observer = await b.page.createCDPSession()
+        await observer.send('Network.enable')
+        subscriptions.push(
+          new Promise<void>(resolve => {
+            observer.on('Network.webSocketFrameReceived', ({ response }) => {
+              if (response.opcode !== 1) return
+              try {
+                const message = JSON.parse(response.payloadData)
+                if (
+                  message.type === 'subscribed' &&
+                  message.gameId === fixture.ids.game
+                )
+                  resolve()
+              } catch {
+                // The browser can also receive text frames from other sockets.
+              }
+            })
+          })
+        )
+      }
       pages.push(b.page)
       cleanup.push(async () => {
         await b.browser.disconnect()
@@ -156,8 +179,31 @@ async function main(): Promise<void> {
       ? new ConcurrentScoringSafariRig(ctx)
       : new ConcurrentScoringRig(ctx)
   try {
-    if (scenario === 'updates') await remoteUpdates(rig)
-    else if (scenario === 'four-innings') await fourInnings(rig, ctx)
+    if (scenario === 'updates') {
+      await remoteUpdates(rig, async () => {
+        if (surface !== 'chromium') return
+        assert.equal(subscriptions.length, 2)
+        let timeout: NodeJS.Timeout | undefined
+        try {
+          await Promise.race([
+            Promise.all(subscriptions),
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      'Both scorers must subscribe before the first pitch'
+                    )
+                  ),
+                20000
+              )
+            })
+          ])
+        } finally {
+          clearTimeout(timeout)
+        }
+      })
+    } else if (scenario === 'four-innings') await fourInnings(rig, ctx)
     else if (scenario === 'network-recovery') {
       assert.equal(surface, 'safari')
       await networkRecovery(rig)

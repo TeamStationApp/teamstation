@@ -38,6 +38,33 @@ const plate = (
 })
 
 describe('the phone’s nameplates over the field', function () {
+  it('gives the fitted catcher’s accessible view the size and anchor of the actual card', async function () {
+    let report: ((plates: NameplatePlacement[]) => void) | undefined
+    function Harness(): React.ReactElement {
+      const nameplates = useFieldNameplates()
+      report = nameplates.report
+      return (
+        <FieldNameplates faces={nameplates.faces} spots={nameplates.spots} />
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => root!.render(<Harness />))
+    await act(async () => report!([plate('C', { fitted: true })]))
+    const card = host.querySelector<HTMLElement>(
+      '[data-testid="scoring-catcher-face"]'
+    )!
+    expect(card.getAttribute('aria-label')).equals('Name C')
+    const styles = getComputedStyle(card)
+    expect([styles.width, styles.height, styles.left, styles.top]).deep.equals([
+      '60px',
+      '30px',
+      '-30px',
+      '-30px'
+    ])
+  })
+
   it('draws empty position squares with the same red appearance and acronym', async function () {
     let report: ((plates: NameplatePlacement[]) => void) | undefined
     function Harness(): React.ReactElement {
