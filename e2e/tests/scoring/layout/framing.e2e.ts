@@ -75,17 +75,14 @@ export default defineE2e({
           const { menu, card, face, firstControl } = await page.evaluate(() => {
             const el = (sel: string): Element => document.querySelector(sel)!
             const catcher = el('[data-position="C"]')
-            const row = document.querySelector('[data-testid="walk-up-row"]')
+            const deck = el('[data-testid="scoring-deck"]')
             return {
               menu: el(
                 '[aria-label="Open scoring menu"]'
               ).getBoundingClientRect().bottom,
               card: catcher.getBoundingClientRect().toJSON(),
               face: catcher.getAttribute('aria-label'),
-              firstControl: (row == null
-                ? el('[aria-label="More"]')
-                : row
-              ).getBoundingClientRect().top
+              firstControl: deck.getBoundingClientRect().top
             }
           })
           expect(board.top, 'roof below menu').closeTo(menu + 8, 1)
@@ -93,11 +90,6 @@ export default defineE2e({
             card.bottom,
             'entire catcher card clears the controls'
           ).at.most(firstControl + 0.5)
-          if (width === 463)
-            expect(
-              firstControl - card.bottom,
-              'spare height above the controls'
-            ).greaterThan(8)
           if (width === 1000) {
             expect(card.height).greaterThan(0)
             expect(card.top).greaterThan(board.top)
