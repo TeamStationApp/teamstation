@@ -40,6 +40,7 @@
 - changed: With no sort asked for and none saved, the umpire schedule runs by day, then season, where it ran by start time
 - fixed: A tab or phone left open on a busy schedule no longer reads every game again and again
 - fixed: Closing the scoring screen with no connection no longer keeps asking the server for the time
+- fixed: Web scorers can record the next pitch after a strikeout even when the field redraws slowly
 
 ## 1.4.0 (2026-11-21)
 

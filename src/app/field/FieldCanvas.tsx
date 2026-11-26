@@ -199,6 +199,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
           >
             <FieldScene
               {...props}
+              activeMotionTime
               onNameplates={onNameplates}
               presentationPaused={props.presentationPaused === true || hidden}
               registerInterruption={registerInterruption}
