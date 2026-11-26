@@ -313,16 +313,22 @@ const KeptFieldContext = createContext<Relay<KeptFieldDraw | undefined> | null>(
  * the props of the screen drawn last and keeps them while none is drawn.
  */
 export function FieldKeeper(props: {
+  rootStyle?: ViewStyle
   children: React.ReactNode
 }): React.ReactElement {
   const [relay] = useState(() =>
     createRelay<KeptFieldDraw | undefined>(undefined)
   )
-  const surface = useFieldSurface()
   const theme = useTheme()
   return (
     <KeptFieldContext.Provider value={relay}>
-      <View style={[surface.root, { backgroundColor: theme.backgroundColor }]}>
+      <View
+        testID="scoring-viewport"
+        style={[
+          props.rootStyle ?? { flex: 1 },
+          { backgroundColor: theme.backgroundColor }
+        ]}
+      >
         <KeptField relay={relay} />
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
           {props.children}
@@ -380,6 +386,7 @@ function KeptField(props: {
         <FieldCanvas
           {...field}
           {...SCORING_CAMERA}
+          basicTouchShadows
           bottomExtension={SCORING_BOTTOM_EXTENSION}
           onBaseProjection={
             field.onBaseProjection == null
@@ -442,7 +449,6 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   useEffect(() => {
     if (props.historyLabel == null) closeHistory()
   }, [props.historyLabel, closeHistory])
-  const surface = useFieldSurface()
   const theme = useTheme()
   const band = props.topBand ?? 0
   // The top controls and the scene rise half a button into the top inset
@@ -464,6 +470,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     offset,
     fullLift,
     props.suspended === true
+  )
+  const surface = useFieldSurface(
+    kept ? 'contained' : props.frame != null ? 'scoring' : 'field'
   )
   const [viewportHeight, setViewportHeight] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(0)
@@ -525,6 +534,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
             <FieldCanvas
               {...bandedCanvas}
               {...SCORING_CAMERA}
+              basicTouchShadows
               bottomExtension={SCORING_BOTTOM_EXTENSION}
               onScoreboardBounds={onScoreboardBounds}
             />

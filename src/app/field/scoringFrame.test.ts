@@ -179,4 +179,41 @@ describe('scoring field frame', function () {
       }
     })
   }
+  it('anchors the strip to the measured web root across toolbar changes and rotation', function () {
+    const input = {
+      width: 390,
+      height: 635,
+      platform: 'web',
+      insets: { top: 0, bottom: 34, left: 0, right: 0 }
+    }
+    const viewport = Object.getOwnPropertyDescriptor(window, 'visualViewport')
+    try {
+      for (const height of [635, 735, 635]) {
+        Object.defineProperty(window, 'visualViewport', {
+          configurable: true,
+          value: { height }
+        })
+        const frame = scoringFrame(input)
+        expect(frame.stripTop + frame.stripHeight).equals(input.height)
+        expect(frame.stripHeight).equals(74)
+      }
+    } finally {
+      if (viewport != null)
+        Object.defineProperty(window, 'visualViewport', viewport)
+      else Reflect.deleteProperty(window, 'visualViewport')
+    }
+    for (const [width, height, left] of [
+      [390, 664, 0],
+      [844, 390, 59]
+    ]) {
+      const frame = scoringFrame({
+        width,
+        height,
+        platform: 'web',
+        insets: { top: 0, bottom: 0, left, right: left }
+      })
+      expect(frame.stripTop + frame.stripHeight).equals(height)
+      expect(frame.stripHeight).equals(40)
+    }
+  })
 })
