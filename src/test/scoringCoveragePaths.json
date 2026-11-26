@@ -21,6 +21,7 @@
   "src/app/field/playerPresentation.ts",
   "src/app/field/scoreboardModel.ts",
   "src/app/field/fieldActivity.ts",
+  "src/app/sync/outbox.ts",
   "src/common/api.ts",
   "src/common/names.ts",
   "src/common/gumboEventTypes.ts",
