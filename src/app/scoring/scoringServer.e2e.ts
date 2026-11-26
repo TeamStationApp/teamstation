@@ -311,7 +311,7 @@ async function waitSaved(page: Page): Promise<void> {
     quiet = open.size === 0 ? quiet + 1 : 0
   }
   await page.waitForFunction(
-    () => document.querySelector('[aria-label="Save status"]') == null,
+    () => document.querySelector('[data-testid="scoringSaveStatus"]') == null,
     { timeout: 30000 }
   )
 }
@@ -860,7 +860,7 @@ describe('scoring into the server', function () {
       await waitReady(page)
       await page.waitForFunction(
         () => {
-          const status = document.querySelector('[aria-label="Save status"]')
+          const status = document.querySelector('[data-testid="scoringNotice"]')
           return (
             status != null && String(status.textContent).startsWith('Offline')
           )
