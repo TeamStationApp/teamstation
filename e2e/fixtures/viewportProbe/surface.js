@@ -2,9 +2,9 @@
 // paths so the suite can read them from the stack's existing forwarded-request
 // log even when the phone browser exposes no DOM text through accessibility.
 ;(() => {
-  const query = new URLSearchParams(location.search)
+  const query = new URLSearchParams(window.location.search)
   const run = query.get('run')
-  const reference = location.pathname.endsWith('/reference.html')
+  const reference = window.location.pathname.endsWith('/reference.html')
   const game = query.get('game')
   if (
     !/^[a-f0-9-]{36}$/.test(run) ||
@@ -12,7 +12,8 @@
   ) {
     throw new Error('Invalid scoring viewport fixture')
   }
-  if (!reference) history.replaceState(null, '', '/games/' + game + '/score')
+  if (!reference)
+    window.history.replaceState(null, '', '/games/' + game + '/score')
   const documentId = crypto.randomUUID()
   const probe = document.createElement('div')
   probe.style.cssText =
@@ -42,22 +43,25 @@
     )
       return
     const viewport = window.visualViewport
-    const insets = getComputedStyle(probe)
+    const insets = window.getComputedStyle(probe)
     const top = viewport?.offsetTop ?? 0
-    const bottom = top + (viewport?.height ?? innerHeight)
+    const bottom = top + (viewport?.height ?? window.innerHeight)
     let exposed
     if (root && bottom > root.bottom + 2) {
       let el = document.elementFromPoint(
-        innerWidth / 2,
+        window.innerWidth / 2,
         (bottom + root.bottom) / 2
       )
-      while (el && getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)')
+      while (
+        el &&
+        window.getComputedStyle(el).backgroundColor === 'rgba(0, 0, 0, 0)'
+      )
         el = el.parentElement
-      exposed = el && getComputedStyle(el).backgroundColor
+      exposed = el && window.getComputedStyle(el).backgroundColor
     }
     const data = {
       documentId,
-      width: innerWidth,
+      width: window.innerWidth,
       small: probe.getBoundingClientRect().height,
       top,
       bottom,
@@ -68,7 +72,14 @@
         .querySelector('[data-position="C"]')
         ?.getBoundingClientRect().bottom,
       log: box('remote-scoring-updates'),
-      page: getComputedStyle(document.documentElement).backgroundColor,
+      logBand: box('scoring-log-band'),
+      notice: box('scoringNotice'),
+      noticeText: document.querySelector('[data-testid="scoringNotice"]')
+        ?.textContent,
+      noticeTextBottom: document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getBoundingClientRect().bottom,
+      page: window.getComputedStyle(document.documentElement).backgroundColor,
       exposed,
       insets: [
         insets.paddingTop,
@@ -78,7 +89,9 @@
       ].map(parseFloat)
     }
     const channel = reference ? 'reference' : 'scoring'
-    const payload = btoa(JSON.stringify(data))
+    const payload = btoa(
+      String.fromCharCode(...new TextEncoder().encode(JSON.stringify(data)))
+    )
       .replaceAll('/', '_')
       .replaceAll('+', '-')
     fetch(

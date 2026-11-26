@@ -1093,7 +1093,7 @@ describe('the roster screen for a scorekeeper', function () {
   const waitSaved = async (): Promise<void> => {
     await network.wait(300, [new URL(APP).origin, new URL(API).origin])
     await page.waitForFunction(
-      () => document.querySelector('[aria-label="Save status"]') == null,
+      () => document.querySelector('[data-testid="scoringSaveStatus"]') == null,
       { timeout: 30000 }
     )
   }
