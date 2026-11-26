@@ -3374,6 +3374,7 @@ function ScoringPanel(props: {
   )
   const field = (
     <BaseballScreen
+      boxState={session}
       frame={frame}
       onRootSize={setRootSize}
       remoteUpdates={
@@ -3996,6 +3997,7 @@ function ScoringPanel(props: {
             style={{ position: 'absolute', inset: 0, zIndex: 99 }}
           />
           <ScrollView
+            testID="scoring-menu"
             style={{
               position: 'absolute',
               ...scoringMenuFrame(menuButton),

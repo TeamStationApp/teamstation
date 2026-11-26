@@ -14,6 +14,7 @@ import {
   ControlBackdrop,
   ControlFace
 } from './ScoringControlAppearance'
+import { MENU_GAP, useMenuAnchor } from './scoringMenuAnchor'
 import { SCORING_MENU, ScoringMenuLabel } from './ScoringMenuAppearance'
 import { scoringMenuPanel, scoringMenuRow } from './scoringMenuWebStyle'
 import { useMenuEscape } from './useMenuEscape'
@@ -39,6 +40,23 @@ export function MoreMenu({
   const primaryPanel = useRef<HTMLDivElement>(null)
   const childPanel = useRef<HTMLDivElement>(null)
   const [childTop, setChildTop] = useState(8)
+  // Over the deck, as the native menu is: left-aligned with this button, its
+  // child to its right, both inside the deck's width and so the field column.
+  const anchor = useMenuAnchor(open, trigger)
+  const menuBottom = anchor?.bottom ?? SCORING_MENU.bottom
+  const center =
+    anchor == null ? undefined : (anchor.deckLeft + anchor.deckRight) / 2
+  const panelWidth =
+    anchor == null || center == null
+      ? undefined
+      : Math.min(300, center - MENU_GAP - anchor.triggerLeft)
+  const childLeft =
+    anchor == null || center == null || panelWidth == null
+      ? 'calc(50vw + 8px)'
+      : Math.min(
+          center + MENU_GAP,
+          anchor.triggerLeft + panelWidth + 2 * MENU_GAP
+        )
   useLayoutEffect(() => {
     if (!child) return
     const measure = (): void => {
@@ -308,16 +326,17 @@ export function MoreMenu({
             style={{
               ...scoringMenuPanel,
               position: 'fixed',
-              left: 'max(8px, env(safe-area-inset-left))',
-              bottom: SCORING_MENU.bottom,
-              width: 'calc(50vw - 16px)',
+              left:
+                anchor?.triggerLeft ?? 'max(8px, env(safe-area-inset-left))',
+              bottom: menuBottom,
+              width: panelWidth ?? 'calc(50vw - 16px)',
               maxWidth: 300,
               zIndex: 20
             }}
           >
             <div
               style={{
-                maxHeight: `calc(100dvh - ${SCORING_MENU.bottom + 12}px)`,
+                maxHeight: `calc(100dvh - ${menuBottom + 12}px)`,
                 overflowY: 'auto'
               }}
             >
@@ -348,11 +367,11 @@ export function MoreMenu({
               style={{
                 ...scoringMenuPanel,
                 position: 'fixed',
-                left: 'calc(50vw + 8px)',
+                left: childLeft,
                 maxWidth: 300,
                 top: childTop,
                 zIndex: 20,
-                width: 'calc(50vw - 16px)'
+                width: panelWidth ?? 'calc(50vw - 16px)'
               }}
             >
               {['First', 'Second', 'Third'].map((label, index) =>

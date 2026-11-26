@@ -10,6 +10,7 @@ import {
   fakeAnthropic,
   type ScriptEntry
 } from '../../src/test/fakeAnthropic'
+import { ScoringOutage } from './scoringOutage'
 
 /**
  * The services a stack's server calls that a test scripts: Tess's model and
@@ -144,6 +145,7 @@ export interface Forwarded {
 }
 
 export interface StandIns {
+  scoringOutage: ScoringOutage
   model: FakeAnthropic
   speech: Speech
   /** API reads held back, by path prefix, and for how long. */
@@ -179,7 +181,9 @@ export async function startStandIns(
     host,
     options.speechPort ?? SPEECH_PORT
   )
+  const scoringOutage = new ScoringOutage()
   const standIns: StandIns = {
+    scoringOutage,
     model,
     speech,
     delay: null,
@@ -188,6 +192,7 @@ export async function startStandIns(
     eventGates: new Map(),
     speechUrl: recogniser.url,
     close: async () => {
+      scoringOutage.close()
       await model.close()
       await new Promise<void>(resolve => {
         recogniser.server.close(() => {
@@ -288,6 +293,21 @@ export function standInRoute(
           error: error instanceof Error ? error.message : String(error)
         })
       })
+  }
+  const networkGame = /^network-gate\/([\w-]+)$/.exec(route)?.[1]
+  if (networkGame != null) {
+    const gate = standIns.scoringOutage
+    if (req.method === 'PUT')
+      put(body => {
+        gate.set(networkGame, (body as { mode?: unknown } | null)?.mode)
+        return gate.status(networkGame)
+      })
+    else if (req.method === 'GET') json(res, 200, gate.status(networkGame))
+    else if (req.method === 'DELETE') {
+      gate.release(networkGame)
+      json(res, 200, { released: true })
+    } else return false
+    return true
   }
   const game = /^event-gate\/([\w-]+)$/.exec(route)?.[1]
   if (game != null) {

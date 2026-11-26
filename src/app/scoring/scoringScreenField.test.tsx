@@ -1874,7 +1874,9 @@ describe('scoring screen field wiring', function () {
 
   for (const [width, height] of [
     [393, 852],
-    [1000, 742]
+    [1000, 742],
+    [1133, 744],
+    [744, 1133]
   ]) {
     it(`sizes the scoring camera from the measured ${width}×${height} root with the deck directly beneath its catcher`, async function () {
       await mount()
@@ -1882,8 +1884,29 @@ describe('scoring screen field wiring', function () {
         props().onRootSize!({ width, height })
       })
       const frame = props().frame!
-      expect(frame.fieldWidth).equals(width)
-      expect(frame.camera).to.include({ top: 64, bottom: 172 })
+      const side = width >= 820
+      expect(frame.fieldWidth).equals(side ? width - 360 : width)
+      const el = (id: string): HTMLElement | null =>
+        container!.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+      expect(el('scoring-side') != null).equals(side)
+      if (side) {
+        expect(el('scoring-side')!.style.width).equals('360px')
+        expect(el('replay-box-score')).not.equals(null)
+        expect(el('scoring-log-band')).equals(null)
+      }
+      expect(el('scoring-field-holder')!.style.width).equals(
+        `${frame.fieldWidth}px`
+      )
+      expect(el('scoring-notice-strip')!.style.width).equals(
+        `${frame.fieldWidth}px`
+      )
+      // A side field column taller than wide drops the gap under its deck.
+      const tall = side && width - 360 < height
+      expect(frame.camera).to.include({
+        top: 64,
+        bottom: tall ? 164 : 172,
+        corners: side && !tall
+      })
       expect(componentProps<FieldProps>('FieldCanvas').frame).deep.equals(
         frame.camera
       )
@@ -1974,10 +1997,10 @@ describe('scoring screen field wiring', function () {
           componentProps<{ bounds?: { y: number } }>('InstructionToast').bounds
             ?.y
         ).equals(60 + offset)
-        expect(
-          componentProps<RemoteScoringUpdatesProps>('RemoteScoringUpdates')
-            .frame.lines
-        ).equals(0)
+        // Without a frame there is no room for the log, so none is mounted.
+        expect(() => componentProps('RemoteScoringUpdates')).throws(
+          'The screen has not rendered'
+        )
       } finally {
         restore()
       }

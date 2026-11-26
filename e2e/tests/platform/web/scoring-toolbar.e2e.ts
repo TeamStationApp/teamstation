@@ -16,6 +16,7 @@ import {
   RESET_AND_SWAP_REPORT,
   scoringSwapFixture
 } from '../../../rigs/scoringLayout'
+import { freshReading, type Reading } from '../../../rigs/scoringViewport'
 import {
   hideSafariToolbar,
   nativeFooterRows,
@@ -24,32 +25,26 @@ import {
   tapViewportBall
 } from '../../../rigs/scoringViewportPhone'
 
-interface Box {
-  top: number
-  bottom: number
-  height: number
-}
-interface Reading {
-  documentId: string
-  width: number
-  small: number
-  top: number
-  bottom: number
-  root?: Box
-  menu?: Box
-  strip?: Box
-  deck?: Box
-  catcher?: number
-  logBand?: Box
-  notice?: Box
-  noticeText?: string
-  noticeTextBottom?: number
-  log?: Box
-  page: string
-  exposed?: string | null
-  insets: number[]
-}
 const grass = 'rgb(79, 121, 56)'
+const COVER = 'Rotate to portrait to continue scoring.'
+
+/**
+ * Chrome folds its toolbar only while a page scrolls. The scoring page is
+ * fixed at 100svh and never scrolls, so on it Chrome's toolbar stays shown
+ * after the swipe: the collapsed state does not exist there.
+ * Whether the swipe folded it, from readings over the next three seconds.
+ */
+async function chromeFolded(
+  read: () => Promise<Reading>,
+  expanded: Reading
+): Promise<boolean> {
+  for (const until = Date.now() + 3000; Date.now() < until;) {
+    const r = await read()
+    if (r.bottom - r.top > expanded.bottom - expanded.top + 8) return true
+    await pause(500)
+  }
+  return false
+}
 const pause = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -79,36 +74,6 @@ function footColours(png: PNG, rows: number): number[][] {
   })
 }
 
-function freshReading(control: ReturnType<typeof faultControl>, run: string) {
-  const originPath = `/api/v1/viewport-observation/${run}/`
-  return async (
-    channel: string,
-    widthCheck: (r: Reading) => boolean
-  ): Promise<Reading> => {
-    const prefix = originPath + channel + '/'
-    const rows = async (): Promise<Array<{ at: number; path: string }>> => {
-      const rows = (await control.call(
-        'GET',
-        'requests?path=' + encodeURIComponent(prefix)
-      )) as { requests: Array<{ at: number; path: string }> }
-      return rows.requests
-    }
-    const previous = (await rows()).at(-1)?.at ?? 0
-    for (const end = Date.now() + 15000; Date.now() < end;) {
-      await pause(400)
-      const row = (await rows()).at(-1)
-      if (row == null || row.at <= previous) continue
-      const measurement = JSON.parse(
-        Buffer.from(row.path.slice(prefix.length), 'base64url').toString()
-      ) as Reading
-      if (widthCheck(measurement)) return measurement
-    }
-    throw new Error(
-      `No fresh ${channel} geometry; stage e2e/fixtures/viewportProbe/stage.mjs on the isolated web build`
-    )
-  }
-}
-
 async function bottomStrip(ctx: E2eContext): Promise<void> {
   const faults =
     ctx.stack.attached == null
@@ -127,9 +92,12 @@ async function bottomStrip(ctx: E2eContext): Promise<void> {
   // (RotateToPortrait, E2), so the toolbar is read in portrait only.
   const orientations = ['PORTRAIT']
   const origin = ctx.stack.origin
+  // Unknown until the first swipe on Chrome; Safari folds by its own menu.
+  let folds: boolean | undefined = ios ? true : undefined
   try {
     for (const orientation of orientations) {
       for (const state of ['expanded', 'collapsed', 'expanded-again']) {
+        if (state !== 'expanded' && folds === false) continue
         const world = await scoringSwapFixture(ctx)
         const run = randomUUID()
         const fresh = freshReading(faultControl(faults), run)
@@ -158,6 +126,32 @@ async function bottomStrip(ctx: E2eContext): Promise<void> {
               (await fresh('scoring', turned)).bottom <= expanded.bottom + 8
             ) {
               await hideSafariToolbar(m)
+            }
+            if (
+              !ios &&
+              !(await chromeFolded(
+                async () => await fresh('scoring', turned),
+                expanded
+              ))
+            ) {
+              folds = false
+              writeFileSync(
+                ctx.artifact('chrome-toolbar-stays.png'),
+                await m.screenshot()
+              )
+              writeFileSync(
+                ctx.artifact('chrome-toolbar-stays.json'),
+                JSON.stringify(
+                  {
+                    folded: false,
+                    expanded,
+                    afterSwipe: await fresh('scoring', turned)
+                  },
+                  null,
+                  2
+                )
+              )
+              continue
             }
             await fresh(
               'scoring',
@@ -293,6 +287,8 @@ export default defineE2e({
       > = {}
       const fresh = freshReading(control, run)
       let documentId: string | undefined
+      // Whether Chrome's toolbar folds on the scoring page, from its swipe.
+      let folds: boolean | undefined = ios ? true : undefined
       const game = world.ids.game
       try {
         await m.setOrientation({ orientation: 'PORTRAIT' })
@@ -393,6 +389,58 @@ export default defineE2e({
               }
               return r
             }
+            /**
+             * Turned sideways, the browser shows the rotate-to-portrait cover
+             * and a tap where Ball was does not score; upright again, the
+             * same page (no reload) lays out as before and Ball scores.
+             */
+            const sidewaysCover = async (at: string): Promise<void> => {
+              if (at !== 'scoring') return
+              const before = await balls()
+              await m.setOrientation({ orientation: 'LANDSCAPE_LEFT' })
+              await m.assertVisible({ text: COVER, timeout: 15000 })
+              await pause(1000)
+              const png = Buffer.from(await m.screenshot())
+              writeFileSync(
+                ctx.artifact(
+                  ['scoring', layout, 'LANDSCAPE', 'cover'].join('-') + '.png'
+                ),
+                png
+              )
+              if (ios && layout === 'bottom')
+                writeFileSync(
+                  ctx.artifact('iphone15-safari-landscape-after.png'),
+                  png
+                )
+              // Where Ball sits under the cover, and the middle of the
+              // screen: each is a touch on the cover.
+              await tapViewportBall(m, ios).catch(() => undefined)
+              await m.tapOn({ point: '50%,50%' })
+              await pause(3000)
+              expect(await balls(), 'the cover takes the Ball tap').equals(
+                before
+              )
+              await m.setOrientation({ orientation: 'PORTRAIT' })
+              await m.assertNotVisible({ text: COVER, timeout: 15000 })
+              // grab checks the same document, the deck and the strip, once
+              // the toolbar is back to its expanded height.
+              await grab(
+                'upright-again',
+                r =>
+                  Math.abs(
+                    r.bottom - r.top - (expanded.bottom - expanded.top)
+                  ) <= 2
+              )
+              await tapViewportBall(m, ios)
+              for (
+                const until = Date.now() + 20000;
+                (await balls()) === before && Date.now() < until;
+              )
+                await pause(500)
+              expect(await balls(), 'Ball scores upright again').equals(
+                before + 1
+              )
+            }
             const expanded = await grab('expanded')
             if (channel === 'scoring') {
               const before = await balls()
@@ -406,6 +454,10 @@ export default defineE2e({
                 before + 1
               )
             }
+            if (folds === false) {
+              await sidewaysCover(channel)
+              continue
+            }
             await m.swipe({ start: '50%,65%', end: '50%,25%' })
             if (
               ios &&
@@ -414,6 +466,25 @@ export default defineE2e({
               // A fixed scoring page does not scroll. Safari's own menu
               // can hide its bars on such a page.
               await hideSafariToolbar(m)
+            }
+            if (
+              folds === undefined &&
+              !(folds = await chromeFolded(
+                async () => await fresh(channel, turned),
+                expanded
+              ))
+            ) {
+              // The toolbar stayed: still the expanded layout, recorded as
+              // what a swipe leaves on Chrome.
+              await grab(
+                'swipe-stays-expanded',
+                r =>
+                  Math.abs(
+                    r.bottom - r.top - (expanded.bottom - expanded.top)
+                  ) <= 2
+              )
+              await sidewaysCover(channel)
+              continue
             }
             await grab(
               'collapsed',
@@ -432,6 +503,7 @@ export default defineE2e({
                 Math.abs(r.bottom - r.top - (expanded.bottom - expanded.top)) <=
                 2
             )
+            await sidewaysCover(channel)
           }
         }
       } finally {

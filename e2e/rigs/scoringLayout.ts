@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs'
+
 import { expect } from 'chai'
 
 import { asStoredDefaultLineup } from '../../src/common/scoring/lineupHistory'
@@ -16,6 +18,8 @@ export async function remotePitch(
 ): Promise<{
   pitch: () => Promise<void>
   swap: () => Promise<void>
+  /** The peer's screen and page text, kept with a failed run. */
+  evidence: (name: string) => Promise<void>
   close: WebSession['close']
 }> {
   const peer = await ctx.browser({ width: 390, height: 844 })
@@ -46,6 +50,13 @@ export async function remotePitch(
     }
     return {
       close: peer.close,
+      evidence: async name => {
+        writeFileSync(ctx.artifact(name + '.png'), await peer.m.screenshot())
+        writeFileSync(
+          ctx.artifact(name + '.txt'),
+          await peer.page.evaluate(() => document.body.innerText)
+        )
+      },
       swap: async () => {
         // The peer's own screen reopens after each swap: wait until it can
         // score again, and until its confirmation sheet has gone, so a tap
@@ -163,12 +174,15 @@ export const RESET_AND_SWAP_REPORT =
 /** Verify both sides and the emptied score from an independent reader. */
 export async function expectSwapped(
   ctx: E2eContext,
-  world: FixtureManifest
+  world: FixtureManifest,
+  observer?: string
 ): Promise<void> {
-  const token = await signInTestAccount(
-    ctx.stack.origin + '/api/v1',
-    world.accounts.coach
-  )
+  const token =
+    observer ??
+    (await signInTestAccount(
+      ctx.stack.origin + '/api/v1',
+      world.accounts.coach
+    ))
   const get = async (suffix: string): Promise<unknown> =>
     await readJson(
       ctx.stack.origin,

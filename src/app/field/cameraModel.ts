@@ -6,6 +6,7 @@ import {
   nameplateSize,
   projectPlayerLabel
 } from './playerPresentation'
+import { OUTFIELD_HALF_ANGLE, OUTFIELD_RADIUS } from './stadiumBoundary'
 
 export const SCOREBOARD_SCALE = 1.8
 export const SCOREBOARD_Y = 28.2
@@ -33,12 +34,26 @@ export const SCORING_CAMERA = {
   cameraHeight: 33
 } as const
 export const SCORING_BOTTOM_EXTENSION = 112
+/** The board's width over the column's on an iPhone 15 (419.977 / 393). */
+export const PHONE_BOARD_RATIO = 419.977 / 393
 
 /** Clearances in the drawable canvas's own points. */
 export interface CameraFrame {
+  corners?: boolean
   cardInterval?: { left: number; right: number }
   top: number
   bottom: number
+  /**
+   * Where the card's bottom goes when the width-bound fit leaves height
+   * spare: the field is zoomed in until the card reaches `height − fill`, or
+   * until the board spans PHONE_BOARD_RATIO of the width, whichever is first.
+   */
+  fill?: number
+  /**
+   * Fit the board to this share of the width instead of the legacy points,
+   * backing away only if the card would not clear the bottom.
+   */
+  boardRatio?: number
 }
 
 const referenceCatcher: FieldPlayer = {
@@ -75,6 +90,22 @@ export function catcherCardBottom(
   )
   return plate.y + plate.height
 }
+
+// The wall endpoints, near edge of the roof and home apron. The home camera
+// is centered on x = 0, so the opposite points have equal projected widths.
+const sideExtents = [
+  new Vector3(
+    OUTFIELD_RADIUS * Math.sin(OUTFIELD_HALF_ANGLE),
+    0,
+    -OUTFIELD_RADIUS * Math.cos(OUTFIELD_HALF_ANGLE)
+  ),
+  new Vector3(
+    34.5 * SCOREBOARD_SCALE,
+    SCOREBOARD_Y + 9.95 * SCOREBOARD_SCALE,
+    SCOREBOARD_Z + 2.9 * SCOREBOARD_SCALE
+  ),
+  new Vector3(12, 0, 10)
+]
 
 /** Pin the top of the physical scoreboard roof, including its depth. */
 function fitScoringCamera(
@@ -119,21 +150,108 @@ function fitScoringCamera(
     return catcherCardBottom(camera, width, height)
   }
 
+  // The board's near roof edge, which spans its widest projected extent.
+  const boardWidth = (): number => {
+    const [left, right] = [-1, 1].map(
+      side =>
+        new Vector3(
+          side * 34.5 * SCOREBOARD_SCALE,
+          SCOREBOARD_Y + 9.95 * SCOREBOARD_SCALE,
+          SCOREBOARD_Z + 2.9 * SCOREBOARD_SCALE
+        ).project(camera).x
+    )
+    return ((right - left) * width) / 2
+  }
   const limit = height - frame.bottom
+  const overflow = (bottom: number): number => {
+    let excess = bottom - limit
+    if (frame.corners === true)
+      for (const point of sideExtents) {
+        const projected = point.clone().project(camera)
+        excess = Math.max(excess, ((Math.abs(projected.x) - 0.9) * width) / 2)
+      }
+    return excess
+  }
+  if (frame.boardRatio != null) {
+    // Start from the distance at which the board spans that share of the
+    // width; the board narrows as the camera backs away.
+    const target = frame.boardRatio * width
+    const wide = (d: number): number => {
+      place(d)
+      return boardWidth() - target
+    }
+    let near = distance
+    let far = distance
+    if (wide(distance) > 0)
+      for (let i = 0; i < 40 && wide(far) > 0; i++) far *= 1.25
+    else for (let i = 0; i < 40 && wide(near) < 0; i++) near *= 0.8
+    for (let i = 0; i < 40; i++) {
+      const middle = (near + far) / 2
+      if (wide(middle) > 0) near = middle
+      else far = middle
+    }
+    distance = far
+  }
   let bottom = place(distance)
-  if (bottom <= limit) return bottom
+  if (overflow(bottom) <= 0) {
+    const fill = frame.fill
+    if (fill == null) return bottom
+    // Zoom in no further than the board spans an iPhone 15's column, nor
+    // past a width-bound fit that is already wider.
+    const widest = Math.max(PHONE_BOARD_RATIO * width, boardWidth())
+    const excess = (bottom: number): number =>
+      Math.max(bottom - (height - fill), boardWidth() - widest)
+    if (excess(bottom) >= 0) return bottom
+    return zoomIn(place, excess, distance, bottom)
+  }
   let low = distance
   let high = distance * 2
   // A transient zero-height layout can leave less than the card's own height.
-  while (place(high) > limit && high < 1e7) high *= 2
+  while (overflow(place(high)) > 0 && high < 1e7) high *= 2
   for (let i = 0; i < 24; i++) {
     const middle = (low + high) / 2
     bottom = place(middle)
-    if (bottom > limit) low = middle
-    else if (limit - bottom < 0.001) return bottom
+    const excess = overflow(bottom)
+    if (excess > 0) low = middle
+    else if (-excess < 0.001) return bottom
     else high = middle
   }
   return place(high)
+}
+
+/**
+ * Move the camera in from `distance` while `excess` (negative while there is
+ * room) stays at or under zero, stopping as close to zero as it can.
+ */
+function zoomIn(
+  place: (distance: number) => number,
+  excess: (bottom: number) => number,
+  distance: number,
+  bottom: number
+): number {
+  let far = distance
+  let near = distance
+  let reached = false
+  // The card moves down as the camera comes in, until the camera nears the
+  // catcher and the projection turns back; stop at whichever comes first.
+  for (let i = 0; i < 40 && !reached; i++) {
+    const next = near * 0.8
+    const nextBottom = place(next)
+    if (!(nextBottom > bottom)) break
+    near = next
+    bottom = nextBottom
+    if (excess(bottom) >= 0) reached = true
+    else far = near
+  }
+  if (!reached) return place(near)
+  for (let i = 0; i < 40; i++) {
+    const middle = (far + near) / 2
+    const over = excess(place(middle))
+    if (over > 0) near = middle
+    else if (-over < 0.001) return place(middle)
+    else far = middle
+  }
+  return place(far)
 }
 
 export function applyFieldCamera(

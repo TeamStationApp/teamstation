@@ -2,14 +2,11 @@ import React, { useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Text, View, type ViewStyle } from 'react-native'
 
+import { SIDE_MIN_HEIGHT } from '../field/scoringFrame'
 import { glassStyle } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
+import { TABLET_MIN_SHORT_SIDE } from '../player/multiCam/orientationLock'
 import { useTheme } from '../theme/ThemeContext'
-
-/** The plan's side-column height: a window shorter than this has no column. */
-const SIDE_MIN_HEIGHT = 640
-/** A device whose shortest screen side is under this is a phone. */
-const PHONE_MAX_SHORT_SIDE = 600
 
 /**
  * A phone held sideways: the window is wider than tall and too short for
@@ -24,7 +21,7 @@ export function phoneLandscape(
   return (
     window.width > window.height &&
     window.height < SIDE_MIN_HEIGHT &&
-    Math.min(screen.width, screen.height) < PHONE_MAX_SHORT_SIDE
+    Math.min(screen.width, screen.height) < TABLET_MIN_SHORT_SIDE
   )
 }
 

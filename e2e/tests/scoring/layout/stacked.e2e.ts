@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 
 import { expect } from 'chai'
 
+import { PHONE_BOARD_RATIO } from '../../../../src/app/field/cameraModel'
 import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
 import { fakeMicrophone } from '../../../rigs/fakeMicrophone'
 import {
@@ -275,6 +276,11 @@ export default defineE2e({
               }))
               expect(box.top - deck.bottom).closeTo(8, 1)
               expect(box.height).equals(lines * 20)
+              // Height past the longest log goes to the field until the board
+              // spans the column as an iPhone 15's does; never wider.
+              expect(board.width / width).at.most(PHONE_BOARD_RATIO * 1.02)
+              if (lines === 5 && board.width / width < PHONE_BOARD_RATIO * 0.98)
+                expect(strip.top - (box.top + 44 + box.height)).closeTo(8, 1)
             } else
               expect(
                 await page.$('[data-testid="remote-scoring-updates"]')

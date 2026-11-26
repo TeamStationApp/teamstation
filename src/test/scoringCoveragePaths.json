@@ -60,6 +60,7 @@
   "src/app/field/cameraModel.ts",
   "src/app/field/scoringFrame.ts",
   "src/app/sync/optimistic.ts",
+  "src/app/replay/GameReplayScreen.tsx",
   "src/app/field/interactionAffordances.ts",
   "src/app/field/DestinationMarker.tsx",
   "src/app/field/BallArc.tsx",

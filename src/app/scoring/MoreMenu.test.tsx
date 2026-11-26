@@ -259,6 +259,61 @@ describe('More scoring menu', function () {
   })
 })
 
+describe('More menu over the deck', () => {
+  const saved = {
+    innerWidth: Object.getOwnPropertyDescriptor(window, 'innerWidth'),
+    innerHeight: Object.getOwnPropertyDescriptor(window, 'innerHeight')
+  }
+  const px = (value: string): number => Number.parseFloat(value)
+  afterEach(() => {
+    for (const key of ['innerWidth', 'innerHeight'] as const) {
+      const descriptor = saved[key]
+      if (descriptor != null) Object.defineProperty(window, key, descriptor)
+      else Reflect.deleteProperty(window, key)
+    }
+    document.querySelector('[data-testid="scoring-deck"]')?.remove()
+  })
+  // The window, the field column's width, and the deck's top: the deck is
+  // 8 inside the column and More its leftmost fifth.
+  for (const [width, height, column, deckTop] of [
+    [1366, 1024, 1006, 880],
+    [393, 852, 393, 541.12]
+  ] as const)
+    it(`opens above the deck inside a ${column}-wide field column`, async () => {
+      for (const [key, value] of [
+        ['innerWidth', width],
+        ['innerHeight', height]
+      ] as const)
+        Object.defineProperty(window, key, { configurable: true, value })
+      await mount()
+      const host = button('More').closest('div')!.parentElement!
+      host.dataset.testid = 'scoring-deck'
+      const deck = new window.DOMRect(8, deckTop, column - 16, 120)
+      host.getBoundingClientRect = () => deck
+      const fifth = (deck.width - 24) / 5
+      button('More').getBoundingClientRect = () =>
+        new window.DOMRect(8, deckTop, fifth, 56)
+      await click('More')
+      const panel = button('More scoring actions')
+      const left = px(panel.style.left)
+      expect(left).equals(8)
+      expect(height - px(panel.style.bottom)).closeTo(deckTop - 8, 0.01)
+      const center = deck.left + deck.width / 2
+      expect(left + px(panel.style.width)).at.most(center - 8 + 0.01)
+      expect(px(panel.style.width)).at.most(300)
+      await click('Put Batter on Base')
+      const child = button('Batter base')
+      const childLeft = px(child.style.left)
+      expect(childLeft).at.least(left + px(panel.style.width) + 8)
+      expect(childLeft + px(child.style.width)).at.most(deck.right)
+      expect(childLeft + px(child.style.width)).at.most(column)
+      if (column === width)
+        // A phone keeps today's halves: the child at 50vw + 8.
+        expect(childLeft).closeTo(width / 2 + 8, 0.01)
+      await click('Dismiss More')
+    })
+})
+
 describe('More drag boundary', () => {
   it('permits upward approach and the submenu bridge, then cancels a departed gesture permanently', async () => {
     await mount()

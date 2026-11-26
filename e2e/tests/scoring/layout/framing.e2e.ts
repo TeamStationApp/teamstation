@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 
 import { expect } from 'chai'
 
+import { PHONE_BOARD_RATIO } from '../../../../src/app/field/cameraModel'
 import { defineE2e } from '../../../core/spec'
 import { FIELD_SCENE_PROBE, measuredBoard } from '../../../rigs/fieldPointer'
 
@@ -62,7 +63,8 @@ export default defineE2e({
               if (canvas == null) return false
               const rect = canvas.getBoundingClientRect()
               return (
-                rect.width === width &&
+                rect.width ===
+                  (width >= 820 && height >= 640 ? width - 360 : width) &&
                 rect.height === height &&
                 document.querySelector('[data-position="C"]') != null
               )
@@ -72,24 +74,45 @@ export default defineE2e({
             height
           )
           const board = await measuredBoard(page)
-          const { menu, card, face, firstControl } = await page.evaluate(() => {
-            const el = (sel: string): Element => document.querySelector(sel)!
-            const catcher = el('[data-position="C"]')
-            const deck = el('[data-testid="scoring-deck"]')
-            return {
-              menu: el(
-                '[aria-label="Open scoring menu"]'
-              ).getBoundingClientRect().bottom,
-              card: catcher.getBoundingClientRect().toJSON(),
-              face: catcher.getAttribute('aria-label'),
-              firstControl: deck.getBoundingClientRect().top
-            }
-          })
+          const { menu, card, face, firstControl, deckBottom, stripTop } =
+            await page.evaluate(() => {
+              const el = (sel: string): Element => document.querySelector(sel)!
+              const catcher = el('[data-position="C"]')
+              const deck = el('[data-testid="scoring-deck"]')
+              return {
+                menu: el(
+                  '[aria-label="Open scoring menu"]'
+                ).getBoundingClientRect().bottom,
+                card: catcher.getBoundingClientRect().toJSON(),
+                face: catcher.getAttribute('aria-label'),
+                firstControl: deck.getBoundingClientRect().top,
+                deckBottom: deck.getBoundingClientRect().bottom,
+                stripTop: el(
+                  '[data-testid="scoring-notice-strip"]'
+                ).getBoundingClientRect().top
+              }
+            })
           expect(board.top, 'roof below menu').closeTo(menu + 8, 1)
           expect(
             card.bottom,
             'entire catcher card clears the controls'
           ).at.most(firstControl + 0.5)
+          // Spare height goes to the field until the deck meets the strip
+          // (a side column) or the longest log fits under it (8 + 44 + 5 × 20
+          // + 8 when stacked), or until the board spans the column as an
+          // iPhone 15's does; never wider.
+          const column =
+            width - 360 >= 460 && height >= 640 ? width - 360 : width
+          const ratio = board.width / column
+          expect(ratio, 'board no wider than an iPhone 15').at.most(
+            PHONE_BOARD_RATIO * 1.02
+          )
+          if (ratio < PHONE_BOARD_RATIO * 0.98) {
+            if (column < width && column < height)
+              expect(deckBottom, 'deck meets the strip').closeTo(stripTop, 1)
+            else if (column === width)
+              expect(stripTop - deckBottom, 'no empty band').at.most(161)
+          }
           if (width === 1000) {
             expect(card.height).greaterThan(0)
             expect(card.top).greaterThan(board.top)
@@ -114,6 +137,8 @@ export default defineE2e({
               menu,
               card,
               firstControl,
+              deckBottom,
+              stripTop,
               face
             })
           )

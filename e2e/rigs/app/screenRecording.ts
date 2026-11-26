@@ -255,6 +255,20 @@ export function lastFramesText(
   return framesText(video, Math.max(0, duration - seconds), duration, fps)
 }
 
+export function screenshotText(
+  paths: string[]
+): Array<{ file: string; lines: string[] }> {
+  const out = execFileSync(
+    'swift',
+    [join(__dirname, 'ocrFrames.swift'), ...paths],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+  )
+  return out
+    .split('\n')
+    .filter(line => line.startsWith('{'))
+    .map(line => JSON.parse(line) as { file: string; lines: string[] })
+}
+
 /**
  * The text of a recording from `fromSec` to `toSec`, `fps` frames a second,
  * read with macOS Vision (ocrFrames.swift), each line top to bottom.
@@ -284,15 +298,7 @@ export function framesText(
     .filter(name => name.endsWith('.png'))
     .sort()
   try {
-    const out = execFileSync(
-      'swift',
-      [join(__dirname, 'ocrFrames.swift'), ...frames.map(f => join(dir, f))],
-      { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
-    )
-    const read = out
-      .split('\n')
-      .filter(line => line.startsWith('{'))
-      .map(line => JSON.parse(line) as { file: string; lines: string[] })
+    const read = screenshotText(frames.map(f => join(dir, f)))
     return read.map(frame => ({
       atSec: from + frames.indexOf(frame.file.split('/').at(-1)!) / fps,
       lines: frame.lines
