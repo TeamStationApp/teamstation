@@ -62,13 +62,6 @@ describe('app titles', function () {
     ])
   })
 
-  it('draws the destinations as icons alone', function () {
-    const nav = readFileSync(join(__dirname, 'components/AppNav.tsx'), 'utf8')
-    // The label is what a screen reader says, not what is painted.
-    expect(nav).contains('accessibilityLabel={tab.label}')
-    expect(nav).not.contains('<Text')
-  })
-
   it('hands the game card up as the card itself goes under', function () {
     const game = readFileSync(join(__dirname, 'screens/GameScreen.tsx'), 'utf8')
     // Watch and the other sections now delegate measurement to pinned bands.

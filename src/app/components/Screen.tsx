@@ -11,10 +11,14 @@ import type Animated from 'react-native-reanimated'
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
+import {
+  FLOATING_BOTTOM_REM,
+  FLOATING_HEIGHT_REM,
+  NAV_CLEARANCE_REM
+} from './AppNav'
 import { type ContentInset, ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
-import { navClearanceAboveInset } from './navClearance'
+import { navContentBottom } from './navClearance'
 import { pageScroller } from './PageScrollView'
 import { useActiveRef, usePageSliding } from './TabPages'
 import { useBreakpoint } from './useBreakpoint'
@@ -83,10 +87,6 @@ export interface ScreenProps {
  * the clearance the floating nav capsule needs, and either way the offline
  * banner's height while it shows.
  *
- * The capsule floats above the home indicator. On iOS it sits against that
- * inset, so the clearance drops the extra margin; Android and the web keep
- * both. A screen that scrolls its content to a place of its own choosing
- * counts this in, because the page can always scroll this much further.
  */
 export function useScreenBottom(): number {
   const theme = useTheme()
@@ -95,13 +95,14 @@ export function useScreenBottom(): number {
   const banner = useHeaderSlot().bannerHeight ?? 0
   if (breakpoint !== 'phone') return theme.rem(theme.spaceLgRem) + banner
   return (
-    navClearanceAboveInset(
+    theme.rem(FLOATING_HEIGHT_REM) +
+    navContentBottom(
       Platform.OS,
-      theme.rem(NAV_CLEARANCE_REM),
-      theme.rem(FLOATING_BOTTOM_REM)
+      theme.rem(FLOATING_BOTTOM_REM),
+      insets.bottom,
+      banner
     ) +
-    insets.bottom +
-    banner
+    theme.rem(2)
   )
 }
 

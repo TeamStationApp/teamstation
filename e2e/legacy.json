@@ -225,7 +225,11 @@
     "src/test/chat2FixtureProxyServe.e2e.ts",
     "src/test/chatBrowserLegacyActions.e2e.ts",
     "src/test/longListsFixture.e2e.ts",
-    "src/app/push/webCoverage.e2e.ts"
+    "src/app/push/webCoverage.e2e.ts",
+    "src/test/hubRecording.e2e.ts",
+    "src/test/navTab.e2e.ts",
+    "src/test/navigationControl.e2e.ts",
+    "src/test/navigationFixture.e2e.ts"
   ],
   "parked": [
     "appletv/e2e/auth.e2e.ts",

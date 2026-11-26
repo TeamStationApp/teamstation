@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- added: On iOS 26 and later, the phone tab bar uses native Liquid Glass and follows TeamStation’s theme
+- added: On iOS 26 and later, the phone tab bar uses native Liquid Glass and follows TeamStation’s theme. On Android, web and earlier iOS versions, tap a labelled tab or drag to select it. The bar turns opaque when reduced transparency is enabled
 - added: Scorers can end a live game during any play, see what will go in the scorebook, and undo the final after reopening the game
 - added: TS Director can show the selected game’s scoreboard in any camera window while the primary output stays on a camera
 - added: Radar exit velocity wipes across the batter’s stats for five seconds and follows the play during replay. On TS Director’s own stream output the wipe moves in steps; OBS and the web player draw it smoothly

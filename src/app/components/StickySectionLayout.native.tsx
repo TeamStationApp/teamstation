@@ -1,5 +1,5 @@
 import React from 'react'
-import { Platform, View } from 'react-native'
+import { View } from 'react-native'
 import Animated, {
   runOnJS,
   useAnimatedScrollHandler,
@@ -10,11 +10,10 @@ import Animated, {
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
-import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
 import { ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
-import { navClearanceAboveInset } from './navClearance'
 import { pageScroller } from './PageScrollView'
+import { useScreenBottom } from './Screen'
 import type { StickySectionLayoutProps } from './stickySectionLayoutProps'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -30,7 +29,7 @@ export function StickySectionLayout({
   pagedList
 }: StickySectionLayoutProps): React.ReactElement {
   const theme = useTheme()
-  const { headerHeight, bannerHeight = 0 } = useHeaderSlot()
+  const { headerHeight } = useHeaderSlot()
   const breakpoint = useBreakpoint()
   const insets = useInsets()
   const scrollY = useSharedValue(0)
@@ -42,16 +41,7 @@ export function StickySectionLayout({
     left: Math.max(margin, insets.left),
     right: Math.max(margin, insets.right)
   }
-  const bottom =
-    breakpoint === 'phone'
-      ? navClearanceAboveInset(
-          Platform.OS,
-          theme.rem(NAV_CLEARANCE_REM),
-          theme.rem(FLOATING_BOTTOM_REM)
-        ) +
-        insets.bottom +
-        bannerHeight
-      : theme.rem(theme.spaceLgRem) + bannerHeight
+  const bottom = useScreenBottom()
   const handleScroll = useAnimatedScrollHandler(event => {
     scrollY.value = event.contentOffset.y
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- same handoff bridge as GameWatchLayout

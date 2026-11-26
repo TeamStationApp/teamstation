@@ -10,6 +10,7 @@ import type { Theme } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import type { AppNavProps } from './AppNav'
+import * as navClearance from './navClearance'
 import { SystemTabBar as UnsupportedTabBar } from './SystemTabBar'
 import * as tabBarModel from './tabBarModel'
 import type { NativeProps } from './TSTabBarNativeComponent'
@@ -42,14 +43,18 @@ type RenderedBar = React.ReactElement<{
   style: { bottom: number }
 }>
 
-function renderBar(theme: Theme, options: AppNavProps): RenderedBar {
+function renderBar(
+  theme: Theme,
+  options: AppNavProps & { reduced?: boolean }
+): RenderedBar {
   const mocks: Record<string, unknown> = {
     react: React,
     'react-native': { View: 'View' },
     '../platform/safeArea': { useInsets: () => ({ bottom: 34 }) },
     '../theme/ThemeContext': { useTheme: () => theme },
     './tabBarModel': tabBarModel,
-    './navGeometry': { NAV_NATIVE_HEIGHT_ABOVE_INSET: 49, NAV_BOTTOM_GAP: 21 },
+    './navClearance': navClearance,
+    './navGeometry': { NAV_BOTTOM_GAP: 21, NAV_NATIVE_HEIGHT_ABOVE_INSET: 49 },
     './TSTabBarNativeComponent': 'UITabBar'
   }
   const element = loadNative('SystemTabBar.ios.tsx', mocks).SystemTabBar(
@@ -125,9 +130,31 @@ describe('the UIKit tab bar bridge', () => {
           nativeEvent: { height: number }
         }) => void
         resize({ nativeEvent: { height: 83 } })
-        expect(heights).deep.equals([49])
+        expect(heights).deep.equals([62])
       }
     )
+})
+
+describe('the opaque native tab bar', () => {
+  it('uses the app colors for the opaque platter and keeps Chat accessible', () => {
+    const bar = renderBar(tsBallpark, {
+      selected: 'chat',
+      mode: 'floating',
+      reduced: true,
+      dots: { chat: true },
+      onSelect: () => {}
+    }).props.children.props
+    expect(bar.compact).equals(false)
+    expect(bar.opaqueBackgroundColor).equals(
+      tsBallpark.navOpaqueBackgroundColor
+    )
+    expect(bar.activeColor).equals(tsBallpark.navOpaqueActiveColor)
+    expect(bar.inactiveColor).equals(tsBallpark.navOpaqueInactiveColor)
+    expect(bar.items.find(tab => tab.id === 'chat')).includes({
+      title: 'Chat',
+      badge: true
+    })
+  })
 })
 
 describe('availability of the system tab bar', () => {

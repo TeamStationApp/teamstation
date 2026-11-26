@@ -56,6 +56,34 @@ describe('legacy navigation device routing', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('reads the client and binary from settings and diagnoses an incomplete configuration before connecting', async () => {
+    const client = process.env.TS_MAESTRO_D_CLIENT
+    const bin = process.env.MAESTRO_D_BIN
+    delete process.env.TS_MAESTRO_D_CLIENT
+    delete process.env.MAESTRO_D_BIN
+    writeFileSync(settings, JSON.stringify({ maestroClientRoot: client }))
+    let error: unknown
+    try {
+      await maestro('missing-binary')
+    } catch (caught) {
+      error = caught
+    }
+    expect(String(error)).includes('Configure the maestro-d client and binary')
+    expect(calls).deep.equals([])
+    writeFileSync(
+      settings,
+      JSON.stringify({ maestroClientRoot: client, maestroBin: bin })
+    )
+    const daemon = await maestro('from-settings')
+    await daemon.attach({ device: 'browser', platform: 'web' })
+    expect(calls[0]).deep.equals([
+      'connect',
+      { name: 'from-settings', bin, idleTimeout: 0 },
+      undefined
+    ])
+    await daemon.shutdown()
+  })
+
   it('routes local and hub targets independently and ends its leases', async () => {
     mock.timers.enable({ apis: ['setInterval'] })
     const tokenFile = join(dir, 'token')

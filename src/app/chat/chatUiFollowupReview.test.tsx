@@ -8,6 +8,7 @@ import * as ReactNative from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { HeaderSlotProvider } from '../components/headerSlot'
+import { NAV_BOTTOM_GAP } from '../components/navGeometry'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
 import { ChatListScreen } from './ChatListScreen'
@@ -4139,16 +4140,18 @@ describe('review4 quiet preview recovery', function () {
 
 describe('qa4 accepted list boundaries', function () {
   it('accepts a phone clamp only after its tail plus measured navigation inset completes and preserves the same reader after growth', async function () {
+    const navigationHeight = 76
     const pending = await returningList(
       true,
       780,
       { id: 'cnv_return_1', relativeY: 20 },
-      76
+      navigationHeight
     )
     await pending.populate(2)
     const incompleteHeight = listTailHeight(194)
     const completeHeight = listTailHeight(200)
-    expect(completeHeight).equals(76)
+    // The final 200 px include the measured bar, its gap, and two 16 px content gaps.
+    expect(completeHeight).equals(200 - navigationHeight - NAV_BOTTOM_GAP - 32)
     setListRowMeasurement('cnv_return_1', 800, incompleteHeight)
     await pending.content(1000)
     await act(async () => {

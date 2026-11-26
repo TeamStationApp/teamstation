@@ -1,30 +1,35 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { floatingNavBottom, navClearanceAboveInset } from './navClearance'
+import { floatingNavBottom, navContentBottom } from './navClearance'
 
 const margin = 16
 const inset = 34
-const clearance = 120
 
 describe('the floating nav and the unsafe area', function () {
-  it('sits the iOS capsule on the home-indicator inset', function () {
-    expect(floatingNavBottom('ios', margin, inset)).equals(inset)
-    expect(navClearanceAboveInset('ios', clearance, margin)).equals(
-      clearance - margin
+  it('aligns the reference capsule with the 83-point UIKit host and lifts it above a banner', function () {
+    const height = 62
+    const hostHeight = 49 + inset
+    const gap = floatingNavBottom('ios', margin, inset)
+    expect(gap).equals(21)
+    expect(height + gap).equals(hostHeight)
+    const withBanner = floatingNavBottom('ios', margin, inset, 40)
+    expect(navContentBottom('ios', margin, inset)).equals(gap)
+    expect(navContentBottom('ios', margin, inset, 40)).equals(withBanner)
+    expect(navContentBottom('android', margin, inset, 40)).equals(
+      margin + inset + 40
     )
+    expect(withBanner - gap).equals(53)
+    expect(height + withBanner).equals(hostHeight + 53)
+    expect(floatingNavBottom('ios', margin, 0)).equals(0)
   })
 
   it('keeps Android a margin above its navigation inset', function () {
     expect(floatingNavBottom('android', margin, inset)).equals(margin + inset)
-    expect(navClearanceAboveInset('android', clearance, margin)).equals(
-      clearance
-    )
   })
 
   it('keeps the browser on the designed margin, with no inset to add', function () {
     expect(floatingNavBottom('web', margin, 0)).equals(margin)
-    expect(navClearanceAboveInset('web', clearance, margin)).equals(clearance)
   })
 
   it('sits the capsule on the offline banner, which sits on the inset', function () {

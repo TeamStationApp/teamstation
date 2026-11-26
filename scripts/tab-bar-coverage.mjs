@@ -29,10 +29,23 @@ const supplements = values.supplement.map(readJson)
 const report = resolve('coverage/tabBar')
 mkdirSync(report, { recursive: true })
 const specs = [
+  'src/app/App.offlineBanner.test.tsx',
+  'src/app/chat/chat2ActionsView.test.tsx',
+  'src/app/chat/chat2ViewportView.test.tsx',
+  'src/app/theme/navContrast.test.ts',
   'src/app/components/AppNav.test.tsx',
   'src/app/components/AppSidebar.test.tsx',
+  'src/app/components/AppNavCapsule.test.tsx',
+  'src/app/components/capsuleMotion.test.tsx',
+  'src/app/components/useMotionPreference.test.tsx',
+  'src/app/components/TabPages.test.tsx',
   'src/app/components/navGeometry.test.ts',
-  'src/app/components/SystemTabBar.native.test.ts'
+  'src/app/components/SystemTabBar.native.test.ts',
+  'src/app/components/reducedTransparency.test.tsx',
+  'src/app/components/tabBarModel.test.ts',
+  'src/app/components/navClearance.test.ts',
+  'src/app/components/SuccessToast.test.tsx',
+  'src/app/components/StickySectionLayout.native.test.tsx'
 ]
 const bundle = resolve('lib/tab-bar-tests.cjs')
 execFileSync(

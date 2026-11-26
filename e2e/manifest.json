@@ -1835,6 +1835,167 @@
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
     },
     {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "id": "app-shell/tab-bar/capsule#tap-and-drag",
+      "title": "The fallback capsule selects each destination by tap and Search by drag",
+      "covers": [
+        "src/app/components/AppNavCapsule.tsx",
+        "src/app/components/useCapsuleDrag.ts"
+      ],
+      "spec": "app-shell/tab-bar/capsule",
+      "file": "e2e/tests/app-shell/tab-bar/capsule.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "id": "app-shell/tab-bar/reduced-transparency#capsule",
+      "title": "The system and fallback bars paint the app theme with accessible inactive icons",
+      "covers": [
+        "src/app/components/AppNavCapsule.tsx",
+        "src/app/components/reducedTransparency.native.ts",
+        "ios/TeamStation/TSTabBarComponentView.mm"
+      ],
+      "spec": "app-shell/tab-bar/reduced-transparency",
+      "file": "e2e/tests/app-shell/tab-bar/reducedTransparency.e2e.ts"
+    },
+    {
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "team-with-roster"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "id": "app-shell/tab-bar/reduced-transparency#system",
+      "title": "The system and fallback bars paint the app theme with accessible inactive icons",
+      "covers": [
+        "src/app/components/AppNavCapsule.tsx",
+        "src/app/components/reducedTransparency.native.ts",
+        "ios/TeamStation/TSTabBarComponentView.mm"
+      ],
+      "spec": "app-shell/tab-bar/reduced-transparency",
+      "file": "e2e/tests/app-shell/tab-bar/reducedTransparency.e2e.ts"
+    },
+    {
       "id": "app-shell/tab-bar/system#composer-clearance",
       "title": "The iOS system tab bar selects labelled destinations by tap and drag",
       "kind": "e2e",

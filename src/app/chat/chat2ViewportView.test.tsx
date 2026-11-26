@@ -8,6 +8,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import { AppHeader } from '../components/AppHeader'
 import { AppNav } from '../components/AppNav'
 import { HeaderSlotProvider } from '../components/headerSlot'
+import { NAV_BOTTOM_GAP } from '../components/navGeometry'
 import { Screen } from '../components/Screen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -203,7 +204,9 @@ describe('chat measured chrome and explicit focus', function () {
     )!
     const content = scroll.firstElementChild!
     expect(getComputedStyle(content).paddingTop).equals('80px')
-    expect(getComputedStyle(content).paddingBottom).equals('124px')
+    expect(getComputedStyle(content).paddingBottom).equals(
+      `${76 + NAV_BOTTOM_GAP + 32}px`
+    )
     expect(getComputedStyle(scroll).overflowY).equals('auto')
     expect(
       scroll.querySelector('[data-testid="chat-conversation-' + item.id + '"]')
@@ -331,7 +334,7 @@ describe('chat measured chrome and explicit focus', function () {
       })
       expect(
         node.querySelector('[data-testid="composer-bottom"]')!.textContent
-      ).equals('104')
+      ).equals(String(72 + NAV_BOTTOM_GAP + 16))
       await act(async () => {
         root!.unmount()
       })

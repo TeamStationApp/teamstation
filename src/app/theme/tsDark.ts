@@ -165,6 +165,17 @@ export const tsDark: Theme = {
   glassBorderColor: 'rgba(216, 214, 191, 0.14)',
   glassBlur: 'blur(24px) saturate(200%)',
   navActiveColor: palette.tsAccentGreen,
+  // The olive pill is the dark theme's selected surface; the pale green keeps
+  // 4.5:1 on it and beige keeps the other tabs 4.5:1 on the bar.
+  navSelectedColor: palette.tsDarkOlive,
+  navTabActiveColor: palette.tsPaleGreen,
+  navTabInactiveColor: palette.tsBeige,
+  navOpaqueBackgroundColor: palette.tsVeryDarkGreen,
+  navOpaqueSelectedColor: palette.tsDarkOlive,
+  // The accent green reaches only 3.4:1 on the olive pill, so an opaque
+  // selected tab is the brighter pale green and the others drop to the accent.
+  navOpaqueActiveColor: palette.tsPaleGreen,
+  navOpaqueInactiveColor: palette.tsAccentGreen,
   navInactiveColor: palette.tsMediumOlive,
 
   scoreboardBackground: palette.black,

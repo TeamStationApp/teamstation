@@ -181,6 +181,16 @@ export interface Theme {
   glassBorderColor: string
   glassBlur: string
   navActiveColor: string
+  /** The tab capsule's selected highlight where the bar is translucent. */
+  navSelectedColor: string
+  /** The tab capsule's selected icon and label where the bar is translucent. */
+  navTabActiveColor: string
+  /** The tab capsule's other icons and labels where the bar is translucent. */
+  navTabInactiveColor: string
+  navOpaqueBackgroundColor: string
+  navOpaqueSelectedColor: string
+  navOpaqueActiveColor: string
+  navOpaqueInactiveColor: string
   navInactiveColor: string
 
   /** The dark scoreboard panel a game's score is set on. */

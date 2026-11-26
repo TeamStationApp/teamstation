@@ -548,10 +548,16 @@ const upper =
     (n.bounds?.y ?? 0) < screen.height * share
 
 async function openTabRoot(id: 'home' | 'videos' | 'schedule'): Promise<void> {
-  await navTab(m, id)
+  const select = async (): Promise<void> => {
+    if (MODE === 'before') {
+      const label = { home: 'Home', videos: 'Videos', schedule: 'Schedule' }[id]
+      await tap(new RegExp(`^${label}$`), SLOW, inTabBar)
+    } else await navTab(m, id)
+  }
+  await select()
   // A second tap pops the tab's stack to its root (a game opened from
   // Schedule stays on Schedule's stack).
-  if ((await find(/^Back$/)) != null) await navTab(m, id)
+  if ((await find(/^Back$/)) != null) await select()
 }
 async function type(text: string): Promise<void> {
   if (PLATFORM === 'android') {

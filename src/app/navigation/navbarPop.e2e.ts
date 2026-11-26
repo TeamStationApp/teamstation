@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
+import { verifyWebTransparency } from '../../../e2e/rigs/app/tabBarContrast'
 import {
+  type BrowserSession,
   browserSession,
   capture,
   contains,
@@ -31,6 +33,15 @@ const daemonName =
 async function seed(): Promise<OwnedNavigationFixture<NavigationFixture>> {
   const f = await groupFixture(resolve('dist'))
   try {
+    // The five-tab tour visits Chat. This synthetic adult already answered
+    // the age prompt, so the tour can return to Home.
+    const age = await f.h.request(
+      'PUT',
+      '/me/account/age',
+      { adult: true },
+      101
+    )
+    assert.equal(age.status, 200)
     // The account harness's own team is also named Demo Hawks; this script
     // follows the fixture's, so Home must show one team by that name.
     await f.h.db
@@ -121,16 +132,69 @@ async function seed(): Promise<OwnedNavigationFixture<NavigationFixture>> {
   }
 }
 
+/** Use real pointer input so the pan recognizer competes with the tab press. */
+async function verifyCapsule({ page, m }: BrowserSession): Promise<void> {
+  const tabs = ['home', 'videos', 'schedule', 'search', 'chat'] as const
+  const selected = async (id: (typeof tabs)[number]): Promise<void> => {
+    await page.waitForSelector(navTabCss(id) + '[aria-selected="true"]')
+  }
+  for (const id of tabs) {
+    const selector = navTabCss(id)
+    const text = await page.$eval(selector, el => el.textContent)
+    assert.ok(
+      text?.toLowerCase().includes(id) === true,
+      id + ' has a visible label'
+    )
+    await m.tapOn({ css: selector })
+    await selected(id)
+  }
+  const slot = async (
+    id: (typeof tabs)[number]
+  ): Promise<{ x: number; top: number; height: number }> =>
+    await page.$eval(navTabCss(id), el => {
+      const { left, top, width, height } = el.getBoundingClientRect()
+      return { x: left + width / 2, top, height }
+    })
+  for (const [offset, target] of [
+    [0.5, 'search'],
+    [-0.5, 'search'],
+    [-1.1, 'home']
+  ] as const) {
+    await m.tapOn({ css: navTabCss('home') })
+    await selected('home')
+    const home = await slot('home')
+    const search = await slot('search')
+    await m.command('dragAndDrop', {
+      from: {
+        point: `${Math.round(home.x)},${Math.round(home.top + home.height / 2)}`
+      },
+      to: {
+        point: `${Math.round(search.x)},${Math.round(search.top + search.height * offset)}`
+      },
+      holdDuration: 40,
+      duration: 320
+    })
+    await selected(target)
+    assert.equal(
+      await page.$eval(navTabCss('search'), el =>
+        el.getAttribute('aria-selected')
+      ),
+      String(target === 'search')
+    )
+  }
+}
+
 async function drive(data: NavigationFixture): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
   const daemon = await maestro(daemonName)
-  const { m, page, browser } = await browserSession(
+  const session = await browserSession(
     daemon,
     `${daemonName}-phone`,
     402,
     874,
     artifacts!
   )
+  const { m, page, browser } = session
   const note = async (line: string): Promise<void> => {
     await log(artifacts!, 'navbar-pop.log', line)
   }
@@ -173,6 +237,17 @@ async function drive(data: NavigationFixture): Promise<void> {
         for (const node of document.querySelectorAll('[data-e2e-tap]'))
           node.removeAttribute('data-e2e-tap')
       })
+  }
+  const tapDestination = async (
+    id: 'videos' | 'schedule' | 'search'
+  ): Promise<void> => {
+    // Before screenshots run against the published bar without stable tab IDs.
+    const label = id.charAt(0).toUpperCase() + id.slice(1)
+    await tapCss(
+      before
+        ? `[role="tablist"]:not([aria-label]) [aria-label="${label}"]`
+        : navTabCss(id)
+    )
   }
   const settle = async (text: string): Promise<void> => {
     await contains(page, text)
@@ -243,14 +318,14 @@ async function drive(data: NavigationFixture): Promise<void> {
       await settle('Your Home')
     }
 
-    await tapCss(navTabCss('videos'))
+    await tapDestination('videos')
     await settle('Game videos')
     await openPlayerFromGame()
     if (before) await shot('videos-deep-before.png')
     else
       await popped('videos', '/videos', 'Game videos', 'videos-root-after.png')
 
-    await tapCss(navTabCss('schedule'))
+    await tapDestination('schedule')
     await settle('Schedule')
     await openPlayerFromGame()
     if (before) await shot('schedule-deep-before.png')
@@ -262,7 +337,7 @@ async function drive(data: NavigationFixture): Promise<void> {
         'schedule-root-after.png'
       )
 
-    await tapCss(navTabCss('search'))
+    await tapDestination('search')
     await settle('Discover')
     await fill(m, 'Search leagues, seasons, teams and people', 'Demo League A')
     await tap(m, 'Open Demo League A')
@@ -300,6 +375,12 @@ async function drive(data: NavigationFixture): Promise<void> {
       )
       assert.equal(await labeled('Back'), true)
       await shot('switch-preserves-after.png')
+      // Leave the root's original browser history intact for its back check.
+      await verifyCapsule(session)
+      await verifyWebTransparency(page)
+      await note(
+        'The five labels, selected states, drag margins and compact scroll passed'
+      )
     }
   } finally {
     await m.detach()
