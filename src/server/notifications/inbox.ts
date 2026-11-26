@@ -28,20 +28,9 @@ import type {
   GroupRequestsTable,
   NotificationEventsTable
 } from '../db/database'
-import {
-  mayAnswerPlayerAdd,
-  rejoinedSince,
-  supersededPlayerAdd
-} from '../groups/noticePolicy'
-import {
-  approvesSide,
-  type Clock,
-  realClock,
-  requestStatus,
-  speaksForSender,
-  type StoredRequest
-} from '../groups/requests'
-import { canScheduleFor, currentActor } from '../groups/rights'
+import { withRolesRead } from '../db/readOnce'
+import { type Clock, realClock, type StoredRequest } from '../groups/requests'
+import { currentActor } from '../groups/rights'
 import { heldAt } from '../invites/grants'
 import {
   isSlotNotice,
@@ -51,8 +40,19 @@ import {
 import { shortNamesOf, userNames } from '../users/nameBook'
 import { fullNamesFor, type Reader, readerOf } from '../users/readerNames'
 import { survivorsOf } from '../users/survivors'
+import {
+  informationPages,
+  mergePage,
+  pageOptions,
+  requestPages
+} from './inboxPage'
+import {
+  InboxProjection,
+  type InformationFacts,
+  informationFacts,
+  type RequestState
+} from './inboxProjection'
 import { pendingInformationWhere, PLAYER_ADD_REJECTED } from './pending'
-import { pendingRequests } from './pendingRequests'
 import {
   grantInformation,
   type PlayerRemovedMetadata,
@@ -96,19 +96,23 @@ async function informationFor(
   actor: Actor,
   event: Selectable<NotificationEventsTable>,
   names: PageNames,
-  clock: Clock
+  clock: Clock,
+  facts?: InformationFacts
 ): Promise<Listed | null> {
   if (
     event.source_type === 'groupRequest' ||
     !event.recorded_recipients.includes(actor.userId)
   )
     return null
-  const receipt = await db
-    .selectFrom('notification_receipts')
-    .select(['event_id', 'dismissed_at'])
-    .where('event_id', '=', event.id)
-    .where('user_id', '=', actor.userId)
-    .executeTakeFirst()
+  const receipt =
+    facts == null
+      ? await db
+          .selectFrom('notification_receipts')
+          .select(['event_id', 'dismissed_at'])
+          .where('event_id', '=', event.id)
+          .where('user_id', '=', actor.userId)
+          .executeTakeFirst()
+      : facts.receipts.get(event.id)
   const metadata = event.metadata as {
     title?: string
     description?: string
@@ -178,18 +182,25 @@ async function informationFor(
   const waiting = reminder && receipt?.dismissed_at == null
   let link: { status: Notification['status']; expiresAt: string } | undefined
   if (event.source_type === CHAT_DEVICE_APPROVAL) {
-    const request = await db
-      .selectFrom('chat_links')
-      .innerJoin('chat_devices', 'chat_devices.id', 'chat_links.new_device_id')
-      .select([
-        'chat_links.box',
-        'chat_links.declined_at',
-        'chat_links.expires_at',
-        'chat_devices.revoked_at'
-      ])
-      .where('chat_links.id', '=', event.source_id)
-      .where('chat_links.user_id', '=', actor.userId)
-      .executeTakeFirst()
+    const request =
+      facts == null
+        ? await db
+            .selectFrom('chat_links')
+            .innerJoin(
+              'chat_devices',
+              'chat_devices.id',
+              'chat_links.new_device_id'
+            )
+            .select([
+              'chat_links.box',
+              'chat_links.declined_at',
+              'chat_links.expires_at',
+              'chat_devices.revoked_at'
+            ])
+            .where('chat_links.id', '=', event.source_id)
+            .where('chat_links.user_id', '=', actor.userId)
+            .executeTakeFirst()
+        : facts.links.get(event.source_id)
     if (request == null) return null
     link = {
       expiresAt: new Date(request.expires_at).toISOString(),
@@ -364,21 +375,6 @@ function isReminderType(type: string): boolean {
   return type === RECORDING_UPLOAD || type === LOCAL_COPY_EXPIRING
 }
 
-/** A reminder still waiting: Pending lists these before anything else. */
-function rankOf(row: Notification): number {
-  return isReminderType(row.type) && row.status === 'pending' ? 0 : 1
-}
-
-/** Pending reminders first, then oldest first, then by id. */
-function compareRows(
-  a: { rank: number; sentAt: string; requestId: string },
-  b: { rank: number; sentAt: string; requestId: string }
-): number {
-  if (a.rank !== b.rank) return a.rank - b.rank
-  if (a.sentAt !== b.sentAt) return a.sentAt < b.sentAt ? -1 : 1
-  return a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0
-}
-
 /**
  * Whether a notification waits on this person: a request they can answer, or
  * an upload reminder, removal or missing-umpires digest they have not
@@ -405,139 +401,51 @@ export async function notificationFor(
   senders?: ReadonlyMap<string, string>,
   readsFull?: ReadonlySet<string>
 ): Promise<Listed | null> {
-  const fresh = await currentActor(db, actor)
-  const sides = await db
-    .selectFrom('group_request_sides')
-    .selectAll()
-    .where('request_id', '=', request.id)
-    .execute()
-  let eligible = false
-  let actionable = false
-  let representedConsent = false
-  // A player add answers to the player's side as it is now.
-  if (request.kind === 'playerAdd') {
-    eligible = await mayAnswerPlayerAdd(db, fresh, request)
-    actionable = eligible
-  }
-  for (const side of request.kind === 'playerAdd' ? [] : sides) {
-    const sideRef = { kind: side.scope_type, id: side.scope_id }
-    if (!(await approvesSide(db, fresh, sideRef, request))) continue
-    eligible = true
-    if (
-      side.scope_type === 'team' &&
-      side.approved_by != null &&
-      (request.kind === 'game' || request.kind === 'gameChange') &&
-      (await canScheduleFor(db, fresh, { kind: 'team', id: side.scope_id }))
-    )
-      representedConsent = true
-    let valid = false
-    if (side.approved_by != null) {
-      try {
-        valid = await approvesSide(
-          db,
-          { userId: side.approved_by, isAdmin: false, scopes: [] },
-          sideRef,
-          request
-        )
-      } catch {}
-    }
-    if (!valid) actionable = true
-  }
-  const senderAdmin = await speaksForSender(db, fresh, request)
-  const event = await db
-    .selectFrom('notification_events')
-    .select(['id', 'recorded_recipients'])
-    .where('source_type', '=', 'groupRequest')
-    .where('source_id', '=', request.id)
-    .executeTakeFirst()
-  const receipt =
-    event == null
+  return await readInbox(db, async trx => {
+    const fresh = await currentActor(trx, actor)
+    const projection = new InboxProjection(trx, fresh, clock)
+    const state = (await projection.requests([request])).get(request.id)
+    return state == null
       ? null
-      : await db
-          .selectFrom('notification_receipts')
-          .select(['event_id', 'dismissed_at'])
-          .where('event_id', '=', event.id)
-          .where('user_id', '=', fresh.userId)
-          .executeTakeFirst()
-  const status = requestStatus(request, clock)
-  if (
-    status === 'pending' &&
-    !eligible &&
-    !senderAdmin &&
-    request.sender_id === fresh.userId
-  )
-    return {
-      news: false,
-      id: event?.id ?? request.id,
-      requestId: request.id,
-      type: request.kind,
-      title: 'Pending invitation you sent',
-      description:
-        'You no longer administer the sending group. You may withdraw this invitation, but need current administrator authority to resend it or make decisions.',
-      sentAt: request.sent_at.toISOString(),
-      expiresAt: request.expires_at.toISOString(),
-      status,
-      canAct: false,
-      canWithdraw: true,
-      canResend: false,
-      canReject: false,
-      rejectUntil: null,
-      viewed: receipt != null,
-      leave: null
-    }
-  const historical =
-    status !== 'pending' &&
-    (request.sender_id === fresh.userId ||
-      event?.recorded_recipients.includes(fresh.userId) === true ||
-      receipt != null)
-  if (!eligible && !senderAdmin && !historical) return null
-  const display = await titleAndDescription(
-    db,
-    request,
-    senders,
-    readerOf(fresh),
-    readsFull
-  )
-  // A change already made, which its approver may reject for 90 days, until
-  // a later add of the same person replaces it.
-  const notice = request.kind === 'playerAdd' && status === 'applied'
-  const canReject =
-    notice &&
-    eligible &&
-    request.expires_at.getTime() > clock.now().getTime() &&
-    !(await supersededPlayerAdd(db, request)) &&
-    !(await rejoinedSince(db, request.terms as PlayerAddTerms))
-  const row: Listed = {
-    // An applied add its approver may still reject, until they dismiss it:
-    // news like a request waiting on them, without anything to accept.
-    news: canReject && receipt?.dismissed_at == null,
-    id: event?.id ?? request.id,
-    requestId: request.id,
-    type: request.kind,
-    ...display,
-    sentAt: request.sent_at.toISOString(),
-    expiresAt: request.expires_at.toISOString(),
-    status,
-    canAct: status === 'pending' && actionable,
-    canWithdraw:
-      status === 'pending' &&
-      (senderAdmin || request.sender_id === fresh.userId || representedConsent),
-    canResend:
-      status !== 'accepted' &&
-      senderAdmin &&
-      request.kind !== 'guardian' &&
-      request.kind !== 'membership' &&
-      request.kind !== 'videographer' &&
-      // A player add is made or asked once; a refused one is asked again by
-      // adding the player again.
-      request.kind !== 'playerAdd',
-    viewed: receipt != null,
-    leave: null,
-    // Every item carries both, as the published shape has them.
-    canReject,
-    rejectUntil: notice ? request.expires_at.toISOString() : null
-  }
-  return row
+      : await wordRequest(trx, fresh, request, state, senders, readsFull)
+  })
+}
+
+async function wordRequest(
+  db: Kysely<Database>,
+  actor: Actor,
+  request: StoredRequest,
+  state: RequestState,
+  senders?: ReadonlyMap<string, string>,
+  readsFull?: ReadonlySet<string>
+): Promise<Listed> {
+  const { senderOnly, ...row } = state
+  const display = senderOnly
+    ? {
+        title: 'Pending invitation you sent',
+        description:
+          'You no longer administer the sending group. You may withdraw this invitation, but need current administrator authority to resend it or make decisions.'
+      }
+    : await titleAndDescription(
+        db,
+        request,
+        senders,
+        readerOf(actor),
+        readsFull
+      )
+  return { ...row, ...display }
+}
+
+/** Never attach a per-read cache to the shared pool handle. */
+async function readInbox<T>(
+  db: Kysely<Database>,
+  work: (trx: Kysely<Database>) => Promise<T>
+): Promise<T> {
+  const read = async (trx: Kysely<Database>): Promise<T> =>
+    await withRolesRead(trx, async () => await work(trx))
+  return db.isTransaction
+    ? await read(db)
+    : await db.transaction().execute(read)
 }
 
 /**
@@ -806,98 +714,62 @@ export async function inbox(
   hasPending: boolean
   nextCursor: string | null
 }> {
-  const mode =
-    options.history === true
-      ? 'history'
-      : options.sent === true
-        ? 'sent'
-        : 'pending'
+  // Invalid cursors fail before account or collection queries.
+  const { mode, limit, after } = pageOptions(options)
   const now = clock.now()
-  const { fresh, rows } = await candidateRequests(db, actor, clock)
-  const found = await pendingRequests(rows, mode, now)
-    .orderBy('sent_at', 'asc')
-    .orderBy('id')
-    .execute()
-  // History lists every piece of information; the other tabs read only
-  // undismissed upload reminders, removals and missing-umpires digests, which
-  // wait in Pending and light the bell. Grants, scheduling notices and umpire
-  // sign-ups and withdrawals are History from the moment they are recorded.
-  const information = await db
-    .selectFrom('notification_events')
-    .selectAll()
-    .where('source_type', '!=', 'groupRequest')
-    .$if(options.history !== true, query =>
-      query.where(eb => pendingInformationWhere(eb, fresh.userId, clock.now()))
+  const frozen = { now: () => now }
+  return await readInbox(db, async trx => {
+    const { fresh, rows } = await candidateRequests(trx, actor, frozen)
+    const projection = new InboxProjection(trx, fresh, frozen)
+    const { page, nextCursor } = await mergePage(
+      [
+        requestPages(rows, projection, mode, after),
+        informationPages(trx, fresh.userId, now, mode, after)
+      ],
+      limit
     )
-    .where(eb =>
-      eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
+    const found = page.flatMap(row =>
+      row.kind === 'request' ? [row.request] : []
     )
-    .execute()
-  const names = await pageNames(db, information, found, readerOf(fresh))
-  const projected: Listed[] = []
-  for (const request of found) {
-    const row = await notificationFor(
-      db,
-      fresh,
-      request,
-      clock,
-      names.people,
-      names.readsFull
+    const information = page.flatMap(row =>
+      row.kind === 'information' ? [row.event] : []
     )
-    if (row != null) projected.push(row)
-  }
-  for (const event of information) {
-    const row = await informationFor(db, fresh, event, names, clock)
-    if (row != null) projected.push(row)
-  }
-  projected.sort((a, b) =>
-    compareRows(
-      { rank: rankOf(a), sentAt: a.sentAt, requestId: a.requestId },
-      { rank: rankOf(b), sentAt: b.sentAt, requestId: b.requestId }
-    )
-  )
-  const hasPending = projected.some(isPendingRow)
-  let visible = projected.filter(row =>
-    options.history === true
-      ? row.status !== 'pending' && !isPendingRow(row)
-      : options.sent === true
-        ? row.canWithdraw
-        : isPendingRow(row)
-  )
-  if (options.cursor != null) {
-    // The last row of the page before, rank and all, so a page that ended
-    // among the reminders carries on there even when that reminder has been
-    // dismissed since. A cursor without a rank is from before reminders were
-    // listed first, when every row was of the second rank.
-    const parts = options.cursor.split('|')
-    const [rankText, time, id] = parts.length === 2 ? ['1', ...parts] : parts
-    if (
-      (rankText !== '0' && rankText !== '1') ||
-      !Number.isFinite(Date.parse(time)) ||
-      id == null ||
-      parts.length > 3
-    )
-      throw forbidden('Invalid notification cursor')
-    const at = { rank: Number(rankText), sentAt: time, requestId: id }
-    visible = visible.filter(
-      row =>
-        compareRows(
-          { rank: rankOf(row), sentAt: row.sentAt, requestId: row.requestId },
-          at
-        ) > 0
-    )
-  }
-  const limit = Math.max(1, Math.min(100, options.limit ?? 25))
-  const page = visible.slice(0, limit)
-  const last = page.at(-1)
-  return {
-    items: page.map(sent),
-    hasPending,
-    nextCursor:
-      visible.length > limit && last != null
-        ? `${rankOf(last)}|${last.sentAt}|${last.requestId}`
-        : null
-  }
+    const names = await pageNames(trx, information, found, readerOf(fresh))
+    const facts = await informationFacts(trx, fresh.userId, information)
+    const items: Notification[] = []
+    for (const row of page) {
+      const value =
+        row.kind === 'request'
+          ? await wordRequest(
+              trx,
+              fresh,
+              row.request,
+              row.state,
+              names.people,
+              names.readsFull
+            )
+          : await informationFor(trx, fresh, row.event, names, frozen, facts)
+      if (value != null) items.push(sent(value))
+    }
+    // A visible pending item is a positive witness. An empty page or a
+    // History/Sent-only page still asks about the complete pending inbox.
+    const waiting =
+      projection.hasPending ||
+      page.some(row =>
+        row.kind === 'request'
+          ? row.state.canAct || row.state.news
+          : mode === 'pending'
+      )
+    const hasPending =
+      waiting ||
+      (
+        await pendingInRead(trx, fresh, frozen, new AbortController().signal, {
+          rows,
+          projection
+        })
+      ).hasPending
+    return { items, hasPending, nextCursor }
+  })
 }
 
 export async function notificationDetail(
@@ -1184,7 +1056,31 @@ async function pendingNow(
   signal: AbortSignal
 ): Promise<PendingAnswer> {
   const now = clock.now()
-  const { fresh, rows } = await candidateRequests(db, actor, clock)
+  return await readInbox(
+    db,
+    async trx => await pendingInRead(trx, actor, { now: () => now }, signal)
+  )
+}
+
+async function pendingInRead(
+  db: Kysely<Database>,
+  actor: Actor,
+  clock: Clock,
+  signal: AbortSignal,
+  prepared?: {
+    rows: SelectQueryBuilder<
+      Database,
+      'group_requests',
+      Selectable<GroupRequestsTable>
+    >
+    projection: InboxProjection
+  }
+): Promise<PendingAnswer> {
+  const now = clock.now()
+  const { fresh, rows } =
+    prepared == null
+      ? await candidateRequests(db, actor, clock)
+      : { fresh: actor, rows: prepared.rows }
   const information = await db
     .selectFrom('notification_events')
     .leftJoin('chat_links', join =>
@@ -1214,17 +1110,12 @@ async function pendingNow(
   const nextExpiry =
     expiries.length === 0 ? null : new Date(Math.min(...expiries)).toISOString()
   if (information.waiting > 0) return { hasPending: true, nextExpiry }
-  const found = await pendingRequests(rows, 'pending', now)
-    .orderBy('sent_at', 'asc')
-    .orderBy('id')
-    .execute()
-  const none = new Map<string, string>()
-  const nobody = new Set<string>()
-  for (const request of found) {
-    if (signal.aborted) break
-    const row = await notificationFor(db, fresh, request, clock, none, nobody)
-    if (row != null && isPendingRow(row))
-      return { hasPending: true, nextExpiry }
+  const projection =
+    prepared?.projection ?? new InboxProjection(db, fresh, clock)
+  const pending = requestPages(rows, projection, 'pending', undefined, signal)
+  try {
+    return { hasPending: (await pending.next()).done !== true, nextExpiry }
+  } finally {
+    await pending.return(undefined)
   }
-  return { hasPending: false, nextExpiry }
 }
