@@ -36,18 +36,25 @@ if (!Number.isInteger(jobs) || jobs < 1)
 /** A group's test source: small groups share out evenly and stay light. */
 const GROUP_BYTES = 400_000
 
+// c8 remaps both tiers after they finish. Keep each tier’s original bundle
+// and source map available throughout collection.
+const chunkDir =
+  process.env.NODE_V8_COVERAGE == null ? 'lib' : `lib/coverage-${tier.tier}`
 const built = spawnSync(
   process.execPath,
   [
     'scripts/build-scoring-tests.mjs',
     `--chunk-bytes=${GROUP_BYTES}`,
+    `--chunk-dir=${chunkDir}`,
     `--tier=${tier.tier}`
   ],
   { stdio: 'inherit' }
 )
 if (built.status !== 0) process.exit(built.status ?? 1)
 
-const chunks = JSON.parse(readFileSync('lib/scoring-tests-chunks.json', 'utf8'))
+const chunks = JSON.parse(
+  readFileSync(`${chunkDir}/scoring-tests-chunks.json`, 'utf8')
+)
 const specs = specFiles(tier.tier)
 
 /** Consecutive files, about GROUP_BYTES of them to a group. */

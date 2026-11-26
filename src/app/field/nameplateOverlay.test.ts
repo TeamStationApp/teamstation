@@ -31,6 +31,14 @@ const plate = (
 })
 
 describe('the phone’s nameplates', function () {
+  it('sizes the scoring catcher face to the same rectangle that is projected and tapped', function () {
+    const faces = nameplateFaces([
+      plate('C', { fitted: true, width: 61, height: 32 }),
+      plate('SS')
+    ])
+    expect(faces[0].fittedSize).deep.equals({ width: 61, height: 32 })
+    expect(faces[1].fittedSize).equals(undefined)
+  })
   it('says what each plate says, in the browser’s colours', function () {
     expect(
       nameplateFaces([

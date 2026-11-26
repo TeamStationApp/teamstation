@@ -98,6 +98,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
   )
   const textures = useSurfaceTextures()
   const ready = useRef(false)
+  const cardBottom = useRef<number>(undefined)
   const boundsKey = useRef('')
   const catcherRect = useRef<ScreenRect | null>(null)
   const baseKey = useRef('')
@@ -110,7 +111,13 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
             player => player.suppressed !== true && hasPlayerLabel(player)
           )
           .map(player =>
-            projectPlayerLabel(player, camera, size.width, size.height)
+            projectPlayerLabel(
+              player,
+              camera,
+              size.width,
+              size.height,
+              cardBottom.current
+            )
           )
       )
     if (callbacks.current.onBaseProjection != null) {
@@ -215,7 +222,8 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
   const point = useMemo(() => new Vector3(), [])
   useEffect(() => {
     if (!(camera instanceof PerspectiveCamera)) return
-    applyFieldCamera(camera, {
+    cardBottom.current = applyFieldCamera(camera, {
+      frame: props.frame,
       width: size.width,
       height: size.height,
       view,
@@ -234,6 +242,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     cameraTilt,
     cameraHeight,
     props.bottomExtension,
+    props.frame,
     invalidate
   ])
 
@@ -437,7 +446,8 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
                 size.width,
                 size.height,
                 (event.pointer.x * 0.5 + 0.5) * size.width,
-                (0.5 - event.pointer.y * 0.5) * size.height
+                (0.5 - event.pointer.y * 0.5) * size.height,
+                cardBottom.current
               )
           )
         : undefined
@@ -452,7 +462,8 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
           size.width,
           size.height,
           pointerX,
-          pointerY
+          pointerY,
+          cardBottom.current
         )
       )
     }
