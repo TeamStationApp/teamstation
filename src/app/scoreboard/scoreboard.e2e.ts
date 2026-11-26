@@ -1160,7 +1160,7 @@ describe('the Score screen and the override dashboard (E10–E11)', function () 
     await page.waitForSelector('[aria-label="Undo Ball"]')
     await saved
     await page.waitForFunction(
-      () => document.querySelector('[aria-label="Save status"]') == null
+      () => document.querySelector('[data-testid="scoringSaveStatus"]') == null
     )
     // Back returns to the Score screen, where the scorer was opened.
     await page.goBack()
