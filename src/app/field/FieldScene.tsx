@@ -116,7 +116,9 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
               camera,
               size.width,
               size.height,
-              cardBottom.current
+              cardBottom.current,
+              undefined,
+              callbacks.current.frame?.cardInterval
             )
           )
       )
@@ -447,7 +449,8 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
                 size.height,
                 (event.pointer.x * 0.5 + 0.5) * size.width,
                 (0.5 - event.pointer.y * 0.5) * size.height,
-                cardBottom.current
+                cardBottom.current,
+                callbacks.current.frame?.cardInterval
               )
           )
         : undefined
@@ -463,7 +466,8 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
           size.height,
           pointerX,
           pointerY,
-          cardBottom.current
+          cardBottom.current,
+          callbacks.current.frame?.cardInterval
         )
       )
     }

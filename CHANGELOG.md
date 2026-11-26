@@ -30,6 +30,7 @@
 - added: A league's settings have a SafeSport switch for leagues that are SafeSport Local Affiliated Organizations: a direct message between someone 13 to 17 on one of its teams and an adult who is not their guardian or family must then include a second adult: their guardian, an adult family member, or an adult coach, assistant or admin of their team. An adult no more than 4 years older needs no second adult
 - added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can give a first age, make an adult a minor, or clear an age
 - added: The web page describes TeamStation ("where a team keeps its games, scores, and video") to search engines, web filters and browsers without JavaScript
+- changed: Scoring: the pitch buttons sit right under the catcher, with the remote scoring log beneath them.
 - changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings

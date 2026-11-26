@@ -9,6 +9,7 @@ import React, {
 } from 'react'
 import {
   ActivityIndicator,
+  NativeModules,
   Platform,
   Pressable,
   ScrollView,
@@ -67,6 +68,7 @@ import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { gridRotation } from '../player/multiCam/orientationLock'
 import { CachingClient, type QueuedSwap } from '../sync/cachingClient'
 import { supersededTag, type TagAcknowledgment } from '../sync/tagRevisions'
 import {
@@ -275,6 +277,12 @@ export const PERSISTENT_NEEDS_QUEUE =
   'Persistent scoring needs the queued client'
 
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
+  useEffect(() => {
+    if (props.active === false) return
+    const rotation = gridRotation(NativeModules.TSOrientation)
+    rotation.allow()
+    return rotation.restore
+  }, [props.active])
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
   const [visibleDefaults, setVisibleDefaults] = useState<DefaultLineups>({})

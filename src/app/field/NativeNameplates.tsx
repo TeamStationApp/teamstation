@@ -107,6 +107,7 @@ function Nameplate({
     >
       <View style={{ position: 'absolute', ...frame }}>
         <View
+          testID={face.fittedSize == null ? undefined : 'scoring-catcher-face'}
           accessibilityLabel={
             face.emptyPosition === true
               ? `Assign ${face.name}`
@@ -142,6 +143,7 @@ function Nameplate({
             style={[
               styles.line,
               {
+                maxWidth: face.fittedSize == null ? undefined : '100%',
                 width: face.emptyPosition === true ? '100%' : undefined,
                 fontSize:
                   face.emptyPosition === true
