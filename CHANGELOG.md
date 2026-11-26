@@ -3,19 +3,18 @@
 ## Unreleased
 
 - added: Scorers can end a live game during any play, see what will go in the scorebook, and undo the final after reopening the game
-- changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
 - added: TS Director can show the selected game’s scoreboard in any camera window while the primary output stays on a camera
 - added: Radar exit velocity wipes across the batter’s stats for five seconds and follows the play during replay. On TS Director’s own stream output the wipe moves in steps; OBS and the web player draw it smoothly
-- added: Chat senders can include a removable link preview. Recipients see its encrypted copy, and reporting the message shares the original content while keeping the preview private.
+- added: Chat senders can include a removable link preview, fetched on their own device and sent encrypted with the message so recipients never open the link; reporting the message leaves the preview out
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.
 - added: Node administrators can set an iOS App Store link to offer the app in Safari on iPhone and iPad
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
-- added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with a dry run first and `--delete-old` for the old copies afterwards
+- added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with `--dry-run` to report first and `--delete-old` for the old copies afterwards
 - added: Tapping "N edits not sent" opens a sheet of each refused edit, naming its game or team with the server's message, with Try Again and Use Server's Copy; the Game and Team screens show the same held notice
 - added: Anyone accepted into a league can umpire its games once an administrator gives them the umpire role: its administrators, league and season members, anyone with a role on one of its teams, and guardians of those teams' players; followers count for nothing
 - added: A Message button on a person's profile and a player's page, at the bottom right of the top card, for anyone you may message; on a phone it is the message icon alone
-- added: For a player who cannot use chat (no account, or under 13), Message offers their guardians, or with none their coaches, to message instead
+- added: For a player who cannot use chat (no account, or under 13), Message offers their guardians or adult family, or with none their coaches, to message instead
 - added: A game's umpires open their league profile, with its Message button, for anyone in that league
 - added: Each league that manages umpires has an umpire chat for its umpires, kept up to date as the role is given and taken away; the umpire schedule opens it with an Umpire chat button beside Leaderboard
 - added: A league administrator can give themselves the umpire role in Manage Umpires
@@ -27,56 +26,71 @@
 - added: League admins can be notified, in the app and by push, of games still missing umpires, of umpire sign-ups and of withdrawals, through the API
 - added: Account → Notifications has a League management switch, on by default
 - added: League admins turn on umpire schedule notifications for themselves with Send me notifications in Umpire Management, and a notice opens the umpire schedule on its game
+- added: Chat asks once for your age, in a modal: a birth year and month, or 18 or older. Until you give it you can be added to chats and sent direct messages but can read and send none; a direct message's notification says only that you have a new message, and group messages send none
+- added: A league's settings have a SafeSport switch for leagues that are SafeSport Local Affiliated Organizations: a direct message between someone 13 to 17 on one of its teams and an adult who is not their guardian or family must then include a second adult: their guardian, an adult family member, or an adult coach, assistant or admin of their team. An adult no more than 4 years older needs no second adult
+- added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can give a first age, make an adult a minor, or clear an age
+- added: The web page describes TeamStation ("where a team keeps its games, scores, and video") to search engines, web filters and browsers without JavaScript
+- changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: The Apple TV app declares that it uses no non-exempt encryption, and its release builds carry no development settings
 - changed: Every uploaded video and every recorded game is kept in the Space as six-second pieces, never as one large file
 - changed: The web keeps the phone's copy of what its screens read and queues edits as the phone does, in the tab: it scores without waiting on the server, keeps every play across browser Back and while offline, shows the offline banner and the "edits not sent" banner and sheet, and warns before the tab is left while edits wait
 - changed: On the web, Coach Game keeps a refused lineup or rostered change and holds it in "edits not sent", as the phone does
 - changed: The web build writes brotli and gzip copies of its scripts, styles and WebAssembly for the server to send, about a quarter of the bytes on a first visit
+- changed: Screens read again only when the server's socket says something they show changed, once on opening, and once for each time the socket drops; nothing reads on a timer or on coming back to the app, and the bell's slow answer no longer puts the app offline
+- changed: A phone keeps the nearest three games its person is a scorekeeper of, in the next four days, ready to open and score with no signal, even one never opened; nobody else's phone downloads games ahead
+- changed: With no sort asked for and none saved, the umpire schedule runs by day, then season, where it ran by start time
+- changed: Who may message someone 13 to 17 follows their age, not whether anyone plays: their team's admins, coaches, assistants, owners and managers, players on their team or in their season who are 13 to 17 or no more than 4 years older, and their adult guardians and family. Adults message each other as before, so an adult who also plays can message league staff
+- changed: Chat is closed to anyone under 13: they leave every chat, and a direct message left with one person closes. Someone who first gives their age in a direct message the rules don't allow it in doesn't see what was said there before
+- changed: A guardian must be an adult, and coaches no longer see or set players' birth months
+- changed: The 13+ consent sheet is gone, along with the account setting behind it
+- changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
 - fixed: The scoreboard keeps its width as scores, player names and radar speeds change
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 - fixed: A ball scored on the web just before browser Back is no longer lost
 - fixed: Scoring opens at once from what the phone or tab holds, with a pitch still on its way to the server, instead of waiting on a slow server
-- changed: Screens read again only when the server's socket says something they show changed, once on opening, and once for each time the socket drops; nothing reads on a timer or on coming back to the app, and the bell's slow answer no longer puts the app offline
-- changed: A phone keeps the nearest three games its person is a scorekeeper of, in the next four days, ready to open and score with no signal, even one never opened; nobody else's phone downloads games ahead
-- changed: With no sort asked for and none saved, the umpire schedule runs by day, then season, where it ran by start time
 - fixed: A tab or phone left open on a busy schedule no longer reads every game again and again
 - fixed: Closing the scoring screen with no connection no longer keeps asking the server for the time
 - fixed: Web scorers can record the next pitch after a strikeout even when the field redraws slowly
 
 ## 1.4.0 (2026-11-21)
 
-- changed: Google Play closed-testing uploads publish the bundle and do not send release notes
 - added: One search field finds leagues, seasons, teams and people, with the closest matches first
-- changed: The Auto-Scheduler builds every schedule exactly on the web, iPhone and Android, and publishes a large preview in a bounded number of queries
-- changed: On a phone, the game screen releases its own player while the four-camera grid is open, and the live pill pulses only where it can be seen
 - added: Streaming end-to-end tests replay synthetic cameras from a publisher, and every viewer recovers when a camera drops out or the viewer scrubs
 - added: The end-to-end suite runs on develop's framework on its test stacks, including stand-ins, Tess and covered taps
 - added: Anyone can ask Tess how TeamStation works and get an answer from the source code of the release they are using, with the files and lines it comes from
 - added: Develop, branch and seat builds of the web and phone apps report how each video plays: how long it takes to start, every stall and seek with how far behind live it was, errors and the recoveries that followed, bitrate and dropped frames, so a slow start or a stall can be measured
 - added: `?debug=1` on the game page shows what its video player is doing: its state, the page's own reading and its last events
 - added: Streaming end-to-end scenarios for iPhone Safari: twenty rapid scrubs, and a camera cut for 64 s again and again
-- added: Chat asks once for your age, in a modal: a birth year and month, or 18 or older. Until you give it you can be added to chats and sent messages but read none, and notifications say only that you have a new message
-- added: A league's settings have a SafeSport switch for leagues that are SafeSport Local Affiliated Organizations: a message between an adult and someone 13 to 17 must then include their guardian, an adult family member, or an adult coach, assistant or admin of their team
-- added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can make an adult a minor or clear an age
+- added: Android builds take Firebase's google-services.json from the Mason project secret file of that name; a build run outside Mason without it builds without push
+- added: Build schedule and Recalculate open a build modal with Cancel; at the two-minute time limit it shows the best schedule found and offers Continue processing, Use this schedule and Cancel
+- added: The Auto-Scheduler offers "Show previous schedule preview" to reopen the league's latest open or published preview
+- added: Node administrators can set, replace or remove a Jev API key under Jev ranking in Node administration; with a key set, Search re-ranks its results with Jev a moment after typing stops, otherwise it ranks by how well names match
+- changed: Google Play closed-testing uploads publish the bundle and do not send release notes
+- changed: The Auto-Scheduler builds every schedule exactly on the web, iPhone and Android, and publishes a large preview in a bounded number of queries
+- changed: On a phone, the game screen releases its own player while the four-camera grid is open, and the live pill pulses only where it can be seen
 - changed: Tess keeps more of a long conversation before summarizing it, and can look things up 20 times in one answer instead of 10
 - changed: The schedule build's log is a four-line box that scrolls like a terminal: each step shows as it starts, its time counting up each second, and becomes its finished line, with how long it took, in place; the clock stops while the build waits at a time limit
 - changed: App builds made with the deploy scripts from any branch but master report their logs to the server they talk to, not to production's
-- changed: Who may message someone 13 to 17 follows their age, not whether anyone plays: their team's admins, coaches and assistants, players within 4 years of them in their season, and their adult guardians and family. Adults message each other as before, so an adult who also plays can message league staff
-- changed: Chat is closed to anyone under 13: they leave every chat, and a direct message left with one person closes. Someone who first gives their age in a direct message the rules don't allow it in doesn't see what was said there before
-- changed: A guardian must be an adult, and coaches no longer see or set players' birth months
-- changed: The 13+ consent sheet is gone, along with the account setting behind it
-- changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
-- fixed: Offline documents and unsent edits stay with the server and account that created them.
+- changed: Builds compile the Auto-Scheduler's C++ engine against a pinned HiGHS (`scripts/schedulerBuild.mjs`), fetching CMake where the host has none, and Emscripten for the web
+- changed: A live game opened at its Videos address starts playing silently, with "Tap for sound", as tapping Videos does
+- changed: The scoring field no longer takes keyboard control on the web (brackets to focus a player, Space to grab, arrows, S/O, Enter, Escape); Space-to-talk works over the field
+- fixed: On a phone, offline documents and unsent edits are kept per account and server, so a build switched to another server never shows or sends the first server's. The copy kept before this release, with any edits still unsent in it, is discarded on first launch
 - fixed: A web build can send its logs to the log collector it was built for; the page's content policy refused them before
 - fixed: Phone builds from Mason, other than master's production build, report their logs and crashes to the server they talk to; they reported nothing before
-- fixed: Scoreboards, roster caches and live playlists recover promptly after an idle connection closes.
+- fixed: Scoreboards, caches, live playlists, live screen updates and the notification queue reconnect within about a minute when the server's Valkey connection goes quiet, and answer "unavailable" instead of failing meanwhile
 - fixed: Chrome end-to-end observations no longer retain a second copy of downloaded responses, keeping long streaming memory measurements representative of playback
-- fixed: In iPhone Safari, a live game's video plays again after a camera is away longer than the 45 s cushion, instead of staying stopped for good
-- fixed: In iPhone Safari, the video no longer freezes for good after quick scrubs or coming back from full screen
-
-## Unreleased
+- fixed: In Safari on a Mac, iPhone or iPad, a live game's video plays again after a camera is away longer than the 45 s cushion, instead of staying stopped for good
+- fixed: In Safari on a Mac, iPhone or iPad, the video no longer freezes for good after quick scrubs or coming back from full screen
+- fixed: On the TV, the other cameras keep playing while one camera's stream is away, and a live camera whose player fails is opened again and rejoins, instead of all four showing unavailable
+- fixed: When the game page's player gives up on its address it asks for a new one: a live game rejoins at live, and a recording resumes where it was, instead of a black picture
+- fixed: In a phone's four-camera grid, a tile waiting for its camera's footage starts once the footage is back, and a tile inside its camera's gap no longer runs ahead of the other angles
+- fixed: Scoring's Done pill moves aside when it would cover the catcher or his nameplate
+- fixed: A roster or lineup editor with a change staged or one of its sheets open is no longer redrawn under the scorer when the game is read again; the defensive roster closes when another device ends the game
+- fixed: A player another scorer's device added stays on the side when this device saves its roster
+- fixed: Dictation takes a question's only option as the answer, leaves a ball call alone when a player is tagged "B", gives a caught foul credited to the center fielder to the first or third baseman, and refuses a sentence mixing a lineup and a defense change even when a name is misheard
+- fixed: On a narrow screen the game page's action buttons go two to a row instead of being cut off; the scoreboard page's board is never narrower than a broadcast's box; on the web an umpire note's text is all selected as it takes focus
 
 ## 1.3.0 (2026-11-18)
 
