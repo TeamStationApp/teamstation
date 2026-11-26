@@ -1517,9 +1517,17 @@ describe('the game socket (U14)', function () {
       for (const listener of [watcher, leaver, stopper])
         await subscribed(listener, scored)
       const startedAt = Date.now()
-      gap('game_changes')
-      // Twice is one close for each.
-      gap('game_changes')
+      // Leave time to unsubscribe before the scheduled close; an arbitrarily
+      // early random timer can close the stopper before its request is handled.
+      const random = Math.random
+      Math.random = () => 0.9
+      try {
+        gap('game_changes')
+        // Twice is one close for each.
+        gap('game_changes')
+      } finally {
+        Math.random = random
+      }
       expect(watcher.ws.readyState).equals(WebSocket.OPEN)
       leaver.ws.terminate()
       const asked = makeId('event')
