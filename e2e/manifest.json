@@ -6303,6 +6303,59 @@
       "file": "e2e/tests/platform/web/scoring-toolbar.e2e.ts"
     },
     {
+      "id": "platform/web/scoring-viewport#bottom-strip",
+      "title": "Scoring fits above the phone browser toolbar as it folds and opens",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/useFieldSurface.ts",
+        "src/app/web/index.html",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/web/scoring-viewport",
+      "file": "e2e/tests/platform/web/scoring-toolbar.e2e.ts"
+    },
+    {
       "id": "platform/web/scoring-viewport#toolbar-probe",
       "title": "What a phone browser’s bottom toolbar leaves the web scoring screen: paint, strip, taps and the deck",
       "kind": "e2e",
@@ -9291,6 +9344,142 @@
       "sendsNoMail": true,
       "spec": "scoring/layout/stacked",
       "file": "e2e/tests/scoring/layout/stacked.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#held-game",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#offline-and-back",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#roster-conflict",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#swap-report",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
     },
     {
       "id": "scoring/offline/eligible#cold-offline-open",

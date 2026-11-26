@@ -49,6 +49,7 @@ import { scoringLayout } from '../field/scoringFrame'
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { scoringSurface } from '../theme/scoringSurface'
 import { ROSTER_CARD_GAP } from './rosterLayout'
+import { NOTICE_TEXT_AREA } from './scoringControlStyle'
 
 const game = asGameDetail({
   nonMemberView: false,
@@ -1675,7 +1676,8 @@ describe('scoring browser', function () {
       // Saved: Back leaves without asking.
       await saved
       await page.waitForFunction(
-        () => document.querySelector('[aria-label="Save status"]') == null
+        () =>
+          document.querySelector('[data-testid="scoringSaveStatus"]') == null
       )
       /** Marks the field's canvas, to tell the same screen from a new one. */
       const mark = async (): Promise<void> => {
@@ -2390,13 +2392,25 @@ describe('scoring browser', function () {
             field,
             targets,
             roster,
+            footer: document
+              .querySelector('[data-testid="Roster footer"]')!
+              .getBoundingClientRect().y,
             fieldScroll:
               document.querySelector('[aria-label="Defensive positions"]') !=
               null
           }
         })
         expect(geometry.fieldScroll).equals(false)
-        expect(geometry.roster.height).at.least(48)
+        // The sheet ends on the notice band, always reserved, so at 238 tall
+        // the roster's scroll area is that much shorter: the list still shows
+        // the top of a card row, enough to grab one, and it ends above the
+        // footer instead of under it.
+        expect(geometry.roster.height).at.least(
+          viewport.height === 238 ? 48 - NOTICE_TEXT_AREA + 16 : 48
+        )
+        expect(geometry.roster.y + geometry.roster.height).at.most(
+          geometry.footer + 1
+        )
         expect(geometry.targets).length(9)
         for (const r of geometry.targets) {
           expect(r.x).at.least(geometry.field.x - 1)
@@ -2510,12 +2524,22 @@ describe('scoring browser', function () {
         node => node.textContent
       )
       await new Promise(resolve => setTimeout(resolve, 300))
+      // Where a finger holds a card: the middle of the part on screen. In
+      // the roster's scroll area that is the part it shows; at 238 tall the
+      // area is shorter by the notice band, so only a card's top shows
+      // above Cancel and Save Rosters.
       const point = async (
         selector: string
       ): Promise<{ x: number; y: number }> =>
         await page.$eval(selector, node => {
           const r = node.getBoundingClientRect()
-          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+          const area = node.closest('[aria-label="Roster players"]')
+          if (area === null)
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+          const clip = area.getBoundingClientRect()
+          const top = Math.max(r.top, clip.top)
+          const bottom = Math.min(r.bottom, clip.bottom)
+          return { x: r.x + r.width / 2, y: (top + bottom) / 2 }
         })
       const from = await point(source)
       const pitcher = await page.$eval(
@@ -6830,7 +6854,11 @@ describe('scoring browser', function () {
         expect(awayTab.width).closeTo(homeTab.width, 1)
         expect((await rect('[aria-label="Lineup"]')).height).equals(36)
         expect(footer.bottom).at.most(height)
-        expect(height - footer.bottom).lessThan(30)
+        // The sheet ends above the notice band, reserved whether or not a
+        // notice shows: the footer sits on the band, not on the window's
+        // bottom.
+        expect(height - footer.bottom).at.least(NOTICE_TEXT_AREA - 1)
+        expect(height - footer.bottom - NOTICE_TEXT_AREA).lessThan(30)
         for (const label of ['Roster players', 'Batting lineup']) {
           const list = await rect(`[aria-label="${label}"]`)
           expect(list.height).greaterThan(60)

@@ -258,10 +258,23 @@ describe('compact defensive field', function () {
   it('reserves a roster row when possible and yields to the complete field for wrapping errors', function () {
     expect(defenseRosterMinimum(0, true)).equals(64)
     expect(defenseRosterMinimum(0, false)).equals(88)
-    expect(defenseRosterMinimum(128, true)).equals(64)
-    expect(defenseRosterMinimum(111, true)).equals(49)
-    expect(defenseRosterMinimum(80, false)).equals(12)
+    // The field's least is 60 points plus the 24-point Help/Clear row.
+    expect(defenseRosterMinimum(150, true)).equals(64)
+    expect(defenseRosterMinimum(128, true)).equals(42)
+    expect(defenseRosterMinimum(111, true)).equals(25)
+    expect(defenseRosterMinimum(100, false)).equals(8)
     expect(defenseRosterMinimum(40, true)).equals(0)
+  })
+  it('shortens the roster by the notice band so it ends above the footer in a short window', function () {
+    // 844x238 on the scoring screen: the sheet ends NOTICE_TEXT_AREA above
+    // the window, leaving the roster area 114 points under the Defense tabs.
+    const area = 114
+    const minimum = defenseRosterMinimum(area, true)
+    // Field viewport 60 + Help/Clear row 24 + gap 2 + the list fit the area.
+    expect(60 + 24 + 2 + minimum).at.most(area)
+    expect(minimum).equals(28)
+    // Without the band (40 more points) the list keeps its full dense row.
+    expect(defenseRosterMinimum(area + 40, true)).equals(64)
   })
   it('uses measured short sheet height to condense controls and retain list space', async function () {
     const host = document.createElement('div')

@@ -76,6 +76,13 @@
         .querySelector('[data-position="C"]')
         ?.getBoundingClientRect().bottom,
       log: box('remote-scoring-updates'),
+      logBand: box('scoring-log-band'),
+      notice: box('scoringNotice'),
+      noticeText: document.querySelector('[data-testid="scoringNotice"]')
+        ?.textContent,
+      noticeTextBottom: document
+        .querySelector('[data-testid="scoringNotice"] [aria-label]')
+        ?.getBoundingClientRect().bottom,
       page: window.getComputedStyle(document.documentElement).backgroundColor,
       exposed,
       insets: [

@@ -222,6 +222,45 @@ describe('the soak sign-ins', function () {
     })
   })
 
+  it('confirms the Sign Out? sheet that unsent edits bring up', async function () {
+    let state: 'in' | 'asking' | 'out' = 'in'
+    const pending = fakeDevice({
+      assertVisible: (arg: unknown) => {
+        const target = arg as { text?: string }
+        if (target.text === 'Sign in to TeamStation' && state === 'out') return
+        if (target.text === 'Sign Out\\?' && state === 'asking') return
+        if (target.text === 'Notifications') return
+        throw new Error('not shown')
+      },
+      hierarchy: () => ({
+        children: [
+          { text: 'Account, Clayton Kershaw' },
+          { text: 'Account', bounds: { x: 10, y: 20, width: 100, height: 40 } },
+          {
+            text: 'Sign out',
+            bounds: { x: 10, y: 100, width: 100, height: 40 }
+          },
+          ...(state === 'asking'
+            ? [
+                { text: 'Sign Out?' },
+                {
+                  text: 'Sign Out',
+                  bounds: { x: 10, y: 300, width: 100, height: 40 }
+                }
+              ]
+            : [])
+        ]
+      }),
+      tapOnPoint: (arg: unknown) => {
+        const { y } = arg as { y: number }
+        if (y === 120) state = 'asking'
+        if (y === 320 && state === 'asking') state = 'out'
+      }
+    })
+    await signOutApp(pending.device, 0)
+    expect(state).equals('out')
+  })
+
   it('says when the link leaves the app signed out, or there is no account button', async function () {
     const stuck = app('out', false)
     expect(
@@ -333,13 +372,21 @@ describe('the account page', function () {
         children: [
           { text: 'Account, X' },
           { text: 'Account', bounds: { x: 0, y: 10, width: 2, height: 2 } },
+          { bounds: { x: 0, y: -1000, width: 400, height: 2300 } },
+          { id: 'Schedule', bounds: { x: 170, y: 740, width: 60, height: 50 } },
           {
             text: 'Sign out',
-            bounds: { x: 0, y: swipes >= 3 ? 700 : 1600, width: 2, height: 2 }
+            bounds: {
+              x: 180,
+              y: swipes >= 3 ? 700 : 760,
+              width: 40,
+              height: 20
+            }
           }
         ]
       }),
-      swipe: () => {
+      swipe: (arg: unknown) => {
+        expect(arg).includes({ startX: 200, startY: 640, endY: 200 })
         swipes++
       }
     })

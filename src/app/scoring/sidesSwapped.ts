@@ -115,3 +115,31 @@ export function replacedNotice(
     ? `${kept}.`
     : `${kept}, and ${unsure} more may not have been.`
 }
+
+/** The full announcement and its two-line presentation on a narrow phone. */
+export function replacedReport(
+  change: GameReplaced,
+  lost: number,
+  unsure = 0
+): {
+  text: string
+  compact?: string
+} {
+  const text = replacedNotice(change, lost, unsure)
+  if (lost === 0 && unsure === 0) return { text }
+  const result = change.reset
+    ? change.swapped
+      ? 'Reset and swapped.'
+      : 'Game reset.'
+    : 'Home and away swapped.'
+  return {
+    text,
+    compact: [
+      result,
+      lost > 0 && `${lost} ${lost === 1 ? 'edit' : 'edits'} lost.`,
+      unsure > 0 && `${unsure} unconfirmed.`
+    ]
+      .filter(Boolean)
+      .join(' ')
+  }
+}

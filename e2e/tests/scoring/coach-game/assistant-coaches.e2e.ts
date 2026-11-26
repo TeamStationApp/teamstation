@@ -33,7 +33,7 @@ export default defineCoachSpec({
       const world = await ctx.fixture('coach-game')
       // The head coach's plan, which the assistant then reads whole.
       await savePlan(ctx, world, WHOLE_PLAN)
-      const app = await openCoachApp(ctx, 'assistant')
+      const app = await openCoachApp(ctx, world.accounts.assistant)
       await app.openGame(world.ids.game)
       await ctx.checkpoint(
         'game-offers-coach',
@@ -66,7 +66,7 @@ export default defineCoachSpec({
     },
     'scorekeeper-has-no-coach': async ctx => {
       const world = await ctx.fixture('coach-game')
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.accounts.scorekeeper)
       await app.openGame(world.ids.game)
       await ctx.checkpoint(
         'game-offers-score-only',

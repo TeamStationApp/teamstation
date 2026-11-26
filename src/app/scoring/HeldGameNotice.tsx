@@ -33,6 +33,7 @@ export function HeldGameNotice(props: {
   consequence?: string
   /** The button's id: on iOS it stands for the message inside it. */
   testID?: string
+  fill?: boolean
 }): React.ReactElement {
   const { held, onSettled, consequence = HELD_GAME_CONSEQUENCE } = props
   const theme = useTheme()
@@ -61,6 +62,7 @@ export function HeldGameNotice(props: {
     <>
       <Pressable
         testID={props.testID}
+        style={props.fill === true ? { flex: 1 } : undefined}
         accessibilityRole="button"
         accessibilityLabel="Unsent changes"
         accessibilityHint={held.text}
