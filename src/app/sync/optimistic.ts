@@ -612,13 +612,26 @@ export function withServerIds(
     const ids = bare == null ? undefined : landed.get(Number(bare[1]))
     return ids == null ? gumboText(key) : String(ids.serverId)
   }
-  const walk = (raw: unknown): unknown => {
+  const walk = (raw: unknown, property?: string): unknown => {
     if (typeof raw === 'number') return landed.get(raw)?.serverId ?? raw
     if (typeof raw === 'string') return byUserId.get(raw) ?? gumboText(raw)
-    if (Array.isArray(raw)) return raw.map(walk)
+    if (Array.isArray(raw)) {
+      const mapped = raw.map(item => walk(item))
+      // A roster can hold the provisional player and the server's copy while
+      // the create is landing. They occupy one place once their ids agree.
+      if (
+        (property === 'tagOrder' ||
+          property === 'players' ||
+          property === 'battingOrder') &&
+        raw.every(item => typeof item === 'number') &&
+        raw.some(item => landed.has(item))
+      )
+        return [...new Set(mapped)]
+      return mapped
+    }
     if (raw == null || typeof raw !== 'object') return raw
     return Object.fromEntries(
-      Object.entries(raw).map(([key, item]) => [gumboKey(key), walk(item)])
+      Object.entries(raw).map(([key, item]) => [gumboKey(key), walk(item, key)])
     )
   }
   return walk(value)

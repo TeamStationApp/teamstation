@@ -1,6 +1,11 @@
 import { type PerspectiveCamera, Vector3 } from 'three'
 
-import type { CameraView } from './fieldModel'
+import { type CameraView, CATCHER_SPOT, type FieldPlayer } from './fieldModel'
+import {
+  nameplateLabel,
+  nameplateSize,
+  projectPlayerLabel
+} from './playerPresentation'
 
 export const SCOREBOARD_SCALE = 1.8
 export const SCOREBOARD_Y = 28.2
@@ -21,6 +26,115 @@ export const MAX_VIEWPORT_HEIGHT = 682
 export function fieldViewportHeight(width: number): number {
   return Math.min(MAX_VIEWPORT_HEIGHT, Math.round(Math.max(1, width) * 1.25))
 }
+/** Fixed home view shared by scoring and replay. */
+export const SCORING_CAMERA = {
+  zoom: 1.25,
+  cameraTilt: (-11 * Math.PI) / 180,
+  cameraHeight: 33
+} as const
+export const SCORING_BOTTOM_EXTENSION = 112
+
+/** Clearances in the drawable canvas's own points. */
+export interface CameraFrame {
+  top: number
+  bottom: number
+}
+
+const referenceCatcher: FieldPlayer = {
+  id: 'C',
+  label: 'C',
+  name: 'C',
+  displayName: 'C',
+  jersey: '2',
+  team: 'defense',
+  position: CATCHER_SPOT,
+  target: CATCHER_SPOT,
+  heading: Math.PI,
+  speed: 0,
+  stride: 0
+}
+
+// Only the numbered face's height enters the fit. An ordinary two-line label
+// has the same height at every distance and on every platform.
+let referenceSize: ReturnType<typeof nameplateSize> | undefined
+
+export function catcherCardBottom(
+  camera: PerspectiveCamera,
+  width: number,
+  height: number
+): number {
+  referenceSize ??= nameplateSize(nameplateLabel(referenceCatcher))
+  const plate = projectPlayerLabel(
+    referenceCatcher,
+    camera,
+    width,
+    height,
+    undefined,
+    referenceSize
+  )
+  return plate.y + plate.height
+}
+
+/** Pin the top of the physical scoreboard roof, including its depth. */
+function fitScoringCamera(
+  camera: PerspectiveCamera,
+  width: number,
+  height: number,
+  referenceHeight: number,
+  target: Vector3,
+  backward: Vector3,
+  distance: number,
+  tilt: number,
+  heightOffset: number,
+  frame: CameraFrame
+): number {
+  function place(distance: number): number {
+    camera.position.copy(target).addScaledVector(backward, distance)
+    camera.lookAt(target)
+    camera.rotateX(tilt)
+    camera.position.y += heightOffset
+    camera.far = Math.max(1100, camera.position.length() + 400)
+    camera.updateMatrixWorld()
+    camera.setViewOffset(width, referenceHeight, 0, 0, width, height)
+    const roofY = SCOREBOARD_Y + (9.7 + 0.25) * SCOREBOARD_SCALE
+    const roofTop = Math.min(
+      ...[-2.1, 2.9].map(depth => {
+        const ndc = new Vector3(
+          0,
+          roofY,
+          SCOREBOARD_Z + depth * SCOREBOARD_SCALE
+        ).project(camera)
+        return ((1 - ndc.y) * height) / 2
+      })
+    )
+    camera.setViewOffset(
+      width,
+      referenceHeight,
+      0,
+      roofTop - frame.top,
+      width,
+      height
+    )
+    return catcherCardBottom(camera, width, height)
+  }
+
+  const limit = height - frame.bottom
+  let bottom = place(distance)
+  if (bottom <= limit) return bottom
+  let low = distance
+  let high = distance * 2
+  // A transient zero-height layout can leave less than the card's own height.
+  while (place(high) > limit && high < 1e7) high *= 2
+  for (let i = 0; i < 24; i++) {
+    const middle = (low + high) / 2
+    bottom = place(middle)
+    if (bottom > limit) low = middle
+    else if (limit - bottom < 0.001) return bottom
+    else high = middle
+  }
+  return place(high)
+}
+
 export function applyFieldCamera(
   camera: PerspectiveCamera,
   options: {
@@ -30,9 +144,10 @@ export function applyFieldCamera(
     zoom: number
     tilt?: number
     heightOffset?: number
+    frame?: CameraFrame
     bottomExtension?: number
   }
-): void {
+): number | undefined {
   const { width, height, view, zoom, tilt = 0, heightOffset = 0 } = options
   const referenceHeight = Math.max(1, height - (options.bottomExtension ?? 0))
   const aspect = Math.max(0.2, width / referenceHeight)
@@ -59,10 +174,25 @@ export function applyFieldCamera(
         local.dot(backward) +
           Math.max(
             Math.abs(local.x) / (tangent * aspect * 0.9),
-            Math.abs(local.dot(up)) / (tangent * 0.76)
+            options.frame == null
+              ? Math.abs(local.dot(up)) / (tangent * 0.76)
+              : 0
           )
       )
     }
+    if (options.frame != null)
+      return fitScoringCamera(
+        camera,
+        width,
+        height,
+        referenceHeight,
+        target,
+        backward,
+        distance / zoom,
+        tilt,
+        heightOffset,
+        options.frame
+      )
     camera.position.copy(target).addScaledVector(backward, distance / zoom)
     camera.lookAt(target)
   } else if (view === 'scoreboard') {
