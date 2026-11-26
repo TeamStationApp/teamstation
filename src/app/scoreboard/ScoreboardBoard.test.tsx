@@ -175,7 +175,8 @@ describe('ScoreboardBoard', function () {
       },
       countOutsContainer: {
         ...expected.countOutsContainer,
-        width: scoreboardTheme.rem(4.6)
+        width: scoreboardTheme.rem(5.25),
+        marginRight: scoreboardTheme.rem(0.6)
       },
       basesAndSpeedColumn: {
         ...expected.basesAndSpeedColumn,
@@ -303,6 +304,22 @@ describe('ScoreboardBoard', function () {
     })
     root = undefined
     expect(ticks.size).equals(0)
+  })
+
+  it('gives the count a column wide enough for "0-0", the board no wider', function () {
+    // The widest count's advance in src/app/assets/fonts/Inter-Bold.ttf, in
+    // em: "0" 0.6743 twice and "-" 0.4678. At 4.6 rem it wrapped on Android.
+    const WIDEST_COUNT_EM = 1.8164
+    const column = styles.countOutsContainer as {
+      width: number
+      marginRight: number
+    }
+    const count = styles.countDisplay as { fontSize: number }
+    expect(column.width).at.least(Math.ceil(WIDEST_COUNT_EM * count.fontSize))
+    // What the width took, the margin gave back.
+    expect(column.width + column.marginRight).equals(
+      scoreboardTheme.rem(4.6) + scoreboardTheme.rem(1.25)
+    )
   })
 
   it('fits extreme numbers and truncates only overlong player names', async function () {

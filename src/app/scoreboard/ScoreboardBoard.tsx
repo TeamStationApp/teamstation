@@ -659,11 +659,14 @@ export const getStyles = (theme: ScoreboardTheme) => {
     arrowInnerInactiveDown: {
       borderTopColor: theme.scoreboardBaseFill
     },
-    // Count and Outs Container
+    // Count and Outs Container. Wide enough for the widest count, "0-0",
+    // 1.82 em of Inter Bold (5 rem at the count's size), which wrapped after
+    // its hyphen at 4.6. The margin gives back what the width takes, so the
+    // board keeps its width as the radar exit velocity wipes across it.
     countOutsContainer: {
-      width: theme.rem(4.6),
+      width: theme.rem(5.25),
       alignItems: 'center',
-      marginRight: theme.rem(1.25)
+      marginRight: theme.rem(0.6)
     },
     countDisplay: {
       color: theme.primaryTextColor,
