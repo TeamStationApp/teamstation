@@ -36,6 +36,7 @@ export const SCORING_BOTTOM_EXTENSION = 112
 
 /** Clearances in the drawable canvas's own points. */
 export interface CameraFrame {
+  cardInterval?: { left: number; right: number }
   top: number
   bottom: number
 }

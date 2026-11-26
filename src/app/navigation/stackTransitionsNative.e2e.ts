@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { isHubDevice } from '../../../e2e/core/maestro'
+import { appLink, openInApp, setServer } from '../../../e2e/rigs/app/setServer'
 import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 
 /**
@@ -43,7 +45,7 @@ interface Device {
   detach: () => Promise<unknown>
 }
 
-const APP_ID = 'app.teamstation.app'
+const APP_ID = process.env.TS_STACK_APP_ID ?? 'app.teamstation.app'
 
 function required(name: string): string {
   const value = process.env[name]
@@ -76,6 +78,15 @@ async function main(): Promise<void> {
   const note = async (line: string): Promise<void> => {
     await log(artifacts, file, line)
   }
+  const develop = APP_ID === 'app.teamstation.develop'
+  const hub = isHubDevice(device)
+  if (develop || hub) {
+    assert.ok(
+      hub && (process.env.MAESTRO_D_HUB ?? '') !== '',
+      'Supply the leased mesh device and MAESTRO_D_HUB'
+    )
+    assert.deepEqual([...cases], ['N4'], 'The mesh runner handles N4')
+  }
   const daemon = await maestro(`stackTransitionsNative-${platform}`)
   const teamId = process.env.MAESTRO_D_TEAM_ID
   const m = (await daemon.attach({
@@ -85,6 +96,18 @@ async function main(): Promise<void> {
     artifacts: 'on-failure',
     ...(teamId != null && teamId !== '' ? { teamId } : {})
   })) as unknown as Device
+  const openRoute = async (path: string): Promise<void> => {
+    if (develop)
+      await openInApp({
+        platform,
+        udid: device,
+        appId: APP_ID,
+        link: appLink(path),
+        device: m,
+        hub
+      })
+    else await m.openLink({ link: `teamstation://${path}` })
+  }
   const visible = async (text: string, timeout = 15000): Promise<void> => {
     await m.assertVisible({ text, timeout })
   }
@@ -156,6 +179,36 @@ async function main(): Promise<void> {
   ): Promise<void> => {
     await note(`${name}: start`)
     const path = join(artifacts, 'support', `${platform}-${name}.mp4`)
+    if (hub) {
+      const recorder = spawn(
+        required('MAESTRO_D_BIN'),
+        ['stream', '--device', device, '--fps', '15', '-o', path],
+        { stdio: ['ignore', 'ignore', 'inherit'] }
+      )
+      const ended = new Promise<number | null>((resolve, reject) => {
+        recorder.once('error', reject)
+        recorder.once('close', resolve)
+      })
+      try {
+        // The stream receives its first frame before the first gesture.
+        for (let i = 0; i < 120; i++) {
+          if (((await stat(path).catch(() => undefined))?.size ?? 0) > 0) break
+          assert.equal(
+            recorder.exitCode,
+            null,
+            'mesh stream ended before capture'
+          )
+          await new Promise(resolve => setTimeout(resolve, 250))
+        }
+        assert.ok((await stat(path)).size > 0, 'mesh stream has no frames')
+        await run()
+      } finally {
+        recorder.kill('SIGINT')
+        assert.equal(await ended, 0, 'mesh recording failed')
+      }
+      await note(`${name}: passed`)
+      return
+    }
     // Each device records itself: a simulator through simctl, an Android
     // phone through screenrecord, pulled when the case ends.
     const onDevice = `/sdcard/ts-${name}.mp4`
@@ -212,7 +265,7 @@ async function main(): Promise<void> {
     const { link } = (await answer.json()) as { link?: string }
     const token = link?.split('/signin/')[1]
     assert.ok(token != null && token !== '', `No sign-in link in ${link}`)
-    await m.openLink({ link: `teamstation://signin/${token}` })
+    await openRoute(`signin/${token}`)
     await visible('Your Home', 30000)
   }
   const openTeam = async (): Promise<void> => {
@@ -238,6 +291,32 @@ async function main(): Promise<void> {
     await note(
       `$ TS_STACK_PLATFORM=${platform} TS_STACK_CASES=${[...cases].join(',')} node -r sucrase/register src/app/navigation/stackTransitionsNative.e2e.ts`
     )
+    if (develop) {
+      const sha = required('TS_STACK_SHA')
+      assert.match(sha, /^[a-f0-9]{40}$/)
+      await setServer({
+        platform,
+        udid: device,
+        appId: APP_ID,
+        origin: manifest.origin,
+        device: m,
+        hub
+      })
+      await m
+        .tapOn({ text: 'About TeamStation', timeout: 5000 })
+        .catch(async () => {
+          await tap('TeamStation menu')
+          await tap('About TeamStation')
+        })
+      await visible(`.*${sha.slice(0, 6)}.*`)
+      await visible(
+        `.*${new URL(manifest.origin).host.replace(/[.]/g, '\\.')}.*`
+      )
+      await tap('Close build information')
+      await note(
+        `Verified installed build ${sha.slice(0, 6)} and active server ${manifest.origin}`
+      )
+    }
     await signIn()
     if (cases.has('N1'))
       await recorded('N1', async () => {
@@ -268,7 +347,7 @@ async function main(): Promise<void> {
       })
     if (cases.has('N4'))
       await recorded('N4', async () => {
-        await m.openLink({ link: `teamstation://games/${manifest.game}` })
+        await openRoute(`games/${manifest.game}`)
         await visible('Demo Owls')
         await visible('Location not set')
         // A pushed screen still scrolls from its left edge: the edge pan
@@ -311,7 +390,7 @@ async function main(): Promise<void> {
       await recorded('N5', async () => {
         await openTeam()
         for (const pill of ['Team', 'Stats', 'Videos']) await tap(pill)
-        await m.openLink({ link: `teamstation://games/${manifest.game}` })
+        await openRoute(`games/${manifest.game}`)
         await visible('Game sections')
         await tap('Box score')
         await tap('Info')
