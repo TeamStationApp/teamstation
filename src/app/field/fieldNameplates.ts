@@ -73,6 +73,9 @@ export function syncFieldNameplates(
       plate.emptyPosition === true ? EMPTY_POSITION_FONT : NAMEPLATE_FONT
     )
     name.style.fontWeight = plate.emptyPosition === true ? '700' : '400'
+    name.style.maxWidth = plate.fitted === true ? '100%' : ''
+    name.style.overflow = plate.fitted === true ? 'hidden' : ''
+    name.style.textOverflow = plate.fitted === true ? 'ellipsis' : ''
     if (name.textContent !== plate.name) name.textContent = plate.name
     const existingNumber = node.querySelector('[data-line="number"]')
     if (plate.number === '') existingNumber?.remove()
