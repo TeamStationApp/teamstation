@@ -30,6 +30,7 @@
 - changed: The web keeps the phone's copy of what its screens read and queues edits as the phone does, in the tab: it scores without waiting on the server, keeps every play across browser Back and while offline, shows the offline banner and the "edits not sent" banner and sheet, and warns before the tab is left while edits wait
 - changed: On the web, Coach Game keeps a refused lineup or rostered change and holds it in "edits not sent", as the phone does
 - changed: The web build writes brotli and gzip copies of its scripts, styles and WebAssembly for the server to send, about a quarter of the bytes on a first visit
+- fixed: Pending notifications and the notification bell stay responsive after a large history of resolved invitations
 - fixed: The Apple TV sign-in screen says its code is eight letters, entered under Account, TeamStation TV
 - fixed: Tapping a highlight or seeking in a recorded game starts playing at once, instead of hanging on "Camera loading…"
 - fixed: A ball scored on the web just before browser Back is no longer lost

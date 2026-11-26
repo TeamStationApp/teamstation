@@ -52,6 +52,7 @@ import { shortNamesOf, userNames } from '../users/nameBook'
 import { fullNamesFor, type Reader, readerOf } from '../users/readerNames'
 import { survivorsOf } from '../users/survivors'
 import { pendingInformationWhere, PLAYER_ADD_REJECTED } from './pending'
+import { pendingRequests } from './pendingRequests'
 import {
   grantInformation,
   type PlayerRemovedMetadata,
@@ -805,8 +806,18 @@ export async function inbox(
   hasPending: boolean
   nextCursor: string | null
 }> {
+  const mode =
+    options.history === true
+      ? 'history'
+      : options.sent === true
+        ? 'sent'
+        : 'pending'
+  const now = clock.now()
   const { fresh, rows } = await candidateRequests(db, actor, clock)
-  const found = await rows.orderBy('sent_at', 'asc').orderBy('id').execute()
+  const found = await pendingRequests(rows, mode, now)
+    .orderBy('sent_at', 'asc')
+    .orderBy('id')
+    .execute()
   // History lists every piece of information; the other tabs read only
   // undismissed upload reminders, removals and missing-umpires digests, which
   // wait in Pending and light the bell. Grants, scheduling notices and umpire
@@ -1203,7 +1214,10 @@ async function pendingNow(
   const nextExpiry =
     expiries.length === 0 ? null : new Date(Math.min(...expiries)).toISOString()
   if (information.waiting > 0) return { hasPending: true, nextExpiry }
-  const found = await rows.orderBy('sent_at', 'asc').orderBy('id').execute()
+  const found = await pendingRequests(rows, 'pending', now)
+    .orderBy('sent_at', 'asc')
+    .orderBy('id')
+    .execute()
   const none = new Map<string, string>()
   const nobody = new Set<string>()
   for (const request of found) {
