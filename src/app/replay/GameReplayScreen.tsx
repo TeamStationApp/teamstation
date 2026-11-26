@@ -48,6 +48,7 @@ import {
   FLOATING_SIZE,
   floatingBottom,
   liftedSafePadding,
+  SCORING_SIDE_WIDTH,
   topLift
 } from '../field/fieldSafeArea'
 import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
@@ -89,8 +90,6 @@ import {
   useCardLineHeights
 } from './ReplayPlayCard'
 
-/** The box score's column beside the field on a wide window. */
-export const SIDE_DECK_WIDTH = 360
 /** The least of a tall window the box score keeps at its bottom. */
 export const DECK_MIN = 160
 /**
@@ -565,7 +564,7 @@ function ReplayView(props: {
   // The top controls' padding: the scoring screen's rule for its header row.
   const topPadding = liftedSafePadding(insets, lift)
   const [catcher, setCatcher] = useState<ScreenRect | null>(null)
-  const fieldWidth = layout.side ? width - SIDE_DECK_WIDTH : width
+  const fieldWidth = layout.side ? width - SCORING_SIDE_WIDTH : width
 
   const session = state.scoring.session
   // Everyone is named as the card and the box score name them: first name
@@ -873,7 +872,7 @@ function ReplayView(props: {
       {layout.side && (
         <View
           testID="replay-side"
-          style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}
+          style={[{ width: SCORING_SIDE_WIDTH }, surfaceStyle.safe]}
         >
           <FadingPlayCard
             {...cardProps}
