@@ -27,6 +27,7 @@
   "src/server/stats/**/*.ts",
   "src/server/statsBuilder/**/*.ts",
   "src/server/dev/postStatsFixture.ts",
+  "src/server/dev/fixtures/coachGame.ts",
   "src/server/dev/refoldScoredGames.ts",
   "src/server/dev/validateGumbo.ts",
   "src/server/events/eventWrite.ts",

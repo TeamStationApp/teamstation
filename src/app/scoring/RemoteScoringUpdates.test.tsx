@@ -72,31 +72,30 @@ describe('remote scoring update panel', () => {
     await f.reread()
     expect(panel()!.textContent).equals(text)
   })
-  it('keeps compact controls inside an unusually short viewport', async () => {
+  it('keeps collecting while zero lines fit and displays the new rows after resize', async () => {
     const f = fixture()
-    await render(f.game, 'tiny-screen', 110, false, 60)
+    await render(f.game, 'short-screen', 0)
     await f.update('pitch')
-    expect(
-      host.querySelector('[data-testid="remote-scoring-update-lines"]')
-    ).equals(null)
-    expect(parseFloat(panel()!.style.top) + 48).at.most(110)
+    expect(panel()).equals(null)
+    await render(f.game, 'short-screen', 1)
+    expect(panel()!.textContent).contains('Mike T.')
   })
-  it('keeps the catcher label clear when a short screen cannot fit the log below it', async () => {
-    const f = fixture()
-    // The figure fits above the clamped toast, but its nameplate below the
-    // feet does not. Clearance includes that reserved nameplate space.
-    await render(f.game, 'short-clearance-test', 620, false, 450)
-    await f.update('pitch')
-    const body = host.querySelector<HTMLElement>(
-      '[data-testid="remote-scoring-update-lines"]'
-    )!
-    expect(parseFloat(body.style.height)).at.least(100)
-    expect(
-      parseFloat(panel()!.style.top) + parseFloat(body.style.height) + 4
-    ).at.most(442)
-    await tap('Collapse scoring updates')
-    expect(parseFloat(panel()!.style.top) + 44).at.most(442)
-  })
+  for (const lines of [1, 3, 5]) {
+    it(`draws a 44-point header above ${lines} log lines at the frame origin`, async () => {
+      const f = fixture()
+      await render(f.game, 'frame-test', lines, false, 410)
+      await f.update('pitch')
+      const body = host.querySelector<HTMLElement>(
+        '[data-testid="remote-scoring-update-lines"]'
+      )!
+      expect(body.style.height).equals(`${lines * 20}px`)
+      expect(panel()!.style.top).equals('410px')
+      expect(panel()!.style.left).equals('12px')
+      await tap('Collapse scoring updates')
+      expect(panel()!.style.top).equals('410px')
+      await tap('Expand scoring updates')
+    })
+  }
   it('updates a named play in place and keeps its pitch sequence separate from the outcome', async () => {
     const f = fixture(true)
     await render(f.game, 'summary-test')
@@ -136,23 +135,11 @@ describe('remote scoring update panel', () => {
     expect(
       host.querySelector('[aria-label="Follow latest scoring updates"]')
     ).not.equals(null)
-    await render(f.game, 'remote-panel-test', 620, true)
+    await render(f.game, 'remote-panel-test', 5, true)
     await render(f.game)
     expect(
       host.querySelector('[aria-label="Follow latest scoring updates"]')
     ).equals(null)
-  })
-  it('shrinks to the available region without covering the catcher or Undo', async () => {
-    const f = fixture()
-    await render(f.game, 'landscape-clearance', 300, false, 120)
-    await f.update('first')
-    const body = host.querySelector<HTMLElement>(
-      '[data-testid="remote-scoring-update-lines"]'
-    )!
-    expect(parseFloat(body.style.height)).below(100 + getTheme().rem(1))
-    expect(
-      parseFloat(panel()!.style.top) + parseFloat(body.style.height) + 4
-    ).at.most(112)
   })
   it('resumes following when a paused log is collapsed and reopened', async () => {
     const f = fixture()
@@ -179,37 +166,6 @@ describe('remote scoring update panel', () => {
     expect(
       host.querySelector('[aria-label="Follow latest scoring updates"]')
     ).equals(null)
-  })
-  it('collapses when the free region cannot fit both header and Follow controls', async () => {
-    const f = fixture()
-    await render(f.game, 'undo-clearance', 180, false, 40)
-    await f.update('first')
-    expect(
-      host.querySelector('[data-testid="remote-scoring-update-lines"]')
-    ).equals(null)
-    expect(host.querySelector('[aria-label="Expand scoring updates"]')).equals(
-      null
-    )
-    const disabled = host.querySelector<HTMLElement>(
-      '[aria-label="Scoring updates need more vertical space"]'
-    )!
-    expect(disabled.getAttribute('aria-disabled')).equals('true')
-    const preference = await scoringPreferences.read('undo-clearance')
-    await tap('Scoring updates need more vertical space')
-    expect(await scoringPreferences.read('undo-clearance')).deep.equals(
-      preference
-    )
-    expect(
-      host.querySelector('[aria-label="Dismiss scoring updates"]')
-    ).not.equals(null)
-    expect(
-      host.querySelector('[aria-label="Follow latest scoring updates"]')
-    ).equals(null)
-    expect(parseFloat(panel()!.style.top) + 48).at.most(180 - 64)
-    await render(f.game, 'undo-clearance', 620)
-    expect(
-      host.querySelector('[data-testid="remote-scoring-update-lines"]')
-    ).not.equals(null)
   })
   it('resumes through the down-chevron after the reader pauses', async () => {
     const f = fixture()
@@ -284,10 +240,8 @@ describe('remote scoring update panel', () => {
     const lines = host.querySelector<HTMLElement>(
       '[data-testid="remote-scoring-update-lines"]'
     )!
-    expect(lines.style.height).equals(`${100 + getTheme().rem(1)}px`)
-    expect(Number.parseFloat(panel()!.style.top)).equals(
-      404 + getTheme().rem(0.5)
-    )
+    expect(lines.style.height).equals('100px')
+    expect(Number.parseFloat(panel()!.style.top)).equals(280)
     const author = [...lines.querySelectorAll<HTMLElement>('*')].find(
       element => element.textContent === 'Mike T.: '
     )!
@@ -295,7 +249,7 @@ describe('remote scoring update panel', () => {
     color.style.color = getTheme().scoringCountdownColor
     expect(author.style.color).equals(color.style.color)
     await f.update('second')
-    expect(lines.style.height).equals(`${100 + getTheme().rem(1)}px`)
+    expect(lines.style.height).equals('100px')
   })
   it('retains only 50 logical lines and renders compact yellow author prefixes', async () => {
     const f = fixture()
@@ -307,7 +261,7 @@ describe('remote scoring update panel', () => {
     const controls = host.querySelector<HTMLElement>(
       '[data-testid="remote-scoring-update-controls"]'
     )!
-    expect(controls.style.position).equals('absolute')
+    expect(controls.style.position).equals('relative')
     expect(controls.style.top).equals('0px')
     for (const id of [
       'remote-scoring-collapse-blur',
@@ -327,14 +281,14 @@ describe('remote scoring update panel', () => {
     await render(f.game, 'overlay-test')
     await f.update('first')
     expect(panel()).not.equals(null)
-    await render(f.game, 'overlay-test', 620, true)
+    await render(f.game, 'overlay-test', 5, true)
     expect(panel()).equals(null)
     await f.update('during-menu')
     expect(panel()).equals(null)
     await render(f.game, 'overlay-test')
     expect(panel()!.textContent!.match(/Mike T\./g)).has.length(4)
     await tap('Collapse scoring updates')
-    await render(f.game, 'overlay-test', 620, true)
+    await render(f.game, 'overlay-test', 5, true)
     await f.update('during-sheet')
     await render(f.game, 'overlay-test')
     expect(
@@ -389,14 +343,12 @@ describe('remote scoring update panel', () => {
   })
   it('clears history on game/account changes and keeps the expanded height fixed', async () => {
     const f = fixture()
-    await render(f.game, 'scroller-test', 400)
+    await render(f.game, 'scroller-test', 5)
     for (let i = 0; i < 6; i++) await f.update(String(i))
     const lines = host.querySelector<HTMLElement>(
       '[data-testid="remote-scoring-update-lines"]'
     )!
-    expect(Number.parseFloat(lines.style.height)).equals(
-      100 + getTheme().rem(1)
-    )
+    expect(Number.parseFloat(lines.style.height)).equals(100)
     expect(panel()!.style.width).equals('369px')
     expect(Number.parseFloat(panel()!.style.top)).at.most(400 - 64)
     await render(f.game, 'another-account')
