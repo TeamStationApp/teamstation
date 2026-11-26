@@ -29,9 +29,12 @@
     )
   const rectOf = selector => {
     const rect = document.querySelector(selector)?.getBoundingClientRect()
-    return rect && { top: rect.top, bottom: rect.bottom, height: rect.height }
+    if (!rect) return undefined
+    const { top, bottom, left, right, width, height } = rect
+    return { top, bottom, left, right, width, height }
   }
   const box = id => rectOf('[data-testid="' + id + '"]')
+  const matrix = query.has('geometry')
   const timer = setInterval(() => {
     if (document.hidden) return
     const root = box('scoring-viewport')
@@ -64,6 +67,44 @@
     }
     const data = {
       menu: rectOf('[aria-label="Open scoring menu"]'),
+      ...(matrix && {
+        holder: box('scoring-field-holder'),
+        face: rectOf('[data-position="C"]'),
+        side: box('scoring-side'),
+        boxScore: box('replay-box-score'),
+        logText: document.querySelector(
+          '[data-testid="remote-scoring-update-lines"]'
+        )?.textContent,
+        undo: document
+          .querySelector('[aria-label^="Undo "]')
+          ?.getAttribute('aria-label'),
+        collapsed: !!document.querySelector(
+          '[aria-label="Expand scoring updates"]'
+        ),
+        landmarks: window.scoringLandmarks?.(
+          Number(query.get('radius')),
+          Number(query.get('angle'))
+        ),
+        buttons: Object.fromEntries(
+          [
+            'Ball',
+            'Called Strike',
+            'Collapse scoring updates',
+            'Expand scoring updates',
+            'Dismiss scoring updates',
+            'Open scoring menu',
+            'Set Team Rosters',
+            'Cancel'
+          ].map(label => [
+            label,
+            rectOf(
+              '[aria-label="' +
+                label +
+                '"]:not([aria-disabled="true"]):not(:disabled)'
+            )
+          ])
+        )
+      }),
       documentId,
       width: window.innerWidth,
       small: probe.getBoundingClientRect().height,

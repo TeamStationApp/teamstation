@@ -9,9 +9,37 @@ import {
 } from './cameraModel'
 import { createPlayers } from './fieldModel'
 import { nameplateContains, projectPlayerLabel } from './playerPresentation'
-import { scoringFrame } from './scoringFrame'
+import { scoringFrame, scoringLayout } from './scoringFrame'
 
 describe('scoring field frame', function () {
+  for (const [width, height, side] of [
+    [393, 852, false],
+    [852, 393, false],
+    [744, 1133, false],
+    [1133, 744, true],
+    [834, 1194, true],
+    [1194, 834, true],
+    [820, 1180, true],
+    [819, 1180, false],
+    [1200, 640, true],
+    [1200, 639, false]
+  ] as const) {
+    it(`uses the measured field-column width at ${width}×${height}`, function () {
+      const layout = scoringLayout(width, height)
+      expect(layout).deep.equals({
+        side,
+        fieldWidth: side ? width - 360 : width
+      })
+      const frame = scoringFrame({
+        width,
+        height,
+        platform: 'ios',
+        insets: { left: 0, top: 24, right: 0, bottom: 20 }
+      })
+      expect(frame.camera.corners).equals(side)
+      expect(frame.logLines === 0).equals(side)
+    })
+  }
   for (const [width, height, top, bottom, platform, lines] of [
     [320, 568, 0, 0, 'web', 0],
     [375, 667, 20, 0, 'ios', 1],
