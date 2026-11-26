@@ -17,6 +17,7 @@ import {
 } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
+import type { GameState } from '../../common/scoring/state'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
 import { PillButton } from '../components/PillTabs'
@@ -47,6 +48,7 @@ import {
   HistoryPopup,
   type HistoryRow
 } from '../scoring/ScoringHistory'
+import { ScoringSidePanel } from '../scoring/ScoringSidePanel'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
 import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
@@ -80,6 +82,7 @@ export const PITCH_CONTROLS = [
   { kind: 'play', label: 'Ball in Play' }
 ] as const
 export interface BaseballScreenProps {
+  boxState?: GameState
   frame?: ScoringFrame
   onRootSize?: (size: { width: number; height: number }) => void
   remoteUpdates?: Pick<
@@ -263,6 +266,7 @@ interface KeptFieldDraw {
   field: FieldCanvasProps
   /** The canvas's vertical offset in the screen. */
   offset: number
+  fieldWidth?: number
   suspended: boolean
   /** Counts the screens that have taken the field, the first 1. */
   taken: number
@@ -348,7 +352,7 @@ function KeptField(props: {
   return (
     <View
       testID="scoring-field-holder"
-      style={fieldHolderStyle(draw?.offset ?? 0)}
+      style={[fieldHolderStyle(draw?.offset ?? 0), { width: draw?.fieldWidth }]}
     >
       {field != null && draw?.suspended === false && (
         <FieldCanvas
@@ -380,7 +384,8 @@ function KeptField(props: {
 function useKeptField(
   field: FieldCanvasProps,
   offset: number,
-  suspended: boolean
+  suspended: boolean,
+  fieldWidth?: number
 ): boolean {
   const relay = useContext(KeptFieldContext)
   const taken = useRef(0)
@@ -389,7 +394,7 @@ function useKeptField(
     // This screen takes the field: the keeper tells it where the bases, the
     // board and the catcher are, as a field of its own tells it as it starts.
     if (taken.current === 0) taken.current = (relay.get()?.taken ?? 0) + 1
-    relay.set({ field, offset, suspended, taken: taken.current })
+    relay.set({ field, offset, fieldWidth, suspended, taken: taken.current })
   })
   return relay != null
 }
@@ -428,7 +433,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const kept = useKeptField(
     { ...translatedCanvas, onScoreboardBounds },
     offset,
-    props.suspended === true
+    props.suspended === true,
+    props.frame?.fieldWidth
   )
   const surface = useFieldSurface(
     kept ? 'contained' : props.frame != null ? 'scoring' : 'field'
@@ -485,7 +491,10 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         />
       )}
       {!kept && (
-        <View testID="scoring-field-holder" style={fieldHolderStyle(offset)}>
+        <View
+          testID="scoring-field-holder"
+          style={[fieldHolderStyle(offset), { width: frame?.fieldWidth }]}
+        >
           {props.suspended !== true && (
             <FieldCanvas
               {...translatedCanvas}
@@ -501,6 +510,14 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         pointerEvents="box-none"
         style={[
           { position: 'absolute', inset: 0, justifyContent: 'space-between' },
+          frame == null
+            ? undefined
+            : {
+                width: frame.fieldWidth,
+                right: undefined,
+                // Web menus anchored to the viewport can extend over the box score.
+                zIndex: Platform.OS === 'web' && frame.side ? 1 : undefined
+              },
           bandedSafe(surface.safe, offset)
         ]}
       >
@@ -875,32 +892,25 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           }}
         />
       )}
-      {props.remoteUpdates != null && (
-        <View
-          testID="scoring-log-band"
-          pointerEvents="box-none"
-          collapsable={false}
-          style={{
-            position: 'absolute',
-            top: frame?.logTop ?? 0,
+      {frame == null && props.remoteUpdates != null && (
+        <RemoteScoringUpdates
+          {...props.remoteUpdates}
+          frame={{
+            top: 0,
             left: row.left,
-            width: (frame?.fieldWidth ?? viewportWidth) - row.left - row.right,
-            height: Math.max(0, (frame?.stripTop ?? 0) - (frame?.logTop ?? 0)),
-            zIndex: 10
+            width: viewportWidth - row.left - row.right,
+            lines: 0
           }}
-        >
-          <RemoteScoringUpdates
-            key={`${props.remoteUpdates.game.gameId}:${props.remoteUpdates.userId}`}
-            {...props.remoteUpdates}
-            frame={{
-              top: 0,
-              left: 0,
-              width:
-                (frame?.fieldWidth ?? viewportWidth) - row.left - row.right,
-              lines: frame?.logLines ?? 0
-            }}
-          />
-        </View>
+        />
+      )}
+      {frame != null && (
+        <ScoringSidePanel
+          frame={frame}
+          insets={insets}
+          row={row}
+          updates={props.remoteUpdates}
+          state={props.boxState}
+        />
       )}
     </View>
   )

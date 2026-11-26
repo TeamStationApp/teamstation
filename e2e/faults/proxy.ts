@@ -10,6 +10,7 @@ import type { Duplex } from 'node:stream'
 
 import { sendReply, upstreamFailed } from '../core/forward'
 import type { ServerError } from '../core/invariants'
+import type { ScoringOutage } from './scoringOutage'
 
 /**
  * Sits between the app and a server, recording every 5xx, and breaking the matched
@@ -18,6 +19,7 @@ import type { ServerError } from '../core/invariants'
  */
 export interface FaultProxyOptions {
   target: string
+  scoringOutage?: ScoringOutage
   fault?: string
   match?: RegExp
   host?: string
@@ -154,7 +156,11 @@ export async function startFaultProxy(
   }
 
   const server: Server = createServer((req, res) => {
-    if (options.control?.(req, res) === true) return
+    if (
+      options.control?.(req, res) === true ||
+      options.scoringOutage?.request(req) === true
+    )
+      return
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
     options.onRequest?.(req.method ?? 'GET', path)
     if (
@@ -211,6 +217,7 @@ export async function startFaultProxy(
   const drops = (path: string): boolean => !path.startsWith('/api/v1/none')
 
   server.on('upgrade', (req, socket, head) => {
+    if (options.scoringOutage?.socket(req, socket) === true) return
     open.add(socket)
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
     upgraded.set(socket, path)
