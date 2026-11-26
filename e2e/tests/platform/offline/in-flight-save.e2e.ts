@@ -3,14 +3,17 @@ import { dirname } from 'node:path'
 
 import { expect } from 'chai'
 
+import type { FixtureAccount } from '../../../core/fixtures'
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
 import { defineE2e, type E2eContext } from '../../../core/spec'
+import { appLink } from '../../../rigs/app/setServer'
 import {
   type CoachApp,
   DEVELOP_APP,
   labelOf,
-  openCoachApp
+  openCoachApp,
+  openFullGameScoring
 } from '../../../rigs/coach/coachApp'
 
 /**
@@ -32,6 +35,7 @@ import {
  */
 
 interface World {
+  scorekeeper: FixtureAccount
   game: string
   coach: { email: string; password: string }
 }
@@ -41,6 +45,7 @@ async function worldOf(ctx: E2eContext): Promise<World> {
   const coach = world.accounts.coach
   return {
     game: world.ids.game,
+    scorekeeper: world.accounts.scorekeeper,
     coach: { email: coach.email, password: coach.password }
   }
 }
@@ -89,14 +94,6 @@ async function shownId(app: CoachApp, id: string): Promise<boolean> {
   return (await app.nodes()).some(node => node.id === id)
 }
 
-async function openScoring(app: CoachApp, world: World): Promise<void> {
-  await app.m.openLink({ link: `teamstation://games/${world.game}/score` })
-  // The control, not the Undo row's description: and settled, so a tap
-  // lands.
-  await app.m.extendedWaitUntil({ visible: { id: 'Ball' }, timeout: 60000 })
-  await sleep(1500)
-}
-
 export default defineE2e({
   id: 'platform/offline/in-flight-save',
   title:
@@ -131,7 +128,7 @@ export default defineE2e({
       if (setFault == null)
         throw new BlockedError('needs a stack whose fault server can be set')
       const world = await worldOf(ctx)
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.scorekeeper)
       const { m } = app
       const seen: Array<Record<string, unknown>> = []
       const note = async (step: string): Promise<void> => {
@@ -140,9 +137,9 @@ export default defineE2e({
           step,
           at: new Date().toISOString(),
           board: await board(app),
-          heldGameNotice: await shownId(app, 'heldGameNotice'),
+          heldGameNotice: await shownId(app, 'heldGameMessage'),
           saveStatus: (await app.nodes())
-            .filter(node => node.id === 'scoringSaveStatus')
+            .filter(node => node.id === 'scoringNotice')
             .map(labelOf)
         })
         writeFileSync(
@@ -150,7 +147,7 @@ export default defineE2e({
           JSON.stringify(seen, null, 2)
         )
       }
-      await openScoring(app, world)
+      await openFullGameScoring(app, world.game)
       await m.tapOn({ id: 'Ball' })
       let online = await callsOnServer(ctx, world)
       for (let i = 0; i < 15 && online.length === 0; i++) {
@@ -171,11 +168,11 @@ export default defineE2e({
         await m.run(
           [
             { tapOn: { id: 'Ball' } },
-            { openLink: `teamstation://games/${world.game}` },
+            { openLink: appLink(`games/${world.game}`) },
             {
               extendedWaitUntil: { notVisible: { text: 'Ball' }, timeout: 8000 }
             },
-            { openLink: `teamstation://games/${world.game}/score` },
+            { openLink: appLink(`games/${world.game}/score`) },
             { takeScreenshot: 'reopened-opening' }
           ],
           { cwd: dirname(ctx.artifact('reopened-opening.png')) }
@@ -189,7 +186,7 @@ export default defineE2e({
         await sleep(15000)
         await note('after-deadline')
         // A pitch scored on what the screen opened on.
-        await m.tapOn({ text: 'Strike' })
+        await m.tapOn({ text: 'Called Strike' })
         await sleep(2000)
         await note('strike-while-held')
         await setFault(null)
@@ -232,6 +229,9 @@ export default defineE2e({
         'every pitch, in order, on the server'
       ).deep.equals(['B', 'B', 'C'])
       expect(at('after-send')?.heldGameNotice, 'nothing refused').equals(false)
+      expect(at('after-send')?.saveStatus, 'the queue has drained').deep.equals(
+        []
+      )
     }
   }
 })

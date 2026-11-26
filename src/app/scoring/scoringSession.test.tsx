@@ -193,20 +193,20 @@ describe('local scoring controls', function () {
     client.roster = roster
     await click('Retry loading scoring')
     expect(document.body.textContent).includes('Owls 0 · Hawks 0')
-    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
     await click('Ball')
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 5))
     })
     expect(
-      document.querySelector('[aria-label="Save status"]')?.textContent
+      document.querySelector('[data-testid="scoringNotice"]')?.textContent
     ).equals('Offline — 1 play waiting')
     fail = false
     await click('Ball')
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 5))
     })
-    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
     expect(store.games.get('g1')?.currentPlay).not.equals(null)
     await mount(client, {
       open: async () => {
@@ -303,13 +303,13 @@ describe('saving from the scoring screen', function () {
       await new Promise(resolve => setTimeout(resolve, 5))
     })
     // The save is still out, and the line says nothing of it.
-    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
     expect(document.body.textContent).not.includes('Saving…')
     release()
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 5))
     })
-    expect(document.querySelector('[aria-label="Save status"]')).equals(null)
+    expect(document.querySelector('[data-testid="scoringNotice"]')).equals(null)
     expect(store.games.get('g1')?.currentPlay).not.equals(null)
   })
 

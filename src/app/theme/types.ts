@@ -80,6 +80,8 @@ export interface Theme {
   // Scoring instruction and decision surfaces
   scoringInstructionBackground: string
   scoringInstructionBorder: string
+  scoringNoticeFill: string
+  scoringNoticeText: string
   scoringStatusText: string
   scoringInstructionText: string
   scoringCountdownColor: string

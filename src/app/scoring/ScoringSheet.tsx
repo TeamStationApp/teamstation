@@ -190,6 +190,7 @@ function SheetContent({
   onBackdropPress,
   onClose,
   keyboardVerticalOffset,
+  notice,
   footer,
   hidden = false,
   children
@@ -201,6 +202,7 @@ function SheetContent({
    * would slide down over it first (a phone's modal animates out).
    */
   hidden?: boolean
+  notice?: React.ReactNode
   compact?: boolean
   placement?: 'top' | 'bottom' | 'center'
   title: string
@@ -527,6 +529,7 @@ function SheetContent({
               </KeyboardAvoidingView>
             )}
           </SafeAreaInsetsContext.Consumer>
+          {notice}
         </SafeAreaProvider>
       )}
     </Modal>

@@ -377,6 +377,11 @@ export default defineE2e({
       await app.m.tapOn({ text: 'Open scoring menu' })
       await app.m.tapOn({ text: 'Swap Home and Away' })
       await app.m.tapOn({ text: 'Reset and Swap|Confirm Swap' })
+      if (ctx.surface === 'web-chromium')
+        await app.m.assertVisible({
+          css: '[data-testid="scoringNotice"]',
+          timeout: 30000
+        })
       await checkpoint(
         ctx,
         'swapped',
@@ -441,6 +446,11 @@ export default defineE2e({
         })
         const opened = Date.now() - started
         await sleep(1500)
+        if (ctx.surface === 'web-chromium')
+          await app.m.assertVisible({
+            css: '[data-testid="scoringNotice"]',
+            timeout: 30000
+          })
         await shot('offline-return')
         await checkpoint(
           ctx,

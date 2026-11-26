@@ -8,6 +8,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import { Pool } from 'pg'
 
 import { POSITIONS } from '../../src/app/scoring/scoringTypes'
+import type { TeamLineups } from '../../src/common/api'
 import { makeId } from '../../src/common/ids'
 import type { Role } from '../../src/common/roles'
 import type { StoredGame } from '../../src/common/scoring/session'
@@ -21,8 +22,10 @@ import type { MediaContext } from '../../src/server/media/mediaContext'
 import { withAudit } from '../../src/server/middleware/withAudit'
 import { errorHandler } from '../../src/server/middleware/withErrors'
 import { groupRoutes } from '../../src/server/routes/groups'
+import { guardianRoutes } from '../../src/server/routes/guardians'
 import { meRoutes } from '../../src/server/routes/me'
 import { playerRoutes } from '../../src/server/routes/players'
+import { statsRoutes } from '../../src/server/routes/stats'
 import { teamRoutes } from '../../src/server/routes/teams'
 import { insertFixtureUsers } from '../../src/test/insertFixtureUsers'
 
@@ -64,6 +67,7 @@ export interface RosterEditFixture {
   ) => Promise<void>
   rosterFailure: (enabled: boolean) => void
   saveFailure: (enabled: boolean) => void
+  refuseWrites: (enabled: boolean) => void
   pauseWrites: (enabled: boolean) => void
   pauseSettings: (enabled: boolean, releasePending?: boolean) => void
   pauseRosterReads: (enabled: boolean, releasePending?: boolean) => void
@@ -275,6 +279,24 @@ export async function rosterEditFixture(
     app.use(withAudit(db))
     app.use('/api/v1', meRoutes(db, undefined, media))
     app.use('/api/v1', playerRoutes(db, media))
+    app.use('/api/v1', statsRoutes(db, media))
+    // This scorer has no age attestation and cannot message a player.
+    app.get('/api/v1/chat/dm-reach', (_req, res) => {
+      const refusal = {
+        code: 'forbidden',
+        message: 'Give your age to use chat',
+        details: { reason: 'ageRequired' }
+      }
+      res.status(403).json(refusal)
+    })
+    app.use(
+      '/api/v1',
+      guardianRoutes(db, {
+        sendInvite: async () => {
+          throw new Error('The scoring fixture never sends invitations.')
+        }
+      })
+    )
     app.use('/api/v1', teamRoutes(db, media))
     app.use('/api/v1', groupRoutes(db, media))
     app.use(errorHandler)
@@ -301,6 +323,7 @@ export async function rosterEditFixture(
     }
     let rosterFailure = false
     let saveFailure = false
+    let refused = false
     let paused = false
     let pausedSettings = false
     let pausedRosters = false
@@ -355,13 +378,23 @@ export async function rosterEditFixture(
         }
         res.setHeader('Content-Type', 'application/json')
         let body: unknown
-        if (u.pathname === '/api/v1/auth/me')
+        if (u.pathname === '/api/v1/node/ios-app-banner') {
+          if (req.headers.accept?.includes('text/css') === true) {
+            res.setHeader('Content-Type', 'text/css')
+            res.end('')
+            return
+          }
+          body = { appId: null }
+        } else if (u.pathname === '/api/v1/auth/me')
           body = {
             id: userIdOfGumbo(ACTOR),
             gumboId: ACTOR,
             displayName: 'Roster Scorer',
             isAdmin: false
           }
+        else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
+        else if (u.pathname === '/api/v1/me/offline-scoring')
+          body = { games: [], nextBoundary: null, digest: 'empty' }
         else if (u.pathname === '/api/v1/me/notifications/summary')
           body = { hasPending: false }
         else if (u.pathname === '/api/v1/health')
@@ -374,6 +407,18 @@ export async function rosterEditFixture(
           }
         else if (/\/games\/[^/]+\/events$/.test(u.pathname)) {
           if (req.method === 'POST') {
+            if (refused) {
+              req.resume()
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(
+                JSON.stringify({
+                  code: 'badRequest',
+                  message: 'Fixture scoring edit refused'
+                })
+              )
+              return
+            }
             if (paused) await new Promise<void>(resolve => waiting.add(resolve))
             let text = ''
             for await (const chunk of req) text += String(chunk)
@@ -476,11 +521,25 @@ export async function rosterEditFixture(
             assignedRoles: { away: [], home: ['scorekeeper'] },
             videos: []
           }
-        else if (u.pathname.endsWith('/default-lineup')) {
+        else if (u.pathname.endsWith('/lineups')) {
+          const side = (teamId: string, teamName: string): TeamLineups => ({
+            teamId,
+            teamName,
+            start: null,
+            current: null,
+            changes: []
+          })
+          body = {
+            away: side('away', 'Owls'),
+            home: side('home', 'Hawks'),
+            digest: 'fixture',
+            generation: 0
+          }
+        } else if (u.pathname.endsWith('/default-lineup')) {
           const side = u.pathname.includes('/away/') ? 'away' : 'home'
           const roster = rows(side)
           const person = (index: number): object => ({
-            userId: roster[index].userId,
+            gumboId: roster[index].gumboId,
             name: `${roster[index].firstName} ${roster[index].lastName[0]}`,
             jersey: roster[index].jersey ?? ''
           })
@@ -588,6 +647,9 @@ export async function rosterEditFixture(
       },
       saveFailure: enabled => {
         saveFailure = enabled
+      },
+      refuseWrites: enabled => {
+        refused = enabled
       },
       pauseWrites,
       pauseSettings: (enabled, releasePending = true) => {

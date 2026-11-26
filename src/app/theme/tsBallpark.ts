@@ -139,6 +139,8 @@ export const tsBallpark: Theme = {
   plateIconColor: palette.moss,
   scoringInstructionBackground: '#665016',
   scoringInstructionBorder: '#c5a13c',
+  scoringNoticeFill: '#FFD34D',
+  scoringNoticeText: '#241D0C',
   scoringStatusText: '#665016',
   scoringInstructionText: '#ffffff',
   scoringCountdownColor: '#f1cf55',
