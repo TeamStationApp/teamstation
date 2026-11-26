@@ -1744,7 +1744,11 @@ describe('the outbox against the server', function () {
     )
     const reader = phoneOn(f, mkdtempSync(join(dir, 'queued-run-reader-')))
     // Four pitches, each saved as it is scored: the session's last scoring.
-    const score = async (gameId: string): Promise<unknown> => {
+    const score = async (
+      gameId: string,
+      /** Before the first pitch, once the game is open. */
+      opened: () => void = () => undefined
+    ): Promise<unknown> => {
       const session = await ScoringSession.open(
         {
           load: async id => await client.gameEvents(id),
@@ -1755,6 +1759,7 @@ describe('the outbox against the server', function () {
         { setTimer: () => null, clearTimer: () => undefined }
       )
       try {
+        opened()
         for (const call of ['B', 'C', 'B', 'S'] as const) {
           expect(session.apply({ type: 'pitch', call }).problems).deep.equals(
             []
@@ -1777,9 +1782,11 @@ describe('the outbox against the server', function () {
       [200, false],
       [200, false]
     ])
-    // The same four with no signal, sent once it comes back.
-    transport.held = true
-    const last = await score(queued)
+    // The same four with no signal, from a game opened online, sent once it
+    // comes back.
+    const last = await score(queued, () => {
+      transport.held = true
+    })
     expect((await client.outboxSummary()).count).equals(4)
     transport.held = false
     client.wakeOutbox(true)
