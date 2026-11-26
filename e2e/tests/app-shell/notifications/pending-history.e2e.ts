@@ -368,7 +368,16 @@ export default defineE2e({
                   { text: 'Cannot reach TeamStation.*', absent: true },
                   { text: '^Retry notifications$', absent: true },
                   ...(first.items.length === 0
-                    ? []
+                    ? [
+                        {
+                          text:
+                            mode === 'Pending'
+                              ? 'No approvals are waiting for you.'
+                              : mode === 'Sent'
+                                ? 'No sent invitations are waiting for approval.'
+                                : 'No resolved notifications yet.'
+                        }
+                      ]
                     : [{ id: `notification-row-${first.items[0].requestId}` }])
                 ]
               })
@@ -399,9 +408,20 @@ export default defineE2e({
                     break
                   await session.m.scroll({ direction: 'DOWN' })
                 }
+                await ctx.checkpoint(`${role}-${mode.toLowerCase()}-next`, {
+                  expect: [{ id: `notification-row-${secondId}` }]
+                })
                 await eventually(async () => {
                   expect(
-                    timings.some(row => row.path.includes('cursor='))
+                    timings.some(row => {
+                      const params = new URL(row.path, ctx.stack.origin)
+                        .searchParams
+                      return (
+                        params.has('cursor') &&
+                        params.has('sent') === (mode === 'Sent') &&
+                        params.has('history') === (mode === 'History')
+                      )
+                    })
                   ).equals(true)
                 })
               }
