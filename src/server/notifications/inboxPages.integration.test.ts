@@ -15,6 +15,16 @@ import { hasPendingNotifications, inbox, notificationDetail } from './inbox'
 import { InboxProjection } from './inboxProjection'
 import * as wording from './requestInformation'
 
+// Coverage adds work inside the measured call. The combined coverage command
+// separately requires this entire suite without instrumentation and with the
+// same 2 s budget. Ordinary test.integration always enforces that budget here.
+const coverageTimings =
+  process.env.TS_NOTIFICATION_COVERAGE_ONLY === '1' &&
+  process.env.NODE_V8_COVERAGE != null
+function withinLocalBudget(ms: number): void {
+  if (!coverageTimings) expect(ms).lessThan(2000)
+}
+
 /** Scale is synthetic; each budget counts real PostgreSQL round trips. */
 describe('bounded notification tab pages', function () {
   this.timeout(180000)
@@ -175,6 +185,7 @@ describe('bounded notification tab pages', function () {
       console.log(
         JSON.stringify({
           case: 'tab-page',
+          instrumented: coverageTimings,
           phase,
           options,
           person,
@@ -207,13 +218,13 @@ describe('bounded notification tab pages', function () {
       expect(first.page.items).length(25)
       expect(first.page.hasPending).equals(true)
       expect(first.queries).at.most(500)
-      expect(first.ms).lessThan(2000)
+      withinLocalBudget(first.ms)
       const last = await read({
         history: true,
         cursor: `1|${new Date(f.clock.now().getTime() - 100000 + Math.max(0, count - 30)).toISOString()}|`
       })
       expect(last.queries).at.most(500)
-      expect(last.ms).lessThan(2000)
+      withinLocalBudget(last.ms)
       const http = await f.h.request(
         'GET',
         '/me/notifications?history=1',
@@ -259,7 +270,7 @@ describe('bounded notification tab pages', function () {
         ...(cursor == null ? {} : { cursor })
       })
       expect(result.queries).at.most(500)
-      expect(result.ms).lessThan(2000)
+      withinLocalBudget(result.ms)
       seen.push(...result.page.items.map(r => r.requestId))
       cursor = result.page.nextCursor
     } while (cursor != null)
@@ -291,7 +302,7 @@ describe('bounded notification tab pages', function () {
       expect(result.page.nextCursor).equals(null)
       expect(result.page.hasPending).equals(true)
       expect(result.queries).lessThan(1600)
-      expect(result.ms).lessThan(2000)
+      withinLocalBudget(result.ms)
       await read({ sent: true }, 101, 'cold')
       const sent = await read({ sent: true }, 101, 'warm')
       expect(sent.page).deep.equals({
@@ -300,7 +311,7 @@ describe('bounded notification tab pages', function () {
         hasPending: true
       })
       expect(sent.queries).lessThan(800)
-      expect(sent.ms).lessThan(2000)
+      withinLocalBudget(sent.ms)
     })
   it('keeps information-only first/late pages and empty Sent reads bounded through10000 events', async () => {
     const read = measured()
@@ -312,7 +323,7 @@ describe('bounded notification tab pages', function () {
       const first = await read({ history: true })
       expect(first.page.items).length(Math.min(25, total))
       expect(first.queries).at.most(100)
-      expect(first.ms).lessThan(2000)
+      withinLocalBudget(first.ms)
       if (first.page.nextCursor != null) {
         const next = await read({
           history: true,
@@ -320,7 +331,7 @@ describe('bounded notification tab pages', function () {
         })
         expect(next.page.items).length(25)
         expect(next.queries).at.most(100)
-        expect(next.ms).lessThan(2000)
+        withinLocalBudget(next.ms)
         expect(
           new Set([...first.page.items, ...next.page.items].map(r => r.id)).size
         ).equals(50)
@@ -462,7 +473,7 @@ describe('bounded notification tab pages', function () {
       expect(result.page.items.map(row => row.requestId)).deep.equals(visible)
       expect(result.page).include({ nextCursor: null, hasPending: false })
       expect(result.queries).lessThan(1300)
-      expect(result.ms).lessThan(2000)
+      withinLocalBudget(result.ms)
       await f.h.db
         .updateTable('users')
         .set({ disabled_at: f.clock.now() })

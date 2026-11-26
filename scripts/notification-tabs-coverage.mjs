@@ -27,9 +27,12 @@ const temp = resolve(report, 'tmp')
 rmSync(report, { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
 function run(command, args, env = {}) {
+  const childEnv = { ...process.env, ...env }
+  for (const key of Object.keys(childEnv))
+    if (childEnv[key] == null) delete childEnv[key]
   const result = spawnSync(command, args, {
     stdio: 'inherit',
-    env: { ...process.env, ...env }
+    env: childEnv
   })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
@@ -97,8 +100,27 @@ run(
     ...unit,
     ...(combined ? integration : [])
   ],
-  { NODE_V8_COVERAGE: temp }
+  { NODE_V8_COVERAGE: temp, TS_NOTIFICATION_COVERAGE_ONLY: '1' }
 )
+if (combined) {
+  console.log(
+    'Uninstrumented real-Postgres performance gate: every warm read under 2000 ms'
+  )
+  run(
+    'node_modules/.bin/mocha',
+    [
+      '--exit',
+      '--timeout',
+      '180000',
+      '-r',
+      'sucrase/register',
+      '-r',
+      './src/test/scoringDomSetup.cjs',
+      'src/server/notifications/inboxPages.integration.test.ts'
+    ],
+    { NODE_V8_COVERAGE: undefined, TS_NOTIFICATION_COVERAGE_ONLY: '0' }
+  )
+}
 run('node', ['scripts/build-scoring-tests.mjs'])
 run('node_modules/.bin/mocha', [
   '--exit',
