@@ -2,8 +2,12 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { migrations } from '../../src/migrate/migrations'
 import { faultProblems } from '../faults/catalogue'
+import { capabilityProblems } from './capabilities'
+import { dumpProblems, type PgTool } from './dumps'
 import { globToRegExp } from './glob'
+import { readGoldenSuite } from './goldens'
 import { type LegacyReport, legacyReport, readLegacy } from './legacy'
 import { lintFile } from './lint'
 import {
@@ -14,7 +18,7 @@ import {
   testFiles
 } from './manifest'
 import { moduleOf, moduleProblems } from './modules'
-import { specProblems } from './spec'
+import { OLD_SERVICES, SERVICES, specProblems } from './spec'
 
 export interface ValidationReport extends LegacyReport {
   problems: string[]
@@ -55,9 +59,22 @@ function namedFaults(root: string): Record<string, string[]> {
   return named
 }
 
+/** A spec's needs outside `specProblems`: its capabilities and its services. */
+export function needProblems(spec: {
+  surfaces: Parameters<typeof capabilityProblems>[0]['surfaces']
+  services: string[]
+}): string[] {
+  const problems = capabilityProblems(spec)
+  const known: readonly string[] = [...SERVICES, ...OLD_SERVICES]
+  for (const service of spec.services) {
+    if (!known.includes(service)) problems.push(`unknown service "${service}"`)
+  }
+  return problems
+}
+
 export function validate(
   root = ROOT,
-  options: { strict?: boolean } = {}
+  options: { strict?: boolean; pg?: PgTool } = {}
 ): ValidationReport {
   const strict = options.strict === true
   const problems: string[] = []
@@ -74,7 +91,7 @@ export function validate(
   }
   for (const file of testFiles(root)) {
     const spec = loadSpec(file, root)
-    for (const problem of specProblems(spec)) {
+    for (const problem of [...specProblems(spec), ...needProblems(spec)]) {
       problems.push(`${file}: ${problem}`)
     }
     for (const glob of spec.covers) {
@@ -106,10 +123,23 @@ export function validate(
       }
     }
   }
+  try {
+    readGoldenSuite(root)
+  } catch (error) {
+    problems.push((error as Error).message)
+  }
   if (strict) {
     for (const file of [...report.legacy, ...report.additions]) {
       problems.push(`${file}: tests belong under e2e/`)
     }
+    problems.push(
+      ...dumpProblems(
+        root,
+        tracked,
+        migrations.map(migration => migration.name),
+        { ...(options.pg == null ? {} : { pg: options.pg }) }
+      )
+    )
   }
   return { problems, ...report }
 }

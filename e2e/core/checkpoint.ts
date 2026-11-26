@@ -9,9 +9,15 @@ import {
   type ServerError
 } from './invariants'
 import type { Budget, Judge, MismatchNote } from './judge'
+import { HarnessError } from './result'
 import type { LocalSettings } from './settings'
 import type { Surface } from './spec'
-import { compareGolden, type GoldenOptions, type VisualVerdict } from './visual'
+import {
+  compareGolden,
+  compareGoldenInDir,
+  type GoldenOptions,
+  type VisualVerdict
+} from './visual'
 
 /**
  * maestro-d's browser driver reports an element's bounds, which a mask needs, only for
@@ -44,6 +50,31 @@ export interface CheckpointSpec {
   golden?: GoldenOptions
   /** A plain-words statement about what no golden can pin, for the AI judge. */
   ask?: string
+  /**
+   * How the screen is judged: against its golden, or by maestro-d's
+   * `assertWithAI` on `prompt`. Without it, a checkpoint naming `golden`
+   * compares it and one that does not compares nothing.
+   */
+  compare?: 'golden' | 'ai'
+  /** For `compare: 'ai'`: a plain-words statement that must be true of the screen. */
+  prompt?: string
+}
+
+/** What maestro-d's `assertWithAI` answers, in its step's `data`. */
+export interface AiCheckResult {
+  verdict: 'pass' | 'fail' | 'unsure'
+  confidence: number
+  model: string
+  escalations: unknown[]
+  observed: string
+  costUsd: number
+}
+
+/** What a harness run's AI checks may spend, and whether a `fail` may fail it. */
+export interface AiRuntime {
+  budget: Budget
+  /** The waterfall has reached the bar (`judgeHasAuthority(root, 'waterfall')`). */
+  authoritative: boolean
 }
 
 export type LayerVerdict = 'pass' | 'fail' | 'not-run'
@@ -69,6 +100,8 @@ export interface CheckpointRecord {
   /** Advisory only: never changes the visual verdict. */
   annotation?: MismatchNote
   ask?: AskRecord
+  /** The whole answer of a `compare: 'ai'` check, beside its verdict in `ask`. */
+  ai?: AiCheckResult
   failure?: string
 }
 
@@ -118,6 +151,13 @@ export interface CheckpointEnvironment {
   alone: boolean
   worldIds: () => string[]
   judges?: JudgeRuntime
+  /** Under `runScenario`: what `compare: 'ai'` checkpoints may spend. */
+  ai?: AiRuntime
+  /**
+   * Under `runScenario`: the goldens the runner fetched, as
+   * `<goldensDir>/<goldenKey>.png`, in place of the golden store.
+   */
+  goldensDir?: string
 }
 
 export class Checkpoints {
@@ -202,13 +242,32 @@ export class Checkpoints {
       }
     }
 
-    if (spec.golden != null) {
+    const comparesGolden =
+      spec.compare === 'golden' || (spec.compare == null && spec.golden != null)
+    if (comparesGolden && env.goldensDir != null) {
+      record.visual = await compareGoldenInDir({
+        device: target.device,
+        runDir: env.runDir,
+        key: goldenKey(env.scenarioId, id, env.surface, target.deviceClass),
+        golden: goldenOn(env.surface, spec.golden ?? {}),
+        goldensDir: env.goldensDir,
+        ...(typeof target.device.evalBrowserScript === 'function'
+          ? {
+              drawn: async (css: string) =>
+                await drawnMatches(target.device, css)
+            }
+          : {})
+      })
+      if (record.visual.verdict === 'fail') {
+        record.failure = record.visual.detail ?? 'the screen moved'
+      }
+    } else if (comparesGolden) {
       record.visual = await compareGolden({
         device: target.device,
         runDir: env.runDir,
         checkpoint: id,
         key: goldenKey(env.scenarioId, id, env.surface, target.deviceClass),
-        golden: goldenOn(env.surface, spec.golden),
+        golden: goldenOn(env.surface, spec.golden ?? {}),
         manifest: readGoldenManifest(env.root),
         store: env.settings.goldenStore,
         ...(typeof target.device.evalBrowserScript === 'function'
@@ -224,6 +283,18 @@ export class Checkpoints {
       }
     }
 
+    if (spec.compare === 'ai') {
+      record.ask = await this.askWaterfall(id, spec.prompt, target, record)
+      if (record.ask.verdict === 'fail') {
+        record.failure ??= record.ask.detail
+      }
+      if (record.ask.verdict === 'needs-review' && record.visual == null) {
+        const captures = join(env.runDir, 'captures')
+        mkdirSync(captures, { recursive: true })
+        writeFileSync(join(captures, `${id}.png`), outcome.frame)
+      }
+    }
+
     if (spec.ask != null) {
       record.ask = await this.askJudge(spec.ask, outcome.frame)
       if (record.ask.verdict === 'fail') {
@@ -236,6 +307,80 @@ export class Checkpoints {
         writeFileSync(join(captures, `${id}.png`), outcome.frame)
       }
     }
+  }
+
+  /**
+   * maestro-d's AI check on the screen, with what is left of the run's
+   * budget. Every verdict comes back as an answer; only a failure to ask is
+   * thrown. A `fail` fails the run only once the waterfall reached the bar.
+   */
+  private async askWaterfall(
+    id: string,
+    prompt: string | undefined,
+    target: CheckpointTarget,
+    record: CheckpointRecord
+  ): Promise<AskRecord> {
+    if (prompt == null || prompt.trim() === '') {
+      throw new HarnessError(`Checkpoint "${id}": compare: 'ai' needs a prompt`)
+    }
+    const runtime = this.env.ai
+    const made = (
+      verdict: AskRecord['verdict'],
+      detail: string,
+      extra: Partial<AskRecord> = {}
+    ): AskRecord => ({
+      question: prompt,
+      basis: 'INFERRED',
+      verdict,
+      detail,
+      costUsd: 0,
+      ...extra
+    })
+    if (runtime == null) return made('needs-review', 'no AI checks in this run')
+    if (typeof target.device.assertWithAI !== 'function') {
+      throw new HarnessError(
+        `Checkpoint "${id}": the device's maestro-d has no assertWithAI`
+      )
+    }
+    const remaining = Math.max(
+      0,
+      runtime.budget.limitUsd - runtime.budget.spentUsd
+    )
+    let reply: unknown
+    try {
+      reply = await target.device.assertWithAI({
+        assertion: prompt,
+        budgetUsd: remaining
+      })
+    } catch (error) {
+      throw new HarnessError(
+        `Checkpoint "${id}": assertWithAI: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    const result = aiResultOf(reply)
+    if (result == null) {
+      throw new HarnessError(
+        `Checkpoint "${id}": assertWithAI answered no verdict`
+      )
+    }
+    runtime.budget.add(result.costUsd)
+    record.ai = result
+    const extra = {
+      ...(result.model === '' ? {} : { model: result.model }),
+      costUsd: result.costUsd
+    }
+    if (result.verdict === 'pass') return made('pass', result.observed, extra)
+    if (result.verdict === 'fail' && runtime.authoritative) {
+      return made('fail', result.observed, extra)
+    }
+    if (result.verdict === 'fail') {
+      return made(
+        'needs-review',
+        `${result.observed} (the AI checks have not reached the bar)`,
+        extra
+      )
+    }
+    return made('needs-review', result.observed, extra)
   }
 
   /** What a mismatch looks like, for the reader. It cannot change the verdict. */
@@ -295,6 +440,28 @@ export class Checkpoints {
       }
     }
     return { ...made, verdict: answer.verdict }
+  }
+}
+
+/** The check's answer, from the step result the client resolves with or the bare answer. */
+export function aiResultOf(reply: unknown): AiCheckResult | undefined {
+  const value = reply as { data?: unknown; verdict?: unknown } | undefined
+  const result = (value?.verdict == null ? value?.data : value) as
+    Partial<AiCheckResult> | undefined
+  if (
+    result?.verdict !== 'pass' &&
+    result?.verdict !== 'fail' &&
+    result?.verdict !== 'unsure'
+  ) {
+    return undefined
+  }
+  return {
+    verdict: result.verdict,
+    confidence: Number(result.confidence ?? 0),
+    model: String(result.model ?? ''),
+    escalations: Array.isArray(result.escalations) ? result.escalations : [],
+    observed: String(result.observed ?? ''),
+    costUsd: Number(result.costUsd ?? 0)
   }
 }
 

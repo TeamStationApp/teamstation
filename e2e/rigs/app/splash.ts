@@ -4,7 +4,12 @@ import { join, resolve } from 'node:path'
 
 import { PNG } from 'pngjs'
 
-import { defineE2e, type E2eContext, type E2eSpec } from '../../core/spec'
+import {
+  defineE2e,
+  type E2eContext,
+  type E2eSpec,
+  isHarnessContext
+} from '../../core/spec'
 
 /**
  * The launch splash's end-to-end steps, shared by the phone, iPad and Android
@@ -251,6 +256,20 @@ export async function resume(
     )
 }
 
+/**
+ * The splash target a scenario runs: under the harness, the app id the
+ * caller passed for the platform's app; under `run.ts`, the spec's own.
+ */
+export function targetFor(ctx: E2eContext, target: SplashTarget): SplashTarget {
+  if (!isHarnessContext(ctx)) return target
+  return {
+    ...target,
+    appId: ctx.app(
+      target.platform === 'ios' ? 'teamstation-ios' : 'teamstation-android'
+    )
+  }
+}
+
 /** A splash spec for one device role on one surface. */
 export function defineSplash(options: {
   behaviour: string
@@ -296,12 +315,13 @@ export function defineSplash(options: {
       Object.entries(options.scenarios).map(([name, run]) => [
         name,
         async (ctx: E2eContext) => {
+          const target = targetFor(ctx, options.target)
           const device = await ctx.attach('app', {
-            platform: options.target.platform,
-            appId: options.target.appId
+            platform: target.platform,
+            appId: target.appId
           })
           await options.prepare?.(ctx, device)
-          await run(ctx, device, options.target)
+          await run(ctx, device, target)
         }
       ])
     )

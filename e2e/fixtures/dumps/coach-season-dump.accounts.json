@@ -1,0 +1,104 @@
+{
+  "world": "coach-season-dump",
+  "source": "coach-game",
+  "migration": "131scoreboardLateRows",
+  "accounts": {
+    "coach": {
+      "role": "coach",
+      "email": "dumps+coach-game-coach-289fd3cb@example.test",
+      "password": "FVtVAIkzDgDdjP7jYlQ77T6b",
+      "userId": "usr_GBSe8ajDZ2xMEojo2oTGhB",
+      "displayName": "Aaron Boone",
+      "teams": [
+        {
+          "id": "tem_eONA_EwpGbXbPbhF",
+          "name": "Hosts"
+        }
+      ],
+      "games": [
+        {
+          "id": "gam_o99gHfELwhKvbRBI",
+          "name": "Visitors at Hosts"
+        }
+      ],
+      "people": [
+        {
+          "id": "1274993184727452",
+          "name": "homePlayer1"
+        },
+        {
+          "id": "1345669813073566",
+          "name": "homePlayer2"
+        },
+        {
+          "id": "4705292727239176",
+          "name": "homePlayer3"
+        },
+        {
+          "id": "256004548129244",
+          "name": "homePlayer4"
+        },
+        {
+          "id": "8659248783594586",
+          "name": "homePlayer5"
+        },
+        {
+          "id": "7848724573325027",
+          "name": "homePlayer6"
+        },
+        {
+          "id": "5168285087813869",
+          "name": "homePlayer7"
+        },
+        {
+          "id": "5557743234884153",
+          "name": "homePlayer8"
+        },
+        {
+          "id": "7323017011841758",
+          "name": "homePlayer9"
+        }
+      ]
+    },
+    "assistant": {
+      "role": "assistant",
+      "email": "dumps+coach-game-assistant-289fd3cb@example.test",
+      "password": "wOSBOHX1pNTyBBASbO9wWcTC",
+      "userId": "usr_9QcHZETpdmDcHsn3tFCPA3",
+      "displayName": "Don Mattingly",
+      "teams": [
+        {
+          "id": "tem_eONA_EwpGbXbPbhF",
+          "name": "Hosts"
+        }
+      ],
+      "games": [
+        {
+          "id": "gam_o99gHfELwhKvbRBI",
+          "name": "Visitors at Hosts"
+        }
+      ],
+      "people": []
+    },
+    "scorekeeper": {
+      "role": "scorekeeper",
+      "email": "dumps+coach-game-scorekeeper-289fd3cb@example.test",
+      "password": "-tTnOAA8yhv_Nm3ddjf9bVWJ",
+      "userId": "usr_UfzZfnfkyGtWPsxAsap6z8",
+      "displayName": "Alex Cora",
+      "teams": [
+        {
+          "id": "tem_eONA_EwpGbXbPbhF",
+          "name": "Hosts"
+        }
+      ],
+      "games": [
+        {
+          "id": "gam_o99gHfELwhKvbRBI",
+          "name": "Visitors at Hosts"
+        }
+      ],
+      "people": []
+    }
+  }
+}
