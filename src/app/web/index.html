@@ -146,6 +146,24 @@
         display: flex;
       }
 
+      /* Scoring leaves the area exposed by a collapsed toolbar to the field
+         colour on html. Clip the app shell there, including its fixed layers. */
+      html.scoring-viewport {
+        --scoring-viewport-height: 100svh;
+      }
+      @supports not (height: 100svh) {
+        html.scoring-viewport {
+          --scoring-viewport-height: 100dvh;
+        }
+      }
+      html.scoring-viewport body,
+      html.scoring-viewport #root {
+        height: var(--scoring-viewport-height);
+      }
+      html.scoring-viewport #root {
+        contain: paint;
+      }
+
       /* React Native Web renders TextInput as a real <input>, which brings the
          browser's own focus ring with it — a blue outline drawn on top of the
          forest border the theme means to show. The theme's focus state is the
