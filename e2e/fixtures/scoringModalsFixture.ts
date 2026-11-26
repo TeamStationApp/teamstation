@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname } from 'node:path'
 
 import { POSITIONS } from '../../src/app/scoring/scoringTypes'
+import type { RosterEntry, TeamLineups } from '../../src/common/api'
 import type { StoredGame } from '../../src/common/scoring/session'
 import { withNames } from '../../src/common/scoring/storedNames'
 import { userIdOfGumbo } from '../../src/common/userId'
@@ -30,6 +31,7 @@ interface LineupPerson {
 interface ModalFixture {
   reset: (missing?: boolean) => string
   loaded: () => string
+  refuseWrites: (enabled: boolean) => void
   pauseWrites: (paused: boolean) => void
   stored: () => StoredGame
   unexpected: string[]
@@ -94,11 +96,14 @@ export async function modalFixture(
 ): Promise<ModalFixture> {
   assert(['localhost', '127.0.0.1'].includes(new URL(assets).hostname))
   let sequence = Date.now()
-  let missing = false
+  const withoutPitcher = new Set<string>()
+  const homeTeam = (gameId: string): string =>
+    withoutPitcher.has(gameId) ? 'home-without-pitcher' : 'home'
   let id = ''
   let loaded = ''
   let held: StoredGame = { plays: [], currentPlay: null }
   const games = new Map<string, StoredGame>()
+  const createdPlayers = new Map<string, RosterEntry[]>()
   const playerNames = new Map(
     [...roster('away'), ...roster('home')].map(player => [
       player.gumboId,
@@ -106,6 +111,7 @@ export async function modalFixture(
     ])
   )
   const unexpected: string[] = []
+  let refused = false
   let paused = false
   const waiting = new Set<() => void>()
   const pauseWrites = (value: boolean): void => {
@@ -116,8 +122,8 @@ export async function modalFixture(
     }
   }
   const reset = (emptyPitcher = false): string => {
-    missing = emptyPitcher
     id = `modal${++sequence}`
+    if (emptyPitcher) withoutPitcher.add(id)
     loaded = ''
     held = { plays: [], currentPlay: null }
     games.set(id, held)
@@ -156,14 +162,31 @@ export async function modalFixture(
         return
       }
       let body: unknown
-      if (u.pathname.endsWith('/auth/me'))
+      if (u.pathname === '/api/v1/node/ios-app-banner') {
+        if (request.headers.accept?.includes('text/css') === true) {
+          response.setHeader('Content-Type', 'text/css')
+          response.end('')
+          return
+        }
+        body = { appId: null }
+      } else if (u.pathname.endsWith('/auth/me'))
         body = {
           id: userIdOfGumbo(999),
           gumboId: 999,
           displayName: 'Scorer',
           isAdmin: false
         }
-      else if (u.pathname.endsWith('/me/roles')) body = { teams: {} }
+      else if (u.pathname.endsWith('/me/roles'))
+        body = {
+          teams: {
+            away: ['scorekeeper'],
+            home: ['scorekeeper'],
+            'home-without-pitcher': ['scorekeeper']
+          },
+          guardianOf: []
+        }
+      else if (u.pathname === '/api/v1/me/offline-scoring')
+        body = { games: [], nextBoundary: null, digest: 'empty' }
       else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
       else if (u.pathname === '/api/v1/me/notifications/summary')
         body = { hasPending: false }
@@ -209,6 +232,18 @@ export async function modalFixture(
             : undefined)
         assert(stored != null, 'Only fixture games may be read or written')
         if (request.method === 'POST') {
+          if (refused) {
+            request.resume()
+            response.statusCode = 400
+            response.setHeader('Content-Type', 'application/json')
+            response.end(
+              JSON.stringify({
+                code: 'badRequest',
+                message: 'Fixture scoring edit refused'
+              })
+            )
+            return
+          }
           if (paused) await new Promise<void>(resolve => waiting.add(resolve))
           let bytes = ''
           for await (const chunk of request) bytes += String(chunk)
@@ -243,11 +278,12 @@ export async function modalFixture(
         const [, , , , , , teamId, , inning] = u.pathname.split('/')
         body = { teamId, inning: Number(inning), column: [] }
       } else if (/\/games\/[^/]+$/.test(u.pathname)) {
-        loaded = u.pathname.split('/').at(-1) ?? ''
+        const requestedId = u.pathname.split('/').at(-1) ?? ''
+        if (requestedId === id) loaded = requestedId
         body = {
-          id: loaded,
+          id: requestedId,
           awayTeamId: 'away',
-          homeTeamId: 'home',
+          homeTeamId: homeTeam(requestedId),
           awayTeamName: 'Owls',
           homeTeamName: 'Hawks',
           seasonId: null,
@@ -263,12 +299,29 @@ export async function modalFixture(
           videos: []
         }
       } else if (u.pathname.endsWith('/roster'))
-        body = roster(u.pathname.includes('/away/') ? 'away' : 'home')
-      else if (u.pathname.endsWith('/default-lineup'))
+        body = [
+          ...roster(u.pathname.includes('/away/') ? 'away' : 'home'),
+          ...(createdPlayers.get(u.pathname.split('/').at(-2) ?? '') ?? [])
+        ]
+      else if (u.pathname.endsWith('/lineups')) {
+        const side = (teamId: string, teamName: string): TeamLineups => ({
+          teamId,
+          teamName,
+          start: null,
+          current: null,
+          changes: []
+        })
+        body = {
+          away: side('away', 'Owls'),
+          home: side(homeTeam(u.pathname.split('/').at(-2) ?? ''), 'Hawks'),
+          digest: 'fixture',
+          generation: 0
+        }
+      } else if (u.pathname.endsWith('/default-lineup'))
         body = {
           lineup: lineup(
             u.pathname.includes('/away/') ? 'away' : 'home',
-            missing && u.pathname.includes('/home/')
+            u.pathname.includes('/home-without-pitcher/')
           ),
           fromGameId: null,
           setAt: null
@@ -294,6 +347,11 @@ export async function modalFixture(
           player.gumboId != null,
           'Fixture player must have a scoring identity'
         )
+        const teamId = u.pathname.split('/').at(-2) ?? ''
+        createdPlayers.set(teamId, [
+          ...(createdPlayers.get(teamId) ?? []),
+          player
+        ])
         playerNames.set(player.gumboId, player.shortName)
         body = player
         response.statusCode = 201
@@ -320,6 +378,9 @@ export async function modalFixture(
   return {
     reset,
     loaded: () => loaded,
+    refuseWrites: enabled => {
+      refused = enabled
+    },
     pauseWrites,
     stored: () => held,
     unexpected,

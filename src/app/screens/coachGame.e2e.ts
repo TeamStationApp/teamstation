@@ -61,7 +61,7 @@ const WIDTH = 402
 const HEIGHT = 874
 const CLIPS = resolve('src/app/scoring/fixtures/audio')
 const BANNER =
-  'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.'
+  'Someone else edited this roster. Saving may overwrite their changes. Cancel takes theirs.'
 const ROSTER_MIC = '[data-testid="Roster mic"] [aria-label="Dictation"]'
 const MIC_STATUS = '[data-testid="Roster mic"] [aria-label="Dictation status"]'
 
@@ -410,7 +410,7 @@ class Browser {
   async waitSaved(): Promise<void> {
     await this.page.waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
     await this.page.waitForFunction(
-      () => document.querySelector('[aria-label="Save status"]') == null,
+      () => document.querySelector('[data-testid="scoringSaveStatus"]') == null,
       { timeout: 30000 }
     )
   }

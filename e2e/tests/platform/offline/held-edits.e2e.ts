@@ -1,15 +1,18 @@
 import { expect } from 'chai'
 
+import type { FixtureAccount } from '../../../core/fixtures'
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
 import { loadSettings } from '../../../core/settings'
 import { defineE2e, type E2eContext } from '../../../core/spec'
 import { typeInto } from '../../../core/typeInto'
+import { appLink } from '../../../rigs/app/setServer'
 import {
   type CoachApp,
   DEVELOP_APP,
   labelOf,
   openCoachApp,
+  openFullGameScoring,
   stackDatabaseUrl
 } from '../../../rigs/coach/coachApp'
 import { loadShaper } from '../../../rigs/streaming/shaper'
@@ -28,7 +31,7 @@ import { loadShaper } from '../../../rigs/streaming/shaper'
 interface World {
   game: string
   homeTeam: string
-  scorekeeper: string
+  scorekeeper: FixtureAccount
   coach: { email: string; password: string }
 }
 
@@ -38,7 +41,7 @@ async function worldOf(ctx: E2eContext): Promise<World> {
   return {
     game: world.ids.game,
     homeTeam: world.ids.homeTeam,
-    scorekeeper: world.accounts.scorekeeper.userId,
+    scorekeeper: world.accounts.scorekeeper,
     coach: { email: coach.email, password: coach.password }
   }
 }
@@ -54,7 +57,7 @@ async function removeScorekeeper(ctx: E2eContext, world: World): Promise<void> {
   try {
     const removed = await client.query(
       "delete from scope_roles where user_id = $1 and scope_type = 'team' and scope_id = $2 and role = 'scorekeeper'",
-      [world.scorekeeper, world.homeTeam]
+      [world.scorekeeper.userId, world.homeTeam]
     )
     expect(removed.rowCount, 'the scorekeeper role row').equals(1)
   } finally {
@@ -90,7 +93,7 @@ const sleep = async (ms: number): Promise<void> => {
 
 /** The Score screen of the game, from its address. */
 async function openScoring(app: CoachApp, world: World): Promise<void> {
-  await app.m.openLink({ link: `teamstation://games/${world.game}/score` })
+  await app.m.openLink({ link: appLink(`games/${world.game}/score`) })
   await app.m.extendedWaitUntil({ visible: { text: 'Ball' }, timeout: 60000 })
 }
 
@@ -151,7 +154,7 @@ async function refuse(
   const setFault = ctx.stack.setFault
   if (setFault == null)
     throw new BlockedError('needs a stack whose fault server can be set')
-  await openScoring(app, world)
+  await openFullGameScoring(app, world.game)
   await setFault('api-hang')
   try {
     await act(app)
@@ -271,7 +274,7 @@ export default defineE2e({
     // before and after screenshots.
     'refused-state': async ctx => {
       const world = await worldOf(ctx)
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.scorekeeper)
       // One refusal for both: a new player for the team and a Ball for the
       // game, held together while the role goes.
       await refuse(ctx, app, world, async held => {
@@ -293,7 +296,7 @@ export default defineE2e({
     },
     'clear-from-banner': async ctx => {
       const world = await worldOf(ctx)
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.scorekeeper)
       await refuse(ctx, app, world, tapBall)
       await ctx.checkpoint(
         'banner-is-a-button',
@@ -336,7 +339,7 @@ export default defineE2e({
     },
     'clear-from-game': async ctx => {
       const world = await worldOf(ctx)
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.scorekeeper)
       await refuse(ctx, app, world, tapBall)
       await ctx.checkpoint(
         'game-notice',
@@ -371,11 +374,11 @@ export default defineE2e({
       if ((await network.onTestNetwork(network.ip)) == null)
         throw new BlockedError(`${network.ip} is not on a shaped network`)
       const world = await worldOf(ctx)
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.scorekeeper)
       const { m } = app
-      await openScoring(app, world)
+      await openFullGameScoring(app, world.game)
       await tapBall(app)
-      await m.tapOn({ text: 'Strike' })
+      await m.tapOn({ text: 'Called Strike' })
       await sleep(1500)
       await app.m.extendedWaitUntil({
         visible: { text: 'Ball' },
@@ -388,6 +391,7 @@ export default defineE2e({
       await network.outage(network.ip, 0, async () => {
         await tapBall(app)
         await tapBall(app)
+        await m.assertVisible({ id: 'scoringNotice', timeout: 30000 })
         await shot(ctx, app, 'offline-scoring.png')
         // Scoring is in front: nothing held, nothing to tap away.
         expect(await shownId(app, 'heldEditsSheet')).equals(false)
@@ -406,7 +410,7 @@ export default defineE2e({
         await shot(ctx, app, 'offline-game.png')
         // Back to scoring, from the phone's copy, and on with the game.
         await openScoring(app, world)
-        await m.tapOn({ text: 'Strike' })
+        await m.tapOn({ text: 'Called Strike' })
         await sleep(1500)
         await shot(ctx, app, 'offline-return.png')
         expect(await shownId(app, 'heldEditsSheet')).equals(false)
@@ -436,7 +440,7 @@ export default defineE2e({
     },
     'clear-from-team': async ctx => {
       const world = await worldOf(ctx)
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.scorekeeper)
       await refuse(ctx, app, world, createPlayer)
       await openRoster(app, world)
       await ctx.checkpoint(
