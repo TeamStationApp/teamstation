@@ -1290,6 +1290,22 @@ describe('the phone outbox', function () {
       flag: true,
       nothing: null
     })
+    // A roster refresh may include both identities of the player whose
+    // creation just landed. Their position in the saved setup stays unique.
+    expect(
+      withServerIds(
+        {
+          tagOrder: [7, 41, 9],
+          teams: { away: { players: [9, 7, 41], battingOrder: [41, 9, 7] } },
+          pitchValues: [41, 9]
+        },
+        new Map([[41, { serverId: 9, userId: null }]])
+      )
+    ).deep.equals({
+      tagOrder: [7, 9],
+      teams: { away: { players: [9, 7], battingOrder: [9, 7] } },
+      pitchValues: [9, 9]
+    })
     expect(withServerIds(body, new Map())).equals(body)
     expect(
       withServerIds(

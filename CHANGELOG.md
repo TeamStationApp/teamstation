@@ -57,6 +57,7 @@
 - changed: The 13+ consent sheet is gone, along with the account setting behind it
 - changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
 - fixed: The API rate-limit tests no longer fail GitHub Code Quality, which checks merges to develop
+- fixed: Scoring: the field fits between the scoreboard and the pitch buttons on every screen size; home plate is never under the buttons.
 - fixed: The scoreboard keeps its width as scores, player names and radar speeds change
 - changed: The two-hour streaming test signs in through the same password form as a viewer and pairs the TV from its on-screen code
 - fixed: Letting go of slow motion in a multi-camera game restores each camera’s previous speed and the next tap responds immediately

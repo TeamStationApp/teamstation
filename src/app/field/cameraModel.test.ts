@@ -5,6 +5,7 @@ import { PerspectiveCamera, Vector3 } from 'three'
 import {
   applyFieldCamera,
   cameraDragValue,
+  catcherCardBottom,
   fieldViewportHeight,
   HEIGHT_LIMIT,
   SCOREBOARD_Z,
@@ -12,6 +13,75 @@ import {
 } from './cameraModel'
 
 describe('field camera controls', function () {
+  for (const [width, height] of [
+    [393, 852],
+    [600, 700],
+    [1000, 742]
+  ]) {
+    it(`pins the scoreboard roof and fits the numbered catcher card at ${width}×${height}`, function () {
+      const camera = new PerspectiveCamera()
+      const options = {
+        width,
+        height,
+        zoom: 1.25,
+        view: 'home' as const,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33,
+        bottomExtension: 112
+      }
+      function roof(): { top: number; width: number } {
+        const points = []
+        for (const x of [-34.5, 34.5])
+          for (const z of [-2.1, 2.9])
+            points.push(
+              new Vector3(x * 1.8, 28.2 + 9.95 * 1.8, -135 + z * 1.8).project(
+                camera
+              )
+            )
+        return {
+          top: Math.min(...points.map(p => ((1 - p.y) * height) / 2)),
+          width:
+            ((Math.max(...points.map(p => p.x)) -
+              Math.min(...points.map(p => p.x))) *
+              width) /
+            2
+        }
+      }
+      applyFieldCamera(camera, options)
+      const old = roof().width
+      const frame = { top: 64, bottom: 200 }
+      const bottom = applyFieldCamera(camera, { ...options, frame })!
+      expect(roof().top).closeTo(frame.top, 0.5)
+      expect(catcherCardBottom(camera, width, height)).closeTo(bottom, 0.01)
+      expect(bottom).at.most(height - frame.bottom)
+      if (width === 393) {
+        expect(roof().width).closeTo(old, 0.01)
+        expect(roof().width).closeTo(419.977, 0.1)
+      } else {
+        expect(bottom).closeTo(height - frame.bottom, 0.05)
+        expect(roof().width).lessThan(old)
+      }
+    })
+  }
+  it('keeps the replay home camera and its bottom extension at their original projection', function () {
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      width: 393,
+      height: 852,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    expect(camera.position.toArray()).deep.equals([
+      0, 137.26702971184517, 145.4970314300046
+    ])
+    expect(camera.projectionMatrix.toArray()).deep.equals([
+      4.7801512539226145, 0, 0, 0, 0, 2.2049289234643044, 0, 0, 0,
+      -0.13145539906103293, -1.0036429872495447, -1, 0, 0, -4.007285974499089, 0
+    ])
+  })
   it('extends only the bottom while retaining world scale and reference pixels', function () {
     for (const [width, height] of [
       [320, 520],

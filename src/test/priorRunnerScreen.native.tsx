@@ -3,6 +3,7 @@ import { LogBox, Pressable, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 
+import type { BaseProjection } from '../app/field/fieldTypes'
 import { scoringClock } from '../app/scoring/scoringClock'
 import { ScoringScreen } from '../app/scoring/ScoringScreen'
 import { ThemeProvider } from '../app/theme/ThemeContext'
@@ -33,6 +34,7 @@ client.roster = async side => priorRunnerRoster(side)
 const realScoringNow = scoringClock.now
 
 export function Root(): React.ReactElement {
+  const [projection, setProjection] = useState<BaseProjection>()
   const [scenario, setScenario] = useState<PriorRunnerScenario>('first')
   const [revision, setRevision] = useState(0)
   // Keep the open-play fixture open while native accessibility reads finish.
@@ -139,14 +141,26 @@ export function Root(): React.ReactElement {
               accessibilityLabel={`Fixture state ${proof}`}
               style={{ position: 'absolute', width: 1, height: 1, bottom: 0 }}
             />
-            <ScoringScreen
-              key={`${scenario}-${revision}-${opened}`}
-              client={client}
-              gameId={priorRunnerGame.id}
-              userId="usr_1111111111111111111112"
-              source={source}
-              onExit={() => undefined}
+            <View
+              accessible
+              accessibilityLabel={`Fixture bases ${JSON.stringify(projection ?? null)}`}
+              style={{ position: 'absolute', width: 1, height: 1, bottom: 0 }}
             />
+            <View
+              testID="fixture-field"
+              collapsable={false}
+              style={{ flex: 1 }}
+            >
+              <ScoringScreen
+                onBaseProjection={setProjection}
+                key={`${scenario}-${revision}-${opened}`}
+                client={client}
+                gameId={priorRunnerGame.id}
+                userId="usr_1111111111111111111112"
+                source={source}
+                onExit={() => undefined}
+              />
+            </View>
           </SafeAreaView>
         </ThemeProvider>
       </GestureHandlerRootView>
