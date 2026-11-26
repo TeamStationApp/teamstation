@@ -188,7 +188,7 @@ describe('E1: the time each scoring action was taken', function () {
     for (;;) {
       await pause(1500)
       const pending = await probe<boolean>(
-        `document.querySelector('[aria-label="Save status"]') != null`
+        `document.querySelector('[data-testid="scoringSaveStatus"]') != null`
       )
       const held = await storedActions(token, gameId)
       const now = JSON.stringify(held)
