@@ -420,6 +420,15 @@ describe('fixture worlds', function () {
       }
       const page = await inbox(the(), actor, { limit: 100 })
       expect(page.items).has.length(expected)
+      if (role === 'small') {
+        const removed = page.items.find(
+          row => row.type === 'playerAddRejected'
+        )!
+        expect(removed.title).equals(
+          `A coach of another of their teams removed Mike T from Fixture Owls ${world.nonce} small`
+        )
+        expect(removed.description).equals('Mike T is no longer on it.')
+      }
       expect((await hasPendingNotifications(the(), actor)).hasPending).equals(
         expected > 0
       )

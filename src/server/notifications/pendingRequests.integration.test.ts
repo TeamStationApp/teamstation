@@ -73,7 +73,12 @@ describe('pending reads skip resolved request history', function () {
         metadata: JSON.stringify({
           title: 'Synthetic notice',
           description: 'Fixture reminder',
-          userId: userIdOfGumbo(106)
+          userId: userIdOfGumbo(106),
+          teamId: f.teamA,
+          teamName: 'Demo Hawks',
+          mode: 'roster',
+          games: 0,
+          remover: 'coach'
         }),
         recorded_recipients: [userIdOfGumbo(101)],
         created_at: f.clock.now()

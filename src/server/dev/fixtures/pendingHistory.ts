@@ -5,6 +5,7 @@ import {
   UMPIRE_MISSING_SLOTS
 } from '../../../common/notifications'
 import { PLAYER_ADD_REJECTED } from '../../notifications/pending'
+import type { PlayerRemovedMetadata } from '../../notifications/requestInformation'
 import { createTeam } from '../../teams/createTeam'
 import {
   createAccount,
@@ -31,9 +32,10 @@ export async function runPendingHistory(
       last: 'Betts'
     })
     accounts[role] = reader
+    const teamName = `Fixture Owls ${nonce} ${role}`
     const team = await createTeam(
       db,
-      { name: `Fixture Owls ${nonce} ${role}`, externalIds: [] },
+      { name: teamName, externalIds: [] },
       { userId: reader.userId, isAdmin: false }
     )
     ids[`${role}Team`] = team.id
@@ -101,11 +103,22 @@ export async function runPendingHistory(
           source_id: id,
           revision: 1,
           actor_id: null,
-          metadata: JSON.stringify({
-            title,
-            description: 'Synthetic inbox reminder',
-            userId: sender.userId
-          }),
+          metadata: JSON.stringify(
+            type === PLAYER_ADD_REJECTED
+              ? ({
+                  teamId: team.id,
+                  teamName,
+                  userId: sender.userId,
+                  mode: 'roster',
+                  games: 0,
+                  remover: 'coach'
+                } satisfies PlayerRemovedMetadata)
+              : {
+                  title,
+                  description: 'Synthetic inbox reminder',
+                  userId: sender.userId
+                }
+          ),
           recorded_recipients: [reader.userId],
           created_at: now
         })
