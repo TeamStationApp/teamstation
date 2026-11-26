@@ -9,6 +9,7 @@
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.
 - added: Node administrators can set an iOS App Store link to offer the app in Safari on iPhone and iPad
+- added: Node admins set where sponsor logos and reels sit in each layout, with Reset to defaults, and can replace the sponsor sample video
 - added: Sponsor reel views, sponsored row views and taps are recorded in analytics
 - added: Schedules show sponsored rows from the leagues that manage their teams, opening the sponsor's site when tapped
 - added: League sponsor reels play before games and between half-innings in every player layout, with game audio fading to 20% while they play

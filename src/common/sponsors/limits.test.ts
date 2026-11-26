@@ -9,6 +9,7 @@ import {
   REEL_BOX,
   reelProbeProblem,
   sampleProbeProblem,
+  sampleSizeProblem,
   sizeProblem,
   type VideoProbe
 } from './limits'
@@ -96,6 +97,13 @@ describe('U2 sponsor limits', function () {
         'The sample video must be H.264 or HEVC.'
       )
       expect(sampleProbeProblem(sample, 120_000_001)).equals(
+        'The sample video can be at most 120 MB.'
+      )
+    })
+
+    it('refuses a size past 120 MB alone, before anything is read', function () {
+      expect(sampleSizeProblem(120_000_000)).equals(null)
+      expect(sampleSizeProblem(120_000_001)).equals(
         'The sample video can be at most 120 MB.'
       )
     })

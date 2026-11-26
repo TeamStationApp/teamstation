@@ -4719,6 +4719,86 @@
       "file": "e2e/tests/platform/node-admin/jev-key.e2e.ts"
     },
     {
+      "id": "platform/node-admin/sponsor-settings#edit-and-reset",
+      "title": "The node administrator places sponsor logos and reels per layout, resets them, and replaces the sponsor sample video",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/app/sponsors/SponsorSampleUpload.tsx",
+        "src/common/nodeSettings.ts",
+        "src/server/nodeSettings.ts",
+        "src/server/routes/nodeSampleVideo.ts",
+        "src/server/sponsors/sample.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/node-admin/sponsor-settings",
+      "file": "e2e/tests/platform/node-admin/sponsor-settings.e2e.ts"
+    },
+    {
+      "id": "platform/node-admin/sponsor-settings#sample-upload",
+      "title": "The node administrator places sponsor logos and reels per layout, resets them, and replaces the sponsor sample video",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/app/sponsors/SponsorSampleUpload.tsx",
+        "src/common/nodeSettings.ts",
+        "src/server/nodeSettings.ts",
+        "src/server/routes/nodeSampleVideo.ts",
+        "src/server/sponsors/sample.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/node-admin/sponsor-settings",
+      "file": "e2e/tests/platform/node-admin/sponsor-settings.e2e.ts"
+    },
+    {
       "id": "platform/offline/held-edits#clear-from-banner",
       "title": "An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page",
       "kind": "e2e",

@@ -88,6 +88,7 @@ export interface NodeSettings {
   replay: ReplaySettings
   distribution: DistributionSettings
   jev: JevSettings
+  sponsors: SponsorSettings
 }
 
 /**
@@ -142,15 +143,6 @@ export const defaultHighlightTimings: HighlightTimings = {
   leadSecByEventType: { strikeout: 10 },
   mergeWithinSec: 5,
   tailSec: 5
-}
-
-export const defaultNodeSettings: NodeSettings = {
-  scoreboard: defaultScoreboardSettings,
-  highlights: defaultHighlightTimings,
-  radar: defaultRadarSettings,
-  replay: defaultReplaySettings,
-  distribution: defaultDistributionSettings,
-  jev: defaultJevSettings
 }
 
 /**
@@ -219,17 +211,53 @@ const defaultReelPlacement: ReelPlacement = {
   maxHeight: 1 / 3
 }
 
+// Each group its own object, so a copy of the defaults changes one group at a time.
 export const defaultSponsorSettings: SponsorSettings = {
   logo: {
-    single: defaultLogoPlacement,
-    grid: defaultLogoPlacement,
-    tv: defaultLogoPlacement,
-    portrait: defaultLogoPlacement
+    single: { ...defaultLogoPlacement },
+    grid: { ...defaultLogoPlacement },
+    tv: { ...defaultLogoPlacement },
+    portrait: { ...defaultLogoPlacement }
   },
   reel: Object.fromEntries(
-    REEL_LAYOUTS.map(layout => [layout, defaultReelPlacement])
+    REEL_LAYOUTS.map(layout => [layout, { ...defaultReelPlacement }])
   ) as Record<ReelLayout, ReelPlacement>,
   sampleKey: null
+}
+
+export const defaultNodeSettings: NodeSettings = {
+  scoreboard: defaultScoreboardSettings,
+  highlights: defaultHighlightTimings,
+  radar: defaultRadarSettings,
+  replay: defaultReplaySettings,
+  distribution: defaultDistributionSettings,
+  jev: defaultJevSettings,
+  sponsors: defaultSponsorSettings
+}
+
+/**
+ * The objects a node's own sample video may be at: the default, or one a
+ * node administrator uploaded, `sponsors/sample/<YYYY-MM-DD>-<id>.mp4`.
+ */
+const SAMPLE_KEY = /^sponsors\/sample\/[A-Za-z0-9_-]+\.mp4$/
+
+/** The day an uploaded sample's key names, `YYYY-MM-DD`, or `null` for the default. */
+export function sampleUploadedOn(sampleKey: string | null): string | null {
+  return (
+    /^sponsors\/sample\/(\d{4}-\d{2}-\d{2})-/.exec(sampleKey ?? '')?.[1] ?? null
+  )
+}
+
+/** The sponsor settings, checked: the overlay, and a sample key or `null`. */
+export function asSponsorSettings(raw: unknown): SponsorSettings {
+  const value = record(raw, 'sponsors')
+  const sampleKey = value.sampleKey ?? null
+  if (
+    sampleKey !== null &&
+    (typeof sampleKey !== 'string' || !SAMPLE_KEY.test(sampleKey))
+  )
+    throw new TypeError('sponsors.sampleKey must be a sample video object')
+  return { ...asSponsorOverlay(value), sampleKey }
 }
 
 /** A sponsor overlay, checked: every placement present and in range. */
@@ -301,8 +329,13 @@ export function asScoreboardOverlay(raw: unknown): ScoreboardOverlay {
  * messages name the field, for the screen to show beside it.
  */
 export function asNodeSettings(raw: unknown): NodeSettings {
-  const { replay, distribution, ...rest } = asNodeSettingsUpdate(raw)
-  const jev = (raw as Record<string, unknown>).jev
+  const {
+    replay,
+    distribution,
+    sponsors: _save,
+    ...rest
+  } = asNodeSettingsUpdate(raw)
+  const { jev, sponsors } = raw as Record<string, unknown>
   return {
     ...rest,
     scoreboard: {
@@ -313,7 +346,10 @@ export function asNodeSettings(raw: unknown): NodeSettings {
     replay: replay ?? defaultReplaySettings,
     distribution: { ...defaultDistributionSettings, ...distribution },
     // A server from before Jev says nothing: no key.
-    jev: jev == null ? defaultJevSettings : asJevSettings(jev)
+    jev: jev == null ? defaultJevSettings : asJevSettings(jev),
+    // A server from before sponsors serves the defaults.
+    sponsors:
+      sponsors == null ? defaultSponsorSettings : asSponsorSettings(sponsors)
   }
 }
 
@@ -328,17 +364,45 @@ export function asJevSettings(raw: unknown): JevSettings {
  * A save from the node administration screen. An app from before the replay
  * section sends no `replay`, and its save keeps the stored pitch delay. An
  * app from before the about-screen links sends no `distribution`, and its
- * save keeps the stored URLs. `jev` is read only: a save that carries it
- * changes nothing, as the key has its own routes.
+ * save keeps the stored URLs. An app from before sponsors sends no
+ * `sponsors`, and its save keeps the stored placements and sample. `jev` is
+ * read only: a save that carries it changes nothing, as the key has its own
+ * routes.
  */
 export type NodeSettingsUpdate = Omit<
   NodeSettings,
-  'replay' | 'distribution' | 'jev'
+  'replay' | 'distribution' | 'jev' | 'sponsors'
 > & {
   replay?: ReplaySettings
   distribution?: Omit<DistributionSettings, 'iosAppStoreUrl'> & {
     iosAppStoreUrl?: string
   }
+  sponsors?: SponsorSettingsUpdate
+}
+
+/**
+ * The sponsor settings a save stores: the placements, and `sampleKey: null`
+ * only to put the default clip back. The sample itself is the upload's
+ * (`PUT /node/sponsor-sample`): a save says nothing else about it.
+ */
+export type SponsorSettingsUpdate = SponsorOverlay & { sampleKey?: null }
+
+/** What the app sends to save the node settings. */
+export type NodeSettingsSave = Omit<NodeSettings, 'sponsors'> & {
+  sponsors?: SponsorOverlay & { sampleKey?: string | null }
+}
+
+/**
+ * A save's sponsor settings, checked as `asSponsorSettings` checks them: a
+ * `sampleKey` of `null` is kept, to put the default clip back, and a key sent
+ * back, which a card read before another upload would hold, is dropped.
+ */
+export function asSponsorSettingsUpdate(raw: unknown): SponsorSettingsUpdate {
+  const { sampleKey, ...overlay } = asSponsorSettings(raw)
+  const sent = (raw as Record<string, unknown>).sampleKey
+  return sent === null && sampleKey === null
+    ? { ...overlay, sampleKey: null }
+    : overlay
 }
 
 /** A save, checked as `asNodeSettings` checks a document, `replay` optional. */
@@ -352,6 +416,9 @@ export function asNodeSettingsUpdate(raw: unknown): NodeSettingsUpdate {
     ...(value.distribution == null
       ? {}
       : { distribution: asDistributionUpdate(value.distribution) }),
+    ...(value.sponsors == null
+      ? {}
+      : { sponsors: asSponsorSettingsUpdate(value.sponsors) }),
     scoreboard: {
       overlayStartDate: asDate(
         scoreboard.overlayStartDate,

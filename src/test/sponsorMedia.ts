@@ -58,10 +58,13 @@ export async function syntheticVideo(options: {
   fps: number
   codec?: 'libx264' | 'libx265'
   bitRate?: string
+  /** The container, by its extension: an MP4 by default. */
+  container?: 'mp4' | 'mkv' | 'ts'
 }): Promise<Buffer> {
+  const container = options.container ?? 'mp4'
   const file = join(
     tmpdir(),
-    `sponsor-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`
+    `sponsor-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.${container}`
   )
   try {
     await run(TEST_FFMPEG, [
@@ -81,8 +84,7 @@ export async function syntheticVideo(options: {
       'yuv420p',
       '-b:v',
       options.bitRate ?? '400k',
-      '-movflags',
-      '+faststart',
+      ...(container === 'mp4' ? ['-movflags', '+faststart'] : []),
       ...(options.codec === 'libx265' ? ['-tag:v', 'hvc1'] : []),
       file
     ])

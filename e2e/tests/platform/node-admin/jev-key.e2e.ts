@@ -43,6 +43,13 @@ export default searchSpec({
       const key = `e2e-jev-${randomBytes(12).toString('hex')}`
 
       await m.openLink({ link: `${ctx.stack.origin}/node` })
+      // The card is longer than ten scrolls since the sponsor settings: bring
+      // the key's field near first, once the card has loaded.
+      await m.assertVisible({ text: 'Show for games from', timeout: 60000 })
+      await m.evalBrowserScript({
+        script: `const field = document.querySelector('${byLabel(KEY_FIELD)}')
+          if (field != null) field.scrollIntoView({ block: 'center' })`
+      })
       await m.scrollUntilVisible({
         element: { text: KEY_FIELD },
         centerElement: true,

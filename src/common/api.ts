@@ -89,8 +89,11 @@ import {
 import {
   asNodeSettings,
   asScoreboardOverlay,
+  asSponsorSettings,
   type NodeSettings,
-  type ScoreboardOverlay
+  type NodeSettingsSave,
+  type ScoreboardOverlay,
+  type SponsorSettings
 } from './nodeSettings'
 import {
   asNotification,
@@ -4935,7 +4938,7 @@ export class TeamStationClient {
   }
 
   /** A node administrator sets every node setting at once. */
-  async setNodeSettings(settings: NodeSettings): Promise<NodeSettings> {
+  async setNodeSettings(settings: NodeSettingsSave): Promise<NodeSettings> {
     return await this.request('PUT', '/node/settings', asNodeSettings, settings)
   }
 
@@ -4947,6 +4950,25 @@ export class TeamStationClient {
   /** A node administrator removes the Jev API key. */
   async clearJevKey(): Promise<void> {
     await this.request('DELETE', '/node/jev-key', asUnknownOk)
+  }
+
+  /**
+   * A node administrator replaces the sponsor sample video, which the
+   * previews of a league with no footage play. The server only checks it:
+   * one that does not fit is refused with the screen's sentence. Answers the
+   * node's sponsor settings, with the new `sampleKey`.
+   */
+  async uploadSponsorSample(
+    contentType: string,
+    bytes: Uint8Array
+  ): Promise<SponsorSettings> {
+    return await this.request(
+      'PUT',
+      '/node/sponsor-sample',
+      asSponsorSettings,
+      bytes,
+      { headers: { 'content-type': contentType } }
+    )
   }
 
   /** Whether a game's board shows over its videos, and where. */

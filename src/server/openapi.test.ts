@@ -48,6 +48,7 @@ import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
 import { narrationRoutes } from './routes/narrations'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
+import { nodeSampleVideoRoutes } from './routes/nodeSampleVideo'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
@@ -236,6 +237,7 @@ describe('the API document', function () {
       ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(nodeAdministrationRoutes(db)),
+      ...routesOf(nodeSampleVideoRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(venueRoutes(db, media)),
       ...routesOf(schedulingSetupRoutes(db)),
@@ -311,6 +313,7 @@ describe('the API document', function () {
       ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(nodeAdministrationRoutes(db)),
+      ...routesOf(nodeSampleVideoRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(venueRoutes(db, media)),
       ...routesOf(schedulingSetupRoutes(db)),

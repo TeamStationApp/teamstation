@@ -21,6 +21,8 @@ export const UNSET_SETTINGS: Record<string, string> = {
   'replay.': 'Each falls back to its default, the same as a production node',
   'scoreboard.':
     'Each falls back to its default, the same as a production node',
+  'sponsors.':
+    'Each placement falls back to its default, and the sample to the default clip, the same as a production node',
   'test.rateLimitScale':
     'Rate limits use a scale of 1 unless a synthetic test fixture overrides it'
 }

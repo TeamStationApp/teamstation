@@ -20,6 +20,7 @@ import { SpacePlayback } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { sponsorOverlay, sponsorSettings } from '../nodeSettings'
 import {
   addCreditRow,
   type CreditKind,
@@ -389,7 +390,8 @@ export function sponsorRoutes(
           db,
           playback,
           leagueId,
-          undefined,
+          // Past this worker's cache, so an upload another took plays.
+          await sponsorSettings(db, Date.now(), true),
           clock().getTime()
         )
       )
@@ -424,7 +426,8 @@ export function sponsorRoutes(
           db,
           media.space,
           gameId,
-          await sponsorLeagueFor(db, game, actor.userId)
+          await sponsorLeagueFor(db, game, actor.userId),
+          await sponsorOverlay(db)
         )
       )
     })

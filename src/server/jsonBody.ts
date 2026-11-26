@@ -78,6 +78,13 @@ const LARGE_BODIES: ReadonlyArray<{
     path: /^\/api\/v1\/leagues\/[^/]+\/sponsors\/media$/,
     parser: parsedByRoute
   },
+  // The node's sponsor sample video, streamed to a file by its route once
+  // the caller is known to be a node administrator, up to 120 MB.
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/node\/sponsor-sample$/,
+    parser: parsedByRoute
+  },
   {
     method: 'POST',
     path: /^\/api\/v1\/analytics\/events$/,

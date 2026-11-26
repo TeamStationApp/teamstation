@@ -94,7 +94,9 @@ const tsSuites = [
   'src/common/observability/contract.test.ts',
   'src/app/sponsors/viewTimers.test.ts',
   'src/app/stream/randomUuid.test.ts',
-  'src/app/stream/deviceId.test.ts'
+  'src/app/stream/deviceId.test.ts',
+  // Where the node places sponsor logos and reels, and its sample (M8).
+  'src/common/nodeSettings.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -137,7 +139,9 @@ const appSuites = [
   'src/app/components/PagedList.test.tsx',
   'src/app/components/PagedList.native.test.tsx',
   'src/app/observability/AnalyticsContext.test.tsx',
-  'src/app/tv/TvApp.test.tsx'
+  'src/app/tv/TvApp.test.tsx',
+  // The node administrator's sponsor settings and sample upload (M8).
+  'src/app/screens/NodeSettingsCard.test.tsx'
 ]
 
 /**
@@ -193,7 +197,10 @@ const integrationSuites = [
   // The rows each Schedule reads, and who may read them (M6).
   { spec: 'src/server/sponsors/rows.integration.test.ts' },
   // The sponsor events stored, signed in and out (M7).
-  { spec: 'src/server/observability/analytics.integration.test.ts' }
+  { spec: 'src/server/observability/analytics.integration.test.ts' },
+  // The node's sponsor placements and its sample video upload (M8).
+  { spec: 'src/server/nodeSettings.integration.test.ts' },
+  { spec: 'src/server/routes/nodeSampleVideo.integration.test.ts' }
 ]
 
 function argument(name) {

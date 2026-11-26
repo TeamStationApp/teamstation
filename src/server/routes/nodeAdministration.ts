@@ -36,6 +36,7 @@ import {
   setNodeSettings
 } from '../nodeSettings'
 import { highlightSettings } from '../settings'
+import { dropReplacedSample } from '../sponsors/sample'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
 
@@ -223,7 +224,14 @@ export function nodeAdministrationRoutes(
       )
         highlights.tailSec = (await highlightSettings(db, true)).tailSec
       const settings = cleanBody(asNodeSettingsUpdate, req.body)
-      await setNodeSettings(db, req.actor, settings)
+      const { replacedSampleKey } = await setNodeSettings(
+        db,
+        req.actor,
+        settings
+      )
+      // Reset to defaults leaves the uploaded clip it replaced to nobody.
+      if (space != null)
+        await dropReplacedSample(space, replacedSampleKey, null)
       // What is stored now, including a pitch delay the save left alone.
       res.json(await nodeSettings(db, req.actor))
     })

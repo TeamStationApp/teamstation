@@ -6,22 +6,32 @@ import { unavailable } from '../common/errors'
 import {
   appStoreProduct,
   asDate,
+  asFraction,
   asHeight,
   asHoldSeconds,
   asPlacement,
   asRadarSettings,
   asReplaySettings,
+  asSponsorSettings,
   type BoardPlacement,
   defaultRadarSettings,
   defaultReplaySettings,
   defaultScoreboardSettings,
+  defaultSponsorSettings,
   type DistributionSettings,
+  LOGO_PLACEMENTS,
+  type LogoPlacement,
   type NodeSettings,
   type NodeSettingsUpdate,
   type RadarSettings,
+  REEL_LAYOUTS,
+  type ReelPlacement,
   type ReplaySettings,
   type ScoreboardOverlay,
   type ScoreboardSettings,
+  type SponsorOverlay,
+  type SponsorSettings,
+  type SponsorSettingsUpdate,
   utcStartOf
 } from '../common/nodeSettings'
 import { requireNodeAdmin } from './admin/nodeAdministration'
@@ -44,11 +54,159 @@ let replayCache: { at: number; value: ReplaySettings } | undefined
 
 let distributionCache: { at: number; value: DistributionSettings } | undefined
 
-/** Forgets the cached scoreboard, replay and about-screen links. Called after a write. */
+let sponsorCache: { at: number; value: SponsorSettings } | undefined
+
+/**
+ * Forgets the cached scoreboard, replay, about-screen links and sponsor
+ * settings. Called after a write.
+ */
 export function forgetScoreboardSettings(): void {
   cache = undefined
   replayCache = undefined
   distributionCache = undefined
+  sponsorCache = undefined
+}
+
+/** The `system_settings` key the node's uploaded sample video's object is under. */
+export const SPONSOR_SAMPLE_SETTING = 'sponsors.sampleKey'
+
+/**
+ * Where sponsor logos and reels sit in each layout, and the node's sample
+ * video: `sponsors.logo.<placement>`, `sponsors.reel.<layout>` and
+ * `sponsors.sampleKey`. Each falls back to its default when missing or
+ * malformed, so a bad row moves a logo, it does not take players down.
+ * Cached for 30 s as the scoreboard's are.
+ */
+export async function sponsorSettings(
+  db: Kysely<Database>,
+  now: number = Date.now(),
+  /** Read the rows even when the cache is current, and cache what they say. */
+  fresh = false
+): Promise<SponsorSettings> {
+  if (!fresh && sponsorCache != null && now - sponsorCache.at < CACHE_MS)
+    return sponsorCache.value
+  const rows = await db
+    .selectFrom('system_settings')
+    .select(['key', 'value'])
+    .where('key', 'like', 'sponsors.%')
+    .execute()
+  const byKey = new Map(rows.map(row => [row.key, row.value]))
+  const defaults = defaultSponsorSettings
+  const logo = (name: (typeof LOGO_PLACEMENTS)[number]): LogoPlacement => {
+    try {
+      const raw = byKey.get(`sponsors.logo.${name}`) as Record<string, unknown>
+      return {
+        side: asFraction(raw.side, 'side'),
+        top: asFraction(raw.top, 'top'),
+        maxWidth: asHeight(raw.maxWidth, 'maxWidth'),
+        maxHeight: asHeight(raw.maxHeight, 'maxHeight')
+      }
+    } catch {
+      return defaults.logo[name]
+    }
+  }
+  const reel = (layout: (typeof REEL_LAYOUTS)[number]): ReelPlacement => {
+    try {
+      const raw = byKey.get(`sponsors.reel.${layout}`) as Record<
+        string,
+        unknown
+      >
+      return {
+        maxWidth: asHeight(raw.maxWidth, 'maxWidth'),
+        maxHeight: asHeight(raw.maxHeight, 'maxHeight')
+      }
+    } catch {
+      return defaults.reel[layout]
+    }
+  }
+  let sampleKey = defaults.sampleKey
+  try {
+    sampleKey = asSponsorSettings({
+      ...defaults,
+      sampleKey: byKey.get(SPONSOR_SAMPLE_SETTING) ?? null
+    }).sampleKey
+  } catch {
+    /* Keep the default clip for a malformed stored key. */
+  }
+  const value: SponsorSettings = {
+    logo: Object.fromEntries(
+      LOGO_PLACEMENTS.map(name => [name, logo(name)])
+    ) as SponsorOverlay['logo'],
+    reel: Object.fromEntries(
+      REEL_LAYOUTS.map(layout => [layout, reel(layout)])
+    ) as SponsorOverlay['reel'],
+    sampleKey
+  }
+  sponsorCache = { at: now, value }
+  return value
+}
+
+/**
+ * Where every player places a sponsor's logo and reel, for `GameSponsors`
+ * and the previews. Read past this worker's cache, as the scoreboard's
+ * overlay is: a save another worker took moves the next game opened.
+ */
+export async function sponsorOverlay(
+  db: Kysely<Database>
+): Promise<SponsorOverlay> {
+  const { logo, reel } = await sponsorSettings(db, Date.now(), true)
+  return { logo, reel }
+}
+
+/**
+ * The stored sample key, locked until the transaction ends so two saves at
+ * once each replace a different one. Null for none, or a malformed row.
+ */
+async function lockedSampleKey(trx: Kysely<Database>): Promise<string | null> {
+  const row = await trx
+    .selectFrom('system_settings')
+    .select('value')
+    .where('key', '=', SPONSOR_SAMPLE_SETTING)
+    .forUpdate()
+    .executeTakeFirst()
+  return typeof row?.value === 'string' ? row.value : null
+}
+
+/**
+ * A node administrator's uploaded sample video becomes the node's, or
+ * `null` puts the default clip back. Answers the node's settings now and the
+ * key it replaced (null for none), for the caller to delete once saved.
+ */
+export async function setSponsorSampleKey(
+  db: Kysely<Database>,
+  actor: Actor,
+  sampleKey: string | null
+): Promise<{ settings: SponsorSettings; replaced: string | null }> {
+  const admin = await requireNodeAdmin(
+    db,
+    actor,
+    'Only a node administrator can change the sponsor sample video'
+  )
+  const json = JSON.stringify(sampleKey)
+  const replaced = await db.transaction().execute(async trx => {
+    const previous = await lockedSampleKey(trx)
+    await trx
+      .insertInto('system_settings')
+      .values({
+        key: SPONSOR_SAMPLE_SETTING,
+        value: json,
+        updated_by: admin.userId
+      })
+      .onConflict(oc =>
+        oc.column('key').doUpdateSet({
+          value: json,
+          updated_at: new Date(),
+          updated_by: admin.userId
+        })
+      )
+      .execute()
+    return previous
+  })
+  forgetScoreboardSettings()
+  return {
+    settings: await sponsorSettings(db, Date.now(), true),
+    replaced
+  }
 }
 
 /**
@@ -287,7 +445,8 @@ export async function nodeSettings(
     highlights: await highlightSettings(db, true),
     replay: await replaySettings(db, Date.now(), true),
     distribution: await distributionSettings(db, Date.now(), true),
-    jev: { configured: (await jevKey(db)) != null }
+    jev: { configured: (await jevKey(db)) != null },
+    sponsors: await sponsorSettings(db, Date.now(), true)
   }
 }
 
@@ -355,20 +514,24 @@ export async function clearJevKey(
 
 /**
  * A node administrator sets every node setting at once; a save without
- * `replay` leaves the stored pitch delay as it is.
+ * `replay` leaves the stored pitch delay as it is. Answers the uploaded
+ * sample video a save that put the default clip back replaced (null for
+ * none), for the caller to delete once saved.
  */
 export async function setNodeSettings(
   db: Kysely<Database>,
   actor: Actor,
   settings: NodeSettingsUpdate
-): Promise<void> {
+): Promise<{ replacedSampleKey: string | null }> {
   const admin = await requireNodeAdmin(
     db,
     actor,
     'Only a node administrator can change the node settings'
   )
-  const { scoreboard, highlights, radar, replay, distribution } = settings
+  const { scoreboard, highlights, radar, replay, distribution, sponsors } =
+    settings
   const rows: Array<[string, unknown]> = [
+    ...(sponsors == null ? [] : sponsorRows(sponsors)),
     ...(replay == null
       ? []
       : [['replay.pitchSec', replay.pitchSec] as [string, unknown]]),
@@ -408,7 +571,9 @@ export async function setNodeSettings(
   if (distribution?.iosAppStoreUrl !== undefined)
     rows.push(['distribution.iosAppStoreUrl', distribution.iosAppStoreUrl])
   const now = new Date()
-  await db.transaction().execute(async trx => {
+  const replacedSampleKey = await db.transaction().execute(async trx => {
+    const replaced =
+      sponsors?.sampleKey === null ? await lockedSampleKey(trx) : null
     for (const [key, value] of rows) {
       // A jsonb column takes the value as JSON text: a bare string would be
       // read as JSON, not as the string.
@@ -425,9 +590,11 @@ export async function setNodeSettings(
         )
         .execute()
     }
+    return replaced
   })
   forgetScoreboardSettings()
   forgetSettings()
+  return { replacedSampleKey }
 }
 
 /** Read fresh so workers use the same matching windows after an admin edit. */
@@ -451,6 +618,29 @@ export async function radarSettings(
     }
   }
   return asRadarSettings(settings)
+}
+
+/**
+ * The `system_settings` rows a save of the sponsor settings writes: the
+ * sample's only to put the default clip back, since the sample is the
+ * upload's.
+ */
+function sponsorRows(
+  sponsors: SponsorSettingsUpdate
+): Array<[string, unknown]> {
+  return [
+    ...LOGO_PLACEMENTS.map((name): [string, unknown] => {
+      const { side, top, maxWidth, maxHeight } = sponsors.logo[name]
+      return [`sponsors.logo.${name}`, { side, top, maxWidth, maxHeight }]
+    }),
+    ...REEL_LAYOUTS.map((layout): [string, unknown] => {
+      const { maxWidth, maxHeight } = sponsors.reel[layout]
+      return [`sponsors.reel.${layout}`, { maxWidth, maxHeight }]
+    }),
+    ...(sponsors.sampleKey === null
+      ? [[SPONSOR_SAMPLE_SETTING, null] as [string, unknown]]
+      : [])
+  ]
 }
 
 function placement(value: BoardPlacement): BoardPlacement {

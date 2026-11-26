@@ -330,6 +330,7 @@ The following table groups the published API contract by path and method. A cell
 | `/node/ownership-preflight` | GET | — | POST |
 | `/node/sessions` | GET | — | — |
 | `/node/settings` | GET, PUT | — | — |
+| `/node/sponsor-sample` | — | — | PUT |
 | `/oauth/approvals/{handle}` | GET, POST | — | — |
 | `/parent-links` | — | PUT | — |
 | `/parent-previews` | — | POST | — |
@@ -410,4 +411,4 @@ The following table groups the published API contract by path and method. A cell
 | `/videos/{videoId}/highlights` | — | GET | — |
 | `/videos/{videoId}/wall-timeline` | GET | — | — |
 
-The published document contains 343 method/path operations on 286 paths. The messaging reach and proxy reads resolve affiliations and share the aggregate tier. Saving umpire season priority can process 500 seasons and rebuild the requirements response, so it uses the expensive tier. A league's raw sponsor media upload stores and probes its file, so it uses the expensive tier too. These classifications come from the handlers. The source scan also found ordinary GETs for player names, playback, stills and HLS files, and an aggregate GET for the API document itself. OAuth interaction and provider requests use the ordinary budget in addition to their dedicated limits. The scoreboard dashboard supports both an ordinary HTTP read and an aggregate WebSocket upgrade.
+The published document contains 344 method/path operations on 287 paths. The messaging reach and proxy reads resolve affiliations and share the aggregate tier. Saving umpire season priority can process 500 seasons and rebuild the requirements response, so it uses the expensive tier. The two raw sponsor uploads, a league's sponsor media and the node's sample video of up to 120 MB, store and probe their files, so they use the expensive tier too. These classifications come from the handlers. The source scan also found ordinary GETs for player names, playback, stills and HLS files, and an aggregate GET for the API document itself. OAuth interaction and provider requests use the ordinary budget in addition to their dedicated limits. The scoreboard dashboard supports both an ordinary HTTP read and an aggregate WebSocket upgrade.

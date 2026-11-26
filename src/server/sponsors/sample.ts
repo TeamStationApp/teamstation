@@ -3,12 +3,14 @@ import { type Kysely, sql } from 'kysely'
 import {
   DEFAULT_SPONSOR_SAMPLE_KEY,
   defaultSponsorSettings,
-  type SponsorOverlay
+  type SponsorSettings
 } from '../../common/nodeSettings'
 import type { SampleVideo } from '../../common/sponsors/types'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { deleteObject } from '../media/images'
 import { playbackAnswer, type PlaybackDeps } from '../media/playbackAnswer'
+import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { mediaUrl } from './credits'
 
 /** The previews play 30:00–32:00 of a recording at least this long. */
@@ -22,34 +24,23 @@ export function sampleWindow(durationSec: number): [number, number] {
   return [0, Math.min(SAMPLE_SEC, durationSec)]
 }
 
-/** What the node's sample and overlay are, until node settings store them. */
-export interface SampleSettings {
-  sampleKey: string | null
-  overlay: SponsorOverlay
-}
-
-export const DEFAULT_SAMPLE_SETTINGS: SampleSettings = {
-  sampleKey: defaultSponsorSettings.sampleKey,
-  overlay: {
-    logo: defaultSponsorSettings.logo,
-    reel: defaultSponsorSettings.reel
-  }
-}
-
 /**
  * The video the league's previews play: its newest recording with a
  * home-plate angle (a title with the word "home"), else its newest recording
  * of any title, from a game in one of its seasons or with one of its teams.
  * Another league's footage is never used. With none, or when the chosen
- * recording's files are not there, the node's sample video.
+ * recording's files are not there, the node's sample video: the one a node
+ * administrator uploaded (`sponsors.sampleKey`), else the default clip. The
+ * previews place the logo and reel by the node's `settings`.
  */
 export async function sampleVideoFor(
   db: Kysely<Database>,
   deps: PlaybackDeps,
   leagueId: string,
-  settings: SampleSettings = DEFAULT_SAMPLE_SETTINGS,
+  settings: SponsorSettings = defaultSponsorSettings,
   now: number = Date.now()
 ): Promise<SampleVideo> {
+  const overlay = { logo: settings.logo, reel: settings.reel }
   const recording = await db
     .selectFrom('videos')
     .innerJoin('games', 'games.id', 'videos.game_id')
@@ -88,13 +79,49 @@ export async function sampleVideoFor(
         videoId: recording.id,
         url: answer.url,
         window: sampleWindow(recording.durationSec),
-        overlay: settings.overlay
+        overlay
       }
   }
   return {
     kind: 'node',
     url: mediaUrl(deps.space, settings.sampleKey ?? DEFAULT_SPONSOR_SAMPLE_KEY),
     window: [0, SAMPLE_SEC],
-    overlay: settings.overlay
+    overlay
+  }
+}
+
+/** A node administrator's upload: `sponsors/sample/<YYYY-MM-DD>-<id>.mp4`. */
+const UPLOADED_SAMPLE_KEY =
+  /^sponsors\/sample\/\d{4}-\d{2}-\d{2}-[A-Za-z0-9_-]+\.mp4$/
+
+/**
+ * Deletes the uploaded sample video a save replaced, once the save is
+ * stored: a new upload, or Reset to defaults. Only a node administrator's
+ * upload (`sponsors/sample/<YYYY-MM-DD>-<id>.mp4`) is deleted, never the
+ * default clip, and never the key the node points at now. A delete that
+ * fails is logged: the save stands, and the object stays.
+ */
+export async function dropReplacedSample(
+  space: SpaceSettings,
+  replaced: string | null,
+  current: string | null,
+  log: (message: string) => void = console.error
+): Promise<boolean> {
+  if (
+    replaced == null ||
+    replaced === current ||
+    replaced === DEFAULT_SPONSOR_SAMPLE_KEY ||
+    !UPLOADED_SAMPLE_KEY.test(replaced) ||
+    !spaceConfigured(space)
+  )
+    return false
+  try {
+    await deleteObject({ space, key: replaced })
+    return true
+  } catch (error) {
+    log(
+      `Deleting the replaced sponsor sample ${replaced} failed: ${error instanceof Error ? error.message : String(error)}`
+    )
+    return false
   }
 }

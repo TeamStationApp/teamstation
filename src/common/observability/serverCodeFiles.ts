@@ -359,6 +359,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/routes/media.js',
   'server/routes/narrations.js',
   'server/routes/nodeAdministration.js',
+  'server/routes/nodeSampleVideo.js',
   'server/routes/notifications.js',
   'server/routes/onboarding.js',
   'server/routes/people.js',

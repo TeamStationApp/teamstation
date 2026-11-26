@@ -117,6 +117,7 @@ import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { narrationRoutes } from './routes/narrations'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
+import { nodeSampleVideoRoutes } from './routes/nodeSampleVideo'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
@@ -975,6 +976,12 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     sponsorRoutes(db, mediaContext, { uploadsDir: uploadsDir() })
+  )
+  // Its body streams to a file, counted up to 120 MB, once the caller is a
+  // node administrator.
+  app.use(
+    '/api/v1',
+    nodeSampleVideoRoutes(db, mediaContext, { uploadsDir: uploadsDir() })
   )
   app.use('/api/v1', scheduleRoutes(db, { onGameWritten }))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))

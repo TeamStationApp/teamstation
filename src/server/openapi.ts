@@ -1617,11 +1617,79 @@ const jevKeyStateSchema = {
  * The node settings as `GET /node/settings` answers them and `PUT` takes and
  * answers them: one copy, so the three cannot drift apart (`asNodeSettings`).
  */
+const sponsorLogoPlacementSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['side', 'top', 'maxWidth', 'maxHeight'],
+  properties: {
+    side: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+    top: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+    maxWidth: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+    maxHeight: { type: 'number', exclusiveMinimum: 0, maximum: 1 }
+  }
+}
+
+const sponsorReelPlacementSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['maxWidth', 'maxHeight'],
+  properties: {
+    maxWidth: { type: 'number', exclusiveMinimum: 0, maximum: 1 },
+    maxHeight: { type: 'number', exclusiveMinimum: 0, maximum: 1 }
+  }
+}
+
+const REEL_LAYOUT_NAMES = [
+  'portrait12',
+  'portrait3',
+  'portrait4',
+  'landscape1',
+  'landscape2',
+  'landscape3',
+  'landscape4'
+]
+
+const sponsorSettingsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  description:
+    'Where sponsor logos and reels sit, and the node’s sample video. A logo’s side and top margins and its largest box are fractions of the video it is on; a reel’s largest box is a fraction of the screen. A save from an older client omits it and keeps what is stored; a read always has it, `sampleKey` included.',
+  required: ['logo', 'reel'],
+  properties: {
+    logo: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['single', 'grid', 'tv', 'portrait'],
+      properties: {
+        single: sponsorLogoPlacementSchema,
+        grid: sponsorLogoPlacementSchema,
+        tv: sponsorLogoPlacementSchema,
+        portrait: sponsorLogoPlacementSchema
+      }
+    },
+    reel: {
+      type: 'object',
+      additionalProperties: false,
+      required: REEL_LAYOUT_NAMES,
+      properties: Object.fromEntries(
+        REEL_LAYOUT_NAMES.map(name => [name, sponsorReelPlacementSchema])
+      )
+    },
+    sampleKey: {
+      type: ['string', 'null'],
+      pattern: '^sponsors/sample/[A-Za-z0-9_-]+\\.mp4$',
+      description:
+        'The uploaded sample video’s object, or null for the default clip at `sponsors/sample/default.mp4`. The sample is its upload’s (`PUT /node/sponsor-sample`): on a save, null puts the default clip back, and a key, or none, leaves the stored sample as it is, so a form read before somebody else’s upload keeps it.'
+    }
+  }
+}
+
 const nodeSettingsSchema = {
   type: 'object',
   additionalProperties: false,
   required: ['scoreboard', 'highlights'],
   properties: {
+    sponsors: sponsorSettingsSchema,
     jev: {
       type: 'object',
       additionalProperties: false,
@@ -7753,6 +7821,32 @@ export function openApiDocument(version: string): OpenApiDocument {
             400: errorResponse,
             401: errorResponse,
             403: errorResponse
+          }
+        }
+      },
+      '/node/sponsor-sample': {
+        put: {
+          summary: 'A node administrator replaces the sponsor sample video',
+          description:
+            'The raw bytes of an MP4 the previews of a league with no footage of its own play. The server only checks it, never changes it: H.264 or HEVC, 1920 × 1080, at most 60 fps, 2 minutes and 120 MB. A refusal is a 400 with the sentence the screen shows. Nothing past 120 MB is kept: the rest of a body up to 240 MB is read and dropped before the refusal, and a longer one is cut off. The file is stored at a new key, which becomes `sponsors.sampleKey`. Node administrators only; nobody else’s body is read.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'video/mp4': { schema: { type: 'string', format: 'binary' } }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The node’s sponsor settings, with the new sample',
+              content: {
+                'application/json': { schema: sponsorSettingsSchema }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            503: errorResponse
           }
         }
       },

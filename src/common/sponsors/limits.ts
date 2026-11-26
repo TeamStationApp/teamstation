@@ -97,13 +97,20 @@ export function reelProbeProblem(
   return null
 }
 
+/** Why a sample video of `bytes` is refused for its size alone, or `null`. */
+export function sampleSizeProblem(bytes: number): string | null {
+  return bytes > SAMPLE_MAX_BYTES
+    ? `The sample video can be at most ${count(SAMPLE_MAX_BYTES / 1_000_000)} MB.`
+    : null
+}
+
 /** Why the node's sample video is refused, or `null`. */
 export function sampleProbeProblem(
   probe: VideoProbe,
   bytes: number
 ): string | null {
-  if (bytes > SAMPLE_MAX_BYTES)
-    return `The sample video can be at most ${count(SAMPLE_MAX_BYTES / 1_000_000)} MB.`
+  const size = sampleSizeProblem(bytes)
+  if (size != null) return size
   if (!SAMPLE_CODECS.includes(probe.codec))
     return 'The sample video must be H.264 or HEVC.'
   if (probe.width !== SAMPLE_BOX.width || probe.height !== SAMPLE_BOX.height)

@@ -6,8 +6,12 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { TeamStationClient } from '../../common/api'
 import {
   defaultNodeSettings,
-  type NodeSettings
+  defaultSponsorSettings,
+  type NodeSettings,
+  type NodeSettingsSave
 } from '../../common/nodeSettings'
+import { mount, text as nativeText, unmount } from '../../test/gameFormDom'
+import { SponsorSampleUpload as NativeSampleUpload } from '../sponsors/SponsorSampleUpload.native'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   NodeAdministrationScreen,
@@ -117,6 +121,8 @@ describe('NodeSettingsCard', function () {
     keys: Array<string | null>
     recover: () => void
     store: (settings: NodeSettings) => void
+    /** The sample an upload, here or elsewhere, made the node's. */
+    sample: (key: string) => void
   } {
     const saved: NodeSettings[] = []
     const keys: Array<string | null> = []
@@ -127,10 +133,22 @@ describe('NodeSettingsCard', function () {
         if (failing != null) throw failing
         return structuredClone(stored)
       },
-      setNodeSettings: async (settings: NodeSettings) => {
-        saved.push(settings)
-        // The key is not a setting a save changes.
-        stored = { ...structuredClone(settings), jev: stored.jev }
+      setNodeSettings: async (settings: NodeSettingsSave) => {
+        saved.push(settings as NodeSettings)
+        // The key is not a setting a save changes, nor is the sample but
+        // to put the default clip back.
+        const sent = structuredClone(settings)
+        stored = {
+          ...sent,
+          jev: stored.jev,
+          sponsors: {
+            ...(sent.sponsors ?? stored.sponsors),
+            sampleKey:
+              sent.sponsors?.sampleKey === null
+                ? null
+                : stored.sponsors.sampleKey
+          }
+        }
         return structuredClone(stored)
       },
       setJevKey: async (apiKey: string) => {
@@ -151,6 +169,9 @@ describe('NodeSettingsCard', function () {
       },
       store: settings => {
         stored = structuredClone(settings)
+      },
+      sample: key => {
+        stored = { ...stored, sponsors: { ...stored.sponsors, sampleKey: key } }
       }
     }
   }
@@ -222,7 +243,8 @@ describe('NodeSettingsCard', function () {
         leadSecByEventType: { strikeout: 10, walk: 90 }
       },
       distribution: defaultNodeSettings.distribution,
-      jev: defaultNodeSettings.jev
+      jev: defaultNodeSettings.jev,
+      sponsors: defaultNodeSettings.sponsors
     })
     await render(server.client)
     expect(text().toLowerCase()).contains('scoreboard settings')
@@ -248,7 +270,7 @@ describe('NodeSettingsCard', function () {
     expect(shown('Play past the event')).equals('5 s')
     // No free text but the Jev key, and no range repeated on the rows.
     expect(
-      [...document.querySelectorAll('input')].map(input =>
+      [...document.querySelectorAll('input:not([type="file"])')].map(input =>
         input.getAttribute('aria-label')
       )
     ).deep.equals(['Jev API key'])
@@ -487,7 +509,7 @@ describe('NodeSettingsCard', function () {
     let answer: () => void = () => {}
     const write = server.client.setNodeSettings.bind(server.client)
     Object.assign(server.client, {
-      setNodeSettings: async (settings: NodeSettings) => {
+      setNodeSettings: async (settings: NodeSettingsSave) => {
         await new Promise<void>(resolve => {
           answer = resolve
         })
@@ -609,5 +631,283 @@ describe('NodeSettingsCard', function () {
       'Only a node administrator can change the node settings'
     )
     expect(text()).not.contains('Saved.')
+  })
+
+  describe('U42 sponsor settings', function () {
+    const LOGOS = [
+      'Logo — single camera',
+      'Logo — four-angle grid',
+      'Logo — Apple TV',
+      'Logo — portrait'
+    ]
+    const REELS = [
+      'Reel — portrait, 1 or 2 cameras',
+      'Reel — portrait, 3 cameras',
+      'Reel — portrait, 4 cameras',
+      'Reel — landscape, 1 camera',
+      'Reel — landscape, 2 cameras',
+      'Reel — landscape, 3 cameras',
+      'Reel — landscape, 4 cameras'
+    ]
+    /** Each sponsor value the card shows, by its row's name. */
+    const sponsorValues = (): Record<string, string> =>
+      Object.fromEntries([
+        ...LOGOS.flatMap(logo =>
+          ['side margin', 'top margin', 'largest width', 'largest height'].map(
+            row => [`${logo}: ${row}`, shown(`${logo}: ${row}`)]
+          )
+        ),
+        ...REELS.flatMap(reel =>
+          ['largest width', 'largest height'].map(row => [
+            `${reel}: ${row}`,
+            shown(`${reel}: ${row}`)
+          ])
+        )
+      ])
+    const defaults = (): Record<string, string> =>
+      Object.fromEntries([
+        ...LOGOS.flatMap(logo => [
+          [`${logo}: side margin`, '5%'],
+          [`${logo}: top margin`, '5%'],
+          [`${logo}: largest width`, '25%'],
+          [`${logo}: largest height`, '25%']
+        ]),
+        ...REELS.flatMap(reel => [
+          [`${reel}: largest width`, '33⅓%'],
+          [`${reel}: largest height`, '33⅓%']
+        ])
+      ])
+
+    /** A card whose server stores uploads, and answers what it stored. */
+    function uploading(answer?: Error): {
+      server: ReturnType<typeof fake>
+      uploads: Array<{ contentType: string; bytes: Uint8Array }>
+    } {
+      const server = fake()
+      const uploads: Array<{ contentType: string; bytes: Uint8Array }> = []
+      Object.assign(server.client, {
+        uploadSponsorSample: async (contentType: string, bytes: Uint8Array) => {
+          uploads.push({ contentType, bytes })
+          if (answer != null) throw answer
+          server.sample('sponsors/sample/2026-11-25-smd_up.mp4')
+          return {
+            ...defaultSponsorSettings,
+            sampleKey: 'sponsors/sample/2026-11-25-smd_up.mp4'
+          }
+        }
+      })
+      return { server, uploads }
+    }
+
+    /** Chooses `file` in the sample's hidden chooser. */
+    async function choose(file: {
+      type: string
+      size: number
+      bytes: Uint8Array
+    }): Promise<void> {
+      const input = document.querySelector<HTMLInputElement>(
+        'input[data-testid="sponsor-sample-input"]'
+      )
+      if (input == null) throw new Error('no sample chooser')
+      expect(input.type).equals('file')
+      expect(input.accept).equals('video/mp4,video/quicktime')
+      Object.defineProperty(input, 'files', {
+        configurable: true,
+        value: [
+          {
+            type: file.type,
+            size: file.size,
+            arrayBuffer: async () => file.bytes.buffer
+          }
+        ]
+      })
+      await act(async () => {
+        input.dispatchEvent(new window.Event('change', { bubbles: true }))
+        await delay()
+      })
+    }
+
+    it('shows each logo and reel group at its default, and the default clip', async function () {
+      await render(fake().client)
+      expect(text().toLowerCase()).contains('sponsor settings')
+      for (const group of [...LOGOS, ...REELS, 'Sample video'])
+        expect(text()).contains(group)
+      expect(sponsorValues()).deep.equals(defaults())
+      expect(text()).contains('Default clip')
+      expect(buttonLabels()).contains('Upload sample video')
+    })
+
+    it('shows stored values at their nearest stops, a stored third as 33⅓%, and an uploaded sample’s day', async function () {
+      const server = fake()
+      server.store({
+        ...defaultNodeSettings,
+        sponsors: {
+          ...defaultSponsorSettings,
+          logo: {
+            ...defaultSponsorSettings.logo,
+            grid: { side: 0.104, top: 0.02, maxWidth: 0.33, maxHeight: 0.18 }
+          },
+          reel: {
+            ...defaultSponsorSettings.reel,
+            landscape2: { maxWidth: 0.34, maxHeight: 0.62 }
+          },
+          sampleKey: 'sponsors/sample/2026-11-25-smd_up.mp4'
+        }
+      })
+      await render(server.client)
+      expect(shown('Logo — four-angle grid: side margin')).equals('10%')
+      expect(shown('Logo — four-angle grid: top margin')).equals('2%')
+      expect(shown('Logo — four-angle grid: largest width')).equals('35%')
+      expect(shown('Logo — four-angle grid: largest height')).equals('20%')
+      // 0.34 is nearer the third than 35%.
+      expect(shown('Reel — landscape, 2 cameras: largest width')).equals('33⅓%')
+      expect(shown('Reel — landscape, 2 cameras: largest height')).equals('60%')
+      expect(text()).contains('Uploaded Nov 25, 2026')
+      expect(text()).not.contains('Default clip')
+    })
+
+    it('marks the form changed on a wheel, and Save sends the new placements', async function () {
+      const server = fake()
+      await render(server.client)
+      await press('Save')
+      expect(text()).contains('Saved.')
+      await pick('Logo — single camera: side margin', 'Side margin 10%')
+      expect(text()).not.contains('Saved.')
+      await pick(
+        'Reel — landscape, 1 camera: largest width',
+        'Largest width 25%'
+      )
+      await pick('Logo — portrait: largest height', 'Largest height 40%')
+      expect(shown('Logo — single camera: side margin')).equals('10%')
+      expect(shown('Reel — landscape, 1 camera: largest width')).equals('25%')
+      await press('Save')
+      const sponsors = server.saved.at(-1)!.sponsors
+      expect(sponsors.logo.single).deep.equals({
+        ...defaultSponsorSettings.logo.single,
+        side: 0.1
+      })
+      expect(sponsors.logo.portrait.maxHeight).equals(0.4)
+      expect(sponsors.reel.landscape1).deep.equals({
+        maxWidth: 0.25,
+        maxHeight: 1 / 3
+      })
+      // Every value left alone goes back as it was: a third stays a third.
+      expect(sponsors.reel.portrait12).deep.equals({
+        maxWidth: 1 / 3,
+        maxHeight: 1 / 3
+      })
+      expect(sponsors.logo.grid).deep.equals(defaultSponsorSettings.logo.grid)
+      expect(text()).contains('Saved.')
+    })
+
+    it('offers the third on the reel wheel and saves it back exactly', async function () {
+      const server = fake()
+      server.store({
+        ...defaultNodeSettings,
+        sponsors: {
+          ...defaultSponsorSettings,
+          reel: {
+            ...defaultSponsorSettings.reel,
+            landscape4: { maxWidth: 0.5, maxHeight: 0.5 }
+          }
+        }
+      })
+      await render(server.client)
+      await pick(
+        'Reel — landscape, 4 cameras: largest width',
+        'Largest width 33⅓%'
+      )
+      expect(shown('Reel — landscape, 4 cameras: largest width')).equals('33⅓%')
+      await press('Save')
+      expect(server.saved.at(-1)!.sponsors.reel.landscape4).deep.equals({
+        maxWidth: 1 / 3,
+        maxHeight: 0.5
+      })
+    })
+
+    it('puts every sponsor value and the default clip back on Reset to defaults, and saves exactly the defaults', async function () {
+      const server = fake()
+      server.store({
+        ...defaultNodeSettings,
+        sponsors: {
+          ...defaultSponsorSettings,
+          sampleKey: 'sponsors/sample/2026-11-25-smd_up.mp4'
+        }
+      })
+      await render(server.client)
+      await pick('Logo — Apple TV: top margin', 'Top margin 20%')
+      await pick(
+        'Reel — portrait, 3 cameras: largest height',
+        'Largest height 75%'
+      )
+      expect(text()).contains('Uploaded Nov 25, 2026')
+      await press('Reset to defaults')
+      expect(sponsorValues()).deep.equals(defaults())
+      expect(text()).contains('Default clip')
+      await press('Save')
+      const saved = server.saved.at(-1)!.sponsors
+      expect(saved).deep.equals(defaultSponsorSettings)
+      expect(saved.reel.landscape1.maxWidth).equals(1 / 3)
+      expect(saved.sampleKey).equals(null)
+      expect(shown('Reel — landscape, 1 camera: largest width')).equals('33⅓%')
+    })
+
+    it('uploads a chosen sample video on the web and shows its day, apart from Save', async function () {
+      const { server, uploads } = uploading()
+      await render(server.client)
+      await choose({
+        type: 'video/mp4',
+        size: 4,
+        bytes: new Uint8Array([0, 0, 0, 1])
+      })
+      expect(uploads).has.length(1)
+      expect(uploads[0].contentType).equals('video/mp4')
+      expect([...uploads[0].bytes]).deep.equals([0, 0, 0, 1])
+      expect(text()).contains('Uploaded Nov 25, 2026')
+      // Nothing else was saved with it.
+      expect(server.saved).has.length(0)
+      // A later Save sends no sample, and the new one stays.
+      await press('Save')
+      expect(server.saved.at(-1)!.sponsors).not.have.property('sampleKey')
+      expect(text()).contains('Uploaded Nov 25, 2026')
+    })
+
+    it('keeps a sample uploaded elsewhere after the card was read, on a Save of something else', async function () {
+      const server = fake()
+      await render(server.client)
+      expect(text()).contains('Default clip')
+      // Another administrator's upload, after this card read the settings.
+      server.sample('sponsors/sample/2026-11-25-smd_up.mp4')
+      await pick('Logo — Apple TV: top margin', 'Top margin 20%')
+      await press('Save')
+      expect(server.saved.at(-1)!.sponsors).not.have.property('sampleKey')
+      expect(text()).contains('Uploaded Nov 25, 2026')
+    })
+
+    it('says why a sample was refused, and refuses one past 120 MB without sending it', async function () {
+      const { server, uploads } = uploading(
+        new Error('The sample video must be 1,920 × 1,080.')
+      )
+      await render(server.client)
+      await choose({ type: '', size: 4, bytes: new Uint8Array([1, 2, 3, 4]) })
+      expect(uploads.map(upload => upload.contentType)).deep.equals([
+        'video/mp4'
+      ])
+      expect(text()).contains('The sample video must be 1,920 × 1,080.')
+      expect(text()).contains('Default clip')
+      await choose({
+        type: 'video/mp4',
+        size: 130_000_000,
+        bytes: new Uint8Array([1])
+      })
+      expect(uploads).has.length(1)
+      expect(text()).contains('The sample video can be at most 120 MB.')
+    })
+
+    it('says on a phone to upload the sample video from the web', async function () {
+      await mount(<NativeSampleUpload busy={false} onPick={() => undefined} />)
+      expect(nativeText()).contains('Upload the sample video from the web.')
+      await unmount()
+    })
   })
 })

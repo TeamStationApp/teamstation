@@ -36,7 +36,7 @@ export interface SponsorMediaContext {
 const IMMUTABLE = 'public, max-age=31536000, immutable'
 
 /** An MP4 (ISO base media) file's first box is `ftyp`. */
-const isMp4 = (bytes: Uint8Array): boolean =>
+export const isMp4 = (bytes: Uint8Array): boolean =>
   bytes.length >= 12 && String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp'
 
 function refuse(problem: string | null): void {

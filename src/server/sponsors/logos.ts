@@ -1,13 +1,15 @@
 import { type Kysely, sql } from 'kysely'
 
-import type { SponsorOverlay } from '../../common/nodeSettings'
+import {
+  defaultSponsorSettings,
+  type SponsorOverlay
+} from '../../common/nodeSettings'
 import type { GameSponsors } from '../../common/sponsors/types'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import type { SpaceSettings } from '../media/spacesHls'
 import { creditsFor, mediaUrl } from './credits'
-import { DEFAULT_SAMPLE_SETTINGS } from './sample'
 
 /** How long a game is recorded before its logo uses a credit, in seconds. */
 export const LOGO_CHARGE_SEC = 30 * 60
@@ -311,7 +313,10 @@ export async function gameSponsorsFor(
   space: SpaceSettings,
   gameId: string,
   leagueId: string | null,
-  overlay: SponsorOverlay = DEFAULT_SAMPLE_SETTINGS.overlay
+  overlay: SponsorOverlay = {
+    logo: defaultSponsorSettings.logo,
+    reel: defaultSponsorSettings.reel
+  }
 ): Promise<GameSponsors> {
   const none: GameSponsors = { leagueId: null, logo: null, reels: [], overlay }
   if (leagueId == null) return none
