@@ -57,8 +57,12 @@ const game = (
     ...patch
   })
 /** What a guest's read of the public games answers: `games`, by page. */
-function publicClient(games: readonly PublicGame[]): TeamStationClient {
+function publicClient(
+  games: readonly PublicGame[],
+  more: Record<string, unknown> = {}
+): TeamStationClient {
   return {
+    ...more,
     publicGamesPage: async (
       kind: string,
       id: string,
@@ -305,5 +309,84 @@ describe('minimal public team information', () => {
       expect(document.querySelector('[role="alert"]')).equals(null)
       expect(document.body.textContent).includes('Demo Away')
     })
+  })
+})
+
+describe('U34 a public team’s sponsored rows', () => {
+  it('places the team’s league’s rows among its games, signed out, and opens the sponsor’s site', async () => {
+    const games = [
+      game({ id: 'g1', startAt: '2026-10-01T18:00:00Z', venue: 'Field One' }),
+      game({ id: 'g2', startAt: '2026-10-08T18:00:00Z', venue: 'Field Two' })
+    ]
+    const rowsAsked: unknown[] = []
+    const client = publicClient(games, {
+      sponsorRows: async (query: unknown) => {
+        rowsAsked.push(query)
+        return [
+          {
+            id: 'srw_a',
+            leagueId: 'lea_al',
+            logoUrl: '',
+            backgroundUrl: '',
+            title: 'Harbor Bakery',
+            message: 'Fresh bread after games.',
+            url: 'https://example.test/bread',
+            textColor: 'dark',
+            startsAt: '2026-10-04T18:00:00Z'
+          }
+        ]
+      }
+    })
+    await show('schedule', { games }, undefined, client)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(rowsAsked).deep.equals([{ team: 'demo', public: true }])
+    const page = document.body.textContent ?? ''
+    const places = ['Field One', 'Harbor Bakery', 'Field Two'].map(each =>
+      page.indexOf(each)
+    )
+    expect(places[0]).greaterThan(-1)
+    expect([...places].sort((a, b) => a - b)).deep.equals(places)
+
+    const opened: unknown[][] = []
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Restored after.
+    const open = window.open
+    window.open = (...args: unknown[]) => {
+      opened.push(args)
+      return null
+    }
+    try {
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>('[data-testid="sponsored-schedule-row"]')!
+          .click()
+      })
+    } finally {
+      window.open = open
+    }
+    expect(opened).deep.equals([
+      ['https://example.test/bread', '_blank', 'noopener']
+    ])
+  })
+
+  it('shows the videos list with no row and reads none', async () => {
+    const rowsAsked: unknown[] = []
+    const games = [game({ videoCount: 1 })]
+    await show(
+      'videos',
+      { games },
+      undefined,
+      publicClient(games, {
+        sponsorRows: async (query: unknown) => {
+          rowsAsked.push(query)
+          return []
+        }
+      })
+    )
+    expect(rowsAsked).deep.equals([])
+    expect(
+      document.querySelector('[data-testid="sponsored-schedule-row"]')
+    ).equals(null)
   })
 })

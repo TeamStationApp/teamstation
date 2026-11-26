@@ -201,14 +201,17 @@ import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
 import type {
   GameSponsors,
   SampleVideo,
+  SponsoredRow,
   SponsoredTextColor,
   SponsorMediaPurpose,
+  SponsorRowsQuery,
   SponsorState,
   UploadedSponsorMedia
 } from './sponsors/types'
 import {
   asGameSponsors,
   asSampleVideo,
+  asSponsoredRows,
   asSponsorState,
   asUploadedSponsorMedia
 } from './sponsors/wire'
@@ -9087,6 +9090,19 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/sponsors`,
       asGameSponsors
     )
+  }
+
+  /**
+   * The sponsored rows of every league that manages a team in a Schedule: a
+   * team's, a season's, or the signed-in person's own. A team or season read
+   * `public` needs nobody signed in.
+   */
+  async sponsorRows(query: SponsorRowsQuery): Promise<SponsoredRow[]> {
+    const params =
+      'scope' in query
+        ? 'scope=me'
+        : `${'team' in query ? `team=${encodeURIComponent(query.team)}` : `season=${encodeURIComponent(query.season)}`}${query.public === true ? '&public=1' : ''}`
+    return await this.request('GET', `/sponsor-rows?${params}`, asSponsoredRows)
   }
 
   private async requestUnobserved<T>(

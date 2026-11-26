@@ -86,7 +86,9 @@ const tsSuites = [
   'src/app/player/nativeVideoHandle.test.ts',
   'src/server/routes/gameWritten.test.ts',
   // Which league's sponsorship each viewer sees (M5).
-  'src/server/sponsors/eligibility.test.ts'
+  'src/server/sponsors/eligibility.test.ts',
+  // Sponsored rows placed among a Schedule's games (M6).
+  'src/app/sponsors/sponsoredRows.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -113,7 +115,15 @@ const appSuites = [
   'src/app/player/sponsors/SponsorReel.test.tsx',
   'src/app/player/sponsors/useGameVolume.test.tsx',
   'src/app/player/multiCam/useMultiCam.test.tsx',
-  'src/app/tv/TransportVideo.test.tsx'
+  'src/app/tv/TransportVideo.test.tsx',
+  // Sponsored rows in the combined, team, public team and season Schedules,
+  // and the paged lists' complete start (M6).
+  'src/app/screens/GamesFeedScreen.test.tsx',
+  'src/app/screens/TeamScreen.test.tsx',
+  'src/app/screens/teamSchedule.test.tsx',
+  'src/app/screens/PublicTeamContent.test.tsx',
+  'src/app/screens/SeasonPresentation.test.tsx',
+  'src/app/hooks/usePagedList.test.tsx'
 ]
 
 /**
@@ -165,7 +175,9 @@ const integrationSuites = [
   {
     spec: 'src/server/routes/lineups.integration.test.ts',
     grep: 'U21'
-  }
+  },
+  // The rows each Schedule reads, and who may read them (M6).
+  { spec: 'src/server/sponsors/rows.integration.test.ts' }
 ]
 
 function argument(name) {
@@ -293,7 +305,10 @@ async function bundle(suite, outfile, native) {
     plugins: [
       ...webSettings.plugins,
       tvRemoteRuntimePlugin(),
-      ...(native ? [pagedListStandInPlugin(), sponsorNativePlugin()] : [])
+      // A DOM with no layout draws a list's rows only through the stand-in,
+      // as `npm test` bundles the Schedule screens' suites.
+      pagedListStandInPlugin(),
+      ...(native ? [sponsorNativePlugin()] : [])
     ],
     alias: {
       ...webSettings.alias,

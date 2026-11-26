@@ -16,6 +16,7 @@ import { asSponsorOverlay } from '../nodeSettings'
 import type {
   GameSponsors,
   SampleVideo,
+  SponsoredRow,
   SponsorState,
   UploadedSponsorMedia
 } from './types'
@@ -107,3 +108,17 @@ export const asGameSponsors: Cleaner<GameSponsors> = asObject({
   ),
   overlay: asSponsorOverlay
 })
+
+export const asSponsoredRows: Cleaner<SponsoredRow[]> = asArray(
+  asObject({
+    id: asString,
+    leagueId: asString,
+    logoUrl: asString,
+    backgroundUrl: asString,
+    title: asString,
+    message: asString,
+    url: asString,
+    textColor: asTextColor,
+    startsAt: asString
+  })
+)

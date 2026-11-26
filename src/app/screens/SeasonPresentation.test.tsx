@@ -3,13 +3,25 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asSeasonSummary, type TeamStationClient } from '../../common/api'
+import {
+  asSeasonGame,
+  asSeasonSummary,
+  type GamesPageQuery,
+  type TeamStationClient
+} from '../../common/api'
+import {
+  asGroupDetail,
+  asPublicGroup,
+  type GroupDetail
+} from '../../common/publicGroups'
+import type { SponsoredRow } from '../../common/sponsors/types'
 import {
   chatAgeSheet,
   pillTabs,
   pressChatAge,
   TestChatAge
 } from '../../test/chatAgeTesting'
+import { pageOfGames } from '../../test/pageOf'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { SeasonPresentation } from './SeasonPresentation'
 
@@ -149,5 +161,165 @@ describe('entity chat season sections', function () {
       expect(chatAgeSheet()).equals(null)
       expect(pillTabs().selected).not.equals('Chats')
     }
+  })
+})
+
+describe('U34 a season’s sponsored rows', function () {
+  const games = [
+    asSeasonGame({
+      id: 'gam_one',
+      homeTeamId: 'tem_sox',
+      awayTeamId: 'tem_yanks',
+      homeTeamName: 'Sox',
+      awayTeamName: 'Yanks',
+      homeTeamExternal: false,
+      awayTeamExternal: false,
+      seasonId: 'sea_spring',
+      startAt: '2027-04-03T17:00:00.000Z',
+      venue: 'Field One',
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      ingestStatus: 'none',
+      videoCount: 0,
+      durationSec: null,
+      posterUrl: null,
+      homeLogoUrl: null,
+      awayLogoUrl: null,
+      isLive: false,
+      externalIds: []
+    })
+  ]
+  games.push({
+    ...games[0],
+    id: 'gam_two',
+    startAt: '2027-04-17T17:00:00.000Z',
+    venue: 'Field Two'
+  })
+  const rows: SponsoredRow[] = [
+    {
+      id: 'srw_al',
+      leagueId: 'lea_al',
+      logoUrl: '',
+      backgroundUrl: '',
+      title: 'Harbor Bakery',
+      message: 'Fresh bread after games.',
+      url: 'https://example.test/bread',
+      textColor: 'dark',
+      startsAt: '2027-04-10T17:00:00.000Z'
+    },
+    {
+      id: 'srw_nl',
+      leagueId: 'lea_nl',
+      logoUrl: '',
+      backgroundUrl: '',
+      title: 'Old Diner',
+      message: 'Breakfast all day.',
+      url: 'https://example.test/diner',
+      textColor: 'white',
+      startsAt: '2026-01-01T17:00:00.000Z'
+    }
+  ]
+
+  /** The season's Schedule on `when`, its reads recorded. */
+  async function schedule(
+    when: 'upcoming' | 'all',
+    publicDetail?: GroupDetail
+  ): Promise<unknown[]> {
+    const asked: unknown[] = []
+    const reads = {
+      group: async () => {
+        throw new Error('offline')
+      },
+      seasonGamesPage: async (_id: string, query: GamesPageQuery) =>
+        pageOfGames(games, query),
+      publicGamesPage: async (
+        _kind: string,
+        _id: string,
+        query: GamesPageQuery
+      ) =>
+        pageOfGames(
+          games.map(game => ({
+            ...game,
+            homeTeam: { id: game.homeTeamId, name: game.homeTeamName },
+            awayTeam: { id: game.awayTeamId, name: game.awayTeamName }
+          })),
+          query
+        ),
+      sponsorRows: async (query: unknown) => {
+        asked.push(query)
+        return rows
+      }
+    }
+    const seasonClient = new Proxy(reads, {
+      get: (target, name) =>
+        (target as Record<string | symbol, unknown>)[name] ?? (async () => [])
+    }) as unknown as TeamStationClient
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <SeasonPresentation
+            client={seasonClient}
+            season={season}
+            publicDetail={publicDetail}
+            initialTab="schedule"
+            initialWhen={when}
+            onOpenGame={() => undefined}
+            onOpenTeam={() => undefined}
+          />
+        </ThemeProvider>
+      )
+      await delay(30)
+    })
+    return asked
+  }
+  const order = (...texts: string[]): number[] => {
+    const page = document.body.textContent ?? ''
+    return texts.map(each => page.indexOf(each))
+  }
+
+  it('places every league’s rows among All’s games, newest first', async function () {
+    const asked = await schedule('all')
+    expect(asked).deep.equals([{ season: 'sea_spring' }])
+    const places = order('Field Two', 'Harbor Bakery', 'Field One', 'Old Diner')
+    expect(places[0]).greaterThan(-1)
+    expect([...places].sort((a, b) => a - b)).deep.equals(places)
+  })
+
+  it('keeps Upcoming to rows still ahead, soonest first', async function () {
+    await schedule('upcoming')
+    const places = order('Field One', 'Harbor Bakery', 'Field Two')
+    expect(places[0]).greaterThan(-1)
+    expect([...places].sort((a, b) => a - b)).deep.equals(places)
+    expect(document.body.textContent).not.includes('Old Diner')
+  })
+
+  it('reads a visitor’s rows as the public page', async function () {
+    const asked = await schedule(
+      'all',
+      asGroupDetail({
+        group: asPublicGroup({
+          id: 'sea_spring',
+          kind: 'season',
+          name: 'Spring 2027',
+          imageUrl: null,
+          locality: null
+        }),
+        parents: [],
+        children: [],
+        participatingSeasons: [],
+        competingTeams: [],
+        staff: [],
+        games: [],
+        nonMemberView: false,
+        canManage: false,
+        canViewPrivate: false
+      })
+    )
+    expect(asked).deep.equals([{ season: 'sea_spring', public: true }])
+    expect(document.body.textContent).includes('Harbor Bakery')
   })
 })

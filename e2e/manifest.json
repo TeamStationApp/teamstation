@@ -7748,6 +7748,330 @@
       "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
     },
     {
+      "id": "schedule/sponsors/rows#combined-web",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#public-signed-out",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#season-web",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#tap-opens-url",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#team-ios-app",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#team-web",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

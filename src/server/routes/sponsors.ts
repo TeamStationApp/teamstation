@@ -8,7 +8,7 @@ import {
   SPONSOR_MEDIA_PURPOSES,
   type SponsorMediaPurpose
 } from '../../common/sponsors/types'
-import { canSeeGame, visibleScopes } from '../access'
+import { canSeeGame, canSeeTeam, nonMemberTeam, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { requireGroupAdmin } from '../groups/rights'
@@ -35,9 +35,13 @@ import {
   addSponsorRow,
   deleteSponsorRow,
   editSponsorRow,
+  scheduleTeamIds,
+  seasonTeamIds,
+  sponsoredRowsFor,
   sponsorRowLeague
 } from '../sponsors/rows'
 import { sampleVideoFor } from '../sponsors/sample'
+import { followMerges } from '../teams/followMerges'
 
 export interface SponsorRouteOptions {
   /** A reel waits under `<uploadsDir>/sponsors/` while it is probed. */
@@ -95,6 +99,72 @@ function purposeOf(raw: unknown): SponsorMediaPurpose {
   return purpose
 }
 
+/** One query parameter, or `undefined` when it is not given. */
+function queryParam(raw: unknown): string | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'string' || raw === '') throw badRequest('Bad parameter')
+  return raw
+}
+
+/**
+ * The teams of the Schedule `GET /sponsor-rows` asks for, each read with
+ * that Schedule's own rights: a team's as `GET /teams/:teamId/games` (or its
+ * public page's), a season's as `GET /events?season=` (or its public
+ * page's), and the person's own as `GET /events`. `null` is every team.
+ */
+async function scheduleTeams(
+  db: Kysely<Database>,
+  req: Request
+): Promise<string[] | null> {
+  const team = queryParam(req.query.team)
+  const season = queryParam(req.query.season)
+  const scope = queryParam(req.query.scope)
+  const asked = [team, season, scope].filter(each => each != null).length
+  if (asked !== 1 || (scope != null && scope !== 'me'))
+    throw badRequest('Ask for one of team, season or scope=me')
+  const isPublic = req.query.public != null
+  const actor = req.actor
+  if (team != null) {
+    if (isPublic) {
+      const id = await followMerges(db, team)
+      const found = await db
+        .selectFrom('teams')
+        .select('id')
+        .where('id', '=', id)
+        .executeTakeFirst()
+      if (found == null) throw notFound()
+      return [id]
+    }
+    if (actor == null) throw unauthorized()
+    const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+    if (
+      !canSeeTeam(scopes, team) &&
+      !(await nonMemberTeam(db, actor, scopes, team))
+    )
+      throw notFound()
+    return [team]
+  }
+  if (season != null) {
+    const found = await db
+      .selectFrom('seasons')
+      .select('id')
+      .where('id', '=', season)
+      .executeTakeFirst()
+    if (found == null) throw notFound()
+    if (!isPublic) {
+      if (actor == null) throw unauthorized()
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      if (!scopes.isAdmin && !scopes.seasonIds.has(season)) throw notFound()
+    }
+    return await seasonTeamIds(db, season)
+  }
+  if (actor == null) throw unauthorized()
+  return await scheduleTeamIds(
+    db,
+    await visibleScopes(db, actor.userId, actor.isAdmin)
+  )
+}
+
 /**
  * A league's sponsor features, for its administrators: what it holds, its
  * uploads, its logos and reels with their credits, its sponsored rows, and
@@ -121,6 +191,11 @@ function purposeOf(raw: unknown): SponsorMediaPurpose {
  *
  * - `GET /games/:gameId/sponsors` → `GameSponsors`, the logo and reels its
  *   players draw.
+ *
+ * And for anybody who may read a Schedule, `GET /sponsor-rows` with one of
+ * `team=<id>`, `season=<id>` or `scope=me` → `SponsoredRow[]`, the live rows
+ * of every league that manages one of its teams, by start. A team or season
+ * read as the Schedule's own read is, with `public=1` as its public page's.
  */
 export function sponsorRoutes(
   db: Kysely<Database>,
@@ -317,6 +392,15 @@ export function sponsorRoutes(
           undefined,
           clock().getTime()
         )
+      )
+    })
+  )
+
+  router.get(
+    '/sponsor-rows',
+    withAsync(async (req, res) => {
+      res.json(
+        await sponsoredRowsFor(db, media.space, await scheduleTeams(db, req))
       )
     })
   )

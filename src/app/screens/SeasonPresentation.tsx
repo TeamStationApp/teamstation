@@ -29,6 +29,10 @@ import {
   type PublicGame
 } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
+import type {
+  SponsoredRow,
+  SponsorRowsQuery
+} from '../../common/sponsors/types'
 import { type TabCorrection, useChatsTabGate } from '../chat/AgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
@@ -62,6 +66,14 @@ import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
+import {
+  isSponsored,
+  keyWithSponsored,
+  type WithSponsored,
+  withSponsoredRows
+} from '../sponsors/sponsoredRows'
+import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { groupScope, seasonScope, storedSchedule } from '../sync/scheduleReads'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -78,7 +90,7 @@ import { SeasonStandings } from './SeasonStandings'
 import { battingColumns, pitchingColumns } from './statColumns'
 import { StatsKey } from './StatsKey'
 import { useBreakParent } from './useBreakParent'
-import { countFor, type When } from './whenFilter'
+import { countFor, rowWindow, type When } from './whenFilter'
 
 /** What a season's administrator can do from its Teams tab. */
 export interface SeasonManagement {
@@ -195,6 +207,8 @@ const LIST_QUERY: Record<ListId, GamesPageQuery> = {
 const ROW_HEIGHT = { schedule: 140, videos: 130 }
 
 const gameId = (game: { id: string }): string => game.id
+const scheduleKey = keyWithSponsored(gameId)
+const startOf = (game: ScheduleGame): string | null => game.startAt
 
 /** One of the season's lists, read by `read` when the screen asks. */
 function useSeasonList<T extends { id: string }>(
@@ -412,6 +426,17 @@ export function SeasonPresentation(
     }),
     [client, mayView, publicDetail, reveals, season.id, seasonRetry]
   )
+  // The leagues of the season's teams sponsor its Schedule, read as the
+  // games are: a member's way, or the public page's.
+  const sponsorQuery = useMemo<SponsorRowsQuery>(
+    () => ({ season: season.id, ...(mayView ? {} : { public: true }) }),
+    [mayView, season.id]
+  )
+  const sponsored = useSponsoredRows(client, sponsorQuery)
+  const { refresh: readSponsored } = sponsored
+  useEffect(() => {
+    readSponsored().catch(() => undefined)
+  }, [readSponsored, readTurn])
   const read = useRef(new Map<ListId, object>())
   useEffect(() => {
     if (read.current.get(listId) === readTurn) return
@@ -850,6 +875,8 @@ export function SeasonPresentation(
                   <SeasonGames
                     key={mayView ? 'member' : 'public'}
                     list={mayView ? memberLists[when] : publicLists[when]}
+                    when={when}
+                    sponsored={sponsored.rows}
                     nonMemberView={!mayView}
                     footer={props.scheduleActions}
                     onOpenGame={openGame}
@@ -1107,29 +1134,51 @@ function SeasonGames(props: {
     | 'failed'
     | 'failedWay'
     | 'retry'
+    | 'ends'
   >
+  /** The pill the list is, which sets its order and its sponsored rows. */
+  when: When
+  /** The season's leagues' sponsored rows, placed among its games. */
+  sponsored: readonly SponsoredRow[]
   nonMemberView: boolean
   footer: React.ReactNode
   onOpenGame: SeasonPresentationProps['onOpenGame']
 }): React.ReactElement {
-  const { list, footer, onOpenGame, nonMemberView } = props
-  const { rows, loadMore } = list
+  const { list, when, sponsored, footer, onOpenGame, nonMemberView } = props
+  const { rows, loadMore, ends } = list
   const styles = getStyles(useTheme())
+  const items = useMemo(
+    () =>
+      withSponsoredRows(
+        rows,
+        sponsored,
+        startOf,
+        LIST_QUERY[when].order ?? 'desc',
+        ends,
+        rowWindow(when)
+      ),
+    [ends, rows, sponsored, when]
+  )
   const renderRow = useCallback(
-    (game: ScheduleGame) => (
-      <View
-        style={styles.row}
-        testID={nonMemberView ? `public-game-${game.id}` : undefined}
-      >
-        <SeasonGameCard game={game} onOpenGame={onOpenGame} />
-      </View>
-    ),
+    (game: WithSponsored<ScheduleGame>) =>
+      isSponsored(game) ? (
+        <View style={styles.row} testID="sponsored-row-cell">
+          <SponsoredScheduleRow {...game.row} />
+        </View>
+      ) : (
+        <View
+          style={styles.row}
+          testID={nonMemberView ? `public-game-${game.id}` : undefined}
+        >
+          <SeasonGameCard game={game} onOpenGame={onOpenGame} />
+        </View>
+      ),
     [onOpenGame, styles.row, nonMemberView]
   )
   return (
     <PagedList
-      data={rows}
-      keyOf={gameId}
+      data={items}
+      keyOf={scheduleKey}
       renderItem={renderRow}
       estimatedItemSize={ROW_HEIGHT.schedule}
       // A list that could not be read says so above the pills.

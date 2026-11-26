@@ -165,14 +165,19 @@ describe('usePagedList', function () {
       }
       await open(read)
       expect(ids(list.rows)).deep.equals(['r5', 'r6', 'r7', 'r8'])
+      // Older rows are still to read: the list's start is not complete.
+      expect(list.ends.start).equals(false)
+      expect(list.ends.end).equals(true)
       await act(async () => {
         await list.loadOlder()
       })
       expect(ids(list.rows)).deep.equals(ids(rows.slice(2)))
+      expect(list.ends.start).equals(false)
       await act(async () => {
         await list.loadOlder()
       })
       expect(ids(list.rows)).deep.equals(ids(rows))
+      expect(list.ends.start).equals(true)
       expect(calls).deep.equals([null, 'prev:5', 'prev:2'])
       await act(async () => {
         await list.loadOlder()
@@ -893,6 +898,49 @@ describe('usePagedList', function () {
         list.paint(pageOf(rowsOf(50, 3), { limit: 3 }))
       })
       expect(ids(list.rows)).deep.equals(['r0', 'r1', 'r2'])
+    })
+
+    it('tells the ends the held rows reach by their cursors, a read on its way or not', async function () {
+      const rows = rowsOf(0, 9)
+      const read = held()
+      await open(read.read)
+      // Nothing held and nothing back: neither end is known.
+      expect(list.ends).deep.equals({ start: false, end: false })
+      // Stored rows whose page had nothing before it, the first read out.
+      await act(async () => {
+        list.paint(pageOf(rows, { limit: 3 }, { anchorIndex: 1 }))
+      })
+      expect(ids(list.rows)).deep.equals(['r0', 'r1', 'r2', 'r3'])
+      expect(list.ends).deep.equals({ start: true, end: false })
+      await read.answer(pageOf(rows, { limit: 3 }, { anchorIndex: 6 }))
+      expect(list.ends).deep.equals({ start: false, end: true })
+      // An older page on its way leaves the ends as they are.
+      let older!: Promise<void>
+      await act(async () => {
+        older = list.loadOlder()
+      })
+      expect(list.ends).deep.equals({ start: false, end: true })
+      await read.answer(pageOf(rows, { cursor: 'prev:5', limit: 5 }))
+      await act(async () => {
+        await older
+      })
+      expect(ids(list.rows)).deep.equals(ids(rows))
+      expect(list.ends).deep.equals({ start: true, end: true })
+    })
+
+    it('knows both ends of a list read empty, and neither of one that failed empty', async function () {
+      const empty = held()
+      await open(empty.read)
+      await empty.answer(pageOf<Row>([], { limit: 3 }))
+      expect(list.ends).deep.equals({ start: true, end: true })
+      await act(async () => {
+        root?.unmount()
+      })
+      const failing = held()
+      await open(failing.read)
+      await failing.fail()
+      expect(list.rows).deep.equals([])
+      expect(list.ends).deep.equals({ start: false, end: false })
     })
   })
 

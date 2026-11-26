@@ -274,4 +274,45 @@ describe('api client sponsors', () => {
         JSON.stringify(bad)
       ).equals('refused')
   })
+
+  it('reads the sponsored rows of a team, a season or the signed-in person, and refuses a broken one', async () => {
+    const row = {
+      id: 'srw_a',
+      leagueId: 'lea_a',
+      logoUrl: 'https://media.example.test/l.png',
+      backgroundUrl: 'https://media.example.test/b.png',
+      title: 'Harbor',
+      message: 'Fresh bread',
+      url: 'https://example.test/bread',
+      textColor: 'white',
+      startsAt: '2027-01-01T12:00:00.000Z'
+    }
+    const { api, calls } = client([row])
+    expect(await api.sponsorRows({ team: 'tem a' })).deep.equals([row])
+    await api.sponsorRows({ team: 'tem_a', public: true })
+    await api.sponsorRows({ season: 'sea a' })
+    await api.sponsorRows({ season: 'sea_a', public: true })
+    await api.sponsorRows({ scope: 'me' })
+    expect(calls.map(call => `${call.method} ${call.url}`)).deep.equals([
+      'GET /api/v1/sponsor-rows?team=tem%20a',
+      'GET /api/v1/sponsor-rows?team=tem_a&public=1',
+      'GET /api/v1/sponsor-rows?season=sea%20a',
+      'GET /api/v1/sponsor-rows?season=sea_a&public=1',
+      'GET /api/v1/sponsor-rows?scope=me'
+    ])
+    for (const bad of [
+      [{ ...row, textColor: 'red' }],
+      [{ ...row, leagueId: null }],
+      { rows: [row] }
+    ])
+      expect(
+        await client(bad)
+          .api.sponsorRows({ scope: 'me' })
+          .then(
+            () => 'accepted',
+            () => 'refused'
+          ),
+        JSON.stringify(bad)
+      ).equals('refused')
+  })
 })

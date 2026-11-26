@@ -97,6 +97,7 @@ describe('the scope the visible route holds', () => {
       reads.push('games')
       return pageOf([])
     }
+    api.sponsorRows = async () => []
     api.game = async () => {
       reads.push('game')
       return { ...gameFixture, canScore: false, videos: [] }

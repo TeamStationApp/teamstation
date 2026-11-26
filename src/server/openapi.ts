@@ -9960,6 +9960,56 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/sponsor-rows': {
+        get: {
+          summary: 'The sponsored rows a Schedule shows',
+          description:
+            'Exactly one of `team`, `season` or `scope=me`: the live ' +
+            'sponsored rows of every league that manages a team in that ' +
+            'Schedule (`teams.league_id`), by start, each `{id, leagueId, ' +
+            'logoUrl, backgroundUrl, title, message, url, textColor, ' +
+            'startsAt}`. A team is read as its Schedule is: by anybody ' +
+            'signed in who may open the team (404 otherwise), and with ' +
+            '`public=1` by anybody, signed out too. A season by its members ' +
+            'and role holders (404 otherwise), and with `public=1` by ' +
+            'anybody. `scope=me` reads the teams of the signed-in person’s ' +
+            'own Schedule: their teams and every team of their seasons.',
+          security: [{}, { bearer: [] }],
+          parameters: [
+            {
+              name: 'team',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'A team’s Schedule'
+            },
+            {
+              name: 'season',
+              in: 'query',
+              schema: { type: 'string' },
+              description: 'A season’s Schedule'
+            },
+            {
+              name: 'scope',
+              in: 'query',
+              schema: { type: 'string', enum: ['me'] },
+              description: 'The signed-in person’s own Schedule'
+            },
+            {
+              name: 'public',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'With `team` or `season`: read as its public page, signed in or not'
+            }
+          ],
+          responses: {
+            200: { description: 'The sponsored rows, by start' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/chat/attachments': {
         post: {
           summary: 'Open an encrypted attachment upload',

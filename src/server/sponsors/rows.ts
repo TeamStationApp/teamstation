@@ -9,10 +9,15 @@ import {
   titleProblem,
   urlProblem
 } from '../../common/sponsors/sponsorRules'
-import type { SponsoredTextColor } from '../../common/sponsors/types'
+import type {
+  SponsoredRow,
+  SponsoredTextColor
+} from '../../common/sponsors/types'
+import type { VisibleScopes } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { creditsFor } from './credits'
+import type { SpaceSettings } from '../media/spacesHls'
+import { creditsFor, mediaUrl } from './credits'
 
 /** A sponsored row as the admin sends it. */
 export interface SponsorRowBody {
@@ -232,4 +237,97 @@ export async function deleteSponsorRow(
         .where('league_id', '=', leagueId)
         .execute()
   })
+}
+
+/** Every team a season holds, whether or not it still plays in it. */
+export async function seasonTeamIds(
+  db: Kysely<Database>,
+  seasonId: string
+): Promise<string[]> {
+  const rows = await db
+    .selectFrom('season_teams')
+    .select('team_id')
+    .where('season_id', '=', seasonId)
+    .execute()
+  return rows.map(row => row.team_id)
+}
+
+/**
+ * The teams whose games a person's own Schedule reads, as `GET /events`
+ * filters it with `visibleGamesWhere`: their teams, and every team of their
+ * seasons. `null` for a site administrator, whose Schedule reads every game.
+ */
+export async function scheduleTeamIds(
+  db: Kysely<Database>,
+  scopes: VisibleScopes
+): Promise<string[] | null> {
+  if (scopes.isAdmin) return null
+  const seasonIds = [...scopes.seasonIds]
+  const seasons =
+    seasonIds.length === 0
+      ? []
+      : await db
+          .selectFrom('season_teams')
+          .select('team_id')
+          .where('season_id', 'in', seasonIds)
+          .execute()
+  return [...new Set([...scopes.teamIds, ...seasons.map(row => row.team_id)])]
+}
+
+/**
+ * The live sponsored rows of every league that manages one of `teamIds`
+ * (`teams.league_id`), by start; every league's for `null`. A team in no
+ * league brings none.
+ */
+export async function sponsoredRowsFor(
+  db: Kysely<Database>,
+  space: SpaceSettings,
+  teamIds: readonly string[] | null
+): Promise<SponsoredRow[]> {
+  if (teamIds?.length === 0) return []
+  let query = db
+    .selectFrom('sponsor_rows')
+    .innerJoin('sponsor_media as logo', 'logo.id', 'sponsor_rows.logo_media_id')
+    .innerJoin(
+      'sponsor_media as background',
+      'background.id',
+      'sponsor_rows.background_media_id'
+    )
+    .select([
+      'sponsor_rows.id',
+      'sponsor_rows.league_id',
+      'sponsor_rows.title',
+      'sponsor_rows.message',
+      'sponsor_rows.url',
+      'sponsor_rows.text_color',
+      'sponsor_rows.starts_at',
+      'logo.object_key as logo_key',
+      'background.object_key as background_key'
+    ])
+    .where('sponsor_rows.deleted_at', 'is', null)
+  if (teamIds != null) {
+    const ids = [...teamIds]
+    query = query.where('sponsor_rows.league_id', 'in', eb =>
+      eb
+        .selectFrom('teams')
+        .select('teams.league_id')
+        .where('teams.id', 'in', ids)
+        .where('teams.league_id', 'is not', null)
+    )
+  }
+  const rows = await query
+    .orderBy('sponsor_rows.starts_at')
+    .orderBy('sponsor_rows.id')
+    .execute()
+  return rows.map(row => ({
+    id: row.id,
+    leagueId: row.league_id,
+    logoUrl: mediaUrl(space, row.logo_key),
+    backgroundUrl: mediaUrl(space, row.background_key),
+    title: row.title,
+    message: row.message,
+    url: row.url,
+    textColor: row.text_color,
+    startsAt: row.starts_at.toISOString()
+  }))
 }

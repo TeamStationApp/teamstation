@@ -16,6 +16,8 @@ import {
   type TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { GroupDetail } from '../../common/publicGroups'
+import type { SponsoredRow } from '../../common/sponsors/types'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   chatAgeSheet,
@@ -866,5 +868,164 @@ describe('a team’s page, from the first page of its lists', function () {
     expect(
       document.querySelector('[data-testid="paged-list-empty-failed"]')
     ).equals(null)
+  })
+})
+
+describe('U34 TeamScreen’s sponsored rows', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+
+  const row = (id: string, startsAt: string, title: string): SponsoredRow => ({
+    id,
+    leagueId: 'lea_al',
+    logoUrl: '',
+    backgroundUrl: '',
+    title,
+    message: 'Fresh bread after games.',
+    url: 'https://example.test/bread',
+    textColor: 'white',
+    startsAt
+  })
+
+  it('places its league’s rows among the team’s games at their times, before the first and after the last of a complete list', async function () {
+    const asked: unknown[] = []
+    const { client } = fakeClient({
+      sponsorRows: async (query: unknown) => {
+        asked.push(query)
+        return [
+          row('srw_between', '2027-04-10T17:00:00.000Z', 'Harbor Bakery'),
+          row('srw_first', '2027-03-01T17:00:00.000Z', 'Early Diner'),
+          row('srw_last', '2027-05-01T17:00:00.000Z', 'Late Garage')
+        ]
+      }
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="schedule"
+        onOpenGame={() => undefined}
+      />
+    )
+    expect(asked).deep.equals([{ team: 'tem_hawks' }])
+    const page = text()
+    const places = [
+      'Early Diner',
+      'vs Owls',
+      'Harbor Bakery',
+      '@ Owls',
+      'Late Garage'
+    ].map(each => page.indexOf(each))
+    expect(places[0]).greaterThan(-1)
+    expect([...places].sort((a, b) => a - b)).deep.equals(places)
+    expect(
+      document.querySelectorAll('[data-testid="sponsored-schedule-row"]')
+    ).length(3)
+  })
+
+  it('places a row just before the next game while older games are still to read, and none before the first read', async function () {
+    const older: Array<string | undefined> = []
+    const game = (id: string, startAt: string, done: boolean): GameSummary =>
+      asGameSummary({
+        id,
+        homeTeamId: 'tem_owls',
+        awayTeamId: 'tem_hawks',
+        homeTeamName: 'Owls',
+        awayTeamName: 'Hawks',
+        seasonId: 'sea_1',
+        startAt,
+        venue: null,
+        status: done ? 'final' : 'scheduled',
+        homeScore: done ? 2 : null,
+        awayScore: done ? 1 : null,
+        ingestStatus: 'ok',
+        videoCount: 0
+      })
+    const { client } = fakeClient({
+      sponsorRows: async () => [
+        row('srw_before_next', '2027-04-10T17:00:00.000Z', 'Harbor Bakery'),
+        row('srw_unread', '2027-03-01T17:00:00.000Z', 'Early Diner')
+      ],
+      // The page around the next game, with the last game played before it
+      // and an older page not read: its read never comes back.
+      teamGamesPage: async (_id: string, query?: GamesPageQuery) => {
+        if (query?.cursor != null) {
+          older.push(query.cursor)
+          return await new Promise(() => undefined)
+        }
+        return {
+          items: [
+            game('gam_last_played', '2027-04-03T17:00:00.000Z', true),
+            game('gam_next', '2027-04-17T17:00:00.000Z', false)
+          ],
+          nextCursor: null,
+          prevCursor: 'prev:older',
+          anchorId: query?.around == null ? null : 'gam_next',
+          counts: null
+        }
+      }
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="schedule"
+        onOpenGame={() => undefined}
+      />
+    )
+    const page = text()
+    const bakery = page.indexOf('Harbor Bakery')
+    expect(bakery).greaterThan(-1)
+    // Between the last game played and the next one, with the older page
+    // still out.
+    const cells = [
+      ...document.querySelectorAll(
+        '[data-testid="scheduleGame"], [data-testid="sponsored-row-cell"]'
+      )
+    ].map(cell =>
+      cell.getAttribute('data-testid') === 'scheduleGame'
+        ? 'game'
+        : (cell.textContent ?? '')
+    )
+    expect(cells.length).equals(3)
+    expect(cells[0]).equals('game')
+    expect(cells[1]).contains('Harbor Bakery')
+    expect(cells[2]).equals('game')
+    // An older page may hold games after the earlier row: it waits for it.
+    expect(page).not.contains('Early Diner')
+  })
+
+  it('reads no rows for a visitor’s public page, which reads its own', async function () {
+    const asked: unknown[] = []
+    const { client } = fakeClient({
+      sponsorRows: async (query: unknown) => {
+        asked.push(query)
+        return []
+      },
+      publicGamesPage: async () => pageOfGames([])
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        publicDetail={
+          {
+            group: { id: 'tem_hawks', kind: 'team', name: 'Hawks' },
+            parents: [],
+            staff: [],
+            children: [],
+            competingTeams: [],
+            participatingSeasons: []
+          } as unknown as GroupDetail
+        }
+        initialTab="schedule"
+        onOpenGame={() => undefined}
+      />
+    )
+    expect(asked).deep.equals([{ team: 'tem_hawks', public: true }])
   })
 })

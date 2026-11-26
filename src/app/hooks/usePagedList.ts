@@ -88,6 +88,15 @@ export interface PagedRows<T> {
    */
   atEnd: boolean
   /**
+   * Whether the rows held reach either end of the list: no page is left to
+   * read before the first (`start`) or after the last (`end`). It goes by
+   * the cursors of the pages held, from the server or the phone's store, so
+   * a page on its way, a first read not back yet over stored rows, or a
+   * failed refresh changes nothing. Both are false while nothing is held and
+   * no read has come back.
+   */
+  ends: { start: boolean; end: boolean }
+  /**
    * The end is being read. An older page on its way says nothing: it lands
    * at rest above the reader, and a spinner after the last row would point
    * the wrong way.
@@ -545,6 +554,8 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
     const { rows, walking, failed, opening, error } = shown
     const loading =
       rows.length === 0 && (opening || walking.next || walking.previous)
+    // Rows to place others among: any held, or an answer that holds none.
+    const placed = rows.length > 0 || (!opening && error == null)
     return {
       rows,
       opened: shown.opened,
@@ -554,6 +565,10 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       empty: rows.length === 0 && !loading && failed == null && error == null,
       atEnd:
         !opening && !walking.next && shown.nextCursor == null && error == null,
+      ends: {
+        start: placed && shown.prevCursor == null,
+        end: placed && shown.nextCursor == null
+      },
       loadingMore: walking.next && rows.length > 0,
       failed: failed != null,
       failedWay: failed,

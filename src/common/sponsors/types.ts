@@ -139,6 +139,35 @@ export interface GameSponsors {
   overlay: SponsorOverlay
 }
 
+/**
+ * A sponsored row as a Schedule shows it, from `GET /sponsor-rows`: a live
+ * row of a league that manages one of the Schedule's teams.
+ */
+export interface SponsoredRow {
+  id: string
+  /** The league whose event stream it is in. */
+  leagueId: string
+  logoUrl: string
+  backgroundUrl: string
+  title: string
+  message: string
+  /** An https address, opened when the row is tapped. */
+  url: string
+  textColor: SponsoredTextColor
+  /** Where it sits among the Schedule's games, as an ISO date-time. */
+  startsAt: string
+}
+
+/**
+ * Whose Schedule the rows are for: a team's, a season's, or the signed-in
+ * person's own combined Schedule. `public` reads a team or season as a
+ * visitor does.
+ */
+export type SponsorRowsQuery =
+  | { team: string; public?: boolean }
+  | { season: string; public?: boolean }
+  | { scope: 'me' }
+
 /** A file the administrator dropped or chose, held as an object URL. */
 export interface PickedFile {
   name: string
