@@ -53,6 +53,7 @@
 - fixed: A tab or phone left open on a busy schedule no longer reads every game again and again
 - fixed: Closing the scoring screen with no connection no longer keeps asking the server for the time
 - fixed: Web scorers can record the next pitch after a strikeout even when the field redraws slowly
+- fixed: The lineup dictation and live roster end-to-end tests run again, with no false timeout after switching games
 
 ## 1.4.0 (2026-11-21)
 

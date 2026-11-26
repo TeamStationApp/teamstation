@@ -7,13 +7,18 @@ import { join } from 'node:path'
    turns ?. and ?? into helpers the page does not have. */
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import type { HTTPRequest, Page } from 'puppeteer'
+import type { HTTPRequest, HTTPResponse, Page } from 'puppeteer'
 
+import {
+  type DocumentNetwork,
+  watchDocumentNetwork
+} from '../../../e2e/rigs/documentNetworkIdle'
 import {
   type BrowserSession,
   browserSession,
   maestro
 } from '../../../e2e/rigs/refinementsMaestro'
+import { dragLineupRow } from '../../../e2e/rigs/rosterDrag'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
 import { signInTestAccount } from '../../test/passwordFixtures'
 
@@ -50,68 +55,6 @@ const BANNER =
   'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.'
 
 /** A new game, its rosters and the people who use it. */
-/** Each page's requests in flight, and when each was sent. */
-const inFlight = new WeakMap<Page, Map<HTTPRequest, number>>()
-
-/** Keeps the page's requests in flight, for `settled` to name. */
-function track(page: Page): void {
-  const open = new Map<HTTPRequest, number>()
-  inFlight.set(page, open)
-  page.on('request', request => {
-    open.set(request, Date.now())
-  })
-  for (const event of ['requestfinished', 'requestfailed'] as const)
-    page.on(event, request => {
-      open.delete(request)
-    })
-}
-
-/**
- * Waits until the page has had no request in flight for half a second; when
- * it never does, says which requests stayed open, so the run's log shows what
- * held the page busy. The requests are this file's own count, not
- * puppeteer's: a request held by interception and let go as its page was
- * left never finishes in puppeteer's, and would keep every later page busy.
- */
-async function settled(page: Page): Promise<void> {
-  const open = inFlight.get(page) ?? new Map<HTTPRequest, number>()
-  const deadline = Date.now() + 30000
-  let quietSince = Date.now()
-  for (;;) {
-    const now = Date.now()
-    if (open.size > 0) quietSince = now
-    else if (now - quietSince >= 500) return
-    if (now > deadline) {
-      const busy = [...open].map(
-        ([request, at]) =>
-          `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
-      )
-      // Whether the server answers the same reads now, with the page's own
-      // headers: a server holding them, or a request the browser lost.
-      const again = await Promise.all(
-        [...open.keys()]
-          .filter(request => request.method() === 'GET')
-          .map(async request => {
-            const started = Date.now()
-            try {
-              const answer = await fetch(request.url(), {
-                headers: request.headers(),
-                signal: AbortSignal.timeout(10000)
-              })
-              return `${new URL(request.url()).pathname} again: ${answer.status} in ${Date.now() - started} ms`
-            } catch (error) {
-              return `${new URL(request.url()).pathname} again: no answer in ${Date.now() - started} ms (${String(error)})`
-            }
-          })
-      )
-      throw new Error(
-        `The page never settled; still open: ${busy.join(', ')}${again.length === 0 ? '' : `; ${again.join('; ')}`}`
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-}
-
 function lineupFixture(): LineupFixture {
   const out = execFileSync(
     'npm',
@@ -125,9 +68,12 @@ function lineupFixture(): LineupFixture {
 class Scorer {
   constructor(
     readonly session: BrowserSession,
-    readonly page: Page
-  ) {
-    track(page)
+    readonly page: Page,
+    readonly network: DocumentNetwork
+  ) {}
+
+  async settled(): Promise<void> {
+    await this.network.wait(500, [new URL(APP).origin, new URL(API).origin])
   }
 
   async tap(label: string, role?: string): Promise<void> {
@@ -223,35 +169,14 @@ class Scorer {
     })
   }
 
-  /**
-   * A mouse drag of the lineup row at `source` to the boundary after
-   * `target`: the press is held until the row lifts.
-   */
+  /** A mouse drag of the lineup row at `source` to the boundary after `target`. */
   async dragAfter(source: number, target: number): Promise<void> {
-    const at = async (
-      index: number,
-      where: 'bottom' | 'middle'
-    ): Promise<{ x: number; y: number }> => {
-      const selector = `[data-roster-target="lineup-${index}"]`
-      await this.page.waitForSelector(selector)
-      const r = await this.page.$eval(selector, node => {
-        const box = node.getBoundingClientRect()
-        return { x: box.x, y: box.y, width: box.width, height: box.height }
-      })
-      return {
-        x: r.x + Math.min(40, r.width / 2),
-        y: where === 'bottom' ? r.y + r.height - 8 : r.y + r.height / 2
-      }
-    }
-    const start = await at(source, 'middle')
-    await this.page.mouse.move(start.x, start.y)
-    await this.page.mouse.down()
-    await new Promise(resolve => setTimeout(resolve, 750))
-    const end = await at(target, 'bottom')
-    await this.page.mouse.move(end.x, end.y, { steps: 12 })
-    await new Promise(resolve => setTimeout(resolve, 200))
-    await this.page.mouse.up()
-    await new Promise(resolve => setTimeout(resolve, 300))
+    await dragLineupRow(
+      this.page,
+      `[data-roster-target="lineup-${source}"]`,
+      `[data-roster-target="lineup-${target}"]`,
+      'after'
+    )
   }
 
   /** The roster sheet's editor is up, with no spinner in its place. */
@@ -277,9 +202,41 @@ class Scorer {
     return Date.now() - started
   }
 
+  /**
+   * The next server answer to this scorer's save of this game, or with
+   * `status` the next one of that status; failing, it names the others seen.
+   */
+  async scoringResponse(
+    gameId: string,
+    status?: number
+  ): Promise<HTTPResponse> {
+    const path = new URL(`${API}/games/${gameId}/events`).pathname
+    const seen: number[] = []
+    try {
+      return await this.page.waitForResponse(
+        response => {
+          if (
+            response.request().method() !== 'POST' ||
+            new URL(response.url()).pathname !== path
+          )
+            return false
+          if (status == null || response.status() === status) return true
+          seen.push(response.status())
+          return false
+        },
+        { timeout: 60000 }
+      )
+    } catch (error) {
+      throw new Error(
+        `No ${status == null ? '' : status + ' '}answer to POST ${path}; saw [${seen.join(', ')}]`,
+        { cause: error }
+      )
+    }
+  }
+
   /** Every save has gone out and come back. */
   async waitSaved(): Promise<void> {
-    await settled(this.page)
+    await this.settled()
     await this.page.waitForFunction(
       () => document.querySelector('[aria-label="Save status"]') == null,
       { timeout: 30000 }
@@ -314,7 +271,7 @@ class Scorer {
 }
 
 describe('two scorekeepers on one game', function () {
-  let daemon: Awaited<ReturnType<typeof maestro>>
+  const cleanup = new AsyncDisposableStack()
   let a: Scorer
   let b: Scorer
   let token: string
@@ -327,7 +284,10 @@ describe('two scorekeepers on one game', function () {
         throw new Error(`${url} must be a local server`)
     if (ARTIFACTS != null) await mkdir(ARTIFACTS, { recursive: true })
     const fixture = lineupFixture()
-    daemon = await maestro(process.env.MAESTRO_D ?? 'lineupDictation')
+    const daemon = await maestro(process.env.MAESTRO_D ?? 'lineupDictation')
+    cleanup.defer(async () => {
+      await daemon.shutdown()
+    })
     const support = join(tmpdir(), 'roster-live-e2e')
     const scorers: Scorer[] = []
     for (const device of ['roster-live-a', 'roster-live-b']) {
@@ -338,6 +298,9 @@ describe('two scorekeepers on one game', function () {
         HEIGHT,
         support
       )
+      cleanup.defer(async () => {
+        await session.m.detach()
+      })
       session.page.setDefaultTimeout(30000)
       // Each its own sign-in, as two phones would have.
       token = await signInTestAccount(API, {
@@ -350,15 +313,15 @@ describe('two scorekeepers on one game', function () {
         domain: new URL(APP).hostname,
         path: '/'
       })
-      scorers.push(new Scorer(session, session.page))
+      const network = await watchDocumentNetwork(session.page)
+      cleanup.defer(network.close)
+      scorers.push(new Scorer(session, session.page, network))
     }
     ;[a, b] = scorers
   })
 
   after(async function () {
-    await a?.session.m.detach()
-    await b?.session.m.detach()
-    await daemon?.shutdown()
+    await cleanup.disposeAsync()
   })
 
   it('L1: shows the other scorekeeper’s saved order on a sheet with no changes, with no warning', async function () {
@@ -442,13 +405,12 @@ describe('two scorekeepers on one game', function () {
     await a.tap('Cancel')
   })
 
-  // Skipped until #356: a chat read never answered keeps the page from settling.
-  it.skip('L3: shows the other scorekeeper’s pitch within 3 s, and puts the next pitch after it', async function () {
+  it('L3: shows the other scorekeeper’s pitch within 3 s, and puts the next pitch after it', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
     await b.scoreGame(fixture.gameId)
     expect(await a.scoreboard()).includes('0 balls 0 strikes')
-    await settled(a.page)
+    await a.settled()
     await b.tapEnabled('Ball')
     const tapped = Date.now()
     await a.waitScoreboard('1 balls 0 strikes', 3000)
@@ -473,12 +435,12 @@ describe('two scorekeepers on one game', function () {
     await b.waitScoreboard('1 balls 1 strikes')
   })
 
-  // Skipped until #356: a chat read never answered keeps the page from settling.
-  it.skip('L4: shows lineup, roster and defense changes at once with every request held, then offline', async function () {
+  it('L4: shows lineup, roster and defense changes at once with every request held, then offline', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
-    await settled(a.page)
+    await a.settled()
     // Every API request from here is held open: none is answered.
+    let removed: string[]
     const held: Array<{ url: string; request: HTTPRequest }> = []
     await a.page.setRequestInterception(true)
     const hold = (request: HTTPRequest): void => {
@@ -499,7 +461,8 @@ describe('two scorekeepers on one game', function () {
       await a.page.waitForSelector('[data-roster-target="lineup-0"]')
       // Lineup and roster: Maldonado out of the order, onto the roster.
       await a.tap('Remove Maldonado')
-      expect(await a.lineup()).not.includes('Maldonado')
+      removed = await a.lineup()
+      expect(removed).not.includes('Maldonado')
       await a.page.waitForSelector('[aria-label="Add Maldonado to Lineup"]')
       const saved = await a.saveShownWithin(3000)
       console.log(
@@ -539,14 +502,20 @@ describe('two scorekeepers on one game', function () {
         await request.continue().catch(() => undefined)
       await a.page.setRequestInterception(false)
       a.page.off('request', pass)
-      // The held phase's page goes: whatever it was still waiting on ends
-      // with it, and the offline phase, and L5, start from a fresh load.
+    }
+    // B reads this game for the first time. Keep A alive until the saved
+    // removal reaches B, even if releasing the held requests took time.
+    try {
+      await b.scoreGame(fixture.gameId)
+      await b.openRosters()
+      await b.waitLineup(removed)
+      await b.tap('Cancel')
+    } finally {
       await a.page.goto('about:blank')
-      inFlight.get(a.page)?.clear()
     }
     // Offline: the same, with nothing to reach.
     await a.scoreGame(fixture.gameId)
-    await settled(a.page)
+    await a.settled()
     await a.page.setOfflineMode(true)
     try {
       const opened = await a.editorShownWithin(3000)
@@ -574,16 +543,14 @@ describe('two scorekeepers on one game', function () {
       // phase's page goes too, as the held phase's does, so L5 starts from a
       // fresh load.
       await a.page.goto('about:blank')
-      inFlight.get(a.page)?.clear()
     }
   })
 
-  // Skipped until #356: a chat read never answered keeps the page from settling.
-  it.skip('L5: keeps the later lineup change of a side on both screens, the earlier one saved last', async function () {
+  it('L5: keeps the later lineup change of a side on both screens, the earlier one saved last', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
     await b.scoreGame(fixture.gameId)
-    await settled(a.page)
+    await a.settled()
     // A makes his change first, with no signal: it waits on his phone.
     await a.page.setOfflineMode(true)
     await a.openRosters()
@@ -597,26 +564,27 @@ describe('two scorekeepers on one game', function () {
     await b.dragAfter(0, 2)
     const later = await b.lineup()
     expect(later).not.deep.equals(earlier)
-    await b.saveShownWithin(3000)
+    const [accepted] = await Promise.all([
+      b.scoringResponse(fixture.gameId),
+      b.saveShownWithin(3000)
+    ])
+    expect(accepted.status()).equals(200)
     const madeB = Date.now()
     await b.waitSaved()
     console.log(
       `      A's change made ${madeB - madeA} ms before B's; B's saved first`
     )
-    // A's signal comes back: his older change is the one dropped.
-    await a.page.setOfflineMode(false)
-    // His queued save goes, is refused as stale, and is put on top of B's
-    // without his older change.
-    let status: string | null = null
-    for (let i = 0; i < 120; i++) {
-      status = await a.page.evaluate(() => {
-        const node = document.querySelector('[aria-label="Save status"]')
-        return node == null ? null : String(node.textContent)
-      })
-      if (status == null || status.includes('another device')) break
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-    console.log(`      A's save status once back online: ${String(status)}`)
+    // A submitted only the offline removal. Its refusal proves that it
+    // reached the server after B's write, before either winner check.
+    const [refused] = await Promise.all([
+      a.scoringResponse(fixture.gameId, 409),
+      a.page.setOfflineMode(false)
+    ])
+    expect(refused.status()).equals(409)
+    expect(await refused.json()).deep.include({
+      code: 'conflict',
+      details: { stale: true }
+    })
     await a.openRosters()
     await a.waitLineup(later)
     await a.tap('Cancel')

@@ -9,14 +9,19 @@ import { join, resolve } from 'node:path'
    turns ?. and ?? into helpers the page does not have. */
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import type { HTTPRequest, Page } from 'puppeteer'
+import type { Page } from 'puppeteer'
 
+import {
+  type DocumentNetwork,
+  watchDocumentNetwork
+} from '../../../e2e/rigs/documentNetworkIdle'
 import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import {
   type BrowserSession,
   browserSession,
   maestro
 } from '../../../e2e/rigs/refinementsMaestro'
+import { dragLineupRow } from '../../../e2e/rigs/rosterDrag'
 import { DEFAULT_DICTATION_MODEL } from '../../common/api'
 import { ONE_CATEGORY_AT_A_TIME } from '../../common/scoring/rosterCommands'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
@@ -88,10 +93,10 @@ function lineupFixture(): LineupFixture {
 }
 
 describe('the roster screen for a scorekeeper', function () {
-  let daemon: Awaited<ReturnType<typeof maestro>>
+  const cleanup = new AsyncDisposableStack()
   let session: BrowserSession
   let page: Page
-  const openRequests = new Map<HTTPRequest, number>()
+  let network: DocumentNetwork
   let token: string
 
   before(async function () {
@@ -106,7 +111,10 @@ describe('the roster screen for a scorekeeper', function () {
       email: fixture.users.scorekeeper.email,
       password: PASSWORD
     })
-    daemon = await maestro(process.env.MAESTRO_D ?? 'lineupDictation')
+    const daemon = await maestro(process.env.MAESTRO_D ?? 'lineupDictation')
+    cleanup.defer(async () => {
+      await daemon.shutdown()
+    })
     const support = join(tmpdir(), 'lineup-dictation-e2e')
     session = await browserSession(
       daemon,
@@ -115,16 +123,13 @@ describe('the roster screen for a scorekeeper', function () {
       HEIGHT,
       support
     )
+    cleanup.defer(async () => {
+      await session.m.detach()
+    })
     page = session.page
     page.setDefaultTimeout(30000)
-    // The page's requests still open, for a wait on an idle network to name.
-    page.on('request', request => {
-      openRequests.set(request, Date.now())
-    })
-    for (const done of ['requestfinished', 'requestfailed'] as const)
-      page.on(done, request => {
-        openRequests.delete(request)
-      })
+    network = await watchDocumentNetwork(page)
+    cleanup.defer(network.close)
     // A silent microphone the R scenarios play their clips into, and every
     // dictation frame both ways, for what the API was asked and answered.
     await page.evaluateOnNewDocument(fakeMicrophone, '')
@@ -165,8 +170,7 @@ describe('the roster screen for a scorekeeper', function () {
   })
 
   after(async function () {
-    await session?.m.detach()
-    await daemon?.shutdown()
+    await cleanup.disposeAsync()
   })
 
   const box = async (selector: string): Promise<Box> => {
@@ -257,44 +261,14 @@ describe('the roster screen for a scorekeeper', function () {
     await waitSave(false)
     await tap('Save Rosters')
     await page.waitForSelector('[aria-label="Save Rosters"]', { hidden: true })
-    await page.waitForFunction(
-      () => !document.body.textContent!.includes('Saving'),
-      { timeout: 20000 }
-    )
+    await waitSaved()
   }
-  /**
-   * A mouse drag of the lineup row at `from` to the boundary after `to`, or
-   * before it with `before`: the press is held until the row lifts.
-   */
   const dragRow = async (
     source: string,
     target: string,
     edge: 'before' | 'after'
   ): Promise<void> => {
-    const at = async (
-      selector: string,
-      where: 'top' | 'bottom' | 'middle'
-    ): Promise<{ x: number; y: number }> => {
-      const r = await box(selector)
-      return {
-        x: r.x + Math.min(40, r.width / 2),
-        y:
-          where === 'top'
-            ? r.y + 8
-            : where === 'bottom'
-              ? r.bottom - 8
-              : r.y + r.height / 2
-      }
-    }
-    const start = await at(source, 'middle')
-    await page.mouse.move(start.x, start.y)
-    await page.mouse.down()
-    await new Promise(resolve => setTimeout(resolve, 750))
-    const end = await at(target, edge === 'after' ? 'bottom' : 'top')
-    await page.mouse.move(end.x, end.y, { steps: 12 })
-    await new Promise(resolve => setTimeout(resolve, 200))
-    await page.mouse.up()
-    await new Promise(resolve => setTimeout(resolve, 300))
+    await dragLineupRow(page, source, target, edge)
   }
 
   it('E1: labels the tabs Roster, Lineup and Defense over a bar of Cancel, a round mic and a dim Save, Create Player the last roster row', async function () {
@@ -382,34 +356,31 @@ describe('the roster screen for a scorekeeper', function () {
       '[data-roster-target="lineup-2"]',
       'after'
     )
+    await waitSave(false)
     const moved = await lineup()
     expect(moved[2]).includes('Ohtani')
     expect(moved[0]).includes('Lindor')
-    await waitSave(false)
     await shot('roster-save-dirty.png')
     await dragRow(
       '[data-roster-target="lineup-2"]',
       '[data-roster-target="lineup-0"]',
       'before'
     )
+    await waitSave(true)
     expect((await lineup()).map(row => row.replace(/^\d+\. /, ''))).deep.equals(
       original.map(row => row.replace(/^\d+\. /, ''))
     )
-    await waitSave(true)
     await dragRow(
       '[data-roster-target="lineup-0"]',
       '[data-roster-target="lineup-2"]',
       'after'
     )
-    const saved = await lineup()
     await waitSave(false)
+    const saved = await lineup()
     await tap('Save Rosters')
     await page.waitForSelector('[aria-label="Save Rosters"]', { hidden: true })
     // Saved to the server: a fresh page reads it back.
-    await page.waitForFunction(
-      () => !document.body.textContent!.includes('Saving'),
-      { timeout: 20000 }
-    )
+    await waitSaved()
     await scoreGame(fixture.gameId)
     await openRosters('Home Team')
     await tap('Lineup', 'tab')
@@ -793,10 +764,26 @@ describe('the roster screen for a scorekeeper', function () {
       { timeout: 15000 }
     )
   }
-  const texts = async (testId: string): Promise<string[]> =>
-    await page.$$eval(`[data-testid="${testId}"]`, nodes =>
-      nodes.map(node => String(node.textContent))
+  // The editor can show the staged lineup before its dictation controls
+  // mount the chat. Wait for the rows the assertion is about to read.
+  const texts = async (testId: string, minimum = 1): Promise<string[]> => {
+    const selector = `[data-testid="${testId}"]`
+    const snapshot = await page.waitForFunction(
+      (selector, minimum) => {
+        const rows = document.querySelectorAll(selector)
+        if (rows.length < minimum) return null
+        return Array.from(rows, row => String(row.textContent))
+      },
+      { timeout: 15000 },
+      selector,
+      minimum
     )
+    try {
+      return (await snapshot.jsonValue())!
+    } finally {
+      await snapshot.dispose()
+    }
+  }
   const slot = async (position: string): Promise<string> =>
     await page.$eval(`[data-roster-target="defense-${position}"]`, node =>
       String(node.textContent)
@@ -898,7 +885,7 @@ describe('the roster screen for a scorekeeper', function () {
       const benched = (await bench()).join()
       for (const name of ['Diaz', 'Maldonado', 'Valdez', 'Freeman'])
         expect(benched).includes(name)
-      expect(await texts('Roster chat said')).has.length(2)
+      expect(await texts('Roster chat said', 2)).has.length(2)
 
       // R6
       await waitSave(false)
@@ -962,7 +949,7 @@ describe('the roster screen for a scorekeeper', function () {
     expect(await slot('SS')).includes('Soto')
     expect(await slot('2B')).includes('Harper')
     expect(await slot('CF')).includes('Turner')
-    expect(await texts('Roster chat line')).to.include.members([
+    expect(await texts('Roster chat line', 3)).to.include.members([
       'Soto to SS',
       'Harper to 2B',
       'Turner to CF'
@@ -987,7 +974,6 @@ describe('the roster screen for a scorekeeper', function () {
     await switchOn()
     const answer = await dictate('mixedLineupDefense')
     expect(answer.kind).equals('actions')
-    await page.waitForSelector('[data-testid="Roster chat problem"]')
     expect(await texts('Roster chat problem')).deep.equals([
       ONE_CATEGORY_AT_A_TIME
     ])
@@ -1105,18 +1091,7 @@ describe('the roster screen for a scorekeeper', function () {
   }
   /** Every save has gone out and come back. */
   const waitSaved = async (): Promise<void> => {
-    await page
-      .waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
-      .catch((error: unknown) => {
-        const now = Date.now()
-        const open = [...openRequests].map(
-          ([request, at]) =>
-            `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
-        )
-        throw new Error(
-          `The network never went idle; still open: ${open.join(', ')} (${String(error)})`
-        )
-      })
+    await network.wait(300, [new URL(APP).origin, new URL(API).origin])
     await page.waitForFunction(
       () => document.querySelector('[aria-label="Save status"]') == null,
       { timeout: 30000 }
@@ -1206,8 +1181,7 @@ describe('the roster screen for a scorekeeper', function () {
     })
   }
 
-  // Skipped until #356: a GET /api/v1/chat/blocks never answered keeps the network from going idle.
-  it.skip('S1: opens the sheet on Defense of the side in the field with a substitution said on the scoring screen by a jersey both teams wear, and saves it', async function () {
+  it('S1: opens the sheet on Defense of the side in the field with a substitution said on the scoring screen by a jersey both teams wear, and saves it', async function () {
     const fixture = lineupFixture()
     await topOfSecond(fixture.gameId)
     await scoringMicOn()
@@ -1241,8 +1215,7 @@ describe('the roster screen for a scorekeeper', function () {
     )
   })
 
-  // Skipped until #356: a GET /api/v1/chat/blocks never answered keeps the network from going idle.
-  it.skip('S2: stages a new pitcher said on the scoring screen, and Cancel leaves the pitcher', async function () {
+  it('S2: stages a new pitcher said on the scoring screen, and Cancel leaves the pitcher', async function () {
     const fixture = lineupFixture()
     await topOfSecond(fixture.gameId)
     await scoringMicOn()
@@ -1261,8 +1234,7 @@ describe('the roster screen for a scorekeeper', function () {
     expect(saved.home.defense.P!.name).equals('Ohtani')
   })
 
-  // Skipped until #356: a GET /api/v1/chat/blocks never answered keeps the network from going idle.
-  it.skip('S3: puts a pinch hitter said on the scoring screen in the due batter’s slot, and he bats', async function () {
+  it('S3: puts a pinch hitter said on the scoring screen in the due batter’s slot, and he bats', async function () {
     const fixture = lineupFixture()
     await topOfSecond(fixture.gameId)
     await scoringMicOn()
@@ -1301,8 +1273,7 @@ describe('the roster screen for a scorekeeper', function () {
     expect(body.currentPlay.matchup.batter.fullName).equals('Betts')
   })
 
-  // Skipped until #356: a GET /api/v1/chat/blocks never answered keeps the network from going idle.
-  it.skip('S4: stages a pinch runner said on the scoring screen, keeps the order, and one Undo takes it back', async function () {
+  it('S4: stages a pinch runner said on the scoring screen, keeps the order, and one Undo takes it back', async function () {
     const fixture = lineupFixture()
     await scoreGame(fixture.gameId)
     // Two walks: Judge on second, Altuve on first.
@@ -1376,8 +1347,7 @@ describe('the roster screen for a scorekeeper', function () {
     ).has.length(0)
   })
 
-  // Skipped until #356: a GET /api/v1/chat/blocks never answered keeps the network from going idle.
-  it.skip('S5: refuses a play and a substitution in one sentence in the scoring log, scoring neither', async function () {
+  it('S5: refuses a play and a substitution in one sentence in the scoring log, scoring neither', async function () {
     const fixture = lineupFixture()
     await scoreGame(fixture.gameId)
     // A walk: Judge on first, Altuve up.
