@@ -156,12 +156,74 @@ describe('the chat crypto core in a browser', () => {
     expect(attempts).equals(2)
   })
 
-  it('a module that will not instantiate is instantiateFailed', async () => {
-    const { fetch } = served(new Uint8Array([0, 1, 2, 3]).buffer)
+  it('a compile past its deadline is instantiateFailed, and the next load uses it when it finishes', async () => {
+    let calls = 0
+    const { fetch, asked } = served(wasmBytes())
+    const late = {
+      instantiate: async (
+        ...args: Parameters<typeof WebAssembly.instantiate>
+      ) => {
+        calls += 1
+        await new Promise(resolve => setTimeout(resolve, 60))
+        return await WebAssembly.instantiate(...args)
+      }
+    }
+    expect(
+      await loadChatCore({
+        fetch,
+        url: '/m',
+        WebAssembly: late,
+        instantiateTimeoutMs: 20
+      })
+    ).deep.equals({ ready: false, reason: 'instantiateFailed' })
+    // The compile runs on, so the core is still loading, not failed.
+    expect(chatCoreStatus()).deep.equals({ ready: false, reason: 'loading' })
+    expect(
+      await loadChatCore({ fetch, url: '/m', WebAssembly: late })
+    ).deep.equals({ ready: true })
+    expect(calls).equals(1)
+    expect(asked).has.length(1)
+  })
+
+  it('a module that will not instantiate is instantiateFailed, and settled', async () => {
+    const { fetch, asked } = served(new Uint8Array([0, 1, 2, 3]).buffer)
     expect(await loadChatCore({ fetch, url: '/m' })).deep.equals({
       ready: false,
       reason: 'instantiateFailed'
     })
+    expect(await loadChatCore({ fetch, url: '/m' })).deep.equals({
+      ready: false,
+      reason: 'instantiateFailed'
+    })
+    expect(asked).has.length(1)
+  })
+
+  it('waits for one compile, and stops after it misses three deadlines', async () => {
+    let calls = 0
+    const { fetch, asked } = served(wasmBytes())
+    const hung = {
+      instantiate: async () => {
+        calls += 1
+        return await new Promise(() => undefined)
+      }
+    }
+    const options = {
+      fetch,
+      url: '/m',
+      WebAssembly: hung,
+      instantiateTimeoutMs: 10
+    }
+    for (let attempt = 0; attempt < 4; attempt++)
+      expect(await loadChatCore(options)).deep.equals({
+        ready: false,
+        reason: 'instantiateFailed'
+      })
+    expect(chatCoreStatus()).deep.equals({
+      ready: false,
+      reason: 'instantiateFailed'
+    })
+    expect(calls).equals(1)
+    expect(asked).has.length(1)
   })
 
   it('a module that gives other bytes is selfTestFailed', async () => {

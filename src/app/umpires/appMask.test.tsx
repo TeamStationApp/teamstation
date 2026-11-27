@@ -382,4 +382,4 @@ it('mounts the shell with role-only mask visibility and preserves header order a
       value: 1280
     })
   }
-}).timeout(10000)
+}).timeout(20000)

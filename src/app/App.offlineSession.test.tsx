@@ -15,6 +15,7 @@ import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { App } from './App'
+import { setApprovalHoldForTests } from './chat/deviceApprovals'
 import { showRoute } from './navigation/useAddressBar'
 import { RELEASE_TIMEOUT_MS } from './platform/pushState'
 import type { StoredUser } from './platform/storedUser'
@@ -93,6 +94,9 @@ describe('the phone session with no signal', () => {
   let netDown = false
 
   beforeEach(() => {
+    // The bell's notice reads this device's approvals too; these tests are
+    // about the session, not the web's two-second hold before that read.
+    setApprovalHoldForTests(0)
     const api = TeamStationClient.prototype
     originals = Object.getOwnPropertyDescriptors(api)
     sockets = fakeSockets()
@@ -143,6 +147,7 @@ describe('the phone session with no signal', () => {
   })
   afterEach(async () => {
     await unmount()
+    setApprovalHoldForTests(undefined)
     Object.defineProperties(TeamStationClient.prototype, originals)
     globalThis.WebSocket = originalSocket
     globalThis.fetch = originalFetch
