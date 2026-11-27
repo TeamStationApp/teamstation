@@ -45,6 +45,8 @@ export default searchSpec({
     'src/server/search/**'
   ],
   minutes: 5,
+  // It covers a sheet in the scoring screens' folder, which a GPU draws.
+  browserNeeds: ['gpu'],
   scenarios: {
     'team-settings': async ctx => {
       const { world, web, frames } = await searchWorld(ctx, 'coach')

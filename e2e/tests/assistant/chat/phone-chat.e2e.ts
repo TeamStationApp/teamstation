@@ -1,12 +1,12 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { type TessNative, withTessNative } from '../../../rigs/tessNativeRig'
 
 /** Her chat on an iPhone, narrow: full screen, with the keyboard left up. */
 async function onPhone(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   run: (native: TessNative) => Promise<void>
 ): Promise<void> {
   await withTessNative(ctx, { surface: 'ios-app', keepKeyboard: true }, run)
@@ -35,7 +35,7 @@ async function backToMark(native: TessNative): Promise<void> {
   await native.show('TeamStation menu')
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'assistant/chat/phone-chat',
   title:
     'On a phone Tess is a full-screen chat, with her links, hold to confirm, sheet, microphone and live thinking',
@@ -46,14 +46,16 @@ export default defineE2e({
     'src/server/routes/tess.ts'
   ],
   stack: 'isolated',
-  fixtures: [],
+  fixtures: ['tess'],
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'user', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'user', needs: ['ios-phone', 'microphone'], simulator: 'never' }
+      ]
     }
   },
-  services: ['web'],
+  services: [],
   apps: ['teamstation-ios'],
   secrets: [],
   costUsd: 0,

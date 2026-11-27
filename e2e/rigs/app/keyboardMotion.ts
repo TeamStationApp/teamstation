@@ -1,198 +1,32 @@
-import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 
-import { loadSettings, type LocalSettings } from '../../core/settings'
+import type { GrayFrame } from '../../core/video'
 
 /**
  * Whether something on a phone moved through the frames between two places
- * or jumped, read off the bench camera. maestro-d cannot record a real
- * iPhone's screen, and an Android recording stays on the phone where a hub
- * does not fetch it, so the camera is the frame source: its stream is
- * recorded around an action the hub drives, cropped to the phone's screen,
- * and a horizontal edge (the top of Search's field) is followed down the
- * crop's centre column, frame by frame.
+ * or jumped, read off maestro-d's recording of the device's own screen: a
+ * horizontal edge (the top of Search's field) is followed down the
+ * picture's centre column, frame by frame. The recording and the reading of
+ * its frames are maestro-d's and the video layer's (`e2e/core/video.ts`);
+ * this rig only follows the edge.
  */
-
-/** Where a phone's screen sits in the camera's frame, and its field at rest. */
-export interface Crop {
-  width: number
-  height: number
-  x: number
-  y: number
-  /** The field's top edge at rest, down from the turned crop's top. */
-  fieldY: number
-  /**
-   * A phone held sideways in its cradle shows the app on its side: the
-   * crop is turned a quarter, clockwise or not, to stand the app upright.
-   */
-  turn?: 'cw' | 'ccw'
-}
-
-/** `w:h:x:y:fieldY[:cw|:ccw]`, as the local settings hold it. */
-export function parseCrop(text: string): Crop {
-  const fields = text.split(':')
-  const last = fields.at(-1)
-  const turn = last === 'cw' || last === 'ccw' ? last : undefined
-  const parts = (turn == null ? fields : fields.slice(0, -1)).map(Number)
-  if (
-    parts.length !== 5 ||
-    parts.some(part => !Number.isInteger(part) || part < 0)
-  )
-    throw new Error(
-      `a crop is w:h:x:y:fieldY[:cw|:ccw] in whole pixels, not "${text}"`
-    )
-  const [width, height, x, y, fieldY] = parts
-  return turn == null
-    ? { width, height, x, y, fieldY }
-    : { width, height, x, y, fieldY, turn }
-}
-
-/**
- * The camera and this device's crop, or null when either is not set: the
- * crop is worked out afresh from a camera frame before each run, never kept.
- */
-export function webcamFor(
-  deviceId: string,
-  settings: LocalSettings = loadSettings()
-): { url: string; crop: Crop } | null {
-  const url = settings.webcam?.url
-  const crop = settings.webcam?.crops?.[deviceId]
-  return url == null || crop == null ? null : { url, crop: parseCrop(crop) }
-}
 
 /** One grayscale frame, row by row. */
-export interface Frame {
-  width: number
-  height: number
-  data: Uint8Array
-}
-
-type Spawn = typeof spawn
+export type Frame = GrayFrame
 
 /**
- * Records the camera from before `action` until after it: the stream takes
- * about a second to connect, so recording starts `leadMs` early and runs
- * `tailMs` past the action, which covers a keyboard's whole animation.
+ * Where an element at rest sits in the recording's picture: its top, in
+ * the hierarchy's points, scaled from the screen's height in points to the
+ * picture's in pixels.
  */
-export async function record(
-  url: string,
-  file: string,
-  action: () => Promise<void>,
-  options: { leadMs?: number; tailMs?: number; run?: Spawn } = {}
-): Promise<string> {
-  const run = options.run ?? spawn
-  const ffmpeg = run(
-    'ffmpeg',
-    [
-      ...['-nostdin', '-loglevel', 'error'],
-      ...['-rtsp_transport', 'tcp', '-tls_verify', '0'],
-      ...['-timeout', '15000000', '-i', url, '-c', 'copy', '-y', file]
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe'] }
-  )
-  const errors: Buffer[] = []
-  ffmpeg.stderr?.on('data', (chunk: Buffer) => errors.push(chunk))
-  let stopping = false
-  // Settled the moment ffmpeg fails (no ffmpeg, a camera that will not
-  // answer), so the failure is never unhandled while the action runs, and
-  // says why.
-  const done = new Promise<void>((resolve, reject) => {
-    ffmpeg.on('error', reject)
-    ffmpeg.on('close', code => {
-      if (stopping || code === 0) resolve()
-      else
-        reject(
-          new Error(
-            `the camera recording stopped (exit ${code}): ${Buffer.concat(errors).toString().trim()}`
-          )
-        )
-    })
-  })
-  const failed = done.then(
-    () => undefined,
-    (error: unknown) => error
-  )
-  const wait = async (ms: number): Promise<void> => {
-    await new Promise(resolve => setTimeout(resolve, ms))
-  }
-  try {
-    // A recording that failed to start fails the run before the action.
-    const early = await Promise.race([
-      failed,
-      wait(options.leadMs ?? 1500).then(() => 'waited' as const)
-    ])
-    if (early !== 'waited' && early !== undefined)
-      throw early instanceof Error
-        ? early
-        : new Error('the camera recording failed to start')
-    await action()
-    await wait(options.tailMs ?? 1500)
-  } finally {
-    // ffmpeg finishes the file on an interrupt.
-    stopping = true
-    ffmpeg.kill('SIGINT')
-  }
-  await done
-  return file
-}
-
-/** How many columns down the middle of a phone's screen a frame keeps. */
-export const STRIP = 16
-
-/**
- * Every frame of a recording, cropped to the phone, upright, in grayscale,
- * as the strip down its middle that the field's edge is read from.
- */
-export async function frames(
-  file: string,
-  crop: Crop,
-  run: Spawn = spawn
-): Promise<Frame[]> {
-  const turned = crop.turn != null
-  const width = turned ? crop.height : crop.width
-  const height = turned ? crop.width : crop.height
-  const strip = Math.min(STRIP, width)
-  const ffmpeg = run(
-    'ffmpeg',
-    [
-      ...['-nostdin', '-loglevel', 'error', '-i', file],
-      '-vf',
-      [
-        `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y}`,
-        ...(crop.turn == null
-          ? []
-          : [`transpose=${crop.turn === 'cw' ? 1 : 2}`]),
-        // Only the strip down the middle that `fieldTopPerFrame` reads: a
-        // whole phone's frames for half a minute would be hundreds of MB.
-        `crop=${strip}:ih:(iw-${strip})/2:0`,
-        'format=gray'
-      ].join(','),
-      ...['-f', 'rawvideo', 'pipe:1']
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  )
-  const chunks: Buffer[] = []
-  ffmpeg.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg.on('error', reject)
-    ffmpeg.on('close', code => {
-      if (code === 0) resolve()
-      else reject(new Error(`ffmpeg could not read ${file}: exit ${code}`))
-    })
-  })
-  return splitFrames(Buffer.concat(chunks), strip, height)
-}
-
-export function splitFrames(
-  raw: Uint8Array,
-  width: number,
-  height: number
-): Frame[] {
-  const size = width * height
-  const out: Frame[] = []
-  for (let at = 0; at + size <= raw.length; at += size)
-    out.push({ width, height, data: raw.subarray(at, at + size) })
-  return out
+export function restRow(
+  topPoints: number,
+  screenPoints: number,
+  picturePixels: number
+): number {
+  if (!(screenPoints > 0)) throw new Error('the screen has no height')
+  const row = Math.round((topPoints * picturePixels) / screenPoints)
+  return Math.min(Math.max(row, 1), picturePixels - 1)
 }
 
 /** The mean brightness of a row across the few columns at the centre. */

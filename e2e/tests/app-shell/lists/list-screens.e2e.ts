@@ -4,7 +4,7 @@ import { scheduleDate } from '../../../../src/app/screens/format'
 import { gamesFor } from '../../../../src/app/screens/whenFilter'
 import { userIdOfGumbo } from '../../../../src/common/userId'
 import {
-  defineE2e,
+  defineHarness,
   type E2eContext,
   type Scenario,
   type WebSession
@@ -855,7 +855,7 @@ for (const size of SIZES) {
     expect(copied).equals(RTMP_URL)
   })
 }
-export default defineE2e({
+export default defineHarness({
   id: 'app-shell/lists/list-screens',
   title:
     'List screens lay out their thumbnails, rows, filters and stream address',
@@ -864,8 +864,10 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: [],
   exclusive: false,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['web'],
+  surfaces: {
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } }
+  },
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

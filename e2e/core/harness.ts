@@ -22,12 +22,7 @@ import {
 } from './checkpoint'
 import { detectRow } from './detectRow'
 import { dumpAccount } from './dumps'
-import {
-  findAccount,
-  type FixtureManifest,
-  signInWithPassword,
-  worldIdsOf
-} from './fixtures'
+import { findAccount, type FixtureManifest, worldIdsOf } from './fixtures'
 import { browserClassOf, deviceClassOf, readGoldenSuite } from './goldens'
 import type { ServerError } from './invariants'
 import { Budget, judgeHasAuthority } from './judge'
@@ -40,6 +35,7 @@ import {
   type Status,
   writeResult
 } from './result'
+import { signInOnAnySurface } from './signIn'
 import type {
   BrowserNeed,
   E2eSpec,
@@ -313,6 +309,12 @@ export function stackControl(
           errors: ServerError[]
         }
       ).errors,
+    apiLog: async since =>
+      (
+        (await call('GET', `api-log?since=${since}`)) as {
+          lines: Array<{ at: number; text: string }>
+        }
+      ).lines,
     setFault: async fault => {
       await call('PUT', 'fault', { fault })
     },
@@ -331,7 +333,11 @@ export function stackControl(
       script: async pages => await call('PUT', 'pages', pages),
       requests: async since =>
         await call('GET', `pages/requests?since=${since}`)
-    }
+    },
+    sql: async (text, values = []) =>
+      await call('POST', 'sql', { text, values }),
+    call: async (method, route, body) =>
+      await call(method, route.replace(/^\/+/, ''), body)
   }
 }
 
@@ -714,7 +720,7 @@ export async function runScenario(
         if (target == null) {
           throw new HarnessError(`Signing in "${role}" has no device to use`)
         }
-        await signInWithPassword(target.device, account)
+        await signInOnAnySurface(target.device, account)
         return account
       },
       address: label => testAddress(HARNESS_MAILBOX, label),

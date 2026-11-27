@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   CHAT,
   COLUMN,
@@ -11,6 +11,7 @@ import {
   TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
+  tessWebSurface,
   withTess
 } from '../../../rigs/tessWeb'
 
@@ -23,8 +24,10 @@ async function breakpoint(web: TessWeb): Promise<string | null> {
   })
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
+  // It plays the fixture's HEVC angle, and opens the 3D scoring screen.
+  surfaces: tessWebSurface(['video', 'gpu']),
   id: 'assistant/chat/split-view',
   title:
     'On a wide window Tess takes a column beside the app, which keeps working; narrower she fills the window',
@@ -81,7 +84,9 @@ export default defineE2e({
           await web.see('[aria-label="Home plate"]', 30000)
           await web.tap('[aria-label="Home plate"]')
           await web.see('video', 30000)
-          await web.tap('video')
+          // The player's overlay takes every press on the picture: it is what
+          // a user touches to start playback, not the <video> beneath it.
+          await web.tap('[data-testid="gameVideoZones"]')
           await m.evalBrowserScript({
             script:
               "const video = document.querySelector('video'); if (video.paused) await video.play()"
@@ -117,7 +122,9 @@ export default defineE2e({
           expect(after.paused).equals(false)
           await ctx.checkpoint('video-kept', {
             expect: [{ text: 'Ask Tess' }],
-            ask: 'A video of a moving test pattern plays beside the chat column, and is neither blank nor black.'
+            compare: 'ai',
+            prompt:
+              'A video of a moving test pattern plays beside the chat column, and is neither blank nor black.'
           })
         },
         { video: true, liveClock: true }
@@ -219,7 +226,9 @@ export default defineE2e({
         await pause(2500)
         await ctx.checkpoint('immersive', {
           expect: [{ text: 'Ask Tess', absent: true }],
-          ask: 'A baseball field is on screen, with a scoreboard and buttons for calling pitches, and no chat column is open.'
+          compare: 'ai',
+          prompt:
+            'A baseball field is on screen, with a scoreboard and buttons for calling pitches, and no chat column is open.'
         })
         await m.back()
         await web.see(COLUMN, 30000)

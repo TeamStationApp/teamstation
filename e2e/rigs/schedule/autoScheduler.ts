@@ -1,12 +1,8 @@
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
 import { expect } from 'chai'
 
 import { FULL_LOG, FULL_LOG_BREAK } from '../../../src/app/scheduling/buildLog'
 import type { E2eContext, WebSession } from '../../core/spec'
+import { encode, type PaintedFrame } from '../../core/video'
 
 /**
  * The Auto-Scheduler's packed league on the web, for the specs that build
@@ -257,24 +253,24 @@ export async function logBox(web: WebSession): Promise<{
 /**
  * Records the page's screen into an MP4 at `path` through Chrome's
  * screencast (any Chromium has it): each frame as Chrome paints it, shown
- * until the next, put together by FFmpeg at `stop`.
+ * until the next, put together at `stop` by the video layer, whose scratch
+ * is under `scratch` (the run's directory).
  */
 export async function recordPage(
   web: WebSession,
-  path: string
+  path: string,
+  scratch: string,
+  encodeFrames: typeof encode = encode
 ): Promise<{ stop: () => Promise<void> }> {
-  const dir = mkdtempSync(join(tmpdir(), 'ts-screencast-'))
-  const frames: Array<{ file: string; at: number }> = []
+  const painted: PaintedFrame[] = []
   let stopped = false
   const cdp = await web.page.createCDPSession()
   cdp.on('Page.screencastFrame', frame => {
     if (stopped) return
-    const file = join(
-      dir,
-      `frame-${String(frames.length).padStart(5, '0')}.jpg`
-    )
-    writeFileSync(file, Buffer.from(frame.data, 'base64'))
-    frames.push({ file, at: frame.metadata.timestamp ?? Date.now() / 1000 })
+    painted.push({
+      image: Buffer.from(frame.data, 'base64'),
+      at: frame.metadata.timestamp ?? Date.now() / 1000
+    })
     cdp
       .send('Page.screencastFrameAck', { sessionId: frame.sessionId })
       .catch(() => undefined)
@@ -285,49 +281,7 @@ export async function recordPage(
       stopped = true
       await cdp.send('Page.stopScreencast').catch(() => undefined)
       await cdp.detach().catch(() => undefined)
-      try {
-        if (frames.length === 0) throw new Error('No frames were painted')
-        const list = frames.flatMap((frame, i) => [
-          `file '${frame.file}'`,
-          `duration ${Math.max(0.001, (frames[i + 1]?.at ?? frame.at + 0.5) - frame.at).toFixed(3)}`
-        ])
-        // The last frame again: FFmpeg's concat leaves the last duration out.
-        list.push(`file '${frames[frames.length - 1].file}'`)
-        writeFileSync(join(dir, 'frames.txt'), `${list.join('\n')}\n`)
-        const made = spawnSync(
-          'ffmpeg',
-          [
-            '-y',
-            '-loglevel',
-            'error',
-            '-f',
-            'concat',
-            '-safe',
-            '0',
-            '-i',
-            join(dir, 'frames.txt'),
-            '-vf',
-            'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2',
-            '-pix_fmt',
-            'yuv420p',
-            path
-          ],
-          { encoding: 'utf8' }
-        )
-        if (made.status !== 0) throw new Error(`FFmpeg failed: ${made.stderr}`)
-      } finally {
-        // Its own files, one at a time, then the empty directory.
-        for (const file of [
-          ...frames.map(frame => frame.file),
-          join(dir, 'frames.txt')
-        ])
-          try {
-            unlinkSync(file)
-          } catch {
-            // Never written: FFmpeg's list when there were no frames.
-          }
-        rmdirSync(dir)
-      }
+      encodeFrames(painted, path, scratch)
     }
   }
 }

@@ -5,12 +5,11 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { BlockedError } from '../../core/result'
+import { BlockedError, HarnessError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
 import {
   answered,
   apiBase,
-  ARTIFACTS_ENV,
   byLabel,
   byLabelStart,
   exactly,
@@ -27,7 +26,6 @@ import {
   type SearchRow,
   searchSpec,
   serverLogCount,
-  shellWord,
   within
 } from './searchRig'
 
@@ -60,7 +58,6 @@ describe('the search rig', function () {
     ])
       expect(new RegExp(`^${exactly(text)}$`).test(text), text).equals(true)
     expect(new RegExp(`^${exactly('a.c')}$`).test('abc')).equals(false)
-    expect(shellWord("it's")).equals(`'it'\\''s'`)
   })
 
   it('reads a row’s world, name, kind and city', function () {
@@ -143,45 +140,62 @@ describe('the search rig', function () {
     ).equals('https://api.example.test/v1')
   })
 
-  it('writes a proving log to the run and to the artifacts directory', function () {
+  it('writes a proving log to the run directory', function () {
     const runDir = mkdtempSync(join(tmpdir(), 'search-rig-run-'))
-    const proofs = join(mkdtempSync(join(tmpdir(), 'search-rig-')), 'proofs')
-    const saved = process.env[ARTIFACTS_ENV]
-    process.env[ARTIFACTS_ENV] = proofs
-    try {
-      proveLog(context({}, runDir), 'jev-live.log', 'model: x\n')
-    } finally {
-      if (saved == null) delete process.env.TS_SEARCH_ARTIFACTS
-      else process.env[ARTIFACTS_ENV] = saved
-    }
+    proveLog(context({}, runDir), 'jev-live.log', 'model: x\n')
     expect(readFileSync(join(runDir, 'jev-live.log'), 'utf8')).equals(
-      'model: x\n'
-    )
-    expect(readFileSync(join(proofs, 'jev-live.log'), 'utf8')).equals(
       'model: x\n'
     )
   })
 
-  it('counts the API log’s lines over SSH, and nothing without a log', async function () {
-    const calls: string[][] = []
-    const exec = (async (_program: string, args: string[]) => {
-      calls.push(args)
-      return { stdout: '2\n', stderr: '' }
-    }) as any
-    expect(await serverLogCount(context({}), 'x', exec)).equals(undefined)
+  it('counts the API log’s lines through the stack, and nothing without a way to', async function () {
+    expect(await serverLogCount(context({}), 'x')).equals(undefined)
+    expect(await serverLogCount(context({ control: {} }), 'x')).equals(
+      undefined
+    )
+    const asked: number[] = []
+    const lines = [
+      { at: 10, text: 'jev: ranked by jev-1 in 80 ms' },
+      { at: 11, text: 'search places ready' },
+      { at: 12, text: 'jev: ranked by jev-1 in 95 ms' }
+    ]
+    const control = {
+      apiLog: async (since: number) => {
+        asked.push(since)
+        return lines.filter(line => line.at >= since)
+      }
+    }
     expect(
-      await serverLogCount(
-        context({
-          attached: { ssh: 'observer@203.0.113.4', serverLog: '/srv/api.log' }
-        }),
-        'jev: ranked by jev-1',
-        exec
-      )
+      await serverLogCount(context({ control }), 'jev: ranked by jev-1')
     ).equals(2)
-    expect(calls[0].slice(-2)).deep.equals([
-      'observer@203.0.113.4',
-      `grep -c -F -- 'jev: ranked by jev-1' '/srv/api.log' || true`
-    ])
+    expect(
+      await serverLogCount(context({ control }), 'jev: ranked by jev-1', 11)
+    ).equals(1)
+    expect(await serverLogCount(context({ control }), 'secret-key')).equals(0)
+    expect(asked).deep.equals([0, 11, 0])
+    // A stack whose control has no api-log route cannot say.
+    const refused = {
+      apiLog: async () => {
+        throw new HarnessError(
+          "the stack's control answered GET api-log?since=0 with 404"
+        )
+      }
+    }
+    expect(await serverLogCount(context({ control: refused }), 'x')).equals(
+      undefined
+    )
+    const broken = {
+      apiLog: async () => {
+        throw new TypeError('fetch failed')
+      }
+    }
+    let failure: unknown
+    try {
+      await serverLogCount(context({ control: broken }), 'x')
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure)).includes('fetch failed')
   })
 
   it('keeps the search socket’s frames by socket and seq', function () {
@@ -383,6 +397,20 @@ describe('the search rig', function () {
     expect(spec).to.include({ stack: 'isolated', exclusive: true })
     expect(spec.fixtures).deep.equals(['search'])
     expect(spec.secrets).deep.equals([])
-    expect(Object.keys(spec.surfaces)).deep.equals(['web-chromium'])
+    expect(spec.services).deep.equals([])
+    expect(spec.surfaces['web-chromium']).deep.equals({
+      devices: [],
+      browser: { role: 'browser', needs: [] }
+    })
+    expect(
+      searchSpec({
+        id: 'people/add-existing/x',
+        title: 't',
+        covers: ['src/app/scoring/x.tsx'],
+        minutes: 1,
+        browserNeeds: ['gpu'],
+        scenarios: { a: async () => undefined }
+      }).surfaces['web-chromium']?.browser?.needs
+    ).deep.equals(['gpu'])
   })
 })

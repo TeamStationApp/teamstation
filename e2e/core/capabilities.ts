@@ -170,8 +170,10 @@ export function gpuProblems(
         )
       }
     }
+    // On web-safari-ios and web-chrome-android the browser is the phone's
+    // own, so the role's gpu covers it.
     if (
-      surface.startsWith('web-') &&
+      surface === 'web-chromium' &&
       !(needs?.browser?.needs ?? []).includes('gpu')
     ) {
       problems.push(`${surface}: the browser covers a 3D screen without gpu`)

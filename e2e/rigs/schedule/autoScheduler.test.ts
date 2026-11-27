@@ -1,5 +1,3 @@
-import { readdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { runInNewContext } from 'node:vm'
 
 import { expect } from 'chai'
@@ -65,26 +63,30 @@ function screencastPage(frames: number): {
   }
 }
 
-const screencastDirs = (): string[] =>
-  readdirSync(tmpdir()).filter(name => name.startsWith('ts-screencast-'))
-
 describe('the Auto-Scheduler rig', function () {
   for (const frames of [0, 2])
-    it(`removes its recording’s frames, one at a time, when it can’t make the video (${frames} frames)`, async function () {
-      const before = screencastDirs()
+    it(`hands the video layer every frame painted before the stop, and its failure (${frames} frames)`, async function () {
       const { web, late } = screencastPage(frames)
-      const recording = await recordPage(web, '/nonexistent/web-build.mp4')
-      expect(screencastDirs()).lengthOf(before.length + 1)
+      const encoded: Array<{ count: number; out: string; scratch: string }> = []
+      const recording = await recordPage(
+        web,
+        '/run/web-build.mp4',
+        '/run/scratch',
+        (painted, out, scratch) => {
+          encoded.push({ count: painted.length, out, scratch })
+          if (painted.length === 0) throw new Error('No frames were painted')
+        }
+      )
       let failed: unknown
       await recording.stop().catch((error: unknown) => {
         failed = error
       })
-      // A frame painted after the stop is not written.
+      // A frame painted after the stop is not kept.
       late()
-      expect(String(failed)).matches(
-        frames === 0 ? /No frames were painted/ : /FFmpeg|ENOENT|spawn/
-      )
-      expect(screencastDirs()).deep.equals(before)
+      expect(encoded).deep.equals([
+        { count: frames, out: '/run/web-build.mp4', scratch: '/run/scratch' }
+      ])
+      expect(failed === undefined).equals(frames > 0)
     })
 
   it('reads the log box in the page from its source alone, with no helper of the test transform', async function () {

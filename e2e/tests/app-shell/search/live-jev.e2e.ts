@@ -34,6 +34,9 @@ export default searchSpec({
       await admin.setJevKey(key)
       try {
         await jev.set({ passThrough: true })
+        // This search's log lines, not an earlier run's on the same stack:
+        // the stack stamps each line when it reads it, a second from now at most.
+        const searched = Date.now() - 2000
         await openSearch(ctx, web)
         await typeSearch(web, 'san diego')
         const ranked = await within(15000, async () => {
@@ -53,7 +56,8 @@ export default searchSpec({
         })
         const logged = await serverLogCount(
           ctx,
-          `jev: ranked by ${ranked.model ?? ''}`
+          `jev: ranked by ${ranked.model ?? ''}`,
+          searched
         )
         proveLog(
           ctx,

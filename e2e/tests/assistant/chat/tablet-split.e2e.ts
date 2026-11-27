@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { type TessNative, withTessNative } from '../../../rigs/tessNativeRig'
 
 /**
@@ -21,7 +21,7 @@ async function openTess(native: TessNative): Promise<void> {
 }
 
 async function onTablet(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   run: (native: TessNative) => Promise<void>
 ): Promise<void> {
   await withTessNative(
@@ -35,7 +35,7 @@ async function onTablet(
   )
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'assistant/chat/tablet-split',
   title:
     'On a tablet on its side Tess sits beside the app; upright she fills it, and DJ Game hides her',
@@ -46,14 +46,14 @@ export default defineE2e({
     'src/app/navigation/**'
   ],
   stack: 'isolated',
-  fixtures: [],
+  fixtures: ['tess'],
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'user', needs: ['ipad'], hardware: 'none' }]
+      devices: [{ role: 'user', needs: ['ipad'], simulator: 'allowed' }]
     }
   },
-  services: ['web'],
+  services: [],
   apps: ['teamstation-ios'],
   secrets: [],
   costUsd: 0,

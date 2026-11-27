@@ -1,17 +1,16 @@
-import { execFile } from 'node:child_process'
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { promisify } from 'node:util'
+import { writeFileSync } from 'node:fs'
 
 import { expect } from 'chai'
 
 import type { FixtureAccount, FixtureManifest } from '../../core/fixtures'
 import type { JevControl, JevView } from '../../core/jevStub'
-import { BlockedError } from '../../core/result'
+import { BlockedError, HarnessError } from '../../core/result'
 import {
-  defineE2e,
+  defineHarness,
   type E2eContext,
-  type E2eSpec,
+  type HarnessSpec,
+  type HarnessStackHandle,
+  type StackControl,
   type WebSession
 } from '../../core/spec'
 
@@ -30,8 +29,9 @@ export const PHONE = { width: 390, height: 844 }
 export const SEARCH_FIELD = 'Search leagues, seasons, teams and people'
 
 /**
- * Where a run also copies its proving screenshots, besides its run
- * directory: `TS_SEARCH_ARTIFACTS=<dir>`.
+ * The variable an older run copied its proving screenshots to. A run's
+ * proofs are now in its run directory only, which the runner hands back;
+ * kept until the last rig that names it stops.
  */
 export const ARTIFACTS_ENV = 'TS_SEARCH_ARTIFACTS'
 
@@ -332,64 +332,42 @@ export async function pathname(web: WebSession): Promise<string> {
   return (await web.page.evaluate('location.pathname')) as string
 }
 
-/**
- * Saves the screen as one of the plan's proving screenshots: in the run
- * directory, and in `TS_SEARCH_ARTIFACTS` when the run names one.
- */
+/** Saves the screen as one of the plan's proving screenshots, in the run directory. */
 export async function proveScreen(
   ctx: E2eContext,
   web: WebSession,
   name: string
 ): Promise<void> {
-  const file = ctx.artifact(name)
-  writeFileSync(file, await web.m.screenshot())
-  const dir = process.env[ARTIFACTS_ENV]
-  if (dir != null && dir !== '') {
-    mkdirSync(dir, { recursive: true })
-    copyFileSync(file, join(dir, name))
-  }
+  writeFileSync(ctx.artifact(name), await web.m.screenshot())
 }
 
-/** Writes a proving log beside the screenshots, the same way. */
+/** Writes a proving log beside the screenshots. */
 export function proveLog(ctx: E2eContext, name: string, text: string): void {
-  const file = ctx.artifact(name)
-  writeFileSync(file, text)
-  const dir = process.env[ARTIFACTS_ENV]
-  if (dir != null && dir !== '') {
-    mkdirSync(dir, { recursive: true })
-    copyFileSync(file, join(dir, name))
-  }
-}
-
-const run = promisify(execFile)
-
-/** The shell's quoting of one word. */
-export function shellWord(word: string): string {
-  return `'${word.replace(/'/g, `'\\''`)}'`
+  writeFileSync(ctx.artifact(name), text)
 }
 
 /**
- * How many lines of the stack API's log hold `needle`, read over the
- * observer's SSH, or undefined when the stack's handle names no log.
+ * How many of the stack API's log lines, read at or after `since` (all of
+ * them by default), hold `needle`, asked of the stack's `api-log` control
+ * route; undefined when the stack has no control or the route cannot say.
  */
 export async function serverLogCount(
   ctx: E2eContext,
   needle: string,
-  exec: typeof run = run
+  since = 0
 ): Promise<number | undefined> {
-  const handle = ctx.stack.attached
-  const ssh = handle?.ssh
-  const log = handle?.serverLog
-  if (typeof ssh !== 'string' || typeof log !== 'string') return undefined
-  const { SSH_OPTIONS } = await import('../../core/streamingStack')
-  // grep exits 1 for no line, which is an answer: 0.
-  const reply = await exec('ssh', [
-    ...SSH_OPTIONS,
-    ssh,
-    `grep -c -F -- ${shellWord(needle)} ${shellWord(log)} || true`
-  ])
-  const count = String(reply.stdout).trim()
-  return count === '' ? 0 : Number(count)
+  const control: StackControl | undefined = (ctx.stack as HarnessStackHandle)
+    .control
+  if (typeof control?.apiLog !== 'function') return undefined
+  let lines
+  try {
+    lines = await control.apiLog(since)
+  } catch (error) {
+    // No such route on an older stack's fault server, or no log to read.
+    if (error instanceof HarnessError) return undefined
+    throw error
+  }
+  return lines.filter(line => line.text.includes(needle)).length
 }
 
 /** What every search spec declares alike. */
@@ -399,9 +377,11 @@ export function searchSpec(options: {
   covers: string[]
   minutes: number
   secrets?: string[]
-  scenarios: E2eSpec['scenarios']
-}): E2eSpec {
-  return defineE2e({
+  /** What the page needs of the browser: `gpu` for a spec covering a 3D screen's folder. */
+  browserNeeds?: string[]
+  scenarios: HarnessSpec['scenarios']
+}): HarnessSpec {
+  return defineHarness({
     id: options.id,
     title: options.title,
     kind: 'e2e',
@@ -410,8 +390,13 @@ export function searchSpec(options: {
     fixtures: ['search'],
     // The Jev key and the Jev stand-in are the stack's, not the world's.
     exclusive: true,
-    surfaces: { 'web-chromium': { devices: [] } },
-    services: ['web', 'api'],
+    surfaces: {
+      'web-chromium': {
+        devices: [],
+        browser: { role: 'browser', needs: options.browserNeeds ?? [] }
+      }
+    },
+    services: [],
     apps: [],
     secrets: options.secrets ?? [],
     costUsd: 0,

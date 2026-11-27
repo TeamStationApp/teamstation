@@ -139,6 +139,7 @@ export default [
       'scripts/pushWakeVectors.ts',
       'scripts/e2e/**/*.ts',
       'scripts/splash/**/*.ts',
+      'scripts/coverage/**/*.ts',
       'scripts/testModels.test.ts',
       'scripts/testTiers.test.ts',
       'scripts/testTools.test.ts'

@@ -1,9 +1,9 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   aboveKeyboard,
-  APP,
+  appOf,
   type Box,
   boxOf,
   flatten,
@@ -12,18 +12,19 @@ import {
   prove,
   typeKeys
 } from '../../../rigs/app/keyboardDock'
+import { pointAtStack } from '../../../rigs/app/pointAtStack'
 
 /**
  * Add Player on a phone or tablet draws Search's own field, docked at the
  * bottom: focused, it rides up with the keyboard while the scene's header
  * stays where it was, and Add to Roster's form keeps its jersey field and
- * its button above the keyboard. Signs in with the `addPlayerAccount`
- * secret (`{"email","password","teamId"}`: an account that may add players
- * to `teamId`, named `teamName`, on the seat the build was made for), opens
- * that team from Home and then its settings, and clears the app's state
- * before and after, leaving the phone signed out. Adds nobody.
+ * its button above the keyboard. Signs in as the `search` world's coach,
+ * who may add players to the world's Demo Hawks, opens that team from Home
+ * and then its settings, and clears the app's state before and after,
+ * leaving the phone signed out; a clear forgets the stack, so the app is
+ * pointed back at it after. Adds nobody.
  */
-export default defineE2e({
+export default defineHarness({
   id: 'people/add-existing/add-player-device',
   title:
     'Add Player’s field rides the keyboard on a phone while its header stays put, and Add to Roster stays above it',
@@ -35,20 +36,22 @@ export default defineE2e({
     'src/app/components/SearchField.tsx',
     'src/app/components/keyboardControllerOwner.native.ts'
   ],
-  stack: 'none',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['search'],
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
   services: [],
   apps: ['teamstation-ios', 'teamstation-android'],
-  secrets: ['addPlayerAccount'],
+  secrets: [],
   costUsd: 0,
   minutes: 5,
   guards: [],
@@ -57,22 +60,20 @@ export default defineE2e({
   sendsNoMail: true,
   scenarios: {
     keyboard: async ctx => {
-      const account = JSON.parse(ctx.secret('addPlayerAccount')) as {
-        email: string
-        password: string
-        teamId: string
-        teamName: string
-      }
+      const world = await ctx.fixture('search')
+      const account = world.accounts.coach
+      const teamName = `Demo Hawks ${world.nonce}`
       const ios = platformOf(ctx) === 'ios'
+      const appId = appOf(ctx)
       const device = await ctx.attach('phone', {
         platform: platformOf(ctx),
-        appId: APP
+        appId
       })
       try {
-        await signIn(device, ios, account)
+        await signIn(device, ios, account, appId, ctx.stack.origin)
         await prove(ctx, device, `${platformOf(ctx)}-signed-in.png`)
         // Home lists the account's teams: the team, then its settings.
-        await tapRow(device, account.teamName)
+        await tapRow(device, teamName)
         await device.tapOn({ text: 'Manage', timeout: 15000 })
         await device.assertVisible({
           text: 'Player Name Privacy',
@@ -195,19 +196,22 @@ export default defineE2e({
         await device.tapOn({ text: 'Cancel' })
       } finally {
         // Signed out again, as the other phone scenarios expect.
-        await device.launchApp({ appId: APP, stopApp: true, clearState: true })
+        await device.launchApp({ appId, stopApp: true, clearState: true })
       }
     }
   }
 })
 
-/** Signs in with a password from a cleared app. */
+/** Signs in with a password from a cleared app, pointed back at the stack. */
 async function signIn(
   device: any,
   ios: boolean,
-  account: { email: string; password: string }
+  account: { email: string; password: string },
+  appId: string,
+  origin: string
 ): Promise<void> {
-  await device.launchApp({ appId: APP, stopApp: true, clearState: true })
+  await device.launchApp({ appId, stopApp: true, clearState: true })
+  await pointAtStack(device, origin, appId)
   // The password form, waited for: a launch can still be settling, and a
   // password typed into the e-mail field would ask for a code instead.
   // The swap is done when its link reads the other way: iOS matches text

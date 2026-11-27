@@ -5,12 +5,12 @@ import { expect } from 'chai'
 import type { FixtureManifest } from '../../../../src/server/dev/fixtures/accounts'
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import {
+  COACH_APP,
   type CoachApp,
-  DEVELOP_APP,
   openCoachApp,
-  stackDatabaseUrl
+  stackSql
 } from '../../../rigs/coach/coachApp'
 
 /**
@@ -30,21 +30,11 @@ const sleep = async (ms: number): Promise<void> => {
 const PREPARE_MS = 60_000
 
 async function sql(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   text: string,
   values: unknown[] = []
 ): Promise<void> {
-  const { Client } = await import('pg')
-  const client = new Client({
-    connectionString: await stackDatabaseUrl(ctx),
-    connectionTimeoutMillis: 15_000
-  })
-  await client.connect()
-  try {
-    await client.query(text, values)
-  } finally {
-    await client.end()
-  }
+  await stackSql(ctx, text, values)
 }
 
 /** Tries `work` again after a dropped connection: the stack is far away. */
@@ -60,7 +50,7 @@ async function retried<T>(work: () => Promise<T>, tries = 3): Promise<T> {
   }
 }
 
-function faults(ctx: E2eContext): (fault: string | null) => Promise<void> {
+function faults(ctx: HarnessContext): (fault: string | null) => Promise<void> {
   const setFault = ctx.stack.setFault
   if (setFault == null)
     throw new BlockedError('needs a stack whose fault server can be set')
@@ -94,7 +84,7 @@ async function home(app: CoachApp): Promise<void> {
 
 /** Which of `games` open to score with the server held, in order. */
 async function readyOffline(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   app: CoachApp,
   games: string[]
 ): Promise<boolean[]> {
@@ -117,7 +107,7 @@ async function readyOffline(
 const tokens = new Map<string, string>()
 
 async function asAccount(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   account: { email: string; password: string },
   path: string
 ): Promise<unknown> {
@@ -139,7 +129,7 @@ async function asAccount(
   )
 }
 
-function log(ctx: E2eContext, name: string, lines: string[]): void {
+function log(ctx: HarnessContext, name: string, lines: string[]): void {
   writeFileSync(ctx.artifact(name), lines.join('\n') + '\n')
 }
 
@@ -147,7 +137,7 @@ function soonOf(world: FixtureManifest): string[] {
   return world.ids.soon.split(',')
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'scoring/offline/eligible',
   title: 'A phone keeps its nearest three scorable games ready offline',
   kind: 'e2e',
@@ -163,10 +153,13 @@ export default defineE2e({
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'device', needs: ['ios'], hardware: 'none' }]
+      // The scoring screen draws in 3D: a GPU, so a physical iPhone.
+      devices: [
+        { role: 'device', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+      ]
     }
   },
-  services: ['web', 'api'],
+  services: [],
   apps: ['teamstation-ios'],
   secrets: [],
   costUsd: 0,
@@ -264,7 +257,7 @@ export default defineE2e({
       await setFault('api-hang')
       try {
         // Closed and opened again with no server: the game was never opened.
-        await app.m.launchApp({ appId: DEVELOP_APP, stopApp: true })
+        await app.m.launchApp({ appId: ctx.app(COACH_APP), stopApp: true })
         await sleep(5000)
         // Schedule lists it from what the phone kept.
         await app.m.openLink({ link: 'teamstation://schedule' })
@@ -303,7 +296,7 @@ export default defineE2e({
       // In front again with the server back: the queue sends.
       await app.m.pressKey({ key: 'home' })
       await sleep(2000)
-      await app.m.launchApp({ appId: DEVELOP_APP, stopApp: false })
+      await app.m.launchApp({ appId: ctx.app(COACH_APP), stopApp: false })
       let pitches = 0
       for (let i = 0; i < 24 && pitches < 2; i++) {
         await sleep(5000)

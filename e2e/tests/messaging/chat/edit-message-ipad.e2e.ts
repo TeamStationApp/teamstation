@@ -1,43 +1,15 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { sep } from 'node:path'
 
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import { chatLinkUi, revealChatTarget } from '../../../rigs/chat/messageLinkUi'
 import { observedNativeValue } from '../../../rigs/chat2Maestro'
 
-function assertLeasedRunner(port: number, udid: string): void {
-  const listeners = execFileSync(
-    'lsof',
-    ['-nP', '-a', '-iTCP:' + port, '-sTCP:LISTEN', '-Fp'],
-    { encoding: 'utf8' }
-  )
-    .trim()
-    .split(/\s+/)
-    .filter(line => /^p\d+$/.test(line))
-  assert.equal(listeners.length, 1, 'Expected a single WDA listener')
-  const match = /^p(\d+)$/.exec(listeners[0])
-  assert(match != null)
-  const executable = execFileSync('ps', ['-p', match[1], '-o', 'comm='], {
-    encoding: 'utf8'
-  }).trim()
-  const parts = executable.split(sep)
-  const devices = parts.lastIndexOf('Devices')
-  assert(
-    devices >= 0 &&
-      parts[devices + 1]?.toLowerCase() === udid.toLowerCase() &&
-      parts[devices + 2] === 'data' &&
-      parts.at(-1) === 'WebDriverAgentRunner-Runner',
-    'The WDA listener must be the runner installed on the leased simulator'
-  )
-}
-
-// Run on the simulator host. Maestro derives the installed WDA port from the
-// UUID's final segment. Reuse its existing session so the keyboard keeps focus.
-async function hardware(ctx: E2eContext): Promise<void> {
-  const f = fixtureFor(ctx)
+// The hardware keyboard's Up arrow and Escape, sent through maestro-d to the
+// focused composer, so the keyboard keeps focus.
+async function hardware(ctx: HarnessContext): Promise<void> {
+  const f = await fixtureFor(ctx)
   const actor = await providerFor(f, f.observer)
   try {
     const { m, enter } = await chatLinkUi(
@@ -48,39 +20,15 @@ async function hardware(ctx: E2eContext): Promise<void> {
       undefined,
       'tablet'
     )
-    const udid = ctx.device('tablet').split('@')[0]
-    assert.match(udid, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i)
-    assert.equal((await m.platformInfo()).isSimulator, true)
-    const port = 8100 + (parseInt(udid.slice(-12), 16) % 1000)
-    const wda = 'http://127.0.0.1:' + port
-    const status = await fetch(wda + '/status')
-    assert.equal(status.status, 200)
-    const { sessionId, value } = await status.json()
-    assert.equal(String(value.device).toLowerCase(), 'ipad')
-    assert.match(sessionId, /^[a-z0-9-]+$/i)
-    const press = async (usage: number): Promise<void> => {
-      assertLeasedRunner(port, udid)
-      const result = await fetch(
-        wda +
-          '/session/' +
-          encodeURIComponent(sessionId) +
-          '/wda/performIoHidEvent',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ page: 7, usage, duration: 0.08 })
-        }
-      )
-      assert.equal(result.status, 200)
-      const reply = await result.json()
-      assert.equal(reply.value?.error, undefined)
+    const press = async (key: 'up' | 'escape'): Promise<void> => {
+      await m.pressKey({ key })
     }
     const text = 'Bring the equipment to practice ' + randomUUID().slice(0, 8)
     const message = await actor.engine.sendText(f.conversationId, text)
     assert(message?.mine === true)
     await enter()
     await m.tapOn({ id: 'chat-composer' })
-    await press(82)
+    await press('up')
     await m.assertVisible({ text: '^Editing your message$' })
     const expectComposerValue = async (value: string): Promise<void> => {
       observedNativeValue(await m.hierarchyRaw(), {
@@ -91,10 +39,10 @@ async function hardware(ctx: E2eContext): Promise<void> {
       })
     }
     await expectComposerValue(text)
-    await press(41)
+    await press('escape')
     await m.assertNotVisible({ text: '^Editing your message$' })
     await m.inputText({ text: 'Practice draft' })
-    await press(82)
+    await press('up')
     await m.assertNotVisible({ text: '^Editing your message$' })
     await expectComposerValue('Practice draft')
     await m.tapOn({ text: '^Attach$' })
@@ -105,7 +53,7 @@ async function hardware(ctx: E2eContext): Promise<void> {
     await m.assertVisible({ text: '^Editing your message$' })
     await m.assertNotVisible({ text: '^Photos$' })
     await expectComposerValue(text)
-    await press(41)
+    await press('escape')
     await m.assertNotVisible({ text: '^Editing your message$' })
     await m.assertNotVisible({ text: '^Photos$' })
     await expectComposerValue('Practice draft')
@@ -114,7 +62,7 @@ async function hardware(ctx: E2eContext): Promise<void> {
     actor.engine.stop()
   }
 }
-export default defineE2e({
+export default defineHarness({
   id: 'messaging/chat/edit-message-ipad',
   title: 'The focused iPad chat composer accepts hardware Up and Escape',
   kind: 'e2e',
@@ -123,17 +71,17 @@ export default defineE2e({
     'ios/TeamStation/ChatKeyboard/**',
     'src/app/chat/Composer.tsx'
   ],
-  stack: 'seat',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['messaging'],
   exclusive: true,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'tablet', needs: ['ipad'], hardware: 'none' }]
+      devices: [{ role: 'tablet', needs: ['ipad'], simulator: 'allowed' }]
     }
   },
-  services: ['api'],
-  apps: [],
-  secrets: ['chatLinkFixture'],
+  services: [],
+  apps: ['teamstation-ios'],
+  secrets: [],
   costUsd: 0,
   minutes: 2,
   guards: [],

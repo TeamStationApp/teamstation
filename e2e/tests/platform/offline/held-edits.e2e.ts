@@ -2,17 +2,15 @@ import { expect } from 'chai'
 
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
-import { loadSettings } from '../../../core/settings'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { typeInto } from '../../../core/typeInto'
 import {
+  COACH_APP,
   type CoachApp,
-  DEVELOP_APP,
   labelOf,
   openCoachApp,
-  stackDatabaseUrl
+  stackSql
 } from '../../../rigs/coach/coachApp'
-import { loadShaper } from '../../../rigs/streaming/shaper'
 
 /**
  * A scorekeeper's edit the server refuses on the phone, and the ways out:
@@ -32,7 +30,7 @@ interface World {
   coach: { email: string; password: string }
 }
 
-async function worldOf(ctx: E2eContext): Promise<World> {
+async function worldOf(ctx: HarnessContext): Promise<World> {
   const world = await ctx.fixture('coach-game')
   const coach = world.accounts.coach
   return {
@@ -44,22 +42,16 @@ async function worldOf(ctx: E2eContext): Promise<World> {
 }
 
 /** Takes the scorekeeper's role on the home team away, on the stack. */
-async function removeScorekeeper(ctx: E2eContext, world: World): Promise<void> {
-  const { Client } = await import('pg')
-  const client = new Client({
-    connectionString: await stackDatabaseUrl(ctx),
-    connectionTimeoutMillis: 15_000
-  })
-  await client.connect()
-  try {
-    const removed = await client.query(
-      "delete from scope_roles where user_id = $1 and scope_type = 'team' and scope_id = $2 and role = 'scorekeeper'",
-      [world.scorekeeper, world.homeTeam]
-    )
-    expect(removed.rowCount, 'the scorekeeper role row').equals(1)
-  } finally {
-    await client.end()
-  }
+async function removeScorekeeper(
+  ctx: HarnessContext,
+  world: World
+): Promise<void> {
+  const removed = await stackSql(
+    ctx,
+    "delete from scope_roles where user_id = $1 and scope_type = 'team' and scope_id = $2 and role = 'scorekeeper'",
+    [world.scorekeeper, world.homeTeam]
+  )
+  expect(removed.rowCount, 'the scorekeeper role row').equals(1)
 }
 
 /** Whether a node with this id is on screen. */
@@ -69,7 +61,7 @@ async function shownId(app: CoachApp, id: string): Promise<boolean> {
 
 /** Reads `path` from the stack's API as the home team's coach. */
 async function asCoach(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   world: World,
   path: string
 ): Promise<unknown> {
@@ -143,7 +135,7 @@ const createPlayer: Act = async app => {
  * once the app comes back to the front. Ends on the game's page.
  */
 async function refuse(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   app: CoachApp,
   world: World,
   act: Act
@@ -163,7 +155,7 @@ async function refuse(
   // Behind and back in front: the queue sends again.
   await app.m.pressKey({ key: 'home' })
   await sleep(2000)
-  await app.m.launchApp({ appId: DEVELOP_APP, stopApp: false })
+  await app.m.launchApp({ appId: ctx.app(COACH_APP), stopApp: false })
   await app.m.extendedWaitUntil({
     visible: { id: 'offlineBanner' },
     timeout: 90000
@@ -200,41 +192,43 @@ async function rosterListsHeldPlayer(app: CoachApp): Promise<boolean> {
 }
 
 /** How many pitches the server holds for the game, read as the coach. */
-async function pitchesOnServer(ctx: E2eContext, world: World): Promise<number> {
+async function pitchesOnServer(
+  ctx: HarnessContext,
+  world: World
+): Promise<number> {
   const events = await asCoach(ctx, world, `/games/${world.game}/events`)
   return (JSON.stringify(events).match(/"isPitch":true/g) ?? []).length
 }
 
 /**
- * The bench's conditioner and the leased iPhone's address on its shaped
- * network, from the local settings' `soak` block (`shaper`, and
- * `shapedIps.iphone`): bench-private, never this repository's.
+ * Cuts the attached phone's network at its hub's shaper (all traffic lost)
+ * while `work` runs, and gives it back whatever happens inside. A phone its
+ * hub cannot shape blocks the run.
  */
-function phoneOutage(): {
-  ip: string
-  outage: ReturnType<typeof loadShaper>['outage']
-  onTestNetwork: ReturnType<typeof loadShaper>['onTestNetwork']
-} {
-  const soak = (loadSettings() as { soak?: unknown }).soak as
-    { shaper?: unknown; shapedIps?: Record<string, unknown> } | undefined
-  const ip = soak?.shapedIps?.iphone
-  if (typeof soak?.shaper !== 'string' || typeof ip !== 'string')
+async function outage<T>(m: any, work: () => Promise<T>): Promise<T> {
+  try {
+    await m.setTrafficShape({ lossPct: 100 })
+  } catch (error) {
     throw new BlockedError(
-      'needs soak.shaper and soak.shapedIps.iphone in the local settings'
+      `the phone's hub cannot cut its network: ${error instanceof Error ? error.message : String(error)}`
     )
-  const shaper = loadShaper(soak.shaper)
-  return { ip, outage: shaper.outage, onTestNetwork: shaper.onTestNetwork }
+  }
+  try {
+    return await work()
+  } finally {
+    await m.resetTrafficShape()
+  }
 }
 
 async function shot(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   app: CoachApp,
   name: string
 ): Promise<void> {
   await app.m.takeScreenshot({ path: ctx.artifact(name) })
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'platform/offline/held-edits',
   title:
     'An edit the server refused is listed from the banner and cleared there, on the Game screen and on the Team page',
@@ -254,10 +248,13 @@ export default defineE2e({
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'device', needs: ['ios'], hardware: 'none' }]
+      // The scoring screen draws in 3D: a GPU, so a physical iPhone.
+      devices: [
+        { role: 'device', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+      ]
     }
   },
-  services: ['web', 'api'],
+  services: [],
   apps: ['teamstation-ios'],
   secrets: [],
   costUsd: 0,
@@ -363,13 +360,10 @@ export default defineE2e({
       })
       expect(await app.heroActions()).not.includes('Score')
     },
-    // Scoring keeps working with the phone's network cut at the bench's
-    // conditioner: no list, sheet or notice stands in its way, and every
+    // Scoring keeps working with the phone's network cut at its hub's
+    // shaper: no list, sheet or notice stands in its way, and every
     // play reaches the server once the network is back, with nothing held.
     'offline-scoring': async ctx => {
-      const network = phoneOutage()
-      if ((await network.onTestNetwork(network.ip)) == null)
-        throw new BlockedError(`${network.ip} is not on a shaped network`)
       const world = await worldOf(ctx)
       const app = await openCoachApp(ctx, 'scorekeeper')
       const { m } = app
@@ -384,8 +378,8 @@ export default defineE2e({
       const before = await pitchesOnServer(ctx, world)
       expect(before, 'the two online pitches reached the server').equals(2)
       // The phone's traffic dropped from here until the network is back;
-      // the conditioner clears it whatever happens inside.
-      await network.outage(network.ip, 0, async () => {
+      // its hub clears the shape whatever happens inside.
+      await outage(m, async () => {
         await tapBall(app)
         await tapBall(app)
         await shot(ctx, app, 'offline-scoring.png')
@@ -414,7 +408,7 @@ export default defineE2e({
       // The network is back: in front again, the queue sends.
       await m.pressKey({ key: 'home' })
       await sleep(2000)
-      await m.launchApp({ appId: DEVELOP_APP, stopApp: false })
+      await m.launchApp({ appId: ctx.app(COACH_APP), stopApp: false })
       await exitScoring(app, world)
       await ctx.checkpoint(
         'online-again',

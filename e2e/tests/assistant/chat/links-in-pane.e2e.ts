@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   COLUMN,
   OPEN_FULL_SCREEN,
@@ -12,6 +12,7 @@ import {
   TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
+  tessWebSurface,
   VIEWER,
   VIEWER_CLOSE,
   withTess
@@ -46,8 +47,10 @@ async function waitForAngleView(web: TessWeb): Promise<Rect> {
   return box as unknown as Rect
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
+  // It plays the fixture's HEVC angles.
+  surfaces: tessWebSurface(['video']),
   id: 'assistant/chat/links-in-pane',
   title:
     'What Tess links to opens in the pane beside her, and over what the pane already shows',
@@ -104,7 +107,9 @@ export default defineE2e({
           await pause(1500)
           await ctx.checkpoint('angle-over-pane', {
             expect: [{ text: 'Ask Tess' }],
-            ask: 'The video of the game, from one camera, fills the area right of the chat column, and the chat is still shown.'
+            compare: 'ai',
+            prompt:
+              'The video of the game, from one camera, fills the area right of the chat column, and the chat is still shown.'
           })
           await m.pressKey({ key: 'Escape' })
         },
