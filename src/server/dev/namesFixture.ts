@@ -438,13 +438,18 @@ function outsidePlays(
 /** Makes the fixture in `db`. */
 export async function createNamesFixture(
   db: Db,
-  options: { password?: string; stamp?: string } = {}
+  options: {
+    password?: string
+    stamp?: string
+    /** Each person's address; on `example.test` by default. */
+    address?: (who: string) => string
+  } = {}
 ): Promise<NamesFixture> {
   const stamp = options.stamp ?? Date.now().toString(36)
   const passwordHash =
     options.password == null ? null : await hashPassword(options.password)
   const email = (who: string): string =>
-    `names.${who.toLowerCase()}.${stamp}@example.test`
+    options.address?.(who) ?? `names.${who.toLowerCase()}.${stamp}@example.test`
 
   const leagueId = makeId('league')
   const seasonId = makeId('season')

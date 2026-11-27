@@ -2,13 +2,12 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 
-import type { HTTPRequest } from 'puppeteer'
-
+import type { HTTPRequest } from '../../../e2e/core/web'
 import type { ConcurrentScoringRig } from './concurrentScoring'
 
 /**
  * A remote pitch accepted while this device's saves are still in flight:
- * scorer B's post is held while B records a ball and A records a
+ * scorer B's post is held (B's browser off the network) while B records a ball and A records a
  * called strike. Released, B's post is superseded and B's session rebases
  * on the server's history. Each panel credits only the other scorer, by
  * name, with what the server accepted from them.
@@ -29,14 +28,14 @@ export async function pendingStretch(rig: ConcurrentScoringRig): Promise<void> {
     new URL(request.url()).pathname.endsWith(path)
   const page = rig.clients[1].page
   assert(page != null, 'Holding requests requires Chromium')
+  // B's saves are held by taking B's browser off the network (maestro-d's
+  // setNetworkConditions), so none reaches the server; the page is only
+  // watched for the attempt.
+  const scorerB = rig.clients[1].m
   const held: HTTPRequest[] = []
   let holding = true
   const onRequest = (request: HTTPRequest): void => {
-    if (holding && isWrite(request)) {
-      held.push(request)
-      return
-    }
-    request.continue().catch(() => undefined)
+    if (holding && isWrite(request)) held.push(request)
   }
   const wait = async (
     check: () => Promise<boolean>,
@@ -49,8 +48,8 @@ export async function pendingStretch(rig: ConcurrentScoringRig): Promise<void> {
     }
   }
   const evidence: unknown[] = []
-  await page.setRequestInterception(true)
   page.on('request', onRequest)
+  await scorerB.setNetworkConditions({ offline: true })
   try {
     // The screen takes no further pitch while its save is unanswered, so B's
     // stretch holds one Ball.
@@ -70,7 +69,7 @@ export async function pendingStretch(rig: ConcurrentScoringRig): Promise<void> {
     const accepted = await rig.api.gameEvents(rig.fixture.ids.game)
     evidence.push({ whileHeld: accepted.scoringAuthorship })
     holding = false
-    for (const request of held.splice(0)) await request.continue()
+    await scorerB.setNetworkConditions({ offline: false })
     await rig.converge(0, 'superseded pending saves rebased')
     await rig.capture('pending-stretch-after')
     const remote = await panelText(1)
@@ -93,7 +92,7 @@ export async function pendingStretch(rig: ConcurrentScoringRig): Promise<void> {
     evidence.push({ final: final.scoringAuthorship })
   } finally {
     page.off('request', onRequest)
-    await page.setRequestInterception(false)
+    await scorerB.setNetworkConditions({ offline: false })
     await writeFile(
       rig.ctx.artifact('pending-stretch.json'),
       JSON.stringify(evidence, null, 2)

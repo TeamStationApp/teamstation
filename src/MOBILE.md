@@ -372,10 +372,11 @@ failure: the device cannot run the scheduler, and nothing is built.
   `localFileId.fixtures.json`; `(cd android && ./gradlew :app:testDebugUnitTest
   --tests '*LocalFileIdTest')` is the Kotlin half.
 - **On a phone under test**: Maestro's `launchApp` grants every permission,
-  so a check that starts without music access launches with `adb shell
-  monkey` instead (`scripts/walkup-native-android.mjs`). Every playback
-  report is logged under the `WalkUpMusic` tag and kept in Sentry as a
-  `walkUpMusic` breadcrumb (`musicLog.ts`).
+  so a check that starts without music access launches with that permission
+  unset through maestro-d (`launchApp` and `setPermissions` with
+  `permissions`, in `e2e/tests/scoring/walk-up/local-song-android.e2e.ts`).
+  Every playback report is logged under the `WalkUpMusic` tag and kept in
+  Sentry as a `walkUpMusic` breadcrumb (`musicLog.ts`).
 
 ## The video
 

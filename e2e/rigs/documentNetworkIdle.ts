@@ -1,4 +1,13 @@
-import type { CDPSession, Page, Protocol } from 'puppeteer'
+import type { Page } from '../core/web'
+
+/** The page's own DevTools session, which this only listens on and reads cookies through. */
+type CDPSession = Awaited<ReturnType<Page['createCDPSession']>>
+/** What this reads of the request a `Network.requestWillBeSent` event carries. */
+interface NetworkRequest {
+  url: string
+  method: string
+  headers: Record<string, string>
+}
 
 export interface DocumentNetwork {
   wait: (quietMs: number, replayOrigins?: readonly string[]) => Promise<void>
@@ -21,7 +30,7 @@ export async function watchDocumentNetwork(
       frame?: string
       loader: string
       document: boolean
-      request: Protocol.Network.Request
+      request: NetworkRequest
       since: number
     }
   >()
@@ -194,7 +203,7 @@ export async function watchDocumentNetwork(
 /** The pending request and, for the roster fixture, its independent retry. */
 async function describeRequest(
   session: CDPSession,
-  request: Protocol.Network.Request,
+  request: NetworkRequest,
   age: number,
   replayOrigins?: readonly string[]
 ): Promise<string> {

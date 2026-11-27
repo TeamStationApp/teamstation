@@ -1,0 +1,11 @@
+{
+  "judges": {
+    "waterfall": {
+      "passed": false,
+      "recall": 0.6,
+      "falseFailures": 0,
+      "model": "waterfall: jev-1.14.0",
+      "date": "2026-11-27"
+    }
+  }
+}

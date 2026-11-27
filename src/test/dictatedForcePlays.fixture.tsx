@@ -15,12 +15,13 @@ import type { ScoringEvent, ScoringState } from '../app/scoring/scoringTypes'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail } from '../common/api'
 import type { ScoringAction } from '../common/scoring/actions'
+import { sendReport } from './dictatedReport'
 import { scoringSession } from './scoringSession'
 
 /**
  * Dictated force plays, the third out and the pitch before a ball in play,
  * on the production field. Each button scores one sentence as the model
- * returned it, through the real reducer, and posts to `/timeline` what the
+ * returned it, through the real reducer, and reports, as `timeline` (`dictatedReport`), what the
  * field was given to draw — each picture with its wall-clock start and end —
  * with the outs, the half, the runs, the errors, the bases and the note the
  * sentence left. A status line shows the same, so frames show it too.
@@ -240,25 +241,21 @@ function Preview(): React.ReactElement {
         : undefined
   useEffect(() => {
     if (!finished) return
-    fetch('/timeline', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        outs: line.outs,
-        top: line.isTopInning,
-        runs: line.teams.away.runs,
-        errors: line.teams.home.errors,
-        bases: Object.fromEntries(
-          (['first', 'second', 'third'] as const).map(key => [
-            key,
-            line.offense[key]?.id ?? null
-          ])
-        ),
-        note: note ?? null,
-        unapplied: unapplied ?? null,
-        timeline: timeline.current
-      })
+    sendReport(name, {
+      name,
+      outs: line.outs,
+      top: line.isTopInning,
+      runs: line.teams.away.runs,
+      errors: line.teams.home.errors,
+      bases: Object.fromEntries(
+        (['first', 'second', 'third'] as const).map(key => [
+          key,
+          line.offense[key]?.id ?? null
+        ])
+      ),
+      note: note ?? null,
+      unapplied: unapplied ?? null,
+      timeline: timeline.current
     }).catch(() => undefined)
   }, [finished, name, line, note, unapplied])
   const play = (scenario: Scenario): void => {

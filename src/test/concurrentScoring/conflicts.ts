@@ -1,20 +1,23 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 
-import type { HTTPRequest } from 'puppeteer'
-
+import type { HTTPRequest } from '../../../e2e/core/web'
 import type { ConcurrentScoringRig } from './concurrentScoring'
 
-/** Both authors start on one version; choose which request reaches the server first. */
+/**
+ * Both authors start on one version; choose which request reaches the
+ * server first. `older` scores first (a Ball), the other second (a Called
+ * Strike); `first` is the one whose save reaches the server first. Each
+ * author's saves are held by taking that browser off the network
+ * (maestro-d's setNetworkConditions) and released by bringing it back.
+ */
 export async function conflictingPitches(
-  rig: ConcurrentScoringRig
+  rig: ConcurrentScoringRig,
+  older: 0 | 1,
+  first: 0 | 1
 ): Promise<void> {
   await rig.open()
-  const older = Number(process.env.TS_CONCURRENT_OLDER_AUTHOR ?? 0)
-  assert(older === 0 || older === 1)
   const newer = 1 - older
-  const first = Number(process.env.TS_CONCURRENT_FIRST_AUTHOR ?? newer)
-  assert(first === 0 || first === 1)
   const expected =
     first === older ? { balls: 1, strikes: 0 } : { balls: 0, strikes: 1 }
   const countOf = (
@@ -29,8 +32,11 @@ export async function conflictingPitches(
   const isWrite = (request: HTTPRequest): boolean =>
     request.method() === 'POST' &&
     new URL(request.url()).pathname.endsWith(path)
-  const held: Array<HTTPRequest | undefined> = []
+  /** The body of each author's held save: a retry carries the same one. */
+  const held: Array<string | undefined> = []
   const holding = [true, true]
+  /** Saves sent once released, until each is answered or fails. */
+  const sent = new Set<HTTPRequest>()
   let pending = 0
   let lastAnswer = 0
   const evidence: unknown[] = []
@@ -49,27 +55,31 @@ export async function conflictingPitches(
     for (const index of [0, 1]) {
       const page = rig.clients[index].page
       assert(page != null, 'Deterministic request holding requires Chromium')
+      const m = rig.clients[index].m
       const onRequest = (request: HTTPRequest): void => {
-        if (isWrite(request)) {
-          pending++
-          evidence.push({
-            author: index,
-            requestAt: Date.now(),
-            body: JSON.parse(request.postData()!)
-          })
-          if (holding[index]) {
-            assert(
-              held[index] == null,
-              'Only one original pitch per author is held'
-            )
-            held[index] = request
-            return
-          }
+        if (!isWrite(request)) return
+        const body = request.postData()!
+        evidence.push({
+          author: index,
+          requestAt: Date.now(),
+          held: holding[index],
+          body: JSON.parse(body)
+        })
+        if (holding[index]) {
+          // Offline, the browser fails each attempt and the screen sends the
+          // same save again: one original pitch per author is held.
+          assert(
+            held[index] == null || held[index] === body,
+            'Only one original pitch per author is held'
+          )
+          held[index] = body
+          return
         }
-        request.continue().catch(() => undefined)
+        sent.add(request)
+        pending++
       }
       const answered = (request: HTTPRequest): void => {
-        if (!isWrite(request)) return
+        if (!sent.delete(request)) return
         pending--
         lastAnswer = Date.now()
         evidence.push({
@@ -78,17 +88,15 @@ export async function conflictingPitches(
           status: request.response()?.status()
         })
       }
-      await page.setRequestInterception(true)
       page.on('request', onRequest)
       page.on('requestfinished', answered)
       page.on('requestfailed', answered)
+      await m.setNetworkConditions({ offline: true })
       cleanup.push(async () => {
-        if (holding[index] && held[index] != null)
-          await held[index].abort().catch(() => undefined)
         page.off('request', onRequest)
         page.off('requestfinished', answered)
         page.off('requestfailed', answered)
-        await page.setRequestInterception(false)
+        await m.setNetworkConditions({ offline: false })
       })
     }
     await rig.tap(older, '^Ball$')
@@ -97,7 +105,7 @@ export async function conflictingPitches(
     await wait(async () => held[newer] != null, 'newer pitch held')
     holding[first] = false
     evidence.push({ firstAcceptedAuthor: first, releasedAt: Date.now() })
-    await held[first]!.continue()
+    await rig.clients[first].m.setNetworkConditions({ offline: false })
     await wait(
       async () =>
         JSON.stringify(
@@ -106,7 +114,7 @@ export async function conflictingPitches(
       'first request accepted'
     )
     holding[1 - first] = false
-    await held[1 - first]!.continue()
+    await rig.clients[1 - first].m.setNetworkConditions({ offline: false })
     await wait(
       async () =>
         pending === 0 && lastAnswer !== 0 && Date.now() - lastAnswer >= 3000,
