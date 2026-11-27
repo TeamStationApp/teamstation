@@ -8,19 +8,21 @@
         "src/server/auth/rateLimit.ts",
         "src/server/routes/auth.ts"
       ],
-      "stack": "seat",
+      "stack": "isolated",
       "fixtures": [
         "team-with-roster"
       ],
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "api",
-        "web",
         "reverse-proxy"
       ],
       "apps": [],
@@ -42,14 +44,18 @@
         "src/server/auth/passwords.ts",
         "src/app/screens/LoginScreen.tsx"
       ],
-      "stack": "seat",
+      "stack": "isolated",
       "fixtures": [
         "team-with-roster"
       ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
@@ -58,7 +64,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -69,15 +75,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios",
         "teamstation-android"
@@ -100,14 +103,18 @@
         "src/server/auth/passwords.ts",
         "src/app/screens/LoginScreen.tsx"
       ],
-      "stack": "seat",
+      "stack": "isolated",
       "fixtures": [
         "team-with-roster"
       ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
@@ -116,7 +123,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -127,15 +134,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios",
         "teamstation-android"
@@ -158,14 +162,18 @@
         "src/server/auth/passwords.ts",
         "src/app/screens/LoginScreen.tsx"
       ],
-      "stack": "seat",
+      "stack": "isolated",
       "fixtures": [
         "team-with-roster"
       ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
@@ -174,7 +182,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -185,15 +193,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios",
         "teamstation-android"
@@ -215,8 +220,10 @@
         "src/app/chat/ChatHistoryList.native.tsx",
         "src/app/components/keyboardControllerOwner.native.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "messaging"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -226,7 +233,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -237,7 +244,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -247,9 +254,7 @@
         "teamstation-ios",
         "teamstation-android"
       ],
-      "secrets": [
-        "searchKeyboardChatAccount"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 5,
       "guards": [],
@@ -272,12 +277,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -307,12 +314,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -342,12 +351,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -377,12 +388,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -412,12 +425,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -447,12 +462,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -482,12 +499,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -517,12 +536,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -552,12 +573,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -587,12 +610,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -622,12 +647,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -657,12 +684,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -692,12 +721,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -727,12 +758,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -772,13 +805,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -815,13 +849,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -858,13 +893,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -901,13 +937,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -931,8 +968,10 @@
         "src/app/components/keyboardControllerOwner.native.ts",
         "src/app/components/LocationPill.tsx"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -942,7 +981,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -953,7 +992,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -983,8 +1022,10 @@
         "src/app/components/keyboardControllerOwner.native.ts",
         "src/app/components/LocationPill.tsx"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -994,7 +1035,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -1005,7 +1046,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1040,13 +1081,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [
         "jev"
@@ -1077,13 +1119,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1112,13 +1155,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1147,13 +1191,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1182,13 +1227,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1217,13 +1263,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1252,13 +1299,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1287,13 +1335,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1322,13 +1371,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1355,13 +1405,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -1381,7 +1432,7 @@
         "src/app/screens/SearchScreen.tsx",
         "src/app/theme/pill.ts"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1392,7 +1443,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -1403,7 +1454,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1432,7 +1483,7 @@
         "src/app/screens/SearchScreen.tsx",
         "src/app/theme/pill.ts"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1443,7 +1494,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -1454,7 +1505,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1484,7 +1535,7 @@
         "android/app/src/main/res/values/styles.xml",
         "mobile/icons/splash/**"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1495,7 +1546,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1524,7 +1575,7 @@
         "android/app/src/main/res/values/styles.xml",
         "mobile/icons/splash/**"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1535,7 +1586,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1564,7 +1615,7 @@
         "android/app/src/main/res/values/styles.xml",
         "mobile/icons/splash/**"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1575,7 +1626,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1604,7 +1655,7 @@
         "ios/TeamStation/AppDelegate.swift",
         "ios/TeamStation/LaunchScreen.storyboard"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1615,7 +1666,7 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1644,7 +1695,7 @@
         "ios/TeamStation/AppDelegate.swift",
         "ios/TeamStation/LaunchScreen.storyboard"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1655,7 +1706,7 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1684,7 +1735,7 @@
         "ios/TeamStation/AppDelegate.swift",
         "ios/TeamStation/LaunchScreen.storyboard"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1695,7 +1746,7 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1724,7 +1775,7 @@
         "ios/TeamStation/AppDelegate.swift",
         "ios/TeamStation/LaunchScreen.storyboard"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1735,7 +1786,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1764,7 +1815,7 @@
         "ios/TeamStation/AppDelegate.swift",
         "ios/TeamStation/LaunchScreen.storyboard"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1775,7 +1826,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1804,7 +1855,7 @@
         "ios/TeamStation/AppDelegate.swift",
         "ios/TeamStation/LaunchScreen.storyboard"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
@@ -1815,7 +1866,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -1844,7 +1895,9 @@
         "src/app/tess/AttachPicker.native.tsx"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "android-app": {
@@ -1854,14 +1907,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-android"
       ],
@@ -1886,7 +1937,9 @@
         "src/app/tess/AttachPicker.native.tsx"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "android-app": {
@@ -1896,14 +1949,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-android"
       ],
@@ -1928,7 +1979,9 @@
         "src/app/tess/AttachPicker.native.tsx"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "android-app": {
@@ -1938,14 +1991,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-android"
       ],
@@ -1970,7 +2021,9 @@
         "src/app/tess/AttachPicker.native.tsx"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "android-app": {
@@ -1980,14 +2033,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-android"
       ],
@@ -2005,16 +2056,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2039,16 +2094,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2070,16 +2129,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2101,16 +2164,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2133,16 +2200,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2165,16 +2236,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2200,16 +2275,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2235,16 +2314,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2270,16 +2353,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2305,16 +2392,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2340,16 +2431,25 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2375,16 +2475,25 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2410,16 +2519,25 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2445,16 +2563,25 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2480,16 +2607,25 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2515,16 +2651,25 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -2557,7 +2702,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2565,16 +2712,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2599,7 +2745,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2607,16 +2755,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2641,7 +2788,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2649,16 +2798,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2683,7 +2831,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2691,16 +2841,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2725,7 +2874,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2733,16 +2884,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2767,7 +2917,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2775,16 +2927,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2809,7 +2960,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2817,16 +2970,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2851,7 +3003,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2859,16 +3013,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2893,7 +3046,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2901,16 +3056,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2935,7 +3089,9 @@
         "src/server/routes/tess.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -2943,16 +3099,15 @@
             {
               "role": "user",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "microphone"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -2970,16 +3125,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3008,21 +3169,25 @@
         "src/server/tess/**",
         "src/server/routes/tess.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "tess-model"
+        "real-model"
       ],
       "apps": [],
-      "secrets": [
-        "anthropic"
-      ],
+      "secrets": [],
       "costUsd": 0.05,
       "minutes": 2,
       "guards": [],
@@ -3039,21 +3204,25 @@
         "src/server/tess/**",
         "src/server/routes/tess.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "tess-model"
+        "real-model"
       ],
       "apps": [],
-      "secrets": [
-        "anthropic"
-      ],
+      "secrets": [],
       "costUsd": 0.05,
       "minutes": 2,
       "guards": [],
@@ -3070,21 +3239,25 @@
         "src/server/tess/**",
         "src/server/routes/tess.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "tess-model"
+        "real-model"
       ],
       "apps": [],
-      "secrets": [
-        "anthropic"
-      ],
+      "secrets": [],
       "costUsd": 0.05,
       "minutes": 2,
       "guards": [],
@@ -3101,21 +3274,25 @@
         "src/server/tess/**",
         "src/server/routes/tess.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "tess-model"
+        "real-model"
       ],
       "apps": [],
-      "secrets": [
-        "anthropic"
-      ],
+      "secrets": [],
       "costUsd": 0.05,
       "minutes": 2,
       "guards": [],
@@ -3132,21 +3309,25 @@
         "src/server/tess/**",
         "src/server/routes/tess.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "tess-model"
+        "real-model"
       ],
       "apps": [],
-      "secrets": [
-        "anthropic"
-      ],
+      "secrets": [],
       "costUsd": 0.05,
       "minutes": 2,
       "guards": [],
@@ -3163,21 +3344,25 @@
         "src/server/tess/**",
         "src/server/routes/tess.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "tess-model"
+        "real-model"
       ],
       "apps": [],
-      "secrets": [
-        "anthropic"
-      ],
+      "secrets": [],
       "costUsd": 0.05,
       "minutes": 2,
       "guards": [],
@@ -3189,16 +3374,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3221,16 +3410,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3253,16 +3446,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3287,16 +3484,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3321,16 +3524,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3355,16 +3564,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3389,16 +3604,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3423,16 +3644,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3457,16 +3684,22 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3491,16 +3724,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3526,16 +3769,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3561,16 +3814,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3596,16 +3859,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3631,16 +3904,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3666,16 +3949,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3701,16 +3994,26 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3736,16 +4039,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -3777,7 +4084,9 @@
         "src/app/navigation/**"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -3787,14 +4096,12 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -3819,7 +4126,9 @@
         "src/app/navigation/**"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -3829,14 +4138,12 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -3861,7 +4168,9 @@
         "src/app/navigation/**"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -3871,14 +4180,12 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -3903,7 +4210,9 @@
         "src/app/navigation/**"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -3913,14 +4222,12 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -3945,7 +4252,9 @@
         "src/app/navigation/**"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -3955,14 +4264,12 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -3980,16 +4287,20 @@
     {
       "kind": "e2e",
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "tess"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4020,21 +4331,28 @@
         "src/app/chat/chatFiles*",
         "src/app/chat/ConversationScreen.tsx"
       ],
-      "stack": "seat",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "messaging"
+      ],
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "camera"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -4043,20 +4361,20 @@
             {
               "role": "phone",
               "needs": [
-                "android-phone"
+                "android-phone",
+                "camera"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "api"
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
       ],
-      "apps": [],
-      "secrets": [
-        "chatLinkFixture"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 6,
       "guards": [],
@@ -4078,12 +4396,19 @@
         "src/app/chat/chatWebInteractions*",
         "android/app/src/main/java/app/teamstation/app/chat/ChatHardwareKeys.kt"
       ],
-      "stack": "seat",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "messaging",
+        "messaging-dated"
+      ],
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
@@ -4092,7 +4417,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -4103,18 +4428,17 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api"
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
       ],
-      "apps": [],
-      "secrets": [
-        "chatLinkFixture"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 4,
       "guards": [],
@@ -4133,8 +4457,10 @@
         "ios/TeamStation/ChatKeyboard/**",
         "src/app/chat/Composer.tsx"
       ],
-      "stack": "seat",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "messaging"
+      ],
       "exclusive": true,
       "surfaces": {
         "ios-app": {
@@ -4144,18 +4470,16 @@
               "needs": [
                 "ipad"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api"
+      "services": [],
+      "apps": [
+        "teamstation-ios"
       ],
-      "apps": [],
-      "secrets": [
-        "chatLinkFixture"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 2,
       "guards": [],
@@ -4182,12 +4506,18 @@
         "native/linkPreview/**",
         "ios/TeamStation/ChatPreview/**"
       ],
-      "stack": "seat",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "messaging"
+      ],
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
@@ -4196,7 +4526,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -4207,18 +4537,17 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api"
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
       ],
-      "apps": [],
-      "secrets": [
-        "chatLinkFixture"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 5,
       "guards": [],
@@ -4243,12 +4572,18 @@
         "ios/TeamStation/RCTChatBrowser.mm",
         "android/app/src/main/java/app/teamstation/app/browser/**"
       ],
-      "stack": "seat",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "messaging"
+      ],
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         },
         "ios-app": {
           "devices": [
@@ -4257,7 +4592,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -4268,18 +4603,17 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api"
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
       ],
-      "apps": [],
-      "secrets": [
-        "chatLinkFixture"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 8,
       "guards": [],
@@ -4300,8 +4634,10 @@
         "src/app/components/SearchField.tsx",
         "src/app/components/keyboardControllerOwner.native.ts"
       ],
-      "stack": "none",
-      "fixtures": [],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
       "exclusive": false,
       "surfaces": {
         "ios-app": {
@@ -4311,7 +4647,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         },
@@ -4322,7 +4658,7 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
@@ -4332,9 +4668,7 @@
         "teamstation-ios",
         "teamstation-android"
       ],
-      "secrets": [
-        "addPlayerAccount"
-      ],
+      "secrets": [],
       "costUsd": 0,
       "minutes": 5,
       "guards": [],
@@ -4362,13 +4696,16 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4397,13 +4734,16 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4431,13 +4771,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4465,13 +4806,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4489,12 +4831,16 @@
       "covers": [
         "e2e/core/browserCdp.ts"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [],
@@ -4563,17 +4909,14 @@
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4601,13 +4944,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4634,13 +4978,14 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -4676,17 +5021,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -4724,17 +5067,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -4772,17 +5113,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -4820,17 +5159,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -4868,17 +5205,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -4912,17 +5247,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -4952,17 +5285,20 @@
         "src/server/push/**",
         "src/server/routes/push.ts"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
       "services": [
-        "web",
-        "api"
+        "push-capture"
       ],
       "apps": [],
       "secrets": [],
@@ -4992,7 +5328,7 @@
         "src/server/push/**",
         "src/server/routes/push.ts"
       ],
-      "stack": "none",
+      "stack": "isolated",
       "fixtures": [],
       "exclusive": true,
       "surfaces": {
@@ -5001,9 +5337,10 @@
             {
               "role": "phone",
               "needs": [
-                "android-phone"
+                "android-phone",
+                "push"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         },
@@ -5012,17 +5349,21 @@
             {
               "role": "phone",
               "needs": [
-                "ios-phone"
+                "ios-phone",
+                "push"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
       "services": [
-        "api"
+        "push-capture"
       ],
-      "apps": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
       "secrets": [],
       "costUsd": 0,
       "minutes": 25,
@@ -5054,16 +5395,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5072,17 +5420,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5115,16 +5461,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5133,17 +5486,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5176,16 +5527,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5194,17 +5552,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5237,16 +5593,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5255,17 +5618,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5298,16 +5659,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5316,17 +5684,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5359,16 +5725,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5377,17 +5750,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5420,16 +5791,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5438,17 +5816,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5481,16 +5857,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5499,17 +5882,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5542,16 +5923,23 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "web-safari-ios": {
           "devices": [
             {
               "role": "phone",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -5560,17 +5948,15 @@
             {
               "role": "phone",
               "needs": [
-                "android"
+                "android-phone",
+                "gpu"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5597,15 +5983,20 @@
       "exclusive": true,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ]
+          }
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [],
-      "secrets": [],
+      "secrets": [
+        "directorTake"
+      ],
       "costUsd": 0,
       "minutes": 30,
       "guards": [],
@@ -5635,13 +6026,19 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5673,13 +6070,19 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
         }
       },
-      "services": [
-        "api",
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5713,13 +6116,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5755,13 +6159,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5797,13 +6202,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5839,13 +6245,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5881,13 +6288,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5923,13 +6331,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5961,13 +6370,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -5999,13 +6409,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -6037,13 +6448,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -6075,13 +6487,14 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -6122,7 +6535,7 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "required"
+              "simulator": "never"
             }
           ]
         },
@@ -6133,14 +6546,12 @@
               "needs": [
                 "android-phone"
               ],
-              "hardware": "preferred"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios",
         "teamstation-android"
@@ -6167,7 +6578,9 @@
         "src/common/eventInfo.ts"
       ],
       "stack": "isolated",
-      "fixtures": [],
+      "fixtures": [
+        "team-with-roster"
+      ],
       "exclusive": false,
       "surfaces": {
         "web-safari-ios": {
@@ -6177,14 +6590,12 @@
               "needs": [
                 "ios-phone"
               ],
-              "hardware": "none"
+              "simulator": "allowed"
             }
           ]
         }
       },
-      "services": [
-        "web"
-      ],
+      "services": [],
       "apps": [],
       "secrets": [],
       "costUsd": 0,
@@ -6224,24 +6635,28 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "ios-app": {
           "devices": [
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6276,24 +6691,28 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "ios-app": {
           "devices": [
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6325,24 +6744,28 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "ios-app": {
           "devices": [
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6375,24 +6798,28 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "ios-app": {
           "devices": [
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6428,24 +6855,28 @@
       "exclusive": false,
       "surfaces": {
         "web-chromium": {
-          "devices": []
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
         },
         "ios-app": {
           "devices": [
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6479,17 +6910,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6526,17 +6955,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],
@@ -6573,17 +7000,15 @@
             {
               "role": "device",
               "needs": [
-                "ios"
+                "ios-phone",
+                "gpu"
               ],
-              "hardware": "none"
+              "simulator": "never"
             }
           ]
         }
       },
-      "services": [
-        "web",
-        "api"
-      ],
+      "services": [],
       "apps": [
         "teamstation-ios"
       ],

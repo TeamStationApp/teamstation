@@ -5,11 +5,15 @@ import { expect } from 'chai'
 import type { FixtureManifest } from '../../../../src/server/dev/fixtures/accounts'
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
-import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
+import {
+  defineHarness,
+  type E2eContext,
+  type WebSession
+} from '../../../core/spec'
 import {
   clearSignInLimits,
   PHONE_WINDOW,
-  stackDatabaseUrl
+  stackSql
 } from '../../../rigs/coach/coachApp'
 
 /**
@@ -114,19 +118,7 @@ async function sql(
   text: string,
   values: unknown[] = []
 ): Promise<Array<Record<string, unknown>>> {
-  const { Client } = await import('pg')
-  const client = new Client({
-    connectionString: await stackDatabaseUrl(ctx),
-    connectionTimeoutMillis: 15_000
-  })
-  await client.connect()
-  try {
-    return (await client.query(text, values)).rows as Array<
-      Record<string, unknown>
-    >
-  } finally {
-    await client.end()
-  }
+  return (await stackSql(ctx, text, values)).rows
 }
 
 /**
@@ -220,11 +212,11 @@ function log(ctx: E2eContext, name: string, lines: string[]): void {
   writeFileSync(ctx.artifact(name), lines.join('\n') + '\n')
 }
 
-/** How long the spectator idles; `TS_IDLE_MINUTES` for a longer proof. */
-const IDLE_MS = Number(process.env.TS_IDLE_MINUTES ?? 6) * 60_000
+/** How long the spectator idles. */
+const IDLE_MS = 6 * 60_000
 const OUTAGE_MS = 5 * 60_000
 
-export default defineE2e({
+export default defineHarness({
   id: 'app-shell/refresh/socket',
   title: 'Reads follow the socket’s notices, never a timer',
   kind: 'e2e',
@@ -243,8 +235,10 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: ['refresh-notices'],
   exclusive: false,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['web', 'api'],
+  surfaces: {
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } }
+  },
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

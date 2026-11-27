@@ -1,9 +1,9 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import { TESS_WEB_SPEC, withTess } from '../../../rigs/tessWeb'
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/weekly-usage',
   title: "The week's usage adds up to what the model really answered",
@@ -27,7 +27,7 @@ export default defineE2e({
         await ctx.checkpoint('usage-after-two-messages', {
           expect: [{ text: 'I can only help with finding' }],
           readBack: async () => {
-            const usage = await t.f.h.request('GET', '/me/tess/usage')
+            const usage = await t.request('GET', '/me/tess/usage')
             expect(usage.status).equals(200)
             const { weeks } = (await usage.json()) as {
               weeks: Array<{
@@ -36,7 +36,7 @@ export default defineE2e({
                 requests: number
               }>
             }
-            const totals = t.model.totals()
+            const totals = await t.modelTotals()
             expect(totals.requests).greaterThan(0)
             expect(weeks).length(1)
             expect(weeks[0]).deep.include({

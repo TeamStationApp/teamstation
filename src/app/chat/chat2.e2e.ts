@@ -32,7 +32,6 @@ import {
 } from '../../../e2e/fixtures/chat2Fixture'
 import {
   androidScopedBounds,
-  Chat2UI,
   exactText,
   flattenPublicHierarchy,
   iosPublicRead,
@@ -53,6 +52,7 @@ import { MAX_ATTACHMENT_SIZE } from '../../common/chatContent'
 import { blobLength } from '../../common/chatCrypto/stream'
 import { HttpError } from '../../common/errors'
 import { gumboOfUserId } from '../../common/userId'
+import { Chat2UI } from '../../test/chat2Ui'
 import {
   decodeRaster,
   type Raster,

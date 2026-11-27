@@ -5,10 +5,10 @@ import { expect } from 'chai'
 
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import {
+  COACH_APP,
   type CoachApp,
-  DEVELOP_APP,
   labelOf,
   openCoachApp
 } from '../../../rigs/coach/coachApp'
@@ -36,7 +36,7 @@ interface World {
   coach: { email: string; password: string }
 }
 
-async function worldOf(ctx: E2eContext): Promise<World> {
+async function worldOf(ctx: HarnessContext): Promise<World> {
   const world = await ctx.fixture('coach-game')
   const coach = world.accounts.coach
   return {
@@ -51,7 +51,7 @@ const sleep = async (ms: number): Promise<void> => {
 
 /** Reads `path` from the stack's API as the home team's coach. */
 async function asCoach(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   world: World,
   path: string
 ): Promise<unknown> {
@@ -67,7 +67,10 @@ async function asCoach(
 }
 
 /** The pitch calls the server holds for the game, in order. */
-async function callsOnServer(ctx: E2eContext, world: World): Promise<string[]> {
+async function callsOnServer(
+  ctx: HarnessContext,
+  world: World
+): Promise<string[]> {
   const events = JSON.stringify(
     await asCoach(ctx, world, `/games/${world.game}/events`)
   )
@@ -97,7 +100,7 @@ async function openScoring(app: CoachApp, world: World): Promise<void> {
   await sleep(1500)
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'platform/offline/in-flight-save',
   title:
     'A pitch still being saved when the scorer leaves is on the board when scoring opens again, and reaches the server in order',
@@ -113,10 +116,13 @@ export default defineE2e({
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'device', needs: ['ios'], hardware: 'none' }]
+      // The scoring screen draws in 3D: a GPU, so a physical iPhone.
+      devices: [
+        { role: 'device', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+      ]
     }
   },
-  services: ['web', 'api'],
+  services: [],
   apps: ['teamstation-ios'],
   secrets: [],
   costUsd: 0,
@@ -201,7 +207,7 @@ export default defineE2e({
       // sends what it holds.
       await m.pressKey({ key: 'home' })
       await sleep(2000)
-      await m.launchApp({ appId: DEVELOP_APP, stopApp: false })
+      await m.launchApp({ appId: ctx.app(COACH_APP), stopApp: false })
       const end = Date.now() + 120000
       let calls = await callsOnServer(ctx, world)
       while (Date.now() < end && calls.length < 3) {

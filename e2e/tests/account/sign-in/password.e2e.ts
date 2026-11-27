@@ -1,26 +1,29 @@
 import { expect } from 'chai'
 
 import { signInWithPassword } from '../../../core/fixtures'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
+import { pointAtStack } from '../../../rigs/app/pointAtStack'
 
-const APP_ID = 'app.teamstation.app'
-
-/** Puts the surface's sign-in form on screen, and returns once a scenario can use it. */
-async function openSignIn(ctx: E2eContext): Promise<void> {
+/**
+ * Puts the surface's sign-in form on screen, and returns once a scenario can
+ * use it. The app is the caller's build, launched fresh and pointed back at
+ * the stack, since clearing its state forgets the stack.
+ */
+async function openSignIn(ctx: HarnessContext): Promise<void> {
   if (ctx.surface === 'web-chromium') {
     const { m } = await ctx.browser({ width: 1280, height: 800 })
     await m.openLink({ link: `${ctx.stack.origin}/sign-in` })
     return
   }
-  const m = await ctx.attach('user', {
-    platform: ctx.surface === 'ios-app' ? 'ios' : 'android',
-    appId: APP_ID,
-    commandTimeout: 30000
-  })
-  await m.launchApp({ appId: APP_ID, clearState: true })
+  const appId = ctx.app(
+    ctx.surface === 'ios-app' ? 'teamstation-ios' : 'teamstation-android'
+  )
+  const m = await ctx.attach('user', { appId })
+  await m.launchApp({ appId, clearState: true })
+  await pointAtStack(m, ctx.stack.origin, appId)
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'account/sign-in/password',
   title:
     'A person signs in with a password on each surface, and sees only their own team',
@@ -30,19 +33,21 @@ export default defineE2e({
     'src/server/auth/passwords.ts',
     'src/app/screens/LoginScreen.tsx'
   ],
-  stack: 'seat',
+  stack: 'isolated',
   fixtures: ['team-with-roster'],
   exclusive: false,
   surfaces: {
-    'web-chromium': { devices: [] },
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } },
     'ios-app': {
-      devices: [{ role: 'user', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'user', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'user', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'user', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
-  services: ['api', 'web'],
+  services: [],
   apps: ['teamstation-ios', 'teamstation-android'],
   secrets: [],
   costUsd: 0,
@@ -52,8 +57,11 @@ export default defineE2e({
   manual: false,
   scenarios: {
     'baseline-account': async ctx => {
+      // A plain account of its own: the roster world's player, seeded for
+      // this scenario alone, as every scenario starts from its own world.
+      await ctx.fixture('team-with-roster')
       await openSignIn(ctx)
-      const account = await ctx.signIn('member')
+      const account = await ctx.signIn('player')
       const first = account.displayName.split(' ')[0]
       await ctx.checkpoint('signed-in', {
         expect: [

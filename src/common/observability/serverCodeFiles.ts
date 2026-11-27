@@ -94,6 +94,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dev/fixtures/baseline.js',
   'server/dev/fixtures/cli.js',
   'server/dev/fixtures/coachGame.js',
+  'server/dev/fixtures/messaging.js',
   'server/dev/fixtures/nodeSettings.js',
   'server/dev/fixtures/packedLeague.js',
   'server/dev/fixtures/refreshNotices.js',

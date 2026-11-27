@@ -1,8 +1,13 @@
 import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
+import {
+  defineHarness,
+  type HarnessContext,
+  type WebSession
+} from '../../../core/spec'
 import {
   bodyText,
   BUILDING,
@@ -36,7 +41,7 @@ import {
  */
 
 const COMMAND = (scenario: string): string =>
-  `npm run -s e2e -- run schedule/auto-scheduler/exact-counts#${scenario} --surface web-chromium --stack <stack>`
+  `(teamstation-devops) npm run e2e -- run <ts>/e2e/tests/schedule/auto-scheduler/exact-counts.e2e.ts --scenario ${scenario} --surface web-chromium`
 
 /** Builds in the modal and waits for the preview: Build to preview, in ms. */
 async function build(web: WebSession): Promise<number> {
@@ -56,7 +61,7 @@ async function buildRefused(web: WebSession, reason: string): Promise<void> {
 
 /** What a run without the engine saw, for `web-no-solver-<scenario>.log`. */
 async function noSolverLog(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   web: WebSession,
   scenario: string
 ): Promise<void> {
@@ -77,7 +82,7 @@ async function noSolverLog(
   )
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'schedule/auto-scheduler/exact-counts',
   title:
     'The Auto-Scheduler builds a packed league at its exact counts on the web, fetching its engine only on Build and telling a browser that cannot run it so',
@@ -92,8 +97,10 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: ['packed-league'],
   exclusive: false,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['web', 'api'],
+  surfaces: {
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } }
+  },
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,
@@ -116,7 +123,8 @@ export default defineE2e({
       // The page's own recording of the build, where the browser can make one.
       const recording = await recordPage(
         web,
-        ctx.artifact('web-build.mp4')
+        ctx.artifact('web-build.mp4'),
+        join(ctx.runDir, 'scratch')
       ).catch((error: unknown) => {
         writeFileSync(
           ctx.artifact('web-build-recording.log'),

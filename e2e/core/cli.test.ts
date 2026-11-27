@@ -136,3 +136,81 @@ describe('needs --json', function () {
     ).contains('dump wants <world> --stack')
   })
 })
+
+describe('the commands narrowed to the streaming freeze', function () {
+  const refusal = async (argv: string[]): Promise<HarnessError> => {
+    const error = await failure(async () => await main(argv))
+    expect(error).instanceOf(HarnessError)
+    return error as HarnessError
+  }
+
+  it('sends run on a scenario outside streaming/ to the devops runner', async function () {
+    expect(
+      (
+        await refusal([
+          'run',
+          'app-shell/splash/phone-launch#frames',
+          '--surface',
+          'ios-app'
+        ])
+      ).message
+    ).equals(
+      'run app-shell/splash/phone-launch#frames: runs through teamstation-devops: npm run e2e -- run e2e/tests/app-shell/splash/phone-launch.e2e.ts'
+    )
+  })
+
+  it('sends detect to the runner’s run --fault', async function () {
+    expect(
+      (
+        await refusal([
+          'detect',
+          'assistant/chat/split-view#video-keeps-playing',
+          '--fault',
+          'api-hang',
+          '--surface',
+          'web-chromium'
+        ])
+      ).message
+    ).equals(
+      'detect assistant/chat/split-view#video-keeps-playing: runs through teamstation-devops: npm run e2e -- run e2e/tests/assistant/chat/split-view.e2e.ts --fault api-hang'
+    )
+  })
+
+  it('refuses stack and prepare for a scenario outside streaming/, naming a file it has no row for', async function () {
+    expect(
+      (await refusal(['stack', 'up', '--for', 'no/such/spec#x'])).message
+    ).equals(
+      'stack no/such/spec#x: runs through teamstation-devops: npm run e2e -- run e2e/tests/no/such/spec.e2e.ts'
+    )
+    expect(
+      (
+        await refusal([
+          'prepare',
+          '--for',
+          'account/sign-in/password#baseline-account'
+        ])
+      ).message
+    ).contains('npm run e2e -- run e2e/tests/account/sign-in/password.e2e.ts')
+  })
+
+  it('leaves streaming scenarios on their own path', async function () {
+    // The streaming path goes on to its own checks, unchanged.
+    const error = await failure(
+      async () => await main(['run', 'streaming/basic/four-synthetic#scrub'])
+    )
+    expect(String(error)).contains('run wants <scenario-id> --surface <s>')
+    const prepare = await failure(
+      async () =>
+        await main(['prepare', '--for', 'streaming/basic/four-synthetic#scrub'])
+    )
+    expect(String(prepare)).contains('prepare wants --app and --device')
+  })
+
+  it('has no plan, run-many or golden command', async function () {
+    for (const command of ['plan', 'run-many', 'golden']) {
+      expect(String(await failure(async () => await main([command])))).contains(
+        `Unknown command "${command}"`
+      )
+    }
+  })
+})

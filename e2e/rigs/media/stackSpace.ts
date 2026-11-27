@@ -1,62 +1,88 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-import type { SpaceSettings } from '../../../src/server/media/spacesHls'
 import { BlockedError } from '../../core/result'
-import type { E2eContext } from '../../core/spec'
-import {
-  requireStreamingHandle,
-  SSH_OPTIONS,
-  type StreamingHandle
-} from '../../core/streamingStack'
-
-const run = promisify(execFile)
-
-/** Where a stack's droplet runs the branch, built, with its own config. */
-export const STACK_APP = '/srv/e2e/app'
-
-/** The attached stack's handle, or blocked: these scenarios need a droplet. */
-export function stackHandle(ctx: E2eContext): StreamingHandle {
-  const attached = ctx.stack.attached
-  if (attached == null) {
-    throw new BlockedError('needs an attached e2e stack (--stack <id>)')
-  }
-  return requireStreamingHandle(attached)
-}
-
-function sshArgs(handle: StreamingHandle): string[] {
-  const key = handle.sshKeyFile
-  return [
-    ...SSH_OPTIONS,
-    ...(typeof key === 'string' && key !== '' ? ['-i', key] : []),
-    handle.ssh
-  ]
-}
-
-/** Runs a shell command on the stack's droplet and answers its output. */
-export async function onStack(
-  handle: StreamingHandle,
-  command: string,
-  options: { timeoutMs?: number } = {}
-): Promise<string> {
-  const { stdout } = await run('ssh', [...sshArgs(handle), command], {
-    maxBuffer: 1 << 26,
-    timeout: options.timeoutMs ?? 600_000
-  })
-  return stdout
-}
+import type { HarnessContext, StackControl } from '../../core/spec'
 
 /**
- * The stack's own Space, read out of the droplet's server config into memory.
- * Never logged or written anywhere: it carries the Space's secret key.
+ * The media work a recording scenario needs done on the stack itself, where
+ * the API, its database and its Space are: each is one call to the stack's
+ * `remux` control route, which runs it there and answers what it did. A
+ * test never reaches the stack's droplet, database or Space keys itself.
+ *
+ * The route takes `{ action, ... }`:
+ *
+ *   programme   { seconds, path }      encodes a test programme (HEVC with
+ *                                      sound, keyed every 2 s) and serves it
+ *                                      on the pages stand-in at `path`
+ *                                      → { path, bytes }
+ *   single-file { videoId, gameId, title, startAt, seconds }
+ *                                      a programme remuxed to one video.mp4
+ *                                      under videos/<videoId>/, and its row,
+ *                                      as every upload before segments was
+ *                                      → { videoId }
+ *   segment     { args }               `segmentSpaceVideos` with `args`
+ *                                      → { output }
+ *   objects     { prefix }             the Space's objects under `prefix`
+ *                                      → { objects: [{ key, size }] }
+ *   play        { gameId, battingTeamId, videoId, secondsIn, atBatIndex }
+ *                                      a play `secondsIn` into the video's
+ *                                      own clock, so the game lists it as a
+ *                                      highlight → { eventId }
+ *   machine     {}                     the droplet's size → { vcpus, memGiB }
  */
-export async function stackSpace(
-  handle: StreamingHandle
-): Promise<SpaceSettings> {
-  const text = await onStack(handle, `cat ${STACK_APP}/serverConfig.json`)
-  const space = (JSON.parse(text) as { space?: SpaceSettings }).space
-  if (space?.bucket == null || space.bucket === '') {
-    throw new BlockedError('the stack has no Space configured')
+export interface StackMedia {
+  programme: (options: {
+    seconds: number
+    path: string
+  }) => Promise<{ path: string; bytes: number }>
+  singleFile: (options: {
+    videoId: string
+    gameId: string
+    title: string
+    startAt: string
+    seconds: number
+  }) => Promise<{ videoId: string }>
+  segment: (args: string[]) => Promise<string>
+  objects: (prefix: string) => Promise<Array<{ key: string; size: number }>>
+  play: (options: {
+    gameId: string
+    battingTeamId: string
+    videoId: string
+    secondsIn: number
+    atBatIndex: number
+  }) => Promise<string>
+  machine: () => Promise<{ vcpus: number; memGiB: number }>
+}
+
+/** The stack's control routes, or blocked: these scenarios need them. */
+export function stackControl(ctx: HarnessContext): StackControl {
+  const control = ctx.stack.control
+  if (control == null) {
+    throw new BlockedError('this stack has no control routes for its media')
   }
-  return space
+  return control
+}
+
+/** The stack's API, where the apps send their uploads. */
+export function stackApi(ctx: HarnessContext): string {
+  return `${ctx.stack.origin.replace(/\/+$/, '')}/api/v1`
+}
+
+/** The media actions above, over the stack's `remux` route. */
+export function stackMedia(control: Pick<StackControl, 'remux'>): StackMedia {
+  const call = async (action: string, body: object): Promise<any> =>
+    await control.remux({ action, ...body })
+  return {
+    programme: async options => await call('programme', options),
+    singleFile: async options => await call('single-file', options),
+    segment: async args =>
+      ((await call('segment', { args })) as { output: string }).output,
+    objects: async prefix =>
+      (
+        (await call('objects', { prefix })) as {
+          objects: Array<{ key: string; size: number }>
+        }
+      ).objects,
+    play: async options =>
+      ((await call('play', options)) as { eventId: string }).eventId,
+    machine: async () => await call('machine', {})
+  }
 }

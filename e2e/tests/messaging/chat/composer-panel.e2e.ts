@@ -6,8 +6,12 @@ import { join } from 'node:path'
 import { dismissNotificationAsk } from '../../../../src/test/notificationAsk'
 import { decodeRaster } from '../../../../src/test/rasterImage'
 import type { MaestroDevice } from '../../../core/maestro'
-import { defineE2e, type E2eContext } from '../../../core/spec'
-import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
+import {
+  fixtureFor,
+  providerFor,
+  seedPickerMedia
+} from '../../../rigs/chat/messageLinkFixture'
 import {
   chatLinkUi,
   clearChatComposer,
@@ -17,6 +21,7 @@ import {
   flattenPublicHierarchy,
   iosPublicRead,
   type PublicNode,
+  tapImportedPhoto,
   until
 } from '../../../rigs/chat2Maestro'
 
@@ -91,8 +96,23 @@ function sourceLabelFits(
 const digest = (bytes: Uint8Array): string =>
   createHash('sha256').update(bytes).digest('hex')
 
-async function attach(ctx: E2eContext): Promise<void> {
-  const f = fixtureFor(ctx)
+/** Taps `selector` when it is on screen within `timeout`; a screen without it is the ordinary case. */
+async function tapIfShown(
+  m: MaestroDevice,
+  selector: Record<string, unknown>,
+  timeout: number
+): Promise<void> {
+  let shown = true
+  try {
+    await m.assertVisible({ ...selector, timeout })
+  } catch {
+    shown = false
+  }
+  if (shown) await m.tapOn(selector)
+}
+
+async function attach(ctx: HarnessContext): Promise<void> {
+  const f = await fixtureFor(ctx)
   const platform =
     ctx.surface === 'web-chromium'
       ? 'web'
@@ -107,7 +127,7 @@ async function attach(ctx: E2eContext): Promise<void> {
       await enter()
       if (web != null)
         await dismissNotificationAsk(web.page, { userId: author.person.userId })
-      const native = f.composerPanel
+      let native = f.composerPanel
       const sources =
         web == null
           ? (['Photos', 'Camera', 'File'] as const)
@@ -253,6 +273,16 @@ async function attach(ctx: E2eContext): Promise<void> {
       const filePath = join(ctx.runDir, filename)
       writeFileSync(imagePath, photo)
       writeFileSync(filePath, documentBytes)
+      if (web == null) {
+        assert(platform === 'ios' || platform === 'android')
+        // The library photo and the document the native pickers choose from.
+        native = await seedPickerMedia(
+          m,
+          platform,
+          { path: imagePath, width: 192, height: 192 },
+          filePath
+        )
+      }
       for (const source of sources) {
         await m.tapOn(field)
         let caption =
@@ -420,11 +450,11 @@ async function attach(ctx: E2eContext): Promise<void> {
             await m.tapOn(sourceButton)
             if (source === 'Camera') {
               // First use can present the platform camera permission prompt.
-              await m.tapOn({
-                text: '^(While using the app|Allow|OK)$',
-                optional: true,
-                timeout: 1200
-              })
+              await tapIfShown(
+                m,
+                { text: '^(While using the app|Allow|OK)$' },
+                1200
+              )
               await m.assertVisible({ text: native.shutter })
             }
             if (cancel) {
@@ -460,12 +490,8 @@ async function attach(ctx: E2eContext): Promise<void> {
                 await m.assertNotVisible({ text: '^Retake$' })
               } else await m.tapOn({ text: native.acceptPhoto })
             } else if (source === 'Photos') {
-              await m.tapOn({ text: native.libraryPhoto })
-              await m.tapOn({
-                text: '^(Add|Done)$',
-                optional: true,
-                timeout: 800
-              })
+              await tapImportedPhoto(m, platform)
+              await tapIfShown(m, { text: '^(Add|Done)$' }, 800)
             } else {
               for (const folder of native.documentFolders)
                 await m.tapOn({ text: folder })
@@ -474,11 +500,11 @@ async function attach(ctx: E2eContext): Promise<void> {
                 // the document thumbnail inside its cell to import it.
                 const documentCell = { id: 'practice-lineup, txt' }
                 await m.tapOn({ ...documentCell, point: '50%,24%' })
-                await m.tapOn({ text: '^Open$', optional: true, timeout: 800 })
+                await tapIfShown(m, { text: '^Open$' }, 800)
                 await m.assertNotVisible(documentCell)
               } else {
                 await m.tapOn({ text: '^practice-lineup(?:\\.txt)?$' })
-                await m.tapOn({ text: '^Open$', optional: true, timeout: 800 })
+                await tapIfShown(m, { text: '^Open$' }, 800)
               }
             }
           }
@@ -584,7 +610,7 @@ async function attach(ctx: E2eContext): Promise<void> {
   }
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'messaging/chat/composer-panel',
   title:
     'Open the attachment panel and send a photo or file from each available source',
@@ -597,23 +623,32 @@ export default defineE2e({
     'src/app/chat/chatFiles*',
     'src/app/chat/ConversationScreen.tsx'
   ],
-  stack: 'seat',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['messaging'],
   exclusive: true,
   surfaces: {
-    'web-chromium': { devices: [] },
+    'web-chromium': {
+      devices: [],
+      browser: { role: 'browser', needs: [] }
+    },
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'required' }]
+      devices: [
+        { role: 'phone', needs: ['ios-phone', 'camera'], simulator: 'never' }
+      ]
     },
     'android-app': {
       devices: [
-        { role: 'phone', needs: ['android-phone'], hardware: 'required' }
+        {
+          role: 'phone',
+          needs: ['android-phone', 'camera'],
+          simulator: 'never'
+        }
       ]
     }
   },
-  services: ['api'],
-  apps: [],
-  secrets: ['chatLinkFixture'],
+  services: [],
+  apps: ['teamstation-ios', 'teamstation-android'],
+  secrets: [],
   costUsd: 0,
   minutes: 6,
   guards: [],

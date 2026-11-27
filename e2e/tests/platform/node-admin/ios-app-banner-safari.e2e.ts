@@ -1,9 +1,9 @@
 import type { NodeSettings } from '../../../../src/common/nodeSettings'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import { apiClient } from '../../../rigs/search/searchRig'
 
 /** Safari owns this action and supplies its label according to installation state. */
-export default defineE2e({
+export default defineHarness({
   id: 'platform/node-admin/ios-app-banner-safari',
   title: 'Safari offers the published app on a physical iPhone or iPad',
   kind: 'e2e',
@@ -16,10 +16,11 @@ export default defineE2e({
   exclusive: true,
   surfaces: {
     'web-safari-ios': {
-      devices: [{ role: 'phone', needs: ['ios'], hardware: 'required' }]
+      // Safari's App Store action needs the App Store, which no simulator has.
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'never' }]
     }
   },
-  services: ['api', 'web'],
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

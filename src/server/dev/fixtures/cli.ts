@@ -2,9 +2,10 @@ import { makeDatabase } from '../../db/database'
 import { serverConfig } from '../../serverConfig'
 import type { FixtureManifest, WorldContext } from './accounts'
 import { makeNonce } from './accounts'
-import { splitMailbox } from './address'
+import { DUMP_WORLD_MAILBOX, splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
+import { runMessaging, runMessagingDated } from './messaging'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
 import { runRefreshNotices } from './refreshNotices'
 import { runSearch } from './search'
@@ -32,7 +33,9 @@ export const WORLDS: Record<
   'packed-league-limit': runPackedLeagueLimit,
   'refresh-notices': runRefreshNotices,
   search: runSearch,
-  tess: runTess
+  tess: runTess,
+  messaging: runMessaging,
+  'messaging-dated': runMessagingDated
 }
 
 export function refuseWithoutTestSettings(testSettings: boolean): void {
@@ -78,7 +81,8 @@ export async function runFixture(args: FixtureArgs): Promise<FixtureManifest> {
   try {
     // The baseline reads the addresses once, for this and for its own use.
     if (args.world === 'baseline') return await runBaseline(db, args.mailbox)
-    await refuseRealAddresses(db, args.mailbox)
+    // A restored dump world's accounts are on its own test mailbox.
+    await refuseRealAddresses(db, args.mailbox, [DUMP_WORLD_MAILBOX])
     return await WORLDS[args.world]({
       db,
       mailbox: args.mailbox,

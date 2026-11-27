@@ -1,28 +1,24 @@
-import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { writeFileSync } from 'node:fs'
 
-import type { E2eContext } from '../../core/spec'
+import type { HarnessContext } from '../../core/spec'
+import { frames, recordScreen, videoSize } from '../../core/video'
 import {
   flatten as flattenNodes,
   type Node as CoachNode
 } from '../coach/coachApp'
-import { ARTIFACTS_ENV, proveLog } from '../search/searchRig'
-import {
-  fieldTopPerFrame,
-  frames,
-  motionFile,
-  motionOf,
-  record,
-  webcamFor
-} from './keyboardMotion'
+import { fieldTopPerFrame, motionOf, restRow } from './keyboardMotion'
+import { pointAtStack } from './pointAtStack'
 
 /**
  * What the keyboard-dock scenarios share on a phone or tablet: reading the
  * hierarchy for where things sit, reaching Search and its tabs, typing as
- * each platform allows, and measuring a move on the bench camera.
+ * each platform allows, and measuring a move in maestro-d's recording of
+ * the device's screen.
  */
 
-export const APP = 'app.teamstation.develop'
+/** The app id the caller passed for this run's platform. */
+export const appOf = (ctx: HarnessContext): string =>
+  ctx.app(ctx.surface === 'ios-app' ? 'teamstation-ios' : 'teamstation-android')
 export const PLACEHOLDER = 'Search leagues, seasons, teams and people'
 
 export interface Box {
@@ -51,28 +47,31 @@ export const boxOf = (node: Node | undefined): Box | undefined =>
         height: node.height ?? 0
       })
 
-/** The device's own screenshot, kept with the run and with the plan's proof. */
+/** The device's own screenshot, kept with the run's evidence. */
 export async function prove(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   device: any,
   name: string
 ): Promise<void> {
-  const file = ctx.artifact(name)
-  writeFileSync(file, await device.screenshot())
-  const dir = process.env[ARTIFACTS_ENV]
-  if (dir != null && dir !== '') {
-    mkdirSync(dir, { recursive: true })
-    copyFileSync(file, join(dir, name))
-  }
+  writeFileSync(ctx.artifact(name), await device.screenshot())
+}
+
+/** A text log kept with the run's evidence. */
+export function proveLog(
+  ctx: HarnessContext,
+  name: string,
+  text: string
+): void {
+  writeFileSync(ctx.artifact(name), text)
 }
 
 /** What a run's platform is, by its surface. */
-export const platformOf = (ctx: E2eContext): 'ios' | 'android' =>
+export const platformOf = (ctx: HarnessContext): 'ios' | 'android' =>
   ctx.surface === 'ios-app' ? 'ios' : 'android'
 
 /** `iphone`, `pixel` or `ipad`, for a proving file's name. */
 export async function deviceName(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   device: any
 ): Promise<string> {
   if (platformOf(ctx) === 'android') return 'pixel'
@@ -177,18 +176,19 @@ export async function typeKeys(
 
 /**
  * Opens Search on a fresh launch. `signedOut` clears the app's state first
- * (a scenario that signs in leaves it signed in); a Mason develop build
- * talks to its own seat again after a clear, so setServer's choice is lost.
+ * (a scenario that signs in leaves it signed in), and points the cleared
+ * app back at the run's stack, which a clear forgets.
  */
 export async function openSearch(
+  ctx: HarnessContext,
   device: any,
   options: { signedOut?: boolean } = {}
 ): Promise<void> {
-  await device.launchApp({
-    appId: APP,
-    stopApp: true,
-    ...(options.signedOut === true ? { clearState: true } : {})
-  })
+  const appId = appOf(ctx)
+  if (options.signedOut === true) {
+    await device.launchApp({ appId, stopApp: true, clearState: true })
+    await pointAtStack(device, ctx.stack.origin, appId)
+  } else await device.launchApp({ appId, stopApp: true })
   await device.assertVisible({ text: 'Search', timeout: 30000 })
   // A launch can settle on Home after its first frame (signed out, the
   // sign-in card): a tap that lands before then is undone, so tap again.
@@ -203,37 +203,80 @@ export async function openSearch(
   }
 }
 
+/** How long a recording runs before and after the measured action. */
+const LEAD_MS = 1500
+
+const wait = async (ms: number): Promise<void> => {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** The screen's height in points: the hierarchy's root, or what its nodes reach. */
+export function screenPoints(nodes: Node[]): number {
+  const root = boxOf(nodes[0])
+  if (root != null && root.height > 0) return root.y + root.height
+  return Math.max(
+    0,
+    ...nodes.map(node => {
+      const box = boxOf(node)
+      return box == null ? 0 : box.y + box.height
+    })
+  )
+}
+
+/** Whether maestro-d said this device has no screen capture (an iOS simulator, a browser). */
+export function captureUnavailable(error: unknown): boolean {
+  const found = error as { code?: unknown; message?: unknown } | null
+  return (
+    found?.code === 'CAPTURE_UNAVAILABLE' ||
+    /CAPTURE_UNAVAILABLE|screen capture unavailable/i.test(
+      String(found?.message ?? error)
+    )
+  )
+}
+
 /**
- * The dock's top edge through a recording on the bench camera; a run with
- * no camera crop for its device says so and measures nothing.
+ * The top edge of what is followed (Search's field, or the element `rest`
+ * finds) through maestro-d's recording of the device's screen around
+ * `action`. A device maestro-d cannot record says so and measures nothing.
  */
 export async function measure(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   device: any,
   name: string,
   action: () => Promise<void>,
-  /**
-   * What is followed when not Search's field: its crop is the device's id
-   * then `#<target>`, whose rest row is where that element rests.
-   */
-  target?: string
+  rest: (device: any) => Promise<Box> = boxOfField
 ): Promise<{ up: boolean; down: boolean } | null> {
-  const key =
-    target == null ? ctx.device('phone') : `${ctx.device('phone')}#${target}`
-  const camera = webcamFor(key)
-  if (camera == null) {
-    ctx.degrade(`no webcam crop for ${key}: motion not measured`)
+  const nodes = flatten((await device.hierarchy()) as Node)
+  const at = await rest(device)
+  const screen = screenPoints(nodes)
+  let acted = false
+  let file: string
+  try {
+    file = (
+      await recordScreen(device, ctx.runDir, `motion-${name}`, async () => {
+        acted = true
+        // The edge at rest first, and the whole animation back after.
+        await wait(LEAD_MS)
+        await action()
+        await wait(LEAD_MS)
+      })
+    ).file
+  } catch (error) {
+    if (acted || !captureUnavailable(error)) throw error
+    ctx.degrade(
+      `maestro-d cannot record this device's screen: motion not measured`
+    )
     await action()
     return null
   }
-  const file = await record(camera.url, motionFile(ctx.runDir, name), action)
+  const size = videoSize(file)
   const positions = fieldTopPerFrame(
-    await frames(file, camera.crop),
-    camera.crop.fieldY
+    await frames(file, { ...size, x: 0, y: 0 }),
+    restRow(at.y, screen, size.height)
   )
   const motion = motionOf(positions)
   const log = [
-    `$ keyboardMotion ${name} on ${ctx.device('phone')} (${positions.length} frames)`,
+    `$ keyboardMotion ${name} on ${ctx.device('phone')} (${positions.length} frames of ${size.width}x${size.height})`,
     `field top per frame: ${positions.join(' ')}`,
     `rest ${motion.up.rest}, raised ${motion.up.raised}`,
     `up: ${motion.up.between.length} places between (${motion.up.animated ? 'animated' : 'jumped'})`,
@@ -241,10 +284,5 @@ export async function measure(
   ].join('\n')
   const who = await deviceName(ctx, device)
   proveLog(ctx, `${who}-${name}-frames.log`, `${log}\n`)
-  const dir = process.env[ARTIFACTS_ENV]
-  if (dir != null && dir !== '') {
-    mkdirSync(dir, { recursive: true })
-    copyFileSync(file, join(dir, `${who}-${name}.mp4`))
-  }
   return { up: motion.up.animated, down: motion.down.animated }
 }

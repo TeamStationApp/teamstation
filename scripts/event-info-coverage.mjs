@@ -116,10 +116,14 @@ if (!reportOnly) {
     )
     if (process.env.EVENT_INFO_ARTIFACTS == null)
       throw new Error('Set EVENT_INFO_ARTIFACTS to the plan artifact directory')
-    run('node', ['-r', 'sucrase/register', 'e2e/rigs/refinementsStartup.ts'], {
-      TS_REFINEMENTS_ARTIFACTS: process.env.EVENT_INFO_ARTIFACTS,
-      TS_REFINEMENTS_STARTUP_V8: temp
-    })
+    run(
+      'node',
+      ['-r', 'sucrase/register', 'scripts/coverage/refinementsStartup.ts'],
+      {
+        TS_REFINEMENTS_ARTIFACTS: process.env.EVENT_INFO_ARTIFACTS,
+        TS_REFINEMENTS_STARTUP_V8: temp
+      }
+    )
   }
   if (phase !== 'server') {
     run('node', ['scripts/build-event-info-tests.mjs'])

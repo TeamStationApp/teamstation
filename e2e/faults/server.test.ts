@@ -9,6 +9,7 @@ import { PassThrough } from 'node:stream'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { stackDatabase } from './database'
 import {
   fixtureSeeder,
   hostPort,
@@ -199,6 +200,219 @@ describe('the fault server', function () {
   })
 })
 
+describe('the fault server’s pages stand-in', function () {
+  let api: Server
+  let started: Awaited<ReturnType<typeof startFaultServer>>
+  let base: string
+  let apiHits = 0
+
+  before(async function () {
+    api = createServer((_req, res) => {
+      apiHits += 1
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
+    const apiPort = await listen(api)
+    started = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: `http://127.0.0.1:${apiPort}`,
+      token: TOKEN
+    })
+    base = started.proxy.url
+  })
+
+  after(async function () {
+    await started.close()
+    api.close()
+  })
+
+  const page = async (
+    path: string,
+    init: { method?: string; signal?: AbortSignal } = {}
+  ): Promise<Response> =>
+    await fetch(`${base}${path}`, {
+      ...init,
+      headers: { 'x-e2e-site': 'pages' }
+    })
+
+  const script = async (body: unknown, token = TOKEN): Promise<Response> =>
+    await fetch(`${base}/__e2e/pages`, {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: typeof body === 'string' ? body : JSON.stringify(body)
+    })
+
+  const requests = async (since: number): Promise<any[]> =>
+    (
+      await (
+        await fetch(`${base}/__e2e/pages/requests?since=${since}`, {
+          headers: { authorization: `Bearer ${TOKEN}` }
+        })
+      ).json()
+    ).requests
+
+  it('answers any path with a page that prints its address, never the API', async function () {
+    const before = apiHits
+    const reply = await page('/somewhere/else?x=1')
+    expect(reply.status).equals(200)
+    expect(reply.headers.get('content-type')).contains('text/html')
+    const text = await reply.text()
+    expect(text).contains('<title>Chat link destination</title>')
+    expect(text).contains('location.pathname + location.search + location.hash')
+    expect(apiHits).equals(before)
+    // Without the site's mark the same path goes to the API as before.
+    await fetch(`${base}/somewhere/else`)
+    expect(apiHits).equals(before + 1)
+  })
+
+  it('serves a scripted path with its type, body and headers', async function () {
+    const put = await script({
+      '/shared': {
+        type: 'text/html',
+        body: '<title>Shared page</title>',
+        headers: { 'access-control-allow-origin': '*' }
+      },
+      '/closed': { body: '<title>Closed page</title>' },
+      '/card.png': {
+        type: 'image/png',
+        body: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64'),
+        encoding: 'base64'
+      }
+    })
+    expect(put.status).equals(200)
+    expect((await put.json()).paths).deep.equals([
+      '/card.png',
+      '/closed',
+      '/shared'
+    ])
+    const card = await page('/card.png')
+    expect([...new Uint8Array(await card.arrayBuffer())]).deep.equals([
+      0x89, 0x50, 0x4e, 0x47
+    ])
+    const shared = await page('/shared')
+    expect(await shared.text()).equals('<title>Shared page</title>')
+    expect(shared.headers.get('access-control-allow-origin')).equals('*')
+    const closed = await page('/closed')
+    expect(await closed.text()).equals('<title>Closed page</title>')
+    expect(closed.headers.get('access-control-allow-origin')).equals(null)
+    expect(closed.headers.get('content-type')).contains('text/html')
+    const listed = await fetch(`${base}/__e2e/pages`, {
+      headers: { authorization: `Bearer ${TOKEN}` }
+    })
+    expect((await listed.json()).paths).deep.equals([
+      '/card.png',
+      '/closed',
+      '/shared'
+    ])
+  })
+
+  it('logs every request it served, since a time', async function () {
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const since = Date.now()
+    await page('/logged?probe=one')
+    await page('/logged', { method: 'HEAD' })
+    const rows = await requests(since)
+    expect(rows.map(row => [row.method, row.path, row.query])).deep.equals([
+      ['GET', '/logged', '?probe=one'],
+      ['HEAD', '/logged', '']
+    ])
+    expect(rows[0].probe).equals('one')
+    expect(await requests(Date.now() + 60_000)).deep.equals([])
+  })
+
+  it('holds a probe page, and answers its HEAD 204 only while the GET is held', async function () {
+    await script({
+      '/pending': { body: '<title>Delayed</title>', holdMs: 400, probe: true }
+    })
+    const probe = '/pending?probe=p1'
+    expect((await page(probe, { method: 'HEAD' })).status).equals(404)
+    const started = Date.now()
+    const held = page(probe)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect((await page(probe, { method: 'HEAD' })).status).equals(204)
+    expect(
+      (await page('/pending?probe=other', { method: 'HEAD' })).status
+    ).equals(404)
+    // A second GET of a probe that is already held is refused.
+    expect((await page(probe)).status).equals(429)
+    const reply = await held
+    expect(Date.now() - started).at.least(350)
+    expect(await reply.text()).equals('<title>Delayed</title>')
+    expect((await page(probe, { method: 'HEAD' })).status).equals(404)
+  })
+
+  it('frees a probe when its client closes the held GET', async function () {
+    await script({
+      '/pending': { body: 'late', holdMs: 5000, probe: true }
+    })
+    const abort = new AbortController()
+    const held = page('/pending?probe=p2', { signal: abort.signal }).catch(
+      (error: unknown) => error
+    )
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect((await page('/pending?probe=p2', { method: 'HEAD' })).status).equals(
+      204
+    )
+    abort.abort()
+    await held
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect((await page('/pending?probe=p2', { method: 'HEAD' })).status).equals(
+      404
+    )
+    // A held page without its probe, or another method, is refused.
+    expect((await page('/pending')).status).equals(429)
+    expect((await page('/pending', { method: 'POST' })).status).equals(405)
+  })
+
+  it('holds a page with no probe, and refuses a script it cannot follow', async function () {
+    await script({ '/slow': { body: 'slow', holdMs: 150 } })
+    const at = Date.now()
+    expect(await (await page('/slow')).text()).equals('slow')
+    expect(Date.now() - at).at.least(120)
+    for (const bad of [
+      [],
+      { nope: { body: 'x' } },
+      { '/a': null },
+      { '/a': {} },
+      { '/a': { body: 'x', type: 1 } },
+      { '/a': { body: 'x', headers: { a: 1 } } },
+      { '/a': { body: 'x', holdMs: -1 } },
+      { '/a': { body: 'x', probe: 'yes' } },
+      { '/a': { body: 'x', encoding: 'hex' } }
+    ]) {
+      expect((await script(bad)).status, JSON.stringify(bad)).equals(400)
+    }
+    expect((await script('not json')).status).equals(400)
+    expect((await script({}, 'b'.repeat(64))).status).equals(401)
+  })
+})
+
+describe('a fault server with no pages stand-in', function () {
+  it('answers its pages routes 404', async function () {
+    const { controlRoutes } = await import('./server')
+    const route = controlRoutes(() => {
+      throw new Error('unused')
+    }, TOKEN)
+    const req = Object.assign(new PassThrough(), {
+      url: '/__e2e/pages',
+      method: 'GET',
+      headers: { authorization: `Bearer ${TOKEN}` }
+    })
+    let status = 0
+    const res = {
+      writeHead: (code: number) => {
+        status = code
+      },
+      end: () => undefined
+    }
+    expect(route(req as never, res as never)).equals(true)
+    expect(status).equals(404)
+  })
+})
+
 describe('a fault server with no Places listener', function () {
   it('has no Jev stand-in to script', async function () {
     const started = await startFaultServer({
@@ -223,21 +437,21 @@ describe('the fault server’s command line', function () {
   it('reads its options and the token from its file', function () {
     const file = join(mkdtempSync(join(tmpdir(), 'e2e-faults-')), 'token')
     writeFileSync(file, `${TOKEN}\n`)
-    expect(
-      parseFaultServerArgs(
-        [
-          '--listen',
-          '127.0.0.1:9200',
-          '--target',
-          'http://127.0.0.1:9100',
-          '--places',
-          '127.0.0.1:9300',
-          '--token-file',
-          file
-        ],
-        {}
-      )
-    ).deep.equals({
+    const { remux, ...parsed } = parseFaultServerArgs(
+      [
+        '--listen',
+        '127.0.0.1:9200',
+        '--target',
+        'http://127.0.0.1:9100',
+        '--places',
+        '127.0.0.1:9300',
+        '--token-file',
+        file
+      ],
+      {}
+    )
+    expect(typeof remux).equals('function')
+    expect(parsed).deep.equals({
       listen: { host: '127.0.0.1', port: 9200 },
       target: 'http://127.0.0.1:9100',
       places: { host: '127.0.0.1', port: 9300 },
@@ -425,10 +639,145 @@ describe('the fault server’s seed route', function () {
       file
     ]
     expect(parseFaultServerArgs(args, {}).seed).equals(undefined)
+    expect(parseFaultServerArgs(args, {}).database).equals(undefined)
+    const withDb = parseFaultServerArgs([...args, '--checkout', '/srv/c'], {
+      DATABASE_URL: 'postgres://x/y'
+    })
+    expect(typeof withDb.seed).equals('function')
+    expect(typeof withDb.database?.query).equals('function')
+  })
+})
+
+describe('the fault server’s database routes', function () {
+  const ran: Array<[string, unknown[]]> = []
+  let started: Awaited<ReturnType<typeof startFaultServer>>
+  let bare: Awaited<ReturnType<typeof startFaultServer>>
+  let closed = 0
+  const database = stackDatabase('postgres://stack/db', url => {
+    expect(url).equals('postgres://stack/db')
+    return {
+      query: (async (text: string, values: unknown[]) => {
+        ran.push([text, values])
+        if (text === 'broken') throw new Error('syntax error')
+        return {
+          rows: text.startsWith('SELECT') ? [{ n: 1 }] : [],
+          rowCount: text.startsWith('DELETE') ? 2 : 1
+        }
+      }) as never,
+      end: async () => {
+        closed += 1
+      }
+    }
+  })
+
+  before(async function () {
+    started = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: 'http://127.0.0.1:1',
+      token: TOKEN,
+      database
+    })
+    bare = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: 'http://127.0.0.1:1',
+      token: TOKEN
+    })
+  })
+
+  after(async function () {
+    await started.close()
+    await bare.close()
+  })
+
+  const post = async (
+    base: string,
+    route: string,
+    body: unknown
+  ): Promise<{ status: number; body: any }> => {
+    const reply = await fetch(`${base}/__e2e/${route}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json'
+      },
+      body: typeof body === 'string' ? body : JSON.stringify(body)
+    })
+    return { status: reply.status, body: await reply.json() }
+  }
+
+  it('runs a statement on the stack’s database and answers its rows', async function () {
     expect(
-      typeof parseFaultServerArgs([...args, '--checkout', '/srv/c'], {
-        DATABASE_URL: 'postgres://x/y'
-      }).seed
-    ).equals('function')
+      await post(started.proxy.url, 'sql', {
+        text: 'SELECT 1 AS n WHERE $1 = $1',
+        values: ['x']
+      })
+    ).deep.equals({ status: 200, body: { rows: [{ n: 1 }], rowCount: 1 } })
+    expect(ran.at(-1)).deep.equals(['SELECT 1 AS n WHERE $1 = $1', ['x']])
+    expect(
+      (await post(started.proxy.url, 'sql', { text: 'UPDATE t' })).body
+    ).deep.equals({ rows: [], rowCount: 1 })
+    expect(ran.at(-1)).deep.equals(['UPDATE t', []])
+  })
+
+  it('clears the sign-in limits of a scope and its family', async function () {
+    ran.length = 0
+    expect(
+      await post(started.proxy.url, 'rate-limits', {
+        clear: ['password', 'passwordParameters.address']
+      })
+    ).deep.equals({ status: 200, body: { cleared: 4 } })
+    expect(ran).deep.equals([
+      [
+        'DELETE FROM rate_events WHERE scope = $1 OR left(scope, $2) = $3',
+        ['password', 9, 'password.']
+      ],
+      [
+        'DELETE FROM rate_events WHERE scope = $1 OR left(scope, $2) = $3',
+        ['passwordParameters.address', 27, 'passwordParameters.address.']
+      ]
+    ])
+    expect(await post(started.proxy.url, 'rate-limits', {})).deep.equals({
+      status: 200,
+      body: { cleared: 0 }
+    })
+    ran.length = 0
+    expect(
+      await post(started.proxy.url, 'rate-limits', { scale: 0.2 })
+    ).deep.equals({ status: 200, body: { cleared: 0, scale: 0.2 } })
+    expect(ran).has.length(1)
+    expect(ran[0][0]).contains('test.rateLimitScale')
+    expect(ran[0][1]).deep.equals(['0.2'])
+  })
+
+  it('refuses a body it cannot run, and reports a failed statement', async function () {
+    for (const body of [{}, { text: ' ' }, { text: 'x', values: 'y' }]) {
+      expect((await post(started.proxy.url, 'sql', body)).status).equals(400)
+    }
+    for (const body of [
+      { clear: 'password' },
+      { clear: ['bad scope'] },
+      { scale: 0 },
+      { scale: 'x' }
+    ]) {
+      expect(
+        (await post(started.proxy.url, 'rate-limits', body)).status
+      ).equals(400)
+    }
+    expect(
+      await post(started.proxy.url, 'sql', { text: 'broken' })
+    ).deep.equals({ status: 500, body: { error: 'syntax error' } })
+  })
+
+  it('answers 501 without a database, and closes its pool with the server', async function () {
+    expect(
+      (await post(bare.proxy.url, 'sql', { text: 'SELECT 1' })).status
+    ).equals(501)
+    expect(
+      (await post(bare.proxy.url, 'rate-limits', { clear: [] })).status
+    ).equals(501)
+    await database.close()
+    expect(closed).equals(1)
+    // A query after closing opens a pool again.
+    await database.query('SELECT 2', [])
   })
 })

@@ -3,7 +3,7 @@ import { expect } from 'chai'
 import type { CheckpointSpec } from '../../../core/checkpoint'
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { clearSignInLimits, PHONE_WINDOW } from '../../../rigs/coach/coachApp'
 import { pastFirstRun } from '../../../rigs/mobileWeb'
 
@@ -43,7 +43,7 @@ function rememberAccounts(world: {
     accounts.set(role, { email: account.email, password: account.password })
 }
 
-async function worldOf(ctx: E2eContext): Promise<World> {
+async function worldOf(ctx: HarnessContext): Promise<World> {
   const world = await ctx.fixture('coach-game')
   rememberAccounts(world)
   const coach = world.accounts.coach
@@ -87,7 +87,7 @@ async function clearOfBar(m: any): Promise<void> {
  * `<id>.png`: the flow's proof on each surface.
  */
 async function checkpoint(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   id: string,
   spec: CheckpointSpec,
   m: any
@@ -248,7 +248,7 @@ async function signInOnPhone(
   await sleep(2000)
 }
 
-async function openWebApp(ctx: E2eContext, role: string): Promise<WebApp> {
+async function openWebApp(ctx: HarnessContext, role: string): Promise<WebApp> {
   const origin = ctx.stack.origin
   const phone = ctx.surface !== 'web-chromium'
   const ios = ctx.surface === 'web-safari-ios'
@@ -319,7 +319,7 @@ const tokens = new Map<string, string>()
 
 /** Reads `path` from the stack's API as the home team's coach. */
 async function asCoach(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   world: World,
   path: string
 ): Promise<unknown> {
@@ -336,7 +336,10 @@ async function asCoach(
 }
 
 /** The pitch calls the server holds for the game, in order. */
-async function callsOnServer(ctx: E2eContext, world: World): Promise<string[]> {
+async function callsOnServer(
+  ctx: HarnessContext,
+  world: World
+): Promise<string[]> {
   const events = JSON.stringify(
     await asCoach(ctx, world, `/games/${world.game}/events`)
   )
@@ -368,7 +371,7 @@ async function openScoring(app: WebApp, world: World): Promise<void> {
   await sleep(1500)
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'platform/web/main-flows',
   title:
     'The web app’s main flows work on the queued client, in Chrome, Safari on an iPhone and Chrome on an Android phone',
@@ -385,16 +388,25 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: ['coach-game', 'streaming', 'packed-league'],
   exclusive: false,
+  // The scoring screen draws in 3D: every browser and phone has a GPU, so
+  // the phones are physical.
   surfaces: {
-    'web-chromium': { devices: [] },
+    'web-chromium': {
+      devices: [],
+      browser: { role: 'browser', needs: ['gpu'] }
+    },
     'web-safari-ios': {
-      devices: [{ role: 'phone', needs: ['ios'], hardware: 'required' }]
+      devices: [
+        { role: 'phone', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+      ]
     },
     'web-chrome-android': {
-      devices: [{ role: 'phone', needs: ['android'], hardware: 'required' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone', 'gpu'], simulator: 'never' }
+      ]
     }
   },
-  services: ['web', 'api'],
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

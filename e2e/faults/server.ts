@@ -8,7 +8,22 @@ import { join } from 'node:path'
 import { asJevControl, JevStub } from '../core/jevStub'
 import { PLACES_ANSWERS, startPlacesStub } from '../core/placesStub'
 import { FAULTS } from './catalogue'
+import {
+  clearRateLimits,
+  rateLimitsAsk,
+  setRateLimitScale,
+  sqlProblem,
+  type StackDatabase,
+  stackDatabase
+} from './database'
+import {
+  isPagesRequest,
+  type PageScript,
+  PagesStandIn,
+  scriptProblem
+} from './pages'
 import { type FaultProxy, startFaultProxy } from './proxy'
+import { RemuxError, type RemuxHandler, stackRemux } from './remux'
 import {
   beaconRoute,
   delayFor,
@@ -40,6 +55,15 @@ import {
  *                                         replaces the script, forgetting the requests
  *   POST /__e2e/seed   { world, mailbox } seeds a scripted world on the stack's
  *                                         database and answers its manifest
+ *   POST /__e2e/sql    { text, values? }  runs a statement on the stack's database
+ *   POST /__e2e/rate-limits { clear?, scale? }  clears sign-in limits' rows, scales the limits
+ *   POST /__e2e/remux  { action, ... }    media work on the stack (`remux.ts`)
+ *   PUT  /__e2e/pages  { [path]: page }   scripts the pages stand-in (`pages.ts`)
+ *   GET  /__e2e/pages                     the scripted paths
+ *   GET  /__e2e/pages/requests?since=<ms> { requests } the pages site served
+ *
+ * A request Caddy marks `X-E2E-Site: pages` (the stack's pages port) is the
+ * pages stand-in's, whatever its path, and never reaches the API.
  *
  * On a stack it also hosts the stand-ins `standIns.ts` describes, the
  * scripted model and the recogniser on their own ports, with their routes
@@ -179,15 +203,97 @@ function seedRoute(
   })
 }
 
+/** POST /__e2e/sql and /__e2e/rate-limits, on the stack's own database. */
+function databaseRoute(
+  route: 'sql' | 'rate-limits',
+  req: IncomingMessage,
+  res: ServerResponse,
+  database: StackDatabase | undefined
+): void {
+  if (database == null) {
+    json(res, 501, {
+      error: 'this fault server has no database: start it with DATABASE_URL'
+    })
+    return
+  }
+  withJson(req, res, body => {
+    const answer = (work: Promise<unknown>): void => {
+      work.then(
+        result => {
+          json(res, 200, result)
+        },
+        (error: unknown) => {
+          json(res, 500, {
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+      )
+    }
+    if (route === 'sql') {
+      const problem = sqlProblem(body)
+      if (problem != null) {
+        json(res, 400, { error: problem })
+        return
+      }
+      const { text, values } = body as { text: string; values?: unknown[] }
+      answer(database.query(text, values ?? []))
+      return
+    }
+    const ask = rateLimitsAsk(body)
+    if (typeof ask === 'string') {
+      json(res, 400, { error: ask })
+      return
+    }
+    answer(
+      (async () => {
+        if (ask.scale != null) await setRateLimitScale(database, ask.scale)
+        const cleared = await clearRateLimits(database, ask.clear)
+        return { cleared, ...(ask.scale == null ? {} : { scale: ask.scale }) }
+      })()
+    )
+  })
+}
+
+/** POST /__e2e/remux: one media action on the stack, or why it cannot run. */
+function remuxRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  remux: RemuxHandler | undefined
+): void {
+  if (remux == null) {
+    json(res, 501, { error: 'this fault server does no media work' })
+    return
+  }
+  withJson(req, res, body => {
+    remux(body).then(
+      result => {
+        json(res, 200, result)
+      },
+      (error: unknown) => {
+        json(res, error instanceof RemuxError ? error.status : 500, {
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    )
+  })
+}
+
 /** The /__e2e/ routes, for `startFaultProxy`'s `control`. */
 export function controlRoutes(
   proxy: () => FaultProxy,
   token: string,
   jev?: JevStub,
   standIns?: StandIns,
-  seed?: Seeder
+  seed?: Seeder,
+  pages?: PagesStandIn,
+  database?: StackDatabase,
+  remux?: RemuxHandler
 ): (req: IncomingMessage, res: ServerResponse) => boolean {
   return (req, res) => {
+    if (pages != null && isPagesRequest(req)) {
+      pages.serve(req, res)
+      return true
+    }
     const url = new URL(req.url ?? '/', 'http://faults')
     if (standIns != null && beaconRoute(standIns, req, res)) return true
     if (!url.pathname.startsWith(CONTROL)) return false
@@ -226,6 +332,29 @@ export function controlRoutes(
       })
     } else if (route === 'seed' && req.method === 'POST') {
       seedRoute(req, res, seed)
+    } else if (
+      (route === 'sql' || route === 'rate-limits') &&
+      req.method === 'POST'
+    ) {
+      databaseRoute(route, req, res, database)
+    } else if (route === 'remux' && req.method === 'POST') {
+      remuxRoute(req, res, remux)
+    } else if (route.startsWith('pages') && pages == null) {
+      json(res, 404, { error: 'this fault server has no pages stand-in' })
+    } else if (route === 'pages' && req.method === 'GET') {
+      json(res, 200, pages!.view())
+    } else if (route === 'pages' && req.method === 'PUT') {
+      withJson(req, res, body => {
+        const problem = scriptProblem(body)
+        if (problem != null) {
+          json(res, 400, { error: problem })
+          return
+        }
+        pages!.setScript(body as Record<string, PageScript>)
+        json(res, 200, pages!.view())
+      })
+    } else if (route === 'pages/requests' && req.method === 'GET') {
+      json(res, 200, { requests: pages!.since(since) })
     } else if (route === 'jev' && jev == null) {
       json(res, 404, { error: 'this fault server has no Jev stand-in' })
     } else if (route === 'jev' && req.method === 'GET') {
@@ -261,6 +390,10 @@ export interface FaultServerOptions {
   speechPort?: number
   /** Seeds worlds for `POST /__e2e/seed`; without it the route answers 501. */
   seed?: Seeder
+  /** The stack's database, for `sql` and `rate-limits`; without it they answer 501. */
+  database?: StackDatabase
+  /** Makes the `remux` route's handler on the server's pages; without it the route answers 501. */
+  remux?: (pages: PagesStandIn) => RemuxHandler
 }
 
 export async function startFaultServer(
@@ -271,6 +404,7 @@ export async function startFaultServer(
   placesUrl?: string
   jev?: JevStub
   standIns?: StandIns
+  pages: PagesStandIn
   close: () => Promise<void>
 }> {
   if (options.token.length < 32) throw new Error('the stack token is too short')
@@ -293,6 +427,7 @@ export async function startFaultServer(
             ? {}
             : { speechPort: options.speechPort })
         })
+  const pages = new PagesStandIn()
   const proxy = await startFaultProxy({
     target: options.target,
     host: options.listen.host,
@@ -303,7 +438,10 @@ export async function startFaultServer(
       options.token,
       options.places == null ? undefined : jev,
       standIns,
-      options.seed
+      options.seed,
+      pages,
+      options.database,
+      options.remux?.(pages)
     ),
     ...(standIns == null
       ? {}
@@ -328,9 +466,11 @@ export async function startFaultServer(
     proxy,
     ...(places == null ? {} : { placesUrl: places.url, jev }),
     ...(standIns == null ? {} : { standIns }),
+    pages,
     close: async () => {
       places?.server.close()
       await standIns?.close()
+      await options.database?.close()
       await proxy.close()
     }
   }
@@ -379,6 +519,11 @@ export function parseFaultServerArgs(
   for (const flag of ['--listen', '--target', '--token-file']) {
     if (values[flag] == null) throw new Error(`${flag} is needed`)
   }
+  const checkout = values['--checkout'] ?? cwd
+  const database =
+    env.DATABASE_URL == null || env.DATABASE_URL === ''
+      ? undefined
+      : stackDatabase(env.DATABASE_URL)
   return {
     listen: hostPort(values['--listen'], '--listen'),
     target: values['--target'],
@@ -386,11 +531,14 @@ export function parseFaultServerArgs(
       ? {}
       : { places: hostPort(values['--places'], '--places') }),
     token: readFileSync(values['--token-file'], 'utf8').trim(),
-    ...(env.DATABASE_URL == null || env.DATABASE_URL === ''
+    ...(database == null
       ? {}
       : {
-          seed: fixtureSeeder(values['--checkout'] ?? cwd, env.DATABASE_URL)
-        })
+          seed: fixtureSeeder(checkout, env.DATABASE_URL!),
+          database
+        }),
+    // The media work reads the checkout's own server config, for its Space and FFmpeg.
+    remux: pages => stackRemux(checkout, database, pages)
   }
 }
 

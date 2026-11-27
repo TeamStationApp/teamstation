@@ -1,9 +1,9 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   aboveKeyboard,
-  APP,
+  appOf,
   boxOf,
   boxOfField,
   deviceName,
@@ -22,11 +22,11 @@ import {
  * Search's dock on a phone or tablet: the location pills sit directly above
  * the field, and both ride the keyboard up and back down through the frames
  * of its animation; a drag of the results puts the keyboard away, animated.
- * The app is a Mason develop build, `prepare`d and pointed at its seat with
- * setServer before the run; devices come through a maestro-d hub when the
- * local settings name one.
+ * The runner installs the caller's develop build and points it at the run's
+ * stack, which holds the `search` world for the results to come from; the
+ * motion is read from maestro-d's recording of the device's screen.
  */
-export default defineE2e({
+export default defineHarness({
   id: 'app-shell/search/keyboard-dock',
   title:
     'Search’s dock rides the keyboard up and down on a phone, with its location pills above the field',
@@ -37,15 +37,17 @@ export default defineE2e({
     'src/app/components/keyboardControllerOwner.native.ts',
     'src/app/components/LocationPill.tsx'
   ],
-  stack: 'none',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['search'],
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
   services: [],
@@ -59,11 +61,12 @@ export default defineE2e({
   sendsNoMail: true,
   scenarios: {
     'rides-keyboard': async ctx => {
+      await ctx.fixture('search')
       const device = await ctx.attach('phone', {
         platform: platformOf(ctx),
-        appId: APP
+        appId: appOf(ctx)
       })
-      await openSearch(device)
+      await openSearch(ctx, device)
       const rest = await boxOfField(device)
       await ctx.checkpoint('dock-at-rest', {
         expect: [{ text: PLACEHOLDER }]
@@ -170,11 +173,11 @@ export default defineE2e({
     'sign-in-field': async ctx => {
       const device = await ctx.attach('phone', {
         platform: platformOf(ctx),
-        appId: APP
+        appId: appOf(ctx)
       })
       // Search first, with its keyboard up, then away to sign-in: the field
       // there must still rise clear of its keyboard once Search has let go.
-      await openSearch(device, { signedOut: true })
+      await openSearch(ctx, device, { signedOut: true })
       await device.tapOn({ text: PLACEHOLDER })
       await typeKeys(device, platformOf(ctx) === 'ios', 'san')
       // A phone's keyboard covers its floating tab bar: put it away to reach

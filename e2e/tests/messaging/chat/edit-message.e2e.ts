@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -10,9 +9,14 @@ import {
   dismissNotificationAsk,
   dismissNotificationAskOn
 } from '../../../../src/test/notificationAsk'
-import { isHubDevice } from '../../../core/maestro'
-import { defineE2e, type E2eContext } from '../../../core/spec'
-import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
+import type { MaestroDevice } from '../../../core/maestro'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
+import {
+  datedCaption,
+  fixtureFor,
+  providerFor,
+  scriptPreviewPages
+} from '../../../rigs/chat/messageLinkFixture'
 import {
   chatLinkUi,
   clearChatComposer,
@@ -21,9 +25,27 @@ import {
 } from '../../../rigs/chat/messageLinkUi'
 import { flattenPublicHierarchy, until } from '../../../rigs/chat2Maestro'
 
-async function edit(ctx: E2eContext): Promise<void> {
-  const f = fixtureFor(ctx)
-  assert(f.previewPage != null)
+/** Waits until maestro-d reports the soft keyboard on screen. */
+async function keyboardShown(
+  m: MaestroDevice,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const answer = (await m.keyboardVisible()) as {
+      visible?: boolean
+      data?: { visible?: boolean }
+    }
+    if ((answer.data?.visible ?? answer.visible) === true) return true
+    if (Date.now() >= deadline) return false
+    await delay(100)
+  }
+}
+
+async function edit(ctx: HarnessContext): Promise<void> {
+  const f = await fixtureFor(ctx)
+  // The page the edited caption links to, whose title its preview carries.
+  const previewPage = await scriptPreviewPages(ctx)
   const author = await providerFor(f, f.observer)
   try {
     const peer = await providerFor(f, f.sender)
@@ -39,6 +61,8 @@ async function edit(ctx: E2eContext): Promise<void> {
       })
       const room = f.conversationId
       const tag = randomUUID().slice(0, 8)
+      // A two-file caption of the author's, moved a week back by its world.
+      await datedCaption(ctx, f, author, 'Practice handouts ' + tag)
       assert(
         f.datedCaptionId != null,
         'Seed a dated two-file caption for this synthetic author'
@@ -117,17 +141,6 @@ async function edit(ctx: E2eContext): Promise<void> {
       const enterText = async (text: string): Promise<void> => {
         await m.inputText({ text, keyPress: platform === 'android' })
         assert.equal(await readChatComposer(m, platform, web), text)
-      }
-      const pressLocalEscape = (): void => {
-        execFileSync('adb', [
-          '-s',
-          ctx.device('phone'),
-          'shell',
-          'input',
-          'keyboard',
-          'keyevent',
-          '111'
-        ])
       }
       const editButton = { text: '^Edit$' }
       const chooseEdit = async (expected: string): Promise<void> => {
@@ -264,25 +277,15 @@ async function edit(ctx: E2eContext): Promise<void> {
         )
       }
       assert.equal(await readChatComposer(m, platform, web), originalCaption)
-      if (platform === 'android' && !isHubDevice(ctx.device('phone'))) {
-        // A menu edit brings up the IME over the parked draft. One physical
+      if (platform === 'android') {
+        // A menu edit brings up the IME over the parked draft. One keyboard
         // Escape must reach the editor before the IME can consume it.
         await m.tapOn(field)
-        const imeVisible = (): boolean =>
-          /\bmInputShown=true\b/.test(
-            execFileSync(
-              'adb',
-              ['-s', ctx.device('phone'), 'shell', 'dumpsys', 'input_method'],
-              { encoding: 'utf8' }
-            )
-          )
-        const deadline = Date.now() + 5000
-        while (!imeVisible() && Date.now() < deadline) await delay(100)
         assert(
-          imeVisible(),
+          await keyboardShown(m, 5000),
           'The soft keyboard must be shown before testing Escape'
         )
-        pressLocalEscape()
+        await m.pressKey({ key: 'escape' })
         await m.assertNotVisible({ text: '^Editing your message$' })
         assert.equal(await readChatComposer(m, platform, web), draft)
         await openMenu(original.id)
@@ -362,7 +365,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       await openMenu(original.id)
       await chooseEdit(originalCaption)
       await clearChatComposer(m, platform, originalCaption, web)
-      const editedCaption = 'Updated handouts ' + tag + ' ' + f.previewPage.url
+      const editedCaption = 'Updated handouts ' + tag + ' ' + previewPage.url
       await enterText(editedCaption)
       await m.assertVisible({
         id: 'chat-dismiss-link-preview',
@@ -414,7 +417,7 @@ async function edit(ctx: E2eContext): Promise<void> {
       assert.equal(received.seq, original.seq)
       assert.equal(received.sentAt, original.sentAt)
       assert.equal(received.senderUserId, original.senderUserId)
-      assert.equal(received.preview?.title, f.previewPage.title)
+      assert.equal(received.preview?.title, previewPage.title)
       assert.deepEqual(received.attachments, original.attachments)
       for (const [i, ref] of received.attachments.entries()) {
         const bytes = await peer.engine.openAttachment(ref)
@@ -453,20 +456,8 @@ async function edit(ctx: E2eContext): Promise<void> {
           await web.page.keyboard.press('Escape')
           keyboardReceipt =
             'Chromium delivered Up and Escape to the focused field.'
-        } else if (isHubDevice(ctx.device('phone'))) {
-          try {
-            await m.pressKey({ key: 'ESCAPE' })
-            keyboardReceipt = 'The Android hub delivered Up and Escape.'
-          } catch (error) {
-            if (!/unknown key: escape/i.test(String(error))) throw error
-            // Older hubs have no Escape mapping. The companion Android run
-            // exercises that key locally with the same signed app.
-            await m.tapOn({ text: '^Cancel edit$' })
-            keyboardReceipt =
-              'The Android hub delivered Up. Cancel restored the draft on this phone. This driver has no Escape mapping.'
-          }
         } else {
-          pressLocalEscape()
+          await m.pressKey({ key: 'escape' })
           keyboardReceipt =
             'Android delivered Up and one keyboard Escape for each menu and keyboard edit.'
         }
@@ -495,7 +486,7 @@ async function edit(ctx: E2eContext): Promise<void> {
   }
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'messaging/chat/edit-message',
   title: 'Authors edit their original chat message or caption',
   kind: 'e2e',
@@ -507,21 +498,26 @@ export default defineE2e({
     'src/app/chat/chatWebInteractions*',
     'android/app/src/main/java/app/teamstation/app/chat/ChatHardwareKeys.kt'
   ],
-  stack: 'seat',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['messaging', 'messaging-dated'],
   exclusive: true,
   surfaces: {
-    'web-chromium': { devices: [] },
+    'web-chromium': {
+      devices: [],
+      browser: { role: 'browser', needs: [] }
+    },
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
-  services: ['api'],
-  apps: [],
-  secrets: ['chatLinkFixture'],
+  services: [],
+  apps: ['teamstation-ios', 'teamstation-android'],
+  secrets: [],
   costUsd: 0,
   minutes: 4,
   guards: [],
