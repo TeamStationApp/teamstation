@@ -58,6 +58,9 @@
 - fixed: Web scorers can record the next pitch after a strikeout even when the field redraws slowly
 - fixed: The lineup dictation and live roster end-to-end tests run again, with no false timeout after switching games
 - fixed: Mason builds install Socket CLI 1.16.1: 1.17.0 refused the credential builds without a Socket token use, and every iOS and Android build failed installing dependencies
+- fixed: On Android, a landscape full-screen video with one angle draws the scoreboard at the node's Single camera placement, as iOS and the web do, instead of below the hidden status bar
+- fixed: The scoreboard's ball-strike count stays on one line, "0-0" with the out dots below it, instead of wrapping after its hyphen
+- fixed: The Valkey enqueue tests no longer fail CI when the clock passes a millisecond between setting a command's deadline and giving its first try the time left
 
 ## 1.4.0 (2026-11-21)
 

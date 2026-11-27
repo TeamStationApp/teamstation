@@ -301,6 +301,119 @@ describe('the player’s layout (U6)', function () {
   })
 })
 
+describe('the single picture sideways under an Android top inset', function () {
+  /** An Android phone sideways: the hidden status bar still reported on top. */
+  const ANDROID_LANDSCAPE = {
+    screen: { width: 874, height: 402 },
+    safe: { x: 0, y: 24, w: 874, h: 402 - 24 }
+  }
+  /** The same with a cutout on the left. */
+  const ANDROID_CUTOUT = {
+    screen: { width: 874, height: 402 },
+    safe: { x: 48, y: 24, w: 874 - 48, h: 402 - 24 }
+  }
+  /** A cutout on the left, the navigation bar on the right, the gesture bar. */
+  const ANDROID_INSET_ALL = {
+    screen: { width: 874, height: 402 },
+    safe: { x: 48, y: 24, w: 874 - 96, h: 402 - 24 - 40 }
+  }
+  /** The hidden status bar is the whole of the reported top inset. */
+  const under = { singleHiddenTopInset: 24 }
+  const atSingle = (board: Rect, picture: Rect): void => {
+    const { single } = SETTINGS
+    expect(board.y).closeTo(picture.y + single.y * picture.h, 0.01)
+    expect(board.x).closeTo(picture.x + single.x * picture.w, 0.01)
+    expect(board.h).closeTo(single.height * picture.h, 0.01)
+  }
+  const band = (board: Rect): number =>
+    (board.h * Math.max(FULL_BOARD_HEIGHT, BOARD.height)) / BOARD.height
+
+  it('puts the board at the Single camera top of one angle, above the inset (U1)', function () {
+    for (const where of [ANDROID_LANDSCAPE, ANDROID_CUTOUT]) {
+      const placed = layout(where, { count: 1, ...under })
+      atSingle(placed.board!, placed.tiles[0])
+      expect(placed.board!.y).below(where.safe.y)
+    }
+  })
+
+  it('keeps the board under the inset without the field (U2)', function () {
+    for (const field of [{}, { singleHiddenTopInset: 0 }]) {
+      const placed = layout(ANDROID_LANDSCAPE, { count: 1, ...field })
+      near(placed.board!.y, ANDROID_LANDSCAPE.safe.y + BOARD_INSET)
+    }
+  })
+
+  it('places the board the same over one angle zoomed out of two or four (U3)', function () {
+    for (const count of [2, 4]) {
+      const placed = layout(ANDROID_LANDSCAPE, { count, zoomed: 1, ...under })
+      expect(placed.box).equals(null)
+      atSingle(placed.board!, placed.tiles[1])
+    }
+  })
+
+  it('still keeps the board off the left, right and bottom insets (U4)', function () {
+    const wide = { count: 1, aspect: 2.4 }
+    const { safe } = ANDROID_INSET_ALL
+    const at = (
+      single: { x: number; y: number },
+      field: object
+    ): ReturnType<typeof playerLayout> =>
+      layout(ANDROID_INSET_ALL, {
+        ...wide,
+        ...field,
+        settings: { ...SETTINGS, single: { ...SETTINGS.single, ...single } }
+      })
+    const placed = at({ x: 0.01, y: 0.01 }, under)
+    const picture = placed.tiles[0]
+    near(picture.w, 874)
+    near(placed.board!.x, safe.x + BOARD_INSET)
+    expect(placed.board!.y).closeTo(picture.y + 0.01 * picture.h, 0.01)
+    expect(placed.board!.y).below(safe.y)
+    const without = at({ x: 0.01, y: 0.01 }, {})
+    near(without.board!.x, safe.x + BOARD_INSET)
+    near(without.board!.y, safe.y + BOARD_INSET)
+
+    const left = at({ x: 0.01, y: 0.5 }, under)
+    expect(left).deep.equals(at({ x: 0.01, y: 0.5 }, {}))
+    near(left.board!.x, safe.x + BOARD_INSET)
+    const right = at({ x: 0.9, y: 0.5 }, under)
+    expect(right).deep.equals(at({ x: 0.9, y: 0.5 }, {}))
+    near(right.board!.x + right.board!.w, safe.x + safe.w - BOARD_INSET)
+    const low = at({ x: 0.3, y: 0.95 }, under)
+    expect(low).deep.equals(at({ x: 0.3, y: 0.95 }, {}))
+    near(low.board!.y + band(low.board!), safe.y + safe.h - BOARD_INSET)
+  })
+
+  it('keeps the board clear of a top inset taller than the hidden status bar (U7)', function () {
+    // A cutout on the top edge sideways: Android reports the edge as the
+    // larger of the cutout (60) and the bar (24), so all 60 is the cutout.
+    const cutout = {
+      screen: { width: 874, height: 402 },
+      safe: { x: 0, y: 60, w: 874, h: 402 - 60 }
+    }
+    const kept = layout(cutout, { count: 1, singleHiddenTopInset: 24 })
+    near(kept.board!.y, 60 + BOARD_INSET)
+    expect(kept).deep.equals(layout(cutout, { count: 1 }))
+    // A bar as tall as the inset, or taller, is all of it.
+    for (const bar of [60, 80]) {
+      const placed = layout(cutout, { count: 1, singleHiddenTopInset: bar })
+      atSingle(placed.board!, placed.tiles[0])
+    }
+  })
+
+  it('leaves portrait and two to four angles sideways as they were (U5)', function () {
+    for (const [where, count] of [
+      [PORTRAIT, 1],
+      [ANDROID_LANDSCAPE, 2],
+      [ANDROID_LANDSCAPE, 3],
+      [ANDROID_LANDSCAPE, 4]
+    ] as const)
+      expect(layout(where, { count, ...under })).deep.equals(
+        layout(where, { count })
+      )
+  })
+})
+
 describe('a board that measures taller than the full board, as a phone’s does', function () {
   const TALL = { width: 607, height: FULL_BOARD_HEIGHT + 30 }
 

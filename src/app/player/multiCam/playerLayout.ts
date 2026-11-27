@@ -36,6 +36,16 @@ export interface PlayerLayoutInput {
   line: boolean
   /** The angle zoomed to the whole box, by its index, or null. */
   zoomed?: number | null
+  /**
+   * The hidden status bar's height, sideways, for the board over a single
+   * picture: Android's full-screen modal still reports it as the top inset,
+   * which would push the board below the Single camera placement. A top inset
+   * no taller than it is that bar, and the board may sit under it. A taller
+   * one is a cutout, since Android reports an edge as the larger of the bar
+   * and the cutout, not their sum, and the board stays clear of all of it,
+   * as of the other edges. None unless set.
+   */
+  singleHiddenTopInset?: number
 }
 
 export interface PlayerLayout {
@@ -126,7 +136,9 @@ function boxHeightFor(count: number, w: number): number {
  * at `COMPACT_LINE_SCALE` of that height. With no board it takes the board's
  * place; with neither, the angles
  * start at the top of the safe area. Every board and box is kept inside the
- * safe area (`keptClear`).
+ * safe area (`keptClear`), but for the single picture's board under the top
+ * inset as far as the caller says it is a hidden status bar
+ * (`singleHiddenTopInset`).
  */
 export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
   const { screen, safe, landscape, settings, line } = input
@@ -134,10 +146,14 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
   const board = settings == null ? null : input.board
   const clear = (rect: Rect | null, area?: Rect): Rect | null =>
     rect == null ? null : keptClear(rect, safe, area)
-  const clearBoard = (rect: Rect | null, area?: Rect): Rect | null => {
+  const clearBoard = (
+    rect: Rect | null,
+    area?: Rect,
+    within: Rect = safe
+  ): Rect | null => {
     if (board == null || rect == null || rect.h <= 0) return rect
     const full = bandOf(board) / board.height
-    const placed = keptClear({ ...rect, h: rect.h * full }, safe, area)
+    const placed = keptClear({ ...rect, h: rect.h * full }, within, area)
     return { ...placed, h: placed.h / full }
   }
   const none: PlayerLayout = {
@@ -232,6 +248,12 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
 
   if (zoomed != null) {
     const picture = tiles[zoomed]
+    // The safe area, with its top taken to the screen's when the top inset
+    // is only the hidden status bar Android still reports, which must not
+    // push the board down. A taller inset is a cutout, and still does.
+    const hidden = input.singleHiddenTopInset ?? 0
+    const top = hidden > 0 && safe.y <= hidden ? 0 : safe.y
+    const boardSafe = { ...safe, y: top, h: safe.h + safe.y - top }
     return {
       tiles,
       board:
@@ -243,7 +265,8 @@ export function playerLayout(input: PlayerLayoutInput): PlayerLayout {
                 placement: settings.single,
                 natural: board
               }),
-              picture
+              picture,
+              boardSafe
             ),
       boardClip: null,
       box: null,
