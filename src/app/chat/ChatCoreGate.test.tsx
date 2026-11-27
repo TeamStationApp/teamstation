@@ -1,8 +1,15 @@
+import { readFileSync } from 'node:fs'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import {
+  chatCoreStatus,
+  forgetChatCoreForTests,
+  loadChatCore
+} from '../../common/chatCrypto/core.web'
 import type {
   ChatCoreStatus,
   CoreUnavailableReason
@@ -190,6 +197,72 @@ describe('ChatCoreGate', () => {
       await delay(10)
     })
     expect(text()).equals('the chat')
+  })
+
+  it('after a browser compile misses its deadline, the next chat screen opens chat, not the failure', async () => {
+    const file = readFileSync('src/common/chatCrypto/wasm/chat_crypto.wasm')
+    const bytes = file.buffer.slice(
+      file.byteOffset,
+      file.byteOffset + file.byteLength
+    )
+    const fetch = async (): Promise<{
+      ok: boolean
+      arrayBuffer: () => Promise<ArrayBuffer>
+    }> => ({ ok: true, arrayBuffer: async () => bytes })
+    let compiles = 0
+    const late = {
+      instantiate: async (
+        ...args: Parameters<typeof WebAssembly.instantiate>
+      ) => {
+        compiles += 1
+        await delay(150)
+        return await WebAssembly.instantiate(...args)
+      }
+    }
+    try {
+      await render(
+        <ChatCoreGate
+          loadCore={async () =>
+            await loadChatCore({
+              fetch,
+              url: '/m',
+              WebAssembly: late,
+              instantiateTimeoutMs: 20
+            })
+          }
+          coreStatus={chatCoreStatus}
+        >
+          <>the chat</>
+        </ChatCoreGate>
+      )
+      await act(async () => {
+        await delay(40)
+      })
+      expect(text()).not.contains('the chat')
+      expect(text()).not.contains('Opening chat')
+      act(() => {
+        root?.unmount()
+      })
+      document.body.innerHTML = ''
+      await render(
+        <ChatCoreGate
+          loadCore={async () =>
+            await loadChatCore({ fetch, url: '/m', WebAssembly: late })
+          }
+          coreStatus={chatCoreStatus}
+        >
+          <>the chat</>
+        </ChatCoreGate>
+      )
+      expect(text()).contains('Opening chat')
+      await act(async () => {
+        await delay(200)
+      })
+      expect(text()).equals('the chat')
+      expect(compiles).equals(1)
+    } finally {
+      forgetChatCoreForTests()
+    }
   })
 
   it('after the module traps, shows why and tells the log', async () => {

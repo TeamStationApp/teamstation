@@ -20,6 +20,7 @@ import {
 import { pageOfGames } from '../test/pageOf'
 import { App } from './App'
 import { AppleAgeOverride } from './chat/DeclaredAgeGate'
+import { setApprovalHoldForTests } from './chat/deviceApprovals'
 import { ChatEngine, type ConversationListItem } from './chat/engine/engine'
 import { askedKey, switchesKey } from './platform/notificationSwitches'
 
@@ -69,6 +70,9 @@ describe('the app’s ask about notifications', function () {
   let root: Root | undefined
 
   beforeEach(() => {
+    // The ask waits for this device's approvals to be read; these tests are
+    // about the ask, not the web's two-second hold before that read.
+    setApprovalHoldForTests(0)
     window.localStorage.clear()
     asked = 0
     global.Notification = {
@@ -155,6 +159,7 @@ describe('the app’s ask about notifications', function () {
   afterEach(async () => {
     await act(async () => root?.unmount())
     root = undefined
+    setApprovalHoldForTests(undefined)
     window.history.replaceState(null, '', '/')
     document.body.replaceChildren()
   })

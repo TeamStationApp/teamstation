@@ -289,10 +289,22 @@ describe('entity chat preview restoration', () => {
           throw new Error('must not load')
         }
       }
-      const load = entityPreviewLoader(engine, { load: async () => record }, me)
+      let reads = 0
+      const load = entityPreviewLoader(
+        engine,
+        {
+          load: async () => {
+            reads++
+            return record
+          }
+        },
+        me
+      )
       await load(['one'])
       await load(['one'])
       expect(starts).equals(0)
+      // No linked record is settled: the next preview does not read again.
+      expect(reads).equals(1)
     }
     const engine: Pick<ChatEngine, 'status' | 'start' | 'loadPreview'> = {
       status: 'idle',
@@ -342,7 +354,7 @@ describe('entity chat preview restoration', () => {
     )
     await load(['one'])
     await load(['one'])
-    expect(attempts).equals(1)
+    expect(attempts).equals(2)
     engine.status = 'link'
     await load(['one'])
   })
@@ -369,5 +381,57 @@ describe('entity chat unavailable crypto', () => {
       me,
       async () => ({ ready: false, reason: 'noWebAssembly' })
     )(['one'])
+  })
+
+  it('tries again after a core that is not ready or a rejected key read', async () => {
+    let starts = 0
+    let coreReady = false
+    const engine: Pick<ChatEngine, 'status' | 'start' | 'loadPreview'> = {
+      status: 'idle',
+      start: async () => {
+        starts++
+        engine.status = 'ready'
+        return 'ready' as const
+      },
+      loadPreview: async () => undefined
+    }
+    const load = entityPreviewLoader(
+      engine,
+      { load: async () => savedRecord() },
+      me,
+      async () =>
+        coreReady
+          ? { ready: true }
+          : { ready: false, reason: 'instantiateFailed' }
+    )
+    await load(['one'])
+    expect(starts).equals(0)
+    coreReady = true
+    await load(['one'])
+    expect(starts).equals(1)
+
+    let reads = 0
+    const engine2: Pick<ChatEngine, 'status' | 'start' | 'loadPreview'> = {
+      status: 'idle',
+      start: async () => {
+        engine2.status = 'ready'
+        return 'ready' as const
+      },
+      loadPreview: async () => undefined
+    }
+    const reading = entityPreviewLoader(
+      engine2,
+      {
+        load: async () => {
+          reads++
+          if (reads === 1) throw new Error('Chat keys could not be opened')
+          return savedRecord()
+        }
+      },
+      me
+    )
+    await reading(['one'])
+    await reading(['one'])
+    expect(reads).equals(2)
   })
 })

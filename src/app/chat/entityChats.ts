@@ -67,22 +67,30 @@ export function entityPreviewLoader(
   userId: string | undefined,
   loadCore: typeof loadChatCore = loadChatCore
 ): (ids: string[]) => Promise<void> {
-  let starting: Promise<void> | undefined
+  /** Resolves `true` once settled for this page, `false` to try again. */
+  let starting: Promise<boolean> | undefined
   return async ids => {
     if (engine == null || ids.length === 0) return
     if (engine.status === 'idle') {
       starting ??= (async () => {
-        if (!(await loadCore()).ready || userId == null) return
+        if (!(await loadCore()).ready) return false
+        if (userId == null) return true
         const record = await store.load(userId)
+        // No linked record here: nothing changes until this device links,
+        // and linking starts the engine itself.
         if (
           record?.userId !== userId ||
           record?.identity == null ||
           record.puks.length === 0
         )
-          return
+          return true
         await engine.start(true)
-      })().catch(() => undefined)
-      await starting
+        return engine.status === 'ready'
+      })()
+      const mine = starting
+      // A rejected start is tried again on the next call.
+      const settled = await mine.catch(() => false)
+      if (!settled && starting === mine) starting = undefined
     }
     if (engine.status !== 'ready') return
     await Promise.all(

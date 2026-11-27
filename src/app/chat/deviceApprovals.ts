@@ -31,6 +31,27 @@ export const EMPTY_APPROVAL_STATE: ApprovalState = {
   dismissed: new Set()
 }
 
+/** The hold tests of the whole shell use: see `setApprovalHoldForTests`. */
+let holdForTests: number | undefined
+
+/**
+ * Sets the web hold for tests that mount the whole app to test something
+ * else; `undefined` puts the real one back.
+ */
+export function setApprovalHoldForTests(ms: number | undefined): void {
+  holdForTests = ms
+}
+
+/** How long a web shell waits before its first background key read. */
+export function approvalHoldMs(
+  platform: 'web' | 'ios' | 'android' | undefined,
+  override?: number
+): number {
+  if (override != null) return override
+  if (holdForTests != null) return holdForTests
+  return platform === 'web' ? 2000 : 0
+}
+
 /** One account-owned decision queue for the shell, inbox and device list. */
 export class DeviceApprovals {
   private state: ApprovalState = EMPTY_APPROVAL_STATE
@@ -43,11 +64,46 @@ export class DeviceApprovals {
   private projection?: string
   private working = false
   private unsubscribe?: () => void
+  private holdTimer?: ReturnType<typeof setTimeout>
+  /** The first background read waits for the hold timer, not the clock. */
+  private holding = false
+  private holdCancelled = false
+  private readonly holdMs: number
+  private readonly onPageHide = (): void => {
+    this.cancelHold()
+  }
+
+  /** A restored page, including one kept in the back-forward cache. */
+  private readonly onPageShow = (): void => {
+    if (!this.active || !this.holdCancelled) return
+    this.releaseHold()
+    this.refresh().catch(() => undefined)
+  }
 
   constructor(
     private readonly setup: ChatSetup,
-    private readonly socket?: Pick<GameSocket, 'onChat'>
-  ) {}
+    private readonly socket?: Pick<GameSocket, 'onChat'>,
+    holdMs?: number
+  ) {
+    this.holdMs = approvalHoldMs(setup.device.platform, holdMs)
+  }
+
+  private cancelHold(): void {
+    this.holdCancelled = true
+    this.clearHoldTimer()
+  }
+
+  /** Reads may start: the hold ran out, the page came back, or someone decided. */
+  private releaseHold(): void {
+    this.holding = false
+    this.holdCancelled = false
+    this.clearHoldTimer()
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer != null) clearTimeout(this.holdTimer)
+    this.holdTimer = undefined
+  }
 
   snapshot = (): ApprovalState => this.state
   subscribe = (listener: () => void): (() => void) => {
@@ -65,6 +121,10 @@ export class DeviceApprovals {
   start(): void {
     if (this.active) return
     this.active = true
+    this.holdCancelled = false
+    this.holding = this.holdMs > 0
+    globalThis.window?.addEventListener?.('pagehide', this.onPageHide)
+    globalThis.window?.addEventListener?.('pageshow', this.onPageShow)
     try {
       this.unsubscribe = this.socket?.onChat(event => {
         if (
@@ -76,10 +136,19 @@ export class DeviceApprovals {
     } catch {
       // With no socket, the bell's notices still read it again (`refresh`).
     }
-    this.refresh().catch(() => undefined)
+    if (this.holdMs === 0) this.refresh().catch(() => undefined)
+    else {
+      this.holdTimer = setTimeout(() => {
+        this.releaseHold()
+        this.refresh().catch(() => undefined)
+      }, this.holdMs)
+    }
   }
 
   stop(): void {
+    globalThis.window?.removeEventListener?.('pagehide', this.onPageHide)
+    globalThis.window?.removeEventListener?.('pageshow', this.onPageShow)
+    this.cancelHold()
     this.active = false
     this.lifetime++
     this.followUp = false
@@ -90,7 +159,7 @@ export class DeviceApprovals {
   }
 
   refresh = async (): Promise<void> => {
-    if (!this.active) return
+    if (!this.active || this.holdCancelled || this.holding) return
     if (this.refreshing != null) {
       this.followUp = true
       await this.refreshing
@@ -162,6 +231,7 @@ export class DeviceApprovals {
     decision: 'approve' | 'decline'
   ): Promise<void> => {
     if (!this.active || this.working) return
+    this.releaseHold()
     this.working = true
     const lifetime = this.lifetime
     const current = (): boolean =>
