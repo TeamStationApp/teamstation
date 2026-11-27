@@ -131,7 +131,10 @@ async function keepsTheNewestPieces(ctx: HarnessContext): Promise<void> {
     status => status.exit != null,
     { timeoutMs: 120_000 }
   )
-  expect(published.exit, 'the broadcaster published every part').equals(0)
+  expect(
+    published.exit,
+    `the broadcaster published every part${published.stderr == null ? '' : ` (it said: ${published.stderr.slice(-5).join(' | ')})`}`
+  ).equals(0)
   await pause(3000)
 
   // After the first stretch the disk never holds more than the tail and the

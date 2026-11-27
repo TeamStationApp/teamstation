@@ -212,6 +212,11 @@ describe('the broadcast actions', function () {
       'done'
     ])
     expect(status.events[1].line).equals('not json')
+    child.stderr.write('a warning\n')
+    await new Promise(resolve => setImmediate(resolve))
+    expect(
+      ((await actions['broadcast-status']({ id: 'bc1' })) as any).stderr
+    ).deep.equals(['a warning'])
     // A stop after the end changes nothing.
     expect(
       ((await actions['broadcast-stop']({ id: 'bc1' })) as any).exit

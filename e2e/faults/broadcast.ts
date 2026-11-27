@@ -20,8 +20,9 @@ import { RemuxError } from './remux'
  *                    in the checkout, the app and key taken from the camera's
  *                    `url`, and answers once it has printed `planned`
  *                    → { id, t0, events, exit }
- *   broadcast-status { id }   every event it has printed, and its exit code
- *                             once it has ended → { events, exit }
+ *   broadcast-status { id }   every event it has printed, its last lines of
+ *                             standard error, and its exit code once it has
+ *                             ended → { events, stderr, exit }
  *   broadcast-stop   { id }   stops it, and answers once it has ended
  *   ingest-files     { videoId }
  *                    the ingest's own live directory for the video
@@ -77,6 +78,8 @@ interface Running {
   child: BroadcastChild
   events: BroadcastEvent[]
   exit: number | null
+  /** Its last lines of standard error, which say why a broadcast failed. */
+  stderr: string[]
   ended: Promise<void>
 }
 
@@ -195,9 +198,10 @@ export function broadcastActions(
   }
   const status = (
     one: Running
-  ): { events: BroadcastEvent[]; exit: number | null } => ({
+  ): { events: BroadcastEvent[]; exit: number | null; stderr: string[] } => ({
     events: [...one.events],
-    exit: one.exit
+    exit: one.exit,
+    stderr: [...one.stderr]
   })
 
   return {
@@ -213,6 +217,7 @@ export function broadcastActions(
         child,
         events: [],
         exit: null,
+        stderr: [],
         ended: new Promise(resolve => {
           child.on('exit', code => {
             one.exit = code ?? 1
@@ -225,7 +230,7 @@ export function broadcastActions(
       const plannedEvent = new Promise<BroadcastEvent>(resolve => {
         planned = resolve
       })
-      const stderr: string[] = []
+      const stderr = one.stderr
       createInterface({ input: child.stderr }).on('line', line => {
         stderr.push(line)
         if (stderr.length > 20) stderr.shift()
