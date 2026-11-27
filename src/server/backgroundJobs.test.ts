@@ -44,6 +44,10 @@ function recordingJobs(
     startChatAttachmentPurge: job('startChatAttachmentPurge'),
     startChatReconciler: job('startChatReconciler'),
     startRosterBumpPrune: job('startRosterBumpPrune'),
+    startSponsorSweeps: () => {
+      ran.push('startSponsorSweeps')
+      return child('sponsorSweeps', ran)
+    },
     startPushSender: () => {
       ran.push('startPushSender')
       return child('pushSender', ran)
@@ -77,6 +81,7 @@ describe('startBackgroundJobs', function () {
       'startChatAttachmentPurge',
       'startChatReconciler',
       'startRosterBumpPrune',
+      'startSponsorSweeps',
       'startPushSender',
       'startStatsBuilder'
     ])
@@ -86,6 +91,7 @@ describe('startBackgroundJobs', function () {
     expect(ran).deep.equals([
       'stop rsvpReminders SIGTERM',
       'stop umpireDigests SIGTERM',
+      'stop sponsorSweeps SIGTERM',
       'stop pushSender SIGTERM',
       'stop statsBuilder SIGTERM'
     ])
@@ -104,6 +110,7 @@ describe('startBackgroundJobs', function () {
       'startChatAttachmentPurge',
       'startChatReconciler',
       'startRosterBumpPrune',
+      'startSponsorSweeps',
       'startPushSender',
       'startStatsBuilder'
     ])
@@ -125,6 +132,24 @@ describe('startBackgroundJobs', function () {
         expect(ran.indexOf('startUmpireDigests')).equals(
           ran.indexOf('startRsvpReminders') + 1
         )
+    }
+  })
+
+  it('starts the sponsor sweeps once, only when on, and stops them with the children', async function () {
+    for (const enabled of [true, false]) {
+      const ran: string[] = []
+      const children = startBackgroundJobs(
+        enabled,
+        recordingJobs(ran, false),
+        OFF,
+        () => undefined
+      )
+      expect(ran.filter(name => name === 'startSponsorSweeps').length).equals(
+        enabled ? 1 : 0
+      )
+      ran.length = 0
+      await children.stop('SIGTERM')
+      expect(ran.includes('stop sponsorSweeps SIGTERM')).equals(enabled)
     }
   })
 

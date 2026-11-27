@@ -1,7 +1,10 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { defaultScoreboardSettings } from '../../../common/nodeSettings'
+import {
+  defaultScoreboardSettings,
+  defaultSponsorSettings
+} from '../../../common/nodeSettings'
 import { BOARD_INSET } from '../scoreboardOverlay/layouts'
 import {
   LINE_BOX_HEIGHT,
@@ -20,6 +23,7 @@ import {
   GAP,
   playerLayout,
   type PlayerLayoutInput,
+  reelHasPlace,
   topOfAngles,
   videoBlock
 } from './playerLayout'
@@ -546,5 +550,300 @@ describe('the block of videos the controls go on (videoBlock)', function () {
     const inner = { x: 200, y: 50, w: 300, h: 200 }
     expect(controlBlock(inner, safe)).deep.equals(inner)
     expect(controlBlock({ x: 900, y: 0, w: 10, h: 10 }, safe).w).equals(0)
+  })
+})
+
+/** U23: where a sponsor reel plays in each layout, and what it hides. */
+describe('the sponsor reel in each layout (U23)', function () {
+  const REELS = {
+    active: true,
+    aspect: 16 / 9,
+    placements: defaultSponsorSettings.reel,
+    any: true
+  }
+  const idle = { ...REELS, active: false }
+  const third = (n: number): number => n / 3
+  const aspectOf = (rect: Rect): number => rect.w / rect.h
+  const reelOf = (laid: ReturnType<typeof playerLayout>): Rect => {
+    expect(laid.reel).not.equals(null)
+    near(aspectOf(laid.reel!), 16 / 9)
+    return laid.reel!
+  }
+
+  it('leaves every layout as it was with no reels, and with reels and none playing but for two and three sideways', function () {
+    for (const where of [PORTRAIT, LANDSCAPE])
+      for (let count = 1; count <= 4; count++)
+        for (const zoomed of [null, 0]) {
+          const plain = layout(where, { count, zoomed })
+          expect(plain.reel).equals(null)
+          expect(layout(where, { count, zoomed, reel: null })).deep.equals(
+            plain
+          )
+          const waiting = layout(where, { count, zoomed, reel: idle })
+          expect(waiting.reel).equals(null)
+          const moves =
+            where === LANDSCAPE &&
+            zoomed == null &&
+            (count === 2 || count === 3)
+          if (!moves) expect(waiting).deep.equals(plain)
+        }
+    // Reels and nothing else for three sideways still keep the quadrant.
+    expect(
+      layout(LANDSCAPE, { count: 3, board: null, line: false, reel: idle })
+        .boardCell
+    ).equals(true)
+    expect(
+      layout(LANDSCAPE, { count: 3, board: null, line: false }).boardCell
+    ).equals(false)
+  })
+
+  it('plays below one or two upright angles, centred, the board and box staying', function () {
+    for (const count of [1, 2]) {
+      const plain = layout(PORTRAIT, { count })
+      const laid = layout(PORTRAIT, { count, reel: REELS })
+      const reel = reelOf(laid)
+      const bottom = Math.max(...laid.tiles.map(tile => tile.y + tile.h))
+      near(reel.y, bottom + GAP)
+      near(reel.x + reel.w / 2, PORTRAIT.screen.width / 2)
+      expect(reel.w).at.most(third(PORTRAIT.screen.width) + 1e-6)
+      expect(laid.board).deep.equals(plain.board)
+      expect(laid.box).deep.equals(plain.box)
+      inside(reel, PORTRAIT.safe)
+    }
+  })
+
+  it('takes the board’s place upright with three and four angles, the board hidden', function () {
+    for (const count of [3, 4]) {
+      const plain = layout(PORTRAIT, { count })
+      const laid = layout(PORTRAIT, { count, reel: REELS })
+      const reel = reelOf(laid)
+      expect(laid.board).equals(null)
+      near(reel.x, plain.board!.x)
+      near(reel.y, plain.board!.y)
+      inside(reel, plain.board!)
+      expect(laid.tiles).deep.equals(plain.tiles)
+    }
+    // With no board, the box's place, and with neither, the first angle's.
+    const noBoard = layout(PORTRAIT, { count: 3, board: null, reel: REELS })
+    inside(reelOf(noBoard), layout(PORTRAIT, { count: 3, board: null }).box!)
+    const bare = layout(PORTRAIT, {
+      count: 4,
+      board: null,
+      line: false,
+      reel: REELS
+    })
+    inside(reelOf(bare), bare.tiles[0])
+  })
+
+  it('takes the board’s place on one angle sideways and on a zoomed one, the board hidden', function () {
+    for (const options of [
+      { count: 1 },
+      { count: 3, zoomed: 1 },
+      { count: 4, zoomed: 2 }
+    ]) {
+      const laid = layout(LANDSCAPE, { ...options, reel: REELS })
+      const reel = reelOf(laid)
+      const picture = laid.tiles[options.zoomed ?? 0]
+      expect(laid.board).equals(null)
+      near(reel.x, picture.x + SETTINGS.single.x * picture.w)
+      near(reel.y, picture.y + SETTINGS.single.y * picture.h)
+      inside(reel, picture)
+      expect(reel.w).at.most(third(LANDSCAPE.screen.width) + 1e-6)
+      expect(reel.h).at.most(third(LANDSCAPE.screen.height) + 1e-6)
+    }
+    // The node's board placement unknown yet: the default one's place.
+    const unknown = layout(LANDSCAPE, {
+      count: 1,
+      settings: null,
+      reel: REELS
+    })
+    near(
+      reelOf(unknown).x,
+      unknown.tiles[0].x +
+        defaultScoreboardSettings.single.x * unknown.tiles[0].w
+    )
+  })
+
+  it('keeps two angles sideways to the top with reels, the board above the box in the left half of the band and the reel under the right angle', function () {
+    const plain = layout(LANDSCAPE, { count: 2 })
+    expect(plain.tiles[0].y).greaterThan(0)
+    for (const active of [false, true]) {
+      const laid = layout(LANDSCAPE, {
+        count: 2,
+        reel: { ...REELS, active }
+      })
+      const bottom = Math.max(...laid.tiles.map(tile => tile.y + tile.h))
+      expect(laid.tiles[0].y).equals(0)
+      const half = LANDSCAPE.screen.width / 2
+      expect(laid.board).not.equals(null)
+      expect(laid.box).not.equals(null)
+      expect(laid.board!.y).greaterThan(bottom)
+      expect(laid.box!.y).at.least(laid.board!.y + laid.board!.h)
+      expect(laid.board!.x + laid.board!.w).at.most(half)
+      expect(laid.box!.x + laid.box!.w).at.most(half)
+      inside(laid.board!, LANDSCAPE.safe)
+      inside(laid.box!, LANDSCAPE.safe)
+      expect(intersects(laid.board!, laid.box!)).equals(false)
+      if (!active) {
+        expect(laid.reel).equals(null)
+        continue
+      }
+      const reel = reelOf(laid)
+      const right = laid.tiles[1]
+      near(reel.y, bottom + GAP)
+      near(reel.x + reel.w / 2, right.x + right.w / 2)
+      expect(reel.x).at.least(right.x)
+      expect(intersects(reel, laid.board!)).equals(false)
+      expect(intersects(reel, laid.box!)).equals(false)
+    }
+    // The board alone, and the box alone, in the band's left half.
+    const board = layout(LANDSCAPE, { count: 2, line: false, reel: REELS })
+    expect(board.box).equals(null)
+    expect(board.board).not.equals(null)
+    const box = layout(LANDSCAPE, { count: 2, board: null, reel: REELS })
+    expect(box.board).equals(null)
+    expect(box.box!.x + box.box!.w).at.most(LANDSCAPE.screen.width / 2)
+    const neither = layout(LANDSCAPE, {
+      count: 2,
+      board: null,
+      line: false,
+      reel: REELS
+    })
+    expect([neither.board, neither.box]).deep.equals([null, null])
+    reelOf(neither)
+  })
+
+  it('has no place for a reel where two angles fill the window’s height, or three sideways leave no quadrant, and says so (reelHasPlace)', function () {
+    const wide = {
+      screen: { width: 3000, height: 400 },
+      safe: { x: 0, y: 0, w: 3000, h: 400 }
+    }
+    const input = (
+      where: typeof wide,
+      options: Partial<PlayerLayoutInput>
+    ): PlayerLayoutInput => ({
+      ...where,
+      count: 2,
+      aspect: 16 / 9,
+      landscape: where.screen.width > where.screen.height,
+      settings: SETTINGS,
+      board: BOARD,
+      line: true,
+      ...options
+    })
+    expect(layout(wide, { count: 2, reel: REELS }).reel).equals(null)
+    expect(reelHasPlace(input(wide, { count: 2, reel: idle }))).equals(false)
+    // Three sideways with no reels in the track keep no quadrant for one.
+    expect(
+      layout(LANDSCAPE, {
+        count: 3,
+        board: null,
+        line: false,
+        reel: { ...REELS, any: false }
+      }).reel
+    ).equals(null)
+    expect(
+      reelHasPlace(
+        input(LANDSCAPE, {
+          count: 3,
+          board: null,
+          line: false,
+          reel: { ...idle, any: false }
+        })
+      )
+    ).equals(false)
+    // Where a reel has its place, it is asked while none plays yet.
+    for (const count of [1, 2, 3, 4])
+      for (const where of [PORTRAIT, LANDSCAPE])
+        expect(reelHasPlace(input(where, { count, reel: idle }))).equals(true)
+    expect(reelHasPlace(input(LANDSCAPE, { count: 2, reel: null }))).equals(
+      false
+    )
+  })
+
+  it('plays in the top-left quadrant of three sideways, the board hidden and the box hidden only where the reel covers it', function () {
+    const laid = layout(LANDSCAPE, { count: 3, reel: REELS })
+    const reel = reelOf(laid)
+    const cell = {
+      x: laid.tiles[1].x,
+      y: laid.tiles[0].y,
+      w: laid.tiles[1].w,
+      h: laid.tiles[0].h
+    }
+    near(reel.x, cell.x)
+    near(reel.y, cell.y)
+    inside(reel, cell)
+    expect(laid.board).equals(null)
+    const plain = layout(LANDSCAPE, { count: 3 })
+    expect(intersects(plain.box!, reel)).equals(true)
+    expect(laid.box).equals(null)
+    // A small reel leaves the box where it was.
+    const small = layout(LANDSCAPE, {
+      count: 3,
+      reel: {
+        ...REELS,
+        placements: {
+          ...REELS.placements,
+          landscape3: { maxWidth: 0.05, maxHeight: 0.05 }
+        }
+      }
+    })
+    expect(small.box).deep.equals(plain.box)
+    // Reels with nothing else still leave the quadrant to the reel.
+    reelOf(
+      layout(LANDSCAPE, { count: 3, board: null, line: false, reel: REELS })
+    )
+  })
+
+  it('takes the board’s place over the top-left angle of four sideways, the board hidden', function () {
+    const plain = layout(LANDSCAPE, { count: 4 })
+    const laid = layout(LANDSCAPE, { count: 4, reel: REELS })
+    const reel = reelOf(laid)
+    const corner = laid.tiles[0]
+    expect([laid.board, laid.boardClip]).deep.equals([null, null])
+    near(reel.x, corner.x + SETTINGS.landscape.x * corner.w)
+    near(reel.y, corner.y + SETTINGS.landscape.y * corner.h)
+    inside(reel, corner)
+    expect(laid.tiles).deep.equals(plain.tiles)
+  })
+
+  it('places a reel by the node’s box for its layout, and none in a space with no room', function () {
+    const laid = layout(LANDSCAPE, {
+      count: 1,
+      reel: {
+        ...REELS,
+        placements: {
+          ...REELS.placements,
+          landscape1: { maxWidth: 0.25, maxHeight: 1 }
+        }
+      }
+    })
+    near(reelOf(laid).w, LANDSCAPE.screen.width / 4)
+    // Upright and two angles filling the screen leave no room below.
+    const full = playerLayout({
+      screen: { width: 400, height: 460 },
+      safe: { x: 0, y: 0, w: 400, h: 460 },
+      count: 2,
+      aspect: 16 / 9,
+      landscape: false,
+      settings: SETTINGS,
+      board: BOARD,
+      line: true,
+      reel: REELS
+    })
+    expect(full.reel).equals(null)
+    expect(full.board).not.equals(null)
+    expect(
+      playerLayout({
+        ...PORTRAIT,
+        count: 0,
+        aspect: 1,
+        landscape: false,
+        settings: null,
+        board: null,
+        line: false,
+        reel: REELS
+      }).reel
+    ).equals(null)
   })
 })

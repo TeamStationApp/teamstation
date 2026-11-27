@@ -138,6 +138,34 @@ export default defineE2e({
       const scroll = async (
         element: { css: string } | { text: string }
       ): Promise<void> => {
+        // The card is longer than ten scrolls since the sponsor settings:
+        // bring the target near first, once the card has drawn it. (No `?.`
+        // or `??` in here: the spec's compiler turns them into helpers the
+        // page does not have.)
+        await page.waitForFunction(
+          (css: string | null, text: string | null) => {
+            let target: Element | null = null
+            if (css != null) target = document.querySelector(css)
+            else if (text != null) {
+              const pattern = new RegExp(text)
+              const nodes = document.querySelectorAll('*')
+              for (let i = 0; i < nodes.length && target == null; i++) {
+                const node = nodes[i]
+                if (
+                  node.children.length === 0 &&
+                  pattern.test(String(node.textContent).trim())
+                )
+                  target = node
+              }
+            }
+            if (target == null) return false
+            target.scrollIntoView({ block: 'center' })
+            return true
+          },
+          { timeout: 60000 },
+          'css' in element ? element.css : null,
+          'text' in element ? element.text : null
+        )
         const above =
           'css' in element &&
           (await page.evaluate(css => {
@@ -151,18 +179,26 @@ export default defineE2e({
           timeout: 60000
         })
       }
-      const edit = async (value: string, previous: string): Promise<void> => {
-        await m.tapOn({ css: 'input' + byLabel(label) })
-        if (previous.length > 0) {
-          await m.pressKey({ key: 'End' })
-          await m.eraseText({ characters: previous.length })
-        }
-        if (value.length > 0) await m.inputText({ text: value })
-        const typed = await page.$eval(
-          'input' + byLabel(label),
-          field => (field as HTMLInputElement).value
-        )
-        expect(typed, 'Typed link: ' + typed).equals(value)
+      const field = 'input' + byLabel(label)
+      const held = async (): Promise<string> =>
+        await page.$eval(field, one => (one as HTMLInputElement).value)
+      const edit = async (value: string): Promise<void> => {
+        await m.tapOn({ css: field })
+        // The whole link selected and deleted, then typed, until the field
+        // holds it: a key at a time, erasing and typing dropped keys on a
+        // busy stack.
+        await eventually(async () => {
+          if ((await held()).length > 0) {
+            await page.$eval(field, one => {
+              ;(one as HTMLInputElement).select()
+            })
+            await m.pressKey({ key: 'Backspace' })
+          }
+          expect(await held(), 'Erased link').equals('')
+          if (value.length > 0) await m.inputText({ text: value })
+          const typed = await held()
+          expect(typed, 'Typed link: ' + typed).equals(value)
+        }, 30000)
         await m.tapOn({ text: '^Use$' })
       }
       const save = async (expected: string): Promise<void> => {
@@ -186,7 +222,7 @@ export default defineE2e({
         await m.takeScreenshot({ path: ctx.artifact('admin-links-after.png') })
         await m.tapOn(row)
         const invalid = 'https://example.test/app/id123'
-        await edit(invalid, '')
+        await edit(invalid)
         await m.assertVisible({ text: 'iOS App Store link must be.*' })
         await m.takeScreenshot({
           path: ctx.artifact('admin-validation-after.png')
@@ -194,7 +230,7 @@ export default defineE2e({
         expect((await admin.nodeSettings()).distribution.iosAppStoreUrl).equals(
           ''
         )
-        await edit(listing, invalid)
+        await edit(listing)
         await save(listing)
         await m.openLink({ link: node })
         await scroll(row)
@@ -244,13 +280,13 @@ export default defineE2e({
             expected == null ? 0 : 1
           )
         }
-        for (const [old, value, id] of [
-          [listing, replacement, '001234'],
-          [replacement, '', null]
+        for (const [value, id] of [
+          [replacement, '001234'],
+          ['', null]
         ] as const) {
           await scroll(row)
           await m.tapOn(row)
-          await edit(value, old)
+          await edit(value)
           await save(value)
           await visit(phone, address, id, 1)
         }

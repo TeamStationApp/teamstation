@@ -1,14 +1,16 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Save and restore prototype methods without invoking them. */
 // The bundler loads the separate TV entry without extending the app tsconfig root.
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { AppRegistry, BackHandler, NativeModules } from 'react-native'
 
 import { asSession, asVideoGame, TeamStationClient } from '../../common/api'
 import type { BuildInfo } from '../../common/distribution'
+import { AnalyticsClient } from '../../common/observability/analyticsClient'
 import { userIdOfGumbo } from '../../common/userId'
+import { memoryQueueStorage } from './tvAnalyticsStorage'
 import { TvApp, tvLoginScale, tvLoginServer } from './TvApp'
 
 require('../../../appletv/index.js')
@@ -28,6 +30,34 @@ const original = {
   out: TeamStationClient.prototype.signOut,
   store: NativeModules.TVSession
 }
+/** The analytics batches the TV posted, and with what authorization. */
+const posted: Array<{
+  url: string
+  authorization: string | undefined
+  rows: Array<{ E: string; P: Record<string, unknown> }>
+}> = []
+const realFetch = globalThis.fetch
+before(() => {
+  // The TV's analytics, answered here; anything else goes where it went.
+  globalThis.fetch = (async (url: string, options?: RequestInit) => {
+    if (String(url).endsWith('/analytics/events')) {
+      posted.push({
+        url: String(url),
+        authorization: (options?.headers as Record<string, string> | undefined)
+          ?.authorization,
+        rows: JSON.parse(options?.body as string) as Array<{
+          E: string
+          P: Record<string, unknown>
+        }>
+      })
+      return { status: 202 }
+    }
+    return await realFetch(url, options)
+  }) as typeof fetch
+})
+after(() => {
+  globalThis.fetch = realFetch
+})
 const pause = async (ms = 20): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -196,6 +226,94 @@ describe('TV app presentation', () => {
         window.dispatchEvent(new window.Event('resize'))
       })
     }
+  })
+  describe('analytics', () => {
+    const identify = Object.getOwnPropertyDescriptor(
+      AnalyticsClient.prototype,
+      'identify'
+    )!
+    afterEach(() => {
+      Object.defineProperty(AnalyticsClient.prototype, 'identify', identify)
+      posted.length = 0
+    })
+    /** Each `identify` the TV's client is given, and the client. */
+    const watchIdentify = (): {
+      calls: Array<[string | undefined, string | undefined]>
+      client: () => AnalyticsClient | undefined
+    } => {
+      const calls: Array<[string | undefined, string | undefined]> = []
+      let client: AnalyticsClient | undefined
+      Object.defineProperty(AnalyticsClient.prototype, 'identify', {
+        configurable: true,
+        writable: true,
+        value(this: AnalyticsClient, user?: string, token?: string) {
+          // eslint-disable-next-line @typescript-eslint/no-this-alias -- the spy keeps the client it identified
+          client = this
+          calls.push([user, token])
+          ;(identify.value as AnalyticsClient['identify']).call(
+            this,
+            user,
+            token
+          )
+        }
+      })
+      return { calls, client: () => client }
+    }
+
+    it('mounts the provider and identifies the viewer on sign-in, and nobody on sign-out', async () => {
+      const { calls, client } = watchIdentify()
+      setup()
+      await render()
+      expect(client()).not.equals(undefined)
+      expect(calls.at(-1)).deep.equals([undefined, undefined])
+      TeamStationClient.prototype.claimTvLogin = async () => session
+      await act(async () => {
+        await pause(3200)
+      })
+      expect(document.body.textContent).contains('Welcome, Babe')
+      expect(calls.at(-1)).deep.equals([session.user.id, 'fixture-session'])
+      await press('Sign out')
+      expect(document.body.textContent).contains('ABCD–EFGH')
+      expect(calls.at(-1)).deep.equals([undefined, undefined])
+    })
+
+    it('posts a reel view from memory, with the viewer’s token, and keeps nothing in localStorage', async () => {
+      const { client } = watchIdentify()
+      window.localStorage.clear()
+      setup(JSON.stringify({ origin: 'https://example.test/api/v1', session }))
+      await render()
+      expect(document.body.textContent).contains('Welcome, Babe')
+      await act(async () => {
+        await client()!.emit('sponsor_reel_viewed', {
+          rp: 'srp_place1',
+          rr: 'srl_reel1',
+          gm: 'gam_game1',
+          lg: 'lea_al',
+          at: 1764000000000,
+          lv: false
+        })
+        await client()!.flush()
+      })
+      const batch = posted.find(post =>
+        post.rows.some(row => row.E === 'sponsor_reel_viewed')
+      )!
+      expect(batch.url).equals('https://example.test/api/v1/analytics/events')
+      expect(batch.authorization).equals('Bearer fixture-session')
+      expect(
+        Object.keys(window.localStorage).filter(key =>
+          key.startsWith('analytics-v1:')
+        )
+      ).deep.equals([])
+    })
+  })
+  it('keeps its analytics in a store of its own per call', async () => {
+    const one = memoryQueueStorage()
+    const two = memoryQueueStorage()
+    expect(await one.getItem('analytics-v1:x')).equals(null)
+    await one.setItem('analytics-v1:x', 'first')
+    await one.setItem('analytics-v1:x', 'second')
+    expect(await one.getItem('analytics-v1:x')).equals('second')
+    expect(await two.getItem('analytics-v1:x')).equals(null)
   })
   it('registers the native entry point', () => {
     expect(AppRegistry.getAppKeys()).contains('TeamStationTV')

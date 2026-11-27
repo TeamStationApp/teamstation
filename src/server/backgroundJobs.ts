@@ -25,6 +25,11 @@ export interface BackgroundJobs<Child extends Stoppable> {
   startChatAttachmentPurge: () => void
   startChatReconciler: () => void
   startRosterBumpPrune: () => void
+  /**
+   * The sponsor sweeps (`sponsors/sweeps.ts`), once a node: answers how to
+   * stop their timers and close their own scoreboard store's connection.
+   */
+  startSponsorSweeps: () => Stoppable
   /** Forks and supervises the push sender (`push/sender/start.ts`). */
   startPushSender: () => Child
   startStatsBuilder: () => Child
@@ -33,7 +38,8 @@ export interface BackgroundJobs<Child extends Stoppable> {
 /**
  * Starts this path's jobs where `backgroundJobs` is on, and none of them where
  * it is off. Answers what to stop on the way down, the reminder sweep, the
- * umpire digest sweep, the push sender and the stats builder at once, or `off` in its place. Each job drains on start, so
+ * umpire digest sweep, the sponsor sweeps, the push sender and the stats
+ * builder at once, or `off` in its place. Each job drains on start, so
  * whatever a node missed while it was away waits for it to return.
  */
 export function startBackgroundJobs<Child extends Stoppable>(
@@ -59,6 +65,7 @@ export function startBackgroundJobs<Child extends Stoppable>(
   const children = [
     reminders,
     digests,
+    jobs.startSponsorSweeps(),
     jobs.startPushSender(),
     jobs.startStatsBuilder()
   ]

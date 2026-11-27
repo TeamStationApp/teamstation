@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  ANONYMOUS_EVENTS,
   APPS,
   bytes,
   EVENT_RULES,
@@ -343,5 +344,58 @@ describe('playback telemetry contract', () => {
           NOW
         ).P.rp
       ).equals(route)
+  })
+})
+
+describe('sponsor analytics contract', () => {
+  const DEVICE = '0b6e1c2a-5d4f-4a3b-9c8d-7e6f5a4b3c2d'
+  const row = { er: 'ser_row1', lg: 'lea_al', dv: DEVICE }
+  const reel = {
+    rp: 'srp_place1',
+    rr: 'srl_reel1',
+    gm: 'gam_game1',
+    lg: 'lea_al',
+    at: 1764000000000,
+    lv: true
+  }
+  it('parses both row events anonymously, with the device', () => {
+    for (const E of ['sponsor_row_viewed', 'sponsor_row_tapped'] as const) {
+      expect(ANONYMOUS_EVENTS.has(E), E).equals(true)
+      expect(parseEvent(sample(E, row), NOW).P).deep.equals(row)
+    }
+  })
+  it('keeps the reel view signed in, and takes no device on it', () => {
+    expect(ANONYMOUS_EVENTS.has('sponsor_reel_viewed')).equals(false)
+    expect(parseEvent(sample('sponsor_reel_viewed', reel), NOW).P).deep.equals(
+      reel
+    )
+    expect(() =>
+      parseEvent(sample('sponsor_reel_viewed', { ...reel, dv: DEVICE }), NOW)
+    ).throws('Invalid event property')
+  })
+  it('takes only sponsor ids where a sponsor id goes', () => {
+    for (const bad of ['usr_x', 'srl_', 'slg_logo1', 'srl_a b', 7])
+      expect(
+        () => parseEvent(sample('sponsor_row_tapped', { er: bad }), NOW),
+        String(bad)
+      ).throws('Invalid event property')
+    for (const bad of ['usr_x', 'gam_game1'])
+      expect(() =>
+        parseEvent(sample('sponsor_reel_viewed', { ...reel, rp: bad }), NOW)
+      ).throws('Invalid event property')
+    expect(() =>
+      parseEvent(sample('sponsor_row_viewed', { ...row, dv: 'device' }), NOW)
+    ).throws('Invalid event property')
+    expect(() =>
+      parseEvent(sample('sponsor_reel_viewed', { ...reel, lg: 'srl_x' }), NOW)
+    ).throws('Invalid event property')
+  })
+  it('maps each sponsor property to the type its rule needs', () => {
+    for (const key of ['rp', 'rr', 'er', 'gm', 'lg', 'dv'])
+      expect(PROPERTY_TYPES[key], key).equals('keyword')
+    expect(PROPERTY_TYPES.at).equals('double')
+    expect(PROPERTY_TYPES.lv).equals('boolean')
+    // The playback event's numeric `rl` keeps its mapping; the reel is `rr`.
+    expect(PROPERTY_TYPES.rl).equals('double')
   })
 })

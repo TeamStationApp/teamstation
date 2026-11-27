@@ -41,6 +41,7 @@ class FakePlayer implements VideoHandle {
   duration = Number.POSITIVE_INFINITY
   paused = true
   muted = true
+  volume = 1
   playbackRate = 1
   readyState = 0
   videoWidth = 1920

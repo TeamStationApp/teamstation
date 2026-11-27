@@ -66,6 +66,11 @@ export type CreationRoute =
         | 'umpireLevels'
         | 'umpireRequirements'
         | 'umpireNotifications'
+        /** A league's Sponsor features screens, for its id. */
+        | 'sponsorFeatures'
+        | 'sponsorLogos'
+        | 'sponsorReels'
+        | 'sponsorEventStream'
       id: string
     }
   | { name: 'umpireRequirementEdit'; id: string; seasonIds: string[] }
@@ -148,6 +153,10 @@ export function isCreationRoute(route: {
     'umpireRequirementEdit',
     'umpireNotifications',
     'umpireSchedule',
+    'sponsorFeatures',
+    'sponsorLogos',
+    'sponsorReels',
+    'sponsorEventStream',
     'nodeAdministration',
     'userManagement',
     'adminAccount',
@@ -411,6 +420,14 @@ export function parseRoute(path: string, search = ''): Route {
         : { name: 'umpireRequirements', id }
     if (parts[3] === 'umpire-notifications')
       return { name: 'umpireNotifications', id }
+    if (parts[3] === 'sponsors' && (parts[4] ?? '') === '')
+      return { name: 'sponsorFeatures', id }
+    if (parts[3] === 'sponsors' && parts[4] === 'logos')
+      return { name: 'sponsorLogos', id }
+    if (parts[3] === 'sponsors' && parts[4] === 'reels')
+      return { name: 'sponsorReels', id }
+    if (parts[3] === 'sponsors' && parts[4] === 'event-stream')
+      return { name: 'sponsorEventStream', id }
   }
   if (parts[0] === 'umpires') {
     const id = decodeURIComponent(parts[1] ?? '')
@@ -817,6 +834,14 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case 'leagueUmpires':
       return `/groups/league/${encodeURIComponent(route.id)}/umpires`
+    case 'sponsorFeatures':
+      return `/groups/league/${encodeURIComponent(route.id)}/sponsors`
+    case 'sponsorLogos':
+      return `/groups/league/${encodeURIComponent(route.id)}/sponsors/logos`
+    case 'sponsorReels':
+      return `/groups/league/${encodeURIComponent(route.id)}/sponsors/reels`
+    case 'sponsorEventStream':
+      return `/groups/league/${encodeURIComponent(route.id)}/sponsors/event-stream`
     case 'umpireNoteTypes':
       return `/groups/league/${encodeURIComponent(route.id)}/umpire-note-types`
     case 'umpireTypes':

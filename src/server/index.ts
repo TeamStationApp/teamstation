@@ -102,6 +102,7 @@ import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
 import { gamePlanRoutes } from './routes/gamePlans'
+import { eachGameWritten } from './routes/gameWritten'
 import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
@@ -116,6 +117,7 @@ import { meRoutes } from './routes/me'
 import { mediaAuthRoute, mediaRoutes } from './routes/media'
 import { narrationRoutes } from './routes/narrations'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
+import { nodeSampleVideoRoutes } from './routes/nodeSampleVideo'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
@@ -127,6 +129,7 @@ import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
+import { sponsorRoutes } from './routes/sponsors'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
@@ -157,6 +160,8 @@ import {
 import { bindUpgrades } from './socket/bindUpgrades'
 import { attachGameSocket } from './socket/gameSocket'
 import { supportsUpgrade } from './socket/upgradePaths'
+import { halfInningHook } from './sponsors/reels'
+import { startSponsorSweeps } from './sponsors/sweeps'
 import {
   exitAfterBuilder,
   forceStop,
@@ -543,6 +548,14 @@ function jobsOn(
         console.log(message)
       })
     },
+    startSponsorSweeps: () =>
+      startSponsorSweeps({
+        db,
+        space: serverConfig.space,
+        redis: serverConfig.redis,
+        databaseUrl: serverConfig.databaseUrl,
+        log: say
+      }),
     // The only process that reads the push keys and sends.
     startPushSender: () =>
       supervise({
@@ -735,6 +748,12 @@ function runWorker(): void {
     databaseUrl: serverConfig.databaseUrl,
     log
   })
+  // After every committed write to a game: its board and timeline notice,
+  // then its half-inning ends, which the sponsor reels are placed after.
+  const onGameWritten = eachGameWritten(
+    scoreboard.onGameWritten,
+    halfInningHook({ db, log })
+  )
   // Team rosters' cores, read through on every roster read outside a write,
   // and the game socket's frames of a live post's edits; without Valkey they
   // are read from Postgres, as before.
@@ -897,7 +916,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     gameApprovalRoutes(db, undefined, {
-      onGameWritten: scoreboard.onGameWritten
+      onGameWritten
     })
   )
   app.use('/api/v1', umpireRoutes(db, mediaContext, { push: pushQueue }))
@@ -952,15 +971,24 @@ function runWorker(): void {
       uploadsDir: uploadsDir()
     })
   )
+  // A sponsor upload's body is raw bytes, read by the route's own
+  // `express.raw` once the caller is known to administer the league.
   app.use(
     '/api/v1',
-    scheduleRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+    sponsorRoutes(db, mediaContext, { uploadsDir: uploadsDir() })
   )
+  // Its body streams to a file, counted up to 120 MB, once the caller is a
+  // node administrator.
+  app.use(
+    '/api/v1',
+    nodeSampleVideoRoutes(db, mediaContext, { uploadsDir: uploadsDir() })
+  )
+  app.use('/api/v1', scheduleRoutes(db, { onGameWritten }))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
   app.use(
     '/api/v1',
     eventRoutes(db, {
-      onGameWritten: scoreboard.onGameWritten,
+      onGameWritten,
       cache: rosterCache,
       minimumProtocol: serverConfig.gameSocketMinimumProtocol
     })
@@ -968,7 +996,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     lineupRoutes(db, {
-      onGameWritten: scoreboard.onGameWritten,
+      onGameWritten,
       cache: rosterCache
     })
   )

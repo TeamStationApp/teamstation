@@ -208,6 +208,17 @@ describe('the public Safari product and its stored link', () => {
       transaction: () => ({
         execute: async (run: (trx: unknown) => Promise<void>) => {
           await run({
+            // The sample key a save putting the default clip back replaces.
+            selectFrom: () => ({
+              select: () => ({
+                where: (_column: string, _op: string, key: string) => ({
+                  forUpdate: () => ({
+                    executeTakeFirst: async () =>
+                      held.has(key) ? { value: held.get(key) } : undefined
+                  })
+                })
+              })
+            }),
             insertInto: () => ({
               values: (row: {
                 key: string

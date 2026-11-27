@@ -16,10 +16,15 @@ import { Path, Rect, Svg } from 'react-native-svg'
 
 import { TeamStationClient } from '../../common/api'
 import { type BuildInfo, buildInfo } from '../../common/distribution'
+import {
+  AnalyticsProvider,
+  useAnalytics
+} from '../observability/AnalyticsContext'
 import { ScopedThemeProvider } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
 import { PlaybackProbe } from './PlaybackProbe'
 import { TvSessionController, type TvSessionStore } from './session'
+import { memoryQueueStorage } from './tvAnalyticsStorage'
 import { TvBackdrop, TvBrand } from './TvBrand'
 import { TvBrowser, type TvPlayRequest } from './TvBrowser'
 import { TvButton } from './TvButton'
@@ -74,17 +79,37 @@ export function TvQr({ value }: { value: string }): React.ReactElement {
     </View>
   )
 }
-export function TvApp({
-  apiBaseUrl = 'https://app.teamstation.app/api/v1',
-  appOrigin,
-  probeUrls,
-  info = buildInfo
-}: {
+export interface TvAppProps {
   apiBaseUrl?: string
   appOrigin?: string
   probeUrls?: string
   info?: BuildInfo
-}): React.ReactElement {
+}
+
+/**
+ * The TV app: its screens under the analytics provider the phone app uses,
+ * at the same endpoint, keeping its unsent events in memory
+ * (`memoryQueueStorage`), since the TV has no AsyncStorage.
+ */
+export function TvApp(props: TvAppProps): React.ReactElement {
+  const { apiBaseUrl = 'https://app.teamstation.app/api/v1' } = props
+  const [storage] = useState(memoryQueueStorage)
+  return (
+    <AnalyticsProvider
+      endpoint={apiBaseUrl + '/analytics/events'}
+      storage={storage}
+    >
+      <TvScreens {...props} />
+    </AnalyticsProvider>
+  )
+}
+
+function TvScreens({
+  apiBaseUrl = 'https://app.teamstation.app/api/v1',
+  appOrigin,
+  probeUrls,
+  info = buildInfo
+}: TvAppProps): React.ReactElement {
   const { width, height } = useWindowDimensions()
   const client = useMemo(
     () => new TeamStationClient({ baseUrl: apiBaseUrl }),
@@ -101,6 +126,21 @@ export function TvApp({
     [client, apiBaseUrl, appOrigin]
   )
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot)
+  // Events carry the signed-in viewer, as the phone app's do: identified on
+  // each change of the session, and anonymous again on sign-out.
+  const analytics = useAnalytics()
+  useEffect(() => {
+    if (analytics == null) return
+    const identify = (): void => {
+      const now = controller.snapshot()
+      analytics.identify(
+        now.phase === 'ready' ? now.session?.user.id : undefined,
+        now.phase === 'ready' ? client.token : undefined
+      )
+    }
+    identify()
+    return controller.subscribe(identify)
+  }, [analytics, client, controller])
   const [now, setNow] = useState(Date.now())
   const [playing, setPlaying] = useState<TvPlayRequest | null>(null)
   useEffect(() => {

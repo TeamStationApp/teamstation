@@ -156,6 +156,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       paused={handle.props.paused}
       muted={props.deferGridRelease === true || muted || handle.props.muted}
       rate={props.deferGridRelease === true ? SLOW_RATE : handle.props.rate}
+      volume={handle.props.volume ?? 1}
       {...(Platform.OS === 'ios' && props.gridTransport === true
         ? { teamstationGridCrawlRate: SLOW_RATE }
         : {})}

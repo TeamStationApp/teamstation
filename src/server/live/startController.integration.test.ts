@@ -8,8 +8,11 @@ import { after, afterEach, before, describe, it } from 'mocha'
 
 import { type LiveFixture, liveFixture } from '../../test/liveFixture'
 import { asServerConfig, type LiveSettings } from '../serverConfig'
+import { assignGameLogos } from '../sponsors/logos'
 import {
+  beganPublishing,
   drainLiveController,
+  type LiveControllerOptions,
   liveTimersRunningForTest,
   liveVideoDir,
   queueLiveWorkForTest,
@@ -221,5 +224,144 @@ describe('starting the live controller', function () {
     stopLiveController()
     expect(liveTimersRunningForTest()).equals(false)
     expect(await accepts(port)).equals(false)
+  })
+
+  describe('U16 the first publish gives the game its sponsor logo', function () {
+    const leagueId = 'lea_publish_logo'
+    const options = (
+      extra: Partial<LiveControllerOptions> = {}
+    ): LiveControllerOptions => ({
+      db: fixture!.db,
+      live: settings(0),
+      ffmpegPath: '/does/not/matter',
+      mediaRoot,
+      workDir: mediaRoot,
+      sessionSecret: SECRET,
+      log: line => lines.push(line),
+      freeBytes: async () => Number.MAX_SAFE_INTEGER,
+      ...extra
+    })
+
+    before(async function () {
+      const db = fixture!.db
+      await db
+        .insertInto('leagues')
+        .values({ id: leagueId, name: 'American League' })
+        .execute()
+      await db
+        .updateTable('teams')
+        .set({ league_id: leagueId })
+        .where('id', '=', 'tem_home')
+        .execute()
+      await db
+        .insertInto('sponsor_media')
+        .values({
+          id: 'smd_publish_logo',
+          league_id: leagueId,
+          purpose: 'logo',
+          object_key: `sponsors/${leagueId}/smd_publish_logo.png`,
+          content_type: 'image/png',
+          bytes: 100,
+          sha256: '0'.repeat(64),
+          width: 480,
+          height: 120,
+          created_by: null
+        })
+        .execute()
+      await db
+        .insertInto('sponsor_logos')
+        .values({
+          id: 'slg_publish_logo',
+          league_id: leagueId,
+          media_id: 'smd_publish_logo',
+          name: 'Logo',
+          allocation: 10,
+          position: 1,
+          accepted_at: new Date(Date.now() - 60_000)
+        })
+        .execute()
+    })
+
+    const gameOf = async (streamId: string): Promise<string> =>
+      (
+        await fixture!.db
+          .selectFrom('live_streams')
+          .select('game_id')
+          .where('id', '=', streamId)
+          .executeTakeFirstOrThrow()
+      ).game_id
+
+    it('asks with the video’s start once it is live, and a second publish keeps the one logo', async function () {
+      lines.length = 0
+      const stream = await fixture!.addStream(settings(0), SECRET)
+      const gameId = await gameOf(stream.id)
+      const asked: Array<{ gameId: string; startedAt: Date; status: string }> =
+        []
+      const watching = options({
+        assignLogos: async (db, game, startedAt) => {
+          const video = await db
+            .selectFrom('videos')
+            .select('status')
+            .where('id', '=', stream.videoId)
+            .executeTakeFirstOrThrow()
+          asked.push({ gameId: game, startedAt, status: video.status })
+          return await assignGameLogos(db, game, startedAt)
+        }
+      })
+      await beganPublishing(watching, stream.id)
+      await beganPublishing(watching, stream.id)
+      const video = await fixture!.db
+        .selectFrom('videos')
+        .select('start_at')
+        .where('id', '=', stream.videoId)
+        .executeTakeFirstOrThrow()
+      expect(asked.map(one => one.gameId)).deep.equals([gameId, gameId])
+      for (const one of asked) {
+        expect(one.status).equals('live')
+        expect(one.startedAt.getTime()).equals(
+          new Date(video.start_at!).getTime()
+        )
+      }
+      expect(
+        await fixture!.db
+          .selectFrom('game_sponsor_logos')
+          .select(['league_id', 'logo_id'])
+          .where('game_id', '=', gameId)
+          .execute()
+      ).deep.equals([{ league_id: leagueId, logo_id: 'slg_publish_logo' }])
+      // The default is the real assignment.
+      const other = await fixture!.addStream(settings(0), SECRET)
+      await beganPublishing(options(), other.id)
+      expect(
+        await fixture!.db
+          .selectFrom('game_sponsor_logos')
+          .select('logo_id')
+          .where('game_id', '=', await gameOf(other.id))
+          .execute()
+      ).to.have.length(1)
+    })
+
+    it('goes live when giving the logo fails, and says so', async function () {
+      lines.length = 0
+      const stream = await fixture!.addStream(settings(0), SECRET)
+      const gameId = await gameOf(stream.id)
+      await beganPublishing(
+        options({
+          assignLogos: async () => {
+            throw new Error('no logos today')
+          }
+        }),
+        stream.id
+      )
+      expect(await fixture!.stateOf(stream.id)).equals('publishing')
+      expect(lines).includes(
+        `live: sponsor logos for game ${gameId}: Error: no logos today`
+      )
+      await fixture!.db
+        .updateTable('live_streams')
+        .set({ state: 'idle' })
+        .where('id', '=', stream.id)
+        .execute()
+    })
   })
 })

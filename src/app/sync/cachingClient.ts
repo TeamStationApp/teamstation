@@ -256,6 +256,22 @@ function digestOf(raw: unknown): string | null {
 }
 
 /**
+ * An `AbortError`: the `DOMException` a browser or Node makes, or, on the
+ * phone, whose runtime defines none, an `Error` of the same name.
+ */
+function abortError(): Error {
+  const Exception = (
+    globalThis as {
+      DOMException?: new (message: string, name: string) => Error
+    }
+  ).DOMException
+  if (Exception != null) return new Exception('Aborted', 'AbortError')
+  const error = new Error('Aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+/**
  * `work`, or an abort once `signal` aborts first: for work that takes no
  * signal itself, such as a read of the defaults.
  */
@@ -264,11 +280,11 @@ export async function untilAborted<T>(
   signal: AbortSignal | undefined
 ): Promise<T> {
   if (signal == null) return await work
-  if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+  if (signal.aborted) throw abortError()
   let stop = (): void => undefined
   const aborted = new Promise<never>((_resolve, reject) => {
     stop = () => {
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortError())
     }
     signal.addEventListener('abort', stop, { once: true })
   })

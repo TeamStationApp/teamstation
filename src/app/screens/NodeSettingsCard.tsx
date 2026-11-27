@@ -8,14 +8,25 @@ import {
   defaultDistributionSettings,
   defaultJevSettings,
   defaultNodeSettings,
+  defaultSponsorSettings,
   type DistributionSettings,
-  type NodeSettings
+  LOGO_PLACEMENTS,
+  type LogoPlacement,
+  type NodeSettings,
+  REEL_LAYOUTS,
+  type ReelLayout,
+  type ReelPlacement,
+  sampleUploadedOn,
+  type SponsorSettings
 } from '../../common/nodeSettings'
+import { sampleSizeProblem } from '../../common/sponsors/limits'
 import { Button, Card, ListCard, SectionHeader, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
 import { CalendarPicker } from '../components/EventScheduleFields'
 import { PickerDialog } from '../components/PickerDialog'
 import { Wheel } from '../components/Wheel'
+import { SponsorSampleUpload } from '../sponsors/SponsorSampleUpload'
+import type { PickedSample } from '../sponsors/sponsorSampleUploadProps'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 const range = (from: number, to: number, step = 1): number[] =>
@@ -53,7 +64,70 @@ function nearest(options: readonly number[], value: number): number {
   )
 }
 
+/**
+ * A reel's largest width or height, as a fraction of the screen: the
+ * heights' stops and the default's exact third, so a stored 1/3 shows, and
+ * saves, as itself.
+ */
+export const REEL_SIZES = [...HEIGHTS.map(height => height / 100), 1 / 3].sort(
+  (a, b) => a - b
+)
+
 const percent = (option: number): string => `${option}%`
+const reelSize = (option: number): string =>
+  option === 1 / 3 ? '33⅓%' : `${Math.round(option * 100)}%`
+
+/** The logo groups, as the card names them. */
+const LOGO_NAMES: Record<(typeof LOGO_PLACEMENTS)[number], string> = {
+  single: 'Logo — single camera',
+  grid: 'Logo — four-angle grid',
+  tv: 'Logo — Apple TV',
+  portrait: 'Logo — portrait'
+}
+
+/** The reel groups, as the card names them. */
+const REEL_NAMES: Record<ReelLayout, string> = {
+  portrait12: 'Reel — portrait, 1 or 2 cameras',
+  portrait3: 'Reel — portrait, 3 cameras',
+  portrait4: 'Reel — portrait, 4 cameras',
+  landscape1: 'Reel — landscape, 1 camera',
+  landscape2: 'Reel — landscape, 2 cameras',
+  landscape3: 'Reel — landscape, 3 cameras',
+  landscape4: 'Reel — landscape, 4 cameras'
+}
+
+/** `2026-11-25` as "Nov 25, 2026", read as the UTC day it names. */
+function dayLabel(day: string): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC'
+  })
+}
+
+/** The sponsor settings as the wheels show them: each at its nearest stop. */
+function shownSponsors(sponsors: SponsorSettings): SponsorSettings {
+  const logo = (placement: LogoPlacement): LogoPlacement => ({
+    side: nearest(POSITIONS, placement.side * 100) / 100,
+    top: nearest(POSITIONS, placement.top * 100) / 100,
+    maxWidth: nearest(HEIGHTS, placement.maxWidth * 100) / 100,
+    maxHeight: nearest(HEIGHTS, placement.maxHeight * 100) / 100
+  })
+  const reel = (placement: ReelPlacement): ReelPlacement => ({
+    maxWidth: nearest(REEL_SIZES, placement.maxWidth),
+    maxHeight: nearest(REEL_SIZES, placement.maxHeight)
+  })
+  return {
+    logo: Object.fromEntries(
+      LOGO_PLACEMENTS.map(name => [name, logo(sponsors.logo[name])])
+    ) as SponsorSettings['logo'],
+    reel: Object.fromEntries(
+      REEL_LAYOUTS.map(layout => [layout, reel(sponsors.reel[layout])])
+    ) as SponsorSettings['reel'],
+    sampleKey: sponsors.sampleKey
+  }
+}
 const seconds = (option: number): string =>
   option === DEFAULT ? 'Default' : `${option} s`
 
@@ -88,6 +162,7 @@ export function shownSettings(settings: NodeSettings): NodeSettings {
     },
     distribution: { ...defaultDistributionSettings, ...settings.distribution },
     jev: settings.jev ?? defaultJevSettings,
+    sponsors: shownSponsors(settings.sponsors ?? defaultSponsorSettings),
     highlights: {
       ...h,
       lagSec: nearest(SECONDS, h.lagSec),
@@ -158,6 +233,10 @@ export function NodeSettingsCard({
   const [jevInput, setJevInput] = useState('')
   const [jevBusy, setJevBusy] = useState(false)
   const [jevProblem, setJevProblem] = useState<string>()
+  const [sampleBusy, setSampleBusy] = useState(false)
+  const [sampleProblem, setSampleProblem] = useState<string>()
+  // Reset to defaults was pressed: the next Save puts the default clip back.
+  const [sampleReset, setSampleReset] = useState(false)
   const load = useCallback(async (): Promise<void> => {
     try {
       setSettings(shownSettings(await client.nodeSettings()))
@@ -215,7 +294,15 @@ export function NodeSettingsCard({
     setBusy(true)
     setProblem(undefined)
     try {
-      setSettings(shownSettings(await client.setNodeSettings(settings)))
+      // The sample is the upload's: a save sends none, so a card read before
+      // somebody else's upload keeps it, but for Reset's default clip.
+      const { sampleKey: _shown, ...overlay } = settings.sponsors
+      const stored = await client.setNodeSettings({
+        ...settings,
+        sponsors: sampleReset ? { ...overlay, sampleKey: null } : overlay
+      })
+      setSettings(shownSettings(stored))
+      setSampleReset(false)
       setSaved(true)
     } catch (error) {
       setProblem(
@@ -257,6 +344,46 @@ export function NodeSettingsCard({
   }
   const jevConfigured = settings.jev.configured
   const jevTyped = jevInput.trim()
+
+  /**
+   * Upload a sample video, apart from Save: once the server has checked and
+   * stored it, it is the node's, and the card shows its day.
+   */
+  const uploadSample = async (picked: PickedSample): Promise<void> => {
+    if (sampleBusy) return
+    // The server refuses one past the cap without reading it; this says so
+    // before sending it.
+    const tooLarge = sampleSizeProblem(picked.size)
+    if (tooLarge != null) {
+      setSampleProblem(tooLarge)
+      return
+    }
+    setSampleBusy(true)
+    setSampleProblem(undefined)
+    try {
+      const stored = await client.uploadSponsorSample(
+        picked.contentType,
+        await picked.bytes()
+      )
+      setSampleReset(false)
+      setSettings(current =>
+        current == null
+          ? current
+          : {
+              ...current,
+              sponsors: { ...current.sponsors, sampleKey: stored.sampleKey }
+            }
+      )
+    } catch (error) {
+      setSampleProblem(
+        error instanceof Error
+          ? error.message
+          : 'The sample video could not be uploaded. Retry.'
+      )
+    } finally {
+      setSampleBusy(false)
+    }
+  }
 
   const { scoreboard, highlights, radar } = settings
   // The account screen's settings row: the whole row is the target, its
@@ -369,6 +496,94 @@ export function NodeSettingsCard({
       </View>
     )
   }
+  const sponsors = settings.sponsors
+  const logoRows = (
+    name: (typeof LOGO_PLACEMENTS)[number]
+  ): React.ReactElement => {
+    const title = LOGO_NAMES[name]
+    const placement = sponsors.logo[name]
+    const set = (part: Partial<LogoPlacement>): NodeSettings => ({
+      ...settings,
+      sponsors: {
+        ...sponsors,
+        logo: { ...sponsors.logo, [name]: { ...placement, ...part } }
+      }
+    })
+    return (
+      <View key={name} style={styles.group}>
+        <Text style={styles.groupTitle}>{title}</Text>
+        <ListCard>
+          {wheelRow(
+            'Side margin',
+            `${title}: side margin`,
+            POSITIONS,
+            percent,
+            Math.round(placement.side * 100),
+            option => set({ side: option / 100 })
+          )}
+          {wheelRow(
+            'Top margin',
+            `${title}: top margin`,
+            POSITIONS,
+            percent,
+            Math.round(placement.top * 100),
+            option => set({ top: option / 100 })
+          )}
+          {wheelRow(
+            'Largest width',
+            `${title}: largest width`,
+            HEIGHTS,
+            percent,
+            Math.round(placement.maxWidth * 100),
+            option => set({ maxWidth: option / 100 })
+          )}
+          {wheelRow(
+            'Largest height',
+            `${title}: largest height`,
+            HEIGHTS,
+            percent,
+            Math.round(placement.maxHeight * 100),
+            option => set({ maxHeight: option / 100 })
+          )}
+        </ListCard>
+      </View>
+    )
+  }
+  const reelRows = (layout: ReelLayout): React.ReactElement => {
+    const title = REEL_NAMES[layout]
+    const placement = sponsors.reel[layout]
+    const set = (part: Partial<ReelPlacement>): NodeSettings => ({
+      ...settings,
+      sponsors: {
+        ...sponsors,
+        reel: { ...sponsors.reel, [layout]: { ...placement, ...part } }
+      }
+    })
+    return (
+      <View key={layout} style={styles.group}>
+        <Text style={styles.groupTitle}>{title}</Text>
+        <ListCard>
+          {wheelRow(
+            'Largest width',
+            `${title}: largest width`,
+            REEL_SIZES,
+            reelSize,
+            placement.maxWidth,
+            option => set({ maxWidth: option })
+          )}
+          {wheelRow(
+            'Largest height',
+            `${title}: largest height`,
+            REEL_SIZES,
+            reelSize,
+            placement.maxHeight,
+            option => set({ maxHeight: option })
+          )}
+        </ListCard>
+      </View>
+    )
+  }
+  const uploadedOn = sampleUploadedOn(sponsors.sampleKey)
   const setHighlights = (
     part: Partial<NodeSettings['highlights']>
   ): NodeSettings => ({ ...settings, highlights: { ...highlights, ...part } })
@@ -441,6 +656,47 @@ export function NodeSettingsCard({
             })
           )}
         </ListCard>
+      </View>
+      <View style={styles.section}>
+        <SectionHeader title="Sponsor settings" />
+        <Text style={styles.hint}>
+          Where league sponsors&apos; logos and reels sit. A logo&apos;s margins
+          and largest size are percentages of the video it is on, from its top
+          and from the side it is on. A reel&apos;s largest size is a percentage
+          of the screen, in each layout.
+        </Text>
+        {LOGO_PLACEMENTS.map(logoRows)}
+        {REEL_LAYOUTS.map(reelRows)}
+        <View style={styles.group}>
+          <Text style={styles.groupTitle}>Sample video</Text>
+          <Text style={styles.hint}>
+            What a league&apos;s sponsor previews play when it has no footage of
+            its own: a 1920 × 1080 H.264 or HEVC MP4, at most 2 minutes, 60
+            frames a second and 120 MB.
+          </Text>
+          <ListCard>
+            <View style={[styles.settingRow, styles.paddedRow]}>
+              <Text style={styles.settingLabel}>Sample video</Text>
+              <Text style={styles.sampleValue}>
+                {uploadedOn == null
+                  ? 'Default clip'
+                  : `Uploaded ${dayLabel(uploadedOn)}`}
+              </Text>
+            </View>
+          </ListCard>
+          <SponsorSampleUpload
+            busy={sampleBusy}
+            disabled={busy}
+            onPick={picked => {
+              uploadSample(picked).catch(() => undefined)
+            }}
+          />
+          {sampleProblem != null && (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {sampleProblem}
+            </Text>
+          )}
+        </View>
       </View>
       <View style={styles.section}>
         <SectionHeader title="Radar matching" />
@@ -604,8 +860,10 @@ export function NodeSettingsCard({
         textColor={theme.linkTextColor}
         disabled={busy}
         onPress={() => {
-          // The Jev key is not a setting Reset puts back.
+          // The Jev key is not a setting Reset puts back. The sample video
+          // goes back to the default clip once saved.
           change(shownSettings({ ...defaultNodeSettings, jev: settings.jev }))
+          setSampleReset(true)
         }}
       />
       {picker != null && (
@@ -785,6 +1043,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600' as const,
     color: theme.primaryTextColor
+  },
+  sampleValue: {
+    flexShrink: 1,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(1),
+    color: theme.secondaryTextColor
   },
   settingValue: {
     flexShrink: 1,

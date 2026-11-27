@@ -221,6 +221,7 @@ The following table groups the published API contract by path and method. A cell
 | `/games/{gameId}/scheduling` | GET | — | — |
 | `/games/{gameId}/scoreboard-overlay` | GET | — | — |
 | `/games/{gameId}/scoreboard-timeline` | — | GET | — |
+| `/games/{gameId}/sponsors` | GET | — | — |
 | `/games/{gameId}/stream-access` | GET | — | — |
 | `/games/{gameId}/swap-sides` | POST | — | — |
 | `/games/{gameId}/tags/{targetId}` | PUT, DELETE | — | — |
@@ -246,6 +247,12 @@ The following table groups the published API contract by path and method. A cell
 | `/leagues/{leagueId}/schedule-previews/latest` | — | — | GET |
 | `/leagues/{leagueId}/schedule-previews/preparations` | — | — | POST |
 | `/leagues/{leagueId}/schedule-setup` | — | GET, PUT | — |
+| `/leagues/{leagueId}/sponsors` | GET | — | — |
+| `/leagues/{leagueId}/sponsors/logos` | POST | — | — |
+| `/leagues/{leagueId}/sponsors/media` | — | — | POST |
+| `/leagues/{leagueId}/sponsors/reels` | POST | — | — |
+| `/leagues/{leagueId}/sponsors/rows` | POST | — | — |
+| `/leagues/{leagueId}/sponsors/sample` | GET | — | — |
 | `/leagues/{leagueId}/umpire-candidates` | — | GET | — |
 | `/leagues/{leagueId}/umpire-leaderboard` | — | GET | — |
 | `/leagues/{leagueId}/umpire-levels` | GET, POST | — | — |
@@ -323,6 +330,7 @@ The following table groups the published API contract by path and method. A cell
 | `/node/ownership-preflight` | GET | — | POST |
 | `/node/sessions` | GET | — | — |
 | `/node/settings` | GET, PUT | — | — |
+| `/node/sponsor-sample` | — | — | PUT |
 | `/oauth/approvals/{handle}` | GET, POST | — | — |
 | `/parent-links` | — | PUT | — |
 | `/parent-previews` | — | POST | — |
@@ -358,6 +366,12 @@ The following table groups the published API contract by path and method. A cell
 | `/seasons/{seasonId}/standings` | — | GET | — |
 | `/seasons/{seasonId}/stats` | — | GET | — |
 | `/seasons/{seasonId}/teams` | — | GET | — |
+| `/sponsor-rows` | GET | — | — |
+| `/sponsors/logos/{logoId}` | PATCH | — | — |
+| `/sponsors/logos/{logoId}/deactivate` | POST | — | — |
+| `/sponsors/reels/{reelId}` | PATCH | — | — |
+| `/sponsors/reels/{reelId}/deactivate` | POST | — | — |
+| `/sponsors/rows/{rowId}` | PATCH, DELETE | — | — |
 | `/tags` | GET | — | — |
 | `/teams` | — | GET, POST | — |
 | `/teams/search` | — | GET | — |
@@ -397,4 +411,4 @@ The following table groups the published API contract by path and method. A cell
 | `/videos/{videoId}/highlights` | — | GET | — |
 | `/videos/{videoId}/wall-timeline` | GET | — | — |
 
-The published document contains 329 method/path operations on 273 paths. The messaging reach and proxy reads resolve affiliations and share the aggregate tier. Saving umpire season priority can process 500 seasons and rebuild the requirements response, so it uses the expensive tier. These classifications come from the handlers. The source scan also found ordinary GETs for player names, playback, stills and HLS files, and an aggregate GET for the API document itself. OAuth interaction and provider requests use the ordinary budget in addition to their dedicated limits. The scoreboard dashboard supports both an ordinary HTTP read and an aggregate WebSocket upgrade.
+The published document contains 344 method/path operations on 287 paths. The messaging reach and proxy reads resolve affiliations and share the aggregate tier. Saving umpire season priority can process 500 seasons and rebuild the requirements response, so it uses the expensive tier. The two raw sponsor uploads, a league's sponsor media and the node's sample video of up to 120 MB, store and probe their files, so they use the expensive tier too. These classifications come from the handlers. The source scan also found ordinary GETs for player names, playback, stills and HLS files, and an aggregate GET for the API document itself. OAuth interaction and provider requests use the ordinary budget in addition to their dedicated limits. The scoreboard dashboard supports both an ordinary HTTP read and an aggregate WebSocket upgrade.

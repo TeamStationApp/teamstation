@@ -144,6 +144,50 @@ describe('PagedList in a browser', function () {
     expect(shown('row120')).equals(false)
   })
 
+  it('reports the keys of the rows on screen, and none while kept', async function () {
+    const reports: string[][] = []
+    let setChosen!: (page: string) => void
+    function Host(): React.ReactElement {
+      const [chosen, set] = useState('list')
+      setChosen = set
+      return (
+        <TabPages page={chosen} index={chosen === 'list' ? 0 : 1} keep>
+          {chosen === 'list' ? (
+            <PagedList
+              data={range(0, 200)}
+              keyOf={index => `row${index}`}
+              estimatedItemSize={ROW}
+              renderItem={index => row(`row${index}`)}
+              onViewableKeys={keys => reports.push(keys)}
+            />
+          ) : (
+            <View testID="other" />
+          )}
+        </TabPages>
+      )
+    }
+    await render(
+      <Scroller>
+        <Host />
+      </Scroller>
+    )
+    expect(reports.at(-1)).includes('row1')
+    expect(reports.at(-1)).includes('row7')
+    expect(reports.at(-1)).not.includes('row20')
+    await scroll(5000)
+    expect(reports.at(-1)).includes('row52')
+    expect(reports.at(-1)).not.includes('row1')
+    await act(async () => {
+      setChosen('other')
+    })
+    await wait()
+    expect(reports.at(-1)).deep.equals([])
+    await act(async () => {
+      setChosen('list')
+    })
+    await wait()
+    expect(reports.at(-1)).includes('row52')
+  })
   it('takes a list width', async function () {
     await render(
       <Scroller>

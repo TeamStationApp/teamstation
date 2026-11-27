@@ -12,6 +12,25 @@ type ViewNode = React.ComponentRef<typeof View>
 type TextNode = React.ComponentRef<typeof Text>
 
 /**
+ * What the fit reads of the web's page, typed here because the phone's build
+ * has no DOM library to type it with.
+ */
+interface WebBox {
+  clientWidth: number
+  scrollWidth: number
+}
+interface WebPage {
+  getComputedStyle?: (node: WebBox) => {
+    paddingLeft: string
+    paddingRight: string
+  }
+  document?: { fonts?: { ready: Promise<unknown> } }
+}
+// Through `unknown`: where the DOM types it, `getComputedStyle` asks for a
+// whole `Element`, where the fit hands it only what it measures.
+const webPage = globalThis as unknown as WebPage
+
+/**
  * The scale that fits a one-line text of `natural` width, measured at full
  * size, into `room`: 1 when it fits, never below `minimum`. Rounded down to
  * a hundredth, with a point to spare, so the browser's rounding of the
@@ -55,10 +74,16 @@ export function useFittedText(
   const [scale, setScale] = useState(1)
   const onWeb = minimum != null && Platform.OS === 'web'
   const measure = (): void => {
-    const outer = box.current as unknown as HTMLElement | null
-    const inner = text.current as unknown as HTMLElement | null
-    if (minimum == null || outer == null || inner == null) return
-    const padding = getComputedStyle(outer)
+    const outer = box.current as unknown as WebBox | null
+    const inner = text.current as unknown as WebBox | null
+    if (
+      minimum == null ||
+      outer == null ||
+      inner == null ||
+      webPage.getComputedStyle == null
+    )
+      return
+    const padding = webPage.getComputedStyle(outer)
     const room =
       outer.clientWidth -
       parseFloat(padding.paddingLeft) -
@@ -72,7 +97,7 @@ export function useFittedText(
     if (!onWeb) return
     let current = true
     // A test page has no font set.
-    const { fonts } = document as { fonts?: FontFaceSet }
+    const fonts = webPage.document?.fonts
     fonts?.ready.then(
       () => {
         if (current) measured.current()

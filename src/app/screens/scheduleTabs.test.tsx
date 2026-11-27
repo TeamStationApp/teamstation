@@ -64,7 +64,9 @@ function schedule(): {
 } {
   const routes: Record<string, unknown> = {
     '/events?paged=1&when=upcoming': pageOf(UPCOMING),
-    '/events?paged=1&when=past': pageOf(PAST)
+    '/events?paged=1&when=past': pageOf(PAST),
+    // The person's sponsored rows, read beside each list.
+    '/sponsor-rows?scope=me': []
   }
   const state = {
     calls: [] as string[],
@@ -179,8 +181,11 @@ describe('Schedule’s pills with games the phone stored', function () {
     await draw(client, 'upcoming')
     expect(rows().map(row => row.id)).deep.equals(UPCOMING.map(row => row.id))
     expect(rows()[0]?.homeScore).equals(null)
-    // The screen's own read still goes out, and only it.
-    expect(net.calls).deep.equals(['/events?paged=1&when=upcoming'])
+    // The screen's own reads still go out, and only they.
+    expect(net.calls).deep.equals([
+      '/events?paged=1&when=upcoming',
+      '/sponsor-rows?scope=me'
+    ])
     await act(async () => {
       net.gate = undefined
       release()
@@ -201,7 +206,10 @@ describe('Schedule’s pills with games the phone stored', function () {
     ])
     net.calls.length = 0
     await draw(client, 'past')
-    expect(net.calls).deep.equals(['/events?paged=1&when=past'])
+    expect(net.calls).deep.equals([
+      '/events?paged=1&when=past',
+      '/sponsor-rows?scope=me'
+    ])
     expect(rows().map(row => row.id)).deep.equals(['p1', 'p0'])
 
     // No signal: each pill keeps what it stored, and says nothing failed.

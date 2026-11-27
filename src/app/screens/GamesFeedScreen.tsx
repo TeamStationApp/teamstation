@@ -15,6 +15,7 @@ import {
   type SeasonGame,
   type TeamStationClient
 } from '../../common/api'
+import type { SponsoredRow } from '../../common/sponsors/types'
 import {
   Card,
   GameRow,
@@ -44,6 +45,15 @@ import { useScreenScope } from '../hooks/useScreenScope'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
+import {
+  isSponsored,
+  keyWithSponsored,
+  type WithSponsored,
+  withSponsoredRows
+} from '../sponsors/sponsoredRows'
+import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
+import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { ME_SCOPE, storedSchedule } from '../sync/scheduleReads'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -56,7 +66,7 @@ import {
   shortTime
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
-import { countFor, type When } from './whenFilter'
+import { countFor, rowWindow, type When } from './whenFilter'
 
 export interface GamesFeedScreenProps {
   client: TeamStationClient
@@ -86,6 +96,11 @@ const WHEN_TABS = [
 const ROW_HEIGHT = { schedule: 140, videos: 130 }
 
 const gameId = (game: SeasonGame): string => game.id
+const itemKey = keyWithSponsored(gameId)
+const startOf = (game: SeasonGame): string | null => game.startAt
+
+/** The person's own Schedule's sponsored rows. */
+const MY_ROWS = { scope: 'me' } as const
 
 /** When each list last had its first page from the server. */
 type AnsweredAt = Partial<Record<When, number>>
@@ -196,6 +211,13 @@ export function GamesFeedScreen(
   const list: When = mode === 'schedule' ? when : 'all'
   const games = lists[list]
   const { refresh: readGames, paint } = games
+  // The leagues of the person's teams sponsor their Schedule; Videos shows
+  // only what was recorded.
+  const sponsored = useSponsoredRows(
+    client,
+    mode === 'schedule' ? MY_ROWS : null
+  )
+  const { refresh: readSponsored } = sponsored
   const { pinned, selectTab } = usePinnedTabs({
     head: { headerHeight, handoff },
     ready: mode === 'schedule' && !games.loading,
@@ -220,8 +242,8 @@ export function GamesFeedScreen(
   // reaches it within the half minute.
   const shownList = useRef<When | undefined>(undefined)
   const loadGames = useCallback(async (): Promise<void> => {
-    await readGames()
-  }, [readGames])
+    await Promise.all([readGames(), readSponsored()])
+  }, [readGames, readSponsored])
   /** The list's games as the phone last stored them, until the read returns. */
   const paintGames = useCallback(async (): Promise<void> => {
     const stored = await storedSchedule(
@@ -303,6 +325,8 @@ export function GamesFeedScreen(
           )}
           <GameCards
             list={games}
+            when={list}
+            sponsored={sponsored.rows}
             mode={mode}
             columns={columns}
             narrow={narrow}
@@ -325,26 +349,49 @@ export function GamesFeedScreen(
  */
 function GameCards(props: {
   list: PagedRows<SeasonGame>
+  /** Which games the list holds, and so which sponsored rows go among them. */
+  when: When
+  sponsored: readonly SponsoredRow[]
   mode: GamesFeedScreenProps['mode']
   columns: number
   narrow: boolean
   offline: boolean
   onOpenGame: GamesFeedScreenProps['onOpenGame']
 }): React.ReactElement {
-  const { list, mode, columns, narrow, offline, onOpenGame } = props
-  const { rows, loadMore } = list
+  const { list, when, sponsored, mode, columns, narrow, offline, onOpenGame } =
+    props
+  const { rows, loadMore, ends } = list
   const styles = getStyles(useTheme())
+  const rowViews = useSponsoredRowViews(sponsored)
+  // Upcoming reads soonest first; Past and All newest first.
+  const items = useMemo(
+    () =>
+      withSponsoredRows(
+        rows,
+        sponsored,
+        startOf,
+        when === 'upcoming' ? 'asc' : 'desc',
+        ends,
+        rowWindow(when)
+      ),
+    [ends, rows, sponsored, when]
+  )
   const renderRow = useCallback(
-    (game: SeasonGame) => (
-      <GameCardRow
-        game={game}
-        mode={mode}
-        narrow={narrow}
-        offline={offline}
-        onOpenGame={onOpenGame}
-      />
-    ),
-    [mode, narrow, offline, onOpenGame]
+    (game: WithSponsored<SeasonGame>) =>
+      isSponsored(game) ? (
+        <View style={styles.cell} testID="sponsored-row-cell">
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
+        </View>
+      ) : (
+        <GameCardRow
+          game={game}
+          mode={mode}
+          narrow={narrow}
+          offline={offline}
+          onOpenGame={onOpenGame}
+        />
+      ),
+    [mode, narrow, offline, onOpenGame, styles.cell]
   )
   const extraData = useMemo(() => ({ narrow, offline }), [narrow, offline])
   const readOn = useCallback(() => {
@@ -353,12 +400,13 @@ function GameCards(props: {
   return (
     <View style={styles.grid}>
       <PagedList
-        data={rows}
-        keyOf={gameId}
+        data={items}
+        keyOf={itemKey}
         renderItem={renderRow}
         extraData={extraData}
         numColumns={columns}
         estimatedItemSize={ROW_HEIGHT[mode]}
+        onViewableKeys={rowViews}
         // A list that could not be read says so above, and does not spin.
         empty={
           <PagedListEmpty

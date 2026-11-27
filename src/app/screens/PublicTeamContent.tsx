@@ -1,10 +1,11 @@
-import React, { memo, useCallback } from 'react'
+import React, { memo, useCallback, useMemo } from 'react'
 import { Text, View } from 'react-native'
 
 import type { GamesPageQuery, TeamStationClient } from '../../common/api'
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail, PublicGame } from '../../common/publicGroups'
 import { ROLE_FLAGS } from '../../common/roles'
+import type { SponsorRowsQuery } from '../../common/sponsors/types'
 import {
   Card,
   GameRow,
@@ -19,9 +20,19 @@ import { useNoticedRead } from '../hooks/useNoticedRead'
 import { type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { videoCountLabel } from '../locales/strings'
+import {
+  isSponsored,
+  keyWithSponsored,
+  type WithSponsored,
+  withSponsoredRows
+} from '../sponsors/sponsoredRows'
+import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
+import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { shortDate, shortTime } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
+import { rowWindow } from './whenFilter'
 
 type OpenGame = (
   id: string,
@@ -37,6 +48,8 @@ const SCHEDULE_QUERY: GamesPageQuery = { order: 'asc' }
 const VIDEOS_QUERY: GamesPageQuery = { order: 'asc', hasVideo: true }
 
 const gameId = (game: PublicGame): string => game.id
+const scheduleKey = keyWithSponsored(gameId)
+const startOf = (game: PublicGame): string | null => game.startAt
 const matchup = (game: PublicGame): string =>
   `${game.awayTeam.name} at ${game.homeTeam.name}`
 
@@ -153,11 +166,15 @@ export function PublicTeamContent({
   )
 }
 
-/** A list of the team's public games, read while it is on show. */
+/**
+ * A list of the team's public games, read while it is on show, with `also`
+ * read beside it each time.
+ */
 function usePublicGames(
   client: TeamStationClient,
   teamId: string,
-  query: GamesPageQuery
+  query: GamesPageQuery,
+  also?: () => Promise<void>
 ): PagedRows<PublicGame> {
   const list = usePagedList<PublicGame>({
     listKey: `${teamId}:${query.hasVideo === true ? 'videos' : 'schedule'}`,
@@ -170,7 +187,11 @@ function usePublicGames(
         cursor == null ? query : { ...query, cursor }
       )
   })
-  useNoticedRead(useScreenScope(list.refresh, client))
+  const { refresh } = list
+  const read = useCallback(async (): Promise<void> => {
+    await Promise.all([refresh(), also?.()])
+  }, [also, refresh])
+  useNoticedRead(useScreenScope(read, client))
   return list
 }
 
@@ -236,25 +257,51 @@ function PublicSchedule(props: {
   onOpenGame?: OpenGame
 }): React.ReactElement {
   const { client, teamId, onOpenGame } = props
-  const list = usePublicGames(client, teamId, SCHEDULE_QUERY)
-  const { rows, loadMore } = list
+  // The team's league sponsors its public Schedule too, signed out or not.
+  const sponsorQuery = useMemo<SponsorRowsQuery>(
+    () => ({ team: teamId, public: true }),
+    [teamId]
+  )
+  const sponsored = useSponsoredRows(client, sponsorQuery)
+  const rowViews = useSponsoredRowViews(sponsored.rows)
+  const list = usePublicGames(client, teamId, SCHEDULE_QUERY, sponsored.refresh)
+  const { rows, loadMore, ends } = list
   const styles = getStyles(useTheme())
+  // Every game of the team's, in the order they are played.
+  const items = useMemo(
+    () =>
+      withSponsoredRows(
+        rows,
+        sponsored.rows,
+        startOf,
+        'asc',
+        ends,
+        rowWindow('all')
+      ),
+    [ends, rows, sponsored.rows]
+  )
   const renderRow = useCallback(
-    (game: PublicGame) => (
-      <View style={styles.row} testID={`public-game-${game.id}`}>
-        <PublicScheduleRow game={game} onOpenGame={onOpenGame} />
-      </View>
-    ),
+    (game: WithSponsored<PublicGame>) =>
+      isSponsored(game) ? (
+        <View style={styles.row} testID="sponsored-row-cell">
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
+        </View>
+      ) : (
+        <View style={styles.row} testID={`public-game-${game.id}`}>
+          <PublicScheduleRow game={game} onOpenGame={onOpenGame} />
+        </View>
+      ),
     [onOpenGame, styles.row]
   )
   return (
     <View style={styles.section}>
       <SectionHeader title="Schedule and results" />
       <PagedList
-        data={rows}
-        keyOf={gameId}
+        data={items}
+        keyOf={scheduleKey}
         renderItem={renderRow}
         estimatedItemSize={ROW_HEIGHT.schedule}
+        onViewableKeys={rowViews}
         empty={<NoRows list={list} none="No games scheduled." />}
         footer={<PagedListEnd list={list} />}
         onEndReached={() => {

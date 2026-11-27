@@ -15,6 +15,9 @@ def observabilityCoverage = System.getenv('TS_OBSERVABILITY_COVERAGE') == '1'
 // Push notification coverage (scripts/push-coverage.mjs): the JUnit run and
 // the emulator run of a debug build are both measured.
 def pushCoverage = System.getenv('TS_PUSH_COVERAGE') == '1'
+// Sponsor media coverage (scripts/sponsor-coverage-native.mjs): the
+// instrumented run of a debug build is measured.
+def sponsorCoverage = System.getenv('TS_SPONSOR_COVERAGE') == '1'
 jacoco { toolVersion = '0.8.13' }
 
 /**
@@ -151,7 +154,7 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
-            enableAndroidTestCoverage observabilityCoverage || pushCoverage
+            enableAndroidTestCoverage observabilityCoverage || pushCoverage || sponsorCoverage
             enableUnitTestCoverage pushCoverage
         }
         release {
@@ -276,6 +279,20 @@ tasks.register('pushCoverage', JacocoReport) {
     }
 }
 
+// The sponsor media module's lines from its JVM tests and every execution
+// file in TS_SPONSOR_EXEC (comma-separated), the emulator runs', merged.
+tasks.register('sponsorMediaCoverage', JacocoReport) {
+    executionData.from(layout.buildDirectory.file('jacoco/testDebugUnitTest.exec'))
+    executionData.from(providers.environmentVariable('TS_SPONSOR_EXEC').map { paths ->
+        paths.split(',').findAll { !it.isEmpty() }.collect { file(it) }
+    })
+    sourceDirectories.from(file('src/main/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/sponsormedia/**'
+    })
+    reports { xml.required = true }
+}
+
 // The sign-in link filter for the app's link host, added to every variant's
 // manifests only when the build has one, so a build without config claims no
 // https address at all.
@@ -297,6 +314,10 @@ dependencies {
     // Live HLS players get a playlist tracker that waits out a publisher's
     // absence (LivePlaylistPatience), at the same version.
     implementation("androidx.media3:media3-exoplayer-hls:1.9.0")
+    // Sponsor reels are shrunk on the phone before they are uploaded
+    // (SponsorMediaModule), with the same version's Transformer and effects.
+    implementation("androidx.media3:media3-transformer:1.9.0")
+    implementation("androidx.media3:media3-effect:1.9.0")
     // Predictive back's progress (`BackEventCompat` and the dispatcher's
     // started/progressed/cancelled callbacks) for the stack navigator's drag;
     // React Native alone brings 1.7, from before they existed.

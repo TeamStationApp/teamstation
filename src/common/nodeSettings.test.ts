@@ -7,8 +7,11 @@ import {
   asNodeSettings,
   asNodeSettingsUpdate,
   asScoreboardOverlay,
+  asSponsorSettings,
   defaultNodeSettings,
+  defaultSponsorSettings,
   type NodeSettings,
+  sampleUploadedOn,
   utcStartOf
 } from './nodeSettings'
 
@@ -47,7 +50,107 @@ describe('node settings', function () {
         tailSec: 5
       },
       distribution: { betaBuildsUrl: '', appStoreUrl: '', iosAppStoreUrl: '' },
-      jev: { configured: false }
+      jev: { configured: false },
+      sponsors: defaultSponsorSettings
+    })
+  })
+
+  describe('U39 sponsor settings', function () {
+    it('places every logo 5% in from the top and side within 25%, every reel within a third, and plays the default clip', function () {
+      const logo = { side: 0.05, top: 0.05, maxWidth: 0.25, maxHeight: 0.25 }
+      const reel = { maxWidth: 1 / 3, maxHeight: 1 / 3 }
+      expect(defaultSponsorSettings).deep.equals({
+        logo: { single: logo, grid: logo, tv: logo, portrait: logo },
+        reel: {
+          portrait12: reel,
+          portrait3: reel,
+          portrait4: reel,
+          landscape1: reel,
+          landscape2: reel,
+          landscape3: reel,
+          landscape4: reel
+        },
+        sampleKey: null
+      })
+    })
+
+    it('defaults sponsors for a server from before them, and leaves them out of an older app’s save', function () {
+      const { sponsors: _sponsors, ...older } = defaultNodeSettings
+      expect(asNodeSettings(older).sponsors).deep.equals(defaultSponsorSettings)
+      expect(asNodeSettingsUpdate(older)).not.has.property('sponsors')
+      const placed = with_(settings => {
+        settings.sponsors.logo.grid.side = 0.1
+        settings.sponsors.reel.landscape1.maxWidth = 0.25
+        settings.sponsors.sampleKey = 'sponsors/sample/2026-11-25-smd_a-b_C.mp4'
+      })
+      expect(asNodeSettings(placed)).deep.equals(placed)
+      // A save's sample key is dropped: the sample is the upload's. Only
+      // null, for the default clip, is kept.
+      const { sampleKey: _key, ...overlay } = (placed as NodeSettings).sponsors
+      expect(asNodeSettingsUpdate(placed).sponsors).deep.equals(overlay)
+      expect(
+        asNodeSettingsUpdate({
+          ...(placed as NodeSettings),
+          sponsors: overlay
+        }).sponsors
+      ).deep.equals(overlay)
+      expect(
+        asNodeSettingsUpdate({
+          ...(placed as NodeSettings),
+          sponsors: { ...overlay, sampleKey: null }
+        }).sponsors
+      ).deep.equals({ ...overlay, sampleKey: null })
+    })
+
+    it('refuses a margin of 1.2, a negative width, a missing placement and a sample key outside the samples', function () {
+      expect(
+        refused(
+          with_(settings => {
+            settings.sponsors.logo.single.side = 1.2
+          })
+        )
+      ).equals('single side must be a number from 0 to under 1')
+      expect(
+        refused(
+          with_(settings => {
+            settings.sponsors.logo.tv.maxWidth = -0.1
+          })
+        )
+      ).equals('tv maxWidth must be a number above 0, up to 1')
+      expect(
+        refused(
+          with_(settings => {
+            settings.sponsors.reel.portrait3.maxHeight = -0.5
+          })
+        )
+      ).equals('portrait3 maxHeight must be a number above 0, up to 1')
+      const { landscape4: _gone, ...fewer } = defaultSponsorSettings.reel
+      expect(() =>
+        asSponsorSettings({ ...defaultSponsorSettings, reel: fewer })
+      ).throws('the landscape4 reel must be an object')
+      for (const sampleKey of [
+        'sponsors/lea_a/smd_b.mp4',
+        'sponsors/sample/../secret.mp4',
+        'sponsors/sample/clip.mov',
+        7
+      ])
+        expect(() =>
+          asSponsorSettings({ ...defaultSponsorSettings, sampleKey })
+        ).throws('sponsors.sampleKey must be a sample video object')
+      expect(
+        asSponsorSettings({
+          logo: defaultSponsorSettings.logo,
+          reel: defaultSponsorSettings.reel
+        }).sampleKey
+      ).equals(null)
+    })
+
+    it('reads an uploaded sample’s day from its key, and none from the default', function () {
+      expect(sampleUploadedOn('sponsors/sample/2026-11-25-smd_abc.mp4')).equals(
+        '2026-11-25'
+      )
+      expect(sampleUploadedOn('sponsors/sample/default.mp4')).equals(null)
+      expect(sampleUploadedOn(null)).equals(null)
     })
   })
 

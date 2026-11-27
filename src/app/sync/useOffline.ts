@@ -161,6 +161,28 @@ export function useOutboxSummary(
 }
 
 /**
+ * A browser page's `beforeunload`, typed here because the phone's build has
+ * no DOM library to type it with.
+ */
+interface UnloadEvent {
+  preventDefault: () => void
+  returnValue: unknown
+}
+interface UnloadEvents {
+  addEventListener: (
+    type: 'beforeunload',
+    listener: (event: UnloadEvent) => void
+  ) => void
+  removeEventListener: (
+    type: 'beforeunload',
+    listener: (event: UnloadEvent) => void
+  ) => void
+}
+const unloads = (
+  page: Partial<UnloadEvents> | undefined
+): page is UnloadEvents => typeof page?.addEventListener === 'function'
+
+/**
  * Asks the browser to warn before the page unloads while `summary` holds an
  * edit: the web's queue is in memory, and leaving loses it. Nothing on the
  * phone, which has no page to unload and keeps its queue in a file.
@@ -172,15 +194,16 @@ export function useUnsentEditsWarning(
   const waiting = (summary?.count ?? 0) + (summary?.inFlight ?? 0) > 0
   useEffect(() => {
     // React Native's `window` has no events.
-    if (!waiting || typeof window?.addEventListener !== 'function') return
-    const unload = (event: BeforeUnloadEvent): void => {
+    const page = (globalThis as { window?: Partial<UnloadEvents> }).window
+    if (!waiting || !unloads(page)) return
+    const unload = (event: UnloadEvent): void => {
       event.preventDefault()
-      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      // Deprecated, but what older browsers read to warn at all.
       event.returnValue = ''
     }
-    window.addEventListener('beforeunload', unload)
+    page.addEventListener('beforeunload', unload)
     return () => {
-      window.removeEventListener('beforeunload', unload)
+      page.removeEventListener('beforeunload', unload)
     }
   }, [waiting])
 }

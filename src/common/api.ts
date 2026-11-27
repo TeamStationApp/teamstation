@@ -89,8 +89,11 @@ import {
 import {
   asNodeSettings,
   asScoreboardOverlay,
+  asSponsorSettings,
   type NodeSettings,
-  type ScoreboardOverlay
+  type NodeSettingsSave,
+  type ScoreboardOverlay,
+  type SponsorSettings
 } from './nodeSettings'
 import {
   asNotification,
@@ -198,6 +201,23 @@ import {
   type SeasonScheduleSettings
 } from './seasonScheduling'
 import { type ServerSentEvent, serverSentEvents } from './serverSentEvents'
+import type {
+  GameSponsors,
+  SampleVideo,
+  SponsoredRow,
+  SponsoredTextColor,
+  SponsorMediaPurpose,
+  SponsorRowsQuery,
+  SponsorState,
+  UploadedSponsorMedia
+} from './sponsors/types'
+import {
+  asGameSponsors,
+  asSampleVideo,
+  asSponsoredRows,
+  asSponsorState,
+  asUploadedSponsorMedia
+} from './sponsors/wire'
 import {
   asTvLoginPreview,
   asTvLoginRequest,
@@ -3768,6 +3788,23 @@ export const SLOWEST_BODY_BYTES_PER_SECOND = 8 * 1024
 export class DeadlinePassed extends Error {}
 
 /**
+ * A body that streams, and the decoder its bytes need: what a browser's or
+ * Node's `fetch` gives and React Native's does not, so typed here for the
+ * phone's build, which has no DOM library.
+ */
+interface StreamedResponse {
+  body?: {
+    getReader?: () => {
+      read: () => Promise<{ done: boolean; value?: Uint8Array }>
+      cancel: () => Promise<void>
+    }
+  } | null
+}
+type BodyDecoder = new () => {
+  decode: (input?: Uint8Array, options?: { stream?: boolean }) => string
+}
+
+/**
  * Reads `response`'s body as text, giving up once nothing of it has arrived
  * for `idleMs`. Where the body streams, each chunk starts the wait again, so
  * a long answer on a slow link is read to its end; where it does not, the
@@ -3778,7 +3815,11 @@ export async function bodyOf(
   response: Response,
   idleMs: number
 ): Promise<string> {
-  const reader = response.body?.getReader?.()
+  const Decoder = (globalThis as { TextDecoder?: BodyDecoder }).TextDecoder
+  const reader =
+    Decoder == null
+      ? undefined
+      : (response as StreamedResponse).body?.getReader?.()
   let timer: ReturnType<typeof setTimeout> | undefined
   const idle = async (ms: number): Promise<never> =>
     await new Promise<never>((_resolve, reject) => {
@@ -3789,7 +3830,7 @@ export async function bodyOf(
       ;(timer as { unref?: () => void }).unref?.()
     })
   try {
-    if (reader == null) {
+    if (reader == null || Decoder == null) {
       const length = Number(response.headers.get('content-length') ?? 0)
       const read = response.text()
       read.catch(() => undefined)
@@ -3803,7 +3844,7 @@ export async function bodyOf(
         )
       ])
     }
-    const decoder = new TextDecoder()
+    const decoder = new Decoder()
     let text = ''
     for (;;) {
       const next = reader.read()
@@ -4370,6 +4411,18 @@ function statisticsPath(
   return `/games/${encodeURIComponent(gameId)}/box-score?${params}`
 }
 
+/** A sponsored row as an administrator places it. */
+export interface SponsorRowInput {
+  logoMediaId: string
+  backgroundMediaId: string
+  title: string
+  message: string
+  url: string
+  textColor: SponsoredTextColor
+  /** ISO date-time. */
+  startsAt: string
+}
+
 export class TeamStationClient {
   private readonly statisticsRequests = new Map<
     string,
@@ -4906,7 +4959,7 @@ export class TeamStationClient {
   }
 
   /** A node administrator sets every node setting at once. */
-  async setNodeSettings(settings: NodeSettings): Promise<NodeSettings> {
+  async setNodeSettings(settings: NodeSettingsSave): Promise<NodeSettings> {
     return await this.request('PUT', '/node/settings', asNodeSettings, settings)
   }
 
@@ -4918,6 +4971,25 @@ export class TeamStationClient {
   /** A node administrator removes the Jev API key. */
   async clearJevKey(): Promise<void> {
     await this.request('DELETE', '/node/jev-key', asUnknownOk)
+  }
+
+  /**
+   * A node administrator replaces the sponsor sample video, which the
+   * previews of a league with no footage play. The server only checks it:
+   * one that does not fit is refused with the screen's sentence. Answers the
+   * node's sponsor settings, with the new `sampleKey`.
+   */
+  async uploadSponsorSample(
+    contentType: string,
+    bytes: Uint8Array
+  ): Promise<SponsorSettings> {
+    return await this.request(
+      'PUT',
+      '/node/sponsor-sample',
+      asSponsorSettings,
+      bytes,
+      { headers: { 'content-type': contentType } }
+    )
   }
 
   /** Whether a game's board shows over its videos, and where. */
@@ -8908,6 +8980,174 @@ export class TeamStationClient {
     xhr.send(body === undefined ? undefined : JSON.stringify(body))
   }
 
+  /** What a league holds for sponsors, for its administrators. */
+  async sponsorState(leagueId: string): Promise<SponsorState> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/sponsors`,
+      asSponsorState
+    )
+  }
+
+  /**
+   * Uploads a shrunk logo, reel or sponsored row picture. The server only
+   * checks it: one that does not fit is refused with the screen's sentence.
+   */
+  async uploadSponsorMedia(
+    leagueId: string,
+    purpose: SponsorMediaPurpose,
+    contentType: string,
+    bytes: Uint8Array
+  ): Promise<UploadedSponsorMedia> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(leagueId)}/sponsors/media?purpose=${purpose}`,
+      asUploadedSponsorMedia,
+      bytes,
+      { headers: { 'content-type': contentType } }
+    )
+  }
+
+  /** Lists an uploaded logo with `allocation` of the league's credits. */
+  async addSponsorLogo(
+    leagueId: string,
+    logo: { mediaId: string; name: string; allocation: number }
+  ): Promise<SponsorState> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(leagueId)}/sponsors/logos`,
+      asSponsorState,
+      logo
+    )
+  }
+
+  async setSponsorLogoAllocation(
+    logoId: string,
+    allocation: number
+  ): Promise<SponsorState> {
+    return await this.request(
+      'PATCH',
+      `/sponsors/logos/${encodeURIComponent(logoId)}`,
+      asSponsorState,
+      { allocation }
+    )
+  }
+
+  /** A used logo turns inactive; an unused one is removed. */
+  async deactivateSponsorLogo(logoId: string): Promise<SponsorState> {
+    return await this.request(
+      'POST',
+      `/sponsors/logos/${encodeURIComponent(logoId)}/deactivate`,
+      asSponsorState
+    )
+  }
+
+  /** Lists an uploaded reel with `allocation` of the league's broadcasts. */
+  async addSponsorReel(
+    leagueId: string,
+    reel: { mediaId: string; name: string; allocation: number }
+  ): Promise<SponsorState> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(leagueId)}/sponsors/reels`,
+      asSponsorState,
+      reel
+    )
+  }
+
+  async setSponsorReelAllocation(
+    reelId: string,
+    allocation: number
+  ): Promise<SponsorState> {
+    return await this.request(
+      'PATCH',
+      `/sponsors/reels/${encodeURIComponent(reelId)}`,
+      asSponsorState,
+      { allocation }
+    )
+  }
+
+  /** A used reel turns inactive; an unused one is removed. */
+  async deactivateSponsorReel(reelId: string): Promise<SponsorState> {
+    return await this.request(
+      'POST',
+      `/sponsors/reels/${encodeURIComponent(reelId)}/deactivate`,
+      asSponsorState
+    )
+  }
+
+  /** Places a sponsored row in the league's event stream, using a slot. */
+  async addSponsorRow(
+    leagueId: string,
+    row: SponsorRowInput
+  ): Promise<SponsorState> {
+    return await this.request(
+      'POST',
+      `/leagues/${encodeURIComponent(leagueId)}/sponsors/rows`,
+      asSponsorState,
+      row
+    )
+  }
+
+  /**
+   * Changes a row within 24 hours of placing it. A picture left out keeps
+   * the row's current one.
+   */
+  async editSponsorRow(
+    rowId: string,
+    patch: Partial<SponsorRowInput>
+  ): Promise<SponsorState> {
+    return await this.request(
+      'PATCH',
+      `/sponsors/rows/${encodeURIComponent(rowId)}`,
+      asSponsorState,
+      patch
+    )
+  }
+
+  /** Deletes a row: its slot returns within 24 hours of placing it. */
+  async deleteSponsorRow(rowId: string): Promise<SponsorState> {
+    return await this.request(
+      'DELETE',
+      `/sponsors/rows/${encodeURIComponent(rowId)}`,
+      asSponsorState
+    )
+  }
+
+  /** The video the league's sponsor previews play, and where they place things. */
+  async sponsorSample(leagueId: string): Promise<SampleVideo> {
+    return await this.request(
+      'GET',
+      `/leagues/${encodeURIComponent(leagueId)}/sponsors/sample`,
+      asSampleVideo
+    )
+  }
+
+  /**
+   * The sponsorship a game's players draw: its league's logo and reels, and
+   * where the node's settings put them.
+   */
+  async gameSponsors(gameId: string): Promise<GameSponsors> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/sponsors`,
+      asGameSponsors
+    )
+  }
+
+  /**
+   * The sponsored rows of every league that manages a team in a Schedule: a
+   * team's, a season's, or the signed-in person's own. A team or season read
+   * `public` needs nobody signed in.
+   */
+  async sponsorRows(query: SponsorRowsQuery): Promise<SponsoredRow[]> {
+    const params =
+      'scope' in query
+        ? 'scope=me'
+        : `${'team' in query ? `team=${encodeURIComponent(query.team)}` : `season=${encodeURIComponent(query.season)}`}${query.public === true ? '&public=1' : ''}`
+    return await this.request('GET', `/sponsor-rows?${params}`, asSponsoredRows)
+  }
+
   private async requestUnobserved<T>(
     method: string,
     path: string,
@@ -8921,11 +9161,14 @@ export class TeamStationClient {
       [SCORING_FEATURE_HEADER]: SCORING_FEATURES,
       [CHAT_KINDS_HEADER]: NEWER_CHAT_KINDS.join(',')
     }
-    // Bytes (an attachment's part) go as they are; anything else as JSON.
+    // Bytes (an attachment's part, a sponsor upload) go as they are, with
+    // the type the caller names or none in particular; anything else as JSON.
     const bytes = body instanceof Uint8Array ? body : undefined
     if (body !== undefined) {
       headers['content-type'] =
-        bytes != null ? 'application/octet-stream' : 'application/json'
+        bytes != null
+          ? (options.headers?.['content-type'] ?? 'application/octet-stream')
+          : 'application/json'
     }
     if (this.analyticsApp != null)
       headers['x-teamstation-app'] = this.analyticsApp

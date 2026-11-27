@@ -35,4 +35,10 @@ export interface PagedListProps<T> {
    * for the list to be on show, where the position keeper is.
    */
   onStartReached?: (atRest: () => Promise<void>) => void
+  /**
+   * The keys of the rows at least half on screen, each time they change
+   * (Legend List's `onViewableItemsChanged`), and none while the list is
+   * kept off screen.
+   */
+  onViewableKeys?: (keys: string[]) => void
 }

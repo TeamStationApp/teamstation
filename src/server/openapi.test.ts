@@ -48,6 +48,7 @@ import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
 import { narrationRoutes } from './routes/narrations'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
+import { nodeSampleVideoRoutes } from './routes/nodeSampleVideo'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
@@ -59,6 +60,7 @@ import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
 import { scoreboardRoutes } from './routes/scoreboard'
 import { seasonRoutes } from './routes/seasons'
+import { sponsorRoutes } from './routes/sponsors'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
@@ -207,6 +209,7 @@ describe('the API document', function () {
         chatAttachmentRoutes(db, { space: media.space, uploadsDir: '/tmp' })
       ),
       ...routesOf(scheduleRoutes(db)),
+      ...routesOf(sponsorRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
@@ -234,6 +237,7 @@ describe('the API document', function () {
       ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(nodeAdministrationRoutes(db)),
+      ...routesOf(nodeSampleVideoRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(venueRoutes(db, media)),
       ...routesOf(schedulingSetupRoutes(db)),
@@ -281,6 +285,7 @@ describe('the API document', function () {
         chatAttachmentRoutes(db, { space: media.space, uploadsDir: '/tmp' })
       ),
       ...routesOf(scheduleRoutes(db)),
+      ...routesOf(sponsorRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
@@ -308,6 +313,7 @@ describe('the API document', function () {
       ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(nodeAdministrationRoutes(db)),
+      ...routesOf(nodeSampleVideoRoutes(db, media, { uploadsDir: '/tmp' })),
       ...routesOf(walkUpSongRoutes(db)),
       ...routesOf(venueRoutes(db, media)),
       ...routesOf(schedulingSetupRoutes(db)),

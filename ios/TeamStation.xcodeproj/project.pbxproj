@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5B0A5E000000000000000002 /* SponsorMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0A5E000000000000000001 /* SponsorMedia.swift */; };
+		5B0A5E000000000000000004 /* SponsorMediaCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0A5E000000000000000003 /* SponsorMediaCore.swift */; };
+		5B0A5E000000000000000006 /* RCTSponsorMedia.mm in Sources */ = {isa = PBXBuildFile; fileRef = 5B0A5E000000000000000005 /* RCTSponsorMedia.mm */; };
+		5B0A5E000000000000000009 /* SponsorMediaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B0A5E000000000000000008 /* SponsorMediaTests.swift */; };
 		A26200000000000000000001 /* GlassViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26200000000000000000002 /* GlassViewTests.swift */; };
 		F831D567321D434490F52BE5 /* ChatBrowserTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = F831D567321D434490F52BE6 /* ChatBrowserTests.mm */; };
 		B621A9C41123456789000003 /* ChatHardwareKeysTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = B621A9C41123456789000004 /* ChatHardwareKeysTests.mm */; };
@@ -115,6 +119,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		5B0A5E000000000000000001 /* SponsorMedia.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SponsorMedia.swift; sourceTree = "<group>"; };
+		5B0A5E000000000000000003 /* SponsorMediaCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SponsorMediaCore.swift; sourceTree = "<group>"; };
+		5B0A5E000000000000000005 /* RCTSponsorMedia.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTSponsorMedia.mm; sourceTree = "<group>"; };
+		5B0A5E000000000000000008 /* SponsorMediaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SponsorMediaTests.swift; sourceTree = "<group>"; };
 		A26200000000000000000002 /* GlassViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassViewTests.swift; sourceTree = "<group>"; };
 		F831D567321D434490F52BE6 /* ChatBrowserTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ChatBrowserTests.mm; sourceTree = "<group>"; };
 		B621A9C41123456789000004 /* ChatHardwareKeysTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ChatHardwareKeysTests.mm; sourceTree = "<group>"; };
@@ -283,6 +291,7 @@
 				B621A9C41123456789000001 /* ChatKeyboard.mm */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
 				D3C1A9E10000000000000005 /* DeclaredAge */,
+				5B0A5E000000000000000007 /* SponsorMedia */,
 				C0EC71A10000000000000003 /* Connections */,
 				B5E0A1C10000000000000007 /* PhoneStream */,
 				C9B2E4F10000000000000003 /* QrScanner */,
@@ -377,6 +386,7 @@
 				B621A9C41123456789000004 /* ChatHardwareKeysTests.mm */,
 				5D995FB8380742968626F68A /* ChatPreviewTests.mm */,
 				D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */,
+				5B0A5E000000000000000008 /* SponsorMediaTests.swift */,
 				C0EC71A10000000000000004 /* ConnectionsTests.swift */,
 				B7A0C0DE0000000000000F0B /* ChatWakeDecryptorTests.swift */,
 				B7A0C0DE0000000000000F0C /* PushTests.swift */,
@@ -451,6 +461,17 @@
 			);
 			path = Pods;
 			sourceTree = "<group>";
+		};
+		5B0A5E000000000000000007 /* SponsorMedia */ = {
+			isa = PBXGroup;
+			children = (
+				5B0A5E000000000000000005 /* RCTSponsorMedia.mm */,
+				5B0A5E000000000000000001 /* SponsorMedia.swift */,
+				5B0A5E000000000000000003 /* SponsorMediaCore.swift */,
+			);
+			name = SponsorMedia;
+			path = TeamStation/SponsorMedia;
+			sourceTree = SOURCE_ROOT;
 		};
 		D3C1A9E10000000000000005 /* DeclaredAge */ = {
 			isa = PBXGroup;
@@ -786,6 +807,7 @@
 				B621A9C41123456789000003 /* ChatHardwareKeysTests.mm in Sources */,
 				DF492311664A419680BF0217 /* ChatPreviewTests.mm in Sources */,
 				D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */,
+				5B0A5E000000000000000009 /* SponsorMediaTests.swift in Sources */,
 				C0EC71A10000000000000005 /* ConnectionsTests.swift in Sources */,
 				B7A0C0DE0000000000000B09 /* ChatWakeDecryptorTests.swift in Sources */,
 				B7A0C0DE0000000000000B0A /* PushTests.swift in Sources */,
@@ -818,6 +840,9 @@
 				D3C1A9E10000000000000004 /* RCTDeclaredAge.mm in Sources */,
 				C0EC71A10000000000000002 /* RCTConnections.mm in Sources */,
 				D3C1A9E10000000000000002 /* DeclaredAge.swift in Sources */,
+				5B0A5E000000000000000006 /* RCTSponsorMedia.mm in Sources */,
+				5B0A5E000000000000000002 /* SponsorMedia.swift in Sources */,
+				5B0A5E000000000000000004 /* SponsorMediaCore.swift in Sources */,
 				2C4859213D85F5C819CDFF61 /* SystemVolume.swift in Sources */,
 				B5E0A1C10000000000000002 /* RCTPhoneStream.mm in Sources */,
 				B5E0A1C10000000000000004 /* PhoneStreamBridge.swift in Sources */,

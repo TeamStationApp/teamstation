@@ -16,6 +16,30 @@ describe('direct action relationship consent', function () {
   afterEach(async () => {
     await f?.h.close()
   })
+  it('gives a league created through POST /leagues 300 game logos, 1,000 reel broadcasts and 10 slots, and a season or team none', async () => {
+    const credits = await f.h.db
+      .selectFrom('league_sponsor_credits')
+      .select([
+        'league_id',
+        'logo_credits',
+        'reel_credits',
+        'event_slots',
+        'kept_slots'
+      ])
+      .execute()
+    // Ordered here: the database's collation and code-point order disagree
+    // on ids such as `lea__…` and `lea_0…`.
+    credits.sort((a, b) => (a.league_id < b.league_id ? -1 : 1))
+    expect(credits).deep.equals(
+      [f.leagueA, f.leagueB].sort().map(leagueId => ({
+        league_id: leagueId,
+        logo_credits: 300,
+        reel_credits: 1000,
+        event_slots: 10,
+        kept_slots: 0
+      }))
+    )
+  })
   it('describes completed actions without copying invitation or proposal language', async () => {
     const team = { kind: 'team' as const, id: f.teamA }
     const season = { kind: 'season' as const, id: f.seasonA }

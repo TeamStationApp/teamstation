@@ -7,6 +7,21 @@ import {
   reasonOf
 } from './engine/links'
 
+/** The page's history events, where the app runs in a browser (the phone has no window). */
+interface PageEvents {
+  addEventListener?: (
+    type: 'pagehide' | 'pageshow',
+    listener: () => void
+  ) => void
+  removeEventListener?: (
+    type: 'pagehide' | 'pageshow',
+    listener: () => void
+  ) => void
+}
+
+const pageWindow = (): PageEvents | undefined =>
+  (globalThis as { window?: PageEvents }).window
+
 export interface ApprovalState {
   links: ChatPendingLink[]
   /** This device can approve: a linked key record was read. */
@@ -123,8 +138,8 @@ export class DeviceApprovals {
     this.active = true
     this.holdCancelled = false
     this.holding = this.holdMs > 0
-    globalThis.window?.addEventListener?.('pagehide', this.onPageHide)
-    globalThis.window?.addEventListener?.('pageshow', this.onPageShow)
+    pageWindow()?.addEventListener?.('pagehide', this.onPageHide)
+    pageWindow()?.addEventListener?.('pageshow', this.onPageShow)
     try {
       this.unsubscribe = this.socket?.onChat(event => {
         if (
@@ -146,8 +161,8 @@ export class DeviceApprovals {
   }
 
   stop(): void {
-    globalThis.window?.removeEventListener?.('pagehide', this.onPageHide)
-    globalThis.window?.removeEventListener?.('pageshow', this.onPageShow)
+    pageWindow()?.removeEventListener?.('pagehide', this.onPageHide)
+    pageWindow()?.removeEventListener?.('pageshow', this.onPageShow)
     this.cancelHold()
     this.active = false
     this.lifetime++

@@ -328,6 +328,28 @@ describe('PagedList on a phone', function () {
       expect(rows().length).lessThan(40)
     })
 
+    it('reports the keys of the rows on screen as the page scrolls', async function () {
+      const reports: string[][] = []
+      await render(
+        <Scroller>
+          <native.PagedList
+            data={range(0, 200)}
+            keyOf={index => `row${index}`}
+            estimatedItemSize={ROW}
+            renderItem={index => row(`row${index}`)}
+            onViewableKeys={keys => reports.push(keys)}
+          />
+        </Scroller>
+      )
+      await scroll(5000)
+      expect(reports.at(-1)).includes('row52')
+      expect(reports.at(-1)).not.includes('row0')
+      expect(reports.at(-1)).not.includes('row120')
+      await scroll(0)
+      expect(reports.at(-1)).includes('row2')
+      expect(reports.at(-1)).not.includes('row52')
+    })
+
     it('reports the end again after a load, once the reader drags, and no row twice', async function () {
       const ends: number[] = []
       let grow!: (rows: number) => void

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
+import { Platform } from 'react-native'
 
 import { asManagePage, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
@@ -793,5 +794,69 @@ describe('a league’s SafeSport switch', () => {
     await settle()
     expect(toggle()?.checked).equals(false)
     expect(toggle()?.disabled).equals(false)
+  })
+})
+
+describe('U13 a league’s Sponsor features row', () => {
+  afterEach(unmount)
+  const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+  afterEach(() => {
+    Object.defineProperty(Platform, 'OS', os)
+  })
+
+  for (const platform of ['ios', 'android', 'web'] as const)
+    it(`shows for a league administrator on ${platform}, with the Premium pill, and opens the sponsor menu`, async () => {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        get: () => platform
+      })
+      const f = fixture('league')
+      const opened: string[] = []
+      await mount(
+        <GroupSettingsScreen
+          client={f.client}
+          groupRef={{ kind: 'league', id: 'canonical' }}
+          onSponsors={() => opened.push('sponsors')}
+        />
+      )
+      expect(text()).includes('SPONSORS')
+      expect(text()).includes('Sponsor features')
+      expect(
+        document.querySelector('[data-testid="sponsor-premium-pill"]')
+      ).not.equals(null)
+      // The pill is its own target, and does nothing yet.
+      await press('Premium (coming soon)')
+      expect(opened).deep.equals([])
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>('[data-testid="sponsor-features-row"]')
+          ?.click()
+      })
+      expect(opened).deep.equals(['sponsors'])
+    })
+
+  it('is absent on a team, on a season, and for a league viewer who cannot manage it', async () => {
+    for (const kind of ['team', 'season'] as const) {
+      const f = fixture(kind)
+      await mount(
+        <GroupSettingsScreen
+          client={f.client}
+          groupRef={{ kind, id: 'canonical' }}
+          onSponsors={() => undefined}
+        />
+      )
+      expect(text(), kind).not.includes('Sponsor features')
+      await unmount()
+    }
+    const viewer = fixture('league')
+    viewer.controls.allowed = false
+    await mount(
+      <GroupSettingsScreen
+        client={viewer.client}
+        groupRef={{ kind: 'league', id: 'canonical' }}
+        onSponsors={() => undefined}
+      />
+    )
+    expect(text()).not.includes('Sponsor features')
   })
 })

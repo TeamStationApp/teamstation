@@ -13,6 +13,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { ACK_GIVE_UP_MS } from '../../common/screenScope'
+import type { SponsoredRow } from '../../common/sponsors/types'
 import { FakeScopeSocket, heldTimers } from '../../test/fakeScreenScope'
 import { type FrameClock, installFrameClock } from '../../test/frameClock'
 import { listProps, reachEnd } from '../../test/PagedListStandIn'
@@ -765,6 +766,135 @@ describe('the games feed', function () {
   it('says nothing of the count until it is known', async function () {
     await mount('videos', [game('gam_final')])
     expect(text()).not.includes('1 game')
+  })
+})
+
+describe('U34 the games feed’s sponsored rows', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    host?.remove()
+    host = undefined
+    applyWhen = undefined
+  })
+
+  const DAY = 24 * 60 * 60 * 1000
+  const at = (days: number): string =>
+    new Date(Date.now() + days * DAY).toISOString()
+  const ahead = (id: string, days: number, venue: string): SeasonGame =>
+    game(id, {
+      startAt: at(days),
+      venue,
+      status: 'scheduled',
+      awayScore: null,
+      homeScore: null,
+      videoCount: 0
+    })
+  const played = (id: string, days: number, venue: string): SeasonGame =>
+    game(id, { startAt: at(days), venue })
+  const row = (id: string, days: number, title: string): SponsoredRow => ({
+    id,
+    leagueId: 'lea_al',
+    logoUrl: '',
+    backgroundUrl: '',
+    title,
+    message: 'Fresh bread after games.',
+    url: 'https://example.test/bread',
+    textColor: 'dark',
+    startsAt: at(days)
+  })
+  const games = [
+    ahead('gam_soon', 1, 'Soon field'),
+    ahead('gam_later', 3, 'Later field'),
+    played('gam_last', -0.5, 'Last field'),
+    played('gam_older', -2, 'Older field')
+  ]
+  const rows = [
+    row('srw_old', -1, 'Old Bakery'),
+    row('srw_new', 2, 'Bayside Bakery')
+  ]
+  /** Where each of `texts` is on the page on show, in order, or -1. */
+  const placesOf = (...texts: string[]): number[] =>
+    texts.map(each => text().indexOf(each))
+
+  it('places the person’s rows among Upcoming’s games at their times, and Past’s among its own, each pill keeping its own', async function () {
+    const asked: unknown[] = []
+    await mount(
+      'schedule',
+      games,
+      'upcoming',
+      undefined,
+      undefined,
+      undefined,
+      {
+        sponsorRows: async (query: unknown) => {
+          asked.push(query)
+          return rows
+        }
+      }
+    )
+    expect(asked.length).greaterThan(0)
+    const [soon, bayside, later] = placesOf(
+      'Soon field',
+      'Bayside Bakery',
+      'Later field'
+    )
+    expect(soon).greaterThan(-1)
+    expect(bayside).greaterThan(soon)
+    expect(later).greaterThan(bayside)
+    expect(text()).not.includes('Old Bakery')
+    expect(
+      host?.querySelectorAll('[data-testid="sponsored-schedule-row"]').length
+    ).greaterThan(0)
+
+    await applyWhen?.('past')
+    await land()
+    const [last, old, older] = placesOf(
+      'Last field',
+      'Old Bakery',
+      'Older field'
+    )
+    expect(last).greaterThan(-1)
+    expect(old).greaterThan(last)
+    expect(older).greaterThan(old)
+    expect(text()).not.includes('Bayside Bakery')
+    // Each read asks for the person's own Schedule's rows.
+    expect(new Set(asked.map(query => JSON.stringify(query)))).deep.equals(
+      new Set(['{"scope":"me"}'])
+    )
+  })
+
+  it('shows no row, and reads none, on the videos list', async function () {
+    const asked: unknown[] = []
+    await mount('videos', games, undefined, undefined, undefined, undefined, {
+      sponsorRows: async (query: unknown) => {
+        asked.push(query)
+        return rows
+      }
+    })
+    expect(text()).includes('Last field')
+    expect(asked).deep.equals([])
+    expect(text()).not.includes('Bakery')
+  })
+
+  it('keeps the games when the rows cannot be read', async function () {
+    await mount(
+      'schedule',
+      games,
+      'upcoming',
+      undefined,
+      undefined,
+      undefined,
+      {
+        sponsorRows: async () => {
+          throw new Error('offline')
+        }
+      }
+    )
+    expect(text()).includes('Soon field')
+    expect(text()).not.includes('Bakery')
   })
 })
 

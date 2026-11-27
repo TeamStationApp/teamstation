@@ -5770,6 +5770,32 @@ describe('the request deadline', function () {
     expect(await bodyOf(late(null, 1), 10)).equals('{}')
   })
 
+  it('reads a body as a whole where the runtime has no TextDecoder to stream it with', async function () {
+    const { bodyOf } = await import('./api')
+    let streamed = 0
+    const response = {
+      body: {
+        getReader: () => {
+          streamed++
+          throw new Error('read as a stream')
+        }
+      },
+      headers: new Headers(),
+      text: async () => await Promise.resolve('{"ok":true}')
+    } as unknown as Response
+    const held = Object.getOwnPropertyDescriptor(globalThis, 'TextDecoder')
+    Reflect.deleteProperty(globalThis, 'TextDecoder')
+    try {
+      expect(await bodyOf(response, 1000)).equals('{"ok":true}')
+    } finally {
+      if (held != null) Object.defineProperty(globalThis, 'TextDecoder', held)
+    }
+    expect(streamed).equals(0)
+    // With one, the same body streams.
+    await bodyOf(response, 1000).catch(() => undefined)
+    expect(streamed).equals(1)
+  })
+
   it('keeps a caller’s own cancel its own, never offline', async function () {
     const sender = client(slow(null))
     const controller = new AbortController()

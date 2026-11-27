@@ -8,6 +8,7 @@ import { runCoachGame } from './coachGame'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
 import { runRefreshNotices } from './refreshNotices'
 import { runSearch } from './search'
+import { runSponsors } from './sponsors'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 import { runTess } from './tess'
@@ -32,6 +33,7 @@ export const WORLDS: Record<
   'packed-league-limit': runPackedLeagueLimit,
   'refresh-notices': runRefreshNotices,
   search: runSearch,
+  sponsors: runSponsors,
   tess: runTess
 }
 

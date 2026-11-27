@@ -30,6 +30,23 @@ export function isAhead(game: Datable, now = Date.now()): boolean {
   return game.startAt != null && Date.parse(game.startAt) > now
 }
 
+/**
+ * Which sponsored rows a list of `when` may hold, on the same test as
+ * `isAhead`: an upcoming list those still ahead, a past one those not, and
+ * `all` every one. The rows are read with no window, so each list keeps only
+ * its own: an upcoming list, whose start has no earlier page, would otherwise
+ * take every past row above its first game.
+ */
+export function rowWindow(
+  when: When,
+  now = Date.now()
+): (row: { startsAt: string }) => boolean {
+  if (when === 'all') return () => true
+  const ahead = (row: { startsAt: string }): boolean =>
+    Date.parse(row.startsAt) > now
+  return when === 'upcoming' ? ahead : row => !ahead(row)
+}
+
 /** The games a filter asks for, nearest to now first in both directions. */
 export function gamesFor<T extends Datable>(
   games: readonly T[],

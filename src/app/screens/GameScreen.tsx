@@ -96,6 +96,7 @@ import { markSeek, playbackOf } from '../player/playbackSession'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
 import { SinglePlayerReadout } from '../player/SinglePlayerReadout'
+import { useGameSponsors } from '../player/sponsors/useGameSponsors'
 import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
 import {
@@ -2000,6 +2001,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [chosen])
 
+  // The game's sponsorship, for the card and the grid of angles alike: the
+  // game's league's, signed in, kept up to date while any angle is live.
+  const { sponsors } = useGameSponsors(
+    client,
+    props.signedIn === true ? gameId : null,
+    video?.status === 'live' ||
+      game?.videos.some(each => each.status === 'live') === true
+  )
+
   if (error != null) {
     // A heading and a reason, not a full stop on its own. A deep link to a
     // game that has gone is the commonest way to land here, and `Not found.`
@@ -2424,6 +2434,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           height={layout.videoHeight}
           active={!showAngles}
           scoreboard={pictureBoard}
+          sponsors={sponsors}
+          gameId={gameId}
           playable={playback?.url != null && playable}
           onOpen={
             playback?.url == null || !playable
@@ -2685,6 +2697,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <MultiCamView
       client={client}
       gameId={game.id}
+      sponsors={sponsors}
       videos={game.videos}
       isLive={async videoId => await isStillLive(client, gameId, videoId)}
       order={angles ?? defaultAngles(game.videos)}

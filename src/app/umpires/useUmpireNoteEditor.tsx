@@ -42,20 +42,34 @@ interface Edit extends NoteCell {
   value: string
 }
 
+/**
+ * What the selection reads of a web input and its page, typed here because
+ * the phone's build has no DOM library to type it with.
+ */
+interface WebInput {
+  select: () => void
+  value: string
+  selectionStart: number | null
+  selectionEnd: number | null
+}
+const webInput = (node: unknown): node is WebInput =>
+  typeof (node as Partial<WebInput> | null)?.select === 'function'
+
 /** One editor per grid; a blur and the following click share the same save. */
 /**
  * Selects a web input's whole text now, and once more after the focus if
  * nothing has been typed and the selection fell back to a caret, as Safari
  * may leave it.
  */
-function selectOnWeb(into: unknown): void {
-  const node = into as HTMLInputElement | null
-  if (node == null || typeof node.select !== 'function') return
+function selectOnWeb(node: unknown): void {
+  if (!webInput(node)) return
   node.select()
   const text = node.value
   setTimeout(() => {
+    const page = (globalThis as { document?: { activeElement: unknown } })
+      .document
     if (
-      document.activeElement === node &&
+      page?.activeElement === node &&
       node.value === text &&
       node.selectionStart === node.selectionEnd
     )

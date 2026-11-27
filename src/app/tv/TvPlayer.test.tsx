@@ -10,6 +10,11 @@ import {
 } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import {
+  defaultSponsorSettings,
+  type LogoPlacement
+} from '../../common/nodeSettings'
+import type { GameSponsors } from '../../common/sponsors/types'
 import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import { boardStep, SHOWN_OVERLAY } from '../../test/overlayFixtures'
 import { replayContext, scored } from '../../test/replayGameFixture'
@@ -19,6 +24,7 @@ import {
   emitTvPan,
   panRequests
 } from '../../test/tvRemoteRuntime'
+import { logoRect } from '../player/sponsors/overlayRects'
 import { timelineFor } from './playbackTimeline'
 import { TvPlayer } from './TvPlayer'
 
@@ -53,7 +59,15 @@ let pending = false
 let live = false
 let mixed = false
 let closed = false
+/** The game's sponsorship, and how often it was read. */
+let sponsorsAnswer: GameSponsors | null = null
+let sponsorReads = 0
 const client = {
+  gameSponsors: async () => {
+    sponsorReads++
+    if (sponsorsAnswer == null) throw new Error('No sponsorship')
+    return sponsorsAnswer
+  },
   game: async () => {
     if (fail) throw new Error('Game unavailable')
     return {
@@ -268,6 +282,8 @@ afterEach(async () => {
   pending = false
   live = false
   closed = false
+  sponsorsAnswer = null
+  sponsorReads = 0
 })
 describe('TV game playback entry', () => {
   it('uses the same short camera names as the regular game player', async () => {
@@ -1436,5 +1452,167 @@ describe('TV game playback entry', () => {
     await press('Retry video')
     expect(document.querySelectorAll('video')).length(1)
     expect(document.body.textContent).not.contains('Retry video')
+  })
+})
+
+describe('U19 the sponsor logo on every TV camera', () => {
+  const tv: LogoPlacement = {
+    side: 0.03,
+    top: 0.04,
+    maxWidth: 0.2,
+    maxHeight: 0.2
+  }
+  const sponsored: GameSponsors = {
+    leagueId: 'lea_al',
+    logo: { url: 'https://cdn.example.test/logo.png', width: 480, height: 120 },
+    reels: [],
+    overlay: {
+      logo: { ...defaultSponsorSettings.logo, tv },
+      reel: defaultSponsorSettings.reel
+    }
+  }
+  const logos = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>('[data-testid="sponsor-logo"]')
+  ]
+  const px = (value: string): number => Number.parseFloat(value)
+
+  it('draws the TV placement in each camera’s upper right, under the board', async () => {
+    viewport = await windowSize(1920, 1080)
+    sponsorsAnswer = sponsored
+    await render()
+    await act(async () => {
+      await pause()
+    })
+    const drawn = logos()
+    expect(drawn).length(4)
+    for (let index = 0; index < 4; index++) {
+      const angle = document.querySelector<HTMLElement>(
+        `[data-testid="tv-angle-${index}"]`
+      )!
+      const logo = angle.querySelector<HTMLElement>(
+        '[data-testid="sponsor-logo"]'
+      )!
+      expect(logo, `camera ${index}`).not.equals(null)
+      const frame = angle.parentElement!
+      const rect = logoRect(
+        { x: 0, y: 0, w: px(frame.style.width), h: px(frame.style.height) },
+        tv,
+        { width: 480, height: 120 }
+      )
+      expect(px(logo.style.left)).closeTo(rect.x, 0.5)
+      expect(px(logo.style.top)).closeTo(rect.y, 0.5)
+      expect(px(logo.style.width)).closeTo(rect.w, 0.5)
+      expect(getComputedStyle(logo).pointerEvents).equals('none')
+    }
+    // The board is drawn after the cameras, over them.
+    const board = document.querySelector('[data-testid="tv-scoreboard"]')
+    if (board != null)
+      expect(
+        drawn[0].compareDocumentPosition(board) &
+          window.Node.DOCUMENT_POSITION_FOLLOWING
+      ).not.equals(0)
+    expect(sponsorReads).equals(1)
+  })
+
+  it('reads it again with the live statistics refresh', async function () {
+    this.timeout(30000)
+    viewport = await windowSize(1920, 1080)
+    live = true
+    sponsorsAnswer = { ...sponsored, logo: null }
+    await render()
+    expect(logos()).deep.equals([])
+    expect(sponsorReads).equals(1)
+    sponsorsAnswer = sponsored
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10_200))
+    })
+    await act(async () => {
+      await pause()
+    })
+    expect(sponsorReads).equals(2)
+    expect(logos()).length(4)
+  })
+
+  it('draws none when the game has no sponsorship to read', async () => {
+    viewport = await windowSize(1920, 1080)
+    await render()
+    expect(sponsorReads).equals(1)
+    expect(logos()).deep.equals([])
+  })
+})
+
+describe('U19 the sponsor reel on the TV', () => {
+  const sponsored = (startMs: number, durationMs: number): GameSponsors => ({
+    leagueId: 'lea_al',
+    logo: null,
+    reels: [
+      {
+        id: 'srp_tv',
+        reelId: 'srl_tv',
+        url: 'https://cdn.example.test/reel.mp4',
+        width: 640,
+        height: 360,
+        startMs,
+        durationMs
+      }
+    ],
+    overlay: {
+      logo: defaultSponsorSettings.logo,
+      reel: defaultSponsorSettings.reel
+    }
+  })
+  const px = (value: string): number => Number.parseFloat(value)
+
+  it('plays the reel over the top-left camera of four, the board making way, with the heard camera turned down', async () => {
+    viewport = await windowSize(1920, 1080)
+    // On over every moment the cameras could be at.
+    sponsorsAnswer = sponsored(0, 4_000_000_000_000)
+    await render()
+    // The cameras load and report where they are: the TV has its wall time.
+    const cameras = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of cameras) {
+        Object.defineProperty(video, 'duration', {
+          configurable: true,
+          value: 600
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    // Ten seconds on with the remote: the TV's clock has a wall time.
+    await press('Close panel')
+    await act(async () => {
+      emitTvDirection('right')
+      await pause()
+    })
+    await act(async () => {
+      await pause()
+    })
+    const reel = document.querySelector<HTMLElement>(
+      '[data-testid="sponsor-reel"]'
+    )!
+    expect(reel).not.equals(null)
+    expect(px(reel.style.left) + px(reel.style.width)).at.most(960 + 0.5)
+    expect(px(reel.style.top) + px(reel.style.height)).at.most(540 + 0.5)
+    expect(document.querySelector('[data-testid="tv-scoreboard"]')).equals(null)
+    const volumes = [
+      ...document.querySelectorAll<HTMLVideoElement>(
+        '[data-testid^="tv-angle-"] video'
+      )
+    ].map(video => video.volume)
+    expect(Math.min(...volumes)).lessThan(Math.max(...volumes))
+  })
+
+  it('draws no reel outside one', async () => {
+    viewport = await windowSize(1920, 1080)
+    sponsorsAnswer = sponsored(1000, 1000)
+    await render()
+    await act(async () => {
+      await pause()
+    })
+    expect(document.querySelector('[data-testid="sponsor-reel"]')).equals(null)
   })
 })

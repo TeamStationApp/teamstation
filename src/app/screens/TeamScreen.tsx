@@ -32,6 +32,7 @@ import { HttpError } from '../../common/errors'
 import { eventName, type PlayerRsvpCounts } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
 import type { Role } from '../../common/roles'
+import type { SponsoredRow } from '../../common/sponsors/types'
 import { type TabCorrection, useChatsTabGate } from '../chat/AgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
@@ -85,6 +86,15 @@ import {
   HELD_TEAM_CONSEQUENCE,
   HeldGameNotice
 } from '../scoring/HeldGameNotice'
+import {
+  isSponsored,
+  keyWithSponsored,
+  type WithSponsored,
+  withSponsoredRows
+} from '../sponsors/sponsoredRows'
+import { SponsoredScheduleRow } from '../sponsors/SponsoredScheduleRow'
+import { useSponsoredRowViews } from '../sponsors/sponsorRowEvents'
+import { useSponsoredRows } from '../sponsors/useSponsoredRows'
 import { rosterKey } from '../sync/documentKeys'
 import { storedSchedule, teamScope } from '../sync/scheduleReads'
 import { useHeldTeamControl } from '../sync/useOffline'
@@ -105,6 +115,7 @@ import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import { battingColumns, pitchingColumns } from './statColumns'
 import { StatsKey } from './StatsKey'
 import { nameGoesBelowControls } from './teamCardLayout'
+import { rowWindow } from './whenFilter'
 
 /** The first read of each list, which the screen makes as it opens. */
 const SCHEDULE_OPENS: GamesPageQuery = { around: 'next', order: 'asc' }
@@ -114,6 +125,8 @@ const VIDEOS_OPEN: GamesPageQuery = { hasVideo: true }
 const ROW_HEIGHT = { schedule: 150, videos: 130 }
 
 const gameId = (game: GameSummary): string => game.id
+const scheduleKey = keyWithSponsored(gameId)
+const startOf = (game: GameSummary): string | null => game.startAt
 
 export interface TeamScreenProps {
   client: TeamStationClient
@@ -324,6 +337,14 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     paint: paintSchedule
   } = schedule
   const { apply: applyVideos, fail: failVideos, paint: paintVideos } = videos
+  // The team's league sponsors its Schedule. A visitor's public page reads
+  // its own, in `PublicTeamContent`.
+  const sponsorQuery = useMemo(
+    () => (publicDetail == null ? { team: team.id } : null),
+    [publicDetail, team.id]
+  )
+  const sponsored = useSponsoredRows(client, sponsorQuery)
+  const { refresh: readSponsored } = sponsored
   const [roster, setRoster] = useState<RosterEntry[]>([])
   // Whether `roster` is the team's, read: until then, and when it is
   // refused, the Team tab keeps no empty section and offers no add.
@@ -372,6 +393,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       return
     }
     setError(undefined)
+    // Beside the games, and never holding them up: a failed read keeps none.
+    readSponsored().catch(() => undefined)
     const load = async (): Promise<void> => {
       // What the phone stored of both lists and the roster, until their
       // reads return.
@@ -477,6 +500,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     failVideos,
     paintSchedule,
     paintVideos,
+    readSponsored,
     team.id,
     publicDetail,
     nonMemberView,
@@ -708,6 +732,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 <ScheduleRows
                   client={client}
                   list={schedule}
+                  sponsored={sponsored.rows}
                   teamId={team.id}
                   nonMemberView={nonMemberView}
                   nextRow={pinned.nextRow}
@@ -868,16 +893,18 @@ const TEAM_KEPT: readonly RosterSection[] = [
   'spectator'
 ]
 
+const NO_ROWS: readonly SponsoredRow[] = []
+
 /** The row a list opens on, and a screen of those after it. */
 export function rowsKeptDrawn(
-  rows: readonly GameSummary[],
+  rows: ReadonlyArray<WithSponsored<GameSummary>>,
   anchorId: string | null,
   screenHeight: number
 ): string[] | undefined {
-  const at = rows.findIndex(game => game.id === anchorId)
+  const at = rows.findIndex(row => !isSponsored(row) && row.id === anchorId)
   if (at < 0) return undefined
   const screen = Math.ceil(screenHeight / ROW_HEIGHT.schedule)
-  return rows.slice(at, at + 1 + screen).map(gameId)
+  return rows.slice(at, at + 1 + screen).map(scheduleKey)
 }
 
 /**
@@ -888,6 +915,8 @@ export function rowsKeptDrawn(
 export function ScheduleRows(props: {
   client: TeamStationClient
   list: PagedRows<GameSummary>
+  /** The team's league's sponsored rows, placed among its games. */
+  sponsored?: readonly SponsoredRow[]
   teamId: string
   nonMemberView: boolean
   nextRow: PinnedHead['nextRow']
@@ -897,13 +926,27 @@ export function ScheduleRows(props: {
   onRetry?: () => void
 }): React.ReactElement {
   const { client, list, teamId, nonMemberView, nextRow, onOpen } = props
-  const { rows, anchorId, loadMore, loadOlder, update } = list
-  const { onCreateGame, onRetry } = props
+  const { rows, anchorId, loadMore, loadOlder, update, ends } = list
+  const { onCreateGame, onRetry, sponsored = NO_ROWS } = props
+  const rowViews = useSponsoredRowViews(sponsored)
   const styles = getStyles(useTheme())
   const { height } = useWindowDimensions()
+  // Every game of the team's, in the order they are played.
+  const items = useMemo(
+    () =>
+      withSponsoredRows(
+        rows,
+        sponsored,
+        startOf,
+        'asc',
+        ends,
+        rowWindow('all')
+      ),
+    [ends, rows, sponsored]
+  )
   const alwaysRenderKeys = useMemo(
-    () => rowsKeptDrawn(rows, anchorId, height),
-    [anchorId, height, rows]
+    () => rowsKeptDrawn(items, anchorId, height),
+    [anchorId, height, items]
   )
   const answered = useCallback(
     (id: string, counts: PlayerRsvpCounts): void => {
@@ -913,33 +956,38 @@ export function ScheduleRows(props: {
   )
   const { ref: nextRowRef } = nextRow
   const renderRow = useCallback(
-    (game: GameSummary) => (
-      <ActiveView
-        testID="scheduleGame"
-        ref={game.id === anchorId ? nextRowRef : undefined}
-        style={styles.row}
-      >
-        {nonMemberView ? (
-          // Visitors can open every published game without receiving
-          // member-only RSVP controls.
-          <GameCard
-            game={game}
-            mode="schedule"
-            teamId={teamId}
-            nonMemberView
-            onOpen={onOpen}
-          />
-        ) : (
-          <ScheduleCard
-            client={client}
-            game={game}
-            teamId={teamId}
-            onOpen={onOpen}
-            onAnswered={answered}
-          />
-        )}
-      </ActiveView>
-    ),
+    (game: WithSponsored<GameSummary>) =>
+      isSponsored(game) ? (
+        <View style={styles.row} testID="sponsored-row-cell">
+          <SponsoredScheduleRow {...game.row} tracked={game.row} />
+        </View>
+      ) : (
+        <ActiveView
+          testID="scheduleGame"
+          ref={game.id === anchorId ? nextRowRef : undefined}
+          style={styles.row}
+        >
+          {nonMemberView ? (
+            // Visitors can open every published game without receiving
+            // member-only RSVP controls.
+            <GameCard
+              game={game}
+              mode="schedule"
+              teamId={teamId}
+              nonMemberView
+              onOpen={onOpen}
+            />
+          ) : (
+            <ScheduleCard
+              client={client}
+              game={game}
+              teamId={teamId}
+              onOpen={onOpen}
+              onAnswered={answered}
+            />
+          )}
+        </ActiveView>
+      ),
     [
       anchorId,
       answered,
@@ -961,14 +1009,15 @@ export function ScheduleRows(props: {
   })
   return (
     <PagedList
-      data={rows}
-      keyOf={gameId}
+      data={items}
+      keyOf={scheduleKey}
       renderItem={renderRow}
       extraData={extraData}
       estimatedItemSize={ROW_HEIGHT.schedule}
       alwaysRenderKeys={alwaysRenderKeys}
       anchorKey={anchorId}
       onAnchorPosition={anchorMoved}
+      onViewableKeys={rowViews}
       header={<PagedListStart list={list} />}
       empty={
         // The screen says what failed, above the pills.

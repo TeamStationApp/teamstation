@@ -4483,6 +4483,108 @@
       "file": "e2e/tests/people/search/reach.e2e.ts"
     },
     {
+      "id": "platform/analytics/sponsor-events#ios-app",
+      "title": "Sponsor reel views, sponsored row views and taps are recorded with the viewer, or the device when signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/common/observability/contract.ts",
+        "src/app/player/sponsors/useReelViews.ts",
+        "src/app/sponsors/viewTimers.ts",
+        "src/app/sponsors/sponsorRowEvents.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/components/usePagedFollow.ts",
+        "src/app/observability/AnalyticsContext.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/analytics/sponsor-events",
+      "file": "e2e/tests/platform/analytics/sponsor-events.e2e.ts"
+    },
+    {
+      "id": "platform/analytics/sponsor-events#web",
+      "title": "Sponsor reel views, sponsored row views and taps are recorded with the viewer, or the device when signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/common/observability/contract.ts",
+        "src/app/player/sponsors/useReelViews.ts",
+        "src/app/sponsors/viewTimers.ts",
+        "src/app/sponsors/sponsorRowEvents.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/components/usePagedFollow.ts",
+        "src/app/observability/AnalyticsContext.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/analytics/sponsor-events",
+      "file": "e2e/tests/platform/analytics/sponsor-events.e2e.ts"
+    },
+    {
       "id": "platform/browser/observation#network",
       "title": "Browser observations read the page without capturing network responses",
       "kind": "integration",
@@ -4615,6 +4717,86 @@
       "manual": false,
       "spec": "platform/node-admin/jev-key",
       "file": "e2e/tests/platform/node-admin/jev-key.e2e.ts"
+    },
+    {
+      "id": "platform/node-admin/sponsor-settings#edit-and-reset",
+      "title": "The node administrator places sponsor logos and reels per layout, resets them, and replaces the sponsor sample video",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/app/sponsors/SponsorSampleUpload.tsx",
+        "src/common/nodeSettings.ts",
+        "src/server/nodeSettings.ts",
+        "src/server/routes/nodeSampleVideo.ts",
+        "src/server/sponsors/sample.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/node-admin/sponsor-settings",
+      "file": "e2e/tests/platform/node-admin/sponsor-settings.e2e.ts"
+    },
+    {
+      "id": "platform/node-admin/sponsor-settings#sample-upload",
+      "title": "The node administrator places sponsor logos and reels per layout, resets them, and replaces the sponsor sample video",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/app/sponsors/SponsorSampleUpload.tsx",
+        "src/common/nodeSettings.ts",
+        "src/server/nodeSettings.ts",
+        "src/server/routes/nodeSampleVideo.ts",
+        "src/server/sponsors/sample.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "platform/node-admin/sponsor-settings",
+      "file": "e2e/tests/platform/node-admin/sponsor-settings.e2e.ts"
     },
     {
       "id": "platform/offline/held-edits#clear-from-banner",
@@ -5657,6 +5839,938 @@
       "file": "e2e/tests/playback/recordings/segmented-seek.e2e.ts"
     },
     {
+      "id": "playback/sponsors/eligibility#viewers",
+      "title": "Each viewer sees the sponsorship of their own team’s league, neutral viewers a stable hash’s, and signed-out visitors none",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/eligibility.ts",
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/player/sponsors/useGameSponsors.ts",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/eligibility",
+      "file": "e2e/tests/playback/sponsors/eligibility.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#before-accept",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#grid-web",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#no-credits",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#phone-ios-app",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/logo#single-web",
+      "title": "A game is given its league's sponsor logo when its first recording begins, every player draws it from the first frame, and it uses a credit only at 30 minutes",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/logos.ts",
+        "src/server/routes/sponsors.ts",
+        "src/server/live/controller.ts",
+        "src/server/media/ingestFile.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/screens/GameScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/logo",
+      "file": "e2e/tests/playback/sponsors/logo.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#audio-safari-ios",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#half-inning",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#layouts-android-app",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#layouts-ios-app",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#layouts-web",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#pregame-live",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#two-tracks",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/reels#undo-inside-window",
+      "title": "A league's sponsor reels are placed before games and after half-innings, and every player plays them in its layout's reel space with the game at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/reels.ts",
+        "src/server/sponsors/sweeps.ts",
+        "src/common/sponsors/halves.ts",
+        "src/app/player/sponsors/**",
+        "src/app/player/multiCam/playerLayout.ts",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/MultiCamView.native.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "browser",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/reels",
+      "file": "e2e/tests/playback/sponsors/reels.e2e.ts"
+    },
+    {
+      "id": "playback/sponsors/tv#logo-and-reel",
+      "title": "The Apple TV draws the sponsor logo on every camera and plays the reel in its layout’s space at its placement, the heard camera at 20%",
+      "kind": "e2e",
+      "covers": [
+        "src/app/tv/TvPlayer.tsx",
+        "src/app/tv/tvLayout.ts",
+        "src/app/tv/TransportVideo.tsx",
+        "src/app/player/sponsors/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 30,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "playback/sponsors/tv",
+      "file": "e2e/tests/playback/sponsors/tv.e2e.ts"
+    },
+    {
       "id": "schedule/auto-scheduler/build-modal#limit-accept",
       "title": "A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds",
       "kind": "e2e",
@@ -6164,6 +7278,980 @@
       "manual": false,
       "spec": "schedule/rsvp/eligibility",
       "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#event-stream-desktop",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#event-stream-phone",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#logos-desktop",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#logos-ios-app",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#logos-phone",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-android-app",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-desktop",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-no-webcodecs",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#reels-phone",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/admin#settings-ios-app",
+      "title": "A league administrator sets up sponsor logos, reels and sponsored Schedule rows on the real API, shrinking uploads on the web and on the phones",
+      "kind": "e2e",
+      "covers": [
+        "src/app/sponsors/**",
+        "src/app/player/sponsors/overlayRects.ts",
+        "src/app/screens/GroupSettingsScreen.tsx",
+        "src/app/navigation/routes.ts",
+        "src/common/sponsors/**",
+        "src/server/routes/sponsors.ts",
+        "src/server/sponsors/**",
+        "ios/TeamStation/SponsorMedia/**",
+        "android/app/src/main/java/app/teamstation/app/sponsormedia/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "packed-league",
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 12,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/admin",
+      "file": "e2e/tests/schedule/sponsors/admin.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#combined-web",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#public-signed-out",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#season-web",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#tap-opens-url",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#team-ios-app",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
+    },
+    {
+      "id": "schedule/sponsors/rows#team-web",
+      "title": "Schedules show sponsored rows from the leagues that manage their teams, and a tap opens the sponsor’s site",
+      "kind": "e2e",
+      "covers": [
+        "src/server/sponsors/rows.ts",
+        "src/server/routes/sponsors.ts",
+        "src/app/sponsors/sponsoredRows.ts",
+        "src/app/sponsors/useSponsoredRows.ts",
+        "src/app/sponsors/SponsoredScheduleRow.tsx",
+        "src/app/sponsors/openSponsorUrl.ts",
+        "src/app/screens/GamesFeedScreen.tsx",
+        "src/app/screens/TeamScreen.tsx",
+        "src/app/screens/PublicTeamContent.tsx",
+        "src/app/screens/SeasonPresentation.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "sponsors"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/sponsors/rows",
+      "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
     },
     {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",

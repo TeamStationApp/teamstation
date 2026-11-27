@@ -307,8 +307,13 @@ export default defineE2e({
         )
         checks.push(() => {
           expect(afterMove.length, 'the Schedule reads again').to.be.at.least(1)
+          // The Schedule's sponsored rows are read beside its games.
           expect(
-            afterMove.filter(read => read.path !== '/api/v1/events'),
+            afterMove.filter(
+              read =>
+                read.path !== '/api/v1/events' &&
+                read.path !== '/api/v1/sponsor-rows'
+            ),
             'and nothing else: no sweep of games'
           ).to.deep.equal([])
         })

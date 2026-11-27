@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { defaultNodeSettings, type NodeSettings } from '../common/nodeSettings'
+import {
+  defaultNodeSettings,
+  defaultSponsorSettings,
+  type NodeSettings,
+  type SponsorSettings
+} from '../common/nodeSettings'
 import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import { SESSION_COOKIE } from './auth/tokens'
@@ -15,7 +20,10 @@ import {
   replaySettings,
   scoreboardOverlayFor,
   scoreboardSettings,
-  speedHoldMs
+  speedHoldMs,
+  SPONSOR_SAMPLE_SETTING,
+  sponsorOverlay,
+  sponsorSettings
 } from './nodeSettings'
 import { forgetSettings, highlightSettings } from './settings'
 
@@ -56,7 +64,24 @@ describe('node settings', function () {
       appStoreUrl: 'https://apps.example.test/app',
       iosAppStoreUrl: 'https://apps.apple.com/us/app/test/id00123/?src=🏟️#store'
     },
-    jev: { configured: false }
+    jev: { configured: false },
+    sponsors: defaultSponsorSettings
+  }
+
+  /** Placements off the defaults in every group, and an uploaded sample. */
+  const placed: SponsorSettings = {
+    logo: {
+      single: { side: 0.1, top: 0.05, maxWidth: 0.25, maxHeight: 0.25 },
+      grid: { side: 0.02, top: 0.03, maxWidth: 0.2, maxHeight: 0.15 },
+      tv: { side: 0.04, top: 0.06, maxWidth: 0.3, maxHeight: 0.2 },
+      portrait: { side: 0, top: 0, maxWidth: 0.5, maxHeight: 0.35 }
+    },
+    reel: {
+      ...defaultSponsorSettings.reel,
+      landscape1: { maxWidth: 0.25, maxHeight: 1 / 3 },
+      portrait4: { maxWidth: 0.9, maxHeight: 0.4 }
+    },
+    sampleKey: 'sponsors/sample/2026-11-25-smd_abc.mp4'
   }
 
   it('lets only a node administrator read and set them, all at once, and records who', async () => {
@@ -564,5 +589,189 @@ describe('node settings', function () {
       .where('key', '=', JEV_KEY_SETTING)
       .execute()
     expect(await jevKey(f.h.db)).equals(null)
+  })
+
+  describe('U40 sponsor placements and the sample video', function () {
+    it('stores every placement, keeps the uploaded sample, reads them back, and serves them to players at once', async () => {
+      // The sample, as its upload stores it.
+      await f.h.db
+        .insertInto('system_settings')
+        .values({
+          key: SPONSOR_SAMPLE_SETTING,
+          value: JSON.stringify(placed.sampleKey)
+        })
+        .execute()
+      const { sampleKey: _key, ...overlay } = placed
+      const saved = await f.h.request(
+        'PUT',
+        '/node/settings',
+        { ...changed, sponsors: overlay },
+        105
+      )
+      expect(saved.status, await saved.clone().text()).equals(200)
+      expect(((await saved.json()) as NodeSettings).sponsors).deep.equals(
+        placed
+      )
+      const read = (await (
+        await f.h.request('GET', '/node/settings', undefined, 105)
+      ).json()) as NodeSettings
+      expect(read.sponsors).deep.equals(placed)
+      expect(await sponsorOverlay(f.h.db)).deep.equals(overlay)
+      const rows = await f.h.db
+        .selectFrom('system_settings')
+        .select(['key', 'updated_by'])
+        .where('key', 'like', 'sponsors.%')
+        .where('key', '!=', SPONSOR_SAMPLE_SETTING)
+        .execute()
+      // Four logos and seven reels.
+      expect(rows).has.length(11)
+      expect(new Set(rows.map(row => row.updated_by))).deep.equals(
+        new Set([userIdOfGumbo(105)])
+      )
+      // A save holding a key read before another upload leaves the upload's.
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            '/node/settings',
+            {
+              ...changed,
+              sponsors: {
+                ...overlay,
+                sampleKey: 'sponsors/sample/2026-11-24-smd_old.mp4'
+              }
+            },
+            105
+          )
+        ).status
+      ).equals(200)
+      expect(
+        (await sponsorSettings(f.h.db, Date.now(), true)).sampleKey
+      ).equals(placed.sampleKey)
+      // A save from an app before sponsors keeps what is stored.
+      const { sponsors: _sponsors, ...older } = changed
+      expect(
+        (await f.h.request('PUT', '/node/settings', older, 105)).status
+      ).equals(200)
+      expect(await sponsorSettings(f.h.db, Date.now(), true)).deep.equals(
+        placed
+      )
+      // Reset to defaults then Save puts the defaults, and the default clip,
+      // back.
+      const reset = await f.h.request('PUT', '/node/settings', changed, 105)
+      expect(((await reset.json()) as NodeSettings).sponsors).deep.equals(
+        defaultSponsorSettings
+      )
+    })
+
+    it('falls back to the default for each sponsor value a row holds badly, and caches', async () => {
+      await f.h.db
+        .insertInto('system_settings')
+        .values([
+          {
+            key: 'sponsors.logo.single',
+            value: JSON.stringify(placed.logo.single)
+          },
+          {
+            key: 'sponsors.logo.grid',
+            value: JSON.stringify({ side: 1.2, top: 0 })
+          },
+          { key: 'sponsors.logo.tv', value: JSON.stringify('left') },
+          {
+            key: 'sponsors.reel.landscape1',
+            value: JSON.stringify(placed.reel.landscape1)
+          },
+          {
+            key: 'sponsors.reel.portrait3',
+            value: JSON.stringify({ maxWidth: -0.5, maxHeight: 0.2 })
+          },
+          {
+            key: SPONSOR_SAMPLE_SETTING,
+            value: JSON.stringify('../elsewhere.mp4')
+          }
+        ])
+        .execute()
+      const now = Date.now()
+      expect(await sponsorSettings(f.h.db, now)).deep.equals({
+        ...defaultSponsorSettings,
+        logo: { ...defaultSponsorSettings.logo, single: placed.logo.single },
+        reel: {
+          ...defaultSponsorSettings.reel,
+          landscape1: placed.reel.landscape1
+        },
+        sampleKey: null
+      })
+      await f.h.db
+        .updateTable('system_settings')
+        .set({ value: JSON.stringify(placed.logo.grid) })
+        .where('key', '=', 'sponsors.logo.grid')
+        .execute()
+      expect((await sponsorSettings(f.h.db, now + 1000)).logo.grid).deep.equals(
+        defaultSponsorSettings.logo.grid
+      )
+      expect(
+        (await sponsorSettings(f.h.db, now + 31000)).logo.grid
+      ).deep.equals(placed.logo.grid)
+      // What players are given reads past the cache, so a save another
+      // worker took moves the next game opened at once.
+      await f.h.db
+        .updateTable('system_settings')
+        .set({ value: JSON.stringify(placed.logo.tv) })
+        .where('key', '=', 'sponsors.logo.grid')
+        .execute()
+      expect((await sponsorOverlay(f.h.db)).logo.grid).deep.equals(
+        placed.logo.tv
+      )
+    })
+
+    it('refuses a margin of 1.2, a negative width, a sample key outside the samples, and anybody but a node administrator', async () => {
+      const refused = async (
+        sponsors: unknown,
+        sentence: string
+      ): Promise<void> => {
+        const response = await f.h.request(
+          'PUT',
+          '/node/settings',
+          { ...changed, sponsors },
+          105
+        )
+        expect(response.status).equals(400)
+        expect(JSON.stringify(await response.json())).contains(sentence)
+      }
+      await refused(
+        {
+          ...placed,
+          logo: { ...placed.logo, grid: { ...placed.logo.grid, side: 1.2 } }
+        },
+        'grid side must be a number from 0 to under 1'
+      )
+      await refused(
+        {
+          ...placed,
+          reel: {
+            ...placed.reel,
+            landscape2: { maxWidth: -0.1, maxHeight: 0.2 }
+          }
+        },
+        'landscape2 maxWidth must be a number above 0, up to 1'
+      )
+      await refused(
+        { ...placed, sampleKey: 'sponsors/lea_x/smd_y.mp4' },
+        'sponsors.sampleKey must be a sample video object'
+      )
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            '/node/settings',
+            { ...changed, sponsors: placed },
+            101
+          )
+        ).status
+      ).equals(403)
+      expect(await sponsorSettings(f.h.db, Date.now(), true)).deep.equals(
+        defaultSponsorSettings
+      )
+    })
   })
 })

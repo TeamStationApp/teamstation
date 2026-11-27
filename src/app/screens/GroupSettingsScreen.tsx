@@ -20,6 +20,7 @@ import { useSceneReveals } from '../components/sceneShown'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings } from '../locales/strings'
+import { SponsorFeaturesCard } from '../sponsors/SponsorFeaturesCard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   UmpireSettingsCard,
@@ -46,6 +47,7 @@ export function GroupSettingsScreen({
   onInvites,
   onPromote,
   onUmpires,
+  onSponsors,
   onAddPlayer,
   onCreatePlayer
 }: {
@@ -61,6 +63,8 @@ export function GroupSettingsScreen({
   onAddPeople?: (ref: GroupRef) => void
   onInvites?: (ref: GroupRef) => void
   onUmpires?: (screen: UmpireSettingsDestination) => void
+  /** A managed league's Sponsor features row: opens the sponsor menu. */
+  onSponsors?: () => void
   onPromote?: ManagementCardProps['onPromote']
   onAddPlayer?: ManagementCardProps['onAddPlayer']
   onCreatePlayer?: ManagementCardProps['onCreatePlayer']
@@ -340,6 +344,9 @@ export function GroupSettingsScreen({
                 onOpen={onUmpires}
                 onChanged={onChanged}
               />
+            )}
+            {kind === 'league' && onSponsors != null && (
+              <SponsorFeaturesCard onOpen={onSponsors} />
             )}
             {detail.group.kind === 'team' && onRequest != null && (
               <GroupGameSchedule

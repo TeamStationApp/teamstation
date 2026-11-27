@@ -70,6 +70,7 @@ import { TESS_HEADER, withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { resolveScoringGame, resolveScoringPlays } from '../scoring/openRow'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
+import { HALF_WAIT_MS, noteHalfInnings } from '../sponsors/reels'
 import { gameNamesDigest } from '../users/nameBook'
 import {
   eventRoutes,
@@ -5059,5 +5060,331 @@ describe('the team default lineup a live post keeps (U10)', function () {
         (stored.currentPlay as { teamStation: unknown }).teamStation
       ).slice(0, 1)
     )
+  })
+})
+
+/** U21: the sponsor reels' half-inning hook, after real live posts. */
+describe('U21 the half-inning ends a live post leaves', function () {
+  this.timeout(60000)
+
+  const name = `teamstation_half_ends_${Date.now()}`
+  const url = adminUrl.replace(/\/[^/]*$/, `/${name}`)
+  const OWNER = 'tok_halfends_00000000000000000000000'
+  let adminPool: Pool | undefined
+  let db: Kysely<Database> | undefined
+  let server: ReturnType<express.Express['listen']> | undefined
+  let base = ''
+  const owner = mintUserId(() => false)
+  const taken = new Set([owner.userId])
+  const players: Array<{ userId: number; legacyId: string }> = []
+  const mint = (): number => {
+    const minted = mintUserId(id => taken.has(id))
+    taken.add(minted.userId)
+    players.push(minted)
+    return minted.userId
+  }
+  const awayIds = Array.from({ length: 9 }, mint)
+  const homeIds = Array.from({ length: 9 }, mint)
+  const awayTeam = makeId('team')
+  const homeTeam = makeId('team')
+  const TEAMS = {
+    away: { id: awayTeam, name: 'Away' },
+    home: { id: homeTeam, name: 'Home' }
+  }
+  const rosterOf = (
+    ids: number[]
+  ): Array<{
+    userId: string
+    gumboId: number
+    shortName: string
+    jersey: string
+  }> =>
+    ids.map((userId, i) => ({
+      userId: userIdOfGumbo(userId),
+      gumboId: userId,
+      shortName: `P${i + 1}`,
+      jersey: String(i + 1)
+    }))
+  const setup = newSetup(TEAMS, {
+    away: rosterOf(awayIds),
+    home: rosterOf(homeIds)
+  })
+  const gameId = makeId('game')
+  /** What the hook is doing for each post, waited on before a read. */
+  const noting: Array<Promise<unknown>> = []
+
+  before(async function () {
+    adminPool = new Pool({ connectionString: adminUrl })
+    try {
+      await adminPool.query('select 1')
+    } catch {
+      await adminPool.end()
+      adminPool = undefined
+      this.skip()
+      return
+    }
+    await adminPool.query(`create database ${name}`)
+    const pool = new Pool({ connectionString: url })
+    await migrateUp(pool, migrations)
+    await pool.end()
+    db = makeDatabase(url)
+    const now = new Date()
+    await insertFixtureUsers(
+      db,
+      [{ ...owner, is_admin: true }, ...players].map((user, i) => ({
+        id: user.userId,
+        legacyId: user.legacyId,
+        display_name: i === 0 ? 'Owner' : `P${i}`,
+        is_admin: 'is_admin' in user,
+        created_at: now,
+        updated_at: now
+      }))
+    )
+    await db
+      .insertInto('auth_sessions')
+      .values({
+        id: 'ses_halfends_owner',
+        user_id: userIdOfGumbo(owner.userId),
+        token_hash: hashToken(OWNER),
+        created_at: now,
+        expires_at: new Date(now.getTime() + 3_600_000)
+      })
+      .execute()
+    // The teams' league has a reel to follow the ends.
+    await db
+      .insertInto('leagues')
+      .values({ id: 'lea_halfends', name: 'Sponsored' })
+      .execute()
+    await db
+      .insertInto('sponsor_media')
+      .values({
+        id: 'smd_halfends',
+        league_id: 'lea_halfends',
+        purpose: 'reel',
+        object_key: 'sponsors/halfends/smd_halfends.mp4',
+        content_type: 'video/mp4',
+        bytes: 1000,
+        sha256: '0'.repeat(64),
+        width: 640,
+        height: 360,
+        duration_ms: 12000,
+        created_by: null
+      })
+      .execute()
+    await db
+      .insertInto('sponsor_reels')
+      .values({
+        id: 'srl_halfends',
+        league_id: 'lea_halfends',
+        media_id: 'smd_halfends',
+        name: 'Reel',
+        allocation: 10,
+        position: 1,
+        duration_ms: 12000
+      })
+      .execute()
+    await db
+      .insertInto('teams')
+      .values([
+        { id: homeTeam, name: 'Home', kind: 'full', league_id: 'lea_halfends' },
+        { id: awayTeam, name: 'Away', kind: 'full', league_id: 'lea_halfends' }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: homeTeam,
+        away_team_id: awayTeam,
+        start_at: now
+      })
+      .execute()
+    // Recorded live, so an end waits for its reel.
+    await db
+      .insertInto('videos')
+      .values({
+        id: makeId('video'),
+        game_id: gameId,
+        kind: 'live',
+        title: 'Home Plate',
+        storage: 'spaces',
+        status: 'live',
+        start_at: now,
+        space_secret: '0123456789abcdef0123456789abcdef',
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    const app = express()
+    app.use(jsonBody)
+    app.use(withActor(db))
+    app.use(
+      '/api/v1',
+      eventRoutes(db, {
+        onGameWritten: written => {
+          noting.push(noteHalfInnings(db!, written, new Date()))
+        }
+      })
+    )
+    app.use(errorHandler)
+    server = app.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => server?.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
+  })
+
+  after(async function () {
+    server?.close()
+    if (db != null) await db.destroy()
+    if (adminPool != null) {
+      await adminPool.query(`drop database if exists ${name}`)
+      await adminPool.end()
+    }
+  })
+
+  async function post(body: Record<string, unknown>): Promise<number> {
+    const read = await fetch(`${base}/games/${gameId}/events`, {
+      headers: { authorization: `Bearer ${OWNER}` }
+    })
+    const current = (await read.json()) as {
+      scoringMutation?: ScoringMutation
+    }
+    const response = await fetch(`${base}/games/${gameId}/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+        authorization: `Bearer ${OWNER}`
+      },
+      body: JSON.stringify({
+        ...body,
+        scoringBase: current.scoringMutation ?? null
+      })
+    })
+    expect(response.status, await response.clone().text()).equals(200)
+    return response.status
+  }
+  const store: EventStore = {
+    load: async () => {
+      const response = await fetch(`${base}/games/${gameId}/events`, {
+        headers: { authorization: `Bearer ${OWNER}` }
+      })
+      const read = (await response.json()) as {
+        plays: Array<{ gumbo: GumboPlay }>
+        currentPlay: CurrentPlay | null
+        scoringMutation?: ScoringMutation
+      }
+      return {
+        plays: read.plays.map(row => row.gumbo),
+        currentPlay: read.currentPlay,
+        scoringMutation: read.scoringMutation
+      }
+    },
+    save: async (_gameId, change) => {
+      const response = await fetch(`${base}/games/${gameId}/events`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+          authorization: `Bearer ${OWNER}`
+        },
+        body: JSON.stringify({
+          ...change,
+          mode: 'live',
+          source: { system: 'teamstation' },
+          plays: change.plays,
+          remove: change.remove,
+          ...(change.currentPlay === undefined
+            ? {}
+            : { currentPlay: change.currentPlay })
+        })
+      })
+      const answer = (await response.json()) as StoredGame
+      expect(response.status, JSON.stringify(answer)).equals(200)
+      return asPostedEdits(answer)
+    }
+  }
+  const strike: ScoringAction = { type: 'pitch', call: 'C' }
+  const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+  async function apply(
+    session: ScoringSession,
+    ...actions: ScoringAction[]
+  ): Promise<void> {
+    for (const action of actions)
+      expect(
+        session.apply(action).problems,
+        JSON.stringify(action)
+      ).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+  }
+  async function ends(): Promise<
+    Array<{ inning: number; half: string; state: string; fadeAt: number }>
+  > {
+    while (noting.length > 0) await noting.shift()
+    return (
+      await db!
+        .selectFrom('game_half_ends')
+        .select(['inning', 'half', 'state', 'fade_at'])
+        .where('game_id', '=', gameId)
+        .execute()
+    ).map(row => ({
+      inning: row.inning,
+      half: row.half,
+      state: row.state,
+      fadeAt: row.fade_at == null ? 0 : new Date(row.fade_at).getTime()
+    }))
+  }
+
+  it('writes the wait on the post that ends a half, forgets it on the remove post that undoes it, and writes it again on the re-entry', async function () {
+    const session = await ScoringSession.open(store, gameId, {
+      gamePk: gameId,
+      teams: TEAMS,
+      setup
+    })
+    // Two strikeouts: the half goes on.
+    await apply(session, strike, strike, strike, strike, strike, strike)
+    expect(await ends()).deep.equals([])
+    // The third, and the play closed: the post that stores it ends the
+    // half, and the wait starts.
+    const before = Date.now()
+    await apply(session, strike, strike, strike, close)
+    const waiting = await ends()
+    expect(waiting.map(row => [row.inning, row.half, row.state])).deep.equals([
+      [1, 'top', 'waiting']
+    ])
+    expect(waiting[0].fadeAt).within(
+      before + HALF_WAIT_MS,
+      Date.now() + HALF_WAIT_MS
+    )
+    // Undo the close: the third out's play is reopened, its row kept until
+    // it closes again, and the half is not over.
+    session.undo()
+    await session.flush()
+    expect(session.problem).equals(null)
+    expect(await ends()).deep.equals([])
+    // Closed again: a new end, waiting from now.
+    const closed = Date.now()
+    await apply(session, close)
+    const reclosed = await ends()
+    expect(reclosed.map(row => row.state)).deep.equals(['waiting'])
+    expect(reclosed[0].fadeAt).at.least(closed + HALF_WAIT_MS)
+    // Undo the third batter whole: a remove post takes the third out away.
+    for (let undone = 0; undone < 4; undone++) session.undo()
+    await session.flush()
+    expect(session.problem).equals(null)
+    expect(await ends()).deep.equals([])
+    // Struck out again: a new end, waiting from now.
+    const again = Date.now()
+    await apply(session, strike, strike, strike, close)
+    const rewritten = await ends()
+    expect(rewritten.map(row => row.state)).deep.equals(['waiting'])
+    expect(rewritten[0].fadeAt).at.least(again + HALF_WAIT_MS)
+    // A post that only rewrites the current play leaves the wait as it was.
+    await post({
+      mode: 'live',
+      source: { system: 'teamstation' },
+      plays: []
+    })
+    expect(await ends()).deep.equals(rewritten)
   })
 })

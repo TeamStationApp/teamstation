@@ -71,6 +71,8 @@ export interface NativeVideoProps {
   paused: boolean
   muted: boolean
   rate: number
+  /** How loud, from 0 to 1; full when not given. */
+  volume?: number
 }
 
 interface Listener {
@@ -281,6 +283,18 @@ export class NativeVideoHandle implements VideoHandle {
   set muted(value: boolean) {
     if (this.props.muted === value) return
     this.props = { ...this.props, muted: value }
+    this.onPropsChange()
+  }
+
+  /** How loud the player is, 0 to 1: a prop, so the view re-renders. */
+  get volume(): number {
+    return this.props.volume ?? 1
+  }
+
+  set volume(value: number) {
+    const next = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 1))
+    if (this.volume === next) return
+    this.props = { ...this.props, volume: next }
     this.onPropsChange()
   }
 

@@ -137,6 +137,11 @@ export interface PictureScoreboardProps {
    * changes, or null while none is: the card's controls keep clear of it.
    */
   onPlaced?: (rect: Rect | null) => void
+  /**
+   * A sponsor's reel is playing in the board's place: no board is drawn
+   * until it ends, and then the one kept comes back.
+   */
+  reelPlaying?: boolean
 }
 
 /**
@@ -198,12 +203,13 @@ export function PictureScoreboard(
     steps: board.steps,
     wallMs: wallNow()
   })
-  const none = shown == null || overlay == null
+  const none = shown == null || overlay == null || props.reelPlaying === true
   // Nothing drawn: no board to keep clear of. Drawn, the overlay says where.
   useEffect(() => {
     if (none) onPlaced?.(null)
   }, [none, onPlaced])
-  if (shown == null || overlay == null) return null
+  if (shown == null || overlay == null || props.reelPlaying === true)
+    return null
   return (
     <ScoreboardOverlay
       step={shown}

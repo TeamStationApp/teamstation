@@ -9,23 +9,31 @@ import { Platform } from 'react-native'
 
 import { buildInfo } from '../../common/distribution'
 import { AnalyticsClient } from '../../common/observability/analyticsClient'
-import { deviceStorage } from '../platform/deviceStorage'
-import { randomUuid } from '../stream/deviceId'
+import type { QueueStorage } from '../../common/observability/queue'
+import { randomUuid } from '../stream/randomUuid'
 import { observeLifecycle } from './lifecycle'
 
 const Context = createContext<AnalyticsClient | undefined>(undefined)
 export const useAnalytics = (): AnalyticsClient | undefined =>
   useContext(Context)
 
+/**
+ * The app's analytics client. `storage` keeps its unsent events: the
+ * device's storage on the phones and the web, and memory on the TV, which
+ * has no AsyncStorage. The client is made with the first store it is given.
+ */
 export function AnalyticsProvider({
   endpoint,
+  storage,
   enabled = true,
   children
 }: {
   endpoint: string
+  storage: QueueStorage
   enabled?: boolean
   children: React.ReactNode
 }): React.ReactElement {
+  const store = useRef(storage)
   const owner = useRef<
     | {
         endpoint: string
@@ -47,7 +55,7 @@ export function AnalyticsProvider({
           app: Platform.OS === 'web' ? 'TS web' : 'TS',
           version: buildInfo.version + '+' + buildInfo.buildNumber,
           id: randomUuid,
-          storage: deviceStorage
+          storage: store.current
         })
       }
     }

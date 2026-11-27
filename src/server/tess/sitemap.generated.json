@@ -777,6 +777,10 @@
         "Retry",
         "Where the scoreboard sits over video: top, left and height are percentages of the video, from its top-left corner. The height is the full board&apos;s; its width follows the team names. It shows for games starting on or after the date, in UTC.",
         "Four-angle portrait",
+        "Sponsor settings",
+        "Where league sponsors&apos; logos and reels sit. A logo&apos;s margins and largest size are percentages of the video it is on, from its top and from the side it is on. A reel&apos;s largest size is a percentage of the screen, in each layout.",
+        "Sample video",
+        "What a league&apos;s sponsor previews play when it has no footage of its own: a 1920 × 1080 H.264 or HEVC MP4, at most 2 minutes, 60 frames a second and 120 MB.",
         "Radar matching",
         "Match recorded speeds to the scorekeeper’s pitch entry.",
         "Replay",
@@ -1207,6 +1211,34 @@
       "name": "signInLink",
       "path": "/signin/:token",
       "title": "Sign in link",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorEventStream",
+      "path": "/groups/league/:id/sponsors/event-stream",
+      "title": "Sponsor event stream",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorFeatures",
+      "path": "/groups/league/:id/sponsors",
+      "title": "Sponsor features",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorLogos",
+      "path": "/groups/league/:id/sponsors/logos",
+      "title": "Sponsor logos",
+      "tabs": [],
+      "settings": []
+    },
+    {
+      "name": "sponsorReels",
+      "path": "/groups/league/:id/sponsors/reels",
+      "title": "Sponsor reels",
       "tabs": [],
       "settings": []
     },

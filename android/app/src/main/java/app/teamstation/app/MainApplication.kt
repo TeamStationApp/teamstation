@@ -13,6 +13,7 @@ import app.teamstation.app.orientation.OrientationPackage
 import app.teamstation.app.plan.PlanDocumentPackage
 import app.teamstation.app.push.PushPackage
 import app.teamstation.app.qrscanner.QrScannerPackage
+import app.teamstation.app.sponsormedia.SponsorMediaPackage
 import app.teamstation.app.stream.PhoneStreamPackage
 import app.teamstation.app.video.LivePlaylistPatience
 import app.teamstation.app.walkup.DictationMicrophonePackage
@@ -59,6 +60,8 @@ class MainApplication : Application(), ReactApplication {
       add(CueSoundsPackage())
       // Notifications: permission, FCM token, and what a chat wake shows.
       add(PushPackage())
+      // Sponsor logos, row pictures and reels, shrunk before they are uploaded.
+      add(SponsorMediaPackage())
     }
 
   override fun onCreate() {

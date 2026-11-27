@@ -169,6 +169,7 @@ import {
   AnalyticsProvider,
   useAnalytics
 } from './observability/AnalyticsContext'
+import { deviceStorage } from './platform/deviceStorage'
 import { passwordKdf } from './platform/passwordKdf'
 import { askWhenWanted, pushDevice } from './platform/pushDevice'
 import { useInsets } from './platform/safeArea'
@@ -241,6 +242,12 @@ import { UserManagementScreen } from './screens/UserManagementScreen'
 import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
+import {
+  SponsorEventStreamScreen,
+  SponsorFeaturesScreen,
+  SponsorLogosScreen,
+  SponsorReelsScreen
+} from './sponsors/SponsorScreens'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
 import { openDocumentCache } from './sync/cache'
 import {
@@ -496,6 +503,7 @@ export function App(props: AppProps): React.ReactElement {
         <ErrorBoundary fallback={errorScreen}>
           <AnalyticsProvider
             endpoint={(props.apiBaseUrl ?? '/api/v1') + '/analytics/events'}
+            storage={deviceStorage}
             enabled={props.fieldPreview !== true}
           >
             <Shell {...props} />
@@ -3260,6 +3268,21 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onApplied={pop}
       />
+    ) : top.name === 'sponsorFeatures' ? (
+      <SponsorFeaturesScreen
+        key={top.id}
+        client={client}
+        league={top.id}
+        onOpen={name => {
+          push({ name, id: top.id })
+        }}
+      />
+    ) : top.name === 'sponsorLogos' ? (
+      <SponsorLogosScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'sponsorReels' ? (
+      <SponsorReelsScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'sponsorEventStream' ? (
+      <SponsorEventStreamScreen key={top.id} client={client} league={top.id} />
     ) : top.name === 'groupSettings' ? (
       <GroupSettingsScreen
         key={`${top.kind}:${top.id}:${sceneVisit}`}
@@ -3271,6 +3294,9 @@ function Shell(props: AppProps): React.ReactElement {
               ? { name, id: top.id, view: 'league' }
               : { name, id: top.id }
           )
+        }}
+        onSponsors={() => {
+          push({ name: 'sponsorFeatures', id: top.id })
         }}
 
         onAddPeople={group => {
@@ -4573,7 +4599,7 @@ function Shell(props: AppProps): React.ReactElement {
 
 /** Loads the page again, and with it the newest web build. */
 function reloadPage(): void {
-  globalThis.location?.reload()
+  ;(globalThis as { location?: { reload: () => void } }).location?.reload()
 }
 
 /**

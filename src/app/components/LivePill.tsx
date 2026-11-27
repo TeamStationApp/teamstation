@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect } from 'react'
-import { Platform, Text, View } from 'react-native'
+import { Platform, Text, View, type ViewStyle } from 'react-native'
 import Animated, {
   cancelAnimation,
   Easing,
@@ -55,12 +55,9 @@ export function LivePill(props: LivePillProps): React.ReactElement {
 export function StillLivePill(props: LivePillProps): React.ReactElement {
   const { inline = false } = props
   const styles = getStyles(useTheme())
+  const placed = useOverlayStyle(inline)
   return (
-    <View
-      style={[styles.pill, inline ? styles.inline : styles.overlay]}
-      accessibilityRole="text"
-      accessibilityLabel="Live now"
-    >
+    <View style={placed} accessibilityRole="text" accessibilityLabel="Live now">
       <Text style={styles.label}>live</Text>
     </View>
   )
@@ -71,6 +68,42 @@ export function StillLivePill(props: LivePillProps): React.ReactElement {
  * such as a game under its angles, which is still the screen on show.
  */
 export const LivePillHeld = createContext(false)
+
+/**
+ * Where a pill over a picture starts down from the picture's top, when
+ * something else holds its corner: below a sponsor logo (`PlayerSurface`).
+ * `null` keeps the usual inset.
+ */
+export const LivePillTop = createContext<number | null>(null)
+
+/**
+ * The overlay pill's inset from the picture's corner and the box it takes,
+ * as its styles draw it: the label's line and the padding round it. The
+ * width allows for the word's four letters in the semi-bold face, a little
+ * wider than they draw, so a logo near the pill is never taken as clear.
+ */
+export function livePillBox(theme: Theme): {
+  inset: number
+  w: number
+  h: number
+} {
+  const font = theme.rem(0.8125)
+  return {
+    inset: theme.rem(theme.spaceSmRem),
+    w: font * 2.8 + 2 * theme.rem(theme.spaceSmRem),
+    h: font * 1.4 + 2 * theme.rem(0.1875)
+  }
+}
+
+/** The pill's own place over a picture, or `inline` in a row. */
+function useOverlayStyle(inline: boolean): ViewStyle[] {
+  const styles = getStyles(useTheme())
+  const top = useContext(LivePillTop)
+  if (inline) return [styles.pill, styles.inline]
+  return top == null
+    ? [styles.pill, styles.overlay]
+    : [styles.pill, styles.overlay, { top }]
+}
 
 /**
  * Whether a pill pulses: only where it can be seen, and for those who have
@@ -90,6 +123,7 @@ export function livePillPulses(options: {
 export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
   const { inline = false } = props
   const styles = getStyles(useTheme())
+  const placed = useOverlayStyle(inline)
   const reduceMotion = useMotionPreference()
   const shown = useSceneShown()
   const held = useContext(LivePillHeld)
@@ -117,7 +151,7 @@ export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
 
   return (
     <Animated.View
-      style={[styles.pill, inline ? styles.inline : styles.overlay, animated]}
+      style={[...placed, animated]}
       accessibilityRole="text"
       accessibilityLabel="Live now"
     >

@@ -9,6 +9,13 @@
 - added: Web addresses in chat messages and attachment captions open when tapped. TeamStation links open the matching page in the app.
 - added: Chat senders can edit their own messages and attachment captions from the message menu.
 - added: Node administrators can set an iOS App Store link to offer the app in Safari on iPhone and iPad
+- added: Node admins set where sponsor logos and reels sit in each layout, with Reset to defaults, and can replace the sponsor sample video
+- added: Sponsor reel views, sponsored row views and taps are recorded in analytics
+- added: Schedules show sponsored rows from the leagues that manage their teams, opening the sponsor's site when tapped
+- added: League sponsor reels play before games and between half-innings in every player layout, with game audio fading to 20% while they play
+- added: Games show their league's sponsor logo in the upper right of every video, live and recorded, on the web, phones and Apple TV
+- added: League admins set up Sponsor features from League Settings on the web, iOS and Android: sponsor video logos and reels with their credit pools, and sponsored Schedule rows, with uploads shrunk on the device
+- added: Every league holds sponsor credits (300 game logos, 1,000 reel broadcasts, 10 event stream slots), and league admins manage sponsor logos, reels and sponsored rows through the API
 - added: Master production builds of the Apple TV app are uploaded to TestFlight, ready for App Store review
 - added: `segmentSpaceVideos` repackages the videos already in the Space as one file into six-second pieces, with `--dry-run` to report first and `--delete-old` for the old copies afterwards
 - added: Tapping "N edits not sent" opens a sheet of each refused edit, naming its game or team with the server's message, with Try Again and Use Server's Copy; the Game and Team screens show the same held notice
@@ -30,6 +37,7 @@
 - added: A league's settings have a SafeSport switch for leagues that are SafeSport Local Affiliated Organizations: a direct message between someone 13 to 17 on one of its teams and an adult who is not their guardian or family must then include a second adult: their guardian, an adult family member, or an adult coach, assistant or admin of their team. An adult no more than 4 years older needs no second adult
 - added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can give a first age, make an adult a minor, or clear an age
 - added: The web page describes TeamStation ("where a team keeps its games, scores, and video") to search engines, web filters and browsers without JavaScript
+- changed: A game's sponsor logo and reels follow the viewer's team, and neutral viewers keep one stable pick
 - changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: Tess shows how long a rate-limited change must wait before it can be confirmed again
@@ -63,6 +71,7 @@
 - fixed: On Android, a landscape full-screen video with one angle draws the scoreboard at the node's Single camera placement, as iOS and the web do, instead of below the hidden status bar
 - fixed: The scoreboard's ball-strike count stays on one line, "0-0" with the out dots below it, instead of wrapping after its hyphen
 - fixed: The Valkey enqueue tests no longer fail CI when the clock passes a millisecond between setting a command's deadline and giving its first try the time left
+- fixed: The phone build's type check, `npm run typecheck.native`, passes with no errors
 
 ## 1.4.0 (2026-11-21)
 

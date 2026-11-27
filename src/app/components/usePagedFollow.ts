@@ -1,4 +1,8 @@
-import type { LegendListRef } from '@legendapp/list/react-native'
+import type {
+  LegendListRef,
+  OnViewableItemsChangedInfo,
+  ViewabilityConfig
+} from '@legendapp/list/react-native'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWindowDimensions } from 'react-native'
 
@@ -15,6 +19,9 @@ const SHIFT_PX = 0.5
 // The scroller is the screen's, and knows nothing of a row resizing. What
 // anchoring it needs is the position keeper's.
 const NO_POSITION_KEEPING = { size: false, data: false }
+
+/** A row is on screen when at least half of it is. */
+const VIEWABILITY: ViewabilityConfig = { itemVisiblePercentThreshold: 50 }
 
 interface Tracked {
   key: string
@@ -134,6 +141,9 @@ export interface PagedFollow<T> {
     onStartReached: (() => void) | undefined
     onEndReachedThreshold: number
     onStartReachedThreshold: number
+    viewabilityConfig: ViewabilityConfig | undefined
+    onViewableItemsChanged:
+      ((info: OnViewableItemsChangedInfo<T>) => void) | undefined
   }
 }
 
@@ -158,7 +168,8 @@ export function usePagedFollow<T>(
     estimatedItemSize,
     alwaysRenderKeys,
     anchorKey,
-    onEndReached
+    onEndReached,
+    onViewableKeys
   } = props
   const active = usePageActive()
   const list = useRef<LegendListRef>(null)
@@ -269,6 +280,23 @@ export function usePagedFollow<T>(
   if (joined !== pinned.current.keys)
     pinned.current = { keys: joined, version: pinned.current.version + 1 }
 
+  // The rows on screen, as Legend List last said, and none while kept: a
+  // list off screen shows nobody anything, and on show again shows those.
+  const viewable = useRef<string[]>([])
+  const viewableChanged = useCallback(
+    (info: OnViewableItemsChangedInfo<T>): void => {
+      viewable.current = info.viewableItems.map(token => token.key)
+      if (shown.current.active)
+        latest.current.onViewableKeys?.([...viewable.current])
+    },
+    []
+  )
+  const watchesViews = onViewableKeys != null
+  useEffect(() => {
+    if (!watchesViews) return
+    latest.current.onViewableKeys?.(active ? [...viewable.current] : [])
+  }, [active, watchesViews])
+
   // Stable, or Legend List would work out its pinned rows on every render.
   const keyExtractor = useCallback((item: T) => latest.current.keyOf(item), [])
   const window = useWindowDimensions()
@@ -296,7 +324,9 @@ export function usePagedFollow<T>(
       onEndReached: active ? onEndReached : undefined,
       onStartReached: keeping ? reachedStart : undefined,
       onEndReachedThreshold: EDGE_SCREENS,
-      onStartReachedThreshold: EDGE_SCREENS
+      onStartReachedThreshold: EDGE_SCREENS,
+      viewabilityConfig: watchesViews ? VIEWABILITY : undefined,
+      onViewableItemsChanged: watchesViews ? viewableChanged : undefined
     }
   }
 }

@@ -8,7 +8,7 @@
  * functions left out, so a spec reads what `VideoView.native` asked the
  * player for. Its ref answers the calls the handle makes and records them.
  */
-import React, { forwardRef, useImperativeHandle } from 'react'
+import React, { forwardRef, useImperativeHandle, useRef } from 'react'
 
 export enum BufferingStrategyType {
   DEFAULT = 'Default',
@@ -29,9 +29,24 @@ export interface VideoRef {
   calls: Array<{ name: string; args: unknown[] }>
 }
 
+/**
+ * Every `Video` drawn, with the props it was last given and the calls its
+ * ref received, so a spec can fire its events (`onLoad`, `onProgress`, …).
+ */
+export const drawnVideos: Array<{
+  props: Record<string, unknown>
+  calls: VideoRef['calls']
+}> = []
+
 const Video = forwardRef<VideoRef, Record<string, unknown>>(
   function Video(props, ref) {
-    const calls: VideoRef['calls'] = []
+    const entry = useRef<(typeof drawnVideos)[number] | null>(null)
+    if (entry.current == null) {
+      entry.current = { props, calls: [] }
+      drawnVideos.push(entry.current)
+    }
+    entry.current.props = props
+    const calls = entry.current.calls
     useImperativeHandle(ref, () => ({
       calls,
       seek: (...args: unknown[]) => calls.push({ name: 'seek', args }),
