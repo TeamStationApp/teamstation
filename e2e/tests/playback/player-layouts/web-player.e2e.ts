@@ -757,10 +757,10 @@ function gestures(touch: boolean) {
 
 async function rightHeld(): Promise<void> {
   // Right held for 700 ms crawls and skips nothing, and slow motion goes
-  // when it is let go: maestro-d's web pressKey presses and lets go at once,
-  // and holdOn (which holds a key) is not on the shared hubs yet.
+  // when it is let go. maestro-d 3.4.0 holds a pointer (holdOn), never a
+  // key: its web pressKey presses and lets go at once.
   throw new BlockedError(
-    'needs a key held down for 700 ms (maestro-d holdOn), which the shared hubs do not have yet'
+    'needs the Right key held down for 700 ms: maestro-d holds a pointer (holdOn) but no key, and pressKey lets go at once'
   )
 }
 

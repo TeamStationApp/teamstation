@@ -21,7 +21,7 @@ describe('the stack’s broadcasts', function () {
     mkdirSync(join(script, '..'), { recursive: true })
     writeFileSync(
       script,
-      `console.log(JSON.stringify({ at: 1, event: 'planned', t0: 42, args: process.argv.slice(2) }))\n`
+      `console.error('the broadcaster warms up')\nconsole.log(JSON.stringify({ at: 1, event: 'planned', t0: 42, args: process.argv.slice(2) }))\n`
     )
     const media = join(checkout, 'media')
     const dir = liveVideoDir(media, 'vid_9')

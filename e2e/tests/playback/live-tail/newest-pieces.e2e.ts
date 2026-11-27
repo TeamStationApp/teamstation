@@ -133,7 +133,7 @@ async function keepsTheNewestPieces(ctx: HarnessContext): Promise<void> {
   )
   expect(
     published.exit,
-    `the broadcaster published every part${published.stderr == null ? '' : ` (it said: ${published.stderr.slice(-5).join(' | ')})`}`
+    `the broadcaster published every part${published.stderr == null ? '' : ` (it said: ${published.stderr.slice(0, 10).join(' | ')})`}`
   ).equals(0)
   await pause(3000)
 

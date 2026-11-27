@@ -1,6 +1,5 @@
 import { expect } from 'chai'
 
-import { BlockedError } from '../../../core/result'
 import {
   defineHarness,
   type HarnessContext,
@@ -223,7 +222,17 @@ function controls(count: number, width: number, height: number) {
     expect((await state(s, full)).muted, 'hidden audio').equals(prior.muted)
     await tapIn(s, reveal)
     expect((await state(s, full)).muted, 'visible audio').equals(!prior.muted)
-    // A mouse hover refreshing both controls is `hover-refreshes-controls`.
+    // A mouse hover refreshes both controls; it does not remove the line.
+    // The pointer reads as a mouse's while it hovers, as it is one.
+    await s.m.evalBrowserScript({ script: 'window.__touchControls = false' })
+    await s.m.hoverOn({
+      point: `${Math.round(middle.x + middle.w / 2)},${Math.round(middle.y + middle.h / 2)}`
+    })
+    expect(
+      (await state(s, full)).icons && (await state(s, full)).line,
+      'a hover refreshes both controls'
+    ).equals(true)
+    await s.m.evalBrowserScript({ script: 'window.__touchControls = true' })
     const corner = await rect(
       s,
       full ? '[aria-label="Close"]' : '[data-testid="gameVideoOpen"]',
@@ -242,15 +251,6 @@ function controls(count: number, width: number, height: number) {
       { timeout: 10000 }
     )
   }
-}
-
-async function hoverRefreshes(): Promise<void> {
-  // With the controls shown, a mouse hover over the middle keeps both the
-  // icons and the line up: maestro-d's hoverOn is what moves a browser's
-  // pointer without pressing, and it is not on the shared hubs yet.
-  throw new BlockedError(
-    'needs a mouse hover without a press (maestro-d hoverOn), which the shared hubs do not have yet'
-  )
 }
 
 async function liveJump(ctx: HarnessContext): Promise<void> {
@@ -396,7 +396,6 @@ export default defineHarness({
   scenarios: {
     'videos-autoplay': videosAutoplay,
     ...sizeScenarios,
-    'hover-refreshes-controls': hoverRefreshes,
     'live-jump': liveJump,
     'keyboard-enter': keyboard('enter'),
     'keyboard-space': keyboard('space')

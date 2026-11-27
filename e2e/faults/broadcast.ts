@@ -20,7 +20,7 @@ import { RemuxError } from './remux'
  *                    in the checkout, the app and key taken from the camera's
  *                    `url`, and answers once it has printed `planned`
  *                    → { id, t0, events, exit }
- *   broadcast-status { id }   every event it has printed, its last lines of
+ *   broadcast-status { id }   every event it has printed, all its
  *                             standard error, and its exit code once it has
  *                             ended → { events, stderr, exit }
  *   broadcast-stop   { id }   stops it, and answers once it has ended
@@ -64,6 +64,8 @@ export interface BroadcastDeps {
   readDir: (dir: string) => Promise<string[]>
   readText: (file: string) => Promise<string>
   makeId: () => string
+  /** Where the broadcaster's standard error is written as it comes. */
+  log: (line: string) => void
   /** How long `broadcast` waits for `planned`. */
   plannedMs?: number
 }
@@ -78,7 +80,7 @@ interface Running {
   child: BroadcastChild
   events: BroadcastEvent[]
   exit: number | null
-  /** Its last lines of standard error, which say why a broadcast failed. */
+  /** Its standard error, which says why a broadcast failed. */
   stderr: string[]
   ended: Promise<void>
 }
@@ -232,8 +234,10 @@ export function broadcastActions(
       })
       const stderr = one.stderr
       createInterface({ input: child.stderr }).on('line', line => {
-        stderr.push(line)
-        if (stderr.length > 20) stderr.shift()
+        // All of it, in the status and in the fault server's own log, which
+        // a stack's down keeps: the first line says why a broadcast failed.
+        if (stderr.length < MAX_EVENTS) stderr.push(line)
+        deps.log(`broadcast ${id}: ${line}`)
       })
       createInterface({ input: child.stdout }).on('line', line => {
         let event: BroadcastEvent
@@ -262,7 +266,7 @@ export function broadcastActions(
         running.delete(id)
         throw new RemuxError(
           502,
-          `the broadcaster ${first === 'ended' ? `exited ${one.exit}` : 'planned nothing in time'}: ${stderr.join(' | ').slice(-500)}`
+          `the broadcaster ${first === 'ended' ? `exited ${one.exit}` : 'planned nothing in time'}: ${stderr.join(' | ').slice(0, 2000)}`
         )
       }
       const t0 = Number(first.t0)
@@ -311,6 +315,9 @@ export function stackBroadcasts(
       spawn(file, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] }),
     readDir: async dir => await readdir(dir),
     readText: async file => await readFile(file, 'utf8'),
+    log: line => {
+      console.error(line)
+    },
     makeId: () =>
       `bc${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
   })

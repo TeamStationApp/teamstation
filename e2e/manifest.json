@@ -7403,49 +7403,6 @@
       "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
     },
     {
-      "id": "playback/playback-controls/control-visibility#hover-refreshes-controls",
-      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
-      "kind": "e2e",
-      "covers": [
-        "src/app/player/ZoneIcons.tsx",
-        "src/app/player/zones.ts",
-        "src/app/player/controlGeometry.ts",
-        "src/app/player/cardScrub.ts",
-        "src/app/player/stillLive.ts",
-        "src/app/player/multiCam/barParts.tsx"
-      ],
-      "stack": "isolated",
-      "fixtures": [
-        "player-layouts"
-      ],
-      "exclusive": false,
-      "surfaces": {
-        "web-chromium": {
-          "devices": [],
-          "browser": {
-            "role": "browser",
-            "needs": [
-              "video"
-            ],
-            "codecs": [
-              "hevc"
-            ]
-          }
-        }
-      },
-      "services": [],
-      "apps": [],
-      "secrets": [],
-      "costUsd": 0,
-      "minutes": 90,
-      "guards": [],
-      "faults": [],
-      "manual": false,
-      "sendsNoMail": true,
-      "spec": "playback/playback-controls/control-visibility",
-      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
-    },
-    {
       "id": "playback/playback-controls/control-visibility#keyboard-enter",
       "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
       "kind": "e2e",

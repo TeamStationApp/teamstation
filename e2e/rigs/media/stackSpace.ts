@@ -125,7 +125,7 @@ export interface BroadcastEvent {
 
 export interface BroadcastStatus {
   events: BroadcastEvent[]
-  /** The broadcaster's last lines of standard error, when the stack sends them. */
+  /** The broadcaster's standard error, when the stack sends it. */
   stderr?: string[]
   /** Null while it runs. */
   exit: number | null
@@ -160,7 +160,7 @@ export async function untilBroadcast(
     if (done(status)) return status
     if (status.exit != null) {
       throw new Error(
-        `the broadcast ended (exit ${status.exit}) before ${what}: ${JSON.stringify(status.events.slice(-3))}${status.stderr == null || status.stderr.length === 0 ? '' : `; it said: ${status.stderr.slice(-5).join(' | ')}`}`
+        `the broadcast ended (exit ${status.exit}) before ${what}: ${JSON.stringify(status.events.slice(-3))}${status.stderr == null || status.stderr.length === 0 ? '' : `; it said: ${status.stderr.slice(0, 10).join(' | ')}`}`
       )
     }
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${what}`)

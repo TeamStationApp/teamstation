@@ -42,9 +42,11 @@ function fake(
   deps: BroadcastDeps
   children: FakeChild[]
   spawned: Array<[string, string[], { cwd: string }]>
+  logged: string[]
 } {
   const children: FakeChild[] = []
   const spawned: Array<[string, string[], { cwd: string }]> = []
+  const logged: string[] = []
   let n = 0
   const deps: BroadcastDeps = {
     checkout: '/srv/e2e/app',
@@ -71,10 +73,13 @@ function fake(
       if (file.includes('vid_nomaster')) throw new Error('ENOENT')
       return `#EXTM3U\n# ${file}\n`
     },
+    log: line => {
+      logged.push(line)
+    },
     makeId: () => `bc${++n}`,
     plannedMs: 200
   }
-  return { deps, children, spawned }
+  return { deps, children, spawned, logged }
 }
 
 async function refused(
@@ -217,6 +222,7 @@ describe('the broadcast actions', function () {
     expect(
       ((await actions['broadcast-status']({ id: 'bc1' })) as any).stderr
     ).deep.equals(['a warning'])
+    expect(f.logged).deep.equals(['broadcast bc1: a warning'])
     // A stop after the end changes nothing.
     expect(
       ((await actions['broadcast-stop']({ id: 'bc1' })) as any).exit
