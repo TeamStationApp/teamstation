@@ -5,13 +5,40 @@ import { makeNonce } from './accounts'
 import { DUMP_WORLD_MAILBOX, splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
+import { runCoachPlan } from './coachPlan'
+import { runConcurrentScoring } from './concurrentScoring'
+import { runDefensiveSetup } from './defensiveSetup'
+import {
+  runEventGroups,
+  runEventInfo,
+  runEventInfoPeople,
+  runEventSchedule,
+  runGameForm
+} from './eventGroups'
+import { runExistingPlayer, runExistingPlayerGuest } from './existingPlayer'
+import {
+  runDefenseGaps,
+  runEmptyDefense,
+  runEventTags,
+  runPickoffGame,
+  runPriorRunner,
+  runRosterPlayers
+} from './fieldGames'
+import { runLineupGame } from './lineupGame'
 import { runMessaging, runMessagingDated } from './messaging'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runPlayerNames } from './playerNames'
 import { runRefreshNotices } from './refreshNotices'
+import { runReplayGames } from './replayGames'
+import { runScoringField } from './scoringField'
+import { runScoringGame } from './scoringGame'
+import { runScoringPreview } from './scoringPreview'
+import { runRosterEdit, runScoringSheets } from './scoringSheets'
 import { runSearch } from './search'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 import { runTess } from './tess'
+import { runWalkUp } from './walkUp'
 
 /**
  * Builds a database from nothing:
@@ -29,11 +56,36 @@ export const WORLDS: Record<
   'team-with-roster': runTeamWithRoster,
   streaming: runStreaming,
   'coach-game': runCoachGame,
+  'concurrent-scoring': runConcurrentScoring,
+  'defensive-setup': runDefensiveSetup,
+  'event-groups': runEventGroups,
+  'event-info': runEventInfo,
+  'event-info-people': runEventInfoPeople,
+  'event-schedule': runEventSchedule,
+  'game-form': runGameForm,
+  'replay-games': runReplayGames,
+  'existing-player': runExistingPlayer,
+  'roster-players': runRosterPlayers,
+  'defense-gaps': runDefenseGaps,
+  'empty-defense': runEmptyDefense,
+  'pickoff-game': runPickoffGame,
+  'prior-runner': runPriorRunner,
+  'event-tags': runEventTags,
+  'existing-player-guest': runExistingPlayerGuest,
+  'coach-plan': runCoachPlan,
+  'lineup-game': runLineupGame,
+  'player-names': runPlayerNames,
   'packed-league': runPackedLeague,
   'packed-league-limit': runPackedLeagueLimit,
   'refresh-notices': runRefreshNotices,
+  'roster-edit': runRosterEdit,
+  'scoring-sheets': runScoringSheets,
+  'scoring-game': runScoringGame,
+  'scoring-preview': runScoringPreview,
+  'scoring-field': runScoringField,
   search: runSearch,
   tess: runTess,
+  'walk-up': runWalkUp,
   messaging: runMessaging,
   'messaging-dated': runMessagingDated
 }

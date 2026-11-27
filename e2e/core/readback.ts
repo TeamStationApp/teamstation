@@ -1,3 +1,8 @@
+import {
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../src/common/scoring/teamRecord'
+
 /**
  * Reads stored state back through the API, so "shown" can be told from "saved". Pass
  * the result to `expect` in a checkpoint's `readBack`.
@@ -7,7 +12,12 @@ export async function readJson(
   path: string,
   init: RequestInit = {}
 ): Promise<unknown> {
-  const response = await fetch(new URL(path, origin), init)
+  // It reads as this checkout's app does, naming the scoring records it can
+  // read: the API refuses a game's newer records to a reader that does not.
+  const headers = new Headers(init.headers)
+  if (!headers.has(SCORING_FEATURE_HEADER))
+    headers.set(SCORING_FEATURE_HEADER, SCORING_FEATURES)
+  const response = await fetch(new URL(path, origin), { ...init, headers })
   if (!response.ok) {
     throw new Error(
       `Read-back of ${path} answered ${response.status}, not the stored state`

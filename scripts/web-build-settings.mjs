@@ -1,5 +1,9 @@
 import babel from '@babel/core'
 import { readFile } from 'fs/promises'
+import { fileURLToPath } from 'url'
+
+/** The checkout, where Babel finds its plugins whatever directory a build runs from. */
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 export const worklets = {
   name: 'reanimated-worklets',
@@ -14,6 +18,7 @@ export const worklets = {
       if (!/react-native-reanimated|['"]worklet['"]/.test(source)) return null
       const result = await babel.transformAsync(source, {
         filename: args.path,
+        cwd: ROOT,
         babelrc: false,
         configFile: false,
         sourceMaps: 'inline',

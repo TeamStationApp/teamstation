@@ -25,8 +25,10 @@ import { dictatingHealth, fakeDictation } from './dictationFakes'
  * from the editor's `initialDraft`; `fakeDictation` only stands in for the
  * socket and microphone dictation needs, so no model is called. The home
  * team is the lineup fixture's (nine in the field, four on the bench), in
- * the scoring sheet's theme and margins. Served by `coachPlan.e2e.ts` from
- * `dist/` at an iPhone's 402×874.
+ * the scoring sheet's theme and margins, at an iPhone's 402×874. The
+ * scenarios that open it (`scoring/game-plan/coaching-screen`'s
+ * `captures-roster-chat` and `d2-roster-chat-overlay`) are blocked until a
+ * stack serves it beside its web build.
  */
 const NAMES = {
   away: [
