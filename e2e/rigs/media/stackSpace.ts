@@ -135,6 +135,11 @@ export interface Broadcast extends BroadcastStatus {
   id: string
   /** The wall time, in ms, its picture's clock starts at. */
   t0: number
+  /**
+   * The lead it was given, in seconds: the one asked for, or more when the
+   * stack needs longer to encode it beside the broadcasts already encoding.
+   */
+  lead?: number
 }
 
 export interface IngestFiles {

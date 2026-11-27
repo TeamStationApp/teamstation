@@ -535,7 +535,7 @@ export async function liveGame(
     await connected(
       pw,
       cameras.map(one => one.videoId),
-      lead
+      Math.max(...broadcasts.map(cast => cast.t0))
     )
   } catch (error) {
     await stop()
@@ -553,15 +553,16 @@ export async function liveGame(
 /**
  * Waits for V's angles to be publishing. Until its publisher connects, a live
  * camera's video is a hidden placeholder, which playback answers as not
- * found, and each publisher first encodes for its lead; until its first
- * segment is written, playback answers with no address.
+ * found, and each publisher first encodes until its T0, the latest of
+ * which is `t0`; until its first segment is written, playback answers with
+ * no address.
  */
 async function connected(
   pw: PlayerWorld,
   videoIds: string[],
-  lead: number
+  t0: number
 ): Promise<void> {
-  const end = Date.now() + (lead + 300) * 1000
+  const end = t0 + 300_000
   for (const videoId of videoIds) {
     for (;;) {
       try {

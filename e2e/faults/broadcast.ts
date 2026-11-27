@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { readdir, readFile } from 'node:fs/promises'
+import { cpus } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
@@ -18,8 +19,8 @@ import { RemuxError } from './remux'
  *                      jumps?, lead?, size?, fps?, sound? }
  *                    runs `node <script> --url rtmp://127.0.0.1:<live port>/<app>/<key> …`
  *                    in the checkout, the app and key taken from the camera's
- *                    `url`, and answers once it has printed `planned`
- *                    → { id, t0, events, exit }
+ *                    `url`, with a lead no less than `encodeLead`, and answers
+ *                    once it has printed `planned` → { id, t0, lead, events, exit }
  *   broadcast-status { id }   every event it has printed, all its
  *                             standard error, and its exit code once it has
  *                             ended → { events, stderr, exit }
@@ -64,6 +65,8 @@ export interface BroadcastDeps {
   readDir: (dir: string) => Promise<string[]>
   readText: (file: string) => Promise<string>
   makeId: () => string
+  /** This machine's processors, which the least lead scales with. */
+  vcpus: () => number
   /** Where the broadcaster's standard error is written as it comes. */
   log: (line: string) => void
   /** How long `broadcast` waits for `planned`. */
@@ -98,14 +101,19 @@ function bad(message: string): never {
   throw new RemuxError(400, message)
 }
 
-function seconds(value: unknown, name: string, min = 1): number {
+function seconds(
+  value: unknown,
+  name: string,
+  min = 1,
+  max = MAX_SECONDS
+): number {
   if (
     typeof value !== 'number' ||
     !Number.isFinite(value) ||
     value < min ||
-    value > MAX_SECONDS
+    value > max
   ) {
-    bad(`${name} is a number of seconds, ${min} to ${MAX_SECONDS}`)
+    bad(`${name} is a number of seconds, ${min} to ${max}`)
   }
   return value
 }
@@ -117,6 +125,30 @@ function stretches(value: unknown, name: string): string[] {
     const { at, seconds: length } = (one ?? {}) as Record<string, unknown>
     return `${seconds(at, `${name}.at`)}:${seconds(length, `${name}.seconds`)}`
   })
+}
+
+/**
+ * The least lead, in seconds, a broadcast of `duration` seconds is given on a
+ * stack of `vcpus` while `encoding` others are still encoding. The
+ * broadcaster encodes its whole picture before its T0, and its own default
+ * lead is a laptop's. On the pool's 8-vCPU droplet one 60 s picture took 25 s
+ * to encode and four at once 66 s each, close to 0.2 + 0.225 s a second for
+ * each encode running. A broadcast's siblings often start just after it, so
+ * at least four are counted, then half as much again to spare.
+ */
+export function encodeLead(
+  duration: number,
+  encoding: number,
+  vcpus: number
+): number {
+  const running = Math.max(4, encoding + 1)
+  const perSecond = (0.2 + 0.225 * running) * (8 / Math.max(1, vcpus))
+  return Math.ceil(20 + duration * perSecond * 1.5)
+}
+
+/** The broadcaster's own default lead: ten seconds and a quarter of the length. */
+export function defaultLead(duration: number): number {
+  return 10 + duration / 4
 }
 
 /** The broadcaster's command line for `body`, publishing to the ingest on `livePort`. */
@@ -152,7 +184,7 @@ export function broadcasterArgs(
   for (const at of stretches(body.stalls, 'stalls')) args.push('--stall', at)
   for (const at of stretches(body.jumps, 'jumps')) args.push('--jump', at)
   if (body.lead != null)
-    args.push('--lead', String(seconds(body.lead, 'lead', 0)))
+    args.push('--lead', String(seconds(body.lead, 'lead', 0, 4 * MAX_SECONDS)))
   if (body.size != null) {
     if (typeof body.size !== 'string' || !SIZE.test(body.size)) {
       bad('size is <width>x<height>')
@@ -208,8 +240,19 @@ export function broadcastActions(
 
   return {
     broadcast: async body => {
+      // The lead asked for, or the broadcaster's own, but never less than
+      // this stack needs to encode it beside what is encoding already.
+      const duration = seconds(body.duration, 'duration')
+      const encoding = [...running.values()].filter(
+        one => one.exit == null && !one.events.some(e => e.event === 'encoded')
+      ).length
+      const asked =
+        body.lead == null
+          ? defaultLead(duration)
+          : seconds(body.lead, 'lead', 0)
+      const lead = Math.max(asked, encodeLead(duration, encoding, deps.vcpus()))
       const args = broadcasterArgs(
-        body,
+        { ...body, lead },
         livePort(),
         deps.config().ffmpegPath ?? 'ffmpeg'
       )
@@ -270,7 +313,7 @@ export function broadcastActions(
         )
       }
       const t0 = Number(first.t0)
-      return { id, t0, ...status(one) }
+      return { id, t0, lead, ...status(one) }
     },
 
     'broadcast-status': async body => status(find(body)),
@@ -315,6 +358,7 @@ export function stackBroadcasts(
       spawn(file, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] }),
     readDir: async dir => await readdir(dir),
     readText: async file => await readFile(file, 'utf8'),
+    vcpus: () => cpus().length,
     log: line => {
       console.error(line)
     },
