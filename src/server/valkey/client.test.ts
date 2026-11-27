@@ -230,7 +230,11 @@ describe('enqueueWithin', function () {
         )
     )
     expect(result.answer).equals('queued')
-    expect(given).deep.equals([ENQUEUE_TIMEOUT_MS])
+    // One try, with the whole budget less the moment the clock moved on.
+    expect(given).length(1)
+    expect(given[0])
+      .at.most(ENQUEUE_TIMEOUT_MS)
+      .and.at.least(ENQUEUE_TIMEOUT_MS - SLACK_MS)
   })
 
   it('gives up on an unanswered try at the budget, and does not try again while connected', async function () {
@@ -293,7 +297,12 @@ describe('enqueueWithin', function () {
     )
     expect(result.answer).equals('queued')
     expect(given).length(2)
-    expect(given[0]).equals(ENQUEUE_TIMEOUT_MS)
+    // The first try has the whole budget, less the moment between setting the
+    // deadline and asking the clock again, which a loaded machine can take
+    // past a millisecond.
+    expect(given[0])
+      .at.most(ENQUEUE_TIMEOUT_MS)
+      .and.at.least(ENQUEUE_TIMEOUT_MS - SLACK_MS)
     // The second try has what the wait left of the budget.
     expect(given[1])
       .at.most(ENQUEUE_TIMEOUT_MS - 95)
