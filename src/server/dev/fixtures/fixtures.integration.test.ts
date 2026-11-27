@@ -775,6 +775,22 @@ describe('fixture worlds', function () {
     expect(members.map(row => row.user_id).sort()).deep.equals(
       [observer.userId, sender.userId].sort()
     )
+    // The team's Members chat is what lets the sender name the observer.
+    const teamChat = await the()
+      .selectFrom('chat_members')
+      .innerJoin(
+        'chat_conversations',
+        'chat_conversations.id',
+        'chat_members.conversation_id'
+      )
+      .select('chat_members.user_id')
+      .where('chat_conversations.kind', '=', 'teamMembers')
+      .where('chat_conversations.scope_id', '=', world.ids.team)
+      .where('chat_members.left_at', 'is', null)
+      .execute()
+    expect(teamChat.map(row => row.user_id).sort()).deep.equals(
+      [observer.userId, sender.userId].sort()
+    )
     const conversation = await the()
       .selectFrom('chat_conversations')
       .select(['kind', 'created_by'])

@@ -2,6 +2,7 @@ import { sql } from 'kysely'
 
 import { makeId } from '../../../common/ids'
 import { createDm } from '../../chat/dms'
+import { reconcileScope } from '../../chat/reconciler'
 import { createTeam } from '../../teams/createTeam'
 import {
   createAccount,
@@ -30,9 +31,13 @@ async function markAdult(
 
 /**
  * Two adults on one team and the direct conversation between them, under
- * this run's nonce: the chat link and composer scenarios' room. Each chat
- * device is a test's own: their keys are made when a scenario first starts
- * a chat engine for them, so nothing here is encrypted.
+ * this run's nonce: the chat link and composer scenarios' room. The DM rules
+ * let an adult name another they share a scope chat with, so the team's
+ * Members chat is brought to its roster first, as the reconciler would once
+ * it heard of the roster change, and the sender names the observer from
+ * there. Each chat device is a test's own: their keys are made when a
+ * scenario first starts a chat engine for them, so nothing here is
+ * encrypted.
  */
 export async function runMessaging(
   context: WorldContext
@@ -63,6 +68,7 @@ export async function runMessaging(
       is_player: true
     })
     .execute()
+  await reconcileScope(db, 'teamMembers', team.id)
   const { conversationId } = await createDm(db, sender.userId, [
     observer.userId
   ])
