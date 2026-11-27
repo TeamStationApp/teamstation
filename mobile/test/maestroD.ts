@@ -2,9 +2,8 @@
  * maestro-d for the phone and iPad tests: one daemon per agent, one pinned
  * device, and screenshots saved where the run can find them.
  *
- * The JavaScript client is loaded the way scripts/scoring-feedback-safari.mjs
- * loads it: from MAESTRO_D_CLIENT_ROOT, a maestro-d checkout's npm/maestro-d
- * directory, by default ~/git/maestro-d/npm/maestro-d. The binary it spawns
+ * The JavaScript client is loaded from MAESTRO_D_CLIENT_ROOT, a maestro-d
+ * checkout's npm/maestro-d directory, by default ~/git/maestro-d/npm/maestro-d. The binary it spawns
  * the daemon from is MAESTRO_D_BIN, by default ~/.maestro-d/bin/maestro-d.
  * The client's docs are in ~/git/maestro-d/docs/daemon/. MAESTRO_D_TEAM_ID is
  * the team that signs WebDriverAgent on a physical iOS device.

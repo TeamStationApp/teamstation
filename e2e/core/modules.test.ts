@@ -126,10 +126,17 @@ describe('moduleOf', function () {
     }
     const legacy = streaming.filter(line => line.startsWith('legacy '))
     expect(legacy.length).is.greaterThan(0)
+    // A converted category lists its specs and no legacy paths; one still
+    // to convert lists its legacy paths after its specs.
     const scoring = await capture(
       async () => await main(['list', '--category', 'scoring'])
     )
-    expect(scoring.some(line => line.startsWith('legacy '))).equals(true)
+    expect(scoring.length).is.greaterThan(0)
+    expect(scoring.some(line => line.startsWith('legacy '))).equals(false)
+    const playback = await capture(
+      async () => await main(['list', '--category', 'playback'])
+    )
+    expect(playback.some(line => line.startsWith('legacy '))).equals(true)
     const json = await capture(async () => await main(['list', '--json']))
     expect(json.some(line => line.includes('legacy '))).equals(false)
     expect(MODULES).includes('scoring')

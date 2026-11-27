@@ -7,8 +7,9 @@ import type { ConcurrentScoringRig } from './concurrentScoring'
 /** A disconnected early scorer cannot erase accepted innings; current Undo can. */
 export async function staleTail(rig: ConcurrentScoringRig): Promise<void> {
   await rig.open()
-  const isolated = rig.clients[0].page
-  assert(isolated != null, 'Stale-tail isolation requires Chromium')
+  // The early scorer's browser loses its network, through maestro-d.
+  const isolated = rig.clients[0].m
+  assert(rig.clients[0].page != null, 'Stale-tail isolation requires Chromium')
   const read = async (): Promise<StoredGame> =>
     await rig.api.gameEvents(rig.fixture.ids.game)
   const completed = (game: StoredGame): number =>
@@ -39,7 +40,7 @@ export async function staleTail(rig: ConcurrentScoringRig): Promise<void> {
     expected: StoredGame,
     label: string
   ): Promise<void> => {
-    await isolated.setOfflineMode(false)
+    await isolated.setNetworkConditions({ offline: false })
     await wait(
       async () => (await rig.summary(0)) === rig.savedSummary(expected),
       'isolated scorer adopts canonical timeline'
@@ -65,7 +66,7 @@ export async function staleTail(rig: ConcurrentScoringRig): Promise<void> {
   }
   try {
     const initial = await rig.summary(0)
-    await isolated.setOfflineMode(true)
+    await isolated.setNetworkConditions({ offline: true })
     for (let out = 0; out < 12; out++) {
       for (let strike = 0; strike < 3; strike++)
         await acceptedAction(async () => {
@@ -111,7 +112,7 @@ export async function staleTail(rig: ConcurrentScoringRig): Promise<void> {
     )
     await rig.converge(0, 'deliberate-current-undo')
     await rig.capture('deliberate-current-undo')
-    await isolated.setOfflineMode(true)
+    await isolated.setNetworkConditions({ offline: true })
     await acceptedAction(async () => {
       await rig.pitch(1, 'Ball', true)
     })
@@ -148,6 +149,6 @@ export async function staleTail(rig: ConcurrentScoringRig): Promise<void> {
     )
     throw error
   } finally {
-    await isolated.setOfflineMode(false)
+    await isolated.setNetworkConditions({ offline: false })
   }
 }

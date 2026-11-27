@@ -36,7 +36,6 @@ export class ConcurrentScoringSafariRig extends ConcurrentScoringRig {
     const m = await this.ctx.attach(role, {
       platform: 'ios',
       appId: 'com.apple.mobilesafari',
-      teamId: process.env.TS_IOS_TEAM_ID,
       waitForIdleTimeout: 500,
       stepDelay: 250
     })

@@ -17,14 +17,15 @@ import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail } from '../common/api'
 import type { ScoringAction } from '../common/scoring/actions'
 import { fieldInfoOf } from '../common/scoring/state'
+import { sendReport } from './dictatedReport'
 import { scoringSession } from './scoringSession'
 
 /**
  * Where dictated balls and pitches went, on the production field. Each
- * button scores what the live interpreter said of a sentence (served at
- * `/scenarios`) through the real reducer and `completeSentence`, at a 200 ft
- * fence, and posts each picture — when it started, when its ball came down
- * and where — and what the play stored, to `/timeline`. It reads only fields
+ * button scores what the live interpreter said of a sentence (served beside
+ * the page as `scenarios`) through the real reducer and `completeSentence`, at a 200 ft
+ * fence, and reports each picture — when it started, when its ball came down
+ * and where — and what the play stored, as `timeline` (`dictatedReport`). It reads only fields
  * the scoring screen has always had, or reads new ones optionally, so the
  * same fixture shows the game as it was before. A scenario may put runners
  * on first, second and third before its sentence, and the report says the
@@ -112,7 +113,7 @@ function Preview(): React.ReactElement {
   const picture = useRef<Entry | null>(null)
   const previous = useRef<FieldPlayer[]>([])
   useEffect(() => {
-    fetch('/scenarios')
+    fetch('scenarios')
       .then(async response => await response.json())
       .then(setScenarios)
       .catch(() => undefined)
@@ -175,45 +176,40 @@ function Preview(): React.ReactElement {
       .filter(event => event.isPitch)
     const linescore = session.liveData.linescore
     const batted = plays.findLast(play => play.hitData != null)
-    fetch('/timeline', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        outs: linescore.outs,
-        runs: linescore.teams.away.runs,
-        bases: [
-          linescore.offense.first,
-          linescore.offense.second,
-          linescore.offense.third
-        ].map(ref => ref?.id ?? null),
-        question: state.dictationQuestion?.question ?? null,
-        problem: state.dictation?.problem ?? null,
-        events: plays.map(play => play.result.eventType ?? null),
-        hit: batted?.hitData ?? null,
-        // The ball as completion left it: its trajectory, depth and spot.
-        ball:
-          state.log.findLast(action => action.type === 'ballInPlay') ?? null,
-        credits: (batted?.runners ?? []).flatMap(runner =>
-          (runner.credits ?? []).map(credit => ({
-            credit: credit.credit,
-            player: credit.player?.id ?? null
-          }))
-        ),
-        count: {
-          balls: session.liveData.linescore.balls,
-          strikes: session.liveData.linescore.strikes
-        },
-        stored: {
-          coordinates: hit?.hitData?.coordinates ?? null,
-          pitches: pitches.map(event => ({
-            call: event.details.code,
-            type: (event.details as { type?: unknown }).type ?? null,
-            pitchData: event.pitchData ?? null
-          }))
-        },
-        timeline: timeline.current
-      })
+    sendReport(name, {
+      name,
+      outs: linescore.outs,
+      runs: linescore.teams.away.runs,
+      bases: [
+        linescore.offense.first,
+        linescore.offense.second,
+        linescore.offense.third
+      ].map(ref => ref?.id ?? null),
+      question: state.dictationQuestion?.question ?? null,
+      problem: state.dictation?.problem ?? null,
+      events: plays.map(play => play.result.eventType ?? null),
+      hit: batted?.hitData ?? null,
+      // The ball as completion left it: its trajectory, depth and spot.
+      ball: state.log.findLast(action => action.type === 'ballInPlay') ?? null,
+      credits: (batted?.runners ?? []).flatMap(runner =>
+        (runner.credits ?? []).map(credit => ({
+          credit: credit.credit,
+          player: credit.player?.id ?? null
+        }))
+      ),
+      count: {
+        balls: session.liveData.linescore.balls,
+        strikes: session.liveData.linescore.strikes
+      },
+      stored: {
+        coordinates: hit?.hitData?.coordinates ?? null,
+        pitches: pitches.map(event => ({
+          call: event.details.code,
+          type: (event.details as { type?: unknown }).type ?? null,
+          pitchData: event.pitchData ?? null
+        }))
+      },
+      timeline: timeline.current
     }).catch(() => undefined)
   }, [
     finished,

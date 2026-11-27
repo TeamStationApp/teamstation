@@ -18,8 +18,10 @@ import { transformSync } from 'esbuild'
 //
 // - unit-only changed-line coverage of at least 90%, per file and overall;
 // - combined unit and browser coverage of at least 95%, per file and overall,
-//   merging measured counters, never percentages. The browser counters are
-//   the istanbul map `lineupQrBrowser.e2e.ts` writes, when it has run.
+//   merging measured counters, never percentages. The browser counters are an
+//   istanbul map at coverage/lineupQr/browser.json, when one has been put
+//   there; the lineup QR browser spec (e2e/tests/scoring/lineup-qr/) runs
+//   through the devops runner, which writes none, so the gate is unit-only.
 //
 // A changed executable file with no counters fails. The base is
 // TS_COVERAGE_BASE, else origin/master.
