@@ -554,6 +554,38 @@ describe('CachingClient', function () {
     ).equals('AbortError')
   })
 
+  it('aborts with a DOMException where the runtime has one, and with an Error named AbortError on a phone, which has none', async function () {
+    const never = new Promise<number>(() => undefined)
+    const caught = async (signal: AbortSignal): Promise<unknown> =>
+      await untilAborted(never, signal).then(
+        () => undefined,
+        (error: unknown) => error
+      )
+    const before = new AbortController()
+    before.abort()
+    const browser = await caught(before.signal)
+    expect(browser).instanceOf(DOMException)
+    expect(browser).property('name', 'AbortError')
+    const held = Object.getOwnPropertyDescriptor(globalThis, 'DOMException')
+    Reflect.deleteProperty(globalThis, 'DOMException')
+    try {
+      // Aborted already, and aborted while waiting.
+      const phone = [await caught(before.signal)]
+      const during = new AbortController()
+      const waiting = caught(during.signal)
+      during.abort()
+      phone.push(await waiting)
+      for (const error of phone) {
+        expect(error).instanceOf(Error)
+        expect(error).property('name', 'AbortError')
+        expect(error).property('message', 'Aborted')
+      }
+    } finally {
+      if (held != null) Object.defineProperty(globalThis, 'DOMException', held)
+    }
+    expect(globalThis.DOMException).not.equals(undefined)
+  })
+
   it('tells the first listener of a change that came back before anyone listened (3.harness-review.1)', async function () {
     const roles = (team: string): Answer => ({
       body: { teams: { [team]: ['scorekeeper'] }, guardianOf: [] }

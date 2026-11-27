@@ -159,11 +159,66 @@ function steppedCell(
   }
 }
 
+/**
+ * What the web's sheet reads of the DOM — its keys, clipboard, focus and
+ * presses — typed here because the phone's build has no DOM library to type
+ * it with.
+ */
+interface WebEvent {
+  target: unknown
+  preventDefault: () => void
+  stopPropagation: () => void
+}
+interface WebKeyEvent extends WebEvent {
+  key: string
+  altKey: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+}
+interface WebClipboardEvent extends WebEvent {
+  clipboardData: {
+    getData: (format: string) => string
+    setData: (format: string, data: string) => void
+  } | null
+}
+interface WebPressEvent extends WebEvent {
+  button: number
+}
+type WebListen<Events> = <Type extends keyof Events & string>(
+  type: Type,
+  listener: (event: Events[Type]) => void,
+  capture?: boolean
+) => void
+interface WebTarget<Events> {
+  addEventListener: WebListen<Events>
+  removeEventListener: WebListen<Events>
+}
+type WebGrid = WebTarget<{
+  keydown: WebKeyEvent
+  copy: WebClipboardEvent
+  paste: WebClipboardEvent
+  focusin: WebEvent
+}>
+interface WebPage {
+  document?: WebTarget<{ pointerdown: WebPressEvent; click: WebEvent }> & {
+    activeElement: unknown
+  }
+  window?: {
+    getSelection: () => {
+      collapse: (node: unknown, offset: number) => void
+    } | null
+  }
+}
+const webPage = globalThis as WebPage
+/** Whether a ref's node is a DOM element, which takes listeners. */
+const listens = (node: unknown): node is WebGrid =>
+  typeof (node as Partial<WebGrid> | null)?.addEventListener === 'function'
+
 /** Whether a DOM node holds another (or is it), for the web's focus. */
-const holds = (node: unknown, other: EventTarget | null): boolean =>
+const holds = (node: unknown, other: unknown): boolean =>
   other != null &&
-  (node as { contains?: (other: Node) => boolean } | null)?.contains?.(
-    other as Node
+  (node as { contains?: (other: unknown) => boolean } | null)?.contains?.(
+    other
   ) === true
 
 /**
@@ -390,7 +445,7 @@ function PlanSheet({
       ? highlight
       : undefined
   const focusGrid = (): void => {
-    ;(grid.current as unknown as HTMLElement | null)?.focus()
+    ;(grid.current as unknown as { focus: () => void } | null)?.focus()
   }
   const refuse = (at: PlanCellAddress, text: string): void => {
     setRefused({ ...at })
@@ -408,7 +463,7 @@ function PlanSheet({
     setPicking(at)
     focusGrid()
   }
-  const keyDown = (event: KeyboardEvent): void => {
+  const keyDown = (event: WebKeyEvent): void => {
     if (
       event.target !== grid.current ||
       event.altKey ||
@@ -471,7 +526,7 @@ function PlanSheet({
     } else if (editing !== '')
       refuse(lit, `${editing}${event.key.toUpperCase()}`)
   }
-  const copy = (event: ClipboardEvent): void => {
+  const copy = (event: WebClipboardEvent): void => {
     if (lit == null || event.clipboardData == null) return
     event.clipboardData.setData(
       'text/plain',
@@ -479,7 +534,7 @@ function PlanSheet({
     )
     event.preventDefault()
   }
-  const paste = (event: ClipboardEvent): void => {
+  const paste = (event: WebClipboardEvent): void => {
     if (lit == null) return
     event.preventDefault()
     const text = (event.clipboardData?.getData('text') ?? '').trim()
@@ -500,27 +555,30 @@ function PlanSheet({
   const keys = useRef({ keyDown, copy, paste, left })
   keys.current = { keyDown, copy, paste, left }
   useEffect(() => {
-    const node = grid.current as unknown as HTMLElement | null
-    const whole = tab.current as unknown as HTMLElement | null
-    if (!web || node?.addEventListener == null || whole == null) return
-    const keyDown = (event: KeyboardEvent): void => {
+    const node: unknown = grid.current
+    const whole = tab.current as unknown as WebTarget<{
+      focusout: WebEvent
+    }> | null
+    if (!web || !listens(node) || whole == null) return
+    const keyDown = (event: WebKeyEvent): void => {
       keys.current.keyDown(event)
     }
-    const copy = (event: ClipboardEvent): void => {
+    const copy = (event: WebClipboardEvent): void => {
       keys.current.copy(event)
     }
-    const paste = (event: ClipboardEvent): void => {
+    const paste = (event: WebClipboardEvent): void => {
       keys.current.paste(event)
     }
     // Chromium aims a copy or a paste made with nothing selected at the
     // page's body, not at the focused grid, so the grid holds a collapsed
     // selection of its own, which draws nothing, while it has the focus.
-    const focusIn = (event: FocusEvent): void => {
-      if (event.target === node) window.getSelection()?.collapse(node, 0)
+    const focusIn = (event: WebEvent): void => {
+      if (event.target === node)
+        webPage.window?.getSelection()?.collapse(node, 0)
     }
     const focusOut = (): void => {
       setTimeout(() => {
-        const active = document.activeElement
+        const active = webPage.document?.activeElement
         if (holds(node, active) || holds(pickerNode.current, active)) return
         keys.current.left()
       }, 0)
@@ -544,29 +602,28 @@ function PlanSheet({
   // changing nothing: the click that follows the press is stopped before
   // what it landed on sees it, as the phone's backdrop takes its tap, so a
   // tab or the Box Score pill under it does not open too.
-  const closingClick = useRef<{ target: EventTarget | null; at: number }>(
-    undefined
-  )
+  const closingClick = useRef<{ target: unknown; at: number }>(undefined)
   useEffect(() => {
     if (!web || picking == null) return
-    const press = (event: Event): void => {
+    const press = (event: WebPressEvent): void => {
       if (holds(pickerNode.current, event.target)) return
       if (holds(grid.current, event.target)) return
       // Only a primary press is followed by a click; a right or middle one
       // must not leave a record that stops the next real click.
-      if ((event as MouseEvent).button === 0)
+      if (event.button === 0)
         closingClick.current = { target: event.target, at: Date.now() }
       setPicking(undefined)
     }
-    document.addEventListener('pointerdown', press, true)
+    const page = webPage.document
+    page?.addEventListener('pointerdown', press, true)
     return () => {
-      document.removeEventListener('pointerdown', press, true)
+      page?.removeEventListener('pointerdown', press, true)
     }
   }, [web, picking])
   // Kept past the picker's closing, which comes before the click.
   useEffect(() => {
     if (!web) return
-    const click = (event: Event): void => {
+    const click = (event: WebEvent): void => {
       const closing = closingClick.current
       closingClick.current = undefined
       if (closing === undefined) return
@@ -578,9 +635,10 @@ function PlanSheet({
       event.stopPropagation()
       event.preventDefault()
     }
-    document.addEventListener('click', click, true)
+    const page = webPage.document
+    page?.addEventListener('click', click, true)
     return () => {
-      document.removeEventListener('click', click, true)
+      page?.removeEventListener('click', click, true)
     }
   }, [web])
 

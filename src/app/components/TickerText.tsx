@@ -13,6 +13,24 @@ import {
 /** Wider than any line a ticker draws. */
 const TICKER_STRIP_WIDTH = 10000
 
+/**
+ * What the ticker reads of the web's page, typed here because the phone's
+ * build has no DOM library to type it with.
+ */
+interface WebDocument {
+  createRange: () => {
+    selectNodeContents: (node: unknown) => void
+    getBoundingClientRect?: () => { width: number }
+  }
+  fonts?: {
+    ready: Promise<unknown>
+    addEventListener: (type: 'loadingdone', listener: () => void) => void
+    removeEventListener: (type: 'loadingdone', listener: () => void) => void
+  }
+}
+const webDocument = (): WebDocument | undefined =>
+  (globalThis as { document?: WebDocument }).document
+
 /** A single accessible label that reveals overflow with a gentle, paused pan. */
 export function TickerText({
   children,
@@ -52,9 +70,10 @@ export function TickerText({
   // A browser reads the line's full width even where it is cut: its text's
   // own extent, fractions rounded up so the panned line never ellipsizes.
   const measureWeb = (fallback?: number): void => {
-    const node = text.current as unknown as HTMLElement | null
-    if (node == null) return
-    const range = document.createRange()
+    const node: unknown = text.current
+    const page = webDocument()
+    if (node == null || page == null) return
+    const range = page.createRange()
     range.selectNodeContents(node)
     // A test page's range has no layout.
     const full =
@@ -77,7 +96,7 @@ export function TickerText({
     const measure = (): void => {
       if (live) measureLatest.current()
     }
-    const { fonts } = document as { fonts?: FontFaceSet }
+    const fonts = webDocument()?.fonts
     fonts?.ready.then(measure).catch(() => undefined)
     fonts?.addEventListener('loadingdone', measure)
     return () => {

@@ -96,7 +96,9 @@ const tsSuites = [
   'src/app/stream/randomUuid.test.ts',
   'src/app/stream/deviceId.test.ts',
   // Where the node places sponsor logos and reels, and its sample (M8).
-  'src/common/nodeSettings.test.ts'
+  'src/common/nodeSettings.test.ts',
+  // The abort the phone makes without a DOMException, typed for its build.
+  'src/app/sync/cachingClient.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */
@@ -141,7 +143,12 @@ const appSuites = [
   'src/app/observability/AnalyticsContext.test.tsx',
   'src/app/tv/TvApp.test.tsx',
   // The node administrator's sponsor settings and sample upload (M8).
-  'src/app/screens/NodeSettingsCard.test.tsx'
+  'src/app/screens/NodeSettingsCard.test.tsx',
+  // The web's DOM reads, typed for the phone's build: the ticker's
+  // measures, the plan sheet's keys and presses, the note's selection.
+  'src/app/components/TickerText.test.tsx',
+  'src/app/scoring/plan/PlanTab.test.tsx',
+  'src/app/umpires/noteEditor.test.tsx'
 ]
 
 /**

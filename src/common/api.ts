@@ -3788,6 +3788,23 @@ export const SLOWEST_BODY_BYTES_PER_SECOND = 8 * 1024
 export class DeadlinePassed extends Error {}
 
 /**
+ * A body that streams, and the decoder its bytes need: what a browser's or
+ * Node's `fetch` gives and React Native's does not, so typed here for the
+ * phone's build, which has no DOM library.
+ */
+interface StreamedResponse {
+  body?: {
+    getReader?: () => {
+      read: () => Promise<{ done: boolean; value?: Uint8Array }>
+      cancel: () => Promise<void>
+    }
+  } | null
+}
+type BodyDecoder = new () => {
+  decode: (input?: Uint8Array, options?: { stream?: boolean }) => string
+}
+
+/**
  * Reads `response`'s body as text, giving up once nothing of it has arrived
  * for `idleMs`. Where the body streams, each chunk starts the wait again, so
  * a long answer on a slow link is read to its end; where it does not, the
@@ -3798,7 +3815,11 @@ export async function bodyOf(
   response: Response,
   idleMs: number
 ): Promise<string> {
-  const reader = response.body?.getReader?.()
+  const Decoder = (globalThis as { TextDecoder?: BodyDecoder }).TextDecoder
+  const reader =
+    Decoder == null
+      ? undefined
+      : (response as StreamedResponse).body?.getReader?.()
   let timer: ReturnType<typeof setTimeout> | undefined
   const idle = async (ms: number): Promise<never> =>
     await new Promise<never>((_resolve, reject) => {
@@ -3809,7 +3830,7 @@ export async function bodyOf(
       ;(timer as { unref?: () => void }).unref?.()
     })
   try {
-    if (reader == null) {
+    if (reader == null || Decoder == null) {
       const length = Number(response.headers.get('content-length') ?? 0)
       const read = response.text()
       read.catch(() => undefined)
@@ -3823,7 +3844,7 @@ export async function bodyOf(
         )
       ])
     }
-    const decoder = new TextDecoder()
+    const decoder = new Decoder()
     let text = ''
     for (;;) {
       const next = reader.read()

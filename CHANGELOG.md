@@ -71,6 +71,7 @@
 - fixed: On Android, a landscape full-screen video with one angle draws the scoreboard at the node's Single camera placement, as iOS and the web do, instead of below the hidden status bar
 - fixed: The scoreboard's ball-strike count stays on one line, "0-0" with the out dots below it, instead of wrapping after its hyphen
 - fixed: The Valkey enqueue tests no longer fail CI when the clock passes a millisecond between setting a command's deadline and giving its first try the time left
+- fixed: The phone build's type check, `npm run typecheck.native`, passes with no errors
 
 ## 1.4.0 (2026-11-21)
 

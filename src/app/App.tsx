@@ -4599,7 +4599,7 @@ function Shell(props: AppProps): React.ReactElement {
 
 /** Loads the page again, and with it the newest web build. */
 function reloadPage(): void {
-  globalThis.location?.reload()
+  ;(globalThis as { location?: { reload: () => void } }).location?.reload()
 }
 
 /**
