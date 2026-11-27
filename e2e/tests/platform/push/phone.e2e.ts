@@ -1,20 +1,18 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
+import { pointAtStack } from '../../../rigs/app/pointAtStack'
 import { pushRun } from '../../../rigs/push/pushRun'
 
 /**
- * N5 on an Android emulator and N6 on an iPhone simulator, in the app built
- * from this checkout for measuring (the debug build on Android, the Release
- * simulator build on iOS), against an API the run starts on this machine with
- * the chat fixture in a database of its own (`e2e/rigs/push/pushRun.ts`): a
- * DM and a mention notify the phone and open their conversation, and a
- * reminder for an RSVPed event opens it. Pass the emulator or simulator as
- * `--device phone=<serial or udid>`; it is never chosen for you. The Android
- * build needs `JAVA_HOME`, `ANDROID_HOME` and `TS_ANDROID_DEBUG_KEYSTORE`. The
- * steps' logs and screenshots are under `notifications/` in the run directory.
+ * N5 on an Android phone and N6 on an iPhone, in the caller's build pointed
+ * at the stack, whose push capture takes every push the server sends
+ * (`e2e/rigs/push/pushRun.ts`): a DM and a mention notify the phone and open
+ * their conversation, and a reminder for an RSVPed event opens it. A
+ * notification reaching the lock screen needs a real phone. The steps' logs
+ * and screenshots are under `notifications/` in the run directory.
  */
-export default defineE2e({
+export default defineHarness({
   id: 'platform/push/phone',
   title:
     'A DM, a mention and an RSVPed event’s reminder notify the phone, decrypted on it, and a tap opens what each is about',
@@ -33,21 +31,24 @@ export default defineE2e({
     'src/server/push/**',
     'src/server/routes/push.ts'
   ],
-  stack: 'none',
+  stack: 'isolated',
   fixtures: [],
   // The run's push queue has a fixed Valkey prefix: one at a time.
   exclusive: true,
   surfaces: {
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone', 'push'], simulator: 'never' }
+      ]
     },
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['ios-phone', 'push'], simulator: 'never' }
+      ]
     }
   },
-  services: ['api'],
-  // The run builds and installs its own app: no prepared Mason build.
-  apps: [],
+  services: ['push-capture'],
+  apps: ['teamstation-ios', 'teamstation-android'],
   secrets: [],
   costUsd: 0,
   minutes: 25,
@@ -56,11 +57,16 @@ export default defineE2e({
   manual: false,
   scenarios: {
     'dms-mentions-reminders': async ctx => {
-      const run = await pushRun(
-        ctx,
-        ctx.surface === 'ios-app' ? 'ios' : 'android'
-      )
-      expect(run.code, `N5/N6 failed: see ${run.log}`).equals(0)
+      const kind =
+        ctx.surface === 'ios-app' ? 'teamstation-ios' : 'teamstation-android'
+      const appId = ctx.app(kind)
+      const m = ctx.attached('phone')
+      // The runner pointed the caller's build at the stack; a fresh launch
+      // keeps it there.
+      await m.launchApp({ appId, stopApp: true })
+      await pointAtStack(m, ctx.stack.origin, appId)
+      await pushRun(ctx, ctx.surface === 'ios-app' ? 'ios' : 'android')
+      expect(ctx.surface).oneOf(['ios-app', 'android-app'])
     }
   }
 })

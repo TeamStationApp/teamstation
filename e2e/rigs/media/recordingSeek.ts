@@ -1,13 +1,10 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
 
 import { TeamStationClient } from '../../../src/common/api'
 import { passwordBytes } from '../../../src/common/passwordProtocol'
 import { nativeArgon } from '../../../src/server/auth/passwords'
-import type { Database } from '../../../src/server/db/database'
-import type { SpaceSettings } from '../../../src/server/media/spacesHls'
-import { listSpaceObjectEntries } from '../../../src/server/media/spacesVideo'
 import type { E2eContext, WebSession } from '../../core/spec'
+import type { StackMedia } from './stackSpace'
 
 /** What the `<video>` showing a picture is doing, the furthest along of them. */
 export interface PlayerState {
@@ -90,10 +87,10 @@ export async function apiToken(
  * only playlists, an init segment and segments, each under 16 MB.
  */
 export async function expectSegmentedPrefix(
-  space: SpaceSettings,
+  media: Pick<StackMedia, 'objects'>,
   videoId: string
 ): Promise<Array<{ key: string; size: number }>> {
-  const entries = (await listSpaceObjectEntries(space, `videos/${videoId}-`))
+  const entries = (await media.objects(`videos/${videoId}-`))
     .filter(entry => !entry.key.includes('/stills/'))
     .map(entry => ({ key: entry.key, size: entry.size }))
   const names = entries.map(entry => entry.key.split('/').slice(-1)[0]).sort()
@@ -123,53 +120,6 @@ export async function servedMediaPlaylist(
   const response = await fetch(variant!)
   expect(response.status).equals(200)
   return await response.text()
-}
-
-/**
- * A play in the game at `secondsIn` of the video's own clock, so the game's
- * page lists it as a highlight. Answers its id.
- */
-export async function seedPlay(
-  db: Kysely<Database>,
-  options: {
-    gameId: string
-    battingTeamId: string
-    videoId: string
-    secondsIn: number
-    /** Unique in the game: the events table keys a play by it. */
-    atBatIndex: number
-  }
-): Promise<string> {
-  const video = await db
-    .selectFrom('videos')
-    .select('start_at')
-    .where('id', '=', options.videoId)
-    .executeTakeFirstOrThrow()
-  if (video.start_at == null) throw new Error('the video has no start')
-  const at = new Date(
-    new Date(video.start_at).getTime() + options.secondsIn * 1000
-  ).toISOString()
-  const id = `evt_seek${Math.random().toString(36).slice(2, 10)}`
-  await db
-    .insertInto('events')
-    .values({
-      id,
-      gameId: options.gameId,
-      startTime: at,
-      battingTeamId: options.battingTeamId,
-      gumbo: {
-        about: {
-          atBatIndex: options.atBatIndex,
-          inning: 1,
-          halfInning: 'top',
-          isScoringPlay: false,
-          startTime: at
-        },
-        result: { eventType: 'double', awayScore: 0, homeScore: 0 }
-      }
-    })
-    .execute()
-  return id
 }
 
 /** Where the game's page starts the highlight for `eventId`, by its own API. */

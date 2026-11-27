@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -253,4 +254,53 @@ export function goldensOf(records: ReadonlyArray<{ visual?: VisualVerdict }>): {
       missing.push(record.visual.key)
   }
   return { differs, missing }
+}
+
+/** How `reference` runs the splash renderer: `spawnSync`, or a stand-in. */
+export type RenderReference = (
+  file: string,
+  args: string[],
+  options: { cwd: string }
+) => { status: number | null; stderr: string }
+
+const renderReference: RenderReference = (file, args, options) => {
+  const ran = spawnSync(file, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'inherit', 'pipe']
+  })
+  if (ran.error != null) throw ran.error
+  return { status: ran.status, stderr: ran.stderr }
+}
+
+/**
+ * The splash's reference frame for a size and scale, `<w>x<h>@<scale>`,
+ * frozen at `t` seconds: rendered into `dir` by
+ * scripts/splash/buildSplashAssets.mjs the first time a size is asked for,
+ * and answered as its path. A comparison's reference is local work, so it
+ * is made here, in the assertion layer, never by a rig.
+ */
+export function reference(
+  options: { dir: string; size: string; t: number },
+  run: RenderReference = renderReference
+): string {
+  const file = join(options.dir, `reference-${options.size}-t${options.t}.png`)
+  if (existsSync(file)) return file
+  mkdirSync(options.dir, { recursive: true })
+  const made = run(
+    process.execPath,
+    [
+      'scripts/splash/buildSplashAssets.mjs',
+      '--frames',
+      options.dir,
+      '--sizes',
+      options.size
+    ],
+    { cwd: join(__dirname, '..', '..') }
+  )
+  if (made.status !== 0 || !existsSync(file))
+    throw new Error(
+      `no reference frame ${file}: ${made.stderr.trim().slice(-300)}`
+    )
+  return file
 }

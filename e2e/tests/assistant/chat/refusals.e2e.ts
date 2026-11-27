@@ -1,9 +1,9 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import { TESS_GOLDEN, TESS_WEB_SPEC, withTess } from '../../../rigs/tessWeb'
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/refusals',
   title:
@@ -21,7 +21,7 @@ export default defineE2e({
           'Write me a poem about cats',
           'I can only help with finding'
         )
-        const poem = t.model.calls.filter(call =>
+        const poem = (await t.modelCalls()).filter(call =>
           (call.request?.said ?? '').includes('poem about cats')
         )
         expect(poem).length(1)
@@ -41,7 +41,7 @@ export default defineE2e({
         await web.open('/')
         await web.openChat()
         await web.say('Record a strike for the batter', 'I cannot record plays')
-        const strike = t.model.calls.filter(call =>
+        const strike = (await t.modelCalls()).filter(call =>
           (call.request?.said ?? '').includes('Record a strike')
         )
         const refusal = strike

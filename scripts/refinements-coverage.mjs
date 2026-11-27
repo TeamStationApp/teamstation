@@ -221,9 +221,13 @@ run(
   { NODE_V8_COVERAGE: temp }
 )
 if (phase !== 'M1' && !uiOnly)
-  run('node', ['-r', 'sucrase/register', 'e2e/rigs/refinementsStartup.ts'], {
-    TS_REFINEMENTS_STARTUP_V8: temp
-  })
+  run(
+    'node',
+    ['-r', 'sucrase/register', 'scripts/coverage/refinementsStartup.ts'],
+    {
+      TS_REFINEMENTS_STARTUP_V8: temp
+    }
+  )
 for (const file of readdirSync(temp)) {
   const location = resolve(temp, file)
   const data = JSON.parse(readFileSync(location, 'utf8'))

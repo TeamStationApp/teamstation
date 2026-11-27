@@ -2,11 +2,10 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import type { HTTPRequest } from 'puppeteer'
-
 import type { MessageView } from '../../../src/app/chat/engine/apply'
 import type { MaestroDevice } from '../../core/maestro'
 import type { WebSession } from '../../core/spec'
+import type { HTTPRequest } from '../../core/web'
 import { androidScopedBounds, flattenPublicHierarchy } from '../chat2Maestro'
 import {
   authenticatedActor,
@@ -92,14 +91,49 @@ export async function receiveWithDelayedImage(
   }
 }
 
-/** Exercise the card itself and read the member's authoritative cursor while it is covered. */
+/**
+ * Which app is in front, as the hierarchy shows it: `shows` is on screen and
+ * no node carries the app under test's own ids, so another app (the phone's
+ * browser) holds the screen.
+ */
+export async function awayFromApp(
+  m: MaestroDevice,
+  appId: string,
+  shows: string,
+  timeoutMs = 12000
+): Promise<void> {
+  const prefix = appId + ':id/'
+  const until = Date.now() + timeoutMs
+  for (;;) {
+    const nodes = flattenPublicHierarchy(await m.hierarchy())
+    const pattern = new RegExp(shows)
+    const showing = nodes.some(
+      node => node.text != null && pattern.test(node.text)
+    )
+    const inApp = nodes.some(node => node.id?.startsWith(prefix) === true)
+    if (showing && !inApp) return
+    assert(
+      Date.now() < until,
+      `Expected another app in front showing ${shows}, not ${appId}`
+    )
+    await delay(100)
+  }
+}
+
+/**
+ * Exercise the card itself and read the member's authoritative cursor while
+ * it is covered. `appId` is the app under test and `shows` what the opened
+ * page puts on screen, for the Android browser check.
+ */
 export async function checkCoveredPreview(
   m: MaestroDevice,
   web: WebSession | undefined,
   platform: string,
   fixture: ChatLinkFixture,
   peer: Awaited<ReturnType<typeof providerFor>>,
-  received: MessageView
+  received: MessageView,
+  appId: string,
+  shows: string
 ): Promise<void> {
   const actor = await authenticatedActor(fixture, fixture.observer, 'provider')
   const cursor = async (): Promise<number> =>
@@ -135,17 +169,7 @@ export async function checkCoveredPreview(
         ',' +
         Math.round(box.y + box.height / 2)
     })
-    assert(fixture.defaultBrowserPackage != null)
-    const prefix = fixture.defaultBrowserPackage + ':id/'
-    const until = Date.now() + 12000
-    while (
-      !flattenPublicHierarchy(await m.hierarchy()).some(
-        n => n.id?.startsWith(prefix) === true
-      )
-    ) {
-      assert(Date.now() < until, 'The selected Android browser must be visible')
-      await delay(100)
-    }
+    await awayFromApp(m, appId, shows)
   } else {
     await m.tapOn({ id: 'chat-open-preview-with-thumbnail', childOf: row })
     await m.assertVisible({

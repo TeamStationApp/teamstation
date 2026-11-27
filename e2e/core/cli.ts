@@ -30,13 +30,7 @@ import { mergeCoverage } from './coverage'
 import { detectFault } from './detect'
 import { requireDropletHandle, seedOnStack } from './dropletStack'
 import { makeDump } from './dumps'
-import {
-  acceptGolden,
-  type GoldenManifest,
-  requireStore,
-  rotateStore,
-  syncStore
-} from './goldens'
+import { requireStore } from './goldens'
 import { normalizedNeeds } from './harness'
 import {
   Budget,
@@ -57,15 +51,14 @@ import {
   ROOT,
   writeManifest
 } from './manifest'
-import { type PlanResource, planScenarios } from './plan'
+import { computeFreeze, FREEZE_FILE, renderFreeze } from './modules'
 import { prepareApp, prepareAppOnHub, preparesOnHub } from './prepare'
 import { BlockedError, HarnessError } from './result'
 import { runScenario } from './run'
-import { runMany } from './runMany'
 import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
 import { loadSettings, type LocalSettings, readSecret } from './settings'
-import type { StackHandle, Surface } from './spec'
+import type { StackHandle } from './spec'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
 
@@ -180,8 +173,29 @@ async function renderErrorDialog(
   }
 }
 
-function gitOutput(args: string[]): string {
-  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim()
+/** The prefix of the only specs TeamStation's own `run`, `stack`, `prepare` and `detect` still run. */
+export const STREAMING_SPECS = 'streaming/'
+
+/**
+ * Refuses a scenario outside the streaming freeze: everything else runs
+ * through the devops runner, which procures its stack, devices and browser.
+ * `detect` is that runner's `run --fault`.
+ */
+export function refuseOutsideStreaming(
+  command: string,
+  scenario: string | undefined,
+  options: { fault?: string; root?: string } = {}
+): void {
+  if (scenario == null || scenario.startsWith(STREAMING_SPECS)) return
+  const spec = scenario.split('#')[0]
+  const file =
+    buildManifest(options.root ?? ROOT).scenarios.find(row => row.spec === spec)
+      ?.file ?? `e2e/tests/${spec}.e2e.ts`
+  const fault =
+    command === 'detect' ? ` --fault ${options.fault ?? '<fault>'}` : ''
+  throw new HarnessError(
+    `${command} ${scenario}: runs through teamstation-devops: npm run e2e -- run ${file}${fault}`
+  )
 }
 
 const OPTIONS = {
@@ -191,10 +205,8 @@ const OPTIONS = {
   strict: { type: 'boolean' },
   changed: { type: 'string', multiple: true },
   base: { type: 'string' },
-  resources: { type: 'string' },
   seat: { type: 'string' },
   stack: { type: 'string' },
-  stacks: { type: 'string' },
   ledger: { type: 'string' },
   lan: { type: 'boolean' },
   native: { type: 'boolean' },
@@ -214,7 +226,7 @@ const OPTIONS = {
   question: { type: 'string' },
   'false-question': { type: 'string' },
   expected: { type: 'string' },
-  'manifest-ref': { type: 'string' },
+  for: { type: 'string' },
   concurrent: { type: 'boolean' },
   retries: { type: 'string' },
   'budget-usd': { type: 'string' }
@@ -294,9 +306,26 @@ export async function main(argv: string[]): Promise<number> {
       return 0
     }
 
+    case 'freeze': {
+      // Records the streaming freeze its roots compute, for validate --strict to check.
+      const freeze = computeFreeze(trackedFiles(ROOT), readLegacy(ROOT), ROOT)
+      const out = values.out ?? join(ROOT, FREEZE_FILE)
+      writeFileSync(out, renderFreeze(freeze))
+      print({
+        files: freeze.files.length,
+        written: values.out ?? FREEZE_FILE
+      })
+      return 0
+    }
+
     case 'validate': {
       const report = validate(ROOT, { strict: values.strict })
       print(report)
+      if (report.lintSkipped != null) {
+        console.error(
+          `validate: ${report.lintSkipped} rig(s) wait for their legacy category before the lint reads them`
+        )
+      }
       return report.problems.length === 0 ? 0 : 1
     }
 
@@ -316,28 +345,8 @@ export async function main(argv: string[]): Promise<number> {
       return 0
     }
 
-    case 'plan': {
-      const resources = (
-        values.resources == null
-          ? {}
-          : (JSON.parse(readFileSync(values.resources, 'utf8')).resources ?? {})
-      ) as Record<string, PlanResource>
-      const ledger =
-        values.ledger == null
-          ? undefined
-          : JSON.parse(readFileSync(values.ledger, 'utf8'))
-      print(
-        planScenarios(buildManifest(), {
-          resources,
-          seat: values.seat,
-          settings,
-          ledger
-        })
-      )
-      return 0
-    }
-
     case 'stack': {
+      refuseOutsideStreaming('stack', values.for)
       if (subcommand === 'up') {
         // A droplet of its own, from the provider's pool, attached once it is up.
         const ref = values.ref ?? 'develop'
@@ -404,6 +413,7 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     case 'prepare': {
+      refuseOutsideStreaming('prepare', values.for)
       if (values.app == null || values.device == null) {
         throw new Error('prepare wants --app and --device')
       }
@@ -422,40 +432,9 @@ export async function main(argv: string[]): Promise<number> {
       return 0
     }
 
-    case 'run-many': {
-      const scenarios = positionals.slice(1)
-      if (
-        scenarios.length === 0 ||
-        values.surface == null ||
-        values.stacks == null
-      ) {
-        throw new Error(
-          'run-many wants <scenario-id>… --stacks <id,id,…> --surface <s> [--device role=id]…'
-        )
-      }
-      const { rows, exitCode } = await runMany({
-        scenarios,
-        stacks: values.stacks.split(',').map(id => ({
-          id,
-          handle: stackHandleFor(stackState(id), settings.mailbox)
-        })),
-        surface: values.surface as Surface,
-        devices: roleMap(values.device),
-        settings,
-        ...(values.retries == null
-          ? {}
-          : { retries: retryCount(values.retries) }),
-        run: runScenario,
-        say: line => {
-          console.error(line)
-        }
-      })
-      print({ rows, exitCode })
-      return exitCode
-    }
-
     case 'run': {
       const id = subcommand
+      refuseOutsideStreaming('run', id)
       if (id == null || values.surface == null) {
         throw new Error('run wants <scenario-id> --surface <s>')
       }
@@ -494,6 +473,7 @@ export async function main(argv: string[]): Promise<number> {
 
     case 'detect': {
       const id = subcommand
+      refuseOutsideStreaming('detect', id, { fault: values.fault })
       if (id == null || values.surface == null || values.fault == null) {
         throw new Error(
           'detect wants <scenario-id> --fault <fault> --surface <s> [--stack <id>]'
@@ -529,45 +509,6 @@ export async function main(argv: string[]): Promise<number> {
       )
       print(buildScorecard(rows))
       return 0
-    }
-
-    case 'golden': {
-      if (subcommand === 'accept') {
-        const runDir = positionals[2]
-        if (runDir == null || values.checkpoint == null) {
-          throw new Error('golden accept wants <run-dir> --checkpoint <id>')
-        }
-        print(
-          acceptGolden({
-            root: ROOT,
-            store: settings.goldenStore,
-            runDir,
-            checkpoint: values.checkpoint,
-            headRef: gitOutput(['rev-parse', '--short', 'HEAD'])
-          })
-        )
-        return 0
-      }
-      if (subcommand === 'sync') {
-        print({ refs: syncStore(requireStore(settings.goldenStore)) })
-        return 0
-      }
-      if (subcommand === 'rotate') {
-        const ref = values['manifest-ref'] ?? 'origin/master'
-        const keep = JSON.parse(
-          gitOutput(['show', `${ref}:e2e/goldens/manifest.json`])
-        ) as GoldenManifest
-        const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-        print(
-          rotateStore({
-            store: requireStore(settings.goldenStore),
-            keep,
-            date
-          })
-        )
-        return 0
-      }
-      throw new Error('golden wants accept, sync or rotate')
     }
 
     case 'judge-eval': {

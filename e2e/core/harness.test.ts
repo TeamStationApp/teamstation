@@ -837,13 +837,13 @@ describe('the harness entry', function () {
 })
 
 describe('the needs vocabulary', function () {
-  it('maps real-model.integration.ts, stack none with tess-model, to isolated with real-model', function () {
-    const spec = loadSpec(
-      'e2e/tests/assistant/chat/real-model.integration.ts',
-      ROOT
-    )
-    expect(spec.stack).equals('none')
-    expect(spec.services).deep.equals(['tess-model'])
+  it('maps an old spec, stack none with tess-model, to isolated with real-model', function () {
+    // real-model.integration.ts as it was before M4 converted it.
+    const spec = {
+      ...loadSpec('e2e/tests/assistant/chat/real-model.integration.ts', ROOT),
+      stack: 'none' as const,
+      services: ['tess-model']
+    }
     const needs = normalizedNeeds(spec)
     expect(needs.stack).equals('isolated')
     expect(needs.services).deep.equals(['real-model'])
@@ -1225,7 +1225,6 @@ describe('the fault-detection row', function () {
 describe('defineSplash under the harness', function () {
   const target = {
     platform: 'ios' as const,
-    appId: 'app.teamstation.app',
     statusBar: 54,
     name: 'phone'
   }
@@ -1243,10 +1242,14 @@ describe('defineSplash under the harness', function () {
     }
   })
 
-  function context(harness: boolean, calls: string[]): any {
+  function context(calls: string[], statusBar: (mode: string) => void): any {
     const device = {
       launchApp: async (options: { appId: string }) => {
         calls.push(`launch ${options.appId}`)
+      },
+      setStatusBar: async (options: { mode: string }) => {
+        calls.push(`status bar ${options.mode}`)
+        statusBar(options.mode)
       }
     }
     return {
@@ -1254,30 +1257,51 @@ describe('defineSplash under the harness', function () {
         calls.push(`attach ${options.appId}`)
         return device
       },
-      ...(harness ? { app: (kind: string) => `caller.${kind}` } : {})
+      app: (kind: string) => `caller.${kind}`
     }
   }
 
-  it("attaches and launches ctx.app('teamstation-ios') under a HarnessContext", async function () {
+  it("attaches and launches ctx.app('teamstation-ios'), with a demo status bar given back", async function () {
     const calls: string[] = []
-    await spec.scenarios.launch(context(true, calls))
+    await spec.scenarios.launch(context(calls, () => undefined))
     expect(calls).deep.equals([
       'attach caller.teamstation-ios',
-      'launch caller.teamstation-ios'
+      'status bar demo',
+      'launch caller.teamstation-ios',
+      'status bar live'
     ])
+    expect(
+      targetFor(
+        context([], () => undefined),
+        {
+          ...target,
+          platform: 'android'
+        }
+      ).appId
+    ).equals('caller.teamstation-android')
   })
 
-  it('still uses the literal under a plain E2eContext', async function () {
+  it('goes on where a physical iPhone has no status bar override, and fails on anything else', async function () {
     const calls: string[] = []
-    await spec.scenarios.launch(context(false, calls))
-    expect(calls).deep.equals([
-      'attach app.teamstation.app',
-      'launch app.teamstation.app'
-    ])
-    expect(targetFor(context(false, []), target)).equals(target)
-    expect(
-      targetFor(context(true, []), { ...target, platform: 'android' }).appId
-    ).equals('caller.teamstation-android')
+    await spec.scenarios.launch(
+      context(calls, () => {
+        throw new Error(
+          'UNSUPPORTED: status bar override on a physical iOS device'
+        )
+      })
+    )
+    expect(calls).contains('launch caller.teamstation-ios')
+    let failed = ''
+    try {
+      await spec.scenarios.launch(
+        context([], () => {
+          throw new Error('device gone')
+        })
+      )
+    } catch (error) {
+      failed = (error as Error).message
+    }
+    expect(failed).equals('device gone')
   })
 })
 
@@ -1306,6 +1330,9 @@ describe('the stack control client', function () {
     await control.push(8)
     await control.pages.script({ '/x': { type: 'text/html', body: 'x' } })
     await control.pages.requests(9)
+    await control.sql('SELECT 1')
+    await control.sql('SELECT $1', [2])
+    await control.call('GET', '/model/calls')
     expect(seen).deep.equals([
       'POST https://s/__e2e/rate-limits',
       'POST https://s/__e2e/restart-api',
@@ -1316,7 +1343,10 @@ describe('the stack control client', function () {
       'GET https://s/__e2e/mail?to=a%2Bb%40example.test&since=7',
       'GET https://s/__e2e/push?since=8',
       'PUT https://s/__e2e/pages',
-      'GET https://s/__e2e/pages/requests?since=9'
+      'GET https://s/__e2e/pages/requests?since=9',
+      'POST https://s/__e2e/sql',
+      'POST https://s/__e2e/sql',
+      'GET https://s/__e2e/model/calls'
     ])
     const nope = stackControl(
       { url: 'https://s/', token: 't' },

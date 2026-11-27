@@ -37,7 +37,6 @@ export default defineSplash({
   ],
   target: {
     platform: 'ios',
-    appId: 'app.teamstation.app',
     statusBar: 32,
     name: 'ipad'
   },

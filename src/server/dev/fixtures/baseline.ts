@@ -17,11 +17,15 @@ import { NODE_SETTINGS } from './nodeSettings'
  */
 export async function refuseRealAddresses(
   db: Kysely<Database>,
-  mailbox: string
+  mailbox: string,
+  /** Other mailboxes whose test addresses this database may hold. */
+  also: string[] = []
 ): Promise<string[]> {
   const rows = await db.selectFrom('user_emails').select('email').execute()
   const emails = rows.map(row => row.email)
-  const real = emails.filter(email => !isTestAddress(mailbox, email))
+  const real = emails.filter(
+    email => ![mailbox, ...also].some(box => isTestAddress(box, email))
+  )
   if (real.length > 0) {
     throw new Error(
       `fixtures refuse this database: ${real.length} address(es) are not test addresses`

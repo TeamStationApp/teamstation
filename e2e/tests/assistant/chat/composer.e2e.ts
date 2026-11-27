@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   FIELD,
   TESS_GOLDEN,
@@ -18,7 +18,7 @@ async function fieldHeight(web: TessWeb): Promise<number> {
   )
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/composer',
   title:
@@ -102,13 +102,13 @@ export default defineE2e({
         expect(oneLine).equals(48)
         expect(await fieldHeight(web), 'two lines').equals(70)
         await ctx.checkpoint('two-lines', { golden: TESS_GOLDEN })
-        const callsBefore = t.model.calls.length
+        const callsBefore = (await t.modelCalls()).length
         await m.pressKey({ key: 'Enter' })
         await eventually(async () => {
           expect(await web.fieldValue()).equals('')
         })
         await web.gone(THINKING)
-        const lines = t.model.calls
+        const lines = (await t.modelCalls())
           .slice(callsBefore)
           .find(call => call.request?.said.startsWith('a') === true)
         expect(lines?.request?.said).equals('a\nb')

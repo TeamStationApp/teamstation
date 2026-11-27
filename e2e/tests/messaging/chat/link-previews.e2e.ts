@@ -3,25 +3,30 @@ import { randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import type { HTTPRequest } from 'puppeteer'
-
 import type { ChatLinkPreview } from '../../../../src/common/chatLinkPreview'
-import { defineE2e, type E2eContext } from '../../../core/spec'
-import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
-import { chatLinkUi, readChatComposer } from '../../../rigs/chat/messageLinkUi'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
+import type { HTTPRequest } from '../../../core/web'
+import {
+  fixtureFor,
+  providerFor,
+  scriptPreviewPages
+} from '../../../rigs/chat/messageLinkFixture'
+import {
+  chatAppKind,
+  chatLinkUi,
+  readChatComposer
+} from '../../../rigs/chat/messageLinkUi'
 import {
   checkCoveredPreview,
   receiveWithDelayedImage
 } from '../../../rigs/chat/receivedPreview'
 import { androidScopedBounds, exactText } from '../../../rigs/chat2Maestro'
 
-async function send(ctx: E2eContext): Promise<void> {
-  const f = fixtureFor(ctx)
-  const page = f.previewPage
-  assert(
-    page != null,
-    'A public CORS-enabled fixture page and its expected title are required'
-  )
+async function send(ctx: HarnessContext): Promise<void> {
+  const f = await fixtureFor(ctx)
+  // A titled page readable from any origin, the same page without CORS, and
+  // one held for ten seconds, all on the stack's pages stand-in.
+  const page = await scriptPreviewPages(ctx)
   const author = await providerFor(f, f.observer)
   try {
     const peer = await providerFor(f, f.sender)
@@ -51,10 +56,7 @@ async function send(ctx: E2eContext): Promise<void> {
       let imageReads = 0
       const inspectedPosts: Array<Promise<boolean>> = []
       const fixtureUrl = new URL(page.url).href
-      const deniedUrl =
-        page.corsDeniedUrl == null
-          ? undefined
-          : new URL(page.corsDeniedUrl).href
+      const deniedUrl = new URL(page.corsDeniedUrl).href
       web?.page.on('request', request => {
         const url = new URL(request.url())
         if (
@@ -101,7 +103,6 @@ async function send(ctx: E2eContext): Promise<void> {
             : mode === 'pending' && web == null
               ? page.pendingUrl
               : page.url
-        assert(fixtureAddress != null, 'Configure the fixture URL for ' + mode)
         const probe = randomUUID()
         const address = new URL(fixtureAddress)
         if (mode === 'pending' && web == null)
@@ -297,8 +298,7 @@ async function send(ctx: E2eContext): Promise<void> {
           await web.page.setRequestInterception(false)
         }
       }
-      if (web != null && page.corsDeniedUrl != null)
-        await outgoing('cors-denied')
+      if (web != null) await outgoing('cors-denied')
       assert(readyPreview != null)
       const { thumbnail, ...metadata } = readyPreview
       const receivedPreview: ChatLinkPreview = { ...metadata }
@@ -471,7 +471,16 @@ async function send(ctx: E2eContext): Promise<void> {
           ].join('\n') + '\n'
         )
       }
-      await checkCoveredPreview(m, web, platform, f, peer, received)
+      await checkCoveredPreview(
+        m,
+        web,
+        platform,
+        f,
+        peer,
+        received,
+        platform === 'web' ? '' : ctx.app(chatAppKind(platform)),
+        page.title
+      )
     } finally {
       peer.engine.stop()
     }
@@ -480,7 +489,7 @@ async function send(ctx: E2eContext): Promise<void> {
   }
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'messaging/chat/link-previews',
   title: 'Chat members receive the sender’s private link preview',
   kind: 'e2e',
@@ -497,21 +506,26 @@ export default defineE2e({
     'native/linkPreview/**',
     'ios/TeamStation/ChatPreview/**'
   ],
-  stack: 'seat',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['messaging'],
   exclusive: true,
   surfaces: {
-    'web-chromium': { devices: [] },
+    'web-chromium': {
+      devices: [],
+      browser: { role: 'browser', needs: [] }
+    },
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
-  services: ['api'],
-  apps: [],
-  secrets: ['chatLinkFixture'],
+  services: [],
+  apps: ['teamstation-ios', 'teamstation-android'],
+  secrets: [],
   costUsd: 0,
   minutes: 5,
   guards: [],

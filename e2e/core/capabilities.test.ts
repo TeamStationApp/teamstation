@@ -171,5 +171,25 @@ describe('capabilities', function () {
     expect(gpuProblems({ covers: ['src/app/chat/**'], surfaces })).deep.equals(
       []
     )
+    // A phone's own browser draws on the phone: the role's gpu covers it.
+    expect(
+      gpuProblems({
+        covers: ['src/app/scoring/**'],
+        surfaces: {
+          'web-safari-ios': {
+            devices: [
+              { role: 'p', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+            ]
+          },
+          'web-chrome-android': {
+            devices: [
+              { role: 'p', needs: ['android-phone'], simulator: 'never' }
+            ]
+          }
+        }
+      })
+    ).deep.equals([
+      'web-chrome-android: role "p" covers a 3D screen without gpu'
+    ])
   })
 })

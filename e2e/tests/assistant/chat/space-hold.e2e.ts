@@ -2,7 +2,7 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type E2eContext } from '../../../core/spec'
 import {
   FIELD,
   MIC,
@@ -10,6 +10,7 @@ import {
   TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
+  tessWebSurface,
   THINKING,
   withTess
 } from '../../../rigs/tessWeb'
@@ -236,8 +237,10 @@ async function beside(
   )
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
+  // It covers the scoring screen's push-to-talk, which draws in 3D.
+  surfaces: tessWebSurface(['gpu']),
   id: 'assistant/chat/space-hold',
   title:
     "Space held half a second talks to Tess; a quick press stays the page's, and a tap records until the next tap",
@@ -253,7 +256,7 @@ export default defineE2e({
     'quick-press-types-a-space': async ctx => {
       await beside(ctx, async web => {
         const { m, t } = web
-        const { begun } = t.dictation
+        const { begun } = await t.dictation()
         await m.tapOn({ css: FIELD })
         await web.type('a')
         await m.pressKey({ key: 'Space' })
@@ -263,7 +266,9 @@ export default defineE2e({
         }, 5000)
         await pause(600)
         expect(await web.dictationStatus()).equals('Off')
-        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        expect((await t.dictation()).begun, 'no utterance started').equals(
+          begun
+        )
         await ctx.checkpoint('field-holds-a-space', {
           expect: [{ id: 'Dictate' }],
           golden: TESS_GOLDEN
@@ -273,7 +278,7 @@ export default defineE2e({
     'rolled-press-keeps-the-order': async ctx => {
       await beside(ctx, async web => {
         const { m, t } = web
-        const { begun } = t.dictation
+        const { begun } = await t.dictation()
         await m.tapOn({ css: FIELD })
         await web.type('hello')
         // Typed fast, Space rolled into the next letter: the letter goes down while
@@ -288,17 +293,19 @@ export default defineE2e({
         }, 5000)
         await pause(600)
         expect(await web.dictationStatus()).equals('Off')
-        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        expect((await t.dictation()).begun, 'no utterance started').equals(
+          begun
+        )
         await ctx.checkpoint('field-in-order', { golden: TESS_GOLDEN })
       })
     },
     'held-in-the-field-listens': async ctx => {
       await beside(ctx, async web => {
         const { m, t } = web
-        const { begun } = t.dictation
+        const { begun } = await t.dictation()
         await m.tapOn({ css: FIELD })
         await holdAndHear(web)
-        expect(t.dictation.begun).equals(begun + 1)
+        expect((await t.dictation()).begun).equals(begun + 1)
         expect(await web.fieldValue()).equals('')
         await ctx.checkpoint('heard-as-a-message', {
           expect: [{ text: "Your team's settings are here" }],
@@ -309,7 +316,7 @@ export default defineE2e({
     'quick-press-activates-a-focused-tab': async ctx => {
       await beside(ctx, async web => {
         const { m, page, t } = web
-        const { begun } = t.dictation
+        const { begun } = await t.dictation()
         await m.evalBrowserScript({
           script: `const seen = { prevented: [] }
             window.__space = seen
@@ -368,7 +375,9 @@ export default defineE2e({
           await page.evaluate(() => (window as any).__space.prevented)
         ).deep.equals([true])
         expect(await web.dictationStatus()).equals('Off')
-        expect(t.dictation.begun, 'no utterance started').equals(begun)
+        expect((await t.dictation()).begun, 'no utterance started').equals(
+          begun
+        )
         await ctx.checkpoint('team-tab-selected', {
           expect: [{ id: 'Dictate' }],
           golden: TESS_GOLDEN
@@ -379,11 +388,11 @@ export default defineE2e({
       await beside(ctx, async web => {
         const { HEARD } = await import('../../../../src/test/tessFixture')
         const { t } = web
-        const { begun } = t.dictation
+        const { begun } = await t.dictation()
         await focusPage(web)
         await holdAndHear(web)
-        expect(t.dictation.begun).equals(begun + 1)
-        expect(t.dictation.heard.at(-1)).equals(HEARD)
+        expect((await t.dictation()).begun).equals(begun + 1)
+        expect((await t.dictation()).heard.at(-1)).equals(HEARD)
         expect(await paneScrollTop(web), 'the hold scrolled nothing').equals(0)
         await ctx.checkpoint('heard-from-the-page', {
           expect: [{ text: HEARD }],

@@ -4,13 +4,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { Emulation } from '../../core/browserCdp'
 import { signInWithPassword } from '../../core/fixtures'
 import type { MaestroDevice } from '../../core/maestro'
-import type { E2eContext, WebSession } from '../../core/spec'
+import type { HarnessContext, WebSession } from '../../core/spec'
 import {
   appLink,
   openInApp,
-  type ServerDevice,
-  setServer
-} from '../app/setServer'
+  pointAtStack,
+  type StackDevice
+} from '../app/pointAtStack'
 import {
   flattenPublicHierarchy,
   iosPublicRead,
@@ -208,15 +208,27 @@ async function waitForComposer(
   throw new Error('The signed-in synthetic conversation did not open')
 }
 
+/** The device a chat scenario drives: maestro-d's, with the commands the rigs name. */
+export type ChatDevice = MaestroDevice &
+  StackDevice & {
+    addMedia: (options: { files: string[] }) => Promise<unknown>
+    tapOnPoint: (options: { point: string }) => Promise<unknown>
+  }
+
+/** The app kind the harness hands an app id for, on a phone surface. */
+export function chatAppKind(platform: 'ios' | 'android'): string {
+  return platform === 'ios' ? 'teamstation-ios' : 'teamstation-android'
+}
+
 export async function chatLinkUi(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   f: ChatLinkFixture,
   observer: Awaited<ReturnType<typeof providerFor>>,
   platform: 'ios' | 'android' | 'web',
   emulation?: Emulation,
   role = 'phone'
 ): Promise<{
-  m: MaestroDevice & ServerDevice
+  m: ChatDevice
   web?: WebSession
   room: string
   enter: () => Promise<void>
@@ -225,11 +237,7 @@ export async function chatLinkUi(
     platform === 'web'
       ? await ctx.browser({ width: 880, height: 780 }, emulation)
       : undefined
-  const appId = 'app.teamstation.develop'
-  const m: MaestroDevice & ServerDevice =
-    web?.m ?? (await ctx.attach(role, { platform, appId }))
-  const simulator =
-    platform === 'ios' && (await m.platformInfo()).isSimulator === true
+  const m: ChatDevice = web?.m ?? ctx.attached(role)
   const room = '/chat/' + encodeURIComponent(f.conversationId)
   if (web != null) {
     await web.page.browserContext().setCookie({
@@ -247,14 +255,7 @@ export async function chatLinkUi(
     })
   } else {
     assert(platform === 'ios' || platform === 'android')
-    await setServer({
-      platform,
-      origin: f.origin,
-      udid: ctx.device(role),
-      appId,
-      simulator,
-      device: m
-    })
+    await pointAtStack(m, f.origin, ctx.app(chatAppKind(platform)))
     const labels = flattenPublicHierarchy(await m.hierarchy()).map(
       node => node.text
     )
@@ -266,14 +267,7 @@ export async function chatLinkUi(
     if (web != null) await m.openLink({ link: f.origin + room })
     else {
       assert(platform === 'ios' || platform === 'android')
-      await openInApp({
-        platform,
-        udid: ctx.device(role),
-        appId,
-        device: m,
-        simulator,
-        link: appLink(room)
-      })
+      await openInApp(m, ctx.app(chatAppKind(platform)), appLink(room))
     }
     await waitForComposer(m, observer, platform, web)
   }

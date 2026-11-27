@@ -26,3 +26,10 @@ export function isTestAddress(mailbox: string, email: string): boolean {
     lower.endsWith(`@${domain.toLowerCase()}`)
   )
 }
+
+/**
+ * The mailbox a committed dump world's accounts were made on
+ * (`e2e/core/dumps.ts`). A restored dump's `dumps+…` addresses are test
+ * addresses too, so a scripted world may seed beside them.
+ */
+export const DUMP_WORLD_MAILBOX = 'dumps@example.test'

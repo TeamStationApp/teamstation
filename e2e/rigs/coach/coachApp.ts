@@ -1,23 +1,26 @@
 import type { Emulation } from '../../core/browserCdp'
 import type { FixtureManifest } from '../../core/fixtures'
-import { isHubDevice } from '../../core/maestro'
-import { iosIsSimulator } from '../../core/prepare'
 import { BlockedError } from '../../core/result'
 import {
-  defineE2e,
+  defineHarness,
   type E2eContext,
-  type E2eSpec,
+  type HarnessContext,
+  type HarnessSpec,
+  type HarnessStackHandle,
+  type StackControl,
   type WebSession
 } from '../../core/spec'
-import { openInApp, serverLink, setServer } from '../app/setServer'
+import { pointAtStack, SERVER_LINK_SETTLE_MS } from '../app/pointAtStack'
 
 /**
- * The game plan's tests on any surface: the develop app on an iPhone or
- * iPad simulator, or the web in maestro-d's Chromium. Everything that acts
- * goes through maestro-d; the browser's page is only read.
+ * The game plan's tests on any surface: the develop app on the iPhone or
+ * iPad the run was handed, or the web in the runner's own browser.
+ * Everything that acts goes through maestro-d; the browser's page is only
+ * read. The app's id is the one the caller passed (`ctx.app`).
  */
 
-export const DEVELOP_APP = 'app.teamstation.develop'
+/** The app kind every coach spec installs. */
+export const COACH_APP = 'teamstation-ios'
 
 /** An iPhone 17 Pro's window, in points: the narrowest the plan is drawn for. */
 export const PHONE_WINDOW = { width: 402, height: 874 }
@@ -142,75 +145,71 @@ async function pageFindAll(web: WebSession, pattern: RegExp): Promise<Found[]> {
   )
 }
 
+/** A stack's control routes that can run the scenario's own setup SQL. */
+export type SqlControl = StackControl & {
+  sql?: (
+    text: string,
+    values?: unknown[]
+  ) => Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }>
+}
+
 /**
- * The attached stack's database URL, for setup that must not go through
- * the API a fault may be breaking. A throwaway stack's database only.
+ * Runs setup SQL on the stack's own database through its control routes,
+ * never through the API a fault may be breaking. A stack whose control
+ * cannot blocks the run, naming why.
  */
-export async function stackDatabaseUrl(ctx: E2eContext): Promise<string> {
-  const attached = ctx.stack.attached
-  if (attached == null)
-    throw new BlockedError('needs an attached stack: --stack <id>')
-  const { requireDropletHandle, nodeDatabaseUrl } =
-    await import('../../core/dropletStack')
-  return nodeDatabaseUrl(requireDropletHandle(attached).databaseUrl)
+export async function stackSql(
+  ctx: E2eContext,
+  text: string,
+  values: unknown[] = []
+): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }> {
+  const control = (ctx.stack as HarnessStackHandle).control
+  if (typeof control?.sql !== 'function') {
+    throw new BlockedError(
+      "this stack's control routes run no setup SQL, which this scenario changes the database with"
+    )
+  }
+  return await control.sql(text, values)
 }
 
 /**
  * Clears the stack's password sign-in limits, which are production's: every
- * sign-in from this machine counts against one address's fifty an hour, and
+ * sign-in from the bench counts against one address's fifty an hour, and
  * the game plan's scenarios sign in through the form on every run.
  */
 export async function clearSignInLimits(ctx: E2eContext): Promise<void> {
-  const { Client } = await import('pg')
-  const client = new Client({
-    connectionString: await stackDatabaseUrl(ctx),
-    connectionTimeoutMillis: 15_000
-  })
-  await client.connect()
-  try {
-    await client.query(
-      "delete from rate_events where scope like 'password.%' or scope like 'passwordParameters.%'"
-    )
-  } finally {
-    await client.end()
+  const control = (ctx.stack as HarnessStackHandle).control
+  if (control == null) {
+    throw new BlockedError('this stack has no rateLimits control')
   }
+  await control.rateLimits({ clear: ['password', 'passwordParameters'] })
 }
 
 /**
- * Sends a hub iPhone's develop app the link that keeps `origin`, waits
- * until the app is in front on its sign-in page (it has read the link it
- * launched with), and launches it fresh, which then talks to `origin`.
- * WebDriverAgent shows neither the app's "Server set" alert nor the
- * address in its About, so the sign-in that follows, with an account only
- * the stack holds, is what proves the server.
+ * Points a hub phone's develop app at `origin` and launches it fresh, the
+ * runner's own way (`pointAtStack`): the server link, the runner's settle,
+ * then a fresh launch. Nothing waits on a screen in between: on Android the
+ * app's "Server set… Restart" alert covers the sign-in page, and on iOS
+ * WebDriverAgent shows neither that alert nor the address in its About. The
+ * sign-in that follows, with an account only the stack holds, is what proves
+ * the server.
  */
 export async function serverKeptOnHubPhone(
   m: any,
-  udid: string,
-  origin: string
+  appId: string,
+  origin: string,
+  settleMs = SERVER_LINK_SETTLE_MS
 ): Promise<void> {
-  await openInApp({
-    platform: 'ios',
-    udid,
-    appId: DEVELOP_APP,
-    link: serverLink('ios', origin),
-    device: m,
-    hub: true
-  })
-  await m.extendedWaitUntil({
-    visible: { text: 'Sign in to TeamStation' },
-    timeout: 30_000
-  })
-  await m.launchApp({ appId: DEVELOP_APP, stopApp: true })
+  await pointAtStack(m, origin, appId, settleMs)
 }
 
 /**
  * Opens the surface on the stack's origin and signs `role` in through the
- * real password form. The app is installed with `prepare` beforehand; on a
- * simulator it is cleared, pointed at the stack and launched fresh.
+ * real password form. The runner installed the app; it is cleared, pointed
+ * at the stack and launched fresh.
  */
 export async function openCoachApp(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   role: string,
   web: { size?: { width: number; height: number }; emulation?: Emulation } = {}
 ): Promise<CoachApp> {
@@ -259,21 +258,11 @@ export async function openCoachApp(
       }
     }
   }
-  const udid = ctx.device('device')
-  const m = await ctx.attach('device', { platform: 'ios', appId: DEVELOP_APP })
-  await m.launchApp({ appId: DEVELOP_APP, clearState: true })
-  if (isHubDevice(udid)) {
-    // A hub's iPhone takes the server link through its lease.
-    await serverKeptOnHubPhone(m, udid, origin)
-  } else
-    await setServer({
-      platform: 'ios',
-      udid,
-      appId: DEVELOP_APP,
-      origin,
-      device: m,
-      simulator: iosIsSimulator(udid)
-    })
+  const appId = ctx.app(COACH_APP)
+  const m = ctx.attached('device')
+  await m.launchApp({ appId, clearState: true })
+  // A clear forgets the server: the link points the app back at the stack.
+  await serverKeptOnHubPhone(m, appId, origin)
   await ctx.signIn(role, m)
   const nodes = async (): Promise<Node[]> => flatten(await m.hierarchy())
   const link = async (path: string): Promise<void> => {
@@ -402,9 +391,8 @@ export async function savePlan(
 ): Promise<void> {
   // Loaded here: a spec's import has no side effects.
   const { LINEUP_NAMES } = await import('../../../src/server/dev/lineupFixture')
-  const { makeDatabase } = await import('../../../src/server/db/database')
-  const { saveGamePlan } = await import('../../../src/server/games/gamePlans')
-  const { asGamePlan } = await import('../../../src/common/gamePlan')
+  const { asGamePlan, planHasPositions } =
+    await import('../../../src/common/gamePlan')
   // Cleaned as the API cleans a saved plan, so what is seeded could be saved.
   const plan = asGamePlan({
     enabled: true,
@@ -418,23 +406,25 @@ export async function savePlan(
       cells: row
     }))
   })
-  const db = makeDatabase(await stackDatabaseUrl(ctx))
-  try {
-    const game = await db
-      .selectFrom('games')
-      .select(['id', 'season_id', 'start_at', 'timezone'])
-      .where('id', '=', world.ids.game)
-      .executeTakeFirstOrThrow()
-    await saveGamePlan(
-      db,
-      game,
+  // The scenario has not opened the game yet, so no inning is live to
+  // announce: the row is the whole save.
+  const saved = await stackSql(
+    ctx,
+    `insert into game_plans (game_id, team_id, enabled, innings, rows, updated_at, updated_by)
+     values ($1, $2, $3, $4, $5::jsonb, now(), $6)
+     on conflict (game_id, team_id) do update set enabled = excluded.enabled,
+       innings = excluded.innings, rows = excluded.rows,
+       updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    [
+      world.ids.game,
       world.ids.homeTeam,
-      plan,
+      planHasPositions(plan),
+      plan.innings,
+      JSON.stringify(plan.rows),
       world.accounts.coach.userId
-    )
-  } finally {
-    await db.destroy()
-  }
+    ]
+  )
+  if (saved.rowCount !== 1) throw new Error('the plan was not saved')
 }
 
 /**
@@ -482,9 +472,10 @@ export function literal(text: string): string {
 }
 
 /**
- * A game plan spec: the web in Chromium, and the develop app on an iOS
- * simulator — an iPhone or an iPad, as `--device device=<udid>` names — on
- * an isolated stack seeded with the `coach-game` world.
+ * A game plan spec: the web in the runner's browser, and the develop app on
+ * a physical iPhone, on an isolated stack seeded with the `coach-game`
+ * world. The plan is drawn by the scoring screens, which only a GPU draws,
+ * so both need one and no simulator stands in.
  */
 export function defineCoachSpec(options: {
   id: string
@@ -492,22 +483,27 @@ export function defineCoachSpec(options: {
   covers: string[]
   minutes: number
   faults: string[]
-  scenarios: E2eSpec['scenarios']
-}): E2eSpec {
-  return defineE2e({
+  scenarios: HarnessSpec['scenarios']
+}): HarnessSpec {
+  return defineHarness({
     ...options,
     kind: 'e2e',
     stack: 'isolated',
     fixtures: ['coach-game'],
     exclusive: false,
     surfaces: {
-      'web-chromium': { devices: [] },
+      'web-chromium': {
+        devices: [],
+        browser: { role: 'browser', needs: ['gpu'] }
+      },
       'ios-app': {
-        devices: [{ role: 'device', needs: ['ios'], hardware: 'none' }]
+        devices: [
+          { role: 'device', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+        ]
       }
     },
-    services: ['web', 'api'],
-    apps: ['teamstation-ios'],
+    services: [],
+    apps: [COACH_APP],
     secrets: [],
     costUsd: 0,
     guards: [],

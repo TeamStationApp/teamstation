@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   TESS_GOLDEN,
   TESS_WEB_SPEC,
@@ -27,7 +27,7 @@ async function attachmentCount(web: TessWeb): Promise<number> {
   )
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/attachments',
   title:
@@ -82,9 +82,9 @@ export default defineE2e({
         await eventually(async () => {
           expect(await attachmentCount(web)).greaterThanOrEqual(2)
         }, 15000)
-        const callsBefore = t.model.calls.length
+        const callsBefore = (await t.modelCalls()).length
         await web.say('Here are our stats', 'I have your CSV and your picture')
-        const sentWith = t.model.calls
+        const sentWith = (await t.modelCalls())
           .slice(callsBefore)
           .find(call => call.request?.said === 'Here are our stats')
         expect(sentWith, 'the model was asked').not.equals(undefined)

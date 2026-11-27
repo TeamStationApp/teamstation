@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   ASK_TESS,
   MARK_MENU,
@@ -38,7 +38,7 @@ async function markBeforeAccount(web: TessWeb): Promise<void> {
   expect(before).equals(true)
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/header-button',
   title:
@@ -55,12 +55,13 @@ export default defineE2e({
       await withTess(
         ctx,
         async web => {
-          // User 101 umpires, so the header has that button too; user 102 does not.
-          for (const [user, checkpoint] of [
-            [101, 'header-umpire'],
-            [102, 'header-member']
+          // The admin umpires, so the header has that button too; Demo
+          // Eagles' admin does not.
+          for (const [role, checkpoint] of [
+            ['admin', 'header-umpire'],
+            ['eagles', 'header-member']
           ] as const) {
-            await web.identity(user)
+            await web.identity(role)
             await web.open('/')
             await markBeforeAccount(web)
             await web.tap(MARK_MENU)

@@ -1,22 +1,25 @@
-import { execFileSync } from 'node:child_process'
-
-import { loadSettings } from '../../../core/settings'
-import { defineE2e } from '../../../core/spec'
+import { BlockedError } from '../../../core/result'
+import { defineHarness } from '../../../core/spec'
 
 const SCALED_ATTEMPTS = 2
 
-/** Wrong passwords against a real address, behind the seat's real reverse proxy. */
-export default defineE2e({
+/**
+ * Wrong passwords against a real address, behind the stack's reverse proxy,
+ * with every limit scaled down through the stack's `rateLimits` control.
+ */
+export default defineHarness({
   id: 'account/rate-limits/password',
   title:
     'Too many wrong passwords are refused at the limit, and reset restores it',
   kind: 'e2e',
   covers: ['src/server/auth/rateLimit.ts', 'src/server/routes/auth.ts'],
-  stack: 'seat',
+  stack: 'isolated',
   fixtures: ['team-with-roster'],
   exclusive: true,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['api', 'web', 'reverse-proxy'],
+  surfaces: {
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } }
+  },
+  services: ['reverse-proxy'],
   apps: [],
   secrets: [],
   costUsd: 0,
@@ -26,9 +29,11 @@ export default defineE2e({
   manual: false,
   scenarios: {
     'refused-at-the-limit': async ctx => {
-      const { seatCommand } = loadSettings()
-      if (seatCommand == null) throw new Error('This scenario needs a seat')
-      execFileSync(seatCommand, ['limits', '0.2'])
+      const control = ctx.stack.control
+      if (control == null) {
+        throw new BlockedError('this stack has no rateLimits control')
+      }
+      await control.rateLimits({ scale: 0.2 })
       const { email } = (await ctx.fixture('team-with-roster')).accounts.coach
       const { m } = await ctx.browser({ width: 1280, height: 800 })
       await m.openLink({ link: `${ctx.stack.origin}/sign-in` })

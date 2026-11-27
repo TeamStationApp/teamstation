@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { type TessNative, withTessNative } from '../../../rigs/tessNativeRig'
 
 /** She opens from the mark's menu. The header has no Tess button of its own. */
@@ -10,13 +10,13 @@ async function openChat(native: TessNative): Promise<void> {
 }
 
 async function onAndroid(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   run: (native: TessNative) => Promise<void>
 ): Promise<void> {
   await withTessNative(ctx, { surface: 'android-app' }, run)
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'assistant/chat/android-chat',
   title:
     'On Android Tess is a full-screen chat that the hardware Back closes, with her links and her sheet',
@@ -27,14 +27,16 @@ export default defineE2e({
     'src/app/tess/AttachPicker.native.tsx'
   ],
   stack: 'isolated',
-  fixtures: [],
+  fixtures: ['tess'],
   exclusive: false,
   surfaces: {
     'android-app': {
-      devices: [{ role: 'user', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'user', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
-  services: ['web'],
+  services: [],
   apps: ['teamstation-android'],
   secrets: [],
   costUsd: 0,

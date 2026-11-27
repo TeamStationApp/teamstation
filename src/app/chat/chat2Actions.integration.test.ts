@@ -29,7 +29,6 @@ import {
   androidImeFrame,
   androidScopedBounds,
   bounded,
-  Chat2UI,
   exactIdAnswer,
   IOS_SIMULATOR_SNAPSHOT_CAP,
   iosPublicRead,
@@ -48,6 +47,7 @@ import {
   recentPickerPhoto
 } from '../../../e2e/rigs/chat2Maestro'
 import { userIdOfGumbo } from '../../common/userId'
+import { Chat2UI } from '../../test/chat2Ui'
 import { encodePng } from '../../test/rasterImage'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'
