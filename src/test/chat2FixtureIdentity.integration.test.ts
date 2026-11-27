@@ -274,7 +274,7 @@ describe('committed chat harness and application provenance', () => {
     'src/test/legacyChatKeyRecord.json',
     'src/app/scoring/scoringModals.preview.tsx',
     'scripts/chat-e2e-reset.sh',
-    'scripts/e2e/scoreboardLog/e5Browser.ts'
+    'scripts/e2e/wallClock/markerProbe.ts'
   ])
     it('rejects an application delta: ' + path, () => {
       const repo = repository()
@@ -291,7 +291,7 @@ describe('committed chat harness and application provenance', () => {
     'src/app/chat/chatUi.test.tsx',
     'src/server/chat/chat2Identity.integration.test.ts',
     'src/test/chatRows.ts',
-    'scripts/e2e/scoreboardLog/e5Browser.e2e.ts',
+    'scripts/e2e/wallClock/markerProbe.e2e.ts',
     'scripts/chatBench.e2e.mjs'
   ])
     it('accepts a delta no application build takes in: ' + path, () => {

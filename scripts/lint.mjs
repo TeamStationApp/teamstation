@@ -11,8 +11,7 @@ const appHelpers = [
   'src/test/fakeScoreboardSocket.ts',
   'src/test/PagedListStandIn.tsx',
   'src/test/responderDrag.ts',
-  'src/test/scoringHelpers.ts',
-  'src/test/scoreboardServer.e2e.ts'
+  'src/test/scoringHelpers.ts'
 ]
 // Under src/test, but left out of tsconfig.server.test.json.
 const serverExcluded = [

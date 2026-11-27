@@ -5968,6 +5968,2268 @@
       "file": "e2e/tests/platform/web/main-flows.e2e.ts"
     },
     {
+      "id": "playback/board-overlay/phone-size#before-picture",
+      "title": "The board on a phone-size web player, single and every angle, upright and sideways",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/phone-size",
+      "file": "e2e/tests/playback/board-overlay/phone-size.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/phone-size#every-angle",
+      "title": "The board on a phone-size web player, single and every angle, upright and sideways",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/phone-size",
+      "file": "e2e/tests/playback/board-overlay/phone-size.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/phone-size#single-picture",
+      "title": "The board on a phone-size web player, single and every angle, upright and sideways",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/phone-size",
+      "file": "e2e/tests/playback/board-overlay/phone-size.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/web-players#before-pictures",
+      "title": "The web players draw the game’s board at the wall time of the frame on screen, recorded and live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**",
+        "src/server/media/wallClockScan.ts",
+        "src/server/routes/scoreboard.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/web-players",
+      "file": "e2e/tests/playback/board-overlay/web-players.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/web-players#live-stamped",
+      "title": "The web players draw the game’s board at the wall time of the frame on screen, recorded and live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**",
+        "src/server/media/wallClockScan.ts",
+        "src/server/routes/scoreboard.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/web-players",
+      "file": "e2e/tests/playback/board-overlay/web-players.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/web-players#live-unstamped-and-grid",
+      "title": "The web players draw the game’s board at the wall time of the frame on screen, recorded and live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**",
+        "src/server/media/wallClockScan.ts",
+        "src/server/routes/scoreboard.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/web-players",
+      "file": "e2e/tests/playback/board-overlay/web-players.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/web-players#no-scoring",
+      "title": "The web players draw the game’s board at the wall time of the frame on screen, recorded and live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**",
+        "src/server/media/wallClockScan.ts",
+        "src/server/routes/scoreboard.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/web-players",
+      "file": "e2e/tests/playback/board-overlay/web-players.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/web-players#recorded-grid",
+      "title": "The web players draw the game’s board at the wall time of the frame on screen, recorded and live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**",
+        "src/server/media/wallClockScan.ts",
+        "src/server/routes/scoreboard.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/web-players",
+      "file": "e2e/tests/playback/board-overlay/web-players.e2e.ts"
+    },
+    {
+      "id": "playback/board-overlay/web-players#recorded-single",
+      "title": "The web players draw the game’s board at the wall time of the frame on screen, recorded and live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**",
+        "src/server/media/wallClockScan.ts",
+        "src/server/routes/scoreboard.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/board-overlay/web-players",
+      "file": "e2e/tests/playback/board-overlay/web-players.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/multi-angle#angle-switch",
+      "title": "Live angles switch on one wall clock, play 45 s behind in step, and wait out a camera that stops without seeking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/angleSwitch.ts",
+        "src/app/player/liveCushion.ts",
+        "src/app/player/liveStart.ts",
+        "src/app/player/wallMapping.ts",
+        "src/app/player/multiCam/**",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/multi-angle",
+      "file": "e2e/tests/playback/live-angles/multi-angle.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/multi-angle#live-playlists",
+      "title": "Live angles switch on one wall clock, play 45 s behind in step, and wait out a camera that stops without seeking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/angleSwitch.ts",
+        "src/app/player/liveCushion.ts",
+        "src/app/player/liveStart.ts",
+        "src/app/player/wallMapping.ts",
+        "src/app/player/multiCam/**",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/multi-angle",
+      "file": "e2e/tests/playback/live-angles/multi-angle.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/multi-angle#live-tiles",
+      "title": "Live angles switch on one wall clock, play 45 s behind in step, and wait out a camera that stops without seeking",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/angleSwitch.ts",
+        "src/app/player/liveCushion.ts",
+        "src/app/player/liveStart.ts",
+        "src/app/player/wallMapping.ts",
+        "src/app/player/multiCam/**",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/multi-angle",
+      "file": "e2e/tests/playback/live-angles/multi-angle.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/writer-probe#jump",
+      "title": "The live writer keeps its segments and target duration through a jump or a stall, and the live tiles read their clocks",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/timestampJump.ts",
+        "src/server/live/splitter.ts",
+        "src/server/live/wallAnchors.ts",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/writer-probe",
+      "file": "e2e/tests/playback/live-angles/writer-probe.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/writer-probe#playlists",
+      "title": "The live writer keeps its segments and target duration through a jump or a stall, and the live tiles read their clocks",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/timestampJump.ts",
+        "src/server/live/splitter.ts",
+        "src/server/live/wallAnchors.ts",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/writer-probe",
+      "file": "e2e/tests/playback/live-angles/writer-probe.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/writer-probe#stall",
+      "title": "The live writer keeps its segments and target duration through a jump or a stall, and the live tiles read their clocks",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/timestampJump.ts",
+        "src/server/live/splitter.ts",
+        "src/server/live/wallAnchors.ts",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/writer-probe",
+      "file": "e2e/tests/playback/live-angles/writer-probe.e2e.ts"
+    },
+    {
+      "id": "playback/live-angles/writer-probe#tiles",
+      "title": "The live writer keeps its segments and target duration through a jump or a stall, and the live tiles read their clocks",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/timestampJump.ts",
+        "src/server/live/splitter.ts",
+        "src/server/live/wallAnchors.ts",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 40,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-angles/writer-probe",
+      "file": "e2e/tests/playback/live-angles/writer-probe.e2e.ts"
+    },
+    {
+      "id": "playback/live-buffer/player-on-live-hls#cushion-rewind-and-pause",
+      "title": "The web player keeps its live cushion, rewinds and pauses, and reports real starvation once",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/attachHls.ts",
+        "src/app/player/explicitSeek.ts",
+        "src/app/player/liveStallDiagnostics.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "h264"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-buffer/player-on-live-hls",
+      "file": "e2e/tests/playback/live-buffer/player-on-live-hls.e2e.ts"
+    },
+    {
+      "id": "playback/live-buffer/player-on-live-hls#one-stall-report",
+      "title": "The web player keeps its live cushion, rewinds and pauses, and reports real starvation once",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/attachHls.ts",
+        "src/app/player/explicitSeek.ts",
+        "src/app/player/liveStallDiagnostics.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "h264"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-buffer/player-on-live-hls",
+      "file": "e2e/tests/playback/live-buffer/player-on-live-hls.e2e.ts"
+    },
+    {
+      "id": "playback/live-origin/phone-playback#plays-to-the-end",
+      "title": "An iPhone plays a live stream from the Space, in Safari and in the app, on to the recording’s end",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/originPublish.ts",
+        "src/server/media/spacesHls.ts",
+        "src/server/routes/media.ts",
+        "src/app/player/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-origin/phone-playback",
+      "file": "e2e/tests/playback/live-origin/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/live-origin/space-playback#chrome",
+      "title": "A live stream plays from the Space’s event playlist, never the ingest’s own media, and closes as fragments",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/originPublish.ts",
+        "src/server/live/originPublisher.ts",
+        "src/server/live/finishVideo.ts",
+        "src/server/media/spacesHls.ts",
+        "src/server/routes/media.ts",
+        "src/app/player/attachHls.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-origin/space-playback",
+      "file": "e2e/tests/playback/live-origin/space-playback.e2e.ts"
+    },
+    {
+      "id": "playback/live-origin/space-playback#contract",
+      "title": "A live stream plays from the Space’s event playlist, never the ingest’s own media, and closes as fragments",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/originPublish.ts",
+        "src/server/live/originPublisher.ts",
+        "src/server/live/finishVideo.ts",
+        "src/server/media/spacesHls.ts",
+        "src/server/routes/media.ts",
+        "src/app/player/attachHls.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-origin/space-playback",
+      "file": "e2e/tests/playback/live-origin/space-playback.e2e.ts"
+    },
+    {
+      "id": "playback/live-origin/space-playback#outage-through-a-viewer-node",
+      "title": "A live stream plays from the Space’s event playlist, never the ingest’s own media, and closes as fragments",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/originPublish.ts",
+        "src/server/live/originPublisher.ts",
+        "src/server/live/finishVideo.ts",
+        "src/server/media/spacesHls.ts",
+        "src/server/routes/media.ts",
+        "src/app/player/attachHls.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-origin/space-playback",
+      "file": "e2e/tests/playback/live-origin/space-playback.e2e.ts"
+    },
+    {
+      "id": "playback/live-origin/space-playback#viewer-node-holds-no-media",
+      "title": "A live stream plays from the Space’s event playlist, never the ingest’s own media, and closes as fragments",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/originPublish.ts",
+        "src/server/live/originPublisher.ts",
+        "src/server/live/finishVideo.ts",
+        "src/server/media/spacesHls.ts",
+        "src/server/routes/media.ts",
+        "src/app/player/attachHls.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-origin/space-playback",
+      "file": "e2e/tests/playback/live-origin/space-playback.e2e.ts"
+    },
+    {
+      "id": "playback/live-outage/viewers-ride-through#with-sound",
+      "title": "Live viewers pick the stream up again, in step, after a publisher outage, and so does a fresh page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/attachHls.ts",
+        "src/app/player/explicitSeek.ts",
+        "src/server/live/controller.ts",
+        "src/server/live/splitter.ts",
+        "src/server/live/segmentClock.ts",
+        "src/server/live/originPublish.ts",
+        "src/server/live/finishVideo.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-outage/viewers-ride-through",
+      "file": "e2e/tests/playback/live-outage/viewers-ride-through.e2e.ts"
+    },
+    {
+      "id": "playback/live-outage/viewers-ride-through#without-sound",
+      "title": "Live viewers pick the stream up again, in step, after a publisher outage, and so does a fresh page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/attachHls.ts",
+        "src/app/player/explicitSeek.ts",
+        "src/server/live/controller.ts",
+        "src/server/live/splitter.ts",
+        "src/server/live/segmentClock.ts",
+        "src/server/live/originPublish.ts",
+        "src/server/live/finishVideo.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-outage/viewers-ride-through",
+      "file": "e2e/tests/playback/live-outage/viewers-ride-through.e2e.ts"
+    },
+    {
+      "id": "playback/live-tail/newest-pieces#keeps-the-newest-pieces",
+      "title": "The ingest keeps only the newest pieces of a live stream on its disk, across a reconnect, and the Space the whole recording",
+      "kind": "e2e",
+      "covers": [
+        "src/server/live/controller.ts",
+        "src/server/live/originPublish.ts",
+        "src/server/live/originPublisher.ts",
+        "src/server/live/playlistTail.ts",
+        "src/server/live/finishVideo.ts",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "streaming"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 14,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/live-tail/newest-pieces",
+      "file": "e2e/tests/playback/live-tail/newest-pieces.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-1-402x874",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-1-874x402",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-2-402x874",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-2-874x402",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-3-402x874",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-3-874x402",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-4-402x874",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#angles-4-874x402",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#keyboard-enter",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#keyboard-space",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#live-jump",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#videos-402x874",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#videos-874x402",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/playback-controls/control-visibility#videos-autoplay",
+      "title": "Playback controls show for a tap, hide again, ignore a tap or drag while hidden, and offer Jump to present only live",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/ZoneIcons.tsx",
+        "src/app/player/zones.ts",
+        "src/app/player/controlGeometry.ts",
+        "src/app/player/cardScrub.ts",
+        "src/app/player/stillLive.ts",
+        "src/app/player/multiCam/barParts.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/playback-controls/control-visibility",
+      "file": "e2e/tests/playback/playback-controls/control-visibility.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/device-videos-page#videos-page",
+      "title": "A scored game's videos page opens on a phone, in its browser and in the app",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/player/VideoView.native.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/device-videos-page",
+      "file": "e2e/tests/playback/player-layouts/device-videos-page.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/ipad-videos-page#videos-page",
+      "title": "A scored game's videos page opens on an iPad, in Safari and in the app",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/player/VideoView.native.tsx",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/multiCam/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ipad"
+              ],
+              "simulator": "allowed"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ipad"
+              ],
+              "simulator": "allowed"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/ipad-videos-page",
+      "file": "e2e/tests/playback/player-layouts/ipad-videos-page.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/screens#shots",
+      "title": "The player layouts, pictured at each window size and angle count",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/screens",
+      "file": "e2e/tests/playback/player-layouts/screens.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/screens#unsupported-shot",
+      "title": "The player layouts, pictured at each window size and angle count",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/screens",
+      "file": "e2e/tests/playback/player-layouts/screens.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#gestures-mouse",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#gestures-touch",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#grid-layout",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#line-score",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#no-hevc",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#one-angle-player",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#right-held-crawls",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
+      "id": "playback/player-layouts/web-player#videos-page",
+      "title": "The one player lays out its angles, board and line score, follows the playhead, and answers its gestures in a browser",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/multiCam/**",
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/MultiCamView.tsx",
+        "src/app/player/PlayerSurface.tsx",
+        "src/app/player/pressGrid.ts",
+        "src/app/player/slowMotion.ts",
+        "src/app/player/cardScrub.ts",
+        "src/server/scoreboard/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "player-layouts"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 90,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/player-layouts/web-player",
+      "file": "e2e/tests/playback/player-layouts/web-player.e2e.ts"
+    },
+    {
       "id": "playback/recordings/director-take-finish#real-take",
       "title": "A real multi-gigabyte TS Director take is taken in as segments inside the apps’ 900 s",
       "kind": "e2e",
@@ -6093,6 +8355,2899 @@
       "sendsNoMail": true,
       "spec": "playback/recordings/segmented-seek",
       "file": "e2e/tests/playback/recordings/segmented-seek.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#brave-on-iphone",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#live-four-angles",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#live-one-angle",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#live-three-angles",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#live-two-angles",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#real-game",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#recorded-four-angles",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#recorded-four-angles-filmed",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#recorded-one-angle",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#recorded-one-angle-take-ends",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#recorded-three-angles",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/reliability/phone-playback#recorded-two-angles",
+      "title": "On a phone, every start of a game’s video moves within 4 s and plays 10 s clean, through every angle, the grid and six scrubs",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/screens/HomeScreen.tsx",
+        "src/app/components/GameHeroCard.tsx",
+        "src/server/routes/media.ts",
+        "src/server/routes/live.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "production-shape"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 120,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/reliability/phone-playback",
+      "file": "e2e/tests/playback/reliability/phone-playback.e2e.ts"
+    },
+    {
+      "id": "playback/replay-device/live-view#three-pitches",
+      "title": "A pitch a web scorer throws shows on the live view in the iPhone’s app within 2.5 s",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone",
+                "gpu"
+              ],
+              "simulator": "never"
+            }
+          ],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/replay-device/live-view",
+      "file": "e2e/tests/playback/replay-device/live-view.e2e.ts"
+    },
+    {
+      "id": "playback/replay-device/live-view-android#three-pitches",
+      "title": "A pitch a web scorer throws shows on the live view in the Android phone’s app within 2.5 s",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone",
+                "gpu"
+              ],
+              "simulator": "never"
+            }
+          ],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/replay-device/live-view-android",
+      "file": "e2e/tests/playback/replay-device/live-view-android.e2e.ts"
+    },
+    {
+      "id": "playback/replay-device/phone-replay#layout",
+      "title": "The replay and the live view play on a phone, with sound, laid out on its safe area",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/app/field/fieldSafeArea.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone",
+                "gpu"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone",
+                "gpu"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/replay-device/phone-replay",
+      "file": "e2e/tests/playback/replay-device/phone-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-device/phone-replay#replay",
+      "title": "The replay and the live view play on a phone, with sound, laid out on its safe area",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/app/field/fieldSafeArea.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone",
+                "gpu"
+              ],
+              "simulator": "never"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone",
+                "gpu"
+              ],
+              "simulator": "never"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/replay-device/phone-replay",
+      "file": "e2e/tests/playback/replay-device/phone-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#announcer",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#board",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#controls",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#crowd",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#final-announcer",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#live",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#live-announcer",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#live-in-play",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#no-announcer",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#pills",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#replay",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#rewind",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#rewind-announcer",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#rewind-live",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#scorers",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/replay-web/game-replay#wide-window",
+      "title": "A game replays and follows live in the browser: pacing, controls, rewind, announcer and crowd",
+      "kind": "e2e",
+      "covers": [
+        "src/app/replay/**",
+        "src/common/replay/**",
+        "src/server/replay/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "replay-league"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video",
+              "gpu"
+            ],
+            "codecs": [
+              "aac"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "quarantine": {
+        "reason": "maestro-d#13: an offline network condition does not apply to a web page since maestro-d 3.2.0, so the scorer keeps writing while it should be offline",
+        "since": "2026-11-27",
+        "scenarios": [
+          "live"
+        ]
+      },
+      "spec": "playback/replay-web/game-replay",
+      "file": "e2e/tests/playback/replay-web/game-replay.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-log/board-timeline#listeners-and-writers-on-two-workers",
+      "title": "A board’s timeline rebuilds it at any moment, and a member listening is told of each change",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/boardTimeline.ts",
+        "src/server/scoreboard/scoreboardHub.ts",
+        "src/server/routes/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-log/board-timeline",
+      "file": "e2e/tests/playback/scoreboard-log/board-timeline.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-log/board-timeline#timeline-and-notices",
+      "title": "A board’s timeline rebuilds it at any moment, and a member listening is told of each change",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/boardTimeline.ts",
+        "src/server/scoreboard/scoreboardHub.ts",
+        "src/server/routes/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-log/board-timeline",
+      "file": "e2e/tests/playback/scoreboard-log/board-timeline.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-log/change-log#non-scoring-changes-logged",
+      "title": "Every change to a board but scoring is logged, in order, and scoring is not",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/scoreboardLog.ts",
+        "src/server/scoreboard/scoreboardHub.ts",
+        "src/server/scoreboard/scoreboardStore.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-log/change-log",
+      "file": "e2e/tests/playback/scoreboard-log/change-log.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-log/upload-clock-offset#offset-carried-to-the-video",
+      "title": "An upload keeps the server-clock offset its app measured, and its wall timeline starts there",
+      "kind": "e2e",
+      "covers": [
+        "src/server/routes/directorUploads.ts",
+        "src/server/media/wallTimeline.ts",
+        "src/common/wallTimeline.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 2,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-log/upload-clock-offset",
+      "file": "e2e/tests/playback/scoreboard-log/upload-clock-offset.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#closed-board-404",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#closes-while-open",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#director-measures",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#keeps-width",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#live-first-state",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#publish-reaches-page",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#quiet-closed-board",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/board-pages#sample-board",
+      "title": "The scoreboard pages draw the sample, a live board within a second, and a closed board’s 404",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreboardBoard.tsx",
+        "src/app/scoreboard/ScoreboardPage.tsx",
+        "src/app/scoreboard/ScoreboardNotFound.tsx",
+        "src/app/scoreboard/scoreboardSocket.ts",
+        "src/app/scoreboard/scoreboardRoute.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/board-pages",
+      "file": "e2e/tests/playback/scoreboard-pages/board-pages.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/score-screen#dashboard-reaches-board",
+      "title": "The Score screen and the override dashboard reach the board for the game’s runner, and nobody else",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreGameScreen.tsx",
+        "src/app/scoreboard/ScoreboardOverrideScreen.tsx",
+        "src/app/scoreboard/scoreboardDashboardClient.ts",
+        "src/app/scoreboard/overrideModel.ts",
+        "src/app/scoring/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/score-screen",
+      "file": "e2e/tests/playback/scoreboard-pages/score-screen.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/score-screen#expired-game",
+      "title": "The Score screen and the override dashboard reach the board for the game’s runner, and nobody else",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreGameScreen.tsx",
+        "src/app/scoreboard/ScoreboardOverrideScreen.tsx",
+        "src/app/scoreboard/scoreboardDashboardClient.ts",
+        "src/app/scoreboard/overrideModel.ts",
+        "src/app/scoring/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/score-screen",
+      "file": "e2e/tests/playback/scoreboard-pages/score-screen.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-pages/score-screen#scorer-path",
+      "title": "The Score screen and the override dashboard reach the board for the game’s runner, and nobody else",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoreboard/ScoreGameScreen.tsx",
+        "src/app/scoreboard/ScoreboardOverrideScreen.tsx",
+        "src/app/scoreboard/scoreboardDashboardClient.ts",
+        "src/app/scoreboard/overrideModel.ts",
+        "src/app/scoring/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-pages/score-screen",
+      "file": "e2e/tests/playback/scoreboard-pages/score-screen.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/scored-board#scored-published-and-overridden",
+      "title": "Scoring, TS Watcher and the override dashboard each reach a viewer’s board where they belong",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/common/scoreboard.ts",
+        "src/app/scoring/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "gpu"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/scored-board",
+      "file": "e2e/tests/playback/scoreboard-server/scored-board.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#board-key-expiry",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#refusals",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#restart-keeps-board",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#run-list",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#store-outage",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#twelve-viewers-in-order",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/scoreboard-server/viewers#viewers-across-workers",
+      "title": "Every viewer gets a board’s states in order, refusals are named, and the board outlives a restart",
+      "kind": "e2e",
+      "covers": [
+        "src/server/scoreboard/**",
+        "src/server/routes/scoreboard.ts",
+        "src/common/scoreboard.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoreboard-games"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": []
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/scoreboard-server/viewers",
+      "file": "e2e/tests/playback/scoreboard-server/viewers.e2e.ts"
+    },
+    {
+      "id": "playback/wall-clock/display-lag#grid",
+      "title": "The live board changes on the first picture that reaches each change, as a recording of the page shows it",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 25,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/wall-clock/display-lag",
+      "file": "e2e/tests/playback/wall-clock/display-lag.e2e.ts"
+    },
+    {
+      "id": "playback/wall-clock/display-lag#sync",
+      "title": "The live board changes on the first picture that reaches each change, as a recording of the page shows it",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/scoreboardOverlay/**",
+        "src/app/player/multiCam/**",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 25,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/wall-clock/display-lag",
+      "file": "e2e/tests/playback/wall-clock/display-lag.e2e.ts"
+    },
+    {
+      "id": "playback/wall-clock/sei-timelines#stamped",
+      "title": "Wall-clock timelines are frame-exact from a stamped stream’s SEI, and arrival points for one with none, live and recorded, across an outage",
+      "kind": "e2e",
+      "covers": [
+        "src/server/media/wallClockScan.ts",
+        "src/common/wallTimeline.ts",
+        "src/server/live/**",
+        "scripts/stampWallClockSei.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/wall-clock/sei-timelines",
+      "file": "e2e/tests/playback/wall-clock/sei-timelines.e2e.ts"
+    },
+    {
+      "id": "playback/wall-clock/sei-timelines#unstamped",
+      "title": "Wall-clock timelines are frame-exact from a stamped stream’s SEI, and arrival points for one with none, live and recorded, across an outage",
+      "kind": "e2e",
+      "covers": [
+        "src/server/media/wallClockScan.ts",
+        "src/common/wallTimeline.ts",
+        "src/server/live/**",
+        "scripts/stampWallClockSei.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "scoring-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [],
+          "browser": {
+            "role": "browser",
+            "needs": [
+              "video"
+            ],
+            "codecs": [
+              "hevc"
+            ]
+          }
+        }
+      },
+      "services": [],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "playback/wall-clock/sei-timelines",
+      "file": "e2e/tests/playback/wall-clock/sei-timelines.e2e.ts"
     },
     {
       "id": "schedule/auto-scheduler/build-modal#limit-accept",

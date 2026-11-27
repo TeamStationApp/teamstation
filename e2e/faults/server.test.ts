@@ -10,6 +10,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { stackDatabase } from './database'
+import { PagesStandIn } from './pages'
 import {
   fixtureSeeder,
   hostPort,
@@ -434,6 +435,30 @@ describe('a fault server with no Places listener', function () {
 })
 
 describe('the fault server’s command line', function () {
+  it('gives the media work the checkout’s broadcaster actions', async function () {
+    const checkout = mkdtempSync(join(tmpdir(), 'e2e-faults-checkout-'))
+    const file = join(checkout, 'token')
+    writeFileSync(file, `${TOKEN}\n`)
+    writeFileSync(
+      join(checkout, 'serverConfig.json'),
+      JSON.stringify({
+        mediaDir: join(checkout, 'media'),
+        live: { port: 1936 }
+      })
+    )
+    const { remux } = parseFaultServerArgs(
+      [
+        ...['--listen', '127.0.0.1:9200', '--target', 'http://127.0.0.1:9100'],
+        ...['--token-file', file, '--checkout', checkout]
+      ],
+      {}
+    )
+    const act = remux!(new PagesStandIn())
+    expect(await act({ action: 'ingest-files', videoId: 'vid_1' })).deep.equals(
+      { live: { port: 1936 }, names: [], master: '' }
+    )
+  })
+
   it('reads its options and the token from its file', function () {
     const file = join(mkdtempSync(join(tmpdir(), 'e2e-faults-')), 'token')
     writeFileSync(file, `${TOKEN}\n`)

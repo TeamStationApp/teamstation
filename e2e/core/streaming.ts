@@ -5,22 +5,7 @@
  * runs them as any other script.
  */
 export const STREAMING: readonly string[] = [
-  'scripts/e2e/playbackReliability/playbackReliability.e2e.ts',
-  'scripts/e2e/playerLayouts/capture.ts',
-  'scripts/e2e/playerLayouts/liveProbe.ts',
-  'scripts/e2e/scoreboardLog/e5.mjs',
-  'scripts/e2e/scoreboardLog/f1Recording.ts',
   'src/app/cameraName.e2e.ts',
-  'src/app/player/liveBuffer.e2e.ts',
-  'src/app/player/liveMultiAngle.e2e.ts',
-  'src/app/player/liveOrigin.e2e.ts',
-  'src/app/player/liveOutage.e2e.ts',
-  'src/app/player/liveStallDiagnostics.e2e.ts',
-  'src/app/player/playbackControls.e2e.ts',
-  'src/app/player/playerLayouts.e2e.ts',
-  'src/app/player/playerLayoutsDevices.e2e.ts',
-  'src/app/player/scoreboardOverlay/overlay.e2e.ts',
-  'src/app/player/scoreboardOverlay/overlayPhone.e2e.ts',
   'src/app/quietStreamNative.e2e.ts',
   'src/app/stream/anglesEdgeStates.e2e.ts',
   'src/app/stream/bridgeSmoke.e2e.ts',
@@ -36,7 +21,6 @@ export const STREAMING: readonly string[] = [
   'src/app/stream/uploadReminder.e2e.ts',
   'src/server/director/cancelInterrupted.e2e.ts',
   'src/server/ingest/survive.e2e.ts',
-  'src/server/live/localTail.e2e.ts',
   'src/server/media/secretPaths.e2e.ts'
 ]
 

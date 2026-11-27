@@ -31,8 +31,7 @@ export default [
       'src/test/fakeScoreboardSocket.ts',
       'src/test/PagedListStandIn.tsx',
       'src/test/responderDrag.ts',
-      'src/test/scoringHelpers.ts',
-      'src/test/scoreboardServer.e2e.ts'
+      'src/test/scoringHelpers.ts'
     ],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.app.json' }
@@ -68,7 +67,6 @@ export default [
       'src/test/chatWakeCases.ts',
       'src/test/fakeScoreboardSocket.ts',
       'src/test/scoringHelpers.ts',
-      'src/test/scoreboardServer.e2e.ts',
       'src/test/scoringBrowser.e2e.ts',
       'src/test/chatBrowserLegacyActions.e2e.ts',
       'src/test/nativeLocationFailure.ts',

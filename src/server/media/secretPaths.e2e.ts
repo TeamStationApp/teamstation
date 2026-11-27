@@ -22,7 +22,8 @@ import { oldVideoPrefix, videoPrefix } from './videoPrefix'
 /**
  * E2E-3: existing videos move to their secret paths, new media is under one,
  * public and unsigned, and playlists stay private. (The web player half of
- * E2E-3, playing in a browser with no CSP violation, is `liveOrigin.e2e.ts`.)
+ * E2E-3, playing in a browser with no CSP violation, is the
+ * `playback/live-origin/space-playback` spec.)
  *
  *   node src/migrate/requirePostgres18.js && npx mocha --timeout 900000 \
  *     --exit -r sucrase/register --extension ts \
