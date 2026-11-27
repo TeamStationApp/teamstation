@@ -13,14 +13,9 @@ import {
 
 /**
  * Node clients for a scoreboard's publish and dashboard sockets, as TS
- * Watcher and the override dashboard use them.
- *
- *   node -r sucrase/register e2e/rigs/scoreboardPublish.ts \
- *     <host> <gameId> <token> '<json>'
- *
- * publishes one partial and prints what happened. `host` is the server's
- * origin, `http://127.0.0.1:9100` or `https://<seat>`, and the socket is the
- * matching `ws:` or `wss:` one. An empty token sends no Authorization.
+ * Watcher and the override dashboard use them. `host` is the server's
+ * origin, and the socket is the matching `ws:` or `wss:` one. An empty token
+ * sends no Authorization.
  */
 
 /**
@@ -266,27 +261,4 @@ export async function override(
   return await sendOver(scoreboardSocketUrl(host, gameId, 'dashboard'), token, [
     { type: 'overrides', data: overrides }
   ])
-}
-
-async function main(): Promise<void> {
-  const [host, gameId, token, json] = process.argv.slice(2)
-  if (host == null || gameId == null || token == null || json == null) {
-    throw new Error(
-      "Usage: node -r sucrase/register e2e/rigs/scoreboardPublish.ts <host> <gameId> <token> '<json>'"
-    )
-  }
-  const outcome = await publish(
-    host,
-    gameId,
-    token,
-    JSON.parse(json) as ScoreboardUpdate
-  )
-  console.log(JSON.stringify(outcome))
-}
-
-if ((process.argv[1] ?? '').endsWith('/scoreboardPublish.ts')) {
-  main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : error)
-    process.exit(1)
-  })
 }

@@ -29,7 +29,6 @@
     "src/test/fakeScoreboardSocket.ts",
     "src/test/PagedListStandIn.tsx",
     "src/test/responderDrag.ts",
-    "src/test/scoringHelpers.ts",
-    "src/test/scoreboardServer.e2e.ts"
+    "src/test/scoringHelpers.ts"
   ]
 }

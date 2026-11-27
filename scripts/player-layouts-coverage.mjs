@@ -13,10 +13,13 @@
 // `.test.tsx` suites in `appSuites` (each bundled alone: bundled together
 // they interfere, the way `npm test`'s one bundle does) and the native specs
 // (`build-player-native-tests.mjs`). Without it the gate is the combined one,
-// at 95%: the same unit counters merged with the web end-to-end run's
-// browser coverage (istanbul JSON, `TS_PLAYER_BROWSER_COVERAGE`) and the
-// end-to-end server's V8 coverage (`NODE_V8_COVERAGE` directory,
-// `TS_PLAYER_SERVER_COVERAGE`). A changed file no suite loaded fails.
+// at 95%: the same unit counters merged with a browser coverage file
+// (istanbul JSON, `TS_PLAYER_BROWSER_COVERAGE`) and a server's V8 coverage
+// (`NODE_V8_COVERAGE` directory, `TS_PLAYER_SERVER_COVERAGE`) given to it.
+// The end-to-end scenarios (`e2e/tests/playback/player-layouts/`) run on a
+// stack through the devops runner and record no browser coverage, so only a
+// file made some other way feeds the combined gate. A changed file no suite
+// loaded fails.
 //
 // A milestone that adds a suite adds it to `tsSuites` or `appSuites`. Test
 // tooling (`scripts/**`, `src/test/**`), tests, end-to-end files, type

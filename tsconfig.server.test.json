@@ -26,7 +26,6 @@
     "src/test/chatWakeCases.ts",
     "src/test/fakeScoreboardSocket.ts",
     "src/test/scoringHelpers.ts",
-    "src/test/scoreboardServer.e2e.ts",
     "e2e/rigs/scoringBrowser.ts",
     "src/test/chatBrowserLegacyActions.e2e.ts",
     "src/test/nativeLocationFailure.ts",

@@ -439,3 +439,345 @@ export function encode(
     rmdirSync(dir)
   }
 }
+
+/**
+ * Every video frame's presentation time in a recording, in seconds and in
+ * order, as ffprobe lists its packets.
+ */
+export function frameTimes(file: string, run: RunTool = runTool): number[] {
+  const probe = run(
+    'ffprobe',
+    [
+      ...['-v', 'error', '-select_streams', 'v:0'],
+      ...['-show_entries', 'packet=pts_time', '-of', 'csv=p=0', file]
+    ],
+    { maxBuffer: 1 << 28 }
+  )
+  if (probe.status !== 0) {
+    throw new Error(`ffprobe could not read ${file}: ${probe.stderr}`)
+  }
+  return probe.stdout
+    .split('\n')
+    .filter(line => line.trim() !== '')
+    .map(Number)
+    .sort((a, b) => a - b)
+}
+
+/**
+ * Each whole frame of a recording, `width` by `height`, in grayscale, handed
+ * to `onFrame` one at a time as FFmpeg decodes it and never kept: a long
+ * recording's frames would not fit in memory. A frame's `data` is reused for
+ * the next, so `onFrame` reads it before it returns. Answers how many frames
+ * there were.
+ */
+export async function eachGrayFrame(
+  file: string,
+  size: { width: number; height: number },
+  onFrame: (frame: GrayFrame, n: number) => void,
+  run: StreamTool = spawn
+): Promise<number> {
+  const bytes = size.width * size.height
+  const buffer = new Uint8Array(bytes)
+  const frame: GrayFrame = { ...size, data: buffer }
+  let filled = 0
+  let n = 0
+  const ffmpeg = run(
+    'ffmpeg',
+    [
+      ...['-nostdin', '-loglevel', 'error', '-i', file],
+      ...['-map', '0:v:0', '-fps_mode', 'passthrough'],
+      ...['-pix_fmt', 'gray', '-f', 'rawvideo', 'pipe:1']
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  ffmpeg.stdout?.on('data', (chunk: Buffer) => {
+    let offset = 0
+    while (offset < chunk.length) {
+      const take = Math.min(bytes - filled, chunk.length - offset)
+      buffer.set(chunk.subarray(offset, offset + take), filled)
+      filled += take
+      offset += take
+      if (filled === bytes) {
+        onFrame(frame, n++)
+        filled = 0
+      }
+    }
+  })
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg.on('error', reject)
+    ffmpeg.on('close', code => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg could not read ${file}: exit ${code}`))
+    })
+  })
+  return n
+}
+
+/**
+ * The first frame of a video or picture file, raw: one byte a pixel in
+ * `gray`, three in `rgb24`, scaled to `width` by `height` when both are
+ * given. Null when FFmpeg decodes no frame from it.
+ */
+export async function decodeFirstFrame(
+  file: string,
+  options: { pixFmt: 'gray' | 'rgb24'; width?: number; height?: number },
+  run: StreamTool = spawn
+): Promise<Uint8Array | null> {
+  const scale =
+    options.width == null || options.height == null
+      ? []
+      : ['-vf', `scale=${options.width}:${options.height}`]
+  const ffmpeg = run(
+    'ffmpeg',
+    [
+      ...['-nostdin', '-hide_banner', '-loglevel', 'error', '-i', file],
+      ...scale,
+      ...['-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', options.pixFmt],
+      'pipe:1'
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+  const chunks: Buffer[] = []
+  ffmpeg.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk))
+  const code = await new Promise<number | null>(resolve => {
+    ffmpeg.on('error', () => {
+      resolve(null)
+    })
+    ffmpeg.on('close', resolve)
+  })
+  const bytes = Buffer.concat(chunks)
+  return code === 0 && bytes.length > 0 ? new Uint8Array(bytes) : null
+}
+
+/** What `hlsFixture` encodes: a test picture with no sound, as H.264 HLS. */
+export interface HlsFixtureOptions {
+  seconds: number
+  /** `<width>x<height>`. */
+  size: string
+  fps: number
+  /** Frames between keyframes. */
+  gop: number
+  segmentSeconds: number
+}
+
+/**
+ * Encodes a test picture into `dir` as an event playlist with no end,
+ * `master.m3u8`, and its `.ts` segments, as a live stream still being
+ * written looks; answers the files' names, the playlist first.
+ */
+export function hlsFixture(
+  dir: string,
+  options: HlsFixtureOptions,
+  run: RunTool = runTool
+): string[] {
+  mkdirSync(dir, { recursive: true })
+  const made = run('ffmpeg', [
+    ...['-hide_banner', '-loglevel', 'error', '-y'],
+    ...[
+      '-f',
+      'lavfi',
+      '-i',
+      `testsrc2=size=${options.size}:rate=${options.fps}`
+    ],
+    ...['-t', String(options.seconds), '-an'],
+    ...['-c:v', 'libx264', '-preset', 'ultrafast', '-g', String(options.gop)],
+    ...['-f', 'hls', '-hls_time', String(options.segmentSeconds)],
+    ...['-hls_list_size', '0', '-hls_playlist_type', 'event'],
+    ...['-hls_flags', 'omit_endlist', join(dir, 'master.m3u8')]
+  ])
+  if (made.status !== 0) throw new Error(`FFmpeg failed: ${made.stderr}`)
+  return [
+    'master.m3u8',
+    ...readdirSync(dir)
+      .filter(name => name.endsWith('.ts'))
+      .sort()
+  ]
+}
+
+/** A rectangle of a picture's own pixels, its corner and its size. */
+export interface PixelRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+const evenPixels = (value: number): number =>
+  Math.max(2, Math.floor(value / 2) * 2)
+
+/**
+ * The mean luma difference between each picture and the one before it,
+ * inside `rect`, for a numbered PNG sequence (`%06d.png`) or a video: one
+ * FFmpeg pass, crop, `tblend` difference against the previous frame, and
+ * `signalstats`' mean of it. Entry `i` compares picture `i + 1` with picture
+ * `i`, so the series is one shorter than the pictures.
+ */
+export function lumaDiffs(
+  input: { pattern: string } | { video: string },
+  rect: PixelRect,
+  run: RunTool = runTool
+): number[] {
+  const source =
+    'pattern' in input
+      ? ['-framerate', '1', '-i', input.pattern]
+      : ['-i', input.video]
+  const filter =
+    `crop=${evenPixels(rect.w)}:${evenPixels(rect.h)}:${Math.round(rect.x)}:${Math.round(rect.y)},` +
+    'format=gray,tblend=all_mode=difference,signalstats,' +
+    'metadata=print:key=lavfi.signalstats.YAVG:file=-'
+  const ran = run('ffmpeg', [
+    ...['-nostdin', '-loglevel', 'error', ...source],
+    ...['-vf', filter, '-f', 'null', '-']
+  ])
+  if (ran.status !== 0) {
+    throw new Error(`ffmpeg could not compare the pictures: ${ran.stderr}`)
+  }
+  // `tblend` emits from the second picture on: one value a pair.
+  return [...ran.stdout.matchAll(/lavfi\.signalstats\.YAVG=([0-9.]+)/g)].map(
+    match => Number(match[1])
+  )
+}
+
+/**
+ * The text inside `box` of a PNG, read with tesseract on one line: `digits`
+ * turns the box dark on light and reads only digits (a burned-in counter),
+ * `white` keeps only the brightest pixels, black on white (a burned-in
+ * name). The box is cut out, scaled up and given a white margin first, as
+ * tesseract drops a character that touches the edge; that picture is kept at
+ * `scratch`.
+ */
+export function ocrBox(
+  png: string,
+  box: PixelRect,
+  scratch: string,
+  mode: 'digits' | 'white',
+  run: RunTool = runTool
+): string {
+  const crop = `crop=${Math.round(box.w)}:${Math.round(box.h)}:${Math.round(box.x)}:${Math.round(box.y)},scale=-2:160,format=gray,`
+  const ink = mode === 'digits' ? 'negate' : "lut=c0='if(gt(val,235),0,255)'"
+  const cut = run('ffmpeg', [
+    ...['-nostdin', '-loglevel', 'error', '-i', png],
+    ...['-vf', `${crop}${ink},pad=iw+120:ih+40:60:20:white`],
+    ...['-frames:v', '1', '-y', scratch]
+  ])
+  if (cut.status !== 0) {
+    throw new Error(`ffmpeg could not cut the box: ${cut.stderr}`)
+  }
+  const read = run('tesseract', [
+    scratch,
+    'stdout',
+    '--psm',
+    '7',
+    ...(mode === 'digits' ? ['-c', 'tessedit_char_whitelist=0123456789'] : [])
+  ])
+  if (read.status !== 0) {
+    throw new Error(`tesseract could not read the box: ${read.stderr}`)
+  }
+  return read.stdout.trim()
+}
+
+/**
+ * A recording's pictures as a numbered PNG sequence in `dir` (`000001.png`
+ * …), `fps` a second, each with its time from the recording's start.
+ */
+export function stillFrames(
+  file: string,
+  dir: string,
+  fps: number,
+  run: RunTool = runTool
+): Array<{ file: string; atSec: number }> {
+  mkdirSync(dir, { recursive: true })
+  const cut = run('ffmpeg', [
+    ...['-nostdin', '-loglevel', 'error', '-i', file],
+    ...['-vf', `fps=${fps}`, '-start_number', '1', join(dir, '%06d.png')]
+  ])
+  if (cut.status !== 0) {
+    throw new Error(`ffmpeg could not cut ${file}: ${cut.stderr}`)
+  }
+  return readdirSync(dir)
+    .filter(name => /^\d{6}\.png$/.test(name))
+    .sort()
+    .map((name, index) => ({ file: join(dir, name), atSec: index / fps }))
+}
+
+/** Whether FFmpeg sees a sound track in a recording. */
+export function hasAudio(file: string, run: RunTool = runTool): boolean {
+  return /Stream #\S+.*: Audio:/.test(
+    run('ffmpeg', ['-hide_banner', '-i', file]).stderr
+  )
+}
+
+/**
+ * A recording's loudness, as FFmpeg's ebur128 filter measures it: each
+ * second's first momentary loudness in LUFS (or `-inf`), by whole second,
+ * and the filter's closing summary.
+ */
+export function momentaryLoudness(
+  file: string,
+  run: RunTool = runTool
+): { seconds: Map<number, string>; summary: string } {
+  const measured = run('ffmpeg', [
+    ...['-nostdin', '-i', file],
+    ...['-vn', '-af', 'ebur128', '-f', 'null', '-']
+  ])
+  if (measured.status !== 0) {
+    throw new Error(`ffmpeg measured nothing in ${file}: ${measured.stderr}`)
+  }
+  const seconds = new Map<number, string>()
+  for (const match of measured.stderr.matchAll(
+    /t:\s*([\d.]+)\s+TARGET:.*?M:\s*(-?[\d.]+|-inf)/g
+  )) {
+    const second = Math.floor(Number(match[1]))
+    if (!seconds.has(second)) seconds.set(second, match[2])
+  }
+  const summary = /Summary:[\s\S]*$/.exec(measured.stderr)?.[0] ?? ''
+  return { seconds, summary: summary.trim() }
+}
+
+/**
+ * A sound file's first `seconds` (the whole of it with null), as 64 kb/s
+ * mono MP3 at 24 kHz, in `out`.
+ */
+export function clipAudio(
+  input: string,
+  out: string,
+  seconds: number | null,
+  run: RunTool = runTool
+): void {
+  const made = run('ffmpeg', [
+    ...['-nostdin', '-loglevel', 'error', '-i', input],
+    ...(seconds == null ? [] : ['-t', seconds.toFixed(2)]),
+    ...['-c:a', 'libmp3lame', '-b:a', '64k', '-ar', '24000', '-ac', '1'],
+    ...['-y', out]
+  ])
+  if (made.status !== 0) throw new Error(`FFmpeg cut nothing: ${made.stderr}`)
+}
+
+/**
+ * Sound files one after another in `out`, as they are (FFmpeg's concat,
+ * copying). The list is written under `scratch` and removed after.
+ */
+export function joinAudio(
+  files: string[],
+  out: string,
+  scratch: string,
+  run: RunTool = runTool
+): void {
+  if (files.length === 0) throw new Error('No sound to join')
+  mkdirSync(scratch, { recursive: true })
+  const dir = mkdtempSync(join(scratch, 'join-'))
+  const list = join(dir, 'list.txt')
+  try {
+    writeFileSync(list, files.map(file => `file '${file}'`).join('\n'))
+    const joined = run('ffmpeg', [
+      ...['-nostdin', '-loglevel', 'error', '-f', 'concat', '-safe', '0'],
+      ...['-i', list, '-c', 'copy', '-y', out]
+    ])
+    if (joined.status !== 0) {
+      throw new Error(`FFmpeg joined nothing: ${joined.stderr}`)
+    }
+  } finally {
+    unlinkSync(list)
+    rmdirSync(dir)
+  }
+}

@@ -8,11 +8,14 @@ import { after, describe, it } from 'mocha'
 import type { StackDatabase } from './database'
 import { PagesStandIn } from './pages'
 import {
+  probeArgs,
   programmeArgs,
   remuxActions,
   type RemuxDeps,
   RemuxError,
-  stackRemux
+  stackRemux,
+  stackServerConfig,
+  takeArgs
 } from './remux'
 import { startFaultServer } from './server'
 
@@ -82,6 +85,14 @@ function fake(
       ran.push([file, args, runOptions])
       // FFmpeg writes its last argument.
       if (file.endsWith('ffmpeg')) writeFileSync(args[args.length - 1], 'mp4!')
+      if (file.endsWith('ffprobe')) {
+        return {
+          stdout: JSON.stringify({
+            streams: [{ codec_type: 'video', codec_name: 'h264' }],
+            packets: [{ dts_time: '0.000000' }]
+          })
+        }
+      }
       return { stdout: `ran ${args.join(' ')}\n` }
     },
     remux: async (_ffmpeg, remuxOptions) => {
@@ -294,13 +305,81 @@ describe('the remux route’s media work', function () {
     ).equals(501)
   })
 
+  it('makes a take as Director sends one, and reads it with ffprobe', async function () {
+    const f = fake()
+    const act = remuxActions(f.deps)
+    const made = (await act({
+      action: 'take',
+      seconds: 2,
+      path: '/e4-1/take.mp4'
+    })) as any
+    expect(made).deep.equals({
+      path: '/e4-1/take.mp4',
+      bytes: 4,
+      streams: ['video/h264'],
+      firstDts: 0
+    })
+    const file = f.served[0][1]
+    expect(f.ran[0]).deep.equals([
+      '/opt/ffmpeg/bin/ffmpeg',
+      takeArgs(2, file),
+      {}
+    ])
+    expect(takeArgs(2, file)).includes('libx264').and.includes('-an')
+    expect(f.ran[1]).deep.equals([
+      '/opt/ffmpeg/bin/ffprobe',
+      probeArgs(file),
+      {}
+    ])
+    expect(f.served[0][2]).equals('video/mp4')
+    expect(
+      (await refused(act({ action: 'take', seconds: 0, path: '/x.mp4' })))
+        .status
+    ).equals(400)
+    // A probe that read nothing answers no streams and no first packet.
+    const empty = fake()
+    empty.deps.run = async (file, args) => {
+      if (file.endsWith('ffmpeg')) writeFileSync(args[args.length - 1], 'x')
+      return { stdout: '{}' }
+    }
+    expect(
+      await remuxActions(empty.deps)({
+        action: 'take',
+        seconds: 1,
+        path: '/e4-2/take.mp4'
+      })
+    ).deep.equals({
+      path: '/e4-2/take.mp4',
+      bytes: 1,
+      streams: [],
+      firstDts: null
+    })
+  })
+
+  it('answers the actions another module adds', async function () {
+    const f = fake()
+    f.deps.more = { echo: async body => ({ echoed: body }) }
+    expect(await remuxActions(f.deps)({ action: 'echo', a: 1 })).deep.equals({
+      echoed: { a: 1 }
+    })
+  })
+
   it('reads the stack’s own server config for its Space and FFmpeg', async function () {
     const checkout = mkdtempSync(join(tmpdir(), 'e2e-remux-checkout-'))
     after(function () {
       rmSync(checkout, { recursive: true, force: true })
     })
-    writeFileSync(join(checkout, 'serverConfig.json'), JSON.stringify({}))
-    const act = stackRemux(checkout, undefined, new PagesStandIn())
+    writeFileSync(
+      join(checkout, 'serverConfig.json'),
+      JSON.stringify({ mediaDir: '/srv/e2e/media' })
+    )
+    expect(stackServerConfig(checkout)).deep.equals({
+      mediaDir: '/srv/e2e/media'
+    })
+    const act = stackRemux(checkout, undefined, new PagesStandIn(), {
+      extra: async () => ({ extra: true })
+    })
+    expect(await act({ action: 'extra' })).deep.equals({ extra: true })
     expect((await act({ action: 'machine' })) as any).to.have.keys(
       'vcpus',
       'memGiB'

@@ -27,9 +27,13 @@ import {
 import { runLineupGame } from './lineupGame'
 import { runMessaging, runMessagingDated } from './messaging'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runPlayerLayouts } from './playerLayouts'
 import { runPlayerNames } from './playerNames'
+import { runProductionShape } from './productionShape'
 import { runRefreshNotices } from './refreshNotices'
 import { runReplayGames } from './replayGames'
+import { runReplayLeague } from './replayLeague'
+import { runScoreboardGames } from './scoreboardGames'
 import { runScoringField } from './scoringField'
 import { runScoringGame } from './scoringGame'
 import { runScoringPreview } from './scoringPreview'
@@ -64,6 +68,8 @@ export const WORLDS: Record<
   'event-schedule': runEventSchedule,
   'game-form': runGameForm,
   'replay-games': runReplayGames,
+  'production-shape': runProductionShape,
+  'replay-league': runReplayLeague,
   'existing-player': runExistingPlayer,
   'roster-players': runRosterPlayers,
   'defense-gaps': runDefenseGaps,
@@ -74,11 +80,13 @@ export const WORLDS: Record<
   'existing-player-guest': runExistingPlayerGuest,
   'coach-plan': runCoachPlan,
   'lineup-game': runLineupGame,
+  'player-layouts': runPlayerLayouts,
   'player-names': runPlayerNames,
   'packed-league': runPackedLeague,
   'packed-league-limit': runPackedLeagueLimit,
   'refresh-notices': runRefreshNotices,
   'roster-edit': runRosterEdit,
+  'scoreboard-games': runScoreboardGames,
   'scoring-sheets': runScoringSheets,
   'scoring-game': runScoringGame,
   'scoring-preview': runScoringPreview,

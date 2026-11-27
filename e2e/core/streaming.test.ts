@@ -8,7 +8,7 @@ import { disabledFor, STREAMING, streamingKnown } from './streaming'
 
 describe('streaming scripts', function () {
   it('are disabled from the sweep unless E2E_STREAMING=1 asks for them', function () {
-    const file = 'src/app/player/liveOutage.e2e.ts'
+    const file = 'src/app/stream/focus.e2e.ts'
     expect(disabledFor(file, {})).includes('streaming')
     expect(disabledFor(file, { E2E_STREAMING: '1' })).equals(null)
     expect(disabledFor('src/app/scoring/scoring.e2e.ts', {})).equals(null)
