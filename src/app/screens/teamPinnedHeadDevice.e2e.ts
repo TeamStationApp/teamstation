@@ -335,8 +335,8 @@ async function main(): Promise<void> {
       return await settled()
     }
 
-    // iOS: W3C touch actions through this daemon's own WebDriverAgent, as in
-    // rosterDrag.e2e.ts, so a drag is a drag and not a fling.
+    // iOS: W3C touch actions through this daemon's own WebDriverAgent, as the
+    // roster-drag scoring module once did, so a drag is a drag and not a fling.
     let wda: { url: string; session: string } | undefined
     const request = async (path: string, body?: unknown): Promise<unknown> => {
       const url = wda!.url + path

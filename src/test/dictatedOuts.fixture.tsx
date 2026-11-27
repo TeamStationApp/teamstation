@@ -15,13 +15,14 @@ import type { ScoringEvent, ScoringState } from '../app/scoring/scoringTypes'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail } from '../common/api'
 import type { ScoringAction } from '../common/scoring/actions'
+import { sendReport } from './dictatedReport'
 import { scoringSession } from './scoringSession'
 
 /**
  * Dictated outs on the production field. Each button scores one sentence as
  * the model returns it, through the real reducer and `completeSentence`, and
  * posts what the field was given to draw — each picture with its wall-clock
- * start and end, and each runner motion as it starts — to `/timeline`.
+ * start and end, and each runner motion as it starts — as `timeline` (`dictatedReport`).
  */
 const F = { P: 10, C: 11, B1: 12, B2: 13, SS: 14, B3: 15, LF: 16 }
 const RUNNER = 5
@@ -270,20 +271,16 @@ function Preview(): React.ReactElement {
   const { session } = state
   useEffect(() => {
     if (!finished) return
-    fetch('/timeline', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        outs: session.liveData.linescore.outs,
-        bases: Object.fromEntries(
-          (['first', 'second', 'third'] as const).map(key => [
-            key,
-            session.liveData.linescore.offense[key]?.id ?? null
-          ])
-        ),
-        timeline: timeline.current
-      })
+    sendReport(name, {
+      name,
+      outs: session.liveData.linescore.outs,
+      bases: Object.fromEntries(
+        (['first', 'second', 'third'] as const).map(key => [
+          key,
+          session.liveData.linescore.offense[key]?.id ?? null
+        ])
+      ),
+      timeline: timeline.current
     }).catch(() => undefined)
   }, [finished, name, session])
   const play = (scenario: Scenario): void => {

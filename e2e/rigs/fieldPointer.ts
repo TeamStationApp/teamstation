@@ -5,11 +5,12 @@
  *
  * A player is found by his nameplate, which names where he plays
  * (`data-position`), and the field picks the player whose plate a press
- * lands on. Puppeteer pages and maestro-d devices both drive it.
+ * lands on. Every press and drag is a maestro-d command (`maestroDriver`);
+ * the page is only read, through `evalBrowserScript`.
  */
-import type { Page } from 'puppeteer'
-
 import { BASES, createPlayers } from '../../src/app/field/fieldModel'
+import { runnerTargets } from '../../src/app/scoring/runnerDrag'
+import type { Page } from '../core/web'
 import { scriptLiteral } from './pageScript'
 
 type Point = [number, number]
@@ -29,25 +30,6 @@ export interface FieldDriver {
 
 const pause = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
-}
-
-export function puppeteerDriver(page: Page): FieldDriver {
-  return {
-    evaluate: async <T>(expression: string) =>
-      (await page.evaluate(expression)) as T,
-    tap: async at => {
-      await page.mouse.move(...at)
-      await page.mouse.down()
-      await page.mouse.up()
-    },
-    drag: async (from, to) => {
-      await page.mouse.move(...from)
-      await page.mouse.down()
-      await page.mouse.move(...to, { steps: 12 })
-      await pause(100)
-      await page.mouse.up()
-    }
-  }
 }
 
 /** The parts of a maestro-d device the field uses. */
@@ -251,22 +233,22 @@ export async function installSceneProbe(page: Page): Promise<void> {
 
 /** Where ground point (x, z), `y` up, draws on the page, through the live camera. */
 export async function groundPoint(
-  page: Page,
+  field: FieldDriver,
   x: number,
   z: number,
   y = 0
 ): Promise<Point> {
-  return (await page.evaluate(`(() => {
+  return await field.evaluate<Point>(`(() => {
     ${THREE_STATE}
     if (three == null) throw new Error('No field scene: install the scene probe')
     return project(${x}, ${y}, ${z})
-  })()`)) as Point
+  })()`)
 }
 
 /** Where the runner standing nearest base `base` draws, through the scene probe. */
-async function runnerAt(page: Page, base: number): Promise<Point> {
+async function runnerAt(field: FieldDriver, base: number): Promise<Point> {
   const { x, z } = BASES[base]
-  return (await page.evaluate(`(() => {
+  return await field.evaluate<Point>(`(() => {
     ${THREE_STATE}
     if (three == null) throw new Error('No field scene: install the scene probe')
     let best
@@ -278,44 +260,56 @@ async function runnerAt(page: Page, base: number): Promise<Point> {
     })
     if (best == null || best.d > 36) throw new Error('No runner near base ${base}')
     return project(best.at.x, 1, best.at.z)
-  })()`)) as Point
+  })()`)
+}
+
+/**
+ * The centre of the Safe or Out target a runner dragged towards base `to`
+ * is dropped on. The screen lays the targets out beside the base the runner
+ * is headed for (`runnerTargets`), in the field's own box, so the point is
+ * known before the press: one maestro-d drag from the runner straight onto
+ * it carries him past halfway and onto the decision.
+ */
+export async function runnerTargetPoint(
+  field: FieldDriver,
+  to: number,
+  decision: 'Safe' | 'Out'
+): Promise<Point> {
+  const { x, z } = BASES[to % 4]
+  const [anchorX, anchorY, left, top, width, height] = await field.evaluate<
+    [number, number, number, number, number, number]
+  >(`(() => {
+    ${THREE_STATE}
+    if (three == null) throw new Error('No field scene: install the scene probe')
+    const box = three.gl.domElement.getBoundingClientRect()
+    const at = project(${x}, 0, ${z})
+    return [at[0] - box.x, at[1] - box.y, box.x, box.y, box.width, box.height]
+  })()`)
+  const targets = runnerTargets({ x: anchorX, y: anchorY }, width, height, to)
+  const rect = decision === 'Safe' ? targets.safe : targets.out
+  return [left + rect.x + rect.width / 2, top + rect.y + rect.height / 2]
 }
 
 /**
  * Drags the runner standing at `base` (1–3) towards the next base (`next`)
  * or back (`back`), or holds him where he is (`stay`), and drops him on Safe
- * or Out.
+ * or Out: one press-hold-drag-release from where he stands onto the target
+ * the screen shows for the base he is then headed for.
  * Runners wear no plates in a play, so the page needs the scene probe
  * (`installSceneProbe`).
  */
 export async function dropRunner(
-  page: Page,
+  field: FieldDriver,
   base: number,
   decision: 'Safe' | 'Out',
   towards: 'next' | 'stay' | 'back' = 'next'
 ): Promise<void> {
-  const from = await runnerAt(page, base)
-  const next = BASES[(towards === 'back' ? base + 3 : base + 1) % 4]
-  await page.mouse.move(...from)
-  await page.mouse.down()
-  if (towards === 'stay') {
-    // Held still, he is put out (or kept safe) on the base he stands on.
-    await pause(500)
-  } else {
-    const along = await groundPoint(page, next.x, next.z)
-    await page.mouse.move(...along, { steps: 12 })
-  }
-  const target = `[aria-label="${decision} drag target"]`
-  await page.waitForSelector(target, { visible: true })
-  const onto = (await page.$eval(target, node => {
-    const r = node.getBoundingClientRect()
-    return [r.x + r.width / 2, r.y + r.height / 2]
-  })) as Point
-  await page.mouse.move(...onto, { steps: 6 })
-  await pause(100)
-  await page.mouse.up()
+  const from = await runnerAt(field, base)
+  const to =
+    towards === 'next' ? base + 1 : towards === 'back' ? base - 1 : base
+  await field.drag(from, await runnerTargetPoint(field, to, decision))
   // The screen asks why he moved once he has run there.
-  await atRest(puppeteerDriver(page))
+  await atRest(field)
 }
 
 /**
@@ -481,11 +475,10 @@ export async function tapOffered(field: FieldDriver, index = 0): Promise<void> {
  * probe.
  */
 export async function dropOfferedRunner(
-  page: Page,
+  field: FieldDriver,
   decision: 'Safe' | 'Out',
   advance = false
 ): Promise<void> {
-  const field = puppeteerDriver(page)
   const id = await offeredWhere(
     field,
     ids => {
@@ -494,7 +487,7 @@ export async function dropOfferedRunner(
     },
     'runner'
   )
-  const base = await page.evaluate(`(() => {
+  const base = await field.evaluate<number>(`(() => {
     ${THREE_STATE}
     const figure = three.scene.getObjectByName(${JSON.stringify(`player-${id}`)})
     const at = figure.getWorldPosition(three.camera.position.clone())
@@ -503,7 +496,7 @@ export async function dropOfferedRunner(
     bases.forEach((b, i) => { if ((b.x - at.x) ** 2 + (b.z - at.z) ** 2 < (bases[best].x - at.x) ** 2 + (bases[best].z - at.z) ** 2) best = i })
     return best
   })()`)
-  await dropRunner(page, Number(base), decision, advance ? 'next' : 'stay')
+  await dropRunner(field, Number(base), decision, advance ? 'next' : 'stay')
 }
 
 /**
@@ -535,11 +528,10 @@ export async function aimLanding(
  * through the live camera. The page needs the scene probe.
  */
 export async function aimLandingAt(
-  page: Page,
+  field: FieldDriver,
   x: number,
   z: number
 ): Promise<void> {
-  const field = puppeteerDriver(page)
   await until(
     field,
     `document.querySelector('[aria-label^="Drag where the ball was hit"]') != null`,
@@ -550,6 +542,6 @@ export async function aimLandingAt(
   )
   await field.drag(
     [rect[0] + rect[2] / 2, rect[1] + rect[3] / 2],
-    await groundPoint(page, x, z)
+    await groundPoint(field, x, z)
   )
 }

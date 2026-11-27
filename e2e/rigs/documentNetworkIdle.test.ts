@@ -3,8 +3,8 @@ import { mock } from 'node:test'
 
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
-import type { Page } from 'puppeteer'
 
+import type { Page } from '../core/web'
 import {
   type DocumentNetwork,
   watchDocumentNetwork

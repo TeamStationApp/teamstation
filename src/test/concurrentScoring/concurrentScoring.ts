@@ -36,9 +36,9 @@ export class ConcurrentScoringRig {
     role: string,
     index: number
   ): Promise<ScoringClient> {
-    const client = await this.ctx.browser(
-      index === 2 ? { width: 1280, height: 900 } : { width: 393, height: 852 }
-    )
+    // Every browser signs in at a phone's width: the password form's
+    // signed-in check reads the phone layout's menu. The coach's then widens.
+    const client = await this.ctx.browser({ width: 393, height: 852 })
     client.page.on('pageerror', error => {
       console.error(`Scoring client ${index} page error:`, error)
     })
@@ -48,6 +48,7 @@ export class ConcurrentScoringRig {
     })
     await client.m.openBrowser({ url: `${this.ctx.stack.origin}/sign-in` })
     await this.ctx.signIn(role, client.m)
+    if (index === 2) await client.resize({ width: 1280, height: 900 })
     const path = index === 2 ? `coach/${this.fixture.ids.home}` : 'score'
     await client.m.openBrowser({
       url: `${this.ctx.stack.origin}/games/${this.fixture.ids.game}/${path}`
