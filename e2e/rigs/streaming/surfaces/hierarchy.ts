@@ -9,6 +9,7 @@ import { LABELS, TILE_NOTICE } from './surface'
 
 export interface HierarchyNode {
   type?: string
+  focused?: boolean
   id?: string
   text?: string
   bounds?: Rect

@@ -1,0 +1,124 @@
+--- a/ios/Video/RCTVideo.swift
++++ b/ios/Video/RCTVideo.swift
+@@ -32,6 +32,11 @@
+     /* Keep track of any modifiers, need to be applied after each play */
+     var _audioOutput: String = "speaker"
+     private var _volume: Float = 1.0
++    // The multi-camera grid owns transport for all its tiles. A rate or mute
++    // change on its own must not reapply track selection, pause and audio
++    // configuration on every player before the next touch can be delivered.
++    @objc var teamstationGridCrawlRate: Float = 0
++    private var gridRateRevision = 0
+     private var _rate: Float = 1.0
+     private var _maxBitRate: Float?
+
+@@ -914,6 +919,43 @@
+
+     @objc
+     func setRate(_ rate: Float) {
++        if teamstationGridCrawlRate > 0 {
++            guard _rate != rate else { return }
++            let previousRate = _rate
++            _rate = rate
++            gridRateRevision += 1
++            guard !_paused, !_adPlaying, let player = _player,
++                  let item = player.currentItem, item.status == .readyToPlay else { return }
++            if previousRate == teamstationGridCrawlRate {
++                // AVPlayer can retain the crawl timebase after its public rate
++                // has changed. Anchor the current picture to the host clock so
++                // the restored rate takes effect even for an in-flight nudge.
++                let waits = player.automaticallyWaitsToMinimizeStalling
++                player.automaticallyWaitsToMinimizeStalling = false
++                player.setRate(rate, time: .invalid, atHostTime: CMClockGetTime(CMClockGetHostTimeClock()))
++                player.automaticallyWaitsToMinimizeStalling = waits
++            } else if previousRate != 1 && rate != 1 {
++                // AVPlayer's workaround between two nonstandard rates. A
++                // replaced item must never restart a hold.
++                let revision = gridRateRevision
++                player.rate = 1
++                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak player, weak item] in
++                    guard let self, let player, let item, self.teamstationGridCrawlRate > 0,
++                          self._player === player, player.currentItem === item,
++                          !self._paused, !self._adPlaying else { return }
++                    // Alignment writes a new nudge on nearly every pass, often
++                    // within 0.1 s, so a superseded change still applies the
++                    // latest rate, as upstream does. Only a normal rate that a
++                    // newer change already applied directly is left alone, so a
++                    // stale crawl never restarts a hold.
++                    if self.gridRateRevision != revision && self._rate == 1 { return }
++                    player.playImmediately(atRate: self._rate)
++                }
++            } else {
++                player.playImmediately(atRate: rate)
++            }
++            return
++        }
+         if _rate != 1 {
+             // This is a workaround
+             // when player change from rate != 1 to another rate != 1 we see some video blocking
+@@ -937,6 +979,15 @@
+
+     @objc
+     func setMuted(_ muted: Bool) {
++        if teamstationGridCrawlRate > 0 {
++            guard _muted != muted else { return }
++            _muted = muted
++            guard let player = _player, player.currentItem?.status == .readyToPlay else { return }
++            if !muted || !_controls { player.volume = muted ? 0 : _volume }
++            player.isMuted = muted
++            AudioSessionManager.shared.playerPropertiesChanged(view: self)
++            return
++        }
+         _muted = muted
+         applyModifiers()
+     }
+--- a/ios/Video/RCTVideoManager.m
++++ b/ios/Video/RCTVideoManager.m
+@@ -27,6 +27,7 @@
+ RCT_EXPORT_VIEW_PROPERTY(ignoreSilentSwitch, NSString);
+ RCT_EXPORT_VIEW_PROPERTY(mixWithOthers, NSString);
+ RCT_EXPORT_VIEW_PROPERTY(rate, float);
++RCT_EXPORT_VIEW_PROPERTY(teamstationGridCrawlRate, float);
+ RCT_EXPORT_VIEW_PROPERTY(fullscreen, BOOL);
+ RCT_EXPORT_VIEW_PROPERTY(fullscreenAutorotate, BOOL);
+ RCT_EXPORT_VIEW_PROPERTY(fullscreenOrientation, NSString);
+--- a/src/specs/VideoNativeComponent.ts
++++ b/src/specs/VideoNativeComponent.ts
+@@ -363,6 +363,7 @@
+   ignoreSilentSwitch?: WithDefault<string, 'inherit'>; // ios, 'inherit'
+   mixWithOthers?: WithDefault<string, 'inherit'>; // ios, 'inherit'
+   rate?: Float;
++  teamstationGridCrawlRate?: Float; // iOS multi-camera grids
+   fullscreen?: boolean; // ios, false
+   fullscreenAutorotate?: boolean;
+   fullscreenOrientation?: WithDefault<string, 'all'>;
+--- a/src/types/video.ts
++++ b/src/types/video.ts
+@@ -361,6 +361,7 @@
+   preventsDisplaySleepDuringVideoPlayback?: boolean;
+   progressUpdateInterval?: number;
+   rate?: number;
++  teamstationGridCrawlRate?: number; // iOS multi-camera grids
+   renderLoader?: ReactNode | ((arg0: ReactVideoRenderLoaderProps) => ReactNode);
+   repeat?: boolean;
+   reportBandwidth?: boolean; //Android
+--- a/lib/specs/VideoNativeComponent.d.ts
++++ b/lib/specs/VideoNativeComponent.d.ts
+@@ -307,6 +307,7 @@
+     ignoreSilentSwitch?: WithDefault<string, 'inherit'>;
+     mixWithOthers?: WithDefault<string, 'inherit'>;
+     rate?: Float;
++    teamstationGridCrawlRate?: Float; // iOS multi-camera grids
+     fullscreen?: boolean;
+     fullscreenAutorotate?: boolean;
+     fullscreenOrientation?: WithDefault<string, 'all'>;
+--- a/lib/types/video.d.ts
++++ b/lib/types/video.d.ts
+@@ -285,6 +285,7 @@
+     preventsDisplaySleepDuringVideoPlayback?: boolean;
+     progressUpdateInterval?: number;
+     rate?: number;
++    teamstationGridCrawlRate?: number; // iOS multi-camera grids
+     renderLoader?: ReactNode | ((arg0: ReactVideoRenderLoaderProps) => ReactNode);
+     repeat?: boolean;
+     reportBandwidth?: boolean;

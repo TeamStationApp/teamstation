@@ -288,6 +288,39 @@ describe('the account menu', function () {
 })
 
 describe('the account page', function () {
+  it('scrolls Sign out clear of the floating tabs before tapping it', async function () {
+    let scrolled = false
+    const { device, calls } = fakeDevice({
+      hierarchy: () => ({
+        bounds: { x: 0, y: 0, width: 400, height: 850 },
+        children: [
+          { text: 'Account, X' },
+          { text: 'Account', bounds: { x: 30, y: 100, width: 60, height: 40 } },
+          {
+            text: 'Sign out',
+            bounds: { x: 160, y: scrolled ? 600 : 760, width: 80, height: 40 }
+          },
+          {
+            bounds: { x: 40, y: 748, width: 320, height: 70 },
+            children: [
+              { text: 'Home' },
+              { text: 'Schedule' },
+              { text: 'Videos' }
+            ]
+          }
+        ]
+      }),
+      swipe: () => {
+        scrolled = true
+      }
+    })
+    await signOutApp(device, 0)
+    expect(calls.filter(([name]) => name === 'tapOnPoint').at(-1)).deep.equals([
+      'tapOnPoint',
+      { x: 200, y: 620 }
+    ])
+  })
+
   it('swipes until Sign out is on the screen, and gives up after fifteen', async function () {
     let swipes = 0
     const far = fakeDevice({

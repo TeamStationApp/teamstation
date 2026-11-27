@@ -73,7 +73,13 @@ describe('the TV surface', function () {
     ])
   })
 
-  function tv(options: { dump?: () => string; captures?: Uint8Array[] } = {}): {
+  function tv(
+    options: {
+      dump?: () => string
+      captures?: Uint8Array[]
+      restartForLive?: () => Promise<void>
+    } = {}
+  ): {
     surface: TvSurface
     runs: string[][]
   } {
@@ -110,10 +116,35 @@ describe('the TV surface', function () {
       bundleId: 'app.example.tv',
       appName: 'TeamStation TV',
       joinSteps: ['select', 'wait:3', 'select'],
+      restartForLive: options.restartForLive,
       sleep: noSleep
     })
     return { surface, runs }
   }
+
+  it('enters the header row before moving across it to sign out', async function () {
+    const nodes = [
+      "Button, 0x1, {{40, 400}, {100, 50}}, label: 'Watch Game'",
+      "Button, 0x2, {{800, 30}, {100, 50}}, label: 'Search'",
+      "Button, 0x3, {{1000, 30}, {100, 50}}, label: 'Sign out'"
+    ]
+    let index = 0
+    const { surface, runs } = tv({
+      dump: () => {
+        const selected = index++
+        return nodes
+          .map((line, i) => (i === selected ? line + ', Focused' : line))
+          .join('\n')
+      }
+    })
+    await surface.focusAndSelect('Sign out', true)
+    expect(runs).deep.equals([
+      ['dump'],
+      ['up', 'wait:0.5', 'dump'],
+      ['right', 'wait:0.5', 'dump'],
+      ['select']
+    ])
+  })
 
   it('probes tiles from two NDI captures and the dump', async function () {
     const { surface } = tv()
@@ -195,6 +226,54 @@ describe('the TV surface', function () {
         (e: unknown) => (e as Error).message
       )
     ).match(/could not reach/)
+  })
+
+  it('refreshes the game list, focuses Watch Live and waits for camera tiles', async function () {
+    const search = "Button, 0x1, {{400, 40}, {80, 40}}, label: 'Search'"
+    const watch =
+      "Button, 0x2, {{40, 340}, {100, 50}}, identifier: 'tv-watch-game', label: '▶ Watch Live'"
+    const choices = search + ', Focused\n' + watch
+    const screen = [
+      search + ', Focused',
+      choices,
+      choices,
+      search + '\n' + watch + ', Focused',
+      "Other, 0x3, identifier: 'tv-player'",
+      "Button, 0x4, identifier: 'tv-angle-0', label: 'Camera PhoneA'"
+    ]
+    let restarts = 0
+    const { surface, runs } = tv({
+      restartForLive: async () => {
+        restarts++
+      },
+      dump: () => screen.shift() ?? ''
+    })
+    await surface.join()
+    expect(restarts).equals(1)
+    expect(runs.filter(steps => !steps.includes('dump'))).deep.equals([
+      ['select']
+    ])
+    expect(runs).deep.includes(['down', 'wait:0.5', 'dump'])
+    expect(screen).length(0)
+  })
+
+  it('refuses an empty home or a Watch Live selection that never opens a camera', async function () {
+    for (const [dump, message] of [
+      [
+        "Button, 0x1, label: 'Search', Focused",
+        'refreshed home did not show Watch Live'
+      ],
+      [
+        "Button, 0x2, {{40, 340}, {100, 50}}, identifier: 'tv-watch-game', label: '▶ Watch Live', Focused",
+        'Watch Live did not open any camera tiles'
+      ]
+    ]) {
+      const { surface } = tv({ dump: () => dump, restartForLive: noSleep })
+      const failure = await surface
+        .join()
+        .catch((error: unknown) => (error as Error).message)
+      expect(failure).equals('tv: ' + message)
+    }
   })
 
   it('joins, scrubs, skips, slows, exits and relaunches with the remote', async function () {

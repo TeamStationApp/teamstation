@@ -170,14 +170,35 @@ function nodes(node: Node | undefined): Node[] {
  */
 function onScreen(root: Node, text: string): Node | undefined {
   const screen = root.bounds
-  return nodes(root).find(
-    node =>
-      node.text === text &&
-      node.bounds != null &&
-      (screen == null ||
-        (node.bounds.y >= screen.y &&
-          node.bounds.y + node.bounds.height <= screen.y + screen.height))
-  )
+  const all = nodes(root)
+  // The floating tab bar can cover the account footer even when the whole
+  // button is inside the screen. A tap there would open the Schedule tab.
+  const tabs = all.find(node => {
+    const labels = node.children?.map(child => child.text)
+    return (
+      labels?.includes('Home') === true &&
+      labels.includes('Schedule') &&
+      labels.includes('Videos')
+    )
+  })?.bounds
+  return all.find(node => {
+    const b = node.bounds
+    if (node.text !== text || b == null) return false
+    const x = b.x + b.width / 2
+    const y = b.y + b.height / 2
+    if (
+      tabs != null &&
+      x >= tabs.x &&
+      x <= tabs.x + tabs.width &&
+      y >= tabs.y &&
+      y <= tabs.y + tabs.height
+    )
+      return false
+    return (
+      screen == null ||
+      (b.y >= screen.y && b.y + b.height <= screen.y + screen.height)
+    )
+  })
 }
 
 async function tapExactly(device: LinkDevice, text: string): Promise<void> {
@@ -211,6 +232,7 @@ export async function signOutApp(
     await device.scrollUntilVisible({
       element: { text: 'Sign out' },
       direction: 'DOWN',
+      centerElement: true,
       timeout: 20_000
     })
   } catch {

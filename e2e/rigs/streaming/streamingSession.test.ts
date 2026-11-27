@@ -306,6 +306,27 @@ describe('the device kit', function () {
     ])
   })
 
+  it('opens a game in the leased develop app through the hub', async function () {
+    const { ctx } = context()
+    const { device, calls } = fakeDevice()
+    ctx.device = () => 'phone@hub'
+    ctx.attach = async () => awaitable(device)
+    const kit = deviceKit(ctx, SETTINGS, {
+      run: async () => {
+        throw new Error('Unexpected host device command')
+      },
+      write: () => {},
+      log: () => {},
+      settleMs: 0
+    })
+    await kit.attachIos('iphone')
+    await kit.openIn('iphone', 'ios')('teamstation://games/test?tab=watch')
+    expect(calls).deep.include([
+      'openLink',
+      { link: 'teamstation-develop://games/test?tab=watch' }
+    ])
+  })
+
   it('hands a link to the develop app alone on each platform, and saves screenshots', async function () {
     const { ctx, dir } = context()
     const ran: Array<[string, string[]]> = []
@@ -396,6 +417,32 @@ describe('the device kit', function () {
 })
 
 describe("the TV's kit", function () {
+  it('restarts the leased TV with its pairing intact for each live join', async function () {
+    const { ctx } = context()
+    const { device, calls } = fakeDevice()
+    const attaches: string[] = []
+    ctx.attach = async role => {
+      attaches.push(role)
+      return awaitable(device)
+    }
+    const { tv } = tvKit(
+      ctx,
+      { ...SETTINGS, tvJoinSteps: ['watchLive'] },
+      async () => ({ stdout: '' })
+    )
+    for (let i = 0; i < 2; i++) {
+      expect(
+        await tv.join().catch((error: unknown) => (error as Error).message)
+      ).equals('tv: refreshed home did not show Watch Live')
+    }
+    expect(attaches).deep.equals(['tv'])
+    const restart = [
+      ['stopApp', { appId: TV_APP }],
+      ['launchApp', { appId: TV_APP, stopApp: false }]
+    ]
+    expect(calls).deep.equals([...restart, ...restart])
+  })
+
   it('drives the remote with the TV named, and captures its picture over NDI', async function () {
     const { ctx, dir } = context()
     const calls: Array<{

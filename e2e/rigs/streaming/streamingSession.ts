@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { Client } from 'pg'
 
 import { isTestAddress } from '../../../src/server/dev/fixtures/address'
+import { isHubDevice, type MaestroDevice } from '../../core/maestro'
 import { BlockedError, HarnessError } from '../../core/result'
 import { loadSettings } from '../../core/settings'
 import type { E2eContext } from '../../core/spec'
@@ -17,6 +18,7 @@ import {
   runOnStack,
   type StreamingHandle
 } from '../../core/streamingStack'
+import { openInApp, PHONE_SCHEME, type ServerDevice } from '../app/setServer'
 import { recoveringDevice } from './recovering'
 import type { Exec } from './samplers/sample'
 import type { SoakFixtureManifest } from './soakFixture'
@@ -294,14 +296,20 @@ export const realWorldDeps: WorldDeps = {
   }
 }
 
-export async function openWorld(
-  options: {
-    ctx: E2eContext
-    cwd: string
-    synthetic?: string[]
-  },
-  deps: WorldDeps = realWorldDeps
-): Promise<StreamingWorld> {
+interface WorldOptions {
+  ctx: E2eContext
+  cwd: string
+  synthetic?: string[]
+}
+
+export async function seedStreamingWorld(
+  options: WorldOptions & { freshAccounts?: boolean },
+  deps: Pick<WorldDeps, 'runOnStack' | 'mailbox' | 'settings'> = realWorldDeps
+): Promise<
+  Pick<StreamingWorld, 'handle' | 'settings' | 'world' | 'links'> & {
+    mailbox: string
+  }
+> {
   const { ctx, cwd } = options
   if (ctx.stack.attached == null) {
     throw new BlockedError(
@@ -321,6 +329,7 @@ export async function openWorld(
       '--json',
       '--mailbox',
       mailbox,
+      ...(options.freshAccounts === true ? ['--fresh-accounts'] : []),
       ...(options.synthetic == null
         ? []
         : ['--synthetic', options.synthetic.join(',')])
@@ -328,9 +337,25 @@ export async function openWorld(
     scratch: join(tmpdir(), `soak-fixture-${process.pid}`),
     config: soakServerConfig(handle)
   })) as SoakFixtureManifest
-  const emails = soakAccounts(world)
-  const links = gameLinks(handle.origin, world.gameId)
+  return {
+    handle,
+    settings,
+    mailbox,
+    world,
+    links: gameLinks(handle.origin, world.gameId)
+  }
+}
 
+export async function openWorld(
+  options: WorldOptions,
+  deps: WorldDeps = realWorldDeps
+): Promise<StreamingWorld> {
+  const { ctx } = options
+  const { handle, settings, mailbox, world, links } = await seedStreamingWorld(
+    options,
+    deps
+  )
+  const emails = soakAccounts(world)
   const mirror = deps.mirror(handle, ctx.artifact('mirror'))
   try {
     // The mirror follows new lines only: let its SSH connect before the first
@@ -413,15 +438,17 @@ export function deviceKit(
     log: line => {
       console.log(line)
     }
-  }
+  },
+  androidApp = { id: DEVELOP_APP, scheme: PHONE_SCHEME }
 ): DeviceKit {
   const settleMs = deps.settleMs ?? 3000
+  const attached = new Map<string, ServerDevice>()
   // A device whose driver dies is attached again, and the run says when.
   const recovering = async (
     role: string,
     options: Record<string, unknown>
-  ): Promise<any> =>
-    await recoveringDevice({
+  ): Promise<any> => {
+    const device = await recoveringDevice({
       role,
       attach: async () => await ctx.attach(role, options),
       onRecovery: recovery => {
@@ -434,6 +461,9 @@ export function deviceKit(
         )
       }
     })
+    attached.set(role, device as MaestroDevice & ServerDevice)
+    return device
+  }
   return {
     attachIos: async role =>
       await recovering(role, {
@@ -443,13 +473,29 @@ export function deviceKit(
     attachSafari: async role =>
       await recovering(role, { platform: 'ios', appId: SAFARI }),
     attachAndroid: async role =>
-      await recovering(role, { platform: 'android', appId: DEVELOP_APP }),
+      await recovering(role, { platform: 'android', appId: androidApp.id }),
     // The develop build and production TeamStation share the teamstation://
     // scheme, so each link goes to the develop app by its id, not through the
     // system's choice of app.
     openIn: (role, platform) => async link => {
       const id = ctx.device(role)
-      if (platform === 'ios') {
+      const target =
+        platform === 'android'
+          ? androidApp
+          : { id: DEVELOP_APP, scheme: PHONE_SCHEME }
+      if (isHubDevice(id)) {
+        const device = attached.get(role)
+        if (device == null)
+          throw new Error(`Attach ${role} before opening its app`)
+        await openInApp({
+          platform,
+          udid: id,
+          appId: target.id,
+          device,
+          hub: true,
+          link: link.replace(/^teamstation:\/\//, `${target.scheme}://`)
+        })
+      } else if (platform === 'ios') {
         await deps.run('xcrun', [
           'devicectl',
           'device',
@@ -467,7 +513,7 @@ export function deviceKit(
           '-s',
           id,
           'shell',
-          `am start -W -a android.intent.action.VIEW -d ${shellQuote(link)} ${DEVELOP_APP}`
+          `am start -W -a android.intent.action.VIEW -d ${shellQuote(link)} ${target.id}`
         ])
       }
       await new Promise(resolve => setTimeout(resolve, settleMs))
@@ -502,12 +548,27 @@ export function tvKit(
     async (command, args) => await exec(command, args, {}),
     path => readFileSync(path)
   )
+  let liveDevice: Promise<MaestroDevice> | undefined
+  const watchLive =
+    settings.tvJoinSteps.length === 1 && settings.tvJoinSteps[0] === 'watchLive'
   const tv = new TvSurface({
     remote,
     capture,
     bundleId: TV_APP,
     appName: 'TeamStation',
-    joinSteps: settings.tvJoinSteps
+    joinSteps: settings.tvJoinSteps,
+    restartForLive: watchLive
+      ? async () => {
+          liveDevice ??= ctx.attach('tv', {
+            platform: 'ios',
+            appId: TV_APP,
+            noAppInstall: true
+          })
+          const device = await liveDevice
+          await device.stopApp({ appId: TV_APP })
+          await device.launchApp({ appId: TV_APP, stopApp: false })
+        }
+      : undefined
   })
   return { tv, remote, capture }
 }

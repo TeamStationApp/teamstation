@@ -8,6 +8,7 @@ export interface PublisherDevice {
   openLink: (options: { link: string }) => Promise<unknown>
   tapOn: (options: Record<string, unknown>) => Promise<unknown>
   inputText: (options: { text: string }) => Promise<unknown>
+  eraseText: (options: { characters: number }) => Promise<unknown>
   assertVisible: (options: Record<string, unknown>) => Promise<unknown>
   swipe: (options: {
     startX: number
@@ -67,6 +68,38 @@ export class PhonePublisher implements SoakPublisher {
     return flatten(await this.options.device.hierarchy()).find(test)
   }
 
+  private async nameCamera(): Promise<void> {
+    const { device, angle } = this.options
+    const isNameInput = (node: HierarchyNode): boolean =>
+      node.type === 'EditText' || node.type?.endsWith('TextField') === true
+    const android = (await this.node(isNameInput))?.type === 'EditText'
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await device.eraseText({ characters: angle.length + 4 })
+      // Android sets the input's entire value on each call. The controlled
+      // iOS field needs time to render between individual keystrokes.
+      if (android) await device.inputText({ text: angle })
+      else {
+        for (const letter of angle) {
+          await device.inputText({ text: letter })
+          await this.sleep(180)
+        }
+      }
+      const field = await this.node(isNameInput)
+      if (field?.text === angle) return
+      // On iOS the normalized text is the accessibility label. Match the
+      // value on that same field through its accessibility identifier.
+      if (
+        field?.id != null &&
+        field.id !== '' &&
+        (await this.visible({ id: field.id, text: `^${angle}$` }, 1500))
+      )
+        return
+    }
+    throw new Error(
+      `${angle}: the camera name field did not show the requested angle`
+    )
+  }
+
   async start(): Promise<void> {
     const { device, appId, gameLink, angle } = this.options
     if (this.options.openIn != null) {
@@ -78,12 +111,16 @@ export class PhonePublisher implements SoakPublisher {
     await this.sleep(2500)
     await device.tapOn({ text: 'Record Video' })
     if (await this.visible({ text: 'Name this camera angle' }, 15_000)) {
-      // The name field has the focus as the prompt opens.
-      await device.inputText({ text: angle })
+      await this.nameCamera()
       await device.tapOn({ text: 'Record with this phone' })
     }
     if (!(await this.visible({ id: 'broadcast-button' }, 20_000))) {
       throw new Error(`${angle}: the camera screen did not open`)
+    }
+    if (
+      !(await this.visible({ id: 'camera-name', text: `^${angle}$` }, 5000))
+    ) {
+      throw new Error(`${angle}: the camera preview showed a different angle`)
     }
     await this.sleep(1000)
     await device.tapOn({ id: 'broadcast-button' })

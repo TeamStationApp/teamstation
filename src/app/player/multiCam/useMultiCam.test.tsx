@@ -523,6 +523,143 @@ describe('useMultiCam', function () {
     expect(tiles.A.playbackRate).equals(1)
   })
 
+  it('lets a running camera coast after a seek that landed on an earlier frame', async function () {
+    const { mc, tiles } = await grid()
+    let now = Date.now()
+    const wall = mock.method(Date, 'now', () => now)
+    const clock = mock.method(performance, 'now', () => now)
+    mock.timers.enable({ apis: ['setTimeout'] })
+    let writes = 0
+    Object.defineProperty(tiles.B, 'currentTime', {
+      get: () => 5,
+      set: () => {
+        writes++
+      }
+    })
+    try {
+      await act(async () => {
+        mc().pressStart(1, WIDTH * 0.9, HEIGHT / 2, 0)
+        now += 2000
+        mock.timers.tick(500)
+      })
+      expect(writes).equals(1)
+      await act(async () => {
+        for (let i = 0; i < 120; i++) {
+          now += 250
+          mock.timers.tick(250)
+        }
+        mc().pressEnd(1, WIDTH * 0.9, HEIGHT / 2)
+      })
+      expect(writes).equals(1)
+      // A new explicit seek remains a user command.
+      await act(async () => {
+        mc().goTo(T0 + 250_000)
+      })
+      expect(writes).equals(2)
+    } finally {
+      clock.mock.restore()
+      wall.mock.restore()
+      mock.timers.reset()
+    }
+  })
+
+  for (const duration of [5000, 30000]) {
+    it(`restores both saved rates after a ${duration} ms hold and handles the next tap`, async function () {
+      const { mc, tiles } = await grid()
+      tiles.A.playbackRate = 0.98
+      tiles.B.playbackRate = 1.02
+      let now = 0
+      const clock = mock.method(performance, 'now', () => now)
+      mock.timers.enable({ apis: ['setTimeout'] })
+      const x = WIDTH * 0.9
+      const y = HEIGHT / 2
+      try {
+        await act(async () => {
+          mc().pressStart(1, x, y, 0)
+          mock.timers.tick(500)
+        })
+        expect(tiles.A.playbackRate).equals(SLOW_RATE)
+        const from = mc().atWallMs!
+        // B's player is still landing an earlier seek. Its stale report must
+        // not send it on the same seek again while the viewer holds.
+        tiles.B.seeking = true
+        let reads = 0
+        let writes = 0
+        Object.defineProperty(tiles.B, 'currentTime', {
+          get: () => {
+            reads++
+            return 5
+          },
+          set: () => {
+            writes++
+          }
+        })
+        await act(async () => {
+          for (now = 250; now <= duration - 500; now += 250) {
+            mc().pressMove(1, x + 1, y)
+            mock.timers.tick(250)
+          }
+        })
+        expect(reads).lessThan((duration / 250) * 5)
+        expect(writes).equals(0)
+        // The final fraction of a delayed tick still belongs to the hold.
+        now = duration - 500 + 73
+        await act(async () => {
+          expect(mc().pressEnd(1, x, y)).equals('held')
+        })
+        expect(mc().atWallMs).closeTo(from + now * SLOW_RATE, 0.01)
+        expect([tiles.A.playbackRate, tiles.B.playbackRate]).deep.equals([
+          0.98, 1.02
+        ])
+        expect(mc().slow).equals(0)
+        await act(async () => {
+          expect(mc().pressStart(2, WIDTH / 2, y, 0)).equals(true)
+          expect(mc().pressEnd(2, WIDTH / 2, y)).equals('pending')
+        })
+        expect(mc().playing).equals(false)
+        await act(async () => {
+          mock.timers.tick(1000)
+        })
+        expect(mc().slow).equals(0)
+      } finally {
+        clock.mock.restore()
+        mock.timers.reset()
+      }
+    })
+  }
+
+  it('keeps a replaced camera’s saved rate and restores a newly attached camera on cancellation', async function () {
+    const { mc, tiles } = await grid()
+    tiles.A.playbackRate = 1.04
+    mock.timers.enable({ apis: ['setTimeout'] })
+    try {
+      const replacement = new FakeTile()
+      const arriving = new FakeTile()
+      arriving.playbackRate = 0.96
+      await act(async () => {
+        mc().pressStart(1, WIDTH * 0.9, HEIGHT / 2, 0)
+        mock.timers.tick(500)
+        mc().takeElement('A')(null)
+        mc().takeElement('A')(replacement)
+        mc().takeElement('C')(arriving)
+      })
+      expect([replacement.playbackRate, arriving.playbackRate]).deep.equals([
+        SLOW_RATE,
+        SLOW_RATE
+      ])
+      expect(arriving.muted).equals(true)
+      await act(async () => {
+        mc().pressCancel(1)
+      })
+      expect([replacement.playbackRate, arriving.playbackRate]).deep.equals([
+        1.04, 0.96
+      ])
+      expect(replacement.muted).equals(false)
+    } finally {
+      mock.timers.reset()
+    }
+  })
+
   it('leaves the heard tile silent after a crawl when the sound is off', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid()

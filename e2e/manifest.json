@@ -7176,6 +7176,62 @@
       "file": "e2e/tests/streaming/targeted/receiver-outage.e2e.ts"
     },
     {
+      "id": "streaming/targeted/slow-motion#release",
+      "title": "Multi-camera slow motion releases on the first lift and the next tap pauses immediately",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "scripts/e2e/holdRelease/**",
+        "src/app/player/multiCam/useMultiCam.ts",
+        "src/app/player/multiCam/gridRelease.ts",
+        "src/app/player/MultiCamView.native.tsx",
+        "src/app/player/VideoView.native.tsx",
+        "ios/patches/react-native-video-grid-transport.patch"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "watcher",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "watcher",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/slow-motion",
+      "file": "e2e/tests/streaming/targeted/slow-motion.e2e.ts"
+    },
+    {
       "id": "streaming/targeted/stream-cuts#ladder-15min",
       "title": "A camera cut for 4 to 64 s plays again on every watcher within 5 s of its return",
       "kind": "e2e",
