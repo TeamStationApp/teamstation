@@ -4,7 +4,7 @@ import { cpus, tmpdir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { remuxToHls } from '../../src/server/media/ffmpeg'
+import { ffprobeFor, remuxToHls } from '../../src/server/media/ffmpeg'
 import { putObjectFile } from '../../src/server/media/images'
 import type { SpaceSettings } from '../../src/server/media/spacesHls'
 import {
@@ -36,6 +36,13 @@ import type { PagesStandIn } from './pages'
  *                                      a play that far into the video's own
  *                                      clock → { eventId }
  *   machine     {}                     this machine → { vcpus, memGiB }
+ *   take        { seconds, path }      a short video-only H.264 take with no
+ *                                      B-frames, as Director's upload client
+ *                                      sends one, served on the pages stand-in
+ *                                      at path, and what ffprobe reads of it
+ *                                      → { path, bytes, streams, firstDts }
+ *
+ * `broadcast.ts` adds the fake broadcaster's actions (`more`).
  */
 export class RemuxError extends Error {
   constructor(
@@ -47,6 +54,12 @@ export class RemuxError extends Error {
 }
 
 export type RemuxHandler = (body: unknown) => Promise<unknown>
+
+/** More actions beside these, by name (`broadcast.ts`'s). */
+export type RemuxActions = Record<
+  string,
+  (body: Record<string, unknown>) => Promise<unknown>
+>
 
 export interface RemuxDeps {
   /** The checkout the server runs from, which holds the built `lib/`. */
@@ -67,6 +80,8 @@ export interface RemuxDeps {
   list: typeof listSpaceObjectEntries
   machine: () => { vcpus: number; memGiB: number }
   makeId: () => string
+  /** Actions of other modules the route also answers. */
+  more?: RemuxActions
 }
 
 /** The test programme: a moving pattern and a tone, as a take is encoded. */
@@ -99,6 +114,24 @@ export function programmeArgs(seconds: number, file: string): string[] {
     '-c:a',
     'aac',
     file
+  ]
+}
+
+/** A take as Director's upload client sends one: H.264, no B-frames, no sound. */
+export function takeArgs(seconds: number, file: string): string[] {
+  return [
+    ...['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi'],
+    ...['-i', `testsrc2=size=320x180:rate=30:duration=${seconds}`],
+    ...['-c:v', 'libx264', '-bf', '0', '-an', file]
+  ]
+}
+
+/** ffprobe's arguments for a file's streams and its first packets' decode times. */
+export function probeArgs(file: string): string[] {
+  return [
+    ...['-v', 'error', '-read_intervals', '%+#4'],
+    ...['-show_entries', 'packet=dts_time:stream=codec_name,codec_type'],
+    ...['-of', 'json', file]
   ]
 }
 
@@ -278,7 +311,36 @@ export function remuxActions(deps: RemuxDeps): RemuxHandler {
       return { eventId: id }
     },
 
-    machine: async () => deps.machine()
+    machine: async () => deps.machine(),
+
+    take: async body => {
+      const seconds = count(body, 'seconds', 60)
+      if (seconds === 0) bad('seconds is a whole number, 1 to 60')
+      const path = text(body, 'path', PATH)
+      const file = join(mkdtempSync(join(deps.scratch, 'take-')), 'take.mp4')
+      await deps.run(ffmpeg(), takeArgs(seconds, file), {})
+      const { stdout } = await deps.run(
+        ffprobeFor(ffmpeg()),
+        probeArgs(file),
+        {}
+      )
+      const probed = JSON.parse(stdout) as {
+        streams?: Array<{ codec_type: string; codec_name: string }>
+        packets?: Array<{ dts_time?: string }>
+      }
+      const dts = probed.packets?.[0]?.dts_time
+      deps.pages.serveFile(path, file, 'video/mp4')
+      return {
+        path,
+        bytes: statSync(file).size,
+        streams: (probed.streams ?? []).map(
+          one => `${one.codec_type}/${one.codec_name}`
+        ),
+        firstDts: dts == null ? null : Number(dts)
+      }
+    },
+
+    ...deps.more
   }
 
   return async body => {
@@ -296,22 +358,32 @@ export function remuxActions(deps: RemuxDeps): RemuxHandler {
 
 const execFileAsync = promisify(execFile)
 
+/** The checkout's own server config, as the stack's API reads it. */
+export function stackServerConfig(checkout: string): {
+  space?: SpaceSettings
+  ffmpegPath?: string
+  mediaDir?: string
+  live?: Record<string, unknown>
+} {
+  return JSON.parse(
+    readFileSync(join(checkout, 'serverConfig.json'), 'utf8')
+  ) as ReturnType<typeof stackServerConfig>
+}
+
 /** The handler a stack's fault server runs, on its own checkout, database and pages. */
 export function stackRemux(
   checkout: string,
   database: StackDatabase | undefined,
-  pages: PagesStandIn
+  pages: PagesStandIn,
+  more?: RemuxActions
 ): RemuxHandler {
   return remuxActions({
+    ...(more == null ? {} : { more }),
     checkout,
     scratch: mkdtempSync(join(tmpdir(), 'e2e-remux-')),
     ...(database == null ? {} : { database }),
     pages,
-    config: () =>
-      JSON.parse(readFileSync(join(checkout, 'serverConfig.json'), 'utf8')) as {
-        space?: SpaceSettings
-        ffmpegPath?: string
-      },
+    config: () => stackServerConfig(checkout),
     run: async (file, args, options) =>
       await execFileAsync(file, args, {
         ...options,

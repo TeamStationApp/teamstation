@@ -1,5 +1,6 @@
-// Test infrastructure: merge unit, integration and child-process counters from
-// exactly one committed revision before applying the changed-line gate.
+// Test infrastructure: merge unit and integration counters from exactly one
+// committed revision before applying the changed-line gate. The live origin's
+// end-to-end run is the devops runner's (playback/live-origin/space-playback).
 import { spawnSync } from 'node:child_process'
 import {
   mkdirSync,
@@ -129,17 +130,6 @@ for (const [index, suite] of appSuites.entries()) {
     env
   )
 }
-run(
-  process.execPath,
-  [
-    '-r',
-    'sucrase/register',
-    'src/app/player/liveOrigin.e2e.ts',
-    '--contract-only',
-    ...(process.env.TS_ORIGIN_COVERAGE_BEFORE === '1' ? ['--before'] : [])
-  ],
-  env
-)
 verifyCoverageSource(source, cwd, base)
 // Normalize source-map identifiers, never measured counters.
 for (const file of readdirSync(temp)) {

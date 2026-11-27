@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { asJevControl, JevStub } from '../core/jevStub'
 import { PLACES_ANSWERS, startPlacesStub } from '../core/placesStub'
 import { ApiLogTail } from './apiLog'
+import { stackBroadcasts } from './broadcast'
 import { FAULTS } from './catalogue'
 import {
   clearRateLimits,
@@ -24,7 +25,12 @@ import {
   scriptProblem
 } from './pages'
 import { type FaultProxy, startFaultProxy } from './proxy'
-import { RemuxError, type RemuxHandler, stackRemux } from './remux'
+import {
+  RemuxError,
+  type RemuxHandler,
+  stackRemux,
+  stackServerConfig
+} from './remux'
 import {
   beaconRoute,
   delayFor,
@@ -61,7 +67,8 @@ import {
  *                                         database and answers its manifest
  *   POST /__e2e/sql    { text, values? }  runs a statement on the stack's database
  *   POST /__e2e/rate-limits { clear?, scale? }  clears sign-in limits' rows, scales the limits
- *   POST /__e2e/remux  { action, ... }    media work on the stack (`remux.ts`)
+ *   POST /__e2e/remux  { action, ... }    media work on the stack (`remux.ts`),
+ *                                         and its fake broadcaster (`broadcast.ts`)
  *   PUT  /__e2e/pages  { [path]: page }   scripts the pages stand-in (`pages.ts`)
  *   GET  /__e2e/pages                     the scripted paths
  *   GET  /__e2e/pages/requests?since=<ms> { requests } the pages site served
@@ -577,7 +584,13 @@ export function parseFaultServerArgs(
           database
         }),
     // The media work reads the checkout's own server config, for its Space and FFmpeg.
-    remux: pages => stackRemux(checkout, database, pages)
+    remux: pages =>
+      stackRemux(
+        checkout,
+        database,
+        pages,
+        stackBroadcasts(checkout, () => stackServerConfig(checkout))
+      )
   }
 }
 
