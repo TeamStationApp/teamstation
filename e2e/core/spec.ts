@@ -21,7 +21,11 @@ export type Hardware = 'none' | 'preferred' | 'required'
 export interface DeviceNeed {
   role: string
   needs: string[]
-  hardware: Hardware
+  /**
+   * The old word for `simulator`, which only specs in the streaming freeze
+   * still use; `validate --strict` rejects it anywhere else.
+   */
+  hardware?: Hardware
   /**
    * Whether a simulator or emulator may stand in when no device with the
    * needs is free (`e2e/core/capabilities.ts`). A role without it is treated
@@ -198,6 +202,17 @@ export interface StackControl {
     script: (pages: Record<string, unknown>) => Promise<unknown>
     requests: (since: number) => Promise<unknown>
   }
+  /**
+   * Any other control route, such as the stand-ins' (`model/script`,
+   * `model/calls`, `speech`, `beacon`, `delay`, `requests`): `route` is
+   * relative to `/__e2e/`.
+   */
+  call: (method: string, route: string, body?: unknown) => Promise<any>
+  /** Runs a setup statement on the stack's own database, never through the API. */
+  sql: (
+    text: string,
+    values?: unknown[]
+  ) => Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }>
 }
 
 /** A stack under the harness: a handle with the control routes, when it has them. */

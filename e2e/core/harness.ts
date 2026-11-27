@@ -332,7 +332,11 @@ export function stackControl(
       script: async pages => await call('PUT', 'pages', pages),
       requests: async since =>
         await call('GET', `pages/requests?since=${since}`)
-    }
+    },
+    sql: async (text, values = []) =>
+      await call('POST', 'sql', { text, values }),
+    call: async (method, route, body) =>
+      await call(method, route.replace(/^\/+/, ''), body)
   }
 }
 

@@ -1,14 +1,31 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { BlockedError } from '../../core/result'
+import type { E2eContext } from '../../core/spec'
 import {
+  clearSignInLimits,
   type CoachApp,
+  defineCoachSpec,
+  ERROR_PLAN,
   type Found,
   literal,
+  savePlan,
   scrollTo,
   serverKeptOnHubPhone,
+  stackSql,
   teamPath
 } from './coachApp'
+
+/** A context whose stack has these control routes, or none. */
+function onStack(control?: Record<string, unknown>): E2eContext {
+  return {
+    stack: {
+      origin: 'https://stack.example.test',
+      ...(control == null ? {} : { control })
+    }
+  } as unknown as E2eContext
+}
 
 /** An app whose sheet moves up `step` points for each swipe it is given. */
 function sheetApp(options: { web?: boolean; shareAt: number; step: number }): {
@@ -60,21 +77,28 @@ describe('the game plan rig', function () {
   it('sends a hub iPhone the server link, waits for the app in front on its sign-in page, then launches it fresh', async function () {
     const steps: string[] = []
     const m = {
-      stopApp: async () => steps.push('stop'),
+      stopApp: async (o: { appId: string }) => steps.push(`stop ${o.appId}`),
       openLink: async (o: { link: string }) => steps.push(`link ${o.link}`),
       tapOn: async (o: { text: string }) => steps.push(`tap ${o.text}`),
-      launchApp: async (o: { stopApp?: boolean }) =>
-        steps.push(`launch stop=${String(o.stopApp)}`),
+      assertVisible: async (o: { text: string }) =>
+        steps.push(`assert ${o.text}`),
+      launchApp: async (o: { appId: string; stopApp?: boolean }) =>
+        steps.push(`launch ${o.appId} stop=${String(o.stopApp)}`),
       extendedWaitUntil: async (o: { visible: { text: string } }) =>
         steps.push(`wait ${o.visible.text}`)
     }
-    await serverKeptOnHubPhone(m, 'udid@hub', 'https://e2e-02.teamstation.app')
+    await serverKeptOnHubPhone(
+      m,
+      'app.example.develop',
+      'https://stack.example.test'
+    )
     expect(steps).deep.equals([
-      'stop',
-      'link teamstation-develop://server?origin=https%3A%2F%2Fe2e-02.teamstation.app',
+      'stop app.example.develop',
+      'link teamstation-develop://server?origin=https%3A%2F%2Fstack.example.test',
+      'assert ^Open$',
       'tap ^Open$',
       'wait Sign in to TeamStation',
-      'launch stop=true'
+      'launch app.example.develop stop=true'
     ])
   })
 
@@ -119,5 +143,104 @@ describe('the game plan rig', function () {
     })
     expect(String(failure)).includes('Plan share never came wholly into view')
     expect(stuck.calls).to.have.length(8)
+  })
+
+  it('runs setup SQL through the stack, and blocks a stack that cannot', async function () {
+    let error: unknown
+    try {
+      await stackSql(onStack(), 'select 1')
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).instanceOf(BlockedError)
+    const asked: unknown[] = []
+    const reply = await stackSql(
+      onStack({
+        sql: async (text: string, values: unknown[]) => {
+          asked.push([text, values])
+          return { rows: [{ one: 1 }], rowCount: 1 }
+        }
+      }),
+      'select $1',
+      [1]
+    )
+    expect(reply.rows).deep.equals([{ one: 1 }])
+    expect(asked).deep.equals([['select $1', [1]]])
+  })
+
+  it('clears the password limits through the rateLimits control', async function () {
+    let error: unknown
+    try {
+      await clearSignInLimits(onStack())
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).instanceOf(BlockedError)
+    const bodies: unknown[] = []
+    await clearSignInLimits(
+      onStack({
+        rateLimits: async (body: unknown) => {
+          bodies.push(body)
+          return {}
+        }
+      })
+    )
+    expect(bodies).deep.equals([{ clear: ['password', 'passwordParameters'] }])
+  })
+
+  it("saves a world's plan as one row on the stack's database", async function () {
+    const calls: unknown[][] = []
+    const world = {
+      nonce: 'n',
+      ids: {
+        game: 'gam_1',
+        homeTeam: 'tem_1',
+        ...Object.fromEntries(
+          ERROR_PLAN.map((_, at) => [`homePlayer${at + 1}`, String(100 + at)])
+        )
+      },
+      accounts: { coach: { userId: 'usr_c' } }
+    } as any
+    const sql = async (
+      text: string,
+      values: unknown[]
+    ): Promise<{ rows: never[]; rowCount: number }> => {
+      calls.push([text, values])
+      return { rows: [], rowCount: calls.length === 1 ? 1 : 0 }
+    }
+    await savePlan(onStack({ sql }), world, ERROR_PLAN)
+    const [text, values] = calls[0] as [string, unknown[]]
+    expect(text).includes('insert into game_plans')
+    expect(values.slice(0, 4)).deep.equals(['gam_1', 'tem_1', true, 5])
+    expect(JSON.parse(values[4] as string)[0].player).deep.include({
+      gumboId: 100,
+      jersey: '1'
+    })
+    expect(values[5]).equals('usr_c')
+    let error: unknown
+    try {
+      await savePlan(onStack({ sql }), world, ERROR_PLAN)
+    } catch (caught) {
+      error = caught
+    }
+    expect(String(error)).includes('the plan was not saved')
+  })
+
+  it('declares a coach spec on a GPU, a physical iPhone and the coach-game world', function () {
+    const spec = defineCoachSpec({
+      id: 'scoring/game-plan/x',
+      title: 't',
+      covers: ['src/app/scoring/plan/PlanTab.tsx'],
+      minutes: 1,
+      faults: [],
+      scenarios: { a: async () => undefined }
+    })
+    expect(spec).to.include({ stack: 'isolated' })
+    expect(spec.services).deep.equals([])
+    expect(spec.fixtures).deep.equals(['coach-game'])
+    expect(spec.surfaces['ios-app']?.devices).deep.equals([
+      { role: 'device', needs: ['ios-phone', 'gpu'], simulator: 'never' }
+    ])
+    expect(spec.surfaces['web-chromium']?.browser?.needs).deep.equals(['gpu'])
   })
 })

@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   FIELD,
   OPEN_FULL_SCREEN,
@@ -12,7 +12,7 @@ import {
   withTess
 } from '../../../rigs/tessWeb'
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/rich-content',
   title:
@@ -53,7 +53,7 @@ export default defineE2e({
         await web.gone(VIEWER)
         await ctx.checkpoint('chart-closed', {
           readBack: async () => {
-            expect(t.beaconHits(), 'a remote load').equals(0)
+            expect(await t.beaconHits(), 'a remote load').equals(0)
           }
         })
       })

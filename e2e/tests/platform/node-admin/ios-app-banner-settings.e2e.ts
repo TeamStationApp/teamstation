@@ -2,7 +2,11 @@ import { expect } from 'chai'
 
 import type { NodeSettings } from '../../../../src/common/nodeSettings'
 import { eventually } from '../../../core/readback'
-import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
+import {
+  defineHarness,
+  type E2eContext,
+  type WebSession
+} from '../../../core/spec'
 import { bannerBrowserCoverage } from '../../../rigs/iosAppBannerCoverage'
 import {
   apiClient,
@@ -103,7 +107,7 @@ async function browserAs(
   return await ctx.browser(size, { beforeLoad })
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'platform/node-admin/ios-app-banner-settings',
   title: 'The saved App Store link controls the next eligible page load',
   kind: 'e2e',
@@ -116,8 +120,10 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: ['search'],
   exclusive: true,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['api', 'web'],
+  surfaces: {
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } }
+  },
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

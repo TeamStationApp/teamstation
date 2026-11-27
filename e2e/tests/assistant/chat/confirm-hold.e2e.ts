@@ -2,7 +2,7 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   EMBLEMS,
   pause,
@@ -29,10 +29,10 @@ async function proposed(web: TessWeb): Promise<void> {
   await web.see(HOLD)
 }
 
-/** The team's games, read from the server behind the proxy. */
+/** The team's games, read from the stack's API as the admin. */
 async function gamesOfTeam(web: TessWeb): Promise<number> {
   const { f } = web.t
-  const answer = await f.h.request('GET', `/teams/${f.teamA}/games`)
+  const answer = await web.t.request('GET', `/teams/${f.teamA}/games`)
   expect(answer.status).equals(200)
   const body = (await answer.json()) as unknown
   return Array.isArray(body)
@@ -49,7 +49,7 @@ async function traceOffset(web: TessWeb): Promise<number> {
   })
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/confirm-hold',
   title:

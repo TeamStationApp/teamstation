@@ -55,7 +55,7 @@ export function lintFile(file: string, text: string): LintProblem[] {
   }
   if (
     /from 'puppeteer|require\('puppeteer/.test(text) &&
-    !file.endsWith('/browserCdp.ts')
+    !/\/(?:browserCdp|web)\.ts$/.test(file)
   ) {
     add('no-puppeteer', 'drive the UI through maestro-d')
   }
@@ -86,4 +86,125 @@ export function lintFile(file: string, text: string): LintProblem[] {
     add('needs-assertion', 'a test must check something')
   }
   return problems
+}
+
+/** The modules a test or rig may not import: each one reaches past maestro-d. */
+const BANNED_MODULES = [
+  'child_process',
+  'net',
+  'http',
+  'https',
+  'os',
+  'puppeteer',
+  'puppeteer-core'
+]
+const MODULE_IMPORT =
+  /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)['"](?:node:)?([\w/-]+)['"]/gm
+const STRING = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g
+const EMAIL_IN = /[\w.+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi
+const URL_HOST =
+  /\b(?:https?|wss?|postgres(?:ql)?|redis|rtmps?|rtsps?|ftp):\/\/([^/'"`\s$?#]+)/gi
+const IP = /\b(?:\d{1,3}\.){3}\d{1,3}\b/
+const DOMAIN =
+  /\b(?:[a-z0-9-]+\.)+(?:app|com|net|org|io|dev|local|internal|lan|cloud|ai)\b/i
+/**
+ * Names no machine of ours answers to (RFC 2606's, and `example.<tld>` as
+ * text a test sends, such as a bare domain to linkify), and public pages a test expects
+ * the app to show or link to: the SVG namespace and the App Store.
+ */
+const RESERVED_HOST =
+  /(?:^|\.)(?:example|test|invalid|example\.[a-z]+|w3\.org|apps\.apple\.com)$/i
+const HOST_PORT = /(?:\blocalhost|\b(?:\d{1,3}\.){3}\d{1,3}|\]):\d{2,5}\b/i
+const CODE_PORT = /\bport\s*[:=]\s*\d{2,5}\b/i
+const SERIAL =
+  /\bemulator-\d{4}\b|\b[0-9a-f]{40}\b|\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{10,16}\b/
+const HOME_PATH = /\/Users\/[a-z]|\/home\/[a-z]|(?:^|[\s'"`(=])~\/|\.cursor\//
+const HOME_CALL = /\bhomedir\s*\(/g
+
+/** Blanks out comments, keeping every newline, so a finding's line stays true. */
+function blankComments(text: string): string {
+  return text.replace(
+    /\/\*[\s\S]*?\*\/|(^|[^:\\'"`])\/\/[^\n]*/g,
+    (match, lead: string | undefined) => {
+      const kept = lead ?? ''
+      const body = match.slice(kept.length)
+      return kept + body.replace(/[^\n]/g, ' ')
+    }
+  )
+}
+
+function lineAt(text: string, index: number): number {
+  let line = 1
+  for (let i = 0; i < index; i += 1) if (text.charCodeAt(i) === 10) line += 1
+  return line
+}
+
+/**
+ * `no-infra`: a test or rig holds navigation, needs and expected results
+ * only. It imports nothing that starts a process, opens a socket or reads the
+ * machine, reads no environment, and names no host, address, port, device
+ * serial or home path; the runner and the stack own all of those.
+ */
+export function noInfraProblems(file: string, text: string): LintProblem[] {
+  const problems: LintProblem[] = []
+  const code = blankComments(text)
+  const add = (index: number, detail: string): void => {
+    problems.push({
+      file,
+      rule: 'no-infra',
+      detail: `line ${lineAt(code, index)}: ${detail}`
+    })
+  }
+  for (const match of code.matchAll(MODULE_IMPORT)) {
+    const name = match[1].split('/')[0]
+    if (BANNED_MODULES.includes(name)) {
+      add(match.index, `imports ${match[1]}`)
+    }
+  }
+  for (const match of code.matchAll(/\bprocess\.env\b/g)) {
+    add(match.index, 'reads process.env')
+  }
+  if (file.endsWith('.swift')) {
+    for (const match of code.matchAll(
+      /\bProcessInfo\.processInfo\.environment\b|\bProcess\s*\(\s*\)/g
+    )) {
+      add(match.index, `${match[0]} reaches past maestro-d`)
+    }
+  }
+  for (const match of code.matchAll(HOME_CALL)) {
+    add(match.index, 'reads the home directory')
+  }
+  for (const match of code.matchAll(new RegExp(CODE_PORT, 'gi'))) {
+    add(match.index, `port literal ${match[0]}`)
+  }
+  for (const match of code.matchAll(STRING)) {
+    const literal = match[0].replace(EMAIL_IN, '')
+    const found = literalShape(literal)
+    if (found != null) add(match.index, found)
+  }
+  return problems
+}
+
+/** What a string literal names that only infrastructure knows, if anything. */
+function literalShape(literal: string): string | undefined {
+  if (HOME_PATH.test(literal)) return `home path in ${short(literal)}`
+  if (HOST_PORT.test(literal)) return `port literal in ${short(literal)}`
+  for (const match of literal.matchAll(URL_HOST)) {
+    const host = match[1].replace(/:\d+$/, '')
+    if (host === '' || RESERVED_HOST.test(host)) continue
+    if (/:\d{2,5}$/.test(match[1])) return `port literal in ${short(literal)}`
+    return `hostname ${host}`
+  }
+  if (/\blocalhost\b/i.test(literal)) return 'hostname localhost'
+  if (IP.test(literal)) return `IP address in ${short(literal)}`
+  const domain = DOMAIN.exec(literal)
+  if (domain != null && !RESERVED_HOST.test(domain[0])) {
+    return `hostname ${domain[0]}`
+  }
+  if (SERIAL.test(literal)) return `device serial shape in ${short(literal)}`
+  return undefined
+}
+
+function short(literal: string): string {
+  return literal.length > 40 ? `${literal.slice(0, 37)}…` : literal
 }

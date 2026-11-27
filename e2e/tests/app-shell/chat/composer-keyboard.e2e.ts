@@ -1,9 +1,10 @@
 import { expect } from 'chai'
 
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   aboveKeyboard,
-  APP,
+  appOf,
+  type Box,
   boxOf,
   flatten,
   measure,
@@ -11,20 +12,28 @@ import {
   platformOf,
   typeKeys
 } from '../../../rigs/app/keyboardDock'
-import { tapIfShown } from '../../../rigs/streaming/surfaces/surface'
+import { pointAtStack } from '../../../rigs/app/pointAtStack'
+
+/** The conversation's composer, where it rests. */
+async function composerBox(device: any): Promise<Box> {
+  const box = boxOf(
+    flatten((await device.hierarchy()) as Node).find(
+      node => node.id === 'chat-composer'
+    )
+  )
+  if (box == null) throw new Error('the composer is not on screen')
+  return box
+}
 
 /**
  * A conversation's composer still rides the keyboard on a phone now that
- * Search shares its hold on Android's keyboard controller. Signs in with
- * the `searchKeyboardChatAccount` secret (`{"email","password"}`, an account
- * with a conversation on the seat the build was made for) and clears the
- * app's state before and after, leaving the phone signed out. A cleared
- * Mason develop build talks to the seat it was built for (`seat=N`), so run
- * it on that seat's build: a setServer choice does not survive the clear.
- * Motion is read from the `<device>#composer` webcam crop, whose rest row
- * is the composer's.
+ * Search shares its hold on Android's keyboard controller. Signs in as the
+ * `messaging` world's sender, who has a conversation, and clears the app's
+ * state before and after, leaving the phone signed out; a clear forgets
+ * the stack, so the app is pointed back at it after. Motion is read from
+ * maestro-d's recording of the screen, from the composer's place at rest.
  */
-export default defineE2e({
+export default defineHarness({
   id: 'app-shell/chat/composer-keyboard',
   title: 'A conversation’s composer rides the keyboard on a phone',
   kind: 'e2e',
@@ -32,20 +41,22 @@ export default defineE2e({
     'src/app/chat/ChatHistoryList.native.tsx',
     'src/app/components/keyboardControllerOwner.native.ts'
   ],
-  stack: 'none',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['messaging'],
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
   services: [],
   apps: ['teamstation-ios', 'teamstation-android'],
-  secrets: ['searchKeyboardChatAccount'],
+  secrets: [],
   costUsd: 0,
   minutes: 5,
   guards: [],
@@ -54,24 +65,17 @@ export default defineE2e({
   sendsNoMail: true,
   scenarios: {
     'rides-keyboard': async ctx => {
-      const account = JSON.parse(ctx.secret('searchKeyboardChatAccount')) as {
-        email: string
-        password: string
-      }
+      await ctx.fixture('messaging')
       const ios = platformOf(ctx) === 'ios'
+      const appId = appOf(ctx)
       const device = await ctx.attach('phone', {
         platform: platformOf(ctx),
-        appId: APP
+        appId
       })
-      await device.launchApp({ appId: APP, stopApp: true, clearState: true })
+      await device.launchApp({ appId, stopApp: true, clearState: true })
       try {
-        // The sign-in screen offers a code first on some builds.
-        await tapIfShown(device, { text: 'Use a password instead' }, 5000)
-        await device.tapOn({ text: 'E-mail address' })
-        await typeKeys(device, ios, account.email)
-        await device.tapOn({ text: 'Password' })
-        await typeKeys(device, ios, account.password)
-        await device.tapOn({ text: 'Sign in' })
+        await pointAtStack(device, ctx.stack.origin, appId)
+        await ctx.signIn('sender', device)
         await device.tapOn({ text: 'Chat' })
         await device.tapOn({ id: 'chat-conversation-.*' })
         let composer: ReturnType<typeof boxOf>
@@ -92,7 +96,7 @@ export default defineE2e({
             await device.eraseText({ characters: 8 })
             await device.hideKeyboard()
           },
-          'composer'
+          composerBox
         )
         await ctx.checkpoint('composer-over-keyboard', {
           expect: [{ id: 'chat-composer' }],
@@ -113,7 +117,7 @@ export default defineE2e({
         })
       } finally {
         // Signed out again, as the other phone scenarios expect.
-        await device.launchApp({ appId: APP, stopApp: true, clearState: true })
+        await device.launchApp({ appId, stopApp: true, clearState: true })
       }
     }
   }

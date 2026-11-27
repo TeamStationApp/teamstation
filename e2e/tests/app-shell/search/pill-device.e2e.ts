@@ -1,8 +1,8 @@
 import { expect } from 'chai'
 
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import {
-  APP,
+  appOf,
   boxOf,
   deviceName,
   flatten,
@@ -15,8 +15,8 @@ import {
 } from '../../../rigs/app/keyboardDock'
 
 /** Picks San Diego from the suggestions, leaving its pill in the field. */
-async function chooseSanDiego(ctx: E2eContext, device: any): Promise<void> {
-  await openSearch(device)
+async function chooseSanDiego(ctx: HarnessContext, device: any): Promise<void> {
+  await openSearch(ctx, device)
   await device.tapOn({ text: PLACEHOLDER })
   await typeKeys(device, platformOf(ctx) === 'ios', 'san d')
   await device.assertVisible({ id: 'location-suggestions', timeout: 15000 })
@@ -27,10 +27,11 @@ async function chooseSanDiego(ctx: E2eContext, device: any): Promise<void> {
 /**
  * The chosen place's pill on a phone or tablet: its close circle sits on the
  * pill's midline, its centre half the pill's height in from its right end,
- * and Backspace in the empty field takes the pill out. The app is a Mason
- * develop build, as for `keyboard-dock`.
+ * and Backspace in the empty field takes the pill out. The app is the
+ * caller's develop build on the run's stack, whose Places stand-in suggests
+ * San Diego, as for `keyboard-dock`.
  */
-export default defineE2e({
+export default defineHarness({
   id: 'app-shell/search/pill-device',
   title:
     'A chosen place’s pill centres its close circle at its end and goes with Backspace, on a phone',
@@ -40,15 +41,17 @@ export default defineE2e({
     'src/app/screens/SearchScreen.tsx',
     'src/app/theme/pill.ts'
   ],
-  stack: 'none',
+  stack: 'isolated',
   fixtures: [],
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
   services: [],
@@ -64,7 +67,7 @@ export default defineE2e({
     'x-centred': async ctx => {
       const device = await ctx.attach('phone', {
         platform: platformOf(ctx),
-        appId: APP
+        appId: appOf(ctx)
       })
       await chooseSanDiego(ctx, device)
       const nodes = flatten((await device.hierarchy()) as Node)
@@ -106,7 +109,7 @@ export default defineE2e({
     'backspace-removes': async ctx => {
       const device = await ctx.attach('phone', {
         platform: platformOf(ctx),
-        appId: APP
+        appId: appOf(ctx)
       })
       await chooseSanDiego(ctx, device)
       await device.pressKey('Backspace')

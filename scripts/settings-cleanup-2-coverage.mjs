@@ -184,10 +184,14 @@ if (!reportOnly) {
       throw new Error(
         'Set TS_CREATION_ARTIFACTS for the production entry smoke'
       )
-    run('node', ['-r', 'sucrase/register', 'e2e/rigs/refinementsStartup.ts'], {
-      TS_REFINEMENTS_ARTIFACTS: artifacts,
-      TS_REFINEMENTS_STARTUP_V8: temp
-    })
+    run(
+      'node',
+      ['-r', 'sucrase/register', 'scripts/coverage/refinementsStartup.ts'],
+      {
+        TS_REFINEMENTS_ARTIFACTS: artifacts,
+        TS_REFINEMENTS_STARTUP_V8: temp
+      }
+    )
   }
 }
 for (const file of readdirSync(temp)) {

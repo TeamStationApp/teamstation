@@ -1,20 +1,12 @@
-import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
-import { makeDatabase } from '../../../../src/server/db/database'
-import { remuxToHls } from '../../../../src/server/media/ffmpeg'
-import { putObjectFile } from '../../../../src/server/media/images'
-import {
-  contentTypeFor,
-  listSpaceObjects
-} from '../../../../src/server/media/spacesVideo'
-import { nodeDatabaseUrl } from '../../../core/dropletStack'
-import { defineE2e, type E2eContext } from '../../../core/spec'
+import { BlockedError } from '../../../core/result'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
 import { directorUpload } from '../../../rigs/media/directorUpload'
 import {
   apiToken,
@@ -22,54 +14,37 @@ import {
   highlightStart,
   pictureAdvancingAt,
   playerState,
-  seedPlay,
   servedMediaPlaylist,
   signInOnDesktop
 } from '../../../rigs/media/recordingSeek'
 import {
-  onStack,
-  STACK_APP,
-  stackHandle,
-  stackSpace
+  stackApi,
+  stackControl,
+  stackMedia
 } from '../../../rigs/media/stackSpace'
 
-const run = promisify(execFile)
-
-/** Ten minutes of HEVC with sound, keyed every two seconds, as a take is. */
-async function programme(dir: string): Promise<string> {
-  const file = join(dir, 'programme.mp4')
-  await run(
-    process.env.TS_FFMPEG ?? 'ffmpeg',
-    [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-f',
-      'lavfi',
-      '-i',
-      'testsrc2=size=1280x720:rate=30',
-      '-f',
-      'lavfi',
-      '-i',
-      'sine=frequency=440:sample_rate=48000',
-      '-t',
-      '600',
-      '-c:v',
-      'libx265',
-      '-preset',
-      'ultrafast',
-      '-x265-params',
-      'log-level=none:keyint=60',
-      '-tag:v',
-      'hvc1',
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'aac',
-      file
-    ],
-    { maxBuffer: 1 << 22 }
-  )
+/**
+ * Ten minutes of HEVC with sound, keyed every two seconds, as a take is:
+ * encoded on the stack, served by its pages stand-in, and fetched into the
+ * run directory, so the upload below sends a file from this machine as the
+ * apps do.
+ */
+async function programme(ctx: HarnessContext): Promise<string> {
+  const media = stackMedia(stackControl(ctx))
+  const pagesOrigin = ctx.stack.pagesOrigin
+  if (pagesOrigin == null) {
+    throw new BlockedError('this stack has no pages stand-in')
+  }
+  const made = await media.programme({
+    seconds: 600,
+    path: `/segmented-seek-${randomUUID()}/programme.mp4`
+  })
+  const response = await fetch(`${pagesOrigin.replace(/\/+$/, '')}${made.path}`)
+  expect(response.status).equals(200)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  expect(bytes.byteLength).equals(made.bytes)
+  const file = join(ctx.runDir, 'programme.mp4')
+  await writeFile(file, bytes)
   return file
 }
 
@@ -79,18 +54,18 @@ async function programme(dir: string): Promise<string> {
  * within 5 s on a cold cache: one small object per seek, never a range deep
  * inside one huge file.
  */
-async function upload(ctx: E2eContext): Promise<void> {
-  const handle = stackHandle(ctx)
+async function upload(ctx: HarnessContext): Promise<void> {
+  const media = stackMedia(stackControl(ctx))
   const world = await ctx.fixture('streaming')
   const coach = world.accounts.coach
-  const api = handle.api
+  const api = stackApi(ctx)
   const token = await apiToken(api, coach)
   const proof: string[] = []
   const say = (line: string): void => {
     proof.push(line)
   }
 
-  const file = await programme(ctx.runDir)
+  const file = await programme(ctx)
   say(
     `$ POST ${api}/director/uploads (a 10-minute HEVC programme), its parts, /finish`
   )
@@ -104,9 +79,8 @@ async function upload(ctx: E2eContext): Promise<void> {
     log: say
   })
 
-  const space = await stackSpace(handle)
   say(`$ list videos/${sent.videoId}-…/ in the stack's Space`)
-  const objects = await expectSegmentedPrefix(space, sent.videoId)
+  const objects = await expectSegmentedPrefix(media, sent.videoId)
   for (const object of objects) {
     say(
       `${object.key.replace(/-[0-9a-f]{32}\//, '-…/').padEnd(48)} ${object.size}`
@@ -123,42 +97,33 @@ async function upload(ctx: E2eContext): Promise<void> {
     `… ${playlist.split('\n').filter(l => l.startsWith('http')).length} segment URLs, no BYTERANGE`
   )
 
-  const db = makeDatabase(nodeDatabaseUrl(handle.databaseUrl))
-  let early = ''
-  let late = ''
-  try {
-    early = await seedPlay(db, {
-      gameId: world.ids.game,
-      battingTeamId: world.ids.awayTeam,
-      videoId: sent.videoId,
-      secondsIn: 450,
-      atBatIndex: 0
-    })
-    late = await seedPlay(db, {
-      gameId: world.ids.game,
-      battingTeamId: world.ids.awayTeam,
-      videoId: sent.videoId,
-      secondsIn: 540,
-      atBatIndex: 1
-    })
-  } finally {
-    await db.destroy()
-  }
+  const early = await media.play({
+    gameId: world.ids.game,
+    battingTeamId: world.ids.awayTeam,
+    videoId: sent.videoId,
+    secondsIn: 450,
+    atBatIndex: 0
+  })
+  const late = await media.play({
+    gameId: world.ids.game,
+    battingTeamId: world.ids.awayTeam,
+    videoId: sent.videoId,
+    secondsIn: 540,
+    atBatIndex: 1
+  })
 
   const session = await ctx.browser(
     { width: 1280, height: 800 },
     { h264: true }
   )
   const { m, page } = session
-  const recording = await page.record({
-    path: ctx.artifact('segmented-seek-after.webm')
-  })
-  const media: Array<{ url: string; range: string | undefined }> = []
+  await m.startRecording({ path: ctx.artifact('segmented-seek-after.mp4') })
+  const requests: Array<{ url: string; range: string | undefined }> = []
   const cdp = await page.createCDPSession()
   await cdp.send('Network.enable')
   cdp.on('Network.requestWillBeSent', event => {
     if (/\.(m4s|mp4)(\?|$)/.test(event.request.url)) {
-      media.push({
+      requests.push({
         url: event.request.url,
         range: event.request.headers.Range ?? event.request.headers.range
       })
@@ -189,11 +154,13 @@ async function upload(ctx: E2eContext): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 5000))
     }
   } finally {
-    await recording.stop()
+    await m.stopRecording({ path: ctx.artifact('segmented-seek-after.mp4') })
     await cdp.detach()
   }
-  const ranged = media.filter(request => request.range != null)
-  say(`media requests: ${media.length}, with a Range header: ${ranged.length}`)
+  const ranged = requests.filter(request => request.range != null)
+  say(
+    `media requests: ${requests.length}, with a Range header: ${ranged.length}`
+  )
   expect(ranged, 'every media GET is a whole object').deep.equals([])
   writeFileSync(
     ctx.artifact('upload-objects-after.log'),
@@ -207,66 +174,32 @@ async function upload(ctx: E2eContext): Promise<void> {
  * load is segments and seeks to a highlight within 5 s, and once the old
  * objects are deleted the page still plays.
  */
-async function repackage(ctx: E2eContext): Promise<void> {
-  const handle = stackHandle(ctx)
+async function repackage(ctx: HarnessContext): Promise<void> {
+  const media = stackMedia(stackControl(ctx))
   const world = await ctx.fixture('streaming')
-  const api = handle.api
+  const api = stackApi(ctx)
   const token = await apiToken(api, world.accounts.coach)
-  const space = await stackSpace(handle)
   const proof: string[] = []
   const say = (line: string): void => {
     proof.push(line.replace(/[0-9a-f]{32}/g, '…'))
   }
 
   // A single-file recording on the plain prefix, as every upload before
-  // segments was stored, and its row.
-  const source = await programme(ctx.runDir)
-  const single = join(ctx.runDir, 'single')
-  await mkdir(single, { recursive: true })
-  await remuxToHls(process.env.TS_FFMPEG ?? 'ffmpeg', {
-    input: source,
-    outDir: single,
-    layout: 'single-file'
+  // segments was stored, and its row, made on the stack.
+  const { videoId } = await media.singleFile({
+    videoId: `vid_repack${Date.now().toString(36)}`,
+    gameId: world.ids.game,
+    title: 'Before segments',
+    startAt: new Date(Date.now() - 20 * 60_000).toISOString(),
+    seconds: 600
   })
-  const videoId = `vid_repack${Date.now().toString(36)}`
-  for (const name of ['master.m3u8', 'video.m3u8', 'video.mp4'])
-    await putObjectFile({
-      space,
-      key: `videos/${videoId}/${name}`,
-      path: join(single, name),
-      contentType: contentTypeFor(name)
-    })
-  const db = makeDatabase(nodeDatabaseUrl(handle.databaseUrl))
-  let play = ''
-  try {
-    await db
-      .insertInto('videos')
-      .values({
-        id: videoId,
-        game_id: world.ids.game,
-        kind: 'program',
-        title: 'Before segments',
-        storage: 'spaces',
-        status: 'ready',
-        start_at: new Date(Date.now() - 20 * 60_000),
-        start_at_source: 'manual',
-        duration_sec: 600,
-        codecs: 'hvc1',
-        width: 1280,
-        height: 720,
-        spaces_verified_at: new Date()
-      })
-      .execute()
-    play = await seedPlay(db, {
-      gameId: world.ids.game,
-      battingTeamId: world.ids.awayTeam,
-      videoId,
-      secondsIn: 450,
-      atBatIndex: 0
-    })
-  } finally {
-    await db.destroy()
-  }
+  const play = await media.play({
+    gameId: world.ids.game,
+    battingTeamId: world.ids.awayTeam,
+    videoId,
+    secondsIn: 450,
+    atBatIndex: 0
+  })
   const before = await servedMediaPlaylist(api, token, videoId)
   expect(before).contains('BYTERANGE')
   say(`$ seeded ${videoId} as one video.mp4 under videos/${videoId}/`)
@@ -275,9 +208,7 @@ async function repackage(ctx: E2eContext): Promise<void> {
     { width: 1280, height: 800 },
     { h264: true }
   )
-  const recording = await page.record({
-    path: ctx.artifact('repackage-under-viewer.webm')
-  })
+  await m.startRecording({ path: ctx.artifact('repackage-under-viewer.mp4') })
   try {
     await m.openLink({ link: `${ctx.stack.origin}/sign-in` })
     await signInOnDesktop(ctx, m, 'coach')
@@ -288,9 +219,8 @@ async function repackage(ctx: E2eContext): Promise<void> {
     await pictureAdvancingAt(page, at.startOffsetSec, { withinMs: 15000 })
 
     const segment = async (args: string): Promise<string> => {
-      const command = `cd ${STACK_APP} && node lib/server/dev/segmentSpaceVideos.js ${args}`
-      say(`$ ssh <stack> '${command}'`)
-      const out = await onStack(handle, command)
+      say(`$ <stack> node lib/server/dev/segmentSpaceVideos.js ${args}`)
+      const out = await media.segment(args.split(' '))
       for (const line of out.trimEnd().split('\n')) say(line)
       return out
     }
@@ -321,9 +251,9 @@ async function repackage(ctx: E2eContext): Promise<void> {
 
     await segment(`--delete-old --dry-run --video ${videoId}`)
     await segment(`--delete-old --video ${videoId}`)
-    const old = (await listSpaceObjects(space, `videos/${videoId}/`)).filter(
-      key => !key.includes('/stills/')
-    )
+    const old = (await media.objects(`videos/${videoId}/`))
+      .map(entry => entry.key)
+      .filter(key => !key.includes('/stills/'))
     expect(old, 'the old prefix holds only stills').deep.equals([])
     await page.reload()
     await m.tapOn({ text: 'Videos', index: 1 })
@@ -333,12 +263,14 @@ async function repackage(ctx: E2eContext): Promise<void> {
       'after --delete-old the old prefix holds only stills, and the page still plays'
     )
   } finally {
-    await recording.stop()
+    await m.stopRecording({
+      path: ctx.artifact('repackage-under-viewer.mp4')
+    })
   }
   writeFileSync(ctx.artifact('repackage-run.log'), `${proof.join('\n')}\n`)
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'playback/recordings/segmented-seek',
   title:
     'A recording in the Space is segments, and a highlight plays within 5 s on a cold cache',
@@ -355,8 +287,14 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: ['streaming'],
   exclusive: false,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['api', 'web'],
+  surfaces: {
+    'web-chromium': {
+      devices: [],
+      // It plays the HEVC recording it uploaded.
+      browser: { role: 'browser', needs: ['video'], codecs: ['hevc'] }
+    }
+  },
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

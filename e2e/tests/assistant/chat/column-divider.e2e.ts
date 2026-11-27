@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   COLUMN,
   DIVIDER,
@@ -47,7 +47,7 @@ async function onTeamBesideTess(web: TessWeb): Promise<void> {
   await web.see(DIVIDER)
 }
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
   id: 'assistant/chat/column-divider',
   title:

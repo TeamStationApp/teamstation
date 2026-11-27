@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -29,6 +29,7 @@ import {
   WORLDS
 } from './cli'
 import { runCoachGame } from './coachGame'
+import { DATED_DAYS, runMessaging, runMessagingDated } from './messaging'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
 import { runRefreshNotices } from './refreshNotices'
@@ -751,6 +752,104 @@ describe('fixture worlds', function () {
       .where('key', '=', 'test.rateLimitScale')
       .executeTakeFirstOrThrow()
     expect(scale.value).equals(RATE_LIMIT_SCALE)
+  })
+
+  it('messaging gives two adults on one team their direct conversation, and messaging-dated moves its two-file posts back', async function () {
+    const context = { db: the(), mailbox: MAILBOX, nonce: makeNonce() }
+    const world = await runMessaging(context)
+    const { observer, sender } = world.accounts
+    expect(isTestAddress(MAILBOX, observer.email)).equals(true)
+    expect(isTestAddress(MAILBOX, sender.email)).equals(true)
+    const adults = await the()
+      .selectFrom('users')
+      .select(['id', 'is_adult'])
+      .where('id', 'in', [observer.userId, sender.userId] as never)
+      .execute()
+    expect(adults.map(row => row.is_adult)).deep.equals([true, true])
+    const members = await the()
+      .selectFrom('chat_members')
+      .select('user_id')
+      .where('conversation_id', '=', world.ids.conversation)
+      .where('left_at', 'is', null)
+      .execute()
+    expect(members.map(row => row.user_id).sort()).deep.equals(
+      [observer.userId, sender.userId].sort()
+    )
+    const conversation = await the()
+      .selectFrom('chat_conversations')
+      .select(['kind', 'created_by'])
+      .where('id', '=', world.ids.conversation)
+      .executeTakeFirstOrThrow()
+    expect(conversation).deep.equals({ kind: 'dm', created_by: sender.userId })
+
+    // Two posts in the room, one with two files and one with one; only the
+    // first moves. They stand in for what a chat engine sends, so the keys and
+    // epochs they would name are left out (replica mode skips those checks).
+    let made = 0
+    const post = async (files: number): Promise<string> => {
+      made += 1
+      const id = `msg_${String(made).padStart(26, 'a')}`
+      await the()
+        .transaction()
+        .execute(async trx => {
+          await sql`set local session_replication_role = replica`.execute(trx)
+          await trx
+            .insertInto('chat_messages')
+            .values({
+              id,
+              conversation_id: world.ids.conversation,
+              seq: made,
+              epoch: 1,
+              sender_user_id: observer.userId,
+              sender_identity_id: 'idn_test',
+              kind: 'post',
+              target_ids: null,
+              nonce: Buffer.alloc(1),
+              ciphertext: Buffer.alloc(1),
+              signature: Buffer.alloc(1),
+              cleared_at: null
+            })
+            .execute()
+          for (let file = 0; file < files; file++) {
+            const attachment = `${id}-file-${file}`
+            await trx
+              .insertInto('chat_attachments')
+              .values({
+                id: attachment,
+                conversation_id: world.ids.conversation,
+                uploader_user_id: observer.userId,
+                size: 1,
+                object_key: attachment,
+                digest: Buffer.alloc(32),
+                completed_at: new Date()
+              })
+              .execute()
+            await trx
+              .insertInto('chat_message_attachments')
+              .values({ message_id: id, attachment_id: attachment })
+              .execute()
+          }
+        })
+      return id
+    }
+    const two = await post(2)
+    const one = await post(1)
+    const dated = await runMessagingDated({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    expect(dated.ids.moved.split(',')).includes(two)
+    expect(dated.ids.moved.split(',')).not.includes(one)
+    const times = await the()
+      .selectFrom('chat_messages')
+      .select(['id', 'created_at'])
+      .where('id', 'in', [one, two])
+      .execute()
+    const at = (id: string): number =>
+      new Date(times.find(row => row.id === id)!.created_at).getTime()
+    const days = (at(one) - at(two)) / (24 * 60 * 60 * 1000)
+    expect(days).greaterThan(DATED_DAYS - 0.01)
   })
 
   it('creates accounts with no role by default and distinct passwords', async function () {

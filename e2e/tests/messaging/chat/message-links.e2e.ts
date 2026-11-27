@@ -1,21 +1,22 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { MaestroDevice } from '../../../core/maestro'
-import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
 import {
-  destinationPage,
-  fixtureFor,
-  providerFor
-} from '../../../rigs/chat/messageLinkFixture'
+  defineHarness,
+  type HarnessContext,
+  type WebSession
+} from '../../../core/spec'
+import { fixtureFor, providerFor } from '../../../rigs/chat/messageLinkFixture'
 import {
+  chatAppKind,
   chatLinkUi,
   clearChatComposer,
   readChatComposer,
   revealChatTarget
 } from '../../../rigs/chat/messageLinkUi'
+import { awayFromApp } from '../../../rigs/chat/receivedPreview'
 import { flattenPublicHierarchy } from '../../../rigs/chat2Maestro'
 
 const composer = { id: 'chat-composer' }
@@ -28,7 +29,7 @@ async function openExternal(
   platform: string,
   url: string,
   keyboard = false,
-  activeBrowser?: () => Promise<void>
+  activeBrowser?: (marker: string) => Promise<void>
 ): Promise<void> {
   const original = web?.page.url()
   const path = new URL(url)
@@ -69,7 +70,7 @@ async function openExternal(
       // Done dismisses the app's Safari sheet.
       await m.tapOn({ text: '^(Done|Close|Close Browser)$' })
     } else {
-      await activeBrowser?.()
+      await activeBrowser?.(marker)
       await m.pressKey({ key: 'BACK' })
     }
   }
@@ -450,30 +451,38 @@ async function verifyWrappedAttention(
   }
 }
 
-async function open(ctx: E2eContext): Promise<void> {
-  const f = fixtureFor(ctx)
+/** Taps `selector` when it is on screen within `timeout`; a screen without it is the ordinary case. */
+async function tapIfShown(
+  m: MaestroDevice,
+  selector: Record<string, unknown>,
+  timeout: number
+): Promise<void> {
+  let shown = true
+  try {
+    await m.assertVisible({ ...selector, timeout })
+  } catch {
+    shown = false
+  }
+  if (shown) await m.tapOn(selector)
+}
+
+async function open(ctx: HarnessContext): Promise<void> {
+  const f = await fixtureFor(ctx)
   const observer = await providerFor(f, f.observer)
   try {
     const sender = await providerFor(f, f.sender)
     try {
-      const dest = await destinationPage(f.destinationHost)
+      // The stack's pages stand-in prints each page's own path, query and
+      // fragment, so the opened link shows where it really went.
+      const destination = ctx.stack.pagesOrigin
+      assert(destination != null, 'the stack has no pages stand-in')
       const platform =
         ctx.surface === 'ios-app'
           ? 'ios'
           : ctx.surface === 'android-app'
             ? 'android'
             : 'web'
-      const adb = (...args: string[]): string =>
-        execFileSync('adb', ['-s', ctx.device('phone'), ...args], {
-          stdio: 'pipe',
-          encoding: 'utf8'
-        })
-      let reversed = false
-      try {
-        if (platform === 'android' && f.destinationHost == null) {
-          adb('reverse', '--no-rebind', 'tcp:' + dest.port, 'tcp:' + dest.port)
-          reversed = true
-        }
+      {
         const { m, web, room, enter } = await chatLinkUi(
           ctx,
           f,
@@ -482,8 +491,8 @@ async function open(ctx: E2eContext): Promise<void> {
         )
         await enter()
         const id = randomUUID().slice(0, 8)
-        const first = dest.origin + '/score/' + id + '?side=away#first'
-        const second = dest.origin + '/sheet/' + id + '?day=2#caption'
+        const first = destination + '/score/' + id + '?side=away#first'
+        const second = destination + '/sheet/' + id + '?day=2#caption'
         const internal = f.origin + '/schedule#' + id
         const body =
           'notes.pdf and 2.50. Fixture ' +
@@ -547,11 +556,7 @@ async function open(ctx: E2eContext): Promise<void> {
         if (web == null) {
           // A reader above the live edge stays on the same rows when the peer sends.
           // Use the same jump control as the reader to reveal the new attachment.
-          await m.tapOn({
-            id: 'chat-jump-latest',
-            optional: true,
-            timeout: 2500
-          })
+          await tapIfShown(m, { id: 'chat-jump-latest' }, 2500)
         }
         await m.assertVisible({ id: 'chat-message-' + file.id, timeout: 20000 })
         await m.assertVisible({ text: exact(second), timeout: 20000 })
@@ -569,39 +574,11 @@ async function open(ctx: E2eContext): Promise<void> {
             ['example.technology', 'https://example.technology/']
           ])
         }
-        const activeBrowser = async (): Promise<void> => {
-          if (ctx.device('phone').includes('@')) {
-            assert(
-              f.defaultBrowserPackage != null && f.defaultBrowserPackage !== '',
-              'Set the leased phone’s default browser package in its fixture'
-            )
-            const prefix = f.defaultBrowserPackage + ':id/'
-            const tree = flattenPublicHierarchy(await m.hierarchy())
-            assert(
-              tree.some(node => node.id?.startsWith(prefix) === true),
-              'The selected browser must own the visible controls'
-            )
-            return
-          }
-          const userBrowser = adb(
-            'shell',
-            'cmd',
-            'role',
-            'get-role-holders',
-            'android.app.role.BROWSER'
-          )
-            .trim()
-            .split(/\s+/)
-          const resumed = adb('shell', 'dumpsys', 'activity', 'activities')
-            .split('\n')
-            .find(line => /(?:mResumedActivity|topResumedActivity)/.test(line))
-          assert(
-            resumed != null &&
-              userBrowser.some(
-                pkg => pkg !== '' && resumed.includes(pkg + '/')
-              ),
-            'The user-selected Android browser must own the foreground activity'
-          )
+        // The phone's own browser is in front: the page shows its address,
+        // and none of the app's own views is on screen.
+        const activeBrowser = async (marker: string): Promise<void> => {
+          assert(platform === 'android')
+          await awayFromApp(m, ctx.app(chatAppKind(platform)), exact(marker))
         }
         await openExternal(m, web, platform, first, false, activeBrowser)
         await openExternal(m, web, platform, second, true, activeBrowser)
@@ -711,9 +688,6 @@ async function open(ctx: E2eContext): Promise<void> {
             first
           )
         await ctx.checkpoint('conversation', { expect: [composer] }, m)
-      } finally {
-        dest.close()
-        if (reversed) adb('reverse', '--remove', 'tcp:' + dest.port)
       }
     } finally {
       sender.engine.stop()
@@ -725,7 +699,7 @@ async function open(ctx: E2eContext): Promise<void> {
   }
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'messaging/chat/message-links',
   title:
     'Chat links in text and file captions open their displayed destination',
@@ -741,21 +715,26 @@ export default defineE2e({
     'ios/TeamStation/RCTChatBrowser.mm',
     'android/app/src/main/java/app/teamstation/app/browser/**'
   ],
-  stack: 'seat',
-  fixtures: [],
+  stack: 'isolated',
+  fixtures: ['messaging'],
   exclusive: true,
   surfaces: {
-    'web-chromium': { devices: [] },
+    'web-chromium': {
+      devices: [],
+      browser: { role: 'browser', needs: [] }
+    },
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'none' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'allowed' }]
     },
     'android-app': {
-      devices: [{ role: 'phone', needs: ['android-phone'], hardware: 'none' }]
+      devices: [
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
+      ]
     }
   },
-  services: ['api'],
-  apps: [],
-  secrets: ['chatLinkFixture'],
+  services: [],
+  apps: ['teamstation-ios', 'teamstation-android'],
+  secrets: [],
   costUsd: 0,
   minutes: 8,
   guards: [],

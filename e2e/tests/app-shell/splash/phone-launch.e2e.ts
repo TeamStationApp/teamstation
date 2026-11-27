@@ -9,7 +9,7 @@ import {
  * The launch splash on an iPhone: frozen frames match the reference page at
  * the phone's own size and scale, the splash leaves for React Native's first
  * screen within 4 s, and coming back from the background shows no splash.
- * Runs a Release simulator build.
+ * Runs on the caller's app, a physical phone first, a simulator where none is free.
  */
 export default defineSplash({
   behaviour: 'phone-launch',
@@ -25,7 +25,6 @@ export default defineSplash({
   ],
   target: {
     platform: 'ios',
-    appId: 'app.teamstation.app',
     statusBar: 64,
     name: 'phone'
   },

@@ -9,9 +9,14 @@ import {
   TraceMap
 } from '@jridgewell/trace-mapping'
 import istanbul, { type FileCoverage } from 'istanbul-lib-coverage'
-import type { JSCoverageEntry } from 'puppeteer'
 
 import type { WebSession } from '../core/spec'
+import type { Page } from '../core/web'
+
+/** One script's coverage as the page's browser reports it. */
+type JSCoverageEntry = Awaited<
+  ReturnType<Page['coverage']['stopJSCoverage']>
+>[number]
 
 const paths = [
   'src/app/web/iosAppBanner.ts',
@@ -62,13 +67,19 @@ function browserLines(
   return files
 }
 
-/** Source maps for an attached HTTPS stack come from the very build under test. */
-export function bannerBrowserCoverage(origin: string): {
+/**
+ * Source maps for an attached HTTPS stack come from the very build under
+ * test. It measures only when its caller names where to write (`output`)
+ * and the release build it measured (`webDir`); otherwise it only watches.
+ */
+export function bannerBrowserCoverage(
+  origin: string,
+  options: { output?: string; webDir?: string } = {}
+): {
   watch: (session: WebSession, request?: 'skipped') => Promise<WebSession>
   finish: () => Promise<void>
 } {
-  const output = process.env.TS_IOS_BANNER_BROWSER_COVERAGE
-  const webDir = process.env.TS_IOS_BANNER_WEB_DIR
+  const { output, webDir } = options
   const require = createRequire(resolve('package.json'))
   const { coverageSource } = require('./scripts/ios-app-banner-source.cjs') as {
     coverageSource: () => string
@@ -80,7 +91,7 @@ export function bannerBrowserCoverage(origin: string): {
       if (output != null) {
         if (webDir == null || webDir === '')
           throw new Error(
-            'Set TS_IOS_BANNER_WEB_DIR to the tested release build'
+            'Name webDir, the tested release build, beside output'
           )
         await session.page.coverage.startJSCoverage({
           resetOnNavigation: false

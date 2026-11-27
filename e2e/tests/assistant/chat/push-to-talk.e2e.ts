@@ -1,17 +1,20 @@
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e } from '../../../core/spec'
+import { defineHarness } from '../../../core/spec'
 import {
   MIC,
   TESS_GOLDEN,
   TESS_WEB_SPEC,
+  tessWebSurface,
   THINKING,
   withTess
 } from '../../../rigs/tessWeb'
 
-export default defineE2e({
+export default defineHarness({
   ...TESS_WEB_SPEC,
+  // It covers the scoring screen's dictation controls, which draw in 3D.
+  surfaces: tessWebSurface(['gpu']),
   id: 'assistant/chat/push-to-talk',
   title: 'What is said while her microphone is held becomes her next message',
   covers: [
@@ -51,7 +54,9 @@ export default defineE2e({
             }, 30000)
             await web.gone(THINKING)
           }
-          expect(t.dictation.heard.filter(heard => heard === HEARD)).length(2)
+          expect(
+            (await t.dictation()).heard.filter(heard => heard === HEARD)
+          ).length(2)
           await ctx.checkpoint('two-messages-heard', {
             expect: [{ text: "Your team's settings are here" }],
             golden: TESS_GOLDEN

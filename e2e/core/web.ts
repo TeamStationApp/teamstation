@@ -14,6 +14,12 @@ import type { LocalSettings } from './settings'
 import type { WebSession } from './spec'
 
 /**
+ * The page types a rig reads through `WebSession.page`, so no test or rig
+ * imports puppeteer itself (the `no-infra` rule).
+ */
+export type { HTTPRequest, HTTPResponse, Page } from 'puppeteer'
+
+/**
  * A Chromium that maestro-d owns and drives, sized for the scenario. `page` reads
  * what maestro-d cannot, and is never used to act on the UI.
  */

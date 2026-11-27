@@ -1,16 +1,11 @@
 import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import { defineE2e, type E2eContext } from '../../../core/spec'
-import {
-  framesText,
-  type FrameText,
-  lastFramesText,
-  recordAndroidScreen,
-  recordIosScreen
-} from '../../../rigs/app/screenRecording'
-import { appLink, openInApp } from '../../../rigs/app/setServer'
+import { defineHarness, type HarnessContext } from '../../../core/spec'
+import { framesText, recordScreen } from '../../../core/video'
+import { appLink, openInApp } from '../../../rigs/app/pointAtStack'
 import {
   BUILDING,
   DAY_HEADER,
@@ -33,8 +28,6 @@ import { SIGNED_OUT } from '../../../rigs/streaming/soakSignIn'
  * minutes. The preview's calendar heads its days like "Mon · Feb · 22". The
  * same build still carries the chat crypto core beside it.
  */
-
-const APP = 'app.teamstation.develop'
 
 /** The phone's Build to preview, at most. */
 const BUILD_LIMIT_MS = 120_000
@@ -65,7 +58,7 @@ interface Watched {
  * times out is the preview's.
  */
 async function watchBuild(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   phone: any,
   platform: string,
   tapped: number
@@ -131,27 +124,18 @@ interface Built {
   tapped: number
 }
 
-/**
- * Signs in, builds the packed league and checks the preview. With `video`,
- * the Android phone records its screen through the build into it.
- */
+/** Signs in, builds the packed league and checks the preview. */
 async function buildOnPhone(
-  ctx: E2eContext,
+  ctx: HarnessContext,
+  phone: any,
   platform: 'ios' | 'android',
-  video: string | null
+  appId: string
 ): Promise<Built> {
   const world = await ctx.fixture('packed-league')
-  const phone = await ctx.attach('phone', { platform, appId: APP })
   const open = async (path: string): Promise<void> => {
-    await openInApp({
-      platform,
-      udid: ctx.device('phone'),
-      appId: APP,
-      link: appLink(path),
-      device: phone
-    })
+    await openInApp(phone, appId, appLink(path))
   }
-  await phone.launchApp({ appId: APP, stopApp: true })
+  await phone.launchApp({ appId, stopApp: true })
   // Each run seeds its own admin, so a session from an earlier run goes.
   const signedOut: boolean = await phone
     .assertVisible({ text: SIGNED_OUT, timeout: 12_000 })
@@ -182,27 +166,16 @@ async function buildOnPhone(
     phone
   )
   await phone.scrollUntilVisible({ element: { text: 'Build schedule' } })
-  const recording =
-    video == null ? null : recordAndroidScreen(ctx.device('phone'))
-  let tapped = 0
-  let watched: Watched
-  try {
-    await phone.tapOn({ text: 'Build schedule' })
-    tapped = Date.now()
-    // The modal opens at once and logs the build while HiGHS solves on its
-    // own thread.
-    await ctx.checkpoint(
-      'building',
-      { expect: [{ text: BUILDING, timeout: 15_000 }, { text: 'Cancel' }] },
-      phone
-    )
-    watched = await watchBuild(ctx, phone, platform, tapped)
-  } catch (error) {
-    if (recording != null && video != null)
-      await recording.stop(video).catch(() => {})
-    throw error
-  }
-  if (recording != null && video != null) await recording.stop(video)
+  await phone.tapOn({ text: 'Build schedule' })
+  const tapped = Date.now()
+  // The modal opens at once and logs the build while HiGHS solves on its
+  // own thread.
+  await ctx.checkpoint(
+    'building',
+    { expect: [{ text: BUILDING, timeout: 15_000 }, { text: 'Cancel' }] },
+    phone
+  )
+  const watched = await watchBuild(ctx, phone, platform, tapped)
   console.error(
     `built in ${Math.round(watched.buildToPreviewMs / 1000)} s, ${watched.lines.length} log lines`
   )
@@ -274,66 +247,55 @@ async function buildOnPhone(
 /**
  * The packed league built on the phone, with every phase line the build modal
  * shows: its last lines show for under a second before the preview opens,
- * less than one read of the screen apart, so the screen is recorded and the
- * lines read from its frames. Android records itself, through the build. The
- * iPhone is recorded over USB on this Mac; starting and stopping that capture
- * switches the phone's USB configuration, which drops the driver's tunnel to
- * WebDriverAgent, so it runs from before the driver attaches until after its
- * last read.
+ * less than one read of the screen apart, so maestro-d records the phone's
+ * screen through the build and the lines are read from its frames.
  */
 async function packedLeague(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   platform: 'ios' | 'android'
 ): Promise<void> {
-  const video = ctx.artifact(
-    platform === 'android' ? 'android-build.mp4' : 'ios-build.mov'
+  const appId = ctx.app(
+    platform === 'ios' ? 'teamstation-ios' : 'teamstation-android'
   )
-  let built: Built
-  let frames: FrameText[]
-  /**
-   * On the iPhone, the recording's time of the first frame with the modal,
-   * and how much later the driver's tap on Build returned.
-   */
-  let opened: { sec: number; tapLagSec: number } | null = null
-  if (platform === 'android') {
-    built = await buildOnPhone(ctx, platform, video)
-    frames = lastFramesText(video, 10)
-  } else {
-    const recording = await recordIosScreen(ctx.device('phone'))
-    try {
-      built = await buildOnPhone(ctx, platform, null)
-    } catch (error) {
-      // The recording up to the failure is its evidence.
-      await recording.stop(video).catch(() => {})
-      throw error
+  const phone = await ctx.attach('phone', { platform, appId })
+  let built: Built | undefined
+  const recording = await recordScreen(
+    phone,
+    ctx.runDir,
+    `${platform}-build`,
+    async () => {
+      built = await buildOnPhone(ctx, phone, platform, appId)
     }
-    await recording.stop(video)
-    // The driver's tap returns once the screen has settled after it, up to
-    // seconds after the modal opened, so the frames are timed from the first
-    // with the modal, when its clock starts. The preview's first read can take
-    // long after the modal closes: the frames read are those from 12 s before
-    // the modal was last seen, timed from its opening (the log's first lines
-    // still whole), to the preview.
-    const tappedSec = (built.tapped - recording.startedAtMs) / 1000
-    const openedSec = recordedPhaseLines(
-      framesText(video, tappedSec - 10, tappedSec + 5),
-      BUILDING
-    ).firstModalSec
-    if (openedSec == null)
-      throw new Error('The recording shows no modal around the tap on Build')
-    opened = { sec: openedSec, tapLagSec: tappedSec - openedSec }
-    frames = framesText(
-      video,
-      openedSec + built.watched.lastSeenMs / 1000 - 12,
-      tappedSec + built.watched.buildToPreviewMs / 1000 + 3
-    ).map(frame => ({ ...frame, atSec: frame.atSec - openedSec }))
-  }
+  )
+  if (built == null) throw new Error('The build never finished')
+  const video = recording.file
+  const scratch = join(ctx.runDir, 'scratch')
+  // The driver's tap returns once the screen has settled after it, up to
+  // seconds after the modal opened, so the frames are timed from the first
+  // with the modal, when its clock starts. The preview's first read can take
+  // long after the modal closes: the frames read are those from 12 s before
+  // the modal was last seen, timed from its opening (the log's first lines
+  // still whole), to the preview.
+  const tappedSec = (built.tapped - recording.startedAtMs) / 1000
+  const openedSec = recordedPhaseLines(
+    framesText(video, scratch, tappedSec - 10, tappedSec + 5),
+    BUILDING
+  ).firstModalSec
+  if (openedSec == null)
+    throw new Error('The recording shows no modal around the tap on Build')
+  const opened = { sec: openedSec, tapLagSec: tappedSec - openedSec }
+  const frames = framesText(
+    video,
+    scratch,
+    openedSec + built.watched.lastSeenMs / 1000 - 12,
+    tappedSec + built.watched.buildToPreviewMs / 1000 + 3
+  ).map(frame => ({ ...frame, atSec: frame.atSec - openedSec }))
   const { watched } = built
   const recorded = recordedPhaseLines(frames, BUILDING)
   writeFileSync(
     ctx.artifact(`${platform}-phase-timings.log`),
     phaseTimingsText({
-      command: `npm run -s e2e -- run schedule/auto-scheduler/native-solver#packed-league --surface ${platform}-app --device phone=<device> --stack <stack>`,
+      command: `(teamstation-devops) npm run e2e -- run <ts>/e2e/tests/schedule/auto-scheduler/native-solver.e2e.ts --scenario packed-league --surface ${platform}-app`,
       platform: `${platform}-app (${ctx.device('phone').slice(0, 8)}…)`,
       scenario: 'native-solver#packed-league',
       buildToPreviewMs: watched.buildToPreviewMs,
@@ -347,14 +309,8 @@ async function packedLeague(
             ]
           : [],
       appendix: [
-        platform === 'android'
-          ? 'Read from the screen recording, not from the sampled reads (adb screenrecord from Build until the preview opened; its last 10 s at 4 frames a second, read with macOS Vision; frame times are seconds from the recording’s start, at Build):'
-          : 'Read from the screen recording, not from the sampled reads (the iPhone’s screen captured over USB on this Mac through AVFoundation, e2e/rigs/app/recordIosScreen.swift, from before the driver attached until after its last read; its frames from 12 s before the modal was last seen (timed from its opening) to the preview, at 4 frames a second, read with macOS Vision; frame times are seconds after the first frame with the modal, when its clock starts):',
-        ...(opened == null
-          ? []
-          : [
-              `  The first frame with the modal: ${opened.sec.toFixed(2)} s into the recording (the driver’s tap on Build returned ${opened.tapLagSec.toFixed(1)} s later; the read times in the notes are from that return)`
-            ]),
+        'Read from the screen recording, not from the sampled reads (maestro-d’s startRecording and stopRecording on the phone, from before sign-in until after its last read; its frames from 12 s before the modal was last seen (timed from its opening) to the preview, at 4 frames a second, read with macOS Vision in the video layer; frame times are seconds after the first frame with the modal, when its clock starts):',
+        `  The first frame with the modal: ${opened.sec.toFixed(2)} s into the recording (the driver’s tap on Build returned ${opened.tapLagSec.toFixed(1)} s later; the read times in the notes are from that return)`,
         `  The last frame with the modal: ${recorded.lastModalSec?.toFixed(2) ?? 'none'} s`,
         ...recorded.lines.map(
           ({ line, firstSec, frames: count }) =>
@@ -379,7 +335,7 @@ async function packedLeague(
     ).equals(true)
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'schedule/auto-scheduler/native-solver',
   title:
     'The Auto-Scheduler builds a packed league at its exact counts with the C++ engine compiled into the app, logging the build in its modal',
@@ -399,15 +355,15 @@ export default defineE2e({
   exclusive: false,
   surfaces: {
     'ios-app': {
-      devices: [{ role: 'phone', needs: ['ios-phone'], hardware: 'required' }]
+      devices: [{ role: 'phone', needs: ['ios-phone'], simulator: 'never' }]
     },
     'android-app': {
       devices: [
-        { role: 'phone', needs: ['android-phone'], hardware: 'preferred' }
+        { role: 'phone', needs: ['android-phone'], simulator: 'allowed' }
       ]
     }
   },
-  services: ['api'],
+  services: [],
   apps: ['teamstation-ios', 'teamstation-android'],
   secrets: [],
   costUsd: 0,

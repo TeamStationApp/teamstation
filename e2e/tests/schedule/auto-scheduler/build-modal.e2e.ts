@@ -3,7 +3,11 @@ import { writeFileSync } from 'node:fs'
 import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
-import { defineE2e, type E2eContext, type WebSession } from '../../../core/spec'
+import {
+  defineHarness,
+  type HarnessContext,
+  type WebSession
+} from '../../../core/spec'
 import {
   apiGet,
   bodyText,
@@ -38,7 +42,7 @@ import {
  */
 
 const COMMAND = (scenario: string): string =>
-  `npm run -s e2e -- run schedule/auto-scheduler/build-modal#${scenario} --surface web-chromium --stack <stack>`
+  `(teamstation-devops) npm run e2e -- run <ts>/e2e/tests/schedule/auto-scheduler/build-modal.e2e.ts --scenario ${scenario} --surface web-chromium`
 
 /** The world's solver limit, which a server with `testSettings` sends. */
 const WORLD_LIMIT_MS = 3000
@@ -155,7 +159,7 @@ interface Built {
  * `limitShot`, or the first that shows a best schedule.
  */
 async function buildAnswering(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   web: WebSession,
   answer: 'Continue processing' | 'Use this schedule' | null,
   options: { maxLimits?: number; limitShot?: string } = {}
@@ -231,7 +235,7 @@ async function buildAnswering(
 }
 
 function writeTimings(
-  ctx: E2eContext,
+  ctx: HarnessContext,
   scenario: string,
   built: Built,
   notes: string[] = []
@@ -265,7 +269,7 @@ async function preview(web: WebSession, id: string): Promise<Preview> {
   return read.body as Preview
 }
 
-export default defineE2e({
+export default defineHarness({
   id: 'schedule/auto-scheduler/build-modal',
   title:
     'A schedule build shows in a modal with its log, Cancel and the time limit, the Auto-Scheduler offers the previous preview, and a large preview publishes in seconds',
@@ -283,8 +287,10 @@ export default defineE2e({
   stack: 'isolated',
   fixtures: ['packed-league', 'packed-league-limit'],
   exclusive: false,
-  surfaces: { 'web-chromium': { devices: [] } },
-  services: ['web', 'api'],
+  surfaces: {
+    'web-chromium': { devices: [], browser: { role: 'browser', needs: [] } }
+  },
+  services: [],
   apps: [],
   secrets: [],
   costUsd: 0,

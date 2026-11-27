@@ -205,7 +205,8 @@
     "src/app/screens/playingTimeRules.e2e.ts",
     "src/app/stream/focus.e2e.ts",
     "src/test/buttonIcons.e2e.ts",
-    "src/test/buttonIcons.gallery.e2e.ts"
+    "src/test/buttonIcons.gallery.e2e.ts",
+    "src/app/scoring/endGameLive.e2e.ts"
   ],
   "helpers": [
     "scripts/e2e/scoreboardLog/e5Browser.e2e.ts",
@@ -481,6 +482,7 @@
     "src/app/sync/offlineDevice.e2e.ts": "platform",
     "src/app/userManagement.e2e.ts": "platform",
     "src/test/dictatedPlacement.e2e.ts": "scoring",
-    "src/app/peopleAffiliations.e2e.ts": "platform"
+    "src/app/peopleAffiliations.e2e.ts": "platform",
+    "src/app/scoring/endGameLive.e2e.ts": "scoring"
   }
 }
