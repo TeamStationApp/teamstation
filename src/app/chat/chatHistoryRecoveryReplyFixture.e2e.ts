@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { executablePath } from 'puppeteer'
 
 import { readSeedTable } from '../../test/chatSeedTable'
+import { navTabCss } from '../../test/navTab.e2e'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Device {
@@ -54,7 +55,7 @@ export async function openRecoveryChat(
   }
 ): Promise<void> {
   await m.tapOn({
-    css: '[role="tab"][aria-label="Chat"], [role="tab"][aria-label="Messages"]'
+    css: navTabCss('chat')
   })
   // Allow a rendering interval for cold crypto before accessibility polling.
   await m.evalBrowserScript({

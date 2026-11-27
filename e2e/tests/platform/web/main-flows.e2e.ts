@@ -636,12 +636,22 @@ export default defineE2e({
     chat: async ctx => {
       const world = await worldOf(ctx)
       const app = await openWebApp(ctx, 'coach')
-      // By its address: the last of the team's tabs is past a phone's edge.
-      await app.go(`/teams/${world.homeTeam}?tab=chats`)
-      // A first chat asks the reader's age once.
-      await app.m
-        .tapOn({ text: 'I’m 13 or Older', timeout: 20000 })
-        .catch(() => undefined)
+      // A fresh coach confirms their age on the team's Chats screen.
+      const chats = `/teams/${world.homeTeam}?tab=chats`
+      await app.go(chats)
+      const declared: boolean = await app.m
+        .tapOn({ text: 'I’m 18 or Older', timeout: 20000 })
+        .then(
+          () => true,
+          () => false
+        )
+      if (declared) {
+        await app.m.extendedWaitUntil({
+          notVisible: { text: 'Your Age' },
+          timeout: 10000
+        })
+        await app.go(chats)
+      }
       await app.m.tapOn({ text: 'Staff', timeout: 30000 })
       // And, once, whether to send notifications.
       await app.m

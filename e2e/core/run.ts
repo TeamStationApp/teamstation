@@ -512,11 +512,12 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     }
     let coverageIndex = 0
     const recordCoverage = async (): Promise<void> => {
-      if (options.browserCoverage == null || handle.webDir == null) return
+      const webDir = process.env.TS_TAB_COVERAGE_WEB_DIR ?? handle.webDir
+      if (options.browserCoverage == null || webDir == null) return
       for (const session of sessions) {
         await writeCoverage(
           [session.page],
-          handle.webDir,
+          webDir,
           handle.origin,
           coverageFile(options.browserCoverage, options.id, coverageIndex++)
         )

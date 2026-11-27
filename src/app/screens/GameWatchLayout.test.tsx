@@ -5,6 +5,11 @@ import { AccessibilityInfo, View } from 'react-native'
 
 import { mount, settle, unmount } from '../../test/gameFormDom'
 import {
+  scrollFrom,
+  scrollState,
+  withNavScroll
+} from '../components/navScroll.test.helpers'
+import {
   PageScrollContext,
   type PageScrollSource
 } from '../components/pageScroll'
@@ -90,13 +95,15 @@ describe('browser event pane in pill pages', function () {
         </TabPages>
       )
     }
-    await mount(<Harness />)
+    await mount(withNavScroll(<Harness />))
     // Something inside the pane's scroll view.
     const pane = (): Element =>
       [...document.querySelectorAll('[data-page="watch"] div')].find(
         node => node.textContent === 'Event sections'
       )!
     const onScroll = scroller(pane()).onScroll as (event: unknown) => void
+    await scrollFrom(pane(), 'wheel', 900)
+    expect(scrollState()).equals('compact')
     const before = scrolled
     await act(async () => {
       onScroll({ nativeEvent: { contentOffset: { x: 0, y: 40 } } })
@@ -328,7 +335,7 @@ describe('browser event pane in pill pages', function () {
       expect(list).equals(page)
       expect(list?.element).not.equals(null)
       await unmount()
-      await mount(<Watch sideways pagedList />)
+      await mount(withNavScroll(<Watch sideways pagedList />))
       expect(list).not.equals(page)
       expect(
         (list?.element as unknown as HTMLElement).contains(
@@ -336,6 +343,12 @@ describe('browser event pane in pill pages', function () {
         )
       ).equals(true)
       expect(list?.element).not.equals(page?.element)
+      await scrollFrom(
+        document.querySelector('[data-testid="highlights"]'),
+        'pointer',
+        900
+      )
+      expect(scrollState()).equals('compact')
     })
 
     it('has no scroller to follow without `pagedList`', async function () {

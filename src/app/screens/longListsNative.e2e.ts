@@ -9,12 +9,25 @@ import {
   type WheelNode,
   wheelValue
 } from '../../../e2e/rigs/iosWheel'
-import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
+import {
+  log,
+  maestro,
+  navigationDaemonName
+} from '../../../e2e/rigs/refinementsMaestro'
+import {
+  recordHubDevice,
+  type RecordingDevice
+} from '../../test/hubRecording.e2e'
 import {
   LONG_LISTS_SHAPE,
   type LongListsSeed,
   longListsSupport
 } from '../../test/longListsSeed'
+import {
+  navigationControl,
+  signInWithFixturePassword
+} from '../../test/navigationControl.e2e'
+import { navTab } from '../../test/navTab.e2e'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 /**
@@ -33,7 +46,8 @@ import { dismissNotificationAskOn } from '../../test/notificationAsk'
  * E5 starts from a fresh sign-in, so run it on an app with no session: a
  * simulator cannot lose its network, so the fixture stops answering it.
  */
-interface Device {
+interface Device extends RecordingDevice {
+  hideKeyboard: () => Promise<unknown>
   launchApp: (options?: unknown) => Promise<unknown>
   stopApp: (options?: unknown) => Promise<unknown>
   openLink: (options: { link: string }) => Promise<unknown>
@@ -83,8 +97,9 @@ interface Manifest extends LongListsSeed {
   phoneNetworkRoute: string
 }
 
-const APP_ID = 'app.teamstation.app'
-/** The read that stores Schedule's first page, as a phone's prefetch asks. */
+const ENTITY_SCHEME = process.env.TS_LONG_LISTS_ENTITY_SCHEME ?? 'teamstation'
+const APP_ID = process.env.TS_LONG_LISTS_APP_ID ?? 'app.teamstation.app'
+/** The first page stored when the phone opens Schedule. */
 const UPCOMING_PAGE = '/api/v1/events?paged=1&when=upcoming'
 /** A row of the upcoming list, whichever day the run is. */
 const ROW_TEXT = 'Demo Hawks'
@@ -140,13 +155,13 @@ async function apiSession(manifest: Manifest): Promise<string> {
     body: JSON.stringify({ email: manifest.email })
   })
   assert.equal(asked.status, 202)
-  const answer = await fetch(
+  const answer = await navigationControl(
     `${manifest.origin}${manifest.signInLinkRoute}?email=${encodeURIComponent(manifest.email)}`
   )
   assert.ok(answer.ok, 'apiSession: no sign-in mail')
   const { link } = (await answer.json()) as { link?: string }
   const token = link?.split('/signin/')[1]
-  assert.ok(token != null && token !== '', `apiSession: no link in ${link}`)
+  assert.ok(token != null && token !== '', 'apiSession: no sign-in link')
   const verified = await fetch(`${manifest.apiBaseUrl}/auth/link/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -170,7 +185,7 @@ async function main(): Promise<void> {
     .split(',')
     .map(name => name.trim())
   const daemon = await maestro(
-    process.env.MAESTRO_D ?? `longListsNative-${platform}`
+    process.env.MAESTRO_D ?? navigationDaemonName(`longListsNative-${platform}`)
   )
   const teamId = process.env.MAESTRO_D_TEAM_ID
   const m = (await daemon.attach({
@@ -180,17 +195,12 @@ async function main(): Promise<void> {
     artifacts: 'on-failure',
     ...(teamId != null && teamId !== '' ? { teamId } : {})
   })) as unknown as Device
-  /** A hierarchy's unit in points: an Android phone's is the pixel. */
-  const scale =
-    platform === 'android'
-      ? Number(
-          /(\d+)\s*$/.exec(
-            execFileSync('adb', ['-s', device, 'shell', 'wm', 'density'], {
-              encoding: 'utf8'
-            })
-          )?.[1]
-        ) / 160
-      : 1
+  // A remote adapter can supply the two Android operations absent from the
+  // hub protocol: physical display density and the precisely timed gesture.
+  const geometry = device.includes('@')
+    ? process.env.TS_LONG_LISTS_ANDROID_GEOMETRY
+    : undefined
+  let scale = 1
   const phone = platform === 'android'
   const note = async (line: string): Promise<void> => {
     await log(support, `longLists-${platform}.log`, line)
@@ -218,6 +228,10 @@ async function main(): Promise<void> {
     name: string,
     run: () => Promise<void>
   ): Promise<void> => {
+    if (device.includes('@')) {
+      await recordHubDevice(m, join(artifacts, name), run)
+      return
+    }
     // maestro-d's iOS driver does not record, and a simulator can itself.
     if (platform === 'ios') {
       const video = spawn('xcrun', [
@@ -276,33 +290,47 @@ async function main(): Promise<void> {
   const signIn = async (): Promise<void> => {
     await m.launchApp({ appId: APP_ID, stopApp: true })
     if (!(await shown('Sign in to TeamStation', 15000))) return
+    const credentials = process.env.TS_NAV_SIGN_IN_FILE
+    if (platform === 'android' && credentials != null) {
+      await signInWithFixturePassword(m, manifest.email, credentials)
+      await visible('Your Home', 30000)
+      return
+    }
     const asked = await fetch(`${manifest.apiBaseUrl}/auth/email-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: manifest.email })
     })
     assert.equal(asked.status, 202)
-    const answer = await fetch(
+    const answer = await navigationControl(
       `${manifest.origin}${manifest.signInLinkRoute}?email=${encodeURIComponent(manifest.email)}`
     )
     assert.ok(answer.ok, 'No sign-in mail')
     const { link } = (await answer.json()) as { link?: string }
     const token = link?.split('/signin/')[1]
-    assert.ok(token != null && token !== '', `No sign-in link in ${link}`)
+    assert.ok(token != null && token !== '', 'No sign-in link')
     await m.openLink({ link: `teamstation://signin/${token}` })
     await visible('Your Home', 30000)
   }
   const onSchedule = async (): Promise<void> => {
-    await m.openLink({ link: 'teamstation://schedule' })
+    await navTab(m, 'schedule')
     await visible('Upcoming')
   }
   /** Tells the fixture how the phone stands, and hears what it has read. */
   const phoneNetwork = async (offline?: boolean): Promise<string[]> => {
     const asked = offline == null ? '' : `?offline=${offline ? 1 : 0}`
-    const answer = await fetch(
+    const answer = await navigationControl(
       `${manifest.controlOrigin}${manifest.phoneNetworkRoute}${asked}`
     )
     return ((await answer.json()) as { seen: string[] }).seen
+  }
+  const withPhoneOffline = async (run: () => Promise<void>): Promise<void> => {
+    await phoneNetwork(true)
+    try {
+      await run()
+    } finally {
+      await phoneNetwork(false)
+    }
   }
   /** The top of the pills on the screen. */
   const pillsTop = async (): Promise<number> => {
@@ -474,6 +502,14 @@ async function main(): Promise<void> {
   ): Promise<void> => {
     const x = 200
     const from = dy > 0 ? 300 : 700
+    if (geometry != null) {
+      execFileSync(geometry, [
+        device,
+        'gesture',
+        ...[x, from, dy, ms, hold, scale].map(String)
+      ])
+      return
+    }
     if (platform === 'android') {
       const place = (points: number): string =>
         String(Math.round(points * scale))
@@ -585,22 +621,23 @@ async function main(): Promise<void> {
     E3: webOnly('E3'),
     E4: webOnly('E4'),
     E5: async () => {
-      // Home's prefetch stores the first page, and Schedule was never opened.
-      for (let wait = 0; wait < 60; wait++) {
-        if ((await phoneNetwork()).includes(UPCOMING_PAGE)) break
-        await pause(500)
-      }
+      // A phone caches Schedule when first opened. Its background offline
+      // scoring set only prepares the three eligible games.
+      await onSchedule()
+      await visible(ROW_TEXT, 30000)
       assert.ok(
-        (await phoneNetwork()).includes(UPCOMING_PAGE),
-        'E5: Home did not store the first page'
+        (await phoneNetwork()).some(path => path.startsWith(UPCOMING_PAGE)),
+        'Schedule read its first page'
       )
+      await navTab(m, 'home')
+      await visible('Your Home')
       const stored = (await phoneNetwork()).length
       await pause(2000)
-      await phoneNetwork(true)
-      await onSchedule()
-      await visible(ROW_TEXT)
-      await note('E5: Schedule painted offline, from the prefetch alone')
-      await phoneNetwork(false)
+      await withPhoneOffline(async () => {
+        await onSchedule()
+        await visible(ROW_TEXT)
+        await note('E5: Schedule painted offline from its stored first page')
+      })
       assert.ok((await phoneNetwork()).length >= stored)
 
       await recorded(`${platform}-schedule-pills.mp4`, async () => {
@@ -636,20 +673,23 @@ async function main(): Promise<void> {
         )
       })
 
-      await phoneNetwork(true)
-      await m.stopApp({ appId: APP_ID })
-      await m.launchApp({ appId: APP_ID, stopApp: true })
-      await visible('Your Home', 30000)
-      await onSchedule()
-      await visible(ROW_TEXT, 30000)
-      await pause(1500)
-      await shot(`${platform}-offline-paint.png`)
-      await note('E5: relaunched offline, the stored first page painted')
-      await scrollDown(SWIPES_PAST_A_PAGE)
-      await visible('Could not load more', 30000)
-      await visible('Retry')
-      await shot(`${platform}-offline-retry.png`)
-      await phoneNetwork(false)
+      await withPhoneOffline(async () => {
+        await m.stopApp({ appId: APP_ID })
+        await m.launchApp({ appId: APP_ID, stopApp: true })
+        await visible('Your Home', 30000)
+        // The offline banner moves the tab bar when the cached Home opens.
+        await m.assertVisible({ id: 'offlineBannerText', timeout: 30000 })
+        await settled()
+        await onSchedule()
+        await visible(ROW_TEXT, 30000)
+        await pause(1500)
+        await shot(`${platform}-offline-paint.png`)
+        await note('E5: relaunched offline, the stored first page painted')
+        await scrollDown(SWIPES_PAST_A_PAGE)
+        await visible('Could not load more', 30000)
+        await visible('Retry')
+        await shot(`${platform}-offline-retry.png`)
+      })
       await tap('Retry')
       await pause(2000)
       assert.ok(
@@ -660,7 +700,7 @@ async function main(): Promise<void> {
     E6: async () => {
       const openTeam = async (): Promise<void> => {
         await m.openLink({
-          link: `teamstation://teams/${manifest.teamId}?tab=schedule`
+          link: `${ENTITY_SCHEME}://teams/${manifest.teamId}?tab=schedule`
         })
         await visible('Stats')
         await pause(2500)
@@ -858,7 +898,9 @@ async function main(): Promise<void> {
       })
     },
     E7: async () => {
-      await m.openLink({ link: `teamstation://seasons/${manifest.seasonId}` })
+      await m.openLink({
+        link: `${ENTITY_SCHEME}://seasons/${manifest.seasonId}`
+      })
       await visible('Stats')
       await pause(1500)
       /** What the hero says, whatever is on the screen. */
@@ -978,14 +1020,15 @@ async function main(): Promise<void> {
           )
         ).size
 
-      await m.openLink({ link: 'teamstation://notifications' })
+      await m.openLink({ link: `${ENTITY_SCHEME}://notifications` })
       await visible('Pending')
-      await pause(1500)
+      const firstReminder = `${ROW}nev_long_reminder_1`
+      await m.assertVisible({ id: firstReminder, timeout: 30000 })
       const { pendingNotices, sentNotices, reminders } = LONG_LISTS_SHAPE
       const opening = await rowsOnShow()
       assert.equal(
         opening[0],
-        `${ROW}nev_long_reminder_1`,
+        firstReminder,
         `E9: reminders come first, in ${opening.join(' ')}`
       )
       await tap('Dismiss')
@@ -1022,7 +1065,9 @@ async function main(): Promise<void> {
     },
     E10: async () => {
       const ROW = 'player-highlight-'
-      await m.openLink({ link: `teamstation://players/${manifest.playerId}` })
+      await m.openLink({
+        link: `${ENTITY_SCHEME}://players/${manifest.playerId}`
+      })
       await visible('Player sections')
       await pause(1500)
       const seen = new Set<string>()
@@ -1144,7 +1189,7 @@ async function main(): Promise<void> {
         await shot(`${platform}-game-highlight-${layout}.png`)
       }
       await m.openLink({
-        link: `teamstation://games/${manifest.highlightsGameId}`
+        link: `${ENTITY_SCHEME}://games/${manifest.highlightsGameId}`
       })
       await visible('Game sections')
       // The section pill, in Box score's row, not the tab bar's Videos.
@@ -1250,7 +1295,7 @@ async function main(): Promise<void> {
         )
 
       await m.openLink({
-        link: `teamstation://umpires/${manifest.leagueId}`
+        link: `${ENTITY_SCHEME}://umpires/${manifest.leagueId}`
       })
       await visible('Umpire')
       await pause(1500)
@@ -1445,7 +1490,7 @@ async function main(): Promise<void> {
       // 1. Filters, then the Date and Season sorts, on one line; Division
       //    after Date in the sticky header.
       await m.openLink({
-        link: `teamstation://umpires/${manifest.leagueId}`
+        link: `${ENTITY_SCHEME}://umpires/${manifest.leagueId}`
       })
       await visible('Umpire')
       await pause(1500)
@@ -1568,7 +1613,7 @@ async function main(): Promise<void> {
     },
     E14: async () => {
       const league = manifest.leagueId
-      const requirementsLink = `teamstation://groups/league/${league}/umpire-requirements`
+      const requirementsLink = `${ENTITY_SCHEME}://groups/league/${league}/umpire-requirements`
       const byId = (nodes: ViewNode[], id: string): ViewNode | undefined =>
         nodes.find(node => node.id === id && node.bounds != null)
       const named = (nodes: ViewNode[], text: string): ViewNode | undefined =>
@@ -1751,7 +1796,7 @@ async function main(): Promise<void> {
       assert.equal(after, 'Demo Regular', 'E14: Season 1→9 follows the order')
       assert.notEqual(after, before)
       await m.openLink({
-        link: `teamstation://umpires/${league}?sort=seasonPriority`
+        link: `${ENTITY_SCHEME}://umpires/${league}?sort=seasonPriority`
       })
       await visible('Division', 30000)
       await note(`E14: the schedule's top row went from ${before} to ${after}`)
@@ -1809,7 +1854,7 @@ async function main(): Promise<void> {
 
       // 1. The Umpire Management card's last row opens the screen.
       await m.openLink({
-        link: `teamstation://groups/league/${league}/settings`
+        link: `${ENTITY_SCHEME}://groups/league/${league}/settings`
       })
       // The settings open at their top; the umpire card is further down, under
       // whatever sections precede it (SafeSport among them), and reach scrolls
@@ -1892,6 +1937,21 @@ async function main(): Promise<void> {
   }
 
   try {
+    if (platform === 'android' && device.includes('@') && geometry == null)
+      throw new Error(
+        'Supply a leased-device geometry reader for Android long lists'
+      )
+    const density =
+      platform !== 'android'
+        ? ''
+        : geometry == null
+          ? execFileSync('adb', ['-s', device, 'shell', 'wm', 'density'], {
+              encoding: 'utf8'
+            })
+          : execFileSync(geometry, [device, 'density'], { encoding: 'utf8' })
+    scale =
+      platform === 'android' ? Number(/(\d+)\s*$/.exec(density)?.[1]) / 160 : 1
+    assert.ok(scale > 0, 'Expected the active display density')
     await note(
       `$ TS_LONG_LISTS_PLATFORM=${platform} TS_LONG_LISTS_CASES=${chosen.join(',')} node -r sucrase/register src/app/screens/longListsNative.e2e.ts`
     )

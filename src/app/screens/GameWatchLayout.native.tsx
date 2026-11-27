@@ -11,6 +11,10 @@ import Animated, {
 import { scheduleOnUI } from 'react-native-worklets'
 
 import {
+  useNavAnimatedScroll,
+  useNavCompactScroll
+} from '../components/navCompact'
+import {
   pageScroller,
   type PageScrollViewProps
 } from '../components/PageScrollView'
@@ -71,12 +75,16 @@ export function GameWatchLayout(
   const contentHeight = useSharedValue(0)
   const listTop = useSharedValue(0)
   const [columnWidth, setColumnWidth] = useState<number | undefined>(undefined)
+  const reportNav = useNavCompactScroll()
+  const forNav = useNavAnimatedScroll(reportNav)
+  const paneNav = useNavAnimatedScroll(useNavCompactScroll(sideBySide))
   const handleScroll = useAnimatedScrollHandler(event => {
     scrollY.value = event.contentOffset.y
   })
   // The native pinned-head implementation always supplies a Reanimated handler.
   const onPageScroll = useComposedEventHandler([
     handleScroll,
+    forNav,
     (sharedScroll ?? null) as typeof handleScroll | null
   ])
   const pegStyle = useAnimatedStyle(() => {
@@ -205,6 +213,8 @@ export function GameWatchLayout(
           </Animated.View>
           <Scroller
             {...paneScroll}
+            onScroll={paneNav ?? undefined}
+            scrollEventThrottle={paneNav == null ? undefined : 16}
             scrollEnabled={sideBySide}
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled

@@ -37,6 +37,8 @@ const palette = {
   bone: '#F5F7F1',
   cream: '#EDF2E7',
   creamPressed: '#E2E7DB',
+  // UIKit's selected tab highlight on iOS 27.2, sampled over this canvas.
+  pillGray: '#E3E4DF',
   fieldLine: '#E3EBD9',
   stone: '#D3DCCB',
   // A chosen search location's pill.
@@ -45,6 +47,9 @@ const palette = {
   // Text, warm charcoal rather than black.
   bark: '#1A2116',
   moss: '#5C6B55',
+  // Between moss and forest: an opaque inactive tab stays clearly behind the
+  // selected one and still clears 3:1 on the opaque gray pill.
+  mossDeep: '#505F49',
   ash: '#788272',
 
   // Status. Clay is the active indicator, gold the honours, and live is red —
@@ -194,6 +199,16 @@ export const tsBallpark: Theme = {
   glassBorderColor: 'rgba(43, 45, 38, 0.10)',
   glassBlur: 'blur(24px) saturate(200%)',
   navActiveColor: palette.forest,
+  // As on UIKit's bar: a light gray highlight, and the selected tab in the
+  // brand green with a filled glyph while the others are near-black outlines.
+  // The glyph and the ink carry the selection; the pill alone is about 1.2:1.
+  navSelectedColor: palette.pillGray,
+  navTabActiveColor: palette.forest,
+  navTabInactiveColor: palette.bark,
+  navOpaqueBackgroundColor: palette.white,
+  navOpaqueSelectedColor: palette.selectorGray,
+  navOpaqueActiveColor: palette.forest,
+  navOpaqueInactiveColor: palette.mossDeep,
   navInactiveColor: palette.moss,
 
   // The scoreboard panel: dark, so the numerals carry.

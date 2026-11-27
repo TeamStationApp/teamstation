@@ -30,17 +30,26 @@ const chunkDir =
   process.argv
     .find(arg => arg.startsWith('--chunk-dir='))
     ?.slice('--chunk-dir='.length) ?? 'lib'
-const files = currentSetup
-  ? globSync([
-      'src/app/scoring/*.test.tsx',
-      'src/app/field/*.test.tsx',
-      'src/app/sync/*.test.tsx',
-      'src/app/hooks/*.test.tsx',
-      'src/app/screens/CoachGameScreen.test.tsx'
-    ])
-  : // `--tier=integration` bundles the app files that need a server; the default
-    // is the unit tier's.
-    appFiles(tierOf(process.argv.slice(2)))
+const selectedFiles = process.argv
+  .filter(arg => arg.startsWith('--spec='))
+  .map(arg => arg.slice('--spec='.length))
+const output = process.argv
+  .find(arg => arg.startsWith('--output='))
+  ?.slice('--output='.length)
+const files =
+  selectedFiles.length > 0
+    ? selectedFiles
+    : currentSetup
+      ? globSync([
+          'src/app/scoring/*.test.tsx',
+          'src/app/field/*.test.tsx',
+          'src/app/sync/*.test.tsx',
+          'src/app/hooks/*.test.tsx',
+          'src/app/screens/CoachGameScreen.test.tsx'
+        ])
+      : // `--tier=integration` bundles the app files that need a server; the default
+        // is the unit tier's.
+        appFiles(tierOf(process.argv.slice(2)))
 const extraFiles = rosterEdit
   ? globSync([
       'src/app/App*.test.tsx',
@@ -84,9 +93,11 @@ const entries =
     : [
         {
           files,
-          outfile: currentSetup
-            ? 'lib/current-setup-tests.cjs'
-            : 'lib/scoring-tests.cjs'
+          outfile:
+            output ??
+            (currentSetup
+              ? 'lib/current-setup-tests.cjs'
+              : 'lib/scoring-tests.cjs')
         },
         ...extraFiles.map((file, index) => ({
           files: [file],
@@ -158,6 +169,7 @@ const bundle = async entry =>
       '@react-three/test-renderer',
       'jsdom',
       'mocha',
+      'esbuild',
       'chai',
       // Its Node build finds its own WebAssembly by import.meta.url, which a
       // CommonJS bundle empties: it is required at run time instead.

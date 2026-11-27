@@ -10,6 +10,7 @@ import {
 } from 'react-native'
 
 import { Badge, Button, Screen } from '../components'
+import { useNavListScroll } from '../components/navCompact'
 import { useBreakpoint } from '../components/useBreakpoint'
 import { edgeMarginRem } from '../layout/margins'
 import { lstrings, sprintf } from '../locales/strings'
@@ -101,6 +102,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   })
   const listVisible =
     props.embedded !== true || !narrow || props.selectedVisible !== true
+  const nav = useNavListScroll(listVisible, list)
   const visibilityState = useRef({ visible: listVisible, version: 0 })
   if (visibilityState.current.visible !== listVisible) {
     visibilityState.current.visible = listVisible
@@ -897,7 +899,6 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         />
       )}
       <FlatList
-        ref={list}
         testID="chat-conversation-list"
         data={rows}
         contentContainerStyle={{
@@ -955,7 +956,11 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         // Web batches remain bounded; queue them directly for the interaction
         // scheduler instead of adding a timer between restoration steps.
         updateCellsBatchingPeriod={Platform.OS === 'web' ? 0 : undefined}
-        onScroll={rememberOffset}
+        {...nav}
+        onScroll={event => {
+          if (nav.onScroll != null && liveData()) nav.onScroll(event)
+          rememberOffset(event)
+        }}
         onScrollEndDrag={event => {
           rememberOffset(event, 'drag')
         }}
@@ -1001,7 +1006,9 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           }
         }}
         scrollEventThrottle={100}
-        onScrollBeginDrag={() => {
+        onScrollBeginDrag={event => {
+          if (nav.onScrollBeginDrag != null && liveData())
+            nav.onScrollBeginDrag(event)
           // RNW also emits this for the programmatic restoration steps.
           if (Platform.OS !== 'web' && liveData()) {
             userScrolled(true)

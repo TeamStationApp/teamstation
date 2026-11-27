@@ -12,6 +12,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 import { presignGetUrl } from '../../server/media/presign'
 import type { retainedBrowserAction } from '../../test/chatBrowserLegacyActions.e2e'
 import { readSeedTable } from '../../test/chatSeedTable'
+import { navTabCss } from '../../test/navTab.e2e'
 import { dismissNotificationAsk } from '../../test/notificationAsk'
 
 /**
@@ -1952,8 +1953,7 @@ describe('chat scenarios in the browser', function () {
     await signIn(page, seed, 'D2')
     const search = await until(
       'the Search tab',
-      async () =>
-        (await page.$('[role="tab"][aria-label="Search"]')) ?? undefined
+      async () => (await page.$(navTabCss('search'))) ?? undefined
     )
     await search.click()
     await typeInto(page, 'Search leagues, seasons, teams and people', 'Haw')

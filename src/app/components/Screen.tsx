@@ -7,15 +7,25 @@ import {
   type ViewStyle
 } from 'react-native'
 import type Animated from 'react-native-reanimated'
+import { useComposedEventHandler } from 'react-native-reanimated'
 
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './AppNav'
+import {
+  FLOATING_BOTTOM_REM,
+  FLOATING_HEIGHT_REM,
+  NAV_CLEARANCE_REM
+} from './AppNav'
 import { type ContentInset, ContentInsetContext } from './contentInset'
 import { useHeaderSlot } from './headerSlot'
-import { navClearanceAboveInset } from './navClearance'
-import { pageScroller } from './PageScrollView'
+import { navContentBottom } from './navClearance'
+import {
+  useNavAnimatedScroll,
+  useNavCompactScroll,
+  useNavScrollInput
+} from './navCompact'
+import { isWorkletHandler, pageScroller } from './PageScrollView'
 import { useActiveRef, usePageSliding } from './TabPages'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -83,25 +93,22 @@ export interface ScreenProps {
  * the clearance the floating nav capsule needs, and either way the offline
  * banner's height while it shows.
  *
- * The capsule floats above the home indicator. On iOS it sits against that
- * inset, so the clearance drops the extra margin; Android and the web keep
- * both. A screen that scrolls its content to a place of its own choosing
- * counts this in, because the page can always scroll this much further.
  */
 export function useScreenBottom(): number {
   const theme = useTheme()
   const breakpoint = useBreakpoint()
   const insets = useInsets()
-  const banner = useHeaderSlot().bannerHeight ?? 0
+  const { navigationHeight, bannerHeight: banner = 0 } = useHeaderSlot()
   if (breakpoint !== 'phone') return theme.rem(theme.spaceLgRem) + banner
   return (
-    navClearanceAboveInset(
+    (navigationHeight ?? theme.rem(FLOATING_HEIGHT_REM)) +
+    navContentBottom(
       Platform.OS,
-      theme.rem(NAV_CLEARANCE_REM),
-      theme.rem(FLOATING_BOTTOM_REM)
+      theme.rem(FLOATING_BOTTOM_REM),
+      insets.bottom,
+      banner
     ) +
-    insets.bottom +
-    banner
+    theme.rem(2)
   )
 }
 
@@ -165,7 +172,34 @@ export function Screen(props: ScreenProps): React.ReactElement {
   // and stops feeding the shared scroll and layout handlers: a fling still
   // coasting there would move the arriving page's pinned head.
   const scroller = useActiveRef(scrollRef)
-  const handleScroll = useActiveRef(onScroll)
+  const observeNavScroll = useNavCompactScroll()
+  const input = useNavScrollInput(observeNavScroll, scroller)
+  const forNav = useNavAnimatedScroll(observeNavScroll)
+  const plainScroll = typeof onScroll === 'function' ? onScroll : undefined
+  const animatedScroll = isWorkletHandler(onScroll)
+  const composedScroll = useComposedEventHandler([
+    forNav,
+    (animatedScroll ? onScroll : null) as typeof forNav | null
+  ])
+  const handleScroll = useActiveRef<ScreenProps['onScroll']>(
+    observeNavScroll == null
+      ? onScroll
+      : animatedScroll
+        ? composedScroll
+        : onScroll != null && typeof onScroll !== 'function'
+          ? onScroll
+          : event => {
+              const { contentOffset, contentSize, layoutMeasurement } =
+                event.nativeEvent
+              if (contentSize != null && layoutMeasurement != null)
+                observeNavScroll(
+                  contentOffset.y,
+                  contentSize.height,
+                  layoutMeasurement.height
+                )
+              plainScroll?.(event)
+            }
+  )
   const handleLayout = useActiveRef(onLayout)
   const handleScrollBeginDrag = useActiveRef(onScrollBeginDrag)
   // Clear while it slides against another layout of its screen, whose
@@ -226,10 +260,17 @@ export function Screen(props: ScreenProps): React.ReactElement {
   const Scroller = pageScroller(pagedList)
   return (
     <Scroller
-      ref={scroller}
       style={[styles.fill, clear && styles.clear]}
       onScroll={handleScroll}
-      onScrollBeginDrag={handleScrollBeginDrag}
+      {...input}
+      onScrollBeginDrag={
+        animatedScroll || input.onScrollBeginDrag == null
+          ? handleScrollBeginDrag
+          : event => {
+              input.onScrollBeginDrag?.(event)
+              handleScrollBeginDrag?.()
+            }
+      }
       onLayout={handleLayout}
       scrollEventThrottle={16}
       // Without this the first tap on a button while a field has focus only

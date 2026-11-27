@@ -1,6 +1,11 @@
 import React, { useCallback, useLayoutEffect, useRef } from 'react'
 import { View } from 'react-native'
 
+import {
+  useNavCompactScroll,
+  useNavListScroll,
+  useNavScrollInput
+} from '../components/navCompact'
 import { usePageScrollSource } from '../components/pageScroll'
 import { pageScroller, Published } from '../components/PageScrollView'
 import { PinnedSpacer } from '../components/PinnedBands'
@@ -39,6 +44,8 @@ export function GameWatchLayout(
   // handlers, as `Screen` does.
   const handleLayout = useActiveRef(pinned.screen.onLayout)
   const sharedScroll = useActiveRef(pinned.screen.onScroll)
+  const pageNav = useNavListScroll(true, useActiveRef(pinned.screen.scrollRef))
+  const paneNav = useNavCompactScroll(sideBySide)
   const listRef = useRef<HTMLElement | null>(null)
   const fitList = useCallback(() => {
     const node = listRef.current
@@ -46,6 +53,14 @@ export function GameWatchLayout(
     const room = window.innerHeight - node.getBoundingClientRect().top
     node.style.maxHeight = `${Math.max(120, Math.round(room))}px`
   }, [])
+  const attachPane = useCallback(
+    (node: HTMLDivElement | null) => {
+      listRef.current = node
+      if (node != null) requestAnimationFrame(fitList)
+    },
+    [fitList]
+  )
+  const paneInput = useNavScrollInput(paneNav, attachPane)
   // Side by side the list pane scrolls by itself, and its list follows that.
   const pane = usePageScrollSource()
   const { attachElement } = pane
@@ -56,10 +71,11 @@ export function GameWatchLayout(
   const Scroller = pageScroller(pagedList)
   return (
     <Scroller
-      ref={useActiveRef(pinned.screen.scrollRef)}
       onLayout={handleLayout}
       style={style}
+      {...pageNav}
       onScroll={event => {
+        pageNav.onScroll?.(event)
         if (typeof sharedScroll === 'function') sharedScroll(event)
         fitList()
       }}
@@ -106,10 +122,19 @@ export function GameWatchLayout(
             {short ? null : description}
           </div>
           <div
-            ref={node => {
-              listRef.current = node
-              if (node != null) requestAnimationFrame(fitList)
-            }}
+            {...paneInput}
+            onScroll={
+              paneNav == null
+                ? undefined
+                : event => {
+                    const pane = event.currentTarget
+                    paneNav(
+                      pane.scrollTop,
+                      pane.scrollHeight,
+                      pane.clientHeight
+                    )
+                  }
+            }
             style={{
               boxSizing: 'border-box',
               flexGrow: sideBySide ? 0 : 1,

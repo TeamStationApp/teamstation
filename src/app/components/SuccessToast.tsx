@@ -3,8 +3,9 @@ import { Animated, Platform, Text, View } from 'react-native'
 
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { NAV_CLEARANCE_REM } from './AppNav'
+import { FLOATING_BOTTOM_REM, FLOATING_HEIGHT_REM } from './AppNav'
 import { GlassView } from './GlassView'
+import { navContentBottom } from './navClearance'
 import { useBreakpoint } from './useBreakpoint'
 
 export interface SuccessNotice {
@@ -15,9 +16,11 @@ export interface SuccessNotice {
 /** Shell-level confirmation survives the screen that submitted the change. */
 export function SuccessToast({
   notice,
-  bannerHeight = 0
+  bannerHeight = 0,
+  navigationHeight
 }: {
   notice?: SuccessNotice
+  navigationHeight?: number
   /** The offline banner's height while it shows: the toast rides above it. */
   bannerHeight?: number
 }): React.ReactElement | null {
@@ -56,10 +59,16 @@ export function SuccessToast({
         styles.position,
         {
           opacity,
-          bottom:
-            insets.bottom +
-            bannerHeight +
-            theme.rem(phone ? NAV_CLEARANCE_REM - 1 : 2)
+          bottom: phone
+            ? (navigationHeight ?? theme.rem(FLOATING_HEIGHT_REM)) +
+              navContentBottom(
+                Platform.OS,
+                theme.rem(FLOATING_BOTTOM_REM),
+                insets.bottom,
+                bannerHeight
+              ) +
+              theme.rem(1)
+            : insets.bottom + bannerHeight + theme.rem(2)
         }
       ]}
     >

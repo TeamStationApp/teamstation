@@ -106,3 +106,21 @@ A category's coverage script reads what its scenarios executed:
 NODE_V8_COVERAGE=coverage/server npm run e2e -- run <id> --surface web-chromium --browser-coverage coverage/browser
 npm run e2e -- coverage-merge coverage/browser --out coverage/browser.json
 ```
+
+### Phone tab bar
+
+`npm run coverage.tabBar` measures JavaScript unit tests and the hosted tab-bar XCTest suite. Set `TS_TAB_IOS` to your task simulator, or pass `-- --js-only` for the JavaScript gate. Each changed production file and the total must reach 90% in unit tests and 95% after combining measured counters. A unit run reaching both thresholds needs no additional fixture.
+
+To include integration or end-to-end measurements, run a collector on the same revision. For browser coverage, run `browser-build` and deploy its printed web directory to the isolated test stack. Set `TS_TAB_COVERAGE_WEB_DIR` to that directory when collecting. The collector checks the build revision and verifies the browser’s executed bytes and source map against that build. Each successful invocation prints a fresh `measured.json` file. Supply each file through `--supplement` when running the gate. The examples use an already attached test stack, its matching release settings, and an owned simulator.
+
+```sh
+node scripts/tab-bar-collect-coverage.mjs node node_modules/.bin/mocha -r sucrase/register --timeout 60000 src/server/tess/sitemap.integration.test.ts
+# Deploy the printed directory to the test stack, then set TS_TAB_COVERAGE_WEB_DIR to its local path.
+node scripts/tab-bar-collect-coverage.mjs browser-build
+node scripts/tab-bar-collect-coverage.mjs browser 'app-shell/lists/list-screens#result-pill-phone' --stack "$STACK_ID"
+node scripts/tab-bar-collect-coverage.mjs xctest TeamStationTests/GlassViewTests
+node scripts/tab-bar-collect-coverage.mjs ios node -r sucrase/register e2e/core/cli.ts run 'app-shell/tab-bar/compact#scroll-and-switch' --surface ios-app --stack "$STACK_ID" --device "device=$TS_TAB_IOS"
+npm run coverage.tabBar -- --supplement "$JS_RECEIPT" --supplement "$NATIVE_RECEIPT"
+```
+
+The browser collector builds the current web release and checks the executing script and its local source map against that build. The simulator collector builds an instrumented app with a temporary bundle ID, runs the provided journey with `TS_TAB_APP_ID` set to that app, and reads its LLVM profiles after backgrounding it. The collector removes its app afterward. Both iOS modes accept `TS_TAB_DERIVED_DATA` for your run's build cache.

@@ -352,6 +352,10 @@ describe('the phone shell offline', () => {
     expect(bottomOf(strip)).equals('0px')
     expect(getComputedStyle(strip).position).equals('absolute')
     expect(bottomOf(nav)).equals('40px')
+    expect(
+      Number(getComputedStyle(strip).zIndex),
+      'the banner receives taps above the bar'
+    ).to.be.greaterThan(Number(getComputedStyle(nav).zIndex))
     // The screen's last row clears the capsule and the banner.
     const clearance = tsBallpark.rem(NAV_CLEARANCE_REM) + 40
     expect(anyPaddedBottom(clearance), `a ${clearance}px clearance`).equals(

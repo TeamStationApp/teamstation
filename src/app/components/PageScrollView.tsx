@@ -46,7 +46,7 @@ interface ScrollFields {
 }
 
 /** A handler built by Reanimated, which can be composed with another. */
-function isWorkletHandler(handler: unknown): handler is ScrollHandler {
+export function isWorkletHandler(handler: unknown): handler is ScrollHandler {
   return (
     handler != null &&
     typeof handler === 'object' &&

@@ -285,51 +285,41 @@ describe('scheduleUi.test.tsx', () => {
     )
     const label = 'Edit Jersey Color, Demo Hawks vs Demo Eagles, Apr 2, 5:00 pm'
     const button = target(label)
-    const fiberKey = Object.keys(button).find(k =>
+    // The table scrolls sideways inside the page. Focusing a note must reveal
+    // it through the vertical page's public ScrollView responder.
+    let owner: HTMLElement | null = button
+    while (owner != null && getComputedStyle(owner).overflowY !== 'auto')
+      owner = owner.parentElement
+    expect(owner, 'owning vertical scroll view').not.equals(null)
+    const scroll = owner as HTMLElement & {
+      scrollResponderScrollNativeHandleToKeyboard: (...args: unknown[]) => void
+    }
+    const fiberKey = Object.keys(scroll).find(k =>
       k.startsWith('__reactFiber')
     )!
-    let fiber = (button as unknown as Record<string, unknown>)[fiberKey] as {
+    let fiber = (scroll as unknown as Record<string, unknown>)[fiberKey] as {
       memoizedProps?: { automaticallyAdjustKeyboardInsets?: boolean }
-      stateNode?: {
-        scrollResponderScrollNativeHandleToKeyboard: (
-          ...args: unknown[]
-        ) => void
-      }
-      ref?: {
-        current?: {
-          scrollResponderScrollNativeHandleToKeyboard: (
-            ...args: unknown[]
-          ) => void
-        }
-      }
       return?: unknown
     } | null
     let insets = false
-    let scroll: NonNullable<NonNullable<typeof fiber>['stateNode']> | undefined
     while (fiber != null) {
       if (fiber.memoizedProps?.automaticallyAdjustKeyboardInsets === true)
         insets = true
-      if (
-        typeof fiber.ref?.current
-          ?.scrollResponderScrollNativeHandleToKeyboard === 'function'
-      )
-        scroll = fiber.ref.current
       fiber = fiber.return as typeof fiber
     }
     expect(
       insets,
       'owning vertical scroll view adjusts keyboard insets'
     ).equals(true)
-    expect(scroll).not.equals(undefined)
-    const reveal =
-      scroll!.scrollResponderScrollNativeHandleToKeyboard.bind(scroll)
+    const reveal = scroll.scrollResponderScrollNativeHandleToKeyboard
+    expect(reveal).to.be.a('function')
     const revealed: unknown[][] = []
     const os = Platform.OS
     try {
       await press(label)
       // Only for the focus: drawn as a phone, the page's scroller is another.
       Platform.OS = 'ios'
-      scroll!.scrollResponderScrollNativeHandleToKeyboard = (...args) => {
+      scroll.scrollResponderScrollNativeHandleToKeyboard = (...args) => {
         revealed.push(args)
       }
       await act(async () => {
@@ -340,7 +330,7 @@ describe('scheduleUi.test.tsx', () => {
       expect(revealed[0].slice(1)).deep.equals([16, true])
     } finally {
       Platform.OS = os
-      scroll!.scrollResponderScrollNativeHandleToKeyboard = reveal
+      scroll.scrollResponderScrollNativeHandleToKeyboard = reveal
     }
     const fill = async (value: string): Promise<void> => {
       await act(async () => {

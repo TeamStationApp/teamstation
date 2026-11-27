@@ -3,6 +3,8 @@ import { readFileSync } from 'fs'
 import { describe, it } from 'mocha'
 import { join } from 'path'
 
+import { NAV_TABS, navTabId } from './components/tabBarModel'
+
 /**
  * The header says as little as it can get away with.
  *
@@ -48,22 +50,16 @@ describe('app titles', function () {
     expect(header).match(/back: \{[\s\S]*?minHeight: theme\.rem\(3\)/)
   })
 
-  it('has three destinations, and Account is not one of them', function () {
-    // Read rather than imported: the component pulls in React Native, which
-    // does not load outside a bundler, and the list is the thing being
-    // asserted rather than the rendering of it.
-    const nav = readFileSync(join(__dirname, 'components/AppNav.tsx'), 'utf8')
-    expect(nav).contains(
-      "export type NavTabId = 'home' | 'videos' | 'schedule'"
-    )
-    expect(nav).not.contains("id: 'account'")
-  })
-
-  it('draws the destinations as icons alone', function () {
-    const nav = readFileSync(join(__dirname, 'components/AppNav.tsx'), 'utf8')
-    // The label is what a screen reader says, not what is painted.
-    expect(nav).contains('accessibilityLabel={tab.label}')
-    expect(nav).not.contains('<Text')
+  it('lists the five main destinations with their labels, icons and stable IDs', function () {
+    expect(
+      NAV_TABS.map(tab => [navTabId(tab.id), tab.label, tab.icon])
+    ).deep.equals([
+      ['tab-home', 'Home', 'home'],
+      ['tab-videos', 'Videos', 'smart_display'],
+      ['tab-schedule', 'Schedule', 'event'],
+      ['tab-search', 'Search', 'search'],
+      ['tab-chat', 'Chat', 'chat']
+    ])
   })
 
   it('hands the game card up as the card itself goes under', function () {

@@ -12,6 +12,9 @@ import {
 import type { GameSocketEvent } from '../../common/gameSocket'
 import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
+import { AppNav } from '../components/AppNav'
+import { NavCompactProvider } from '../components/navCompact'
+import { scrollFrom } from '../components/navScroll.test.helpers'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AT_BAT_FADE_MS } from './atBatColors'
 import {
@@ -240,7 +243,8 @@ const ALREADY_SHOWN: ReadinessStore = {
 }
 
 async function render(
-  props: Partial<DjGameScreenProps> & { client: TeamStationClient }
+  props: Partial<DjGameScreenProps> & { client: TeamStationClient },
+  withNav = false
 ): Promise<void> {
   const node = document.createElement('div')
   document.body.appendChild(node)
@@ -248,12 +252,17 @@ async function render(
   await act(async () => {
     root?.render(
       <ThemeProvider>
-        <DjGameScreen
-          gameId="g1"
-          music={fakeMusic()}
-          readiness={ALREADY_SHOWN}
-          {...props}
-        />
+        <NavCompactProvider>
+          <DjGameScreen
+            gameId="g1"
+            music={fakeMusic()}
+            readiness={ALREADY_SHOWN}
+            {...props}
+          />
+          {withNav && (
+            <AppNav selected="home" mode="floating" onSelect={() => {}} />
+          )}
+        </NavCompactProvider>
       </ThemeProvider>
     )
     await delay(30)
@@ -384,6 +393,17 @@ describe('DJ Game’s team pill (U29)', function () {
 })
 
 describe('DJ Game’s list (U29)', function () {
+  it('compacts and expands navigation from the lineup scroll view', async function () {
+    await render({ client: djClient([game()]) }, true)
+    const row = document.querySelector('[data-testid="DJ row"]')!
+    const label = (): string =>
+      document.querySelector('[data-testid="tab-home"]')!.textContent!
+    await scrollFrom(row, 0, 160)
+    expect(label()).not.includes('Home')
+    await scrollFrom(row, 130)
+    expect(label()).includes('Home')
+  })
+
   it('is the batting order, with no note for the game’s own lineup', async function () {
     await render({ client: djClient([game()]) })
     expect(names().map(row => row.split('No walk')[0])).deep.equals([

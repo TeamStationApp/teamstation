@@ -13,6 +13,11 @@ import {
   text,
   unmount
 } from '../../test/gameFormDom'
+import {
+  scrollFrom,
+  scrollState,
+  withNavScroll
+} from '../components/navScroll.test.helpers'
 import { cityListHeight, LocationScreen } from './LocationScreen'
 
 const austin: Locality = {
@@ -56,9 +61,10 @@ function fixture(): {
 }
 async function open(
   f: ReturnType<typeof fixture>,
-  current: Locality | null = null
+  current: Locality | null = null,
+  navigation = false
 ): Promise<void> {
-  await mount(
+  const screen = (
     <LocationScreen
       client={f.client}
       current={current}
@@ -70,9 +76,29 @@ async function open(
       }}
     />
   )
+  await mount(navigation ? withNavScroll(screen) : screen)
 }
 describe('search-only city selection', () => {
   afterEach(unmount)
+  it('follows the location body and the active city suggestions independently', async () => {
+    await open(fixture(), null, true)
+    const field = document.querySelector('input[aria-label="City"]')!
+    await scrollFrom(field, 'End', 900)
+    expect(scrollState()).equals('compact')
+    await scrollFrom(field, 0)
+    expect(scrollState()).equals('expanded')
+    await fill('City', 'aus')
+    await settle(300)
+    const list = document.querySelector('[data-testid="city-suggestions"]')!
+    await scrollFrom(list, 300)
+    expect(scrollState(), 'first restored list offset').equals('expanded')
+    await scrollFrom(list, 'wheel', 320)
+    expect(scrollState(), 'twenty points below the restored position').equals(
+      'expanded'
+    )
+    await scrollFrom(list, 'wheel', 360)
+    expect(scrollState()).equals('compact')
+  })
   it('reflows the suggestion list when the browser keyboard changes the visual viewport', async () => {
     const original = Object.getOwnPropertyDescriptor(window, 'visualViewport')
     const listeners = new Map<string, () => void>()

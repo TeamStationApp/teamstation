@@ -38,8 +38,8 @@ function observe(): void {
     }
   }
 }
-function Probe(): React.ReactElement {
-  return <span>{String(useMotionPreference())}</span>
+function Probe(props: { remembered?: boolean }): React.ReactElement {
+  return <span>{String(useMotionPreference(props.remembered))}</span>
 }
 afterEach(async () => {
   await act(async () => {
@@ -131,6 +131,35 @@ describe('live motion preference and guidance shadow', () => {
       await act(async () => {
         changed(false)
       })
+    }
+  })
+  it('starts a remembered view from the last answer, and the others from reduced motion', async () => {
+    observe()
+    AccessibilityInfo.isReduceMotionEnabled = async () =>
+      await new Promise<boolean>(() => {})
+    for (const answer of [false, true]) {
+      await mount(<Probe />)
+      await act(async () => {
+        changed(answer)
+      })
+      expect(host.textContent).equals(String(answer))
+      await act(async () => {
+        root!.unmount()
+      })
+      root = undefined
+      // A bar mounted in another screen tree, before its own query returns.
+      await mount(<Probe remembered />)
+      expect(host.textContent).equals(String(answer))
+      await act(async () => {
+        root!.unmount()
+      })
+      root = undefined
+      await mount(<Probe />)
+      expect(host.textContent).equals('true')
+      await act(async () => {
+        root!.unmount()
+      })
+      root = undefined
     }
   })
 })

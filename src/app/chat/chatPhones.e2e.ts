@@ -46,6 +46,7 @@ import puppeteer, {
 
 import { chatRowText } from '../../test/chatRows'
 import { readSeedTable } from '../../test/chatSeedTable'
+import { navTabId } from '../../test/navTab.e2e'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 interface Device {
@@ -197,7 +198,7 @@ async function typeIn(
  */
 async function chatTab(m: Device, expect: string): Promise<void> {
   for (const tap of [1, 2]) {
-    const step = (await m.tapOn({ text: 'Chat' })) as {
+    const step = (await m.tapOn({ id: navTabId('chat') })) as {
       element?: { visible?: boolean }
     }
     const covered = step.element?.visible === false

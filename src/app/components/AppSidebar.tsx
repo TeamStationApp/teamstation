@@ -11,6 +11,7 @@ import { BuildInfoModal } from './BuildInfoModal'
 import { ButtonIcon } from './ButtonIcon'
 import { PersonEmblem } from './PersonEmblem'
 import { SIDEBAR_WIDTH_REM } from './sidebarLayout'
+import { navTabId } from './tabBarModel'
 import { TsMark } from './TsMark'
 
 export interface AppSidebarProps {
@@ -38,16 +39,17 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
     icon: React.ReactElement,
     onPress: () => void,
     selected = false,
-    tab = false,
+    tab?: NavTabId,
     unread = false,
     dotTestId = 'chat-unread',
     accessibilityLabel = label
   ): React.ReactElement => (
     <Pressable
-      accessibilityRole={tab ? 'tab' : 'button'}
+      testID={tab == null ? undefined : navTabId(tab)}
+      accessibilityRole={tab == null ? 'button' : 'tab'}
       accessibilityLabel={accessibilityLabel}
-      accessibilityState={tab ? { selected } : undefined}
-      aria-selected={tab ? selected : undefined}
+      accessibilityState={tab == null ? undefined : { selected }}
+      aria-selected={tab == null ? undefined : selected}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
@@ -80,7 +82,7 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
                   props.onSelect(tab.id)
                 },
                 props.selected === tab.id,
-                true,
+                tab.id,
                 tab.id === 'chat' && props.unread === true
               )}
             </React.Fragment>
@@ -103,7 +105,7 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
             <ButtonIcon name="notifications" color={theme.navActiveColor} />,
             props.notifications.onPress,
             false,
-            false,
+            undefined,
             props.notifications.pending,
             'notification-pending-dot',
             props.notifications.pending

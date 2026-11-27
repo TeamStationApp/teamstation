@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { FlatList, Platform, Text, View } from 'react-native'
+import { FlatList, Text, View } from 'react-native'
 
 import type {
   DjAtBat,
@@ -10,16 +10,10 @@ import type {
 } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { WalkUpSong } from '../../common/walkUpSong'
-import {
-  Button,
-  FLOATING_BOTTOM_REM,
-  NAV_CLEARANCE_REM,
-  Screen
-} from '../components'
-import { useHeaderSlot } from '../components/headerSlot'
-import { navClearanceAboveInset } from '../components/navClearance'
+import { Button, Screen } from '../components'
+import { useNavListScroll } from '../components/navCompact'
+import { useScreenBottom } from '../components/Screen'
 import { lstrings, sprintf } from '../locales/strings'
-import { useInsets } from '../platform/safeArea'
 import { RosterSelector } from '../scoring/RosterSelector'
 import { shortDate } from '../screens/format'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -129,15 +123,8 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
   })
   // The list runs under the floating tabs and the offline banner, and ends
   // clear of them.
-  const banner = useHeaderSlot().bannerHeight ?? 0
-  const clearance =
-    navClearanceAboveInset(
-      Platform.OS,
-      theme.rem(NAV_CLEARANCE_REM),
-      theme.rem(FLOATING_BOTTOM_REM)
-    ) +
-    useInsets().bottom +
-    banner
+  const clearance = useScreenBottom()
+  const nav = useNavListScroll()
 
   const [shown, setShown] = useState<DjGame | undefined>(undefined)
   const [error, setError] = useState(false)
@@ -426,6 +413,8 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
       >
         <FlatList
           data={team.batters}
+          {...nav}
+          scrollEventThrottle={nav.onScroll == null ? undefined : 16}
           keyExtractor={(batter, index) =>
             `${showing}:${index}:${batter.userId ?? batter.name}`
           }

@@ -182,7 +182,7 @@ export default defineE2e({
       // there leaves it collapsed for the next field.
       if ((await deviceName(ctx, device)) !== 'ipad')
         await device.hideKeyboard()
-      await tapTab(device, 'Home')
+      await tapTab(device, 'home')
       await device.assertVisible({ text: 'E-mail address', timeout: 15000 })
       await device.tapOn({ text: 'E-mail address' })
       await typeKeys(device, platformOf(ctx) === 'ios', 'keyboard@example.test')

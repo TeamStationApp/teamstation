@@ -1,19 +1,6 @@
-/**
- * Where the floating capsule sits, and how much a screen leaves beneath its
- * last row.
- *
- * On iOS the home-indicator inset is already the gap under the capsule, so
- * the capsule's bottom edge is that inset. Android's navigation inset does
- * not leave the same empty band, and a browser has no inset at all, so both
- * keep the margin the capsule was designed with.
- */
+import { NAV_HEIGHT, NAV_NATIVE_HEIGHT_ABOVE_INSET } from './navGeometry'
 
-/**
- * Pixels from the window's bottom edge to the capsule's bottom edge.
- *
- * While the offline banner shows it is the bottom strip, on the inset, and
- * the capsule sits on top of it: the banner is the gap, on every platform.
- */
+/** Distance between the window bottom and the bottom of the visible platter. */
 export function floatingNavBottom(
   platform: string,
   marginPx: number,
@@ -21,19 +8,21 @@ export function floatingNavBottom(
   bannerPx = 0
 ): number {
   if (bannerPx > 0) return insetBottom + bannerPx
-  return platform === 'ios' ? insetBottom : marginPx + insetBottom
+  // UIKit's host starts 49 points above the safe area. Its 62-point
+  // material extends 13 points into that area on the reference phone.
+  if (platform === 'ios')
+    return Math.max(0, insetBottom + NAV_NATIVE_HEIGHT_ABOVE_INSET - NAV_HEIGHT)
+  return marginPx + insetBottom
 }
 
-/**
- * The clearance under the last row, before the hardware inset is added back.
- *
- * iOS drops the designed margin, because that margin and the inset were the
- * same gap counted twice.
- */
-export function navClearanceAboveInset(
+/** Scrolling content preserves its outer margin above a banner on Android and web. */
+export function navContentBottom(
   platform: string,
-  clearancePx: number,
-  marginPx: number
+  marginPx: number,
+  insetBottom: number,
+  bannerPx = 0
 ): number {
-  return platform === 'ios' ? clearancePx - marginPx : clearancePx
+  return platform === 'ios'
+    ? floatingNavBottom(platform, marginPx, insetBottom, bannerPx)
+    : insetBottom + marginPx + bannerPx
 }

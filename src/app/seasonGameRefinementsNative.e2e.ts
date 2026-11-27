@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 
 import { log, maestro } from '../../e2e/rigs/refinementsMaestro'
+import { navTab } from '../test/navTab.e2e'
 
 interface Node {
   type?: string
@@ -288,7 +289,7 @@ async function main(): Promise<void> {
     await input('Sign-in code', code)
     await tap('Sign in')
     await show('Search')
-    await tap('Search')
+    await navTab(m, 'search')
     await show('Discover')
     await open(`/groups/season/${manifest.season}`)
     await show('In-Season')

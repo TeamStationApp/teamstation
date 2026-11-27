@@ -8,6 +8,7 @@ import {
   browserSession,
   maestro
 } from '../../e2e/rigs/refinementsMaestro'
+import { navTabCss } from '../test/navTab.e2e'
 import { tessFixture } from '../test/tessFixture'
 
 /**
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
     ] as const) {
       await resize(width, height)
       assert.equal(await page.$(sidebar), null)
-      await page.waitForSelector('[role="tab"][aria-label="Home"]')
+      await page.waitForSelector(navTabCss('home'))
       await tap(mark)
       await page.waitForSelector('[data-testid="header-menu-panel"]')
       await tap('[aria-label="Close menu"]')
@@ -173,28 +174,28 @@ async function main(): Promise<void> {
     await tap(`${sidebar} [aria-label^="Account, "]`)
     await pathIs('/account')
     await shot('short-sidebar')
-    await tap(`${sidebar} [aria-label="Home"]`)
+    await tap(`${sidebar} ${navTabCss('home')}`)
     await pathIs('/')
     await resize(1440)
     await tap(`${sidebar} [aria-label="About TeamStation"]`)
     await tap('[aria-label="Close build information"]')
-    for (const [label, path] of [
-      ['Videos', '/videos'],
-      ['Schedule', '/schedule'],
-      ['Search', '/discover'],
-      ['Messages', '/chat'],
-      ['Home', '/']
+    for (const [id, path] of [
+      ['videos', '/videos'],
+      ['schedule', '/schedule'],
+      ['search', '/discover'],
+      ['chat', '/chat'],
+      ['home', '/']
     ] as const) {
-      await tap(`${sidebar} [aria-label="${label}"]`)
+      await tap(`${sidebar} ${navTabCss(id)}`)
       await pathIs(path)
-      note(`${label} opened ${path}`)
+      note(`${id} opened ${path}`)
     }
-    await tap(`${sidebar} [aria-label="Videos"]`)
+    await tap(`${sidebar} ${navTabCss('videos')}`)
     await resize(1215)
     await pathIs('/videos')
     await resize(1216)
     await pathIs('/videos')
-    await tap(`${sidebar} [aria-label="Home"]`)
+    await tap(`${sidebar} ${navTabCss('home')}`)
     await tap('[role="button"][aria-label="Ask Tess"]')
     await page.waitForSelector('[data-testid="Tess column"]')
     const column = '[data-testid="Tess column"]'

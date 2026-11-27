@@ -79,6 +79,8 @@ export type ButtonIconProps =
   | {
       name: IconName | CustomName
       size?: number
+      /** Maximum native artwork dimension in layout points after text scaling. */
+      maxArtworkSize?: number
       color?: string
       /** Existing web artwork, when the control uses a custom glyph. */
       children?: React.ReactElement
@@ -88,6 +90,7 @@ export type ButtonIconProps =
       children: React.ReactElement
       name?: never
       size?: never
+      maxArtworkSize?: never
       color?: never
     }
 
@@ -134,7 +137,7 @@ function NativeButtonIcon(props: ButtonIconProps): React.ReactElement {
       : maxScale != null && maxScale >= 1
         ? Math.min(fontScale, maxScale)
         : fontScale
-  const points = basePoints * scale
+  const points = Math.min(basePoints * scale, props.maxArtworkSize ?? Infinity)
   if (textProps != null && children != null) {
     const layout: TextStyle = {}
     const typography: TextStyle = {}

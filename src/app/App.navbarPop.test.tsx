@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { AccessibilityInfo, Dimensions } from 'react-native'
 
 import {
   asGameDetail,
@@ -12,12 +13,15 @@ import {
   asTeamSummary,
   TeamStationClient
 } from '../common/api'
+import { HttpError } from '../common/errors'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { FakeSearchServer } from '../test/fakeSearchSocket'
 import { pageOf, pageOfGames } from '../test/pageOf'
 import { App } from './App'
+import { scrollFrom } from './components/navScroll.test.helpers'
+import { highlightWidth, pillFrame } from './components/tabBarModel'
 import { SEARCH_PLACEHOLDER } from './screens/SearchScreen'
 
 const playerId = userIdOfGumbo(201)
@@ -290,6 +294,86 @@ describe('a navbar press clears that tab', () => {
     expect(control('Back')).not.equals(undefined)
   }
 
+  const expanded = (): boolean =>
+    document
+      .querySelector('[data-testid="tab-home"]')!
+      .textContent!.includes('Home')
+
+  it('keeps both Search entries expanded while scrolling their results', async () => {
+    window.history.replaceState(null, '', '/discover?kind=team&follow=1')
+    const cleanup = await render()
+    try {
+      expect(control('Back'), 'follow discovery was pushed on Home').not.equals(
+        undefined
+      )
+      await search('Demo League')
+      await scrollFrom(control('Open Demo League')!, 0, 160)
+      expect(expanded(), 'pushed Search').equals(true)
+
+      await pressNav('Search', 350)
+      await search('Demo League')
+      await scrollFrom(control('Open Demo League')!, 0, 160)
+      expect(expanded(), 'Search root').equals(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('starts expanded when the window shrinks from a scrolled desktop to a phone', async () => {
+    window.history.replaceState(null, '', '/groups/league/league_demo')
+    const viewport = document.documentElement
+    const previous = Object.getOwnPropertyDescriptor(viewport, 'clientWidth')
+    async function resize(width: number): Promise<void> {
+      await act(async () => {
+        Object.defineProperty(viewport, 'clientWidth', {
+          configurable: true,
+          value: width
+        })
+        window.dispatchEvent(new window.Event('resize'))
+      })
+    }
+    let cleanup: (() => Promise<void>) | undefined
+    try {
+      await resize(1440)
+      cleanup = await render()
+      await scrollFrom(control('Open Demo Regular')!, 0, 160)
+      await resize(390)
+      expect(
+        expanded(),
+        'desktop travel did not compact the returning phone bar'
+      ).equals(true)
+      await scrollFrom(control('Open Demo Regular')!, 'wheel', 900)
+      expect(expanded(), 'the phone is listening again').equals(false)
+    } finally {
+      await cleanup?.()
+      if (previous == null) Reflect.deleteProperty(viewport, 'clientWidth')
+      else Object.defineProperty(viewport, 'clientWidth', previous)
+      window.dispatchEvent(new window.Event('resize'))
+    }
+  })
+
+  it('resets scroll history for a new group and keeps it for metadata changes to the same group', async () => {
+    window.history.replaceState(null, '', '/groups/league/league_demo')
+    const cleanup = await render()
+    try {
+      await scrollFrom(control('Open Demo Regular')!, 0, 160)
+      expect(expanded(), 'league scroller').equals(false)
+      await pressIn('League sections', 'Teams')
+      expect(expanded(), 'changing the section of the same group').equals(false)
+      await pressIn('League sections', 'Seasons')
+      await press('Open Demo Regular', 350)
+      expect(window.location.pathname).equals('/groups/season/sea_regular')
+      expect(expanded(), 'new group before it has scrolled').equals(true)
+      await scrollFrom(
+        document.querySelector('[aria-label="Season sections"]'),
+        260
+      )
+      expect(expanded(), 'first offset belongs to the new group').equals(true)
+    } finally {
+      await cleanup()
+    }
+  })
+
   it('returns Home, Videos, Schedule and Search to their roots', async () => {
     const cleanup = await render()
     try {
@@ -340,6 +424,87 @@ describe('a navbar press clears that tab', () => {
       expect(control('Back')).not.equals(undefined)
     } finally {
       await cleanup()
+    }
+  })
+
+  it('starts the highlight where it was when Search swaps the screen while signed out', async () => {
+    // Signed out, Search is the one tab with its own screen, so the bar moves
+    // between two screen trees there. Each new bar starts its highlight where
+    // the last one left it, and slides from there to its own tab.
+    proto.whoAmI = async () => {
+      throw new HttpError('unauthorized', 'Sign in')
+    }
+    const pill = (): HTMLElement =>
+      document.querySelector<HTMLElement>('[data-testid="tab-bar-pill"]')!
+        .parentElement!
+    const pillX = (): number =>
+      Number(/translateX\((-?[\d.]+)px\)/.exec(pill().style.transform)![1])
+    const slotX = (label: string): number => {
+      const tabs = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[role="tablist"]:not([aria-label]) [role="tab"]'
+        )
+      ]
+      const index = tabs.findIndex(
+        tab => tab.getAttribute('aria-label') === label
+      )
+      const platter = document.querySelector<HTMLElement>(
+        '[data-testid="tab-bar-platter"]'
+      )!.parentElement!
+      const width = parseFloat(platter.style.width)
+      return pillFrame(index, width, highlightWidth(width, 5, 4), 5, 4, false).x
+    }
+    // Motion on: under Reduce Motion the new bar goes straight to its tab.
+    const reduceMotion = Object.getOwnPropertyDescriptor(
+      AccessibilityInfo,
+      'isReduceMotionEnabled'
+    )!
+    Object.defineProperty(AccessibilityInfo, 'isReduceMotionEnabled', {
+      configurable: true,
+      value: async () => false
+    })
+    // A phone's window, so the bar has width to slide across.
+    const originalGet = Dimensions.get.bind(Dimensions)
+    Dimensions.get = name =>
+      name === 'window'
+        ? { ...originalGet('window'), width: 390, height: 844 }
+        : originalGet(name)
+    const cleanup = await render()
+    try {
+      await settle(200)
+      expect(text()).includes('Sign in')
+      for (const [from, to] of [
+        ['Home', 'Search'],
+        ['Search', 'Chat']
+      ] as const) {
+        const before = pill()
+        const start = slotX(from)
+        await pressNav(to, 0)
+        // A new bar, as the screen tree changed, starting where the old
+        // one's highlight was: on the old tab, or a little way along if the
+        // old bar had already begun to move. Not on the new tab.
+        expect(pill(), from + ' to ' + to).not.equals(before)
+        const end = slotX(to)
+        expect(end).not.closeTo(start, 1)
+        const along = (pillX() - start) / (end - start)
+        expect(along, from + ' to ' + to).within(-1e-6, 0.5)
+        await settle(400)
+        expect(
+          document
+            .querySelector(
+              `[role="tablist"]:not([aria-label]) [aria-label="${to}"]`
+            )!
+            .getAttribute('aria-selected')
+        ).equals('true')
+      }
+    } finally {
+      await cleanup()
+      Dimensions.get = originalGet
+      Object.defineProperty(
+        AccessibilityInfo,
+        'isReduceMotionEnabled',
+        reduceMotion
+      )
     }
   })
 })

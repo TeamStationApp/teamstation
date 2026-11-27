@@ -1,6 +1,7 @@
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { navTab, navTabId } from '../../../src/test/navTab.e2e'
 import type { E2eContext } from '../../core/spec'
 import {
   flatten as flattenNodes,
@@ -116,29 +117,17 @@ export async function boxOfField(device: any): Promise<Box> {
   return box
 }
 
-/**
- * Taps a tab where it is drawn: a phone's floating bar or a tablet's
- * header, an icon labelled with the tab's name (a longer label that holds
- * the name, such as the Search field's, is bigger, so the smallest match is
- * the tab).
- */
-export async function tapTab(device: any, label: string): Promise<void> {
+export async function tapTab(
+  device: any,
+  id: 'home' | 'search'
+): Promise<void> {
   // A keyboard left up covers a phone's floating tab bar, and a tap at the
   // tab's place would land on a key (iOS's emoji key sits under Home): put
   // it away until the tab is clear.
   for (let tries = 0; ; ++tries) {
     const nodes = flatten((await device.hierarchy()) as Node)
-    const tabs = nodes.filter(
-      node =>
-        (node.text ?? node.accessibilityText) === label && boxOf(node) != null
-    )
-    const tab = boxOf(
-      tabs.sort((a, b) => {
-        const [x, y] = [boxOf(a)!, boxOf(b)!]
-        return x.width * x.height - y.width * y.height
-      })[0]
-    )
-    if (tab == null) throw new Error(`no ${label} tab on screen`)
+    const tab = boxOf(nodes.find(node => node.id === navTabId(id)))
+    if (tab == null) throw new Error(`no ${id} tab on screen`)
     const centre = { x: tab.x + tab.width / 2, y: tab.y + tab.height / 2 }
     const keyboard = boxOf(nodes.find(node => node.type === 'Keyboard'))
     const covered =
@@ -148,13 +137,10 @@ export async function tapTab(device: any, label: string): Promise<void> {
       centre.y >= keyboard.y &&
       centre.y <= keyboard.y + keyboard.height
     if (!covered) {
-      await device.tapOn({
-        point: `${Math.round(centre.x)},${Math.round(centre.y)}`
-      })
+      await navTab(device, id)
       return
     }
-    if (tries === 2)
-      throw new Error(`the keyboard still covers the ${label} tab`)
+    if (tries === 2) throw new Error(`the keyboard still covers the ${id} tab`)
     await device.hideKeyboard()
   }
 }
@@ -193,8 +179,8 @@ export async function openSearch(
   // A launch can settle on Home after its first frame (signed out, the
   // sign-in card): a tap that lands before then is undone, so tap again.
   for (let attempt = 1; ; attempt++) {
-    await tapTab(device, 'Search')
     try {
+      await tapTab(device, 'search')
       await device.assertVisible({ text: PLACEHOLDER, timeout: 8000 })
       return
     } catch (error) {

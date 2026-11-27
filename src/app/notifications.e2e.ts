@@ -25,6 +25,7 @@ import { dueReminders } from '../server/push/rsvpReminders'
 import type { ServerConfig } from '../server/serverConfig'
 import { recordUmpireDigests } from '../server/umpires/notices'
 import { readSeedTable, type SeedTablePerson } from '../test/chatSeedTable'
+import { navTabCss } from '../test/navTab.e2e'
 import { ChatEngine } from './chat/engine/engine'
 import type { ChatKeyRecord } from './chat/keyRecord'
 import { askedKey, switchesKey } from './platform/notificationSwitches'
@@ -472,11 +473,14 @@ async function askAfter(device: Device, ms: number): Promise<boolean> {
 }
 
 /** Taps one of the app's tabs (Home, Chat, …) in its navigation. */
-async function tab(device: Device, label: string): Promise<void> {
-  await device.page.waitForSelector(`[role="tab"][aria-label="${label}"]`, {
+async function tab(
+  device: Device,
+  id: Parameters<typeof navTabCss>[0]
+): Promise<void> {
+  await device.page.waitForSelector(navTabCss(id), {
     timeout: 60000
   })
-  await device.page.$eval(`[role="tab"][aria-label="${label}"]`, node => {
+  await device.page.$eval(navTabCss(id), node => {
     ;(node as HTMLElement).click()
   })
 }
@@ -725,7 +729,7 @@ describe('notifications in the finished web app', function () {
     await c.page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 })
     await c.page.goto(`${WEB}/`, { waitUntil: 'networkidle0' })
     expect(await askAfter(c, 2000), 'not on Home').equals(false)
-    await tab(c, 'Chat')
+    await tab(c, 'chat')
     const said = await untilAsk(c)
     expect(new URL(c.page.url()).pathname).equals('/chat')
     expect(said).contains(ASK_TITLE).and.contains('Continue')
@@ -745,12 +749,12 @@ describe('notifications in the finished web app', function () {
     await askLine(
       `$ web N1.7: Not Now: ${askedKey(fresh.userId)} ${kept.asked}; switches ${kept.switches ?? '(none, all off)'}`
     )
-    await tab(c, 'Home')
-    await tab(c, 'Chat')
+    await tab(c, 'home')
+    await tab(c, 'chat')
     expect(await askAfter(c, 5000), 'asked again').equals(false)
     await c.page.reload({ waitUntil: 'networkidle0' })
-    await tab(c, 'Home')
-    await tab(c, 'Chat')
+    await tab(c, 'home')
+    await tab(c, 'chat')
     expect(await askAfter(c, 5000), 'asked after a reload').equals(false)
     await askLine(
       '$ web N1.7: Home, then Chat, again and after a reload: never asked again'
@@ -838,7 +842,7 @@ describe('notifications in the finished web app', function () {
     const refusing = seed.Es
     const r = await open('R', refusing, 'denied')
     await r.page.goto(`${WEB}/`, { waitUntil: 'networkidle0' })
-    await tab(r, 'Chat')
+    await tab(r, 'chat')
     expect(await untilAsk(r)).contains(ASK_TITLE)
     await answerAsk(r, 'continue')
     await r.page.waitForSelector('[data-testid="notification-ask-hint"]', {

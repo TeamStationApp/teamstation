@@ -4,7 +4,20 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
+import {
+  log,
+  maestro,
+  navigationDaemonName
+} from '../../../e2e/rigs/refinementsMaestro'
+import {
+  recordHubDevice,
+  type RecordingDevice
+} from '../../test/hubRecording.e2e'
+import {
+  navigationControl,
+  signInWithFixturePassword
+} from '../../test/navigationControl.e2e'
+import { navTab } from '../../test/navTab.e2e'
 
 /**
  * Pushed screens, the scoring cover, drags back and pill pages on a real phone,
@@ -24,7 +37,8 @@ interface Node {
   bounds?: { x: number; y: number; width: number; height: number }
   children?: Node[]
 }
-interface Device {
+interface Device extends RecordingDevice {
+  hideKeyboard: () => Promise<unknown>
   launchApp: (options?: unknown) => Promise<unknown>
   stopApp: (options?: unknown) => Promise<unknown>
   openLink: (options: { link: string }) => Promise<unknown>
@@ -37,13 +51,13 @@ interface Device {
   back: () => Promise<unknown>
   pressKey: (options: { key: string }) => Promise<unknown>
   hierarchy: () => Promise<Node>
+  hierarchyRaw: () => Promise<Buffer>
   screenshot: () => Promise<Uint8Array>
-  startRecording: (options: { path: string }) => Promise<unknown>
-  stopRecording: () => Promise<unknown>
   detach: () => Promise<unknown>
 }
 
-const APP_ID = 'app.teamstation.app'
+const ENTITY_SCHEME = process.env.TS_STACK_ENTITY_SCHEME ?? 'teamstation'
+const APP_ID = process.env.TS_STACK_APP_ID ?? 'app.teamstation.app'
 
 function required(name: string): string {
   const value = process.env[name]
@@ -61,7 +75,12 @@ async function main(): Promise<void> {
   const platform = required('TS_STACK_PLATFORM')
   assert.ok(platform === 'ios' || platform === 'android', platform)
   const cases = new Set(
-    (process.env.TS_STACK_CASES ?? 'N1,N2,N3,N4').split(',').map(c => c.trim())
+    (
+      process.env.TS_STACK_CASES ??
+      (platform === 'android' ? 'N1,N4,N6,N7' : 'N1,N2,N3,N4')
+    )
+      .split(',')
+      .map(c => c.trim())
   )
   const manifest = JSON.parse(
     await readFile(join(artifacts, 'support', 'native-manifest.json'), 'utf8')
@@ -76,7 +95,10 @@ async function main(): Promise<void> {
   const note = async (line: string): Promise<void> => {
     await log(artifacts, file, line)
   }
-  const daemon = await maestro(`stackTransitionsNative-${platform}`)
+  const daemon = await maestro(
+    process.env.TS_STACK_DAEMON ??
+      navigationDaemonName(`stackTransitionsNative-${platform}`)
+  )
   const teamId = process.env.MAESTRO_D_TEAM_ID
   const m = (await daemon.attach({
     device,
@@ -138,25 +160,18 @@ async function main(): Promise<void> {
     await m.tapOn({ point: '92%, 92.5%' })
     await new Promise(resolve => setTimeout(resolve, 500))
   }
-  /** The navbar by its glyph's position: a text tap can hit a card first. */
-  const tab = async (label: string): Promise<void> => {
-    await closeWarnings()
-    const nodes = flatten(await m.hierarchy()).filter(
-      node => node.text === label && node.bounds != null
-    )
-    const target = nodes.sort((a, b) => b.bounds!.y - a.bounds!.y)[0]?.bounds
-    assert.ok(target != null, `Missing ${label} tab`)
-    await m.tapOn({
-      point: `${Math.round(target.x + target.width / 2)},${Math.round(target.y + target.height / 2)}`
-    })
-  }
   const recorded = async (
     name: string,
     run: () => Promise<void>
   ): Promise<void> => {
     await note(`${name}: start`)
     const path = join(artifacts, 'support', `${platform}-${name}.mp4`)
-    // Each device records itself: a simulator through simctl, an Android
+    if (device.includes('@')) {
+      await recordHubDevice(m, path, run)
+      await note(`${name}: passed`)
+      return
+    }
+    // Each local device records itself: a simulator through simctl, an Android
     // phone through screenrecord, pulled when the case ends.
     const onDevice = `/sdcard/ts-${name}.mp4`
     const recorder =
@@ -199,24 +214,31 @@ async function main(): Promise<void> {
   const signIn = async (): Promise<void> => {
     await m.launchApp({ appId: APP_ID, stopApp: true })
     if (!(await shown('Sign in to TeamStation', 15000))) return
+    const credentials = process.env.TS_NAV_SIGN_IN_FILE
+    if (platform === 'android' && credentials != null) {
+      await signInWithFixturePassword(m, manifest.email, credentials)
+      await visible('Your Home', 30000)
+      return
+    }
     const asked = await fetch(`${manifest.origin}/api/v1/auth/email-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: manifest.email })
     })
     assert.equal(asked.status, 202)
-    const answer = await fetch(
+    const answer = await navigationControl(
       `${manifest.origin}/__stack/code?email=${encodeURIComponent(manifest.email)}`
     )
     assert.ok(answer.ok, 'No sign-in mail')
     const { link } = (await answer.json()) as { link?: string }
     const token = link?.split('/signin/')[1]
-    assert.ok(token != null && token !== '', `No sign-in link in ${link}`)
+    assert.ok(token != null && token !== '', 'No sign-in link')
     await m.openLink({ link: `teamstation://signin/${token}` })
     await visible('Your Home', 30000)
   }
   const openTeam = async (): Promise<void> => {
-    await tab('Home')
+    await closeWarnings()
+    await navTab(m, 'home')
     await visible('Your Home')
     await tap('Demo Hawks')
     await visible('Team sections')
@@ -229,8 +251,10 @@ async function main(): Promise<void> {
   }
   const pastHome = async (): Promise<void> => {
     // Back to a clean Home whatever the last case left.
-    await tab('Home')
-    await tab('Home')
+    await closeWarnings()
+    await navTab(m, 'home')
+    await closeWarnings()
+    await navTab(m, 'home')
     await visible('Your Home')
   }
 
@@ -268,7 +292,7 @@ async function main(): Promise<void> {
       })
     if (cases.has('N4'))
       await recorded('N4', async () => {
-        await m.openLink({ link: `teamstation://games/${manifest.game}` })
+        await m.openLink({ link: `${ENTITY_SCHEME}://games/${manifest.game}` })
         await visible('Demo Owls')
         await visible('Location not set')
         // A pushed screen still scrolls from its left edge: the edge pan
@@ -311,7 +335,7 @@ async function main(): Promise<void> {
       await recorded('N5', async () => {
         await openTeam()
         for (const pill of ['Team', 'Stats', 'Videos']) await tap(pill)
-        await m.openLink({ link: `teamstation://games/${manifest.game}` })
+        await m.openLink({ link: `${ENTITY_SCHEME}://games/${manifest.game}` })
         await visible('Game sections')
         await tap('Box score')
         await tap('Info')
@@ -339,7 +363,8 @@ async function main(): Promise<void> {
         assert.ok(Math.abs(kept - held) <= 2, 'the player pills moved')
         await pastHome()
         // R3: the schedule's pills still pin after a page change.
-        await tab('Schedule')
+        await closeWarnings()
+        await navTab(m, 'schedule')
         await visible('Upcoming')
         await m.swipe({ start: '50%, 70%', end: '50%, 30%', duration: 400 })
         await new Promise(resolve => setTimeout(resolve, 800))
@@ -378,10 +403,15 @@ async function main(): Promise<void> {
             '1200'
           ])
         }
-        touch('DOWN', 2)
-        for (const x of [60, 160, 260, 360, 300, 200, 100, 30, 5])
-          touch('MOVE', x)
-        touch('UP', 5)
+        if (device.includes('@')) {
+          const tool = required('TS_STACK_ANDROID_GEOMETRY')
+          execFileSync(tool, [device, 'reverse-edge'])
+        } else {
+          touch('DOWN', 2)
+          for (const x of [60, 160, 260, 360, 300, 200, 100, 30, 5])
+            touch('MOVE', x)
+          touch('UP', 5)
+        }
         await new Promise(resolve => setTimeout(resolve, 800))
         await visible('Player sections')
         await m.back()
@@ -407,8 +437,10 @@ async function main(): Promise<void> {
         await m.swipe({ start: '0%, 50%', end: '80%, 50%', duration: 600 })
         await visible('Your Home')
         await openTeam()
-        await tab('Schedule')
-        await tab('Home')
+        await closeWarnings()
+        await navTab(m, 'schedule')
+        await closeWarnings()
+        await navTab(m, 'home')
         await m.swipe({ start: '0%, 50%', end: '80%, 50%', duration: 600 })
         await visible('Upcoming')
         // Back at the bottom of the history leaves the app.
@@ -417,16 +449,22 @@ async function main(): Promise<void> {
         await visible('Your Home')
         await m.back()
         await new Promise(resolve => setTimeout(resolve, 1500))
-        const resumed = execFileSync(
-          'adb',
-          ['-s', device, 'shell', 'dumpsys', 'activity', 'activities'],
-          { encoding: 'utf8' }
+        const packages = [
+          ...new Set(
+            Array.from(
+              (await m.hierarchyRaw())
+                .toString()
+                .matchAll(/package="([^"]+)"/g),
+              match => match[1]
+            )
+          )
+        ]
+        await note(`N7 after Back at Home: ${packages.join(' ')}`)
+        assert.ok(
+          packages.some(id => id !== APP_ID && id !== 'com.android.systemui'),
+          'Expected the Android launcher'
         )
-          .split('\n')
-          .filter(line => /mResumedActivity|topResumedActivity/.test(line))
-          .join(' ')
-        await note(`N7 after Back at Home: ${resumed.trim()}`)
-        assert.ok(!resumed.includes(APP_ID), 'the app is still in front')
+        assert.ok(!packages.includes(APP_ID), 'the app is still in front')
         await m.launchApp({ appId: APP_ID, stopApp: false })
       })
     }
