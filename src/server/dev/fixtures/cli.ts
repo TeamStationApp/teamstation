@@ -158,10 +158,20 @@ export async function runCli(
   argv: string[],
   out: Pick<Console, 'log' | 'error'> = console
 ): Promise<number> {
+  // What a world's server code logs on the way (the stats builder's drain
+  // says what it built) goes to standard error: standard output carries the
+  // manifest alone, which the fault server's seed route parses.
+  const log = console.log
+  console.log = (...line: unknown[]) => {
+    console.error(...line)
+  }
   try {
-    out.log(JSON.stringify(await runFixture(parseFixtureArgs(argv))))
+    const manifest = await runFixture(parseFixtureArgs(argv))
+    console.log = log
+    out.log(JSON.stringify(manifest))
     return 0
   } catch (error) {
+    console.log = log
     out.error(error instanceof Error ? error.message : String(error))
     return 1
   }
