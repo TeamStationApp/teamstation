@@ -10,7 +10,7 @@ import {
   type StackControl,
   type WebSession
 } from '../../core/spec'
-import { openInApp, serverLink } from '../app/pointAtStack'
+import { pointAtStack, SERVER_LINK_SETTLE_MS } from '../app/pointAtStack'
 
 /**
  * The game plan's tests on any surface: the develop app on the iPhone or
@@ -186,24 +186,21 @@ export async function clearSignInLimits(ctx: E2eContext): Promise<void> {
 }
 
 /**
- * Sends a hub iPhone's develop app the link that keeps `origin`, waits
- * until the app is in front on its sign-in page (it has read the link it
- * launched with), and launches it fresh, which then talks to `origin`.
- * WebDriverAgent shows neither the app's "Server set" alert nor the
- * address in its About, so the sign-in that follows, with an account only
- * the stack holds, is what proves the server.
+ * Points a hub phone's develop app at `origin` and launches it fresh, the
+ * runner's own way (`pointAtStack`): the server link, the runner's settle,
+ * then a fresh launch. Nothing waits on a screen in between: on Android the
+ * app's "Server set… Restart" alert covers the sign-in page, and on iOS
+ * WebDriverAgent shows neither that alert nor the address in its About. The
+ * sign-in that follows, with an account only the stack holds, is what proves
+ * the server.
  */
 export async function serverKeptOnHubPhone(
   m: any,
   appId: string,
-  origin: string
+  origin: string,
+  settleMs = SERVER_LINK_SETTLE_MS
 ): Promise<void> {
-  await openInApp(m, appId, serverLink(origin))
-  await m.extendedWaitUntil({
-    visible: { text: 'Sign in to TeamStation' },
-    timeout: 30_000
-  })
-  await m.launchApp({ appId, stopApp: true })
+  await pointAtStack(m, origin, appId, settleMs)
 }
 
 /**

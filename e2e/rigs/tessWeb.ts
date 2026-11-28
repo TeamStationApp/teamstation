@@ -2,6 +2,7 @@
 import { expect } from 'chai'
 
 import type { FakeCall } from '../../src/test/fakeAnthropic'
+import { retryWhileBusy } from '../core/busyRetry'
 import type { FixtureManifest } from '../core/fixtures'
 import { eventually } from '../core/readback'
 import { BlockedError } from '../core/result'
@@ -404,12 +405,18 @@ export async function withTess(
       passwordKdf: async (password: string, parameters: any) =>
         await nativeArgon(passwordBytes(password), parameters)
     })
-    const session = await client.signInWithPassword(
-      account.email,
-      account.password
+    const what = `signing ${role} (${account.email}) in on ${origin}`
+    const session = await retryWhileBusy(
+      what,
+      async () =>
+        await client.signInWithPassword(account.email, account.password)
     )
-    tokens.set(role, session.token)
-    return session.token
+    const token = (session as { token?: unknown } | undefined)?.token
+    if (typeof token !== 'string' || token === '') {
+      throw new Error(`${what} answered no session`)
+    }
+    tokens.set(role, token)
+    return token
   }
   const t: TessStack = {
     world,

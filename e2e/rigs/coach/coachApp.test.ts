@@ -74,7 +74,7 @@ function sheetApp(options: { web?: boolean; shareAt: number; step: number }): {
 }
 
 describe('the game plan rig', function () {
-  it('sends a hub iPhone the server link, waits for the app in front on its sign-in page, then launches it fresh', async function () {
+  it("points a hub phone at the stack the runner's way: the server link, the settle, a fresh launch, and no wait on a screen", async function () {
     const steps: string[] = []
     const m = {
       stopApp: async (o: { appId: string }) => steps.push(`stop ${o.appId}`),
@@ -87,17 +87,19 @@ describe('the game plan rig', function () {
       extendedWaitUntil: async (o: { visible: { text: string } }) =>
         steps.push(`wait ${o.visible.text}`)
     }
+    const started = Date.now()
     await serverKeptOnHubPhone(
       m,
       'app.example.develop',
-      'https://stack.example.test'
+      'https://stack.example.test',
+      20
     )
+    expect(Date.now() - started).greaterThanOrEqual(15)
     expect(steps).deep.equals([
       'stop app.example.develop',
       'link teamstation-develop://server?origin=https%3A%2F%2Fstack.example.test',
       'assert ^Open$',
       'tap ^Open$',
-      'wait Sign in to TeamStation',
       'launch app.example.develop stop=true'
     ])
   })
