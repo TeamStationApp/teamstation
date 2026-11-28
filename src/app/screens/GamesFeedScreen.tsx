@@ -294,7 +294,6 @@ export function GamesFeedScreen(
             selected={when}
             onSelect={choose}
             size="compact"
-            variant="glass"
           />
         </PillBand>
       )}

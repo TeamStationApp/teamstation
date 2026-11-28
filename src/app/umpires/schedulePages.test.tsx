@@ -780,11 +780,16 @@ describe('umpire schedule pages', () => {
       expect(getComputedStyle(pill.parentElement!).marginLeft).equals('4px')
       expect(getComputedStyle(strip.parentElement!).flexWrap).equals('wrap')
       expect(getComputedStyle(strip).flexGrow).equals('0')
-      // The same pill as the tabs: the same shell inside.
-      const shell = (n: HTMLElement): string =>
-        n.querySelector<HTMLElement>('[data-testid="settings-pill-tab"]')!
-          .className
-      expect(shell(pill)).equals(shell(tab('Leaderboard')))
+      // A filled pill as tall as the tabs' glass pill, on the same line.
+      const shell = pill.querySelector<HTMLElement>(
+        '[data-testid="settings-pill-tab"]'
+      )!
+      const label = tab('Leaderboard').querySelector<HTMLElement>(
+        '[data-testid="glass-tab-label"]'
+      )!
+      expect(getComputedStyle(shell).height).equals(
+        getComputedStyle(label).height
+      )
       await act(async () => {
         pill.click()
       })

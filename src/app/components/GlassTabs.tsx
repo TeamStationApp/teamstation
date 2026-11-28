@@ -18,6 +18,7 @@ import Animated, {
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
+import { GlassLabelSizer } from './glassLabelSizer'
 import { GlassView } from './GlassView'
 import type { PillTabsProps } from './PillTabs'
 
@@ -39,13 +40,29 @@ import type { PillTabsProps } from './PillTabs'
  * The pill's two ends travel on different springs, the leading one quicker,
  * so it stretches toward the new tab and settles into its width. Pressing a
  * tab grows the pill a little until the finger lifts.
+ *
+ * Every `PillTabs` strip is this one, at each of its sizes: `compact`, a 36pt
+ * pill in a 48pt target; `small`, a 32pt pill in a 44pt target whose targets
+ * meet, for the filter rows stacked under a screen's tabs. `dense` narrows the
+ * space between labels, never the pill's clearance around one, and `stacked`
+ * drops the strip's padding above and below.
  */
 export function GlassTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  const { tabs, selected, onSelect, bleed = true } = props
+  const {
+    tabs,
+    selected,
+    onSelect,
+    size = 'compact',
+    bleed = true,
+    dense = false,
+    stacked = false
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const small = size === 'small'
+  const geometry = geometryOf(theme, small, dense)
   const inset = useContentInset()
   const reach =
     bleed && (inset.left > 0 || inset.right > 0)
@@ -90,9 +107,9 @@ export function GlassTabs<Id extends string = string>(
   const frame = frames[selected]
   React.useEffect(() => {
     if (frame == null) return
-    const pad = pillPadding(theme.rem(PILL_HEIGHT_REM))
-    const nextLeft = frame.x + TARGET_SIDE(theme) - pad
-    const nextRight = frame.x + frame.width - TARGET_SIDE(theme) + pad
+    const pad = pillPadding(geometry.pill)
+    const nextLeft = frame.x + geometry.side - pad
+    const nextRight = frame.x + frame.width - geometry.side + pad
     const recent = lastPill.get(tabKey)
     // Another strip with these tabs is still showing (sliding out), or went
     // a moment ago.
@@ -141,7 +158,7 @@ export function GlassTabs<Id extends string = string>(
         animated: true
       })
     }
-  }, [frame?.x, frame?.width, stripWidth])
+  }, [frame?.x, frame?.width, stripWidth, geometry.side, geometry.pill])
 
   // Counted while it shows; going, it stamps when, for one that takes over.
   React.useEffect(() => {
@@ -170,21 +187,30 @@ export function GlassTabs<Id extends string = string>(
       onLayout={(event: LayoutChangeEvent) => {
         setStripWidth(event.nativeEvent.layout.width)
       }}
-      contentContainerStyle={[styles.scrollContent, reach?.content]}
+      contentContainerStyle={[
+        styles.scrollContent,
+        stacked && styles.scrollStacked,
+        reach?.content
+      ]}
     >
-      <View style={styles.row}>
+      <View style={[styles.row, small && styles.rowSmall]}>
         <Animated.View
           pointerEvents="none"
           testID="glass-tab-pill"
-          style={[styles.pill, !GLASS_PILL && styles.pillFilled, pillStyle]}
+          style={[
+            styles.pill,
+            small && styles.pillSmall,
+            !isGlassPill() && styles.pillFilled,
+            pillStyle
+          ]}
         >
-          {GLASS_PILL && (
+          {isGlassPill() && (
             <GlassView
               interactive
               tint={`${theme.pillActiveBackground}${
                 lifted ? GLASS_TINT_LIFTED : GLASS_TINT_ALPHA
               }`}
-              radius={theme.rem(PILL_HEIGHT_REM) / 2}
+              radius={geometry.pill / 2}
               style={styles.pillGlass}
             />
           )}
@@ -222,9 +248,16 @@ export function GlassTabs<Id extends string = string>(
               onPress={() => {
                 onSelect(tab.id)
               }}
-              style={styles.target}
+              style={[
+                styles.target,
+                small && styles.targetSmall,
+                dense && !small && styles.targetDense
+              ]}
             >
-              <View style={styles.labelBox}>
+              <View
+                testID="glass-tab-label"
+                style={[styles.labelBox, small && styles.labelBoxSmall]}
+              >
                 {/* Both faces of the label, unseen, hold each tab at the
                     wider of its two widths, so selecting one never pushes
                     its neighbours or cuts its label short. */}
@@ -235,11 +268,12 @@ export function GlassTabs<Id extends string = string>(
                     aria-hidden
                   >
                     {tab.live === true && <View style={styles.liveDot} />}
-                    <Text selectable={false} style={[styles.label, face]}>
-                      {tab.label}
-                    </Text>
+                    <GlassLabelSizer
+                      text={tab.label}
+                      style={[styles.label, small && styles.labelSmall, face]}
+                    />
                     {tab.badge != null && (
-                      <Text style={styles.badge}>{tab.badge}</Text>
+                      <GlassLabelSizer text={tab.badge} style={styles.badge} />
                     )}
                   </View>
                 ))}
@@ -249,8 +283,10 @@ export function GlassTabs<Id extends string = string>(
                   )}
                   <Text
                     selectable={false}
+                    numberOfLines={1}
                     style={[
                       styles.label,
+                      small && styles.labelSmall,
                       isSelected ? styles.labelActive : styles.labelIdle
                     ]}
                   >
@@ -292,14 +328,19 @@ const HANDOVER_MS = 1500
 /** How many strips with each set of tabs are showing. */
 const live = new Map<string, number>()
 
-/** The compact pill's height: 36 points, as the strip's. */
+/**
+ * The compact pill's height, 36 points, in a 48-point target; the small
+ * pill's, 32 in a 44-point target, Apple's minimum.
+ */
 const PILL_HEIGHT_REM = 2.25
-
-/** Where the pill clears the 48-point target above and below. */
-const PILL_INSET_REM = (3 - PILL_HEIGHT_REM) / 2
+const TARGET_HEIGHT_REM = 3
+const SMALL_PILL_HEIGHT_REM = 2
+const SMALL_TARGET_HEIGHT_REM = 2.75
 
 /** Liquid Glass for the pill where the system draws it. */
-const GLASS_PILL = Platform.OS === 'ios'
+function isGlassPill(): boolean {
+  return Platform.OS === 'ios'
+}
 
 /**
  * The green's strength on the glass, as hex alphas: 55% at rest, enough to
@@ -313,30 +354,77 @@ const GLASS_TINT_LIFTED = '33'
 const LIFT_SCALE = 1.12
 const LIFT_MS = 420
 
-/** Each target's side: half the 28 points between two labels. */
-function TARGET_SIDE(theme: Theme): number {
-  return theme.rem(0.875)
+/**
+ * A target's side, beside its label: half the 28 points between two compact
+ * labels, or 24 in a dense strip. The selected pill reaches past it by its
+ * padding, which never shrinks. A small target is its pill's padding and 4
+ * points more, with no gap to the next, so neighbouring targets meet halfway.
+ */
+const SIDE_REM = 0.875
+const DENSE_SIDE_REM = 0.75
+const SMALL_EDGE_REM = 0.25
+/** How far past its box the label that shows may draw: less than any side. */
+const LABEL_ROOM_REM = 0.25
+
+function geometryOf(
+  theme: Theme,
+  small: boolean,
+  dense: boolean
+): { pill: number; side: number } {
+  if (small) {
+    const pill = theme.rem(SMALL_PILL_HEIGHT_REM)
+    return { pill, side: pillPadding(pill) + theme.rem(SMALL_EDGE_REM) }
+  }
+  return {
+    pill: theme.rem(PILL_HEIGHT_REM),
+    side: theme.rem(dense ? DENSE_SIDE_REM : SIDE_REM)
+  }
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
   scrollContent: {
-    paddingHorizontal: theme.rem(theme.spaceXsRem)
+    paddingHorizontal: theme.rem(theme.spaceXsRem),
+    // Room for the pill's lift and shadow, which the strip's own overflow
+    // would otherwise cut off square.
+    paddingVertical: theme.rem(theme.spaceXsRem)
+  },
+  // Rows stacked under one another: their targets meet.
+  scrollStacked: {
+    paddingVertical: 0
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center'
   },
+  // The row is pulled out by a small target's outer edge, so the first pill,
+  // not its target, starts where a filled small pill did.
+  rowSmall: {
+    marginHorizontal: -theme.rem(SMALL_EDGE_REM)
+  },
   // 48 tall, as every tab; the side is half the space to the next label, so
   // two targets meet in the middle of it.
   target: {
-    paddingVertical: theme.rem(PILL_INSET_REM),
-    paddingHorizontal: TARGET_SIDE(theme)
+    paddingVertical: theme.rem((TARGET_HEIGHT_REM - PILL_HEIGHT_REM) / 2),
+    paddingHorizontal: theme.rem(SIDE_REM)
   },
-  // The pill's own height, with the label centred in it exactly as the
-  // filled strip centres its label: the pill is drawn over this box.
+  targetDense: {
+    paddingHorizontal: theme.rem(DENSE_SIDE_REM)
+  },
+  targetSmall: {
+    paddingVertical: theme.rem(
+      (SMALL_TARGET_HEIGHT_REM - SMALL_PILL_HEIGHT_REM) / 2
+    ),
+    paddingHorizontal:
+      pillPadding(theme.rem(SMALL_PILL_HEIGHT_REM)) + theme.rem(SMALL_EDGE_REM)
+  },
+  // The pill's own height, with the label centred in it: the pill is drawn
+  // over this box.
   labelBox: {
     height: theme.rem(PILL_HEIGHT_REM),
     justifyContent: 'center'
+  },
+  labelBoxSmall: {
+    height: theme.rem(SMALL_PILL_HEIGHT_REM)
   },
   sizer: {
     flexDirection: 'row',
@@ -349,12 +437,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     height: 0,
     overflow: 'hidden'
   },
+  // Over the sizers, centred, with room to spare either side: a box exactly
+  // as wide as its text, as the wider face's sizer makes it, can round a
+  // fraction short on Android, which then cuts the label to an ellipsis.
   shown: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    left: 0,
-    right: 0,
+    left: -theme.rem(LABEL_ROOM_REM),
+    right: -theme.rem(LABEL_ROOM_REM),
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -362,9 +453,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pill: {
     position: 'absolute',
-    top: theme.rem(PILL_INSET_REM),
+    top: theme.rem((TARGET_HEIGHT_REM - PILL_HEIGHT_REM) / 2),
     height: theme.rem(PILL_HEIGHT_REM),
     borderRadius: theme.radiusPill
+  },
+  pillSmall: {
+    top: theme.rem((SMALL_TARGET_HEIGHT_REM - SMALL_PILL_HEIGHT_REM) / 2),
+    height: theme.rem(SMALL_PILL_HEIGHT_REM)
   },
   pillGlass: {
     position: 'absolute',
@@ -391,8 +486,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   label: {
     fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375),
+    fontSize: theme.rem(0.875),
     fontWeight: '600'
+  },
+  labelSmall: {
+    fontSize: theme.rem(0.75)
   },
   labelIdle: {
     color: theme.pillTextColor,

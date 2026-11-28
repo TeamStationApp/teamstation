@@ -4,7 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { stubFieldInsets } from '../../test/fieldInsetsStub'
-import { PillTabs } from '../components/PillTabs'
+import { PillButton } from '../components/PillTabs'
 import {
   BaseballScreen,
   type BaseballScreenProps
@@ -58,11 +58,7 @@ describe('scoring UI updates', () => {
       await act(async () => {
         root!.render(
           <ThemeProvider>
-            <PillTabs
-              tabs={[{ id: 'camera', label: 'Home Plate Camera' }]}
-              selected="camera"
-              onSelect={() => undefined}
-            />
+            <PillButton label="Home Plate Camera" role="tab" selected />
             <BaseballScreen
               {...props}
               {...changes}

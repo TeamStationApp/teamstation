@@ -244,7 +244,7 @@ describe('scheduleUi.test.tsx', () => {
     expect(getComputedStyle(game.firstElementChild!).paddingTop).equals('0px')
     expect(
       document.querySelector(
-        '[aria-label="Umpire pages"] [data-testid="settings-pill-tab"]'
+        '[aria-label="Umpire pages"] [data-testid="glass-tab-label"]'
       )
     ).not.equals(null)
   })
