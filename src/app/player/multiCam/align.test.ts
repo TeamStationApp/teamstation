@@ -13,12 +13,17 @@ import {
   holdExpired,
   isFinished,
   isOurSilence,
+  joinLeadSec,
+  LANDING_JOIN_SEC,
+  LANDING_MS,
+  landingStep,
   LIVE_OPEN_WAIT_MS,
   liveOpeningMs,
   masterOf,
   NUDGE_LIMIT,
   nudgeRate,
   type Placeable,
+  SEEKABLE_SLACK_SEC,
   worthCorrecting
 } from './align'
 
@@ -339,5 +344,100 @@ describe('the far side of a hole in a recording', function () {
     for (let at = 0; at < 600_000; at += 777) {
       expect(farSideOfHole(video, T0 + at), `at ${at}`).equals(null)
     }
+  })
+})
+
+describe('landing the tiles after a viewer’s seek', function () {
+  const step = (
+    errorSec: number,
+    options: Partial<Parameters<typeof landingStep>[0]> = {}
+  ): string =>
+    landingStep({
+      errorSec,
+      sinceSeekMs: null,
+      joinedThisSeek: false,
+      mode: 'settle',
+      readyState: 4,
+      ...options
+    })
+
+  it('keeps the steady rule, mode for mode, when there has been no seek', function () {
+    expect(step(0.1)).equals('none')
+    expect(step(-0.05, { mode: 'open' })).equals('none')
+    expect(step(0.6)).equals('nudge')
+    expect(step(0.6, { mode: 'open' })).equals('nudge')
+    expect(step(1.2)).equals('join')
+    expect(step(1.2, { mode: 'open' })).equals('seek')
+  })
+
+  it('joins a tile more than half a second out while landing', function () {
+    const landing = { sinceSeekMs: 2000 }
+    expect(step(0.6, landing)).equals('join')
+    expect(step(-0.6, landing)).equals('join')
+    expect(step(0.4, landing)).equals('nudge')
+    expect(step(0.05, landing)).equals('none')
+  })
+
+  it('falls back to the steady rule once the tile has been joined for this seek', function () {
+    const joined = { sinceSeekMs: 2000, joinedThisSeek: true }
+    expect(step(0.6, joined)).equals('nudge')
+    expect(step(0.6, { ...joined, mode: 'open' })).equals('nudge')
+    expect(step(1.2, joined)).equals('join')
+    expect(step(1.2, { ...joined, mode: 'open' })).equals('seek')
+  })
+
+  it('closes the window at LANDING_MS', function () {
+    expect(step(0.7, { sinceSeekMs: LANDING_MS })).equals('nudge')
+    expect(step(0.7, { sinceSeekMs: LANDING_MS + 5000 })).equals('nudge')
+    expect(step(0.7, { sinceSeekMs: LANDING_MS - 1 })).equals('join')
+  })
+
+  it('joins only strictly past LANDING_JOIN_SEC, and honours a tolerance', function () {
+    const landing = { sinceSeekMs: 2000 }
+    expect(step(LANDING_JOIN_SEC, landing)).equals('nudge')
+    expect(step(0.3, { ...landing, toleranceSec: 0.4 })).equals('none')
+    expect(step(0.45, { ...landing, toleranceSec: 0.4 })).equals('nudge')
+  })
+
+  it('never joins a starved tile it is not worth moving', function () {
+    const starved = { readyState: 1 }
+    expect(step(0.6, { ...starved, sinceSeekMs: 2000 })).equals('nudge')
+    expect(step(1.2, starved)).equals('seek')
+    expect(step(3.5, starved)).equals('join')
+  })
+
+  it('joins in open while landing, rather than seeking', function () {
+    const open = { sinceSeekMs: 2000, mode: 'open' as const }
+    expect(step(0.6, open)).equals('join')
+    expect(step(1.4, open)).equals('join')
+  })
+})
+
+describe('the lead a joining tile is sent ahead by', function () {
+  it('is the lead asked for when the player does not say where it ends', function () {
+    expect(
+      joinLeadSec({ targetSec: 100, leadSec: 1.5, seekableEndSec: null })
+    ).equals(1.5)
+  })
+
+  it('is the lead asked for when there is room', function () {
+    expect(
+      joinLeadSec({ targetSec: 100, leadSec: 1.5, seekableEndSec: 140 })
+    ).equals(1.5)
+  })
+
+  it('stops short of the seekable end, by the slack', function () {
+    expect(
+      joinLeadSec({ targetSec: 100, leadSec: 1.5, seekableEndSec: 101 })
+    ).closeTo(1 - SEEKABLE_SLACK_SEC, 1e-9)
+  })
+
+  it('is nought at or past the end', function () {
+    expect(
+      joinLeadSec({ targetSec: 100, leadSec: 1.5, seekableEndSec: 100.1 })
+    ).equals(0)
+    expect(
+      joinLeadSec({ targetSec: 100, leadSec: 1.5, seekableEndSec: 99 })
+    ).equals(0)
   })
 })

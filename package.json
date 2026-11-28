@@ -48,6 +48,7 @@
     "clean": "rimraf lib",
     "coverage.tags": "node scripts/event-tags-coverage.mjs",
     "coverage": "npm run coverage.scripts && npm run coverage.app && npm run coverage.server && npm run coverage.changed.server && npm run coverage.umpires",
+    "coverage.gridAlign": "node scripts/grid-align-coverage.mjs",
     "coverage.tabBar": "node scripts/tab-bar-coverage.mjs",
     "coverage.uiTweaks": "node scripts/ui-tweaks-coverage.mjs",
     "coverage.sync": "node scripts/sync-changed-coverage.mjs",
