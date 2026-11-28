@@ -461,6 +461,13 @@ describe('fixture worlds', function () {
     expect(roleOf('coach')).deep.equals(['coach'])
     expect(roleOf('assistant')).deep.equals(['assistant'])
     expect(roleOf('scorekeeper')).deep.equals(['scorekeeper'])
+    // The game page's scheduling answers 503 on a node without the cutover.
+    const ready = await the()
+      .selectFrom('system_settings')
+      .select('value')
+      .where('key', '=', 'creation.hierarchyReady')
+      .executeTakeFirstOrThrow()
+    expect(ready.value).equals(true)
     for (const account of Object.values(world.accounts)) {
       expect(isTestAddress(MAILBOX, account.email)).equals(true)
     }

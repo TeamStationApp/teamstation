@@ -1,3 +1,5 @@
+import { sql } from 'kysely'
+
 import { POSITIONS } from '../../../common/scoring/state'
 import { createLineupGame, joinTeam } from '../lineupFixture'
 import {
@@ -18,7 +20,9 @@ const PEOPLE = {
  * the home team's head coach and its assistant, and a scorekeeper of the home
  * team who neither coaches nor assists. `homePlayer1` … `homePlayer9` are the
  * home lineup's gumbo ids, batting one to nine; player i wears i and is named
- * as `LINEUP_NAMES.home` names them.
+ * as `LINEUP_NAMES.home` names them. The game's page asks for its
+ * scheduling, which waits for the organization cutover a deployed node has
+ * made and a fresh stack has not: the world makes it, as `lineup-game` does.
  */
 export async function runCoachGame(
   context: WorldContext
@@ -38,6 +42,10 @@ export async function runCoachGame(
     PEOPLE.scorekeeper
   )
   const game = await context.db.transaction().execute(async trx => {
+    await sql`
+      INSERT INTO system_settings (key, value)
+      VALUES ('creation.hierarchyReady', 'true')
+      ON CONFLICT (key) DO UPDATE SET value = 'true'`.execute(trx)
     const made = await createLineupGame(trx)
     await joinTeam(trx, coach.userId, made.teams.home, 'coach')
     await joinTeam(trx, assistant.userId, made.teams.home, 'assistant')
