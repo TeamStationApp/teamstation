@@ -2080,10 +2080,19 @@ export const asPlayback = asObject({
   durationSec: asNullable(asNumber),
   unavailable: asBoolean,
   /** Publication is still pending, including after the stream has ended. */
-  pending: asOptional(asBoolean)
+  pending: asOptional(asBoolean),
+  /**
+   * The video's sample-entry tag (`hvc1`, `avc1`), which the player asks this
+   * browser about. An older server leaves it out, and its videos are HEVC.
+   */
+  codecs: asOptional(asNullable(asString))
 })
-export type Playback = Omit<ReturnType<typeof asPlayback>, 'pending'> & {
+export type Playback = Omit<
+  ReturnType<typeof asPlayback>,
+  'pending' | 'codecs'
+> & {
   pending?: boolean
+  codecs?: string | null
 }
 
 export const asSeasonSummary = asObject({

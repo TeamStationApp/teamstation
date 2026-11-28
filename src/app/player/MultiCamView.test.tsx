@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -115,6 +115,10 @@ async function grid(options: {
   onEndReached?: () => void
   /** The game's sponsorship, as the game screen read it. */
   sponsors?: GameSponsors
+  /** Each angle's codec, by id; none by default, which is HEVC. */
+  codecs?: Record<string, string>
+  /** Told each angle whose address is asked for. */
+  asked?: string[]
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -151,23 +155,27 @@ async function grid(options: {
   // looks at.
   client.playback =
     options.playable === true
-      ? async videoId => ({
-          videoId,
-          storage: 'spaces',
-          url: `https://media.example.test/${videoId}/index.m3u8`,
-          expiresAt: null,
-          durationSec: 600,
-          unavailable: false
-        })
+      ? async videoId => {
+          options.asked?.push(videoId)
+          return {
+            videoId,
+            storage: 'spaces',
+            url: `https://media.example.test/${videoId}/index.m3u8`,
+            expiresAt: null,
+            durationSec: 600,
+            unavailable: false
+          }
+        }
       : async () => await new Promise(() => undefined)
   const host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
-  const videos = ids.map(id =>
-    options.unmeasured?.includes(id) === true
-      ? { ...angle(id), durationSec: null }
-      : angle(id)
-  )
+  const videos = ids.map(id => {
+    const one = { ...angle(id), codecs: options.codecs?.[id] ?? null }
+    return options.unmeasured?.includes(id) === true
+      ? { ...one, durationSec: null }
+      : one
+  })
   const view = (order: string[]): React.ReactElement => (
     <ThemeProvider>
       <PaneFrameProvider frame={options.frame ?? null}>
@@ -253,6 +261,45 @@ const layer = (): HTMLElement => {
   if (!(found instanceof HTMLElement)) throw new Error('No grid layer')
   return found
 }
+
+describe('a grid of angles in two codecs (U10)', function () {
+  let saved: PropertyDescriptor | undefined
+  beforeEach(function () {
+    saved = Object.getOwnPropertyDescriptor(globalThis, 'MediaSource')
+    // Google Chrome on Linux: H.264 through Media Source, and no HEVC.
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      writable: true,
+      value: { isTypeSupported: (type: string) => type.includes('avc1') }
+    })
+  })
+  afterEach(async function () {
+    await unmount()
+    if (saved != null) Object.defineProperty(globalThis, 'MediaSource', saved)
+  })
+
+  it('plays the H.264 angle and says the HEVC one cannot play here, in its tile only', async function () {
+    const asked: string[] = []
+    await grid({
+      width: 1280,
+      height: 900,
+      playable: true,
+      ids: ['a', 'b'],
+      // The viewer had chosen the HEVC angle's sound.
+      audioId: 'b',
+      codecs: { a: 'avc1', b: 'hvc1' },
+      asked
+    })
+    const states = tiles().map(tile => tile.getAttribute('data-tile-state'))
+    expect(states).deep.equals(['loading', 'unsupported'])
+    // Nothing is fetched for the angle nothing here decodes.
+    expect(asked).deep.equals(['a'])
+    // Its sound goes to the angle that plays.
+    const heard = tiles().map(tile => tile.getAttribute('data-heard'))
+    expect(heard).deep.equals(['true', 'false'])
+    expect(tiles()[1].textContent).contains(lstrings.video_not_supported)
+  })
+})
 
 describe("the grid beside Tess's chat", function () {
   afterEach(unmount)

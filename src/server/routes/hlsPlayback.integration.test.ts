@@ -60,7 +60,9 @@ describe('playback through an API node without media files', function () {
           game_id: 'gam_origin',
           kind,
           status: 'ready',
-          storage: 'spaces'
+          storage: 'spaces',
+          // An H.264 upload; the others say no codec, as older rows do.
+          codecs: id === 'vid_upload' ? 'avc1' : null
         })
         .execute()
     }
@@ -102,9 +104,9 @@ describe('playback through an API node without media files', function () {
     )
 
   it('gives live viewers the media playlist and uploaded recordings their master', async () => {
-    for (const [id, file] of [
-      ['vid_live', 'index.m3u8'],
-      ['vid_upload', 'master.m3u8']
+    for (const [id, file, codecs] of [
+      ['vid_live', 'index.m3u8', null],
+      ['vid_upload', 'master.m3u8', 'avc1']
     ]) {
       const response = await f.h.request(
         'GET',
@@ -116,6 +118,8 @@ describe('playback through an API node without media files', function () {
       const body = await response.json()
       expect(body.url).contains(`/hls/${file}?t=`)
       expect(body.unavailable).equals(false)
+      // The row's codec, for the player to ask the browser about (I6).
+      expect(body.codecs).equals(codecs)
     }
     const live = await hls('vid_live', 'index.m3u8')
     expect(live.status).equals(200)

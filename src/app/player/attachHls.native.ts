@@ -10,7 +10,7 @@ import {
   surfaceOf,
   videoIdOf
 } from './playbackSession'
-import type { PlayIntent } from './playIntent'
+import { type AttachIntent, playIntentOf } from './playIntent'
 import { addressIsWrong } from './videoError'
 import type { VideoHandle } from './videoHandle'
 
@@ -51,8 +51,9 @@ export function attachHls(
    * the player itself (the multi-camera grid). The buffer limit is the web's:
    * AVPlayer and ExoPlayer size their own.
    */
-  intent?: PlayIntent
+  given?: AttachIntent
 ): () => void {
+  const intent = playIntentOf(given)
   if (!(handle instanceof NativeVideoHandle)) {
     // Nothing else can be driven from here. Silently doing nothing is better
     // than throwing inside a ref callback, but silence is also how a video

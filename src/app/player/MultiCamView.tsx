@@ -109,8 +109,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    * to somebody on a gigabit line who can see the same view stall. This shows
    * the numbers it reached that conclusion from.
    */
-  /** Whether this browser can play the video at all (`playable.ts`). */
-  const playable = useMemo(() => playableHere(), [])
   const debug = useMemo(() => playerDebug(), [])
 
   // The game's board and box score, at the wall time of the master tile's
@@ -212,7 +210,10 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         close()
       },
       rects: layout.tiles,
-      fallbackMapping: board.mappingOf
+      fallbackMapping: board.mappingOf,
+      // Per angle: a game's angles can mix HEVC and H.264, and a browser
+      // that decodes only one plays those and says so on the others.
+      playable: video => playableHere(video.codecs)
     }
   )
   board.follow(mc)
@@ -455,7 +456,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           videoId={video.id}
           url={mc.urls[video.id] ?? null}
           unavailable={mc.urls[video.id] === null}
-          unsupported={!playable}
+          unsupported={!playableHere(video.codecs)}
+          codecs={video.codecs}
           onGiveUp={askAgain}
           // Silent throughout a crawl, whichever angle is heard: the sound
           // follows the moment, and a crawl across two recordings would
@@ -666,6 +668,8 @@ function Tile(props: {
   unavailable: boolean
   /** Nothing in this browser can play it: nothing is attached. */
   unsupported: boolean
+  /** Its video's sample-entry tag, for the player to ask the browser about. */
+  codecs: string | null
   takeRef: (node: TileHandle | null) => void
   /** Where its player hands its own wall-clock mapping. */
   onWallMapping: (mapping: WallMapping | null) => void
@@ -754,7 +758,8 @@ function Tile(props: {
       isLive,
       onWallMapping,
       onSoundHeld,
-      unsupported
+      unsupported,
+      codecs
     } = props
     if (node == null || url == null || unsupported) return
     const toSec = onAttaching(videoId)
@@ -772,7 +777,8 @@ function Tile(props: {
         onSoundHeld,
         muted: () => mutedNow.current,
         startSec: toSec ?? undefined,
-        surface: 'grid'
+        surface: 'grid',
+        codecs
       }
     )
     const start = (): void => {

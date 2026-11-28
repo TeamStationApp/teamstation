@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { playedFromStart } from '../../test/liveJoin'
+import type { attachHls } from '../player/attachHls'
 import { LIVE_DELAY_SEC } from '../player/liveDelay'
 import { playbackOf } from '../player/playbackSession'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -296,5 +297,55 @@ describe('VideoPoster playing a live game', function () {
         await playedFromStart(container.querySelector('video')!)
       ).deep.equals([])
     })
+  })
+})
+
+describe('the codec a card plays its video as (U8)', function () {
+  it('hands its codecs to the player, live or not', async function () {
+    const given: Array<string | null | undefined> = []
+    const attach: typeof attachHls = (_video, _url, _gone, intent) => {
+      given.push(intent?.codecs)
+      return () => undefined
+    }
+    const container = await render(
+      <VideoPoster
+        size="hero"
+        videoUrl="https://media/game.m3u8"
+        codecs="avc1"
+        attach={attach}
+      />
+    )
+    expect(given).deep.equals(['avc1'])
+    expect(frameOf(container).getAttribute('data-codecs')).equals('avc1')
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <VideoPoster
+            size="hero"
+            videoUrl="https://media/game.m3u8"
+            codecs="avc1"
+            live
+            attach={attach}
+          />
+        </ThemeProvider>
+      )
+    })
+    expect(given).deep.equals(['avc1', 'avc1'])
+  })
+
+  it('leaves the codec out where the answer had none, which is HEVC', async function () {
+    const given: Array<string | null | undefined> = []
+    const container = await render(
+      <VideoPoster
+        size="hero"
+        videoUrl="https://media/game.m3u8"
+        attach={(_video, _url, _gone, intent) => {
+          given.push(intent?.codecs)
+          return () => undefined
+        }}
+      />
+    )
+    expect(given).deep.equals([undefined])
+    expect(frameOf(container).hasAttribute('data-codecs')).equals(false)
   })
 })

@@ -1614,3 +1614,55 @@ describe('a browser that cannot play the video (U32)', function () {
       expect(video.getAttribute('src')).equals(null)
   })
 })
+
+describe('a browser that decodes H.264 and not HEVC (U10)', function () {
+  let mediaSource: PropertyDescriptor | undefined
+  beforeEach(function () {
+    mediaSource = Object.getOwnPropertyDescriptor(globalThis, 'MediaSource')
+    // Google Chrome on Linux: H.264 through Media Source, no HEVC, and no
+    // HLS of its own.
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      value: { isTypeSupported: (type: string) => type.includes('avc1') }
+    })
+  })
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    if (mediaSource == null) Reflect.deleteProperty(globalThis, 'MediaSource')
+    else Object.defineProperty(globalThis, 'MediaSource', mediaSource)
+  })
+
+  it('plays an H.264 video in place', async function () {
+    await page([{ ...videoOf('v1', START), codecs: 'avc1' }])
+    expect(document.body.textContent).not.includes(lstrings.video_not_supported)
+    expect(inline()).not.equals(null)
+  })
+
+  it('says an HEVC one cannot play here', async function () {
+    await page([{ ...videoOf('v1', START), codecs: 'hvc1' }])
+    expect(document.body.textContent).includes(lstrings.video_not_supported)
+    expect(inline()).equals(null)
+  })
+
+  it('plays the H.264 tile of All Angles and says so on the HEVC one', async function () {
+    await page(
+      [
+        { ...videoOf('v1', START), codecs: 'hvc1' },
+        { ...videoOf('v2', START), codecs: 'avc1' }
+      ],
+      { angles: ['v1', 'v2'], audioId: 'v1' }
+    )
+    const states = [...document.querySelectorAll('[data-tile-state]')].map(
+      tile => tile.getAttribute('data-tile-state')
+    )
+    expect(states[0]).equals('unsupported')
+    expect(states[1]).not.equals('unsupported')
+    const heard = [...document.querySelectorAll('[data-tile-state]')].map(
+      tile => tile.getAttribute('data-heard')
+    )
+    expect(heard).deep.equals(['false', 'true'])
+  })
+})

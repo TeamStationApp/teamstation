@@ -157,6 +157,11 @@ describe('a publish on a key that already holds a recording', function () {
         event.type === 'publishEnded' &&
         STREAM_REFUSAL_PREFIXES.some(prefix => event.reason.startsWith(prefix))
     )
+  /** The tag each publish the controller was told of was started with. */
+  const heardTags = (): string[] =>
+    events.flatMap(event =>
+      event.type === 'publishStarted' ? [event.codecTag] : []
+    )
   /** The streams the controller was told have started publishing. */
   const heard = (): string[] =>
     events.flatMap(event =>
@@ -327,6 +332,8 @@ describe('a publish on a key that already holds a recording', function () {
     expect(heard()).deep.equals(['liv_hold'])
     const args = spawned()[0]
     expect(args[args.indexOf('-tag:v') + 1]).equals('avc1')
+    // And the live row is told the same tag, for the players (U8).
+    expect(heardTags()).deep.equals(['avc1'])
   })
 
   it('still refuses VP9, and writes nothing for it', async function () {
@@ -616,6 +623,7 @@ describe('a publish on a key that already holds a recording', function () {
     expect(heard(), 'its size is not known yet').deep.equals([])
     showHeader(made, 'hevc')
     expect(heard(), 'accepted on its header').deep.equals(['liv_hold'])
+    expect(heardTags()).deep.equals(['hvc1'])
     expect(spawned(), 'sound first').length(0)
     showSound(made)
     await until(() => spawned().length === 1)

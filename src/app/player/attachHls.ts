@@ -7,7 +7,7 @@ import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
 import { AHEAD_SEC, BEHIND_SEC } from './multiCam/buffering'
-import { HEVC_TYPE } from './playable'
+import { mediaSourceTakes } from './playable'
 import {
   markSeek,
   playbackOf,
@@ -16,7 +16,7 @@ import {
   surfaceOf,
   videoIdOf
 } from './playbackSession'
-import type { PlayIntent } from './playIntent'
+import { type AttachIntent, type PlayIntent, playIntentOf } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import { seekableEndOf, type VideoHandle } from './videoHandle'
 import {
@@ -69,8 +69,9 @@ export function attachHls(
    * for a new one.
    */
   onGiveUp?: () => void,
-  intent?: PlayIntent
+  given?: AttachIntent
 ): () => void {
+  const intent = playIntentOf(given)
   // The one place the seam is crossed. `VideoHandle` is what the six modules
   // that drive the picture agree on; `src`, `load`, `canPlayType`, the
   // element's `error` and the element hls.js is handed are the browser's own,
@@ -84,7 +85,7 @@ export function attachHls(
     vendor: typeof navigator === 'undefined' ? '' : navigator.vendor,
     nativeHls: video.canPlayType(HLS_MIME_TYPE) !== '',
     mediaSource: Hls.isSupported(),
-    hevc: mediaSourceTakesHevc()
+    codecSupported: mediaSourceTakes(given?.codecs)
   })
   const session = startPlayback(handle, {
     videoId: videoIdOf(url),
@@ -137,13 +138,6 @@ export function attachHls(
   }
 }
 
-/** Whether this browser's Media Source takes HEVC; false without one. */
-function mediaSourceTakesHevc(): boolean {
-  return (
-    typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(HEVC_TYPE)
-  )
-}
-
 /** What a browser that plays HLS itself answers `canPlayType` for. */
 export const HLS_MIME_TYPE = 'application/vnd.apple.mpegurl'
 
@@ -164,8 +158,8 @@ export type HlsEngine = 'native' | 'hls.js' | 'none'
  *   outside WebKit.
  * - No Media Source but native HLS (an older iPhone): the browser.
  * - Nobody where the video cannot be decoded: a browser that is not Apple's
- *   needs HEVC through Media Source, and Chrome answers `maybe` to HLS either
- *   way (`playable.ts`).
+ *   needs the video's codec (HEVC or H.264) through Media Source, and Chrome
+ *   answers `maybe` to HLS either way (`playable.ts`).
  */
 export function hlsEngine(browser: {
   /** `navigator.vendor`. */
@@ -174,12 +168,12 @@ export function hlsEngine(browser: {
   nativeHls: boolean
   /** hls.js can run here (`Hls.isSupported()`). */
   mediaSource: boolean
-  /** Media Source takes HEVC (`HEVC_TYPE`). */
-  hevc?: boolean
+  /** Media Source takes the video's codec (`mediaSourceTakes`). */
+  codecSupported?: boolean
 }): HlsEngine {
-  const { vendor, nativeHls, mediaSource, hevc = true } = browser
+  const { vendor, nativeHls, mediaSource, codecSupported = true } = browser
   if (nativeHls && vendor === APPLE_VENDOR) return 'native'
-  if (mediaSource && hevc) return 'hls.js'
+  if (mediaSource && codecSupported) return 'hls.js'
   return 'none'
 }
 

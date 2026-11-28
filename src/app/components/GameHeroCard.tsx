@@ -45,6 +45,8 @@ export interface GameHeroCardProps {
   videoUrl?: string | null
   /** That video is streaming now, so it plays behind its newest footage. */
   videoLive?: boolean
+  /** That video's sample-entry tag, from the same playback answer. */
+  videoCodecs?: string | null
   /**
    * Draw the score plainly instead of over a picture.
    *
@@ -132,6 +134,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     posterUrl,
     videoUrl,
     videoLive = false,
+    videoCodecs,
     compact = false,
     teamStats,
     date,
@@ -264,6 +267,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
         uri={posterUrl}
         videoUrl={videoUrl}
         live={videoLive}
+        codecs={videoCodecs}
         size="hero"
       >
         <View style={styles.over}>

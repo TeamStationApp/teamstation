@@ -89,6 +89,7 @@ export function mediaRoutes(
           'videos.duration_sec as durationSec',
           'videos.hidden as hidden',
           'videos.space_secret as spaceSecret',
+          'videos.codecs as codecs',
           'games.home_team_id as homeTeamId',
           'games.away_team_id as awayTeamId',
           'games.season_id as seasonId'

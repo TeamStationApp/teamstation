@@ -286,6 +286,8 @@ interface Setup {
   live?: () => Promise<LiveNow[]>
   videos?: GameDetail['videos']
   playbackUrl?: (videoId: string) => string | null
+  /** Each video's codec in its playback answer; none by default. */
+  codecs?: (videoId: string) => string | null
   /** The person umpires for a league: Home offers Help Umpire. */
   onOpenUmpireSchedule?: () => void
 }
@@ -384,12 +386,15 @@ async function mount(setup: Setup = {}): Promise<Calls> {
     },
     playback: async (videoId: string) => {
       calls.playbacks.push(videoId)
-      return playback(
-        videoId,
-        setup.playbackUrl == null
-          ? `https://video.example/${videoId}.m3u8`
-          : setup.playbackUrl(videoId)
-      )
+      return {
+        ...playback(
+          videoId,
+          setup.playbackUrl == null
+            ? `https://video.example/${videoId}.m3u8`
+            : setup.playbackUrl(videoId)
+        ),
+        ...(setup.codecs == null ? {} : { codecs: setup.codecs(videoId) })
+      }
     }
   } as unknown as TeamStationClient
   const host = document.createElement('div')
@@ -666,6 +671,46 @@ describe('the home screen', function () {
     expect(calls.teams.map(row => row.id)).deep.equals(['tem_sox'])
     await press(labelled('Fall Ball 2025, 6 teams · 30 games · 12 videos'))
     expect(calls.seasons.map(row => row.id)).deep.equals(['sea_fall'])
+  })
+
+  it('plays the live card as the codec its playback answer names (U8b)', async function () {
+    clock = liveClock()
+    restoreVideo = playableVideo()
+    const codecs = (videoId: string): string =>
+      videoId === 'vid_a' ? 'avc1' : 'hvc1'
+    const played = (): Array<Array<string | null | undefined>> =>
+      [...document.querySelectorAll<HTMLElement>('[data-codecs]')].map(node => [
+        node.querySelector('video')?.getAttribute('src'),
+        node.getAttribute('data-codecs')
+      ])
+    await mount({
+      live: async () => [liveGame('vid_a', 'gam_a', 'Alta Hawks', 'Bay Stars')],
+      codecs
+    })
+    expect(played()).deep.equals([['https://video.example/vid_a.m3u8', 'avc1']])
+  })
+
+  it('plays the recent game’s card as the codec its playback answer names (U8b)', async function () {
+    restoreVideo = playableVideo()
+    const codecs = (videoId: string): string =>
+      videoId === 'vid_a' ? 'avc1' : 'hvc1'
+    const played = (): Array<Array<string | null | undefined>> =>
+      [...document.querySelectorAll<HTMLElement>('[data-codecs]')].map(node => [
+        node.querySelector('video')?.getAttribute('src'),
+        node.getAttribute('data-codecs')
+      ])
+    await mount({
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      recent: async () =>
+        recentGame({ posterUrl: 'https://video.example/poster.jpg' }),
+      videos: [
+        { id: 'vid_ready', status: 'ready' }
+      ] as unknown as GameDetail['videos'],
+      codecs
+    })
+    expect(played()).deep.equals([
+      ['https://video.example/vid_ready.m3u8', 'hvc1']
+    ])
   })
 
   it('plays the recent game in its card, and opens it to watch or to the box score', async function () {

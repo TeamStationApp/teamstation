@@ -127,9 +127,13 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
   const [live, setLive] = useState<LiveNow[]>([])
   const [liveUrl, setLiveUrl] = useState<string | undefined>(undefined)
+  /** The codec of the video `liveUrl` plays, from the same answer. */
+  const [liveCodecs, setLiveCodecs] = useState<string | null>(null)
   /** Which game `liveUrl` belongs to, so it is not asked for twice. */
   const playing = useRef<string | undefined>(undefined)
   const [recentUrl, setRecentUrl] = useState<string | undefined>(undefined)
+  /** The codec of the video `recentUrl` plays, from the same answer. */
+  const [recentCodecs, setRecentCodecs] = useState<string | null>(null)
   /** `recentUrl` is a stream that is live now. */
   const [recentLive, setRecentLive] = useState(false)
   const recentPlaying = useRef<
@@ -216,6 +220,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         videoId: playable.id
       }
       setRecentLive(playable.status === 'live')
+      setRecentCodecs(playback.codecs ?? null)
       setRecentUrl(playback.url)
     }
     // A card that does not move is the whole of the failure, and the poster
@@ -276,6 +281,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       )
       if (!current() || playback.url == null) return
       playing.current = first.videoId
+      setLiveCodecs(playback.codecs ?? null)
       setLiveUrl(playback.url)
     } catch {
       // Nothing is live, as far as this screen can tell.
@@ -495,6 +501,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               <VideoPoster
                 size="hero"
                 videoUrl={shown ? liveUrl : undefined}
+                codecs={liveCodecs}
                 // From where the game is now, as every live viewer plays it.
                 live
                 onVideoGone={() => {
@@ -593,6 +600,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               posterUrl={recent.posterUrl}
               videoUrl={offline || !shown ? undefined : recentUrl}
               videoLive={recentLive && !offline}
+              videoCodecs={recentCodecs}
             />
             {/*
               Two buttons, not one. There was no way to reach a box score from

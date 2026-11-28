@@ -52,7 +52,8 @@ export async function sampleVideoFor(
       'videos.storage as storage',
       'videos.kind as kind',
       'videos.duration_sec as durationSec',
-      'videos.space_secret as spaceSecret'
+      'videos.space_secret as spaceSecret',
+      'videos.codecs as codecs'
     ])
     .where(eb =>
       eb.and([

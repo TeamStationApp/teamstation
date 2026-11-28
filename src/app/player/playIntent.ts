@@ -80,6 +80,13 @@ export interface PlayIntent {
    * back to the server's wall timeline or the start time (`wallMapping.ts`).
    */
   onWallMapping?: (mapping: WallMapping | null) => void
+  /**
+   * The video's sample-entry tag (its row's `codecs`: `hvc1`, `avc1`), which
+   * decides whether this browser's Media Source can take it. Left out, or
+   * null, it is HEVC, as every video was before H.264 was recorded. A phone's
+   * player plays both and reads nothing of it.
+   */
+  codecs?: string | null
   /** Nothing in this browser can play the video, and nothing was attached. */
   onUnsupported?: () => void
   /**
@@ -100,4 +107,19 @@ export interface PlayIntent {
    * from there, rather than from its own live position and moving it.
    */
   startSec?: number
+}
+
+/**
+ * What a caller hands `attachHls`: the whole intent, for a player whose
+ * playing it drives, or only the video's codec, for one that plays as a
+ * plain player does (a finished game's card). Only a whole intent changes
+ * how the player behaves.
+ */
+export type AttachIntent = PlayIntent | Pick<PlayIntent, 'codecs'>
+
+/** The intent itself, when the caller gave one; undefined for a codec alone. */
+export function playIntentOf(
+  given: AttachIntent | undefined
+): PlayIntent | undefined {
+  return given != null && 'wantsToPlay' in given ? given : undefined
 }

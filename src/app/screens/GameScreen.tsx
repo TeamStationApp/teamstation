@@ -855,8 +855,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * this one, taking the `<video>` with it and stopping playback dead.
    */
   const engine = useMemo(() => playerEngine(), [])
-  /** Whether this browser can play the video at all (`playable.ts`). */
-  const playable = useMemo(() => playableHere(), [])
+  /**
+   * The playing video's codec, from the game's own copy of its row when it
+   * has one: the selected entry is a snapshot, and a live row is given its
+   * codec as its publish starts.
+   */
+  const playingCodecs = (
+    game?.videos.find(item => item.id === video?.id) ?? video
+  )?.codecs
+  const codecsRef = useRef(playingCodecs)
+  codecsRef.current = playingCodecs
+  /** Whether this browser can play this video at all (`playable.ts`). */
+  const playable = useMemo(() => playableHere(playingCodecs), [playingCodecs])
   /** "All angles": several at once. */
   const anglesOffered = multiAngleSupported(engine, 2)
   /**
@@ -1633,6 +1643,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           else landRef.current?.()
         },
         isLive: placeFor.current.isLive,
+        codecs: codecsRef.current,
         startAtLiveEdge:
           !(resumeAtRef.current?.videoId === placeFor.current.videoId) &&
           !(startAtSecRef.current != null && startAtSecRef.current > 0)

@@ -29,6 +29,12 @@ export interface PlaybackVideo {
   kind: VideosTable['kind']
   durationSec: number | null
   spaceSecret: string | null
+  /**
+   * The recording's sample-entry tag (`videos.codecs`: `hvc1`, `avc1`), or
+   * null where none is stored. Required, so every query that builds one
+   * selects it: the players ask this browser about the codec it names.
+   */
+  codecs: string | null
 }
 
 /** `GET /videos/:videoId/playback`'s answer. */
@@ -40,6 +46,8 @@ export interface PlaybackAnswer {
   durationSec: number | null
   unavailable: boolean
   pending?: boolean
+  /** The video's `codecs`, for the player to ask this browser about. */
+  codecs: string | null
 }
 
 /** What an HLS token is signed against: this video's playlists, and no other. */
@@ -82,6 +90,7 @@ export async function playbackAnswer(
       expiresAt: null,
       durationSec: video.durationSec,
       unavailable: true,
+      codecs: video.codecs,
       // Finish may race the first acknowledgement. No node should issue
       // a scratch URL that the pending origin close will immediately remove.
       pending: waitingForOrigin
@@ -118,6 +127,7 @@ export async function playbackAnswer(
     url,
     expiresAt: new Date(now + MEDIA_TOKEN_TTL_SEC * 1000).toISOString(),
     durationSec: video.durationSec,
-    unavailable: false
+    unavailable: false,
+    codecs: video.codecs
   }
 }

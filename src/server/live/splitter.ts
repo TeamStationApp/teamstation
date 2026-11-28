@@ -224,7 +224,17 @@ export interface LiveSpec {
 }
 
 export type LiveEvent =
-  | { type: 'publishStarted'; key: string; liveStreamId: string }
+  | {
+      type: 'publishStarted'
+      key: string
+      liveStreamId: string
+      /**
+       * The sample-entry tag the writer gives the recording (`writerTag`),
+       * which the live video row is given at once: a recording keeps the
+       * codec it began with, so the tag never changes under a live row.
+       */
+      codecTag: VideoTag
+    }
   | {
       type: 'publishEnded'
       key: string
@@ -1758,7 +1768,8 @@ function acceptIfAcceptable(entry: LiveEntry): void {
   requireConfig().onEvent({
     type: 'publishStarted',
     key: entry.key,
-    liveStreamId: entry.liveStreamId
+    liveStreamId: entry.liveStreamId,
+    codecTag: writerTag(entry)
   })
   report(entry)
 }
@@ -1847,8 +1858,11 @@ export function streamRefusal(entry: LiveEntry): string | null {
   return size == null ? null : sizeRefusal(size)
 }
 
+/** A recording's sample-entry tag, as the HLS writer is told it. */
+export type VideoTag = 'avc1' | 'hvc1'
+
 /** The HLS writer's `-tag:v`, for the codec of the publish it writes. */
-function writerTag(entry: LiveEntry): string {
+function writerTag(entry: LiveEntry): VideoTag {
   const codec = entry.ingress.session?.videoCodec
   const family =
     codec == null || codec === 0 || codec === '' ? undefined : familyOf(codec)
@@ -3650,7 +3664,8 @@ export function forcePublishForTest(key: string, publishing: boolean): void {
     requireConfig().onEvent({
       type: 'publishStarted',
       key: entry.key,
-      liveStreamId: entry.liveStreamId
+      liveStreamId: entry.liveStreamId,
+      codecTag: writerTag(entry)
     })
     startOutputs(entry)
   } else if (!publishing && entry.ingress.publishing) {

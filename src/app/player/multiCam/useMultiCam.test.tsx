@@ -1497,6 +1497,51 @@ describe('useMultiCam on live angles', function () {
     expect(asked.filter(one => one === 'B').length).equals(1)
   })
 
+  it('asks no address for a live angle this browser cannot decode, and hears and follows the one it can (U10)', async function () {
+    this.timeout(8000)
+    // A is H.264 and B HEVC, in a browser that decodes only H.264; the
+    // viewer had chosen B's sound.
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => {
+      asked.push(id)
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: false
+      }
+    }
+    const { mc, tiles } = await grid(
+      {
+        ...live,
+        videos: [
+          { ...liveVideo('A', 0), codecs: 'avc1' },
+          { ...liveVideo('B', 60), codecs: 'hvc1' }
+        ],
+        audioId: 'B',
+        client
+      },
+      {
+        liveRetryDelay: quickRetry,
+        playable: video => video.codecs === 'avc1'
+      },
+      atTheirEdges
+    )
+    await until(() => mc().urls.A != null)
+    expect(mc().urls.B).equals(null)
+    // Not asked once, and not again as a live angle with no address.
+    await until(() => false, 300)
+    expect(asked).deep.equals(['A'])
+    expect(mc().heardId).equals('A')
+    await until(() => !tiles.A.paused, 3000)
+    expect(tiles.A.paused).equals(false)
+    await until(() => mc().masterId != null, 3000)
+    expect(mc().masterId).equals('A')
+  })
+
   it('retries a finished angle awaiting publication through a failed request', async function () {
     this.timeout(5000)
     let asked = 0

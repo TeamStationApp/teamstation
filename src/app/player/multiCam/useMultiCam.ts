@@ -216,6 +216,13 @@ export interface MultiCamOptions {
    * being fetched.
    */
   fallbackMapping?: (videoId: string) => WallMapping | null | undefined
+  /**
+   * Whether this browser can decode an angle (`playableHere` of its
+   * `codecs`). One it cannot is never asked an address: it holds none, as an
+   * angle whose media is gone does, so the sound, the clock and the opening
+   * go to the angles that play. Without it every angle can.
+   */
+  playable?: (video: VideoSummary) => boolean
 }
 
 /**
@@ -486,6 +493,8 @@ export function useMultiCam(
   iconsRef.current = options.icons ?? null
   const onCornerRef = useRef(options.onCorner)
   onCornerRef.current = options.onCorner
+  const playableRef = useRef(options.playable)
+  playableRef.current = options.playable
   /** Each tile's own mapping, from its player; null when it has none. */
   const tileMappings = useRef(new Map<string, WallMapping | null>())
   const fallbackRef = useRef(fallbackMapping)
@@ -852,6 +861,11 @@ export function useMultiCam(
     for (const video of chosen) {
       const id = video.id
       if (urls[id] !== undefined || asking.current.get(id) === client) continue
+      // Nothing here decodes it: no address, and nothing fetched for it.
+      if (playableRef.current?.(video) === false) {
+        setUrls(current => ({ ...current, [id]: null }))
+        continue
+      }
       asking.current.set(id, client)
       // Only the newest ask's answer, and none once the grid has gone.
       const answer = (url: string | null, pending?: boolean): void => {
@@ -886,7 +900,8 @@ export function useMultiCam(
     for (const video of chosen) {
       if (
         (video.status !== 'live' && !pendingUrls[video.id]) ||
-        urls[video.id] !== null
+        urls[video.id] !== null ||
+        playableRef.current?.(video) === false
       )
         continue
       const asks = liveAsks[video.id] ?? 0

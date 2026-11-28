@@ -999,7 +999,7 @@ async function handle(
   }
 
   if (event.type === 'publishStarted') {
-    await beganPublishing(current, event.liveStreamId)
+    await beganPublishing(current, event.liveStreamId, event.codecTag)
     return
   }
   if (event.type === 'publisherPlaced') {
@@ -1208,7 +1208,14 @@ async function scanWallClocks(
  */
 export async function beganPublishing(
   current: LiveControllerOptions,
-  liveStreamId: string
+  liveStreamId: string,
+  /**
+   * The recording's sample-entry tag (`avc1`, `hvc1`), from the publish
+   * that started it, for a live row that has none yet: the players decide
+   * from it whether this browser can play the video, and on local storage
+   * nothing else writes it until the recording finishes.
+   */
+  codecTag?: string
 ): Promise<void> {
   const generation = originGeneration
   const { db } = current
@@ -1267,6 +1274,10 @@ export async function beganPublishing(
           'start_at_source',
           eb.val<'liveSession'>('liveSession')
         ),
+        // A recording keeps its first codec, so a tag already there stands.
+        ...(codecTag == null
+          ? {}
+          : { codecs: eb.fn.coalesce('codecs', eb.val(codecTag)) }),
         updated_at: now
       }))
       .where('id', '=', row.videoId)

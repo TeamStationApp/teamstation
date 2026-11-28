@@ -426,10 +426,11 @@ describe('what the ingest is told', function () {
       status: string
       hidden: boolean
       startAt: Date | null
+      codecs: string | null
     }> =>
       await db!
         .selectFrom('videos')
-        .select(['status', 'hidden', 'start_at as startAt'])
+        .select(['status', 'hidden', 'start_at as startAt', 'codecs'])
         .where('id', '=', 'vid_2')
         .executeTakeFirstOrThrow()
     const stream = async (): Promise<{
@@ -445,14 +446,22 @@ describe('what the ingest is told', function () {
     // Home and the game's event hear of each start and stop.
     const notices = await listenScreenScopes(db)
     let mark = notices.mark()
+    expect((await video()).codecs).equals(null)
     await handleLiveEventForTest(
-      { type: 'publishStarted', key: THIRD_KEY, liveStreamId: 'liv_2' },
+      {
+        type: 'publishStarted',
+        key: THIRD_KEY,
+        liveStreamId: 'liv_2',
+        codecTag: 'avc1'
+      },
       options
     )
     await notices.named(mark, { gameId: 'gam_1' })
     const first = await video()
     expect(first.status).equals('live')
     expect(first.startAt).not.equals(null)
+    // The live row says its codec at once, for the players to ask about (U8).
+    expect(first.codecs).equals('avc1')
     // The writer has been at it: the playlist is on the disk.
     const dir = liveVideoDir(mediaRoot, 'vid_2')
     await mkdir(dir, { recursive: true })
@@ -485,7 +494,12 @@ describe('what the ingest is told', function () {
     await notices.named(mark, { gameId: 'gam_1' })
     mark = notices.mark()
     await handleLiveEventForTest(
-      { type: 'publishStarted', key: THIRD_KEY, liveStreamId: 'liv_2' },
+      {
+        type: 'publishStarted',
+        key: THIRD_KEY,
+        liveStreamId: 'liv_2',
+        codecTag: 'hvc1'
+      },
       options
     )
     await notices.named(mark, { gameId: 'gam_1' })
@@ -499,6 +513,8 @@ describe('what the ingest is told', function () {
     expect(after.status).equals('live')
     expect(after.hidden).equals(false)
     expect(after.startAt?.getTime()).equals(first.startAt?.getTime())
+    // A tag already there stands: the recording keeps its first codec.
+    expect(after.codecs).equals('avc1')
     // One video per stream: the reconnect made none of its own.
     expect(await gameVideos()).deep.equals(videosBefore)
   })
@@ -635,7 +651,12 @@ describe('what the ingest is told', function () {
       const key = 'ts_realkeyrealkeyrealkeyr'
       const videoId = await camera('liv_real', key)
       await handleLiveEventForTest(
-        { type: 'publishStarted', key, liveStreamId: 'liv_real' },
+        {
+          type: 'publishStarted',
+          key,
+          liveStreamId: 'liv_real',
+          codecTag: 'hvc1'
+        },
         options
       )
       const dir = await written(videoId)

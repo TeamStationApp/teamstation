@@ -38,6 +38,12 @@ export interface VideoPosterProps {
    * Safari and the phones open a live game's playlist at its start.
    */
   live?: boolean
+  /**
+   * The video's sample-entry tag (`hvc1`, `avc1`), from the playback answer
+   * that gave `videoUrl`, so the player asks this browser about the codec it
+   * really is. Left out, it is HEVC.
+   */
+  codecs?: string | null
   /** The player has stopped trying; the URL is the thing left to doubt. */
   onVideoGone?: () => void
   /** `1:24:10` for a whole video, or where a highlight seeks to. */
@@ -72,6 +78,8 @@ export interface VideoPosterProps {
   fillHeight?: boolean
   /** Laid over the gradient at the bottom left: a score, a title. */
   children?: React.ReactNode
+  /** What hands the player its stream; a test watches what it is given. */
+  attach?: typeof attachHls
 }
 
 /**
@@ -150,6 +158,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     uri,
     videoUrl,
     live = false,
+    codecs,
     onVideoGone,
     time,
     showPlay = false,
@@ -159,7 +168,8 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     aspect = '16:9',
     frameWidth,
     fillHeight = false,
-    children
+    children,
+    attach = attachHls
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -202,7 +212,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       if (video == null || videoUrl == null || videoUrl === '') return
 
       nameSurface(video, 'card')
-      const detach = attachHls(
+      const detach = attach(
         video,
         videoUrl,
         () => {
@@ -212,9 +222,10 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
           ? {
               wantsToPlay: () => true,
               isLive: () => liveNow.current,
-              preview: true
+              preview: true,
+              codecs
             }
-          : undefined
+          : { codecs }
       )
       const start = (): void => {
         if (!video.paused) return
@@ -256,7 +267,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
     },
     // Attached again when the card turns live, so it joins as a live viewer;
     // a stream that has ended is let go by `isLive`, which reads the ref.
-    [videoUrl, joinedLive]
+    [videoUrl, joinedLive, codecs, attach]
   )
   useEffect(() => {
     return () => teardown.current?.()
@@ -271,6 +282,8 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   return (
     <View
       ref={frameRef}
+      // The codec its video is played as, for the end-to-end suite.
+      dataSet={codecs == null ? undefined : { codecs }}
       style={[
         styles.frame,
         aspect === '4:3' ? { aspectRatio: 4 / 3 } : undefined,
