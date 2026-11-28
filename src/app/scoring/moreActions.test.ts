@@ -4,7 +4,7 @@ import { describe, it } from 'mocha'
 import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
-import { moreEligibility, type MoreInput } from './moreActions'
+import { MORE_GROUPS, moreEligibility, type MoreInput } from './moreActions'
 import { asScoringPlay } from './scoringContract'
 import { runnerReasons } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -32,6 +32,27 @@ function resolveHomes(state: ScoringState): ScoringState {
   return state
 }
 describe('More local scoring actions', function () {
+  it('heads the menu with Double Play, which the screen decides, not the game', function () {
+    expect(MORE_GROUPS[0]).deep.equals({
+      label: 'Ball in play',
+      actions: ['Double Play']
+    })
+    expect(moreEligibility(initial(), 'Double Play')).equals(
+      'Requires fewer than two outs and a runner on base'
+    )
+    expect(moreEligibility(initial(1), 'Double Play')).equals(undefined)
+    const started = more(initial(1), {
+      action: 'Double Play',
+      doublePlay: '5-4-3'
+    })
+    expect(started.phase).equals('trajectory')
+    expect(moreEligibility(started, 'Double Play')).equals(
+      'Finish the current play first'
+    )
+    expect(more(initial(), { action: 'Double Play', doublePlay: 'caught' }))
+      .property('phase')
+      .equals('ready')
+  })
   for (const action of [
     'Hit by Pitch',
     'Intentional Walk',

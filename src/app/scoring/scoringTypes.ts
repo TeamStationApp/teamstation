@@ -12,6 +12,7 @@ import type {
   Side as GameSideName
 } from '../../common/scoring/state'
 import type { GroundPoint } from '../field/fieldModel'
+import type { DoublePlayKind } from './doublePlay'
 import type { MoreAction, MoreInput } from './moreActions'
 import type { RunnerChain } from './runnerChain'
 import type { ContactKind, Outcome } from './scoringContract'
@@ -100,6 +101,8 @@ export interface PendingPlay {
     | 'Manual placement'
   /** Who fielded it: a player, or a stand-in at an empty position. */
   fielder?: FielderRef
+  /** The More menu's Double Play this ball in play was started from. */
+  doublePlay?: { kind: DoublePlayKind }
   location?: GroundPoint
   angle?: number
   trajectoryAccepted: boolean

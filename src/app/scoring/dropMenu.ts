@@ -72,8 +72,8 @@ export function leftDropMenu(
 
 export interface DropMenuOptions {
   disabled: boolean
-  /** The row that opens the submenu. */
-  childKey: string
+  /** The rows that open a submenu, each its own. */
+  childKeys: readonly string[]
   /** Whether a drag that leaves both panels closes the menu (More's). */
   escape: boolean
   onActive: (active: boolean) => void
@@ -86,7 +86,8 @@ export interface DropMenu {
   open: boolean
   /** How the menu was opened: a drag lists the rows nearest the finger first. */
   mode: 'tap' | 'drag'
-  child: boolean
+  /** The row whose submenu is open, if one is. */
+  child: string | undefined
   hover: string | undefined
   /** The trigger was tapped. */
   toggle: () => void
@@ -109,7 +110,7 @@ export function useDropMenu(options: DropMenuOptions): DropMenu {
   latest.current = options
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'tap' | 'drag'>('tap')
-  const [child, setChild] = useState(false)
+  const [child, setChild] = useState<string>()
   const [hover, setHover] = useState<string>()
   const rows = useRef(new Map<string, DropRect>())
   const panels = useRef<{ parent?: DropRect; child?: DropRect }>({})
@@ -121,7 +122,7 @@ export function useDropMenu(options: DropMenuOptions): DropMenu {
 
   const close = useCallback((): void => {
     setOpen(false)
-    setChild(false)
+    setChild(undefined)
     setHover(undefined)
     latest.current.onActive(false)
   }, [])
@@ -146,7 +147,7 @@ export function useDropMenu(options: DropMenuOptions): DropMenu {
     if (!disabled) return
     gesture.current = null
     setOpen(false)
-    setChild(false)
+    setChild(undefined)
     setHover(undefined)
     latest.current.onActive(false)
   }, [disabled])
@@ -162,8 +163,9 @@ export function useDropMenu(options: DropMenuOptions): DropMenu {
     },
     close,
     select: key => {
-      if (key === latest.current.childKey) {
-        if (latest.current.canChoose(key)) setChild(value => !value)
+      if (latest.current.childKeys.includes(key)) {
+        if (latest.current.canChoose(key))
+          setChild(value => (value === key ? undefined : key))
       } else choose(key)
     },
     begin: (_x, y) => {
@@ -191,22 +193,22 @@ export function useDropMenu(options: DropMenuOptions): DropMenu {
       }
       const usable = key != null && latest.current.canChoose(key)
       setHover(usable ? key : undefined)
-      if (key === latest.current.childKey) {
-        if (usable) setChild(true)
+      if (key != null && latest.current.childKeys.includes(key)) {
+        if (usable) setChild(key)
       } else if (
         parent != null &&
         x >= parent.x &&
         x <= parent.x + parent.width &&
         !inDropRect(childPanel, x, y)
       )
-        setChild(false)
+        setChild(undefined)
     },
     end: (x, y) => {
       const active = gesture.current
       gesture.current = null
       if (active == null || !active.dragged || active.escaped) return
       const key = dropRowAt(rows.current, x, y)
-      if (key != null && key !== latest.current.childKey) choose(key)
+      if (key != null && !latest.current.childKeys.includes(key)) choose(key)
       else close()
     },
     cancel: () => {

@@ -13,6 +13,7 @@ import { MoreMenu } from './MoreMenu'
 import { MoreMenu as NativeMoreMenu } from './MoreMenu.native'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
+import type { ScoringState } from './scoringTypes'
 let root: Root | undefined
 const inputs: MoreInput[] = []
 function button(label: string): HTMLElement {
@@ -28,11 +29,13 @@ async function click(label: string): Promise<void> {
 async function mount(
   native = false,
   occupied = false,
-  pristine = false
+  pristine = false,
+  edit?: (state: ScoringState) => void
 ): Promise<void> {
   let state = initialScoringState(scoringSession(gameFixture))
   if (occupied)
     state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
+  edit?.(state)
   if (!pristine) {
     state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
     state = scoringReducer(state, { type: 'PITCH', kind: 'called' })
@@ -253,6 +256,129 @@ describe('More scoring menu', function () {
         )
       })
       expect(document.querySelector('[aria-label="Hit by Pitch"]')).equals(null)
+    } finally {
+      document.elementsFromPoint = saved
+    }
+  })
+})
+
+describe('Double Play in More', () => {
+  const GROUND = ['6-4-3', '4-6-3', '5-4-3', '3-6-3', '1-6-3', '1-4-3']
+  const onSecond = (state: ScoringState): void => {
+    state.session.liveData.linescore.offense.second = playerRef(
+      state.session,
+      3
+    )
+  }
+  /** The labels of the rows in the panel labelled `panel`. */
+  const rowsOf = (panel: string): string[] =>
+    [...button(panel).querySelectorAll('[aria-label]')]
+      .map(node => node.getAttribute('aria-label')!)
+      .filter(label => label !== panel)
+  for (const native of [false, true]) {
+    const surface = native ? 'native' : 'web'
+    it(`opens the seven double plays to its right with a runner on 1st on ${surface}`, async () => {
+      await mount(native, true)
+      await click('More')
+      // It heads the menu, with a chevron, as Put Batter on Base would.
+      expect(rowsOf('More scoring actions')[0]).equals('Double Play')
+      expect(button('Double Play').textContent).includes('›')
+      await click('Double Play')
+      expect(rowsOf('Double play')).deep.equals([...GROUND, 'Caught out'])
+      expect(button('Caught out').textContent).includes('Did not tag')
+      expect(document.querySelector('[aria-label="Batter base"]')).equals(null)
+      await click('6-4-3')
+      expect(inputs.pop()).deep.equals({
+        action: 'Double Play',
+        doublePlay: '6-4-3'
+      })
+      expect(document.querySelector('[aria-label="Double play"]')).equals(null)
+      await click('More')
+      await click('Double Play')
+      await click('Double Play')
+      expect(document.querySelector('[aria-label="Double play"]')).equals(null)
+      await click('Double Play')
+      await click('Caught out')
+      expect(inputs.pop()).deep.equals({
+        action: 'Double Play',
+        doublePlay: 'caught'
+      })
+      expect(inputs).has.length(0)
+    })
+    it(`offers only Caught out without a runner on 1st on ${surface}`, async () => {
+      await mount(native, false, false, onSecond)
+      await click('More')
+      await click('Double Play')
+      expect(rowsOf('Double play')).deep.equals(['Caught out'])
+      await click('Dismiss More')
+    })
+    it(`hides Double Play with the bases empty or two outs on ${surface}`, async () => {
+      await mount(native)
+      await click('More')
+      expect(document.querySelector('[aria-label="Double Play"]')).equals(null)
+      expect(button('Put Batter on Base')).not.equals(null)
+      await click('Dismiss More')
+      await act(async () => {
+        root?.unmount()
+      })
+      await mount(native, true, false, state => {
+        state.session.liveData.linescore.outs = 2
+      })
+      await click('More')
+      expect(document.querySelector('[aria-label="Double Play"]')).equals(null)
+      expect(button('Balk')).not.equals(null)
+      await click('Dismiss More')
+    })
+  }
+  it('aligns the web submenu with the Double Play row and opens it on a drag', async () => {
+    await mount(false, true)
+    await click('More')
+    const row = button('Double Play')
+    row.getBoundingClientRect = () => new window.DOMRect(0, 180, 160, 44)
+    await click('Double Play')
+    expect(button('Double play').style.top).equals('180px')
+    expect(button('Double play').style.left).includes('50vw')
+    await click('Dismiss More')
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const saved = document.elementsFromPoint
+    let hit: Element[] = []
+    document.elementsFromPoint = () => hit
+    const pointer = async (
+      type: string,
+      x: number,
+      y: number
+    ): Promise<void> => {
+      await act(async () => {
+        const e = new window.MouseEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: x,
+          clientY: y
+        })
+        Object.defineProperty(e, 'pointerId', { value: 1 })
+        button('More').dispatchEvent(e)
+      })
+    }
+    try {
+      await pointer('pointerdown', 50, 800)
+      await pointer('pointermove', 50, 700)
+      hit = [button('Double Play')]
+      await pointer('pointermove', 50, 200)
+      expect(rowsOf('Double play')).has.length(7)
+      hit = [button('4-6-3')]
+      await pointer('pointermove', 250, 200)
+      await pointer('pointerup', 250, 200)
+      expect(inputs.pop()).deep.equals({
+        action: 'Double Play',
+        doublePlay: '4-6-3'
+      })
+      // A release on the Double Play row itself chooses nothing.
+      await pointer('pointerdown', 50, 800)
+      await pointer('pointermove', 50, 700)
+      hit = [button('Double Play')]
+      await pointer('pointermove', 50, 200)
+      await pointer('pointerup', 50, 200)
+      expect(inputs).has.length(0)
     } finally {
       document.elementsFromPoint = saved
     }

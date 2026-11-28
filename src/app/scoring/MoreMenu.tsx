@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import { DOUBLE_PLAYS, type DoublePlayKind, doublePlayRows } from './doublePlay'
 import {
   MORE_GROUPS,
   type MoreAction,
@@ -17,6 +19,24 @@ import {
 import { SCORING_MENU, ScoringMenuLabel } from './ScoringMenuAppearance'
 import { scoringMenuPanel, scoringMenuRow } from './scoringMenuWebStyle'
 import { useMenuEscape } from './useMenuEscape'
+
+const BASE = 'Put Batter on Base'
+const DOUBLE = 'Double Play'
+/** The rows that open a submenu to their right. */
+const SUBMENUS: readonly string[] = [BASE, DOUBLE]
+
+/**
+ * What a More row's key asks for: an action, a base for Put Batter on Base,
+ * or a Double Play's kind.
+ */
+function inputOf(key: string): MoreInput {
+  const base = Number(key)
+  if ([1, 2, 3].includes(base)) return { action: BASE, base }
+  if ((DOUBLE_PLAYS as readonly string[]).includes(key))
+    return { action: DOUBLE, doublePlay: key as DoublePlayKind }
+  return { action: key as MoreAction }
+}
+
 export function MoreMenu({
   state,
   disabled,
@@ -25,7 +45,8 @@ export function MoreMenu({
 }: MoreMenuProps): React.ReactElement {
   const theme = useTheme()
   const [open, setOpen] = useState(false)
-  const [child, setChild] = useState(false)
+  /** The row whose submenu is open, if one is. */
+  const [child, setChild] = useState<string>()
   const [hover, setHover] = useState<string>()
   const gesture = useRef<{
     x: number
@@ -40,10 +61,10 @@ export function MoreMenu({
   const childPanel = useRef<HTMLDivElement>(null)
   const [childTop, setChildTop] = useState(8)
   useLayoutEffect(() => {
-    if (!child) return
+    if (child == null) return
     const measure = (): void => {
       const parent = primaryPanel.current
-        ?.querySelector('[data-more="Put Batter on Base"]')
+        ?.querySelector(`[data-more="${child}"]`)
         ?.getBoundingClientRect()
       const height = childPanel.current?.getBoundingClientRect().height ?? 132
       if (parent != null)
@@ -61,7 +82,7 @@ export function MoreMenu({
   }, [child])
   const close = (): void => {
     setOpen(false)
-    setChild(false)
+    setChild(undefined)
     setHover(undefined)
     onActive(false)
   }
@@ -76,7 +97,7 @@ export function MoreMenu({
         trigger.current.releasePointerCapture(pointer)
       gesture.current = null
       setOpen(false)
-      setChild(false)
+      setChild(undefined)
       onActive(false)
     }
   }, [disabled, onActive])
@@ -87,13 +108,10 @@ export function MoreMenu({
   }
   const choose = (key: string): void => {
     if (disabled) return
-    const base = Number(key)
-    const input: MoreInput = [1, 2, 3].includes(base)
-      ? { action: 'Put Batter on Base', base }
-      : { action: key as MoreAction }
+    const input = inputOf(key)
     if (moreEligibility(state, input.action) != null) return
-    if (input.action === 'Put Batter on Base' && input.base == null) {
-      setChild(value => !value)
+    if (SUBMENUS.includes(key)) {
+      setChild(value => (value === key ? undefined : key))
       return
     }
     close()
@@ -107,12 +125,9 @@ export function MoreMenu({
   const row = (
     label: string,
     key = label,
-    submenu = false
+    subtext?: string
   ): React.ReactElement => {
-    const action = [1, 2, 3].includes(Number(key))
-      ? 'Put Batter on Base'
-      : (key as MoreAction)
-    const reason = moreEligibility(state, action)
+    const reason = moreEligibility(state, inputOf(key).action)
     return (
       <button
         key={key}
@@ -145,7 +160,8 @@ export function MoreMenu({
         <ScoringMenuLabel
           label={label}
           active={hover === key && reason == null}
-          chevron={submenu ? 'right' : undefined}
+          chevron={SUBMENUS.includes(key) ? 'right' : undefined}
+          subtext={subtext}
         />
       </button>
     )
@@ -250,9 +266,9 @@ export function MoreMenu({
           }
           const key = hit(event.clientX, event.clientY)
           setHover(key)
-          if (key === 'Put Batter on Base') setChild(true)
+          if (key != null && SUBMENUS.includes(key)) setChild(key)
           else if (parentBounds != null && event.clientX <= parentBounds.right)
-            setChild(false)
+            setChild(undefined)
         }}
         onPointerUp={event => {
           const active = gesture.current
@@ -328,22 +344,33 @@ export function MoreMenu({
                       action =>
                         ![
                           'Dropped Third Strike',
-                          'Put Batter on Base',
-                          'Balk'
+                          BASE,
+                          'Balk',
+                          DOUBLE
                         ].includes(action) ||
                         moreEligibility(state, action) == null
                     )
                     .map(action =>
-                      row(action, action, action === 'Put Batter on Base')
+                      row(
+                        action === DOUBLE
+                          ? lstrings.scoring_double_play
+                          : action,
+                        action
+                      )
                     )}
                 </React.Fragment>
               ))}
             </div>
           </div>
-          {child && (
+          {child != null && (
             <div
+              key={child}
               role="menu"
-              aria-label="Batter base"
+              aria-label={
+                child === DOUBLE
+                  ? lstrings.scoring_double_play_menu
+                  : 'Batter base'
+              }
               ref={childPanel}
               style={{
                 ...scoringMenuPanel,
@@ -355,9 +382,13 @@ export function MoreMenu({
                 width: 'calc(50vw - 16px)'
               }}
             >
-              {['First', 'Second', 'Third'].map((label, index) =>
-                row(label, String(index + 1))
-              )}
+              {child === DOUBLE
+                ? doublePlayRows(state).map(item =>
+                    row(item.label, item.key, item.subtext)
+                  )
+                : ['First', 'Second', 'Third'].map((label, index) =>
+                    row(label, String(index + 1))
+                  )}
             </div>
           )}
         </>

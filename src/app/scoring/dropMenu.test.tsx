@@ -39,7 +39,7 @@ async function harness(
   }
   const base: DropMenuOptions = {
     disabled: false,
-    childKey: 'Out',
+    childKeys: ['Out'],
     escape: false,
     onActive: value => active.push(value),
     canChoose: key => key !== 'Dim',
@@ -126,7 +126,7 @@ describe('the phone drop menu', function () {
     await act(async () => {
       h.menu().select('Out')
     })
-    expect(h.menu().child).equals(true)
+    expect(h.menu().child).equals('Out')
     await act(async () => {
       h.menu().select('Single')
     })
@@ -158,17 +158,17 @@ describe('the phone drop menu', function () {
     await act(async () => {
       h.menu().move(250, 580)
     })
-    expect(h.menu().child).equals(true)
+    expect(h.menu().child).equals('Out')
     layChild(h.menu())
     await act(async () => {
       h.menu().move(130, 600)
     })
     expect(h.menu().hover).equals('Thrown')
-    expect(h.menu().child).equals(true)
+    expect(h.menu().child).equals('Out')
     await act(async () => {
       h.menu().move(250, 500)
     })
-    expect(h.menu().child).equals(false)
+    expect(h.menu().child).equals(undefined)
     await act(async () => {
       h.menu().move(250, 580)
     })
@@ -240,6 +240,95 @@ describe('the phone drop menu', function () {
     expect(h.menu().open).equals(false)
     expect(h.chosen).deep.equals([])
   })
+  it('opens each submenu beside its own row, one at a time', async function () {
+    const h = await harness({ childKeys: ['Out', 'Double'], escape: true })
+    // A tap opens a row's submenu, a second tap on it closes it, and a tap on
+    // the other submenu's row opens that one in its place.
+    await act(async () => {
+      h.menu().toggle()
+    })
+    await act(async () => {
+      h.menu().select('Double')
+    })
+    expect(h.menu().child).equals('Double')
+    await act(async () => {
+      h.menu().select('Out')
+    })
+    expect(h.menu().child).equals('Out')
+    await act(async () => {
+      h.menu().select('Out')
+    })
+    expect(h.menu().child).equals(undefined)
+    await act(async () => {
+      h.menu().close()
+    })
+    // A drag over each submenu row opens its own panel and closes the other.
+    await act(async () => {
+      h.menu().begin(250, 700)
+      h.menu().move(250, 600)
+    })
+    lay(h.menu())
+    h.menu().setRow('Double', { x: 200, y: 440, width: 100, height: 40 })
+    h.menu().setPanel('parent', { x: 200, y: 440, width: 100, height: 160 })
+    await act(async () => {
+      h.menu().move(250, 580)
+    })
+    expect(h.menu().child).equals('Out')
+    layChild(h.menu())
+    await act(async () => {
+      h.menu().move(250, 460)
+    })
+    expect(h.menu().child).equals('Double')
+    expect(h.menu().hover).equals('Double')
+    // The Out panel is gone; the Double Play panel takes the child's place.
+    h.menu().setRow('Caught', undefined)
+    h.menu().setRow('Thrown', undefined)
+    h.menu().setPanel('child', { x: 320, y: 440, width: 100, height: 80 })
+    h.menu().setRow('6-4-3', { x: 320, y: 440, width: 100, height: 40 })
+    h.menu().setRow('caught', { x: 320, y: 480, width: 100, height: 40 })
+    // Crossing the gap to it keeps the menu, as with the other submenu.
+    await act(async () => {
+      h.menu().move(310, 470)
+    })
+    expect(h.menu().open).equals(true)
+    expect(h.menu().child).equals('Double')
+    await act(async () => {
+      h.menu().move(370, 500)
+    })
+    expect(h.menu().hover).equals('caught')
+    // Leaving both panels and the bridge between them closes More's menu.
+    await act(async () => {
+      h.menu().move(600, 300)
+    })
+    expect(h.menu().open).equals(false)
+    expect(h.chosen).deep.equals([])
+    // Released over a row of the other submenu, the drag chooses that row.
+    await act(async () => {
+      h.menu().begin(250, 700)
+      h.menu().move(250, 600)
+    })
+    await act(async () => {
+      h.menu().move(250, 460)
+    })
+    expect(h.menu().child).equals('Double')
+    await act(async () => {
+      h.menu().move(370, 460)
+      h.menu().end(370, 460)
+    })
+    expect(h.chosen).deep.equals(['6-4-3'])
+    expect(h.menu().child).equals(undefined)
+    // A release on a submenu's own row chooses nothing.
+    await act(async () => {
+      h.menu().begin(250, 700)
+      h.menu().move(250, 600)
+    })
+    await act(async () => {
+      h.menu().move(250, 460)
+      h.menu().end(250, 460)
+    })
+    expect(h.chosen).deep.equals(['6-4-3'])
+    expect(h.menu().open).equals(false)
+  })
   it('does nothing while disabled, and closes when it becomes so', async function () {
     const h = await harness()
     await act(async () => {
@@ -259,7 +348,7 @@ describe('the phone drop menu', function () {
     await act(async () => {
       h.menu().select('Out')
     })
-    expect(h.menu().child).equals(false)
+    expect(h.menu().child).equals(undefined)
     h.menu().setRow('Single', undefined)
     h.menu().setPanel('child', undefined)
     expect(h.menu().rowRect('Single')).equals(undefined)

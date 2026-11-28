@@ -1,5 +1,12 @@
 import React from 'react'
 
+import { lstrings } from '../locales/strings'
+import {
+  DOUBLE_PLAYS,
+  doublePlayChoices,
+  type DoublePlayKind,
+  doublePlayRows
+} from './doublePlay'
 import { useDropMenu } from './dropMenu'
 import { DropMenuView } from './DropMenuView'
 import {
@@ -17,14 +24,19 @@ import {
 } from './ScoringControlAppearance'
 
 const BASE = 'Put Batter on Base'
+const DOUBLE = 'Double Play'
 const BASES = ['First', 'Second', 'Third'] as const
 
-/** What a More row's key asks for: an action, or a base for Put Batter on Base. */
+/**
+ * What a More row's key asks for: an action, a base for Put Batter on Base,
+ * or a Double Play's kind.
+ */
 function inputOf(key: string): MoreInput {
   const base = Number(key)
-  return [1, 2, 3].includes(base)
-    ? { action: BASE, base }
-    : { action: key as MoreAction }
+  if ([1, 2, 3].includes(base)) return { action: BASE, base }
+  if ((DOUBLE_PLAYS as readonly string[]).includes(key))
+    return { action: DOUBLE, doublePlay: key as DoublePlayKind }
+  return { action: key as MoreAction }
 }
 
 /** The phone's More: the web's menu, opened above the button (`DropMenuView`). */
@@ -36,10 +48,17 @@ export function MoreMenu({
 }: MoreMenuProps): React.ReactElement {
   const menu = useDropMenu({
     disabled,
-    childKey: BASE,
+    childKeys: [BASE, DOUBLE],
     escape: true,
     onActive,
-    canChoose: key => moreEligibility(state, inputOf(key).action) == null,
+    canChoose: key => {
+      const input = inputOf(key)
+      return (
+        moreEligibility(state, input.action) == null &&
+        (input.doublePlay == null ||
+          doublePlayChoices(state).includes(input.doublePlay))
+      )
+    },
     onChoose: key => {
       const input = inputOf(key)
       onChoose(input)
@@ -48,14 +67,13 @@ export function MoreMenu({
   const rows = MORE_GROUPS.flatMap(group => group.actions)
     .filter(
       action =>
-        !['Dropped Third Strike', BASE, 'Balk'].includes(action) ||
+        !['Dropped Third Strike', BASE, 'Balk', DOUBLE].includes(action) ||
         moreEligibility(state, action) == null
     )
     .map(action => ({
       key: action,
-      label: action,
-      disabled: moreEligibility(state, action) != null,
-      submenu: action === BASE
+      label: action === DOUBLE ? lstrings.scoring_double_play : action,
+      disabled: moreEligibility(state, action) != null
     }))
   return (
     <>
@@ -66,13 +84,20 @@ export function MoreMenu({
         side="left"
         width={{ share: 0.5, less: 16, most: 300 }}
         rows={rows}
-        childKey={BASE}
-        childRows={BASES.map((label, index) => ({
-          key: String(index + 1),
-          label
-        }))}
+        submenus={{
+          [BASE]: {
+            rows: BASES.map((label, index) => ({
+              key: String(index + 1),
+              label
+            })),
+            label: 'Batter base'
+          },
+          [DOUBLE]: {
+            rows: doublePlayRows(state),
+            label: lstrings.scoring_double_play_menu
+          }
+        }}
         panelLabel="More scoring actions"
-        childLabel="Batter base"
         dismissLabel="Dismiss More"
         triggerStyle={{
           ...controlFrame,
