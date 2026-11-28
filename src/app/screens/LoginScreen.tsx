@@ -158,6 +158,14 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
 
   const canSend = email.trim().length > 3
 
+  /** What Enter in the address field does, and what the web form's submit does. */
+  const submit = (): void => {
+    if (!canSend) return
+    if (method === 'password') signInWithPassword()
+    else if (codeSent) signInWithCode()
+    else sendCode()
+  }
+
   return (
     <Screen centreContent contentStyle={styles.centre}>
       <Card style={styles.card}>
@@ -168,89 +176,86 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
           </Text>
         </View>
 
-        <TextField
-          label="E-mail address"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="parent@example.com"
-          keyboardType="email-address"
-          // The address is the account's sign-in name, so password managers
-          // (iCloud Keychain, Autofill with Google, a browser's) must see it
-          // as the username: tagged `email`, they neither offer a saved
-          // TeamStation password here nor save one against it.
-          autoComplete="username"
-          // Only where focus is free. In a browser it puts the caret in the
-          // field and costs nothing; on a phone it throws up a keyboard that
-          // covers the lower half of the card — including `Use a password
-          // instead`, which is the one control somebody signing in with a
-          // password has to reach before they can type anything at all.
-          //
-          // The sign-in code field below keeps its `autoFocus` on every
-          // platform: by then the keyboard is what you want, because asking
-          // for the code is saying you are about to type it.
-          autoFocus={Platform.OS === 'web'}
-          // Enter submits, which is what a keyboard's "go" key is for and what
-          // anybody who has typed an address into a form expects. Noticed
-          // because a browser test pressed it and nothing happened.
-          onSubmitEditing={() => {
-            if (!canSend) return
-            if (method === 'password') signInWithPassword()
-            else if (codeSent) signInWithCode()
-            else sendCode()
-          }}
-        />
-
-        {method === 'password' && (
+        <SignInForm onSubmit={submit}>
           <TextField
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            secure
-            autoComplete="current-password"
-            onSubmitEditing={signInWithPassword}
+            label="E-mail address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="parent@example.com"
+            keyboardType="email-address"
+            // The address is the account's sign-in name, so password managers
+            // (iCloud Keychain, Autofill with Google, a browser's) must see it
+            // as the username: tagged `email`, they neither offer a saved
+            // TeamStation password here nor save one against it.
+            autoComplete="username"
+            // Only where focus is free. In a browser it puts the caret in the
+            // field and costs nothing; on a phone it throws up a keyboard that
+            // covers the lower half of the card — including `Use a password
+            // instead`, which is the one control somebody signing in with a
+            // password has to reach before they can type anything at all.
+            //
+            // The sign-in code field below keeps its `autoFocus` on every
+            // platform: by then the keyboard is what you want, because asking
+            // for the code is saying you are about to type it.
+            autoFocus={Platform.OS === 'web'}
+            // Enter submits, which is what a keyboard's "go" key is for and what
+            // anybody who has typed an address into a form expects. Noticed
+            // because a browser test pressed it and nothing happened.
+            onSubmitEditing={submit}
           />
-        )}
 
-        {method === 'code' && codeSent && (
-          <TextField
-            label="Sign-in code"
-            value={code}
-            onChangeText={setCode}
-            placeholder="123456"
-            keyboardType="number-pad"
-            autoComplete="one-time-code"
-            autoFocus
-            onSubmitEditing={signInWithCode}
-          />
-        )}
+          {method === 'password' && (
+            <TextField
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              secure
+              autoComplete="current-password"
+              onSubmitEditing={signInWithPassword}
+            />
+          )}
 
-        {error != null && <Text style={styles.error}>{error}</Text>}
+          {method === 'code' && codeSent && (
+            <TextField
+              label="Sign-in code"
+              value={code}
+              onChangeText={setCode}
+              placeholder="123456"
+              keyboardType="number-pad"
+              autoComplete="one-time-code"
+              autoFocus
+              onSubmitEditing={signInWithCode}
+            />
+          )}
 
-        {method === 'password' ? (
-          <Button
-            label="Sign in"
-            block
-            busy={busy}
-            disabled={!canSend || password === ''}
-            onPress={signInWithPassword}
-          />
-        ) : codeSent ? (
-          <Button
-            label="Sign in"
-            block
-            busy={busy}
-            disabled={code.trim().length < 4}
-            onPress={signInWithCode}
-          />
-        ) : (
-          <Button
-            label="Send me a sign-in code"
-            block
-            busy={busy}
-            disabled={!canSend}
-            onPress={sendCode}
-          />
-        )}
+          {error != null && <Text style={styles.error}>{error}</Text>}
+
+          {method === 'password' ? (
+            <Button
+              label="Sign in"
+              block
+              busy={busy}
+              disabled={!canSend || password === ''}
+              onPress={signInWithPassword}
+            />
+          ) : codeSent ? (
+            <Button
+              label="Sign in"
+              block
+              busy={busy}
+              disabled={code.trim().length < 4}
+              onPress={signInWithCode}
+            />
+          ) : (
+            <Button
+              label="Send me a sign-in code"
+              block
+              busy={busy}
+              disabled={!canSend}
+              onPress={sendCode}
+            />
+          )}
+        </SignInForm>
 
         {method === 'code' && codeSent && (
           <Text style={styles.sent}>
@@ -281,6 +286,40 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
         )}
       </Card>
     </Screen>
+  )
+}
+
+/**
+ * On the web, the sign-in fields sit in a real `<form>`.
+ *
+ * Safari pairs a password with its username by the form both fields belong
+ * to: with only `div`s around them, its Save Password sheet after a sign-in
+ * came up with an empty User Name, so the saved password was offered to
+ * nobody. The form only groups the fields: `display: contents` keeps it out
+ * of the card's layout, `noValidate` keeps the browser's own e-mail check
+ * out of the way, and a submit — a password manager filling and submitting
+ * it — runs the screen's own sign-in instead of loading a page. Enter in a
+ * field never reaches it: the fields' `onSubmitEditing` handles Enter and
+ * react-native-web cancels the key's default.
+ *
+ * A phone has no forms, and gets the fields exactly as before.
+ */
+function SignInForm(props: {
+  onSubmit: () => void
+  children: React.ReactNode
+}): React.ReactElement {
+  if (Platform.OS !== 'web') return <>{props.children}</>
+  return React.createElement(
+    'form',
+    {
+      noValidate: true,
+      style: { display: 'contents' },
+      onSubmit: (event: React.SyntheticEvent<HTMLFormElement>) => {
+        event.preventDefault()
+        props.onSubmit()
+      }
+    },
+    props.children
   )
 }
 

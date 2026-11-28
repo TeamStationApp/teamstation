@@ -15,8 +15,13 @@ const input = (label: string): HTMLInputElement => {
 }
 
 /** A client whose sign-in calls are recorded and never reach a server. */
-function client(): { client: TeamStationClient; codesSent: string[] } {
+function client(): {
+  client: TeamStationClient
+  codesSent: string[]
+  passwordSignIns: string[]
+} {
   const codesSent: string[] = []
+  const passwordSignIns: string[] = []
   const value = new TeamStationClient({ baseUrl: '/api/v1' })
   value.requestEmailCode = async email => {
     codesSent.push(email)
@@ -24,7 +29,13 @@ function client(): { client: TeamStationClient; codesSent: string[] } {
   }
   // The code screen polls for a sign-in approved elsewhere; none is.
   value.claimSignIn = async () => undefined
-  return { client: value, codesSent }
+  value.signInWithPassword = async email => {
+    passwordSignIns.push(email)
+    return { user: { id: 'synthetic-user' } } as unknown as Awaited<
+      ReturnType<TeamStationClient['signInWithPassword']>
+    >
+  }
+  return { client: value, codesSent, passwordSignIns }
 }
 
 afterEach(async () => {
@@ -76,5 +87,41 @@ describe('Sign-in screen', () => {
     expect(
       document.querySelector('input[aria-label="Sign-in code"]')
     ).not.equals(null)
+  })
+
+  it('holds the address and the password in one form on the web', async () => {
+    const f = client()
+    await mount(<LoginScreen client={f.client} onSignedIn={() => undefined} />)
+    await press('Use a password instead')
+    const form = document.querySelector('form')
+    expect(form, 'form').not.equals(null)
+    expect(form!.contains(input('E-mail address'))).equals(true)
+    expect(form!.contains(input('Password'))).equals(true)
+    expect(form!.noValidate).equals(true)
+  })
+
+  it('signs in once on a form submit, and cancels the page load', async () => {
+    const f = client()
+    const signedIn: unknown[] = []
+    await mount(
+      <LoginScreen
+        client={f.client}
+        onSignedIn={session => signedIn.push(session)}
+      />
+    )
+    await press('Use a password instead')
+    await fill('E-mail address', ' synthetic@example.com ')
+    await fill('Password', 'synthetic-password')
+    const submit = new window.Event('submit', {
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => {
+      document.querySelector('form')!.dispatchEvent(submit)
+    })
+    await settle(0)
+    expect(submit.defaultPrevented, 'page load cancelled').equals(true)
+    expect(f.passwordSignIns).deep.equals(['synthetic@example.com'])
+    expect(signedIn).has.length(1)
   })
 })
