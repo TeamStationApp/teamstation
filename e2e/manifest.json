@@ -9202,12 +9202,56 @@
       "apps": [],
       "secrets": [],
       "costUsd": 0,
-      "minutes": 6,
+      "minutes": 10,
       "guards": [],
       "faults": [
         "api-500",
         "hidden-element",
-        "blank-screen"
+        "blank-screen",
+        "socket-drop"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#live-follow",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen",
+        "socket-drop"
       ],
       "manual": false,
       "spec": "scoring/plays/all-plays",
@@ -9244,12 +9288,13 @@
       "apps": [],
       "secrets": [],
       "costUsd": 0,
-      "minutes": 6,
+      "minutes": 10,
       "guards": [],
       "faults": [
         "api-500",
         "hidden-element",
-        "blank-screen"
+        "blank-screen",
+        "socket-drop"
       ],
       "manual": false,
       "spec": "scoring/plays/all-plays",
@@ -9286,12 +9331,13 @@
       "apps": [],
       "secrets": [],
       "costUsd": 0,
-      "minutes": 6,
+      "minutes": 10,
       "guards": [],
       "faults": [
         "api-500",
         "hidden-element",
-        "blank-screen"
+        "blank-screen",
+        "socket-drop"
       ],
       "manual": false,
       "spec": "scoring/plays/all-plays",
@@ -9328,12 +9374,13 @@
       "apps": [],
       "secrets": [],
       "costUsd": 0,
-      "minutes": 6,
+      "minutes": 10,
       "guards": [],
       "faults": [
         "api-500",
         "hidden-element",
-        "blank-screen"
+        "blank-screen",
+        "socket-drop"
       ],
       "manual": false,
       "spec": "scoring/plays/all-plays",
@@ -9370,12 +9417,56 @@
       "apps": [],
       "secrets": [],
       "costUsd": 0,
-      "minutes": 6,
+      "minutes": 10,
       "guards": [],
       "faults": [
         "api-500",
         "hidden-element",
-        "blank-screen"
+        "blank-screen",
+        "socket-drop"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#undo-hides-pill",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 10,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen",
+        "socket-drop"
       ],
       "manual": false,
       "spec": "scoring/plays/all-plays",
@@ -9412,12 +9503,13 @@
       "apps": [],
       "secrets": [],
       "costUsd": 0,
-      "minutes": 6,
+      "minutes": 10,
       "guards": [],
       "faults": [
         "api-500",
         "hidden-element",
-        "blank-screen"
+        "blank-screen",
+        "socket-drop"
       ],
       "manual": false,
       "spec": "scoring/plays/all-plays",

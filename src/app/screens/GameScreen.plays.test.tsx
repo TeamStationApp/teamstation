@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, before, describe, it } from 'mocha'
+import { afterEach, before, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -9,8 +9,9 @@ import {
   type GameDetail,
   TeamStationClient
 } from '../../common/api'
-import type { GameSocketEvent } from '../../common/gameSocket'
+import type { GameSocket, GameSocketEvent } from '../../common/gameSocket'
 import type { StoredGame } from '../../common/scoring/session'
+import { editsBetween, liveGames } from '../../test/playsLive'
 import { finalGame, inProgressGame } from '../../test/replayGameFixture'
 import { NoticesProvider, ScreenNotices } from '../../test/screenNotices'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -296,4 +297,300 @@ describe('the Plays tab', function () {
       expect(tabs).deep.equals([fallback])
       expect(reads).deep.equals([])
     })
+})
+
+/** A game socket the test speaks for: what it sends, every listener hears. */
+function fakeSocket(): {
+  socket: Pick<GameSocket, 'subscribe'>
+  send: (event: GameSocketEvent) => Promise<void>
+} {
+  const listeners = new Set<(event: GameSocketEvent) => void>()
+  return {
+    socket: {
+      subscribe: (_gameId, listener) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      }
+    },
+    send: async event => {
+      await act(async () => {
+        for (const listener of [...listeners]) listener(event)
+      })
+      await settle()
+    }
+  }
+}
+
+function playEdits(data: ReturnType<typeof editsBetween>): GameSocketEvent {
+  return {
+    type: 'change',
+    gameId: 'g1',
+    kind: 'playEdits',
+    at: new Date().toISOString(),
+    data
+  }
+}
+
+describe('the Plays tab of a game being scored', function () {
+  this.timeout(30000)
+  let games: Awaited<ReturnType<typeof liveGames>>
+  before(async () => {
+    games = await liveGames()
+  })
+
+  // jsdom lays nothing out. Here the stream stands TOP down the page, each
+  // line LINE high and each pitch row under an open line PITCH more, and the
+  // page that scrolls is VIEWPORT high and as long as what it holds.
+  const TOP = 500
+  const LINE = 100
+  const PITCH = 80
+  const VIEWPORT = 800
+  let scrollTop = 0
+  const original = {
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- restored onto the prototype it came from
+    rect: HTMLElement.prototype.getBoundingClientRect,
+    scrollTop: Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop'),
+    clientHeight: Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'clientHeight'
+    ),
+    scrollHeight: Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'scrollHeight'
+    )
+  }
+  const scrolls = (node: Element): boolean =>
+    ['auto', 'scroll'].includes(getComputedStyle(node).overflowY)
+  const streamHeight = (): number =>
+    document.querySelectorAll('[data-testid^="plays-line-"]').length * LINE +
+    document.querySelectorAll('[data-testid="plays-pitch"]').length * PITCH
+  const spacerHeight = (): number => {
+    const height =
+      document.querySelector<HTMLElement>('[data-testid="pinnedSpacer"]')?.style
+        .height ?? ''
+    return height === '' ? 0 : Number.parseFloat(height)
+  }
+  /**
+   * The screen's bottom margin under the stream, as the page opened at its
+   * end shows it: the page can always scroll that much further.
+   */
+  let tail = 0
+  /** The farthest the page can scroll with no room kept under the stream. */
+  const contentEnd = (): number => TOP + streamHeight() + tail - VIEWPORT
+  const page = (): HTMLElement =>
+    [...document.querySelectorAll<HTMLElement>('div')].find(
+      node =>
+        scrolls(node) &&
+        node.querySelector('[data-testid="eventTabContent"]') != null
+    )!
+  const smooth: number[] = []
+
+  beforeEach(function () {
+    scrollTop = 0
+    tail = 0
+    smooth.length = 0
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this.dataset.testid === 'eventTabContent') {
+        const top = TOP - scrollTop
+        const height = streamHeight()
+        return { top, bottom: top + height, height } as unknown as DOMRect
+      }
+      if (scrolls(this))
+        return {
+          top: 0,
+          bottom: VIEWPORT,
+          height: VIEWPORT
+        } as unknown as DOMRect
+      return original.rect.call(this)
+    }
+    Object.defineProperty(Element.prototype, 'scrollTop', {
+      configurable: true,
+      get(this: Element) {
+        return scrolls(this) ? scrollTop : 0
+      },
+      set(this: Element, y: number) {
+        if (scrolls(this)) scrollTop = y
+      }
+    })
+    Object.defineProperty(Element.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: Element) {
+        return scrolls(this) ? VIEWPORT : 0
+      }
+    })
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: Element) {
+        return scrolls(this)
+          ? Math.max(VIEWPORT, TOP + streamHeight() + spacerHeight() + tail)
+          : 0
+      }
+    })
+    // A smooth scroll lands where it was sent, as the browser's would.
+    HTMLElement.prototype.scroll = function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number
+    ) {
+      const top = typeof options === 'number' ? options : (options?.top ?? 0)
+      smooth.push(top)
+      scrollTop = top
+      this.dispatchEvent(new window.Event('scroll'))
+    }
+  })
+
+  afterEach(function () {
+    HTMLElement.prototype.getBoundingClientRect = original.rect
+    for (const key of ['scrollTop', 'clientHeight', 'scrollHeight'] as const) {
+      const descriptor = original[key]
+      if (descriptor != null)
+        Object.defineProperty(Element.prototype, key, descriptor)
+    }
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scroll
+  })
+
+  /** The stream lays out again, as the browser reports it. */
+  async function layOut(): Promise<void> {
+    const stream = document.querySelector<
+      HTMLElement & { __reactLayoutHandler?: (event: unknown) => void }
+    >('[data-testid="plays-stream"]')
+    expect(stream, 'the stream').not.equals(null)
+    await act(async () => {
+      stream!.__reactLayoutHandler?.({
+        nativeEvent: {
+          layout: { x: 0, y: 0, width: 393, height: streamHeight() }
+        },
+        timeStamp: Date.now()
+      })
+    })
+    await settle()
+  }
+
+  async function scrollTo(y: number): Promise<void> {
+    scrollTop = y
+    await act(async () => {
+      page().dispatchEvent(new window.Event('scroll'))
+    })
+    // The button fades over 200 ms.
+    await settle(280)
+  }
+
+  const button = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-testid="plays-latest"]')
+
+  async function openLive(socket: Pick<GameSocket, 'subscribe'>): Promise<{
+    tabs: string[]
+    client: TeamStationClient
+    game: GameDetail
+  }> {
+    stored = games.start
+    const { client, game } = fixture({ status: 'inProgress', homeScore: 0 })
+    const tabs: string[] = []
+    await render({
+      client,
+      gameId: 'g1',
+      initialTab: 'plays',
+      socket,
+      onTab: tab => {
+        tabs.push(tab)
+      }
+    })
+    await layOut()
+    tail = scrollTop - contentEnd()
+    expect(tail).within(0, 200)
+    return { tabs, client, game }
+  }
+
+  it('opens at the end, following each new play down, until the viewer scrolls up', async () => {
+    const { socket, send } = fakeSocket()
+    await openLive(socket)
+    expect(scrollTop).equals(contentEnd())
+    expect(button()).equals(null)
+    // A pitch grows the open line: the page goes with it.
+    await send(playEdits(editsBetween(games.start, games.pitched)))
+    await layOut()
+    expect(scrollTop).equals(contentEnd())
+    expect(button()).equals(null)
+    // Scrolled up, it stays where the viewer put it, and the button shows.
+    const up = contentEnd() - 2 * VIEWPORT
+    await scrollTo(up)
+    expect(button()).not.equals(null)
+    expect(button()!.getAttribute('aria-label')).equals('Latest play')
+    await send(playEdits(editsBetween(games.pitched, games.stored)))
+    await layOut()
+    expect(scrollTop).equals(up)
+    expect(button()).not.equals(null)
+  })
+
+  it('goes back to the end from the button, and following again hides it', async () => {
+    const { socket, send } = fakeSocket()
+    await openLive(socket)
+    await scrollTo(contentEnd() - VIEWPORT)
+    expect(button()).not.equals(null)
+    await act(async () => {
+      button()!.click()
+    })
+    await settle(280)
+    expect(smooth.at(-1)).equals(contentEnd())
+    expect(scrollTop).equals(contentEnd())
+    expect(button()).equals(null)
+    await send(playEdits(editsBetween(games.start, games.pitched)))
+    await layOut()
+    expect(scrollTop).equals(contentEnd())
+  })
+
+  it('follows again when the viewer scrolls back to the end by hand', async () => {
+    const { socket } = fakeSocket()
+    await openLive(socket)
+    const end = contentEnd()
+    await scrollTo(end - 300)
+    expect(button()).not.equals(null)
+    await scrollTo(end)
+    expect(button()).equals(null)
+  })
+
+  it('leaves no room under the stream when the at-bat in progress is stored and shuts', async () => {
+    const { socket, send } = fakeSocket()
+    await openLive(socket)
+    await send(playEdits(editsBetween(games.start, games.pitched)))
+    await layOut()
+    const before = streamHeight()
+    await send(playEdits(editsBetween(games.pitched, games.stored)))
+    await layOut()
+    // Two pitch rows went with the line that shut; the next batter's came.
+    expect(streamHeight()).lessThan(before)
+    expect(scrollTop).equals(contentEnd())
+    expect(spacerHeight()).equals(0)
+    expect(button()).equals(null)
+  })
+
+  it('opens a final game at the top of its plays, with no button', async () => {
+    stored = await finalGame()
+    const { client } = fixture()
+    await render({ client, gameId: 'g1', initialTab: 'plays' })
+    await layOut()
+    expect(scrollTop).lessThan(contentEnd())
+    await scrollTo(contentEnd() - VIEWPORT)
+    await scrollTo(10)
+    expect(button()).equals(null)
+  })
+
+  it('moves a viewer on Plays to the default tab when an undo takes the last pitch away, and back to the pill on the next', async () => {
+    const { socket, send } = fakeSocket()
+    const { tabs, client, game } = await openLive(socket)
+    expect(selected()).equals('Plays')
+    client.game = async () => ({ ...game, hasScoringEvents: false })
+    await send(playEdits(editsBetween(games.start, games.pitched)))
+    expect(pills()).not.includes('Plays')
+    expect(selected()).equals('Info')
+    expect(shown('plays-stream')).equals(false)
+    expect(button()).equals(null)
+    expect(tabs).deep.equals(['info'])
+    client.game = async () => ({ ...game, hasScoringEvents: true })
+    await send(playEdits(editsBetween(games.pitched, games.stored)))
+    // Back with the pill; the viewer stays on the game's default section.
+    expect(pills()).includes('Plays')
+    expect(selected()).not.equals('Plays')
+  })
 })
