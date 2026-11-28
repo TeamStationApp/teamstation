@@ -723,9 +723,14 @@ describe('the pinned head in a browser', function () {
       expect(named('pills').style.top).equals(`${HEADER}px`)
       await setScroll(0)
       const smooth: ScrollToOptions[] = []
-      named('scroller').scrollTo = ((options: ScrollToOptions) => {
+      // A scroll view's own `scrollTo` (react-native-web's, { x, y }) is
+      // never what the head calls.
+      named('scroller').scrollTo = () => {
+        throw new Error('scrollTo')
+      }
+      named('scroller').scroll = ((options: ScrollToOptions) => {
         smooth.push(options)
-      }) as typeof Element.prototype.scrollTo
+      }) as typeof Element.prototype.scroll
       await act(async () => {
         head!.scrollToEnd(true)
       })

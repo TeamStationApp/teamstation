@@ -222,11 +222,13 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       const end = Math.max(reach, bottom - viewport)
       pageEnd.current = end
       rowHold.current = undefined
-      if (animated && typeof page.scrollTo === 'function') {
+      // `scroll`, not `scrollTo`: react-native-web puts its own `scrollTo`
+      // ({ x, y }) on a scroll view's node, which reads `top` as nothing.
+      if (animated && typeof page.scroll === 'function') {
         // Wherever the page stands once the room is gone; the smooth scroll's
         // own events carry the head on from there.
         state.current = scrolled(state.current, Math.min(page.scrollTop, end))
-        page.scrollTo({ top: end, behavior: 'smooth' })
+        page.scroll({ top: end, behavior: 'smooth' })
       } else {
         page.scrollTop = end
         state.current = scrolled(state.current, end)
