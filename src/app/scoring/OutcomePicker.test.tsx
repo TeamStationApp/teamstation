@@ -190,6 +190,110 @@ describe('ball-in-play outcome menu', function () {
   })
 })
 
+const px = (value: string): number => Number.parseFloat(value)
+/**
+ * Lays the picker out in a deck at the bottom of a field column: the window
+ * is `width`×`height`, the column `column` wide from its left edge, the deck
+ * 8 inside it with its top at `deckTop`, and Swing in Play its rightmost
+ * fifth.
+ */
+async function inDeck(
+  width: number,
+  height: number,
+  column: number,
+  deckTop: number
+): Promise<{ deck: DOMRect; restore: () => void }> {
+  const saved = {
+    innerWidth: Object.getOwnPropertyDescriptor(window, 'innerWidth'),
+    innerHeight: Object.getOwnPropertyDescriptor(window, 'innerHeight')
+  }
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: width
+  })
+  Object.defineProperty(window, 'innerHeight', {
+    configurable: true,
+    value: height
+  })
+  const node = document.createElement('div')
+  node.dataset.testid = 'scoring-deck'
+  document.body.appendChild(node)
+  const deck = new window.DOMRect(8, deckTop, column - 16, 120)
+  node.getBoundingClientRect = () => deck
+  root = createRoot(node)
+  await act(async () => {
+    root!.render(
+      <OutcomePicker
+        disabled={false}
+        onChoose={() => undefined}
+        onActive={() => undefined}
+      />
+    )
+  })
+  const fifth = (deck.width - 24) / 5
+  button('Swing in Play').getBoundingClientRect = () =>
+    new window.DOMRect(deck.right - fifth, deckTop, fifth, 120)
+  return {
+    deck,
+    restore: () => {
+      for (const key of ['innerWidth', 'innerHeight'] as const) {
+        const descriptor = saved[key]
+        if (descriptor != null) Object.defineProperty(window, key, descriptor)
+        else Reflect.deleteProperty(window, key)
+      }
+      node.remove()
+    }
+  }
+}
+describe('ball-in-play outcome menu over the deck', function () {
+  it('opens above the deck in the field column beside a side column', async function () {
+    // 1366×1024: a 1006-wide field column beside the 360 side column.
+    const { deck, restore } = await inDeck(1366, 1024, 1006, 880)
+    try {
+      await click('Swing in Play')
+      const panel = button('Swing in Play outcomes')
+      const right = 1366 - px(panel.style.right)
+      expect(right).equals(deck.right)
+      expect(right).at.most(1006)
+      expect(1024 - px(panel.style.bottom)).equals(deck.top - 8)
+      expect(px(panel.style.width)).equals(230)
+      expect(right - px(panel.style.width)).at.least(deck.left)
+      expect(panel.style.maxHeight).equals(
+        `calc(100dvh - ${1024 - 880 + 20}px)`
+      )
+      await click('Batter Out')
+      const out = button('Batter Out options')
+      const left = px(out.style.left)
+      expect(left).at.least(deck.left)
+      expect(left + px(out.style.width)).at.most(right - 230 - 8)
+      expect(px(out.style.top) + 160).at.most(deck.top - 8)
+    } finally {
+      restore()
+    }
+  })
+  it('keeps the phone menu directly above the deck', async function () {
+    // 393×852 web: the deck under the catcher card, the log below it.
+    const { deck, restore } = await inDeck(393, 852, 393, 541.12)
+    try {
+      await click('Swing in Play')
+      const panel = button('Swing in Play outcomes')
+      expect(393 - px(panel.style.right)).equals(deck.right)
+      expect(852 - px(panel.style.bottom)).closeTo(deck.top - 8, 0.01)
+      expect(px(panel.style.width)).closeTo(393 * 0.46, 0.01)
+      await click('Batter Out')
+      expect(px(button('Batter Out options').style.left)).at.least(deck.left)
+      // A resize while open moves it with the deck.
+      deck.y = 500
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+      expect(852 - px(panel.style.bottom)).equals(492)
+    } finally {
+      restore()
+    }
+  })
+})
+
 describe('the phone in-play control', () => {
   async function mountNative(
     props: Partial<React.ComponentProps<typeof NativePicker>>,

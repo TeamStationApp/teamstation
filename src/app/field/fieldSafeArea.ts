@@ -4,6 +4,8 @@ import type { Insets } from '../platform/insets'
 
 /** The space the web leaves between its controls and the window's edge. */
 export const FIELD_EDGE_GAP = 8
+/** Width of the shared scoring and replay side column. */
+export const SCORING_SIDE_WIDTH = 360
 /**
  * The field's padding on a phone. Each edge keeps the web's 8 point gap
  * *beyond* whatever the hardware takes, never inside it: `max(8, inset)`, as
@@ -58,15 +60,16 @@ export interface MenuButtonEdges {
 export const WEB_MENU_BUTTON: MenuButtonEdges = { bottom: 56, right: 8 }
 /**
  * The ☰ button's edges, from the layout of the header row it ends and the
- * width of the screen that row sits in.
+ * width of the layer that row and the menu sit in: the screen on a phone,
+ * the field column beside a side column.
  */
 export function menuButtonEdges(
   header: { x: number; y: number; width: number; height: number },
-  screenWidth: number
+  layerWidth: number
 ): MenuButtonEdges {
   return {
     bottom: header.y + header.height,
-    right: screenWidth - (header.x + header.width)
+    right: layerWidth - (header.x + header.width)
   }
 }
 /**

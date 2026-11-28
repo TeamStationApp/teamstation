@@ -6,6 +6,7 @@ import type { FixtureManifest } from '../../../../src/server/dev/fixtures/accoun
 import { readJson } from '../../../core/readback'
 import { BlockedError } from '../../../core/result'
 import { defineE2e, type E2eContext } from '../../../core/spec'
+import { appLink } from '../../../rigs/app/setServer'
 import {
   type CoachApp,
   DEVELOP_APP,
@@ -77,7 +78,7 @@ async function opensToScore(
   gameId: string,
   ms = 20_000
 ): Promise<boolean> {
-  await app.m.openLink({ link: `teamstation://games/${gameId}/score` })
+  await app.m.openLink({ link: appLink(`games/${gameId}/score`) })
   try {
     await app.m.extendedWaitUntil({ visible: { text: 'Ball' }, timeout: ms })
     return true
@@ -88,7 +89,7 @@ async function opensToScore(
 
 /** Back to Home, out of any game. */
 async function home(app: CoachApp): Promise<void> {
-  await app.m.openLink({ link: 'teamstation://' })
+  await app.m.openLink({ link: appLink('') })
   await sleep(2000)
 }
 
@@ -249,7 +250,7 @@ export default defineE2e({
         "update games set start_at = now() + interval '2 hours' where id = $1",
         [game]
       )
-      const app = await openCoachApp(ctx, 'scorekeeper')
+      const app = await openCoachApp(ctx, world.accounts.scorekeeper)
       const setFault = faults(ctx)
       const lines: string[] = []
       const chosen = (await asAccount(
@@ -267,7 +268,7 @@ export default defineE2e({
         await app.m.launchApp({ appId: DEVELOP_APP, stopApp: true })
         await sleep(5000)
         // Schedule lists it from what the phone kept.
-        await app.m.openLink({ link: 'teamstation://schedule' })
+        await app.m.openLink({ link: appLink('schedule') })
         let listed = false
         try {
           await app.m.extendedWaitUntil({
@@ -289,7 +290,7 @@ export default defineE2e({
         if (!opens || !listed) log(ctx, 'cold-offline-open-after.log', lines)
         expect(listed, 'Schedule lists the game').to.equal(true)
         expect(opens, 'the never-opened game opens').to.equal(true)
-        for (const pitch of ['Ball', 'Strike']) {
+        for (const pitch of ['Ball', 'Called Strike']) {
           await app.m.tapOn({ text: pitch })
           await sleep(1500)
         }
@@ -329,7 +330,7 @@ export default defineE2e({
       const app = await openCoachApp(ctx, 'spectator')
       const setFault = faults(ctx)
       const lines: string[] = []
-      await app.m.openLink({ link: 'teamstation://' })
+      await app.m.openLink({ link: appLink('') })
       await sleep(PREPARE_MS)
       const chosen = async (role: string): Promise<number> =>
         (

@@ -13,13 +13,18 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { CreateGroup } from '../../common/groupCreation'
-import type { GumboPlay } from '../../common/gumboPlay'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FOLD_VERSION } from '../../common/scoring/actions'
 import { FINAL_INDEX, recordOf } from '../../common/scoring/gumbo'
 import {
+  sameScoringMutation,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
+import {
   type LineupRecovery,
   type SaveChange,
+  type SaveHandoff,
   ScoringSession,
   type SessionLog
 } from '../../common/scoring/session'
@@ -1289,6 +1294,22 @@ describe('the phone outbox', function () {
       text: 'ID',
       flag: true,
       nothing: null
+    })
+    // A roster refresh may include both identities of the player whose
+    // creation just landed. Their position in the saved setup stays unique.
+    expect(
+      withServerIds(
+        {
+          tagOrder: [7, 41, 9],
+          teams: { away: { players: [9, 7, 41], battingOrder: [41, 9, 7] } },
+          pitchValues: [41, 9]
+        },
+        new Map([[41, { serverId: 9, userId: null }]])
+      )
+    ).deep.equals({
+      tagOrder: [7, 9],
+      teams: { away: { players: [9, 7], battingOrder: [9, 7] } },
+      pitchValues: [9, 9]
     })
     expect(withServerIds(body, new Map())).equals(body)
     expect(
@@ -7982,6 +8003,850 @@ describe('the phone outbox', function () {
       await p.client.drainOutbox()
       expect(p.rows()).deep.equals([])
       expect(tagOf(p.document(eventsKey('g1')))).equals('nice')
+    })
+  })
+
+  describe('a reconnect’s queued pitches sent together (M7)', function () {
+    /** The scoring a save at `at` leaves: the next at-bat is its frontier. */
+    const mutationOf = (at: number): ScoringMutation => ({
+      at,
+      id: `s${at}`,
+      revision: 0,
+      frontier: at + 1
+    })
+    /** Waits for `ready`, letting the drain run between looks. */
+    const until = async (ready: () => boolean): Promise<void> => {
+      for (let tries = 0; !ready() && tries < 200; tries++)
+        await new Promise(resolve => setTimeout(resolve, 2))
+      expect(ready()).equals(true)
+    }
+
+    /**
+     * Games' servers that judge scoring as the real one does: a save built
+     * on the scoring a game holds is taken, one built on any other is
+     * answered with what it holds (`superseded`), and a key sent again with
+     * another body is refused. `answer`, when it gives one, answers a POST
+     * first.
+     */
+    function scoringServer(): {
+      handler: Handler
+      online: { value: boolean }
+      answer: {
+        value?: (sent: Sent) => Answer | undefined | Promise<Answer | undefined>
+      }
+      game: (gameId: string) => {
+        plays: Map<number, GumboPlay>
+        mutation: ScoringMutation | null
+      }
+      take: (gameId: string, body: SaveChange) => void
+      /** Judges and keeps a save as the server does, whatever is answered. */
+      serve: (sent: Sent) => Promise<Answer>
+    } {
+      const online = { value: true }
+      const answer: {
+        value?: (sent: Sent) => Answer | undefined | Promise<Answer | undefined>
+      } = {}
+      const games = new Map<
+        string,
+        {
+          plays: Map<number, GumboPlay>
+          mutation: ScoringMutation | null
+          digest: string
+        }
+      >()
+      const game = (
+        gameId: string
+      ): {
+        plays: Map<number, GumboPlay>
+        mutation: ScoringMutation | null
+        digest: string
+      } => {
+        if (!games.has(gameId))
+          games.set(gameId, {
+            plays: new Map([[0, play(0)]]),
+            mutation: null,
+            digest: 'D0'
+          })
+        return games.get(gameId)!
+      }
+      const events = (gameId: string): Record<string, unknown> => {
+        const held = game(gameId)
+        return {
+          plays: [...held.plays]
+            .sort(([a], [b]) => a - b)
+            .map(([index, gumbo]) => ({ id: `e${index}`, gameId, gumbo })),
+          currentPlay: null,
+          playsDigest: `plays-${held.plays.size}`,
+          lineupsDigest: held.digest,
+          generation: 1,
+          scoringMutation: held.mutation
+        }
+      }
+      const take = (gameId: string, body: SaveChange): void => {
+        const held = game(gameId)
+        const frontier = body.scoringMutation?.frontier
+        if (frontier != null)
+          for (const index of [...held.plays.keys()])
+            if (index >= frontier && index !== FINAL_INDEX)
+              held.plays.delete(index)
+        for (const index of body.remove) held.plays.delete(index)
+        for (const taken of body.plays)
+          held.plays.set(taken.about.atBatIndex, taken)
+        held.mutation = body.scoringMutation ?? held.mutation
+      }
+      const keys = new Map<string, { text: string; answer: Answer }>()
+      const handler: Handler = async sent => {
+        const [, gameId, kind] =
+          /^\/games\/([^/]+)\/(events|lineups)$/.exec(sent.path) ?? []
+        if (gameId == null) return refusal(404, 'notFound', 'Not found')
+        if (sent.method === 'GET')
+          return kind === 'events'
+            ? { body: events(gameId) }
+            : { body: lineupsDoc(game(gameId).digest) }
+        if (!online.value) return 'offline'
+        const forced = await answer.value?.(sent)
+        if (forced !== undefined) return forced
+        return await serve(sent)
+      }
+      const serve = async (sent: Sent): Promise<Answer> => {
+        const [, gameId, kind] =
+          /^\/games\/([^/]+)\/(events|lineups)$/.exec(sent.path) ?? []
+        if (kind === 'lineups') {
+          game(gameId).digest = 'D1'
+          return { body: lineupsDoc('D1') }
+        }
+        const text = JSON.stringify(sent.body)
+        const seen = keys.get(sent.key!)
+        if (seen != null)
+          return seen.text === text
+            ? seen.answer
+            : refusal(
+                409,
+                'idempotencyKeyReused',
+                'This Idempotency-Key was already sent with another request'
+              )
+        const body = sent.body as SaveChange
+        let reply: Answer
+        if (sameScoringMutation(body.scoringBase, game(gameId).mutation)) {
+          take(gameId, body)
+          reply = { body: events(gameId) }
+        } else reply = { body: { ...events(gameId), superseded: true } }
+        keys.set(sent.key!, { text, answer: reply })
+        return reply
+      }
+      return { handler, online, answer, game, take, serve }
+    }
+
+    /** A pitch saved at `at`, built on the one before it. */
+    const pitch = async (
+      p: ReturnType<typeof phone>,
+      at: number,
+      change: Partial<SaveChange> = {},
+      gameId = 'g1',
+      handoff?: SaveHandoff
+    ): Promise<void> => {
+      await p.client.saveGameEvents(
+        gameId,
+        {
+          plays: [play(at)],
+          remove: [],
+          currentPlay: play(at + 1) as unknown as CurrentPlay,
+          scoringBase: at === 1 ? null : mutationOf(at - 1),
+          scoringMutation: mutationOf(at),
+          lineupsBase: 'D0',
+          generation: 1,
+          ...change
+        },
+        handoff
+      )
+    }
+    /** `count` pitches saved with no signal: the keys they were queued with. */
+    const offline = async (
+      p: ReturnType<typeof phone>,
+      s: ReturnType<typeof scoringServer>,
+      count: number,
+      gameId = 'g1'
+    ): Promise<string[]> => {
+      await p.client.gameEvents(gameId)
+      s.online.value = false
+      for (let at = 1; at <= count; at++) await pitch(p, at, {}, gameId)
+      return keysOf(p, gameId)
+    }
+    /** A save the session lets go a moment after it is sent. */
+    const letGo = (): SaveHandoff => ({
+      taken: () => undefined,
+      release: new Promise<void>(resolve => setTimeout(resolve, 5))
+    })
+    const keysOf = (p: ReturnType<typeof phone>, gameId = 'g1'): string[] =>
+      p
+        .rows()
+        .filter(row => row.game_id === gameId)
+        .map(row => String(row.idempotency_key))
+    /** The network back: the queue drains. */
+    const reconnect = async (
+      p: ReturnType<typeof phone>,
+      s: ReturnType<typeof scoringServer>
+    ): Promise<void> => {
+      s.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+    }
+    /** The keys of the POSTs sent from the `from`th on. */
+    const keysSent = (p: ReturnType<typeof phone>, from: number): string[] =>
+      p
+        .posts()
+        .slice(from)
+        .map(call => call.key!)
+    const atBats = (body: unknown): number[] =>
+      (body as SaveChange).plays.map(sent => sent.about.atBatIndex)
+
+    it('sends four offline saves as one: the first’s bases, the last’s scoring, every play', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const [k1, , , k4] = await offline(p, s, 4)
+      // The first went at once and found no signal; the rest queued.
+      expect(keysSent(p, 0)).deep.equals([k1])
+      await reconnect(p, s)
+      expect(keysSent(p, 1)).deep.equals([`m-${k1}-${k4}`])
+      const body = p.posts()[1].body as SaveChange
+      expect(body.scoringBase).equals(null)
+      expect(body.lineupsBase).equals('D0')
+      expect(body.scoringMutation).deep.equals(mutationOf(4))
+      expect(body.currentPlay?.about.atBatIndex).equals(5)
+      expect(body.generation).equals(1)
+      expect(atBats(body)).deep.equals([1, 2, 3, 4])
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(4))
+      expect([...s.game('g1').plays.keys()]).deep.equals([0, 1, 2, 3, 4])
+      expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
+        { gameId: 'g1', message: '', reconcileScoring: true }
+      ])
+    })
+
+    it('lands the first save the server already holds, then sends the rest together on it', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      await p.client.gameEvents('g1')
+      // The first save is taken, and its answer lost.
+      s.answer.value = sent => {
+        s.answer.value = undefined
+        s.take('g1', sent.body as SaveChange)
+        return 'offline'
+      }
+      await pitch(p, 1)
+      s.online.value = false
+      for (let at = 2; at <= 4; at++) await pitch(p, at)
+      const [k1, k2, , k4] = keysOf(p)
+      await reconnect(p, s)
+      expect(keysSent(p, 1)).deep.equals([`m-${k1}-${k4}`, `m-${k2}-${k4}`])
+      expect((p.posts()[2].body as SaveChange).scoringBase).deep.equals(
+        mutationOf(1)
+      )
+      // Each queued save carries the plays queued ahead of it.
+      expect(atBats(p.posts()[2].body)).deep.equals([1, 2, 3, 4])
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(4))
+      // Kept, not rejected: nobody else's scoring stands.
+      expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
+        { gameId: 'g1', message: '', reconcileScoring: true }
+      ])
+    })
+
+    it('lands the saves a send lost in a crash took, when the run has grown since, and never reuses a key', async function () {
+      const s = scoringServer()
+      const first = phone(s.handler)
+      const [k1, k2] = await offline(first, s, 2)
+      // Sent together, taken, and the app stops before the answer.
+      s.answer.value = async sent => {
+        s.take('g1', sent.body as SaveChange)
+        return await new Promise<Answer>(() => undefined)
+      }
+      s.online.value = true
+      first.client.wakeOutbox(true)
+      await until(() => keysSent(first, 0).includes(`m-${k1}-${k2}`))
+      s.answer.value = undefined
+      s.online.value = false
+      // Opened again, the file's lease long run out, with three more saves.
+      const p = phone(s.handler)
+      for (let at = 3; at <= 5; at++) await pitch(p, at)
+      const [, , k3, , k5] = keysOf(p)
+      const sent = p.posts().length
+      await reconnect(p, s)
+      // The grown run finds the first two taken, and the rest go on them.
+      expect(keysSent(p, sent)).deep.equals([`m-${k1}-${k5}`, `m-${k3}-${k5}`])
+      expect(p.posts().some(call => call.key === k1 || call.key === k2)).equals(
+        false
+      )
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(5))
+      expect([...s.game('g1').plays.keys()]).deep.equals([0, 1, 2, 3, 4, 5])
+    })
+
+    it('asks a run with no answer again before its head goes alone, when a later row of it now names a player never made', async function () {
+      const s = scoringServer()
+      const handler: Handler = async sent => {
+        if (sent.path === '/teams/tem_home/roster') return { body: [] }
+        if (!sent.path.endsWith('/roster-players')) return await s.handler(sent)
+        return s.online.value
+          ? { status: 201, body: serverEntry(601, 'Ronald') }
+          : 'offline'
+      }
+      const p = phone(handler)
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      await p.client.gameEvents('g1')
+      s.online.value = false
+      const made = await p.client.createRosterPlayer(
+        'tem_home',
+        newPlayer('Ronald')
+      )
+      await pitch(p, 1)
+      await pitch(p, 2, { plays: [play(2, made.gumboId!)] })
+      const [k1, k2] = keysOf(p)
+      // The create lands; the saves go together, are taken, and the answer
+      // is lost.
+      s.answer.value = async sent => {
+        if (sent.key !== `m-${k1}-${k2}`) return undefined
+        await s.serve(sent)
+        return 'offline'
+      }
+      await reconnect(p, s)
+      expect(keysSent(p, 0)).includes(`m-${k1}-${k2}`)
+      s.answer.value = undefined
+      // The phone no longer holds the player the second save names, so it
+      // would not go with the first again on its own.
+      executors.at(-1)!.db.prepare('DELETE FROM local_players').run()
+      const sent = p.posts().length
+      await reconnect(p, s)
+      // The run goes again as it went and is answered as it was taken: the
+      // first save never goes alone and is not told it was replaced.
+      expect(keysSent(p, sent)).deep.equals([`m-${k1}-${k2}`])
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(2))
+      expect(
+        notices.filter(notice => notice.rejectedScoring != null)
+      ).deep.equals([])
+    })
+
+    for (const lost of ['answer', 'app'] as const)
+      it(`lands a run the server took though its ${lost === 'answer' ? 'answer was lost' : 'app was killed before the answer'}, when the run has grown and another scorer wrote since`, async function () {
+        const s = scoringServer()
+        const first = phone(s.handler)
+        const notices: OutboxNotice[] = []
+        const [k1, k2] = await offline(first, s, 2)
+        s.answer.value = async sent => {
+          await s.serve(sent)
+          return lost === 'answer'
+            ? 'offline'
+            : await new Promise<Answer>(() => undefined)
+        }
+        s.online.value = true
+        first.client.wakeOutbox(true)
+        await until(() => keysSent(first, 0).includes(`m-${k1}-${k2}`))
+        if (lost === 'answer') await first.client.drainOutbox()
+        s.answer.value = undefined
+        s.online.value = false
+        // Killed, the app opens the file again, its lease long run out.
+        const p = lost === 'answer' ? first : phone(s.handler)
+        p.client.subscribeOutboxNotices(notice => notices.push(notice))
+        await pitch(p, 3)
+        await p.client.drainOutbox()
+        const [, , k3] = keysOf(p)
+        const peer = { at: 9, id: 'peer', revision: 0, frontier: 1 }
+        s.game('g1').mutation = peer
+        const sent = p.posts().length
+        await reconnect(p, s)
+        // The grown run finds the other scorer's write; the run sent before
+        // goes again, answered as it was taken; then the third alone.
+        expect(keysSent(p, sent)).deep.equals([
+          `m-${k1}-${k3}`,
+          `m-${k1}-${k2}`,
+          k3
+        ])
+        expect(p.rows()).deep.equals([])
+        expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
+          {
+            gameId: 'g1',
+            message: '',
+            reconcileScoring: true,
+            rejectedScoring: mutationOf(3)
+          }
+        ])
+      })
+
+    it('judges a run sent with no answer as an older build’s first, after an update, leaving none of it in flight', async function () {
+      const s = scoringServer()
+      const first = phone(s.handler)
+      const [k1, , k3] = await offline(first, s, 3)
+      s.answer.value = async () => await new Promise<Answer>(() => undefined)
+      s.online.value = true
+      first.client.wakeOutbox(true)
+      await until(() => keysSent(first, 0).includes(`m-${k1}-${k3}`))
+      s.answer.value = undefined
+      s.online.value = false
+      // Killed before the answer, the app opens the file again as a build
+      // that folds plays another way, its lease long run out.
+      first.sql(`UPDATE outbox SET fold_version = ${FOLD_VERSION - 1}`)
+      const judged: string[] = []
+      const p = phone(s.handler, undefined, {
+        olderSave: async gameId => {
+          judged.push(gameId)
+          return true
+        }
+      })
+      const sent = p.posts().length
+      await reconnect(p, s)
+      // The head is judged on its own, then the run goes again as it went.
+      expect(judged).deep.equals(['g1'])
+      expect(keysSent(p, sent)).deep.equals([`m-${k1}-${k3}`])
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(3))
+    })
+
+    it('sends each save alone when another scorer’s write stands, ending as one at a time does', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const keys = await offline(p, s, 4)
+      const peer = { at: 9, id: 'peer', revision: 0, frontier: 1 }
+      s.game('g1').mutation = peer
+      await reconnect(p, s)
+      expect(keysSent(p, 1)).deep.equals([`m-${keys[0]}-${keys[3]}`, ...keys])
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(peer)
+      expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
+        {
+          gameId: 'g1',
+          message: '',
+          reconcileScoring: true,
+          rejectedScoring: mutationOf(4)
+        }
+      ])
+    })
+
+    for (const refused of ['stale', 'badRequest'] as const)
+      it(`sends each save alone when the server refuses them together (${refused})`, async function () {
+        const s = scoringServer()
+        const p = phone(s.handler)
+        const keys = await offline(p, s, 4)
+        s.answer.value = sent =>
+          refused === 'stale'
+            ? refusal(409, 'conflict', 'Somebody else changed the lineups', {
+                stale: true
+              })
+            : sent.key!.startsWith('m-')
+              ? refusal(400, 'badRequest', 'Not a save this server takes')
+              : undefined
+        await reconnect(p, s)
+        const merged = `m-${keys[0]}-${keys[3]}`
+        expect(p.rows().map(row => row.state)).not.includes('dead')
+        if (refused === 'stale') {
+          // The first alone is parked as it would be, with all behind it.
+          expect(keysSent(p, 1)).deep.equals([merged, keys[0]])
+          expect(p.rows().map(row => row.state)).deep.equals([
+            'parked',
+            'parked',
+            'parked',
+            'parked'
+          ])
+          expect((await p.client.outboxSummary()).games.g1?.state).equals(
+            'parked'
+          )
+        } else {
+          expect(keysSent(p, 1)).deep.equals([merged, ...keys])
+          expect(p.rows()).deep.equals([])
+          expect(s.game('g1').mutation).deep.equals(mutationOf(4))
+        }
+      })
+
+    it('sends the saves either side of a lineup save together, and the lineup between', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      await p.client.gameEvents('g1')
+      await p.client.gameLineups('g1')
+      s.online.value = false
+      await pitch(p, 1)
+      await pitch(p, 2)
+      await p.client.saveLineups('g1', lineupSave('D0'))
+      await pitch(p, 3)
+      await pitch(p, 4)
+      const [k1, k2, lineups, k3, k4] = keysOf(p)
+      await reconnect(p, s)
+      expect(
+        p
+          .posts()
+          .slice(1)
+          .map(call => [call.path, call.key])
+      ).deep.equals([
+        ['/games/g1/events', `m-${k1}-${k2}`],
+        ['/games/g1/lineups', lineups],
+        ['/games/g1/events', `m-${k3}-${k4}`]
+      ])
+      // Built on the lineups that landed between.
+      expect((p.posts()[3].body as SaveChange).lineupsBase).equals('D1')
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(4))
+    })
+
+    it('sends a run cut off by a crash again under its key, byte for byte', async function () {
+      const s = scoringServer()
+      const first = phone(s.handler)
+      const [k1, , , k4] = await offline(first, s, 4)
+      s.answer.value = async () => await new Promise<Answer>(() => undefined)
+      s.online.value = true
+      first.client.wakeOutbox(true)
+      await until(() => keysSent(first, 0).includes(`m-${k1}-${k4}`))
+      const before = first.posts().at(-1)!
+      const stored = first.rows().map(row => row.body)
+      s.answer.value = undefined
+      // The app opens the same file again, its lease long run out.
+      const p = phone(s.handler)
+      await reconnect(p, s)
+      const again = p.posts()[0]
+      expect(again.key).equals(`m-${k1}-${k4}`)
+      expect(JSON.stringify(again.body)).equals(JSON.stringify(before.body))
+      expect(stored).has.length(4)
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(4))
+    })
+
+    it('waits out a 5xx with every row of the run, then sends it again under the same key', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const [k1, , , k4] = await offline(p, s, 4)
+      s.answer.value = () => {
+        s.answer.value = undefined
+        return refusal(500, 'internal', 'Down')
+      }
+      await reconnect(p, s)
+      expect(p.rows().map(row => [row.state, row.attempts])).deep.equals([
+        ['pending', 1],
+        ['pending', 1],
+        ['pending', 1],
+        ['pending', 1]
+      ])
+      p.clock.now += 2 * BACKOFF_MS[0]
+      p.client.wakeOutbox()
+      await p.client.drainOutbox()
+      expect(keysSent(p, 1)).deep.equals([`m-${k1}-${k4}`, `m-${k1}-${k4}`])
+      expect(p.rows()).deep.equals([])
+    })
+
+    for (const held of ['parked', 'outdated'] as const)
+      it(`sends nothing of a ${held} game while another game’s run drains`, async function () {
+        const s = scoringServer()
+        const p = phone(s.handler)
+        await offline(p, s, 3, 'g1')
+        const [k1, , k3] = await offline(p, s, 3, 'g2')
+        if (held === 'parked')
+          p.sql("UPDATE outbox SET state = 'parked' WHERE game_id = 'g1'")
+        else
+          s.answer.value = sent =>
+            sent.path === '/games/g1/events'
+              ? refusal(400, 'badRequest', 'Update TeamStation', {
+                  reason: 'updateRequired'
+                })
+              : undefined
+        const sent = p.posts().length
+        await reconnect(p, s)
+        const g1 = p.rows().filter(row => row.game_id === 'g1')
+        await reconnect(p, s)
+        const posts = p.posts().slice(sent)
+        expect(
+          posts
+            .filter(call => call.path === '/games/g1/events')
+            .map(call => call.key!.startsWith('m-'))
+        ).deep.equals(held === 'parked' ? [] : [true])
+        expect(
+          posts
+            .filter(call => call.path === '/games/g2/events')
+            .map(call => call.key)
+        ).deep.equals([`m-${k1}-${k3}`])
+        expect(p.rows()).deep.equals(g1)
+        expect(g1.map(row => row.state)).deep.equals(
+          held === 'parked'
+            ? ['parked', 'parked', 'parked']
+            : ['pending', 'pending', 'pending']
+        )
+      })
+
+    it('sends nothing of a game being given up while another game’s run drains', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      await p.client.gameEvents('g1')
+      // g1's first save is let go with its request still out.
+      s.answer.value = async sent =>
+        sent.path === '/games/g1/events' && sent.key === p.posts()[0].key
+          ? await new Promise<Answer>(() => undefined)
+          : undefined
+      await pitch(p, 1, {}, 'g1', letGo())
+      s.online.value = false
+      await pitch(p, 2, {}, 'g1')
+      const [k1, , k3] = await offline(p, s, 3, 'g2')
+      const given = p.client.giveUpGame('g1')
+      const sent = p.posts().length
+      await reconnect(p, s)
+      expect(
+        p
+          .posts()
+          .slice(sent)
+          .map(call => [call.path, call.key])
+      ).deep.equals([['/games/g2/events', `m-${k1}-${k3}`]])
+      expect(keysOf(p, 'g1')).has.length(2)
+      p.timers
+        .filter(
+          timer => timer.ms === REQUEST_DEADLINE_MS && timer.cleared !== true
+        )
+        .at(-1)!
+        .run()
+      await given
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('counts nothing lost when a give-up cuts off a run the server took', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const [k1, , , k4] = await offline(p, s, 4)
+      s.answer.value = async sent => {
+        s.take('g1', sent.body as SaveChange)
+        return await new Promise<Answer>(() => undefined)
+      }
+      s.online.value = true
+      p.client.wakeOutbox(true)
+      const draining = p.client.drainOutbox()
+      await until(() => keysSent(p, 0).includes(`m-${k1}-${k4}`))
+      const given = p.client.giveUpGame('g1')
+      for (let i = 0; i < 20; i++)
+        await new Promise(resolve => setTimeout(resolve, 1))
+      p.timers
+        .filter(
+          timer => timer.ms === REQUEST_DEADLINE_MS && timer.cleared !== true
+        )
+        .at(-1)!
+        .run()
+      expect(await given).deep.equals({ lost: 0, unsure: 0 })
+      await draining
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('sends a let-go first save alone under its key, and the rest together after', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      await p.client.gameEvents('g1')
+      let out = true
+      s.answer.value = async () => {
+        if (!out) return undefined
+        out = false
+        return await new Promise<Answer>(() => undefined)
+      }
+      await pitch(p, 1, {}, 'g1', letGo())
+      s.online.value = false
+      for (let at = 2; at <= 4; at++) await pitch(p, at)
+      const [k1, k2, , k4] = keysOf(p)
+      const sent = p.posts().length
+      await reconnect(p, s)
+      expect(keysSent(p, sent).filter(key => key !== undefined)).deep.equals([
+        k1,
+        `m-${k2}-${k4}`
+      ])
+      expect(p.rows()).deep.equals([])
+      expect(s.game('g1').mutation).deep.equals(mutationOf(4))
+    })
+
+    for (const ender of [
+      'lineupRecovery',
+      'foldVersion',
+      'frontier',
+      'dependsOn',
+      'final'
+    ] as const)
+      it(`ends a run at a save it cannot go with (${ender})`, async function () {
+        const s = scoringServer()
+        const p = phone(s.handler)
+        await p.client.gameEvents('g1')
+        s.online.value = false
+        await pitch(p, 1)
+        await pitch(p, 2)
+        await pitch(
+          p,
+          3,
+          ender === 'frontier'
+            ? {
+                // An Undo that takes the second play back.
+                plays: [play(1)],
+                remove: [2],
+                currentPlay: play(2) as unknown as CurrentPlay,
+                scoringMutation: { at: 3, id: 's3', revision: 0, frontier: 2 }
+              }
+            : ender === 'final'
+              ? { plays: [play(3), play(FINAL_INDEX)] }
+              : {}
+        )
+        await pitch(p, 4)
+        const [k1, k2, k3] = keysOf(p)
+        const set =
+          ender === 'lineupRecovery'
+            ? `lineup_recovery = '{"attempts":4}'`
+            : ender === 'foldVersion'
+              ? `fold_version = ${FOLD_VERSION - 1}`
+              : ender === 'dependsOn'
+                ? `depends_on = '["player-999"]'`
+                : undefined
+        if (set != null)
+          p.sql(`UPDATE outbox SET ${set} WHERE idempotency_key = '${k3}'`)
+        await reconnect(p, s)
+        const merged = p.posts()[1]
+        expect(merged.key).equals(`m-${k1}-${k2}`)
+        expect(atBats(merged.body)).deep.equals([1, 2])
+        expect(
+          p
+            .posts()
+            .slice(2)
+            .some(call => call.key?.startsWith(`m-${k1}-`) === true)
+        ).equals(false)
+      })
+
+    it('sends a single queued save as it was queued, under its own key', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const [k1] = await offline(p, s, 1)
+      const body = JSON.parse(String(p.rows()[0].body)) as unknown
+      await reconnect(p, s)
+      expect(keysSent(p, 1)).deep.equals([k1])
+      expect(p.posts()[1].body).deep.equals(body)
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('sends a real session’s offline pitches through a walk as one run, though the drain tried the first of them during the outage', async function () {
+      const teams = {
+        away: { id: gameFixture.awayTeamId, name: gameFixture.awayTeamName },
+        home: { id: gameFixture.homeTeamId, name: gameFixture.homeTeamName }
+      }
+      let online = true
+      let held: Record<string, unknown> = {
+        plays: [],
+        currentPlay: null,
+        playsDigest: 'plays-0',
+        lineupsDigest: 'D0',
+        generation: 1,
+        scoringMutation: null
+      }
+      const handler: Handler = sent => {
+        if (sent.method === 'GET') {
+          if (sent.path === '/games/g1')
+            return { body: { ...gameFixture, generation: 1 } }
+          if (sent.path === '/games/g1/lineups')
+            return {
+              body: {
+                away: side('away'),
+                home: side('home'),
+                digest: 'D0',
+                generation: 1
+              }
+            }
+          if (sent.path === '/games/g1/events') return { body: held }
+          return refusal(404, 'notFound', 'Not found')
+        }
+        if (!online) return 'offline'
+        // Taken as it comes: no other scorer writes.
+        const body = sent.body as SaveChange
+        const plays = new Map(
+          (held.plays as Array<{ gumbo: GumboPlay }>).map(row => [
+            row.gumbo.about.atBatIndex,
+            row.gumbo
+          ])
+        )
+        for (const index of body.remove) plays.delete(index)
+        for (const taken of body.plays) plays.set(taken.about.atBatIndex, taken)
+        held = {
+          ...held,
+          plays: [...plays.values()].map((gumbo, index) => ({
+            id: `e${index}`,
+            gameId: 'g1',
+            gumbo
+          })),
+          currentPlay: body.currentPlay ?? held.currentPlay,
+          playsDigest: `plays-${String(body.scoringMutation?.id)}`,
+          scoringMutation: body.scoringMutation ?? held.scoringMutation
+        }
+        return { body: held }
+      }
+      const p = phone(handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      const session = await ScoringSession.open(
+        {
+          load: async id => await p.client.gameEvents(id),
+          save: async (id, change) => await p.client.saveGameEvents(id, change)
+        },
+        'g1',
+        { gamePk: 'g1', teams, setup: setupOf(scoringSession(gameFixture)) },
+        { setTimer: () => null, clearTimer: () => undefined }
+      )
+      const score = async (
+        action: Parameters<typeof session.apply>[0]
+      ): Promise<void> => {
+        expect(session.apply(action).problems).deep.equals([])
+        await session.flush()
+      }
+      await score({
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupOf(session.state),
+        confirmed: ['away', 'home']
+      })
+      for (const call of ['B', 'B', 'C'] as const)
+        await score({ type: 'pitch', call })
+      // Ball three, a foul, ball four (a walk) and the next batter's first
+      // pitch, with no signal. Between them the backoff runs out, and the
+      // drain tries what is queued.
+      online = false
+      const sent = p.posts().length
+      for (const call of ['B', 'F', 'B', 'C'] as const) {
+        await score({ type: 'pitch', call })
+        p.clock.now += 2 * BACKOFF_MS[1]
+        p.client.wakeOutbox()
+        await p.client.drainOutbox()
+      }
+      const keys = keysOf(p)
+      expect(keys).has.length(4)
+      expect(keysSent(p, sent)).includes(`m-${keys[0]}-${keys[1]}`)
+      const outage = p.posts().length
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      // One update for the live view: every save of the outage at once.
+      expect(keysSent(p, outage)).deep.equals([`m-${keys[0]}-${keys[3]}`])
+      expect(p.rows()).deep.equals([])
+      expect(held.scoringMutation).deep.equals(session.observedScoringMutation)
+    })
+
+    it('tells the scoring the head of a run carried was rejected', async function () {
+      const s = scoringServer()
+      const p = phone(s.handler)
+      const notices: OutboxNotice[] = []
+      p.client.subscribeOutboxNotices(notice => notices.push(notice))
+      const [k1] = await offline(p, s, 4)
+      const rejected = { at: 0, id: 'lost', revision: 0, frontier: 1 }
+      p.sql(
+        `UPDATE outbox SET rejected_scoring = '${JSON.stringify(rejected)}' WHERE idempotency_key = '${k1}'`
+      )
+      await reconnect(p, s)
+      expect(p.posts()).has.length(2)
+      expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
+        {
+          gameId: 'g1',
+          message: '',
+          reconcileScoring: true,
+          rejectedScoring: rejected
+        }
+      ])
     })
   })
 })

@@ -19,6 +19,7 @@ import { shortName } from '../common/names'
 import { freshGame } from '../common/scoring/rules'
 import { ScoringSession } from '../common/scoring/session'
 import { setupOf } from '../common/scoring/state'
+import { userIdOfGumbo } from '../common/userId'
 import { mintedRosterEntry } from './mintedRosterEntry'
 
 const game = asGameDetail({
@@ -70,7 +71,7 @@ const numbers = [
 const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
   names.map((displayName, i) =>
     asRosterEntry({
-      userId: (side === 'home' ? 200 : 100) + i,
+      userId: userIdOfGumbo((side === 'home' ? 200 : 100) + i),
       gumboId: (side === 'home' ? 200 : 100) + i,
       shortName: shortName({ id: i, displayName }),
       jersey: numbers[i],
@@ -96,6 +97,8 @@ const client = new TeamStationClient({
 client.game = async () => game
 client.roster = async side => roster(side)
 client.createRosterPlayer = async (_teamId, player) => mintedRosterEntry(player)
+client.createGuestPlayer = async (_gameId, _side, player) =>
+  mintedRosterEntry(player)
 const source: ScoringSource = {
   open: async () =>
     ScoringSession.start(
@@ -114,7 +117,7 @@ export function DefensiveScoringScreenFixture(): React.ReactElement {
         <ScoringScreen
           client={client}
           gameId={game.id}
-          userId={123}
+          userId={userIdOfGumbo(123)}
           source={source}
           onExit={() => undefined}
         />
@@ -134,7 +137,7 @@ export function DefensiveRosterSheetFixture(): React.ReactElement {
           <ScoringScreen
             client={client}
             gameId={game.id}
-            userId={123}
+            userId={userIdOfGumbo(123)}
             source={source}
             onExit={() => undefined}
           />

@@ -5,13 +5,126 @@ import { PerspectiveCamera, Vector3 } from 'three'
 import {
   applyFieldCamera,
   cameraDragValue,
+  catcherCardBottom,
   fieldViewportHeight,
   HEIGHT_LIMIT,
+  PHONE_BOARD_RATIO,
   SCOREBOARD_Z,
   TILT_LIMIT
 } from './cameraModel'
 
 describe('field camera controls', function () {
+  for (const [width, height] of [
+    [474, 1194],
+    [773, 744],
+    [834, 834]
+  ]) {
+    it(`fits the outfield wall and roof within 90 percent of the ${width}-point side field`, function () {
+      const camera = new PerspectiveCamera()
+      const frame = { top: 64, bottom: 172, corners: true }
+      applyFieldCamera(camera, {
+        width,
+        height,
+        view: 'home',
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33,
+        bottomExtension: 112,
+        frame
+      })
+      const roofTops: number[] = []
+      for (const side of [-1, 1]) {
+        for (const a of [Math.PI / 4, Math.PI / 3.5]) {
+          const wall = new Vector3(
+            side * 118 * Math.sin(a),
+            0,
+            -118 * Math.cos(a)
+          ).project(camera)
+          expect(Math.abs(wall.x)).at.most(0.90001)
+          expect(Math.abs(wall.y)).lessThan(1)
+        }
+        for (const depth of [-2.1, 2.9]) {
+          const roof = new Vector3(
+            side * 34.5 * 1.8,
+            28.2 + 9.95 * 1.8,
+            -135 + depth * 1.8
+          ).project(camera)
+          expect(Math.abs(roof.x)).at.most(0.90001)
+          roofTops.push(((1 - roof.y) * height) / 2)
+        }
+      }
+      expect(Math.min(...roofTops)).closeTo(frame.top, 0.1)
+    })
+  }
+  for (const [width, height] of [
+    [393, 852],
+    [600, 700],
+    [1000, 742]
+  ]) {
+    it(`pins the scoreboard roof and fits the numbered catcher card at ${width}×${height}`, function () {
+      const camera = new PerspectiveCamera()
+      const options = {
+        width,
+        height,
+        zoom: 1.25,
+        view: 'home' as const,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33,
+        bottomExtension: 112
+      }
+      function roof(): { top: number; width: number } {
+        const points = []
+        for (const x of [-34.5, 34.5])
+          for (const z of [-2.1, 2.9])
+            points.push(
+              new Vector3(x * 1.8, 28.2 + 9.95 * 1.8, -135 + z * 1.8).project(
+                camera
+              )
+            )
+        return {
+          top: Math.min(...points.map(p => ((1 - p.y) * height) / 2)),
+          width:
+            ((Math.max(...points.map(p => p.x)) -
+              Math.min(...points.map(p => p.x))) *
+              width) /
+            2
+        }
+      }
+      applyFieldCamera(camera, options)
+      const old = roof().width
+      const frame = { top: 64, bottom: 200 }
+      const bottom = applyFieldCamera(camera, { ...options, frame })!
+      expect(roof().top).closeTo(frame.top, 0.5)
+      expect(catcherCardBottom(camera, width, height)).closeTo(bottom, 0.01)
+      expect(bottom).at.most(height - frame.bottom)
+      if (width === 393) {
+        expect(roof().width).closeTo(old, 0.01)
+        expect(roof().width).closeTo(419.977, 0.1)
+      } else {
+        expect(bottom).closeTo(height - frame.bottom, 0.05)
+        expect(roof().width).lessThan(old)
+      }
+    })
+  }
+  it('keeps the replay home camera and its bottom extension at their original projection', function () {
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      width: 393,
+      height: 852,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    expect(camera.position.toArray()).deep.equals([
+      0, 137.26702971184517, 145.4970314300046
+    ])
+    expect(camera.projectionMatrix.toArray()).deep.equals([
+      4.7801512539226145, 0, 0, 0, 0, 2.2049289234643044, 0, 0, 0,
+      -0.13145539906103293, -1.0036429872495447, -1, 0, 0, -4.007285974499089, 0
+    ])
+  })
   it('extends only the bottom while retaining world scale and reference pixels', function () {
     for (const [width, height] of [
       [320, 520],
@@ -101,4 +214,42 @@ describe('field camera controls', function () {
       }
     })
   }
+  it('zooms in to fill spare height until the board spans an iPhone 15 column', function () {
+    const fit = (
+      height: number,
+      fill?: number
+    ): { card: number; board: number } => {
+      const camera = new PerspectiveCamera()
+      const card = applyFieldCamera(camera, {
+        width: 640,
+        height,
+        view: 'home',
+        zoom: 1.25,
+        tilt: (-11 * Math.PI) / 180,
+        heightOffset: 33,
+        bottomExtension: 112,
+        frame: { top: 64, bottom: 184, fill }
+      })!
+      const [left, right] = [-1, 1].map(
+        side =>
+          new Vector3(
+            side * 34.5 * 1.8,
+            28.2 + 9.95 * 1.8,
+            -135 + 2.9 * 1.8
+          ).project(camera).x
+      )
+      return { card, board: ((right - left) * 640) / 2 }
+    }
+    const unfilled = fit(1100)
+    const reached = fit(1100, 240)
+    expect(reached.card).closeTo(1100 - 240, 0.001)
+    expect(reached.card).greaterThan(unfilled.card)
+    expect(reached.board / 640).lessThan(PHONE_BOARD_RATIO)
+    // Nothing spare: the width-bound fit stands.
+    expect(fit(1100, 1100 - unfilled.card + 10).card).equals(unfilled.card)
+    // More height than the board allows: it stops at the proportion.
+    const capped = fit(1100, 184)
+    expect(capped.board / 640).closeTo(PHONE_BOARD_RATIO, 0.001)
+    expect(capped.card).lessThan(1100 - 184 - 10)
+  })
 })

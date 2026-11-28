@@ -81,3 +81,20 @@ export function gridRotation(native: NativeOrientation | null | undefined): {
     }
   }
 }
+
+/** A device whose shortest screen side is at least this is a tablet. */
+export const TABLET_MIN_SHORT_SIDE = 600
+
+/**
+ * What the scoring screen calls while it is up: a tablet turns with the
+ * device, for the side column in landscape, and stands upright again when
+ * scoring goes; a phone stays upright throughout, as it always has.
+ */
+export function scoringRotation(
+  native: NativeOrientation | null | undefined,
+  screen: { width: number; height: number }
+): { allow: () => void; restore: () => void } {
+  if (Math.min(screen.width, screen.height) >= TABLET_MIN_SHORT_SIDE)
+    return gridRotation(native)
+  return { allow: () => undefined, restore: () => undefined }
+}

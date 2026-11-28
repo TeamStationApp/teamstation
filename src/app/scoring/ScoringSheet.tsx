@@ -28,6 +28,7 @@ import {
 import { Modal } from '../components/Modal'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
+import { NOTICE_TEXT_AREA } from './scoringControlStyle'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 
 export function ScoringButton({
@@ -190,6 +191,7 @@ function SheetContent({
   onBackdropPress,
   onClose,
   keyboardVerticalOffset,
+  notice,
   footer,
   hidden = false,
   children
@@ -201,6 +203,11 @@ function SheetContent({
    * would slide down over it first (a phone's modal animates out).
    */
   hidden?: boolean
+  /**
+   * The screen's notice bar, drawn in front of the sheet in the strip at the
+   * bottom of the window; the sheet ends above that strip.
+   */
+  notice?: React.ReactNode
   compact?: boolean
   placement?: 'top' | 'bottom' | 'center'
   title: string
@@ -371,6 +378,11 @@ function SheetContent({
                       marginHorizontal: placement === 'center' ? 12 : undefined,
                       marginVertical: placement === 'center' ? 24 : undefined,
                       marginTop: tall ? 8 : undefined,
+                      // The notice strip is reserved below the sheet, so the
+                      // bar in front never covers the sheet's own actions.
+                      // The safe area's inset is already below it.
+                      marginBottom:
+                        notice == null ? undefined : NOTICE_TEXT_AREA,
                       backgroundColor: scoring
                         ? theme.scoringSurface.background
                         : theme.backgroundColor,
@@ -527,6 +539,7 @@ function SheetContent({
               </KeyboardAvoidingView>
             )}
           </SafeAreaInsetsContext.Consumer>
+          {notice}
         </SafeAreaProvider>
       )}
     </Modal>

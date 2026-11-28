@@ -9,10 +9,11 @@ import React, {
 } from 'react'
 import {
   ActivityIndicator,
+  Dimensions,
+  NativeModules,
   Platform,
   Pressable,
   ScrollView,
-  StatusBar,
   Text,
   useWindowDimensions,
   View
@@ -55,17 +56,19 @@ import type { DefaultLineups } from '../../common/scoring/startingSetup'
 import { type GameState, setupOf } from '../../common/scoring/state'
 import type { SwapDocumentsEffect } from '../../common/scoring/swapDocuments'
 import type { WalkUpSong } from '../../common/walkUpSong'
+import { useMotionPreference } from '../components/useMotionPreference'
 import type { BallArcState } from '../field/ballArcModel'
 import { BaseballScreen, FieldKeeper } from '../field/BaseballScreen'
 import type { FieldPlayer } from '../field/fieldModel'
 import { createRelay, type Relay, useRelay } from '../field/fieldPropsRelay'
 import { scoringMenuFrame, WEB_MENU_BUTTON } from '../field/fieldSafeArea'
 import type { BaseProjection } from '../field/fieldTypes'
+import { scoringFrame } from '../field/scoringFrame'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
-import { useFieldSurface } from '../field/useFieldSurface'
+import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
-import { useInsets } from '../platform/safeArea'
+import { scoringRotation } from '../player/multiCam/orientationLock'
 import { CachingClient, type QueuedSwap } from '../sync/cachingClient'
 import { supersededTag, type TagAcknowledgment } from '../sync/tagRevisions'
 import {
@@ -117,7 +120,6 @@ import { EndGameConfirmation, EndGameContext } from './EndGameConfirmation'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { EventTagEditor } from './EventTagEditor'
 import { guestRenames, sendGuestRenames } from './guestRenames'
-import { HeldGameNotice } from './HeldGameNotice'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
@@ -144,6 +146,7 @@ import {
   type RosterMode
 } from './RosterEditor'
 import { type GameChanges, listen, useRosterLive } from './rosterLive'
+import { RotateToPortrait } from './RotateToPortrait'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
@@ -166,6 +169,12 @@ import {
 } from './scoringMachine'
 import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
+import {
+  type SaveStatus,
+  scoringNotice,
+  useReconnectSaving
+} from './scoringNotice'
+import { ScoringNoticeBar } from './ScoringNoticeBar'
 import { scoringPreferences } from './scoringPreferences'
 import type { OpenedReads } from './scoringReads'
 import { withoutPrivateNames, withPublicNames } from './scoringRosterCache'
@@ -188,17 +197,6 @@ import {
   type ScoringSource
 } from './scoringSource'
 import {
-  type SaveStatus,
-  scoringStatusLine,
-  useReconnectSaving
-} from './scoringStatusLine'
-import {
-  SCORING_OFFLINE_BAND,
-  SCORING_STATUS_MAX_WIDTH,
-  scoringOfflineFrame,
-  scoringStatusFrame
-} from './scoringStatusPlacement'
-import {
   type HistoryEntry,
   type Position,
   POSITIONS,
@@ -208,7 +206,7 @@ import {
 import {
   type GameReplaced,
   type OpenedGame,
-  replacedNotice,
+  replacedReport,
   useGameReplaced
 } from './sidesSwapped'
 import {
@@ -224,6 +222,8 @@ import { useScoringExit } from './useScoringExit'
 import { useTiebreakerSetup } from './useTiebreakerSetup'
 
 export interface ScoringScreenProps {
+  /** Projected field landmarks in scoring-root points. */
+  onBaseProjection?: (value: BaseProjection) => void
   active?: boolean
   onEditPlayer?: (userId: string, name: string, teamId: string) => void
   onSettingsRefresh?: (refresh: () => void) => () => void
@@ -272,6 +272,16 @@ export const PERSISTENT_NEEDS_QUEUE =
   'Persistent scoring needs the queued client'
 
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
+  const reducedMotion = useMotionPreference()
+  useEffect(() => {
+    if (props.active === false) return
+    const rotation = scoringRotation(
+      NativeModules.TSOrientation,
+      Dimensions.get('screen')
+    )
+    rotation.allow()
+    return rotation.restore
+  }, [props.active])
   const theme = useTheme()
   const [opened, setOpened] = useState<GameSession>()
   const [visibleDefaults, setVisibleDefaults] = useState<DefaultLineups>({})
@@ -333,7 +343,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
    */
   const [openedSides, setOpenedSides] = useState<OpenedGame>()
   /** Says, once the game opened again, that its sides were swapped. */
-  const [swapNotice, setSwapNotice] = useState<string>()
+  const [swapNotice, setSwapNotice] =
+    useState<ReturnType<typeof replacedReport>>()
   /** The phone gave up its edits, and the server's copy has not come. */
   const [copyPending, setCopyPending] = useState(false)
   // Held edits given up while a page is over the scorer (a player's page
@@ -358,7 +369,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       setRetry(value => value + 1)
     heldBefore.current = { gameId: props.gameId, held: heldHere }
   }, [props.gameId, heldHere, props.active])
-  const surface = useFieldSurface()
+  const surface = useFieldSurface('scoring', props.active !== false)
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
   const source: ScoringSource = props.source ?? fallback
   // A game that saves goes through the queue, on the web as on the phone.
@@ -853,7 +864,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
               const unsaved = session.lostToSwap + session.pending
               const out = session.saving ? unsaved : 0
               setSwapNotice(
-                replacedNotice(change, unsaved - out + lost, out + unsure)
+                replacedReport(change, unsaved - out + lost, out + unsure)
               )
               setRetry(value => value + 1)
             })
@@ -883,7 +894,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         waitingForSave.current = stopWaiting
         return false
       }
-      setSwapNotice(replacedNotice(change, 0))
+      setSwapNotice(replacedReport(change, 0))
       if (swapped == null) {
         setRetry(value => value + 1)
         return false
@@ -1032,7 +1043,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   )
   useEffect(() => {
     if (outboxNotice == null) return
-    setSwapNotice(outboxNotice.text)
+    setSwapNotice({ text: outboxNotice.text })
     // Writes naming a player the server did not take were dropped and the
     // game read again: the session that still holds him opens it again.
     if (outboxNotice.reread) setRetry(value => value + 1)
@@ -1098,38 +1109,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   return (
     // The field stays on screen while a game opened again replaces the
     // panel: a swap's own exchanged sides are drawn on it in the next frame.
-    <FieldKeeper>
-      {swapNotice != null && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            // Below the scoreboard, clear of its names.
-            top: '30%',
-            left: 16,
-            right: 16,
-            zIndex: 98,
-            alignItems: 'center'
-          }}
-        >
-          <Text
-            accessibilityLiveRegion="polite"
-            style={{
-              color: theme.scoringSurface.text,
-              backgroundColor: theme.scoringSurface.background,
-              fontFamily: theme.regularTextFont,
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 12,
-              overflow: 'hidden'
-            }}
-          >
-            {swapNotice}
-          </Text>
-        </View>
-      )}
+    <FieldKeeper rootStyle={surface.root}>
       <OnVanished relay={vanishing} onVanished={replaceVanished} />
       <ScoringPanel
+        reducedMotion={reducedMotion}
+        eventNotice={swapNotice}
         key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}:${openedAttempt}`}
         onReopen={arrived => {
           setCopyPending(!arrived)
@@ -1157,6 +1141,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         gameId={props.gameId}
         persistent={source.persistent === true}
         source={source}
+        onBaseProjection={props.onBaseProjection}
         onExit={props.onExit}
         userId={String(props.userId ?? 'local-scorer')}
         rosters={
@@ -1285,6 +1270,9 @@ function reduceVisible(
 }
 
 function ScoringPanel(props: {
+  reducedMotion: boolean
+  eventNotice?: ReturnType<typeof replacedReport>
+  onBaseProjection?: ScoringScreenProps['onBaseProjection']
   active: boolean
   onEditPlayer?: ScoringScreenProps['onEditPlayer']
   onBeforeLeave?: ScoringScreenProps['onBeforeLeave']
@@ -1569,48 +1557,6 @@ function ScoringPanel(props: {
     phoneOffline || status.offline,
     status.pending > 0 || queued > 0
   )
-  const shownStatus = scoringStatusLine({
-    held,
-    status,
-    phoneOffline,
-    reconnecting
-  })
-  const statusLine = shownStatus?.text
-  // A phone makes room for the offline line across the top; the web's line
-  // already sits above the board (`scoringOfflineFrame`).
-  const topBand =
-    shownStatus?.place === 'top' && Platform.OS !== 'web'
-      ? SCORING_OFFLINE_BAND
-      : 0
-  const atTop = shownStatus?.place === 'top'
-  const statusPill = (
-    <View
-      style={{
-        maxWidth: SCORING_STATUS_MAX_WIDTH,
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: 12,
-        backgroundColor: theme.backgroundColor
-      }}
-    >
-      <Text
-        accessibilityRole="text"
-        accessibilityLabel="Save status"
-        testID={held == null ? 'scoringSaveStatus' : 'heldGameMessage'}
-        // At the top of a phone it is one line in its band, smaller rather
-        // than taller; on the web it wraps between the speaker and ☰.
-        numberOfLines={atTop && Platform.OS !== 'web' ? 1 : undefined}
-        adjustsFontSizeToFit={topBand > 0}
-        style={{
-          color: theme.primaryTextColor,
-          fontFamily: theme.regularTextFont,
-          textAlign: 'center'
-        }}
-      >
-        {statusLine}
-      </Text>
-    </View>
-  )
   // Another device's change heard on the game socket and not yet read in,
   // and a count that asks the screen to look again whether it can be.
   const stale = useRef(false)
@@ -1800,7 +1746,6 @@ function ScoringPanel(props: {
   } | null>(null)
   const [menu, setMenu] = useState(false)
   const [menuButton, setMenuButton] = useState(WEB_MENU_BUTTON)
-  const insets = useInsets()
   const [sheet, setSheet] = useState<
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'swap' | 'game'
   >()
@@ -1808,7 +1753,21 @@ function ScoringPanel(props: {
     if ((model.appliedOverrides ?? 0) > 0)
       setSheet(current => (current === 'overrides' ? undefined : current))
   }, [model.appliedOverrides])
-  const { height: windowHeight } = useWindowDimensions()
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions()
+  const [rootSize, setRootSize] = useState<{ width: number; height: number }>()
+  const fieldInsets = useFieldInsets()
+  const width = rootSize?.width ?? windowWidth
+  const height = rootSize?.height ?? windowHeight
+  const frame = useMemo(
+    () =>
+      scoringFrame({
+        width,
+        height,
+        insets: fieldInsets,
+        platform: Platform.OS
+      }),
+    [width, height, fieldInsets]
+  )
   const [swapProblem, setSwapProblem] = useState<string>()
   /** What the open swap sheet says will be lost. */
   const [swapLoses, setSwapLoses] = useState<PlaysLost>(NOTHING_LOST)
@@ -2106,9 +2065,14 @@ function ScoringPanel(props: {
   // A game that can no longer change its defense here, as when another
   // device ends it, closes the defensive roster this screen has open.
   const defenseEditable = setupEditable(state)
+  const defending = fieldingSide(session)
   useEffect(() => {
-    if (!defenseEditable && defensiveSlot != null) setDefensiveSlot(undefined)
-  }, [defenseEditable, defensiveSlot])
+    if (
+      defensiveSlot != null &&
+      (!defenseEditable || defending !== defensiveSlot.side)
+    )
+      setDefensiveSlot(undefined)
+  }, [defenseEditable, defending, defensiveSlot])
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
   const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])
@@ -2725,7 +2689,6 @@ function ScoringPanel(props: {
       ((state.phase === 'ready' || state.phase === 'awaitingBatter') &&
         atRest(state))) &&
     (sheet == null || sheet === 'rosters') &&
-    !defensiveOpen &&
     !gestureActive &&
     !outcomeMenu &&
     !moreOpen &&
@@ -3387,8 +3350,33 @@ function ScoringPanel(props: {
     ),
     [endGameSession, endGameDisabled]
   )
+  const notice = scoringNotice({
+    held,
+    status,
+    rosterConflict: sheet === 'rosters' && rosterChanged && rosterLive.conflict,
+    event: props.eventNotice?.text,
+    phoneOffline,
+    reconnecting
+  })
+  const noticeBar = (
+    <ScoringNoticeBar
+      reducedMotion={props.reducedMotion}
+      frame={frame}
+      notice={notice}
+      compact={
+        notice?.text === props.eventNotice?.text
+          ? props.eventNotice?.compact
+          : undefined
+      }
+      held={heldGame}
+      onSettled={props.onReopen}
+    />
+  )
   const field = (
     <BaseballScreen
+      boxState={session}
+      frame={frame}
+      onRootSize={setRootSize}
       remoteUpdates={
         props.persistent
           ? {
@@ -3399,7 +3387,6 @@ function ScoringPanel(props: {
           : undefined
       }
       suspended={!props.active}
-      topBand={topBand}
       setupToast={
         setupInstruction === 'Insufficient batting lineup.'
           ? {
@@ -3439,7 +3426,10 @@ function ScoringPanel(props: {
             })
             .catch(() => undefined)
         },
-        onBaseProjection: setBaseProjection,
+        onBaseProjection: projection => {
+          setBaseProjection(projection)
+          props.onBaseProjection?.(projection)
+        },
         ...battedBallField(
           state,
           angle,
@@ -4007,6 +3997,7 @@ function ScoringPanel(props: {
             style={{ position: 'absolute', inset: 0, zIndex: 99 }}
           />
           <ScrollView
+            testID="scoring-menu"
             style={{
               position: 'absolute',
               ...scoringMenuFrame(menuButton),
@@ -4105,6 +4096,7 @@ function ScoringPanel(props: {
       )}
       {sheet != null && sheet !== 'overrides' && (
         <PanelSheet
+          notice={sheet === 'rosters' ? noticeBar : undefined}
           vanishing={props.vanishing}
           game={props.game}
           visible={props.active || sheet === 'exit'}
@@ -4182,7 +4174,6 @@ function ScoringPanel(props: {
                 guests={[...props.guests, ...createdGuests.current]}
                 unaccepted={lineupsUnaccepted(state, props.visibleDefaults)}
                 onDraftChange={setRosterInitial}
-                conflict={rosterLive.conflict}
                 onDirtyChange={onRosterDirty}
                 onHeldChange={onRosterHeld}
                 onEditPlayer={props.onEditPlayer}
@@ -4340,36 +4331,8 @@ function ScoringPanel(props: {
           )}
         </PanelSheet>
       )}
-      {topBand > 0 && (
-        // The band's fill is dark: the status bar's text goes light over it.
-        <StatusBar barStyle="light-content" />
-      )}
-      {statusLine != null && (
-        // Offline, across the very top in a band the field starts under.
-        // Anything else on the phone above the bottom deck, clear of the
-        // scoreboard and ☰. A held game's line is a button: what to do
-        // about it.
-        <View
-          pointerEvents={heldGame == null ? 'none' : 'box-none'}
-          style={
-            atTop
-              ? scoringOfflineFrame(
-                  Platform.OS !== 'web',
-                  insets,
-                  theme.scoringSurface.background
-                )
-              : scoringStatusFrame(Platform.OS !== 'web', insets)
-          }
-        >
-          {heldGame == null ? (
-            statusPill
-          ) : (
-            <HeldGameNotice held={heldGame} onSettled={props.onReopen}>
-              {statusPill}
-            </HeldGameNotice>
-          )}
-        </View>
-      )}
+      {sheet !== 'rosters' && noticeBar}
+      {props.active && <RotateToPortrait />}
       <PlanSyncNotice
         cards={planCards}
         onRetry={retryPlan}

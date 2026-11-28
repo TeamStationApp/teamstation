@@ -7,11 +7,12 @@ import {
   TestComposer as Composer,
   type TestComposerProps as ComposerProps
 } from '../chat/composer.test.helpers'
+import { DONE_WIDTH } from '../scoring/scoringControlStyle'
 import { pillPadding } from '../theme/pill'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { Button, type ButtonKind } from './Button'
-import { PillTabs } from './PillTabs'
+import { PillButton, PillTabs } from './PillTabs'
 import { SectionHeader } from './SectionHeader'
 
 let root: Root | undefined
@@ -92,6 +93,20 @@ describe('pill label clearance', () => {
       expect(['', '0px']).includes(getComputedStyle(outer).borderTopWidth)
       expect(getComputedStyle(outer).backgroundColor).equals('rgba(0, 0, 0, 0)')
     })
+  it('keeps a fitted label such as Done between its arcs at the width it is given', async () => {
+    const container = await render(
+      <div style={{ width: DONE_WIDTH }}>
+        <PillButton fitLabel label="Done" onPress={() => {}} />
+      </div>
+    )
+    const face = container.querySelector<HTMLElement>(
+      '[data-testid="settings-pill-tab"]'
+    )!
+    clearsArcs(face)
+    expect(
+      DONE_WIDTH - 2 * parseFloat(getComputedStyle(face).paddingLeft)
+    ).at.least(36)
+  })
   it('derives both regular and compact clearance from the shell height', () => {
     expect(pillPadding(48)).equals(24)
     expect(pillPadding(36)).equals(18)

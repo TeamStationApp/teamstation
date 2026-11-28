@@ -9,6 +9,7 @@ import { type FaultProxy, startFaultProxy } from './proxy'
 import {
   beaconRoute,
   delayFor,
+  gateEvent,
   logForwarded,
   standInRoute,
   type StandIns,
@@ -202,6 +203,8 @@ export async function startFaultServer(
     ...(standIns == null
       ? {}
       : {
+          scoringOutage: standIns.scoringOutage,
+          gate: (req, res, resume) => gateEvent(standIns, req, res, resume),
           delay: path => delayFor(standIns, path),
           onRequest: (method, path) => {
             logForwarded(standIns, method, path)

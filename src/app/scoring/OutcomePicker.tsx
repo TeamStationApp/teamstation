@@ -11,6 +11,7 @@ import {
   ControlBackdrop,
   ControlFace
 } from './ScoringControlAppearance'
+import { MENU_GAP, useMenuAnchor } from './scoringMenuAnchor'
 import {
   OutTypeHeader,
   SCORING_MENU,
@@ -44,6 +45,26 @@ export function OutcomePicker({
   const previousX = useRef(0)
   const main = useRef<HTMLDivElement>(null)
   const outPanel = useRef<HTMLDivElement>(null)
+  // Over the deck, as the native menu is: right-aligned with this button, its
+  // submenu to its left, both inside the deck's width and so the field column.
+  const anchor = useMenuAnchor(mode != null, trigger)
+  const menuBottom = anchor?.bottom ?? SCORING_MENU.bottom
+  const panelWidth =
+    anchor == null
+      ? undefined
+      : Math.min(
+          230,
+          window.innerWidth * 0.46,
+          anchor.triggerRight - anchor.deckLeft
+        )
+  const mainLeft =
+    anchor == null || panelWidth == null
+      ? window.innerWidth / 2
+      : anchor.triggerRight - panelWidth
+  const outLeft =
+    anchor == null || panelWidth == null
+      ? 12
+      : Math.max(anchor.deckLeft, mainLeft - MENU_GAP - panelWidth)
   useLayoutEffect(() => {
     if (!submenu) return
     const measure = (): void => {
@@ -51,10 +72,7 @@ export function OutcomePicker({
         outPanel.current?.getBoundingClientRect().height ??
         SCORING_MENU.outPanelHeight
       setSubmenuTop(top =>
-        Math.max(
-          12,
-          Math.min(top, window.innerHeight - SCORING_MENU.bottom - height)
-        )
+        Math.max(12, Math.min(top, window.innerHeight - menuBottom - height))
       )
     }
     measure()
@@ -62,7 +80,7 @@ export function OutcomePicker({
     return () => {
       window.removeEventListener('resize', measure)
     }
-  }, [submenu, submenuTop])
+  }, [submenu, submenuTop, menuBottom])
   const close = (): void => {
     setMode(undefined)
     setSubmenu(false)
@@ -122,16 +140,14 @@ export function OutcomePicker({
         Math.max(
           12,
           Math.min(
-            window.innerHeight -
-              SCORING_MENU.bottom -
-              SCORING_MENU.outPanelHeight,
+            window.innerHeight - menuBottom - SCORING_MENU.outPanelHeight,
             item.getBoundingClientRect().top
           )
         )
       )
     } else if (
       (item != null && main.current?.contains(item) === true) ||
-      (movingRight && event.clientX >= window.innerWidth / 2)
+      (movingRight && event.clientX >= mainLeft)
     )
       setSubmenu(false)
   }
@@ -263,13 +279,14 @@ export function OutcomePicker({
               ...scoringMenuPanel,
               position: 'fixed',
               zIndex: 20,
-              right: 12,
-              bottom: SCORING_MENU.bottom,
-              width: 'min(230px, 46vw)',
+              right:
+                anchor == null ? 12 : window.innerWidth - anchor.triggerRight,
+              bottom: menuBottom,
+              width: panelWidth ?? 'min(230px, 46vw)',
               display: 'flex',
               flexDirection: 'column',
               gap: 0,
-              maxHeight: `calc(100dvh - ${SCORING_MENU.bottom + 12}px)`,
+              maxHeight: `calc(100dvh - ${menuBottom + 12}px)`,
               overflowY: 'auto'
             }}
           >
@@ -302,7 +319,7 @@ export function OutcomePicker({
                           12,
                           Math.min(
                             window.innerHeight -
-                              SCORING_MENU.bottom -
+                              menuBottom -
                               SCORING_MENU.outPanelHeight,
                             event.currentTarget.getBoundingClientRect().top
                           )
@@ -329,11 +346,11 @@ export function OutcomePicker({
                 ...scoringMenuPanel,
                 position: 'fixed',
                 zIndex: 20,
-                left: 12,
+                left: outLeft,
                 top: submenuTop,
-                maxHeight: `calc(100dvh - ${SCORING_MENU.bottom + 12}px)`,
+                maxHeight: `calc(100dvh - ${menuBottom + 12}px)`,
                 overflowY: 'auto',
-                width: 'min(230px, 46vw)',
+                width: panelWidth ?? 'min(230px, 46vw)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 0

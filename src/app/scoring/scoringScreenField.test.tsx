@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Dimensions, NativeModules } from 'react-native'
 
 import {
   asRosterEntry,
@@ -24,9 +25,13 @@ import {
 import { F } from '../../test/scoringGames'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import { testCachingClient } from '../../test/testCachingClient'
-import { BaseballScreen } from '../field/BaseballScreen'
+import { BaseballScreen, FieldKeeper } from '../field/BaseballScreen'
 import { topLift } from '../field/fieldSafeArea'
-import type { BaseProjection, FieldPlacement } from '../field/fieldTypes'
+import type {
+  BaseProjection,
+  FieldCanvasProps,
+  FieldPlacement
+} from '../field/fieldTypes'
 import { localTagRevision } from '../sync/tagRevisions'
 import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic from '../walkup/walkUpMusic'
@@ -42,7 +47,6 @@ import {
   memoryStore,
   type ScoringSource
 } from './scoringSource'
-import { SCORING_OFFLINE_BAND } from './scoringStatusPlacement'
 import { POSITIONS } from './scoringTypes'
 
 type Props = Parameters<typeof BaseballScreen>[0]
@@ -1725,117 +1729,213 @@ describe('scoring screen field wiring', function () {
     container = undefined
   })
 
-  for (const top of [0, 59])
-    for (const band of [0, SCORING_OFFLINE_BAND])
-      it(`moves the canvas and every point it reports by band − lift: inset ${top}, band ${band}`, async function () {
-        const restore = stubFieldInsets(() =>
-          top === 0 ? null : { top, bottom: 34, left: 0, right: 0 }
-        )
-        try {
-          const lift = band > 0 ? 0 : topLift(top, 'web')
-          const offset = band - lift
-          expect(lift).equals(band === 0 && top === 59 ? 24 : 0)
-          const bases: BaseProjection[] = []
-          const game = {
-            gameId: 'g1',
-            accepted: undefined,
-            subscribe: () => () => undefined
-          } as unknown as RemoteScoringUpdatesProps['game']
-          container = document.createElement('div')
-          document.body.append(container)
-          root = createRoot(container)
-          await act(async () => {
-            root!.render(
-              <ThemeProvider>
-                <BaseballScreen
-                  field={{
-                    players: [],
-                    selected: '',
-                    onSelect: () => undefined,
-                    view: 'home',
-                    zoom: 1,
-                    onBaseProjection: projection => bases.push(projection)
-                  }}
-                  remoteUpdates={{ game, userId: 'me' }}
-                  onMenu={() => undefined}
-                  onUndo={() => undefined}
-                  onPitch={() => undefined}
-                  canPitch
-                  summary="Game"
-                  topBand={band}
-                  instruction="Tap a fielder"
-                />
-              </ThemeProvider>
-            )
-          })
-          const moved = [...container.querySelectorAll<HTMLElement>('div')]
-            .map(node => node.style.transform)
-            .filter(transform => transform.startsWith('translateY('))
-          expect(moved).deep.equals(
-            offset === 0 ? [] : [`translateY(${offset}px)`]
-          )
-          // The holder is the full lift taller, band or no band, so the
-          // canvas still reaches the bottom and never resizes as the band
-          // comes and goes.
-          const holder = [
-            ...container.querySelectorAll<HTMLElement>('div')
-          ].find(node => node.style.transform.startsWith('translateY('))
-          const full = topLift(top, 'web')
-          expect(holder?.style.marginBottom ?? '').equals(
-            full > 0 ? `${-full}px` : ''
-          )
-          const canvas = componentProps<FieldProps>('FieldCanvas')
-          const point = { x: 100, y: 400 }
-          await act(async () => {
-            canvas.onBaseProjection?.({
-              width: 402,
-              height: 874,
-              bases: [point, point, point, point]
-            })
-            canvas.onScoreboardBounds?.({
-              x: 20,
-              y: 60,
-              width: 300,
-              height: 90
-            })
-            canvas.onCatcherBounds?.({ x: 190, y: 500, width: 20, height: 30 })
-          })
-          expect(bases.at(-1)?.bases[0]).deep.equals({
-            x: 100,
-            y: 400 + offset
-          })
-          expect(
-            componentProps<{ bounds?: { y: number } }>('InstructionToast')
-              .bounds?.y
-          ).equals(60 + offset)
-          expect(
-            componentProps<RemoteScoringUpdatesProps>('RemoteScoringUpdates')
-              .catcher?.y
-          ).equals(500 + offset)
-        } finally {
-          restore()
-        }
+  for (const microphone of [false, true]) {
+    it(`places Done beside the catcher with microphone present = ${microphone}`, async function () {
+      await mount()
+      await act(async () => {
+        props().onRootSize!({ width: 393, height: 852 })
       })
+      const args = props()
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <BaseballScreen
+              {...args}
+              instruction="Finish"
+              onFinish={() => undefined}
+              canFinish
+              walkUpControl={<button aria-label="Walk up" />}
+              dictationControl={
+                microphone ? <button aria-label="Microphone" /> : undefined
+              }
+            />
+          </ThemeProvider>
+        )
+      })
+      const row = container!.querySelector<HTMLElement>(
+        '[data-testid="walk-up-row"]'
+      )!
+      const pill = row.querySelector<HTMLElement>(
+        '[data-testid="scoring-done-pill"]'
+      )!
+      const deck = container!.querySelector<HTMLElement>(
+        '[data-testid="scoring-deck"]'
+      )!
+      expect(row.style.bottom).equals('128px')
+      expect(row.style.height).equals('56px')
+      expect(deck.parentElement!.style.top).equals(`${args.frame!.deckTop}px`)
+      expect(pill.parentElement!.style.marginRight).equals(
+        microphone ? '6px' : '0px'
+      )
+      const { cardInterval } = args.frame!.camera
+      const rightPadding = parseFloat(deck.parentElement!.style.right)
+      const doneRight =
+        393 -
+        rightPadding -
+        (microphone
+          ? parseFloat((row.lastElementChild as HTMLElement).style.width) + 6
+          : 0)
+      expect(
+        doneRight -
+          parseFloat(pill.parentElement!.style.width) -
+          cardInterval!.right
+      ).at.least(8 - 0.01)
+    })
+  }
+  it('lets dimmed pitch controls catch a tap, as Ball in Play does, so nothing under the deck gets it', async function () {
+    await mount()
+    await act(async () => {
+      props().onRootSize!({ width: 393, height: 852 })
+    })
+    const pitched: string[] = []
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <BaseballScreen
+            {...props()}
+            canPitch={false}
+            ballInPlayControl={undefined}
+            onPitch={kind => pitched.push(kind)}
+          />
+        </ThemeProvider>
+      )
+    })
+    const deck = container!.querySelector<HTMLElement>(
+      '[data-testid="scoring-deck"]'
+    )!
+    const control = (label: string): HTMLElement =>
+      deck.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+    // Each control takes the tap as the disabled Ball in Play beside it
+    // does: nothing between it and the deck lets the tap through.
+    const swing = control('Swing in Play')
+    for (const label of [
+      'Ball',
+      'Called Strike',
+      'Swing and Miss',
+      'Foul Ball',
+      'Swing in Play'
+    ]) {
+      const each = control(label)
+      expect(getComputedStyle(each).pointerEvents, label).equals(
+        getComputedStyle(swing).pointerEvents
+      )
+      for (
+        let node = each.parentElement;
+        node != null && node !== deck.parentElement;
+        node = node.parentElement
+      )
+        expect(getComputedStyle(node).pointerEvents, label).not.equals('none')
+      await act(async () => {
+        each.click()
+      })
+    }
+    expect(pitched).deep.equals([])
+  })
+  for (const [title, screen, expected] of [
+    [
+      'allows native rotation on a tablet only while scoring is the active route',
+      { width: 834, height: 1194 },
+      ['allow', 'portrait', 'allow', 'portrait']
+    ],
+    [
+      'keeps a phone upright while scoring, as it always was',
+      { width: 393, height: 852 },
+      []
+    ]
+  ] as const)
+    it(title, async function () {
+      const calls: string[] = []
+      const original = NativeModules.TSOrientation
+      const saved = Object.getOwnPropertyDescriptor(Dimensions, 'get')!
+      const get = Dimensions.get.bind(Dimensions)
+      NativeModules.TSOrientation = {
+        allowRotation: () => calls.push('allow'),
+        lockPortrait: () => calls.push('portrait')
+      }
+      Dimensions.get = dimension =>
+        dimension === 'screen'
+          ? { ...get(dimension), ...screen }
+          : get(dimension)
+      try {
+        const render = await mount(undefined, undefined, { active: false })
+        await render({ active: true })
+        await render({ active: false })
+        await render({ active: true })
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+        expect(calls).deep.equals(expected)
+      } finally {
+        NativeModules.TSOrientation = original
+        Object.defineProperty(Dimensions, 'get', saved)
+      }
+    })
 
-  it('keeps the lifted holder as tall with and without the band', async function () {
-    const restore = stubFieldInsets(() => ({
-      top: 59,
-      bottom: 34,
-      left: 0,
-      right: 0
-    }))
-    try {
-      const game = {
-        gameId: 'g1',
-        accepted: undefined,
-        subscribe: () => () => undefined
-      } as unknown as RemoteScoringUpdatesProps['game']
-      container = document.createElement('div')
-      document.body.append(container)
-      root = createRoot(container)
-      const holderAt = async (
-        band: number
-      ): Promise<{ transform: string; marginBottom: string }> => {
+  for (const [width, height] of [
+    [393, 852],
+    [1000, 742],
+    [1133, 744],
+    [744, 1133]
+  ]) {
+    it(`sizes the scoring camera from the measured ${width}×${height} root with the deck directly beneath its catcher`, async function () {
+      await mount()
+      await act(async () => {
+        props().onRootSize!({ width, height })
+      })
+      const frame = props().frame!
+      const side = width >= 820
+      expect(frame.fieldWidth).equals(side ? width - 360 : width)
+      const el = (id: string): HTMLElement | null =>
+        container!.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+      expect(el('scoring-side') != null).equals(side)
+      if (side) {
+        expect(el('scoring-side')!.style.width).equals('360px')
+        expect(el('replay-box-score')).not.equals(null)
+        expect(el('scoring-log-band')).equals(null)
+      }
+      expect(el('scoring-field-holder')!.style.width).equals(
+        `${frame.fieldWidth}px`
+      )
+      expect(el('scoring-notice-strip')!.style.width).equals(
+        `${frame.fieldWidth}px`
+      )
+      // A side field column taller than wide drops the gap under its deck.
+      const tall = side && width - 360 < height
+      expect(frame.camera).to.include({
+        top: 64,
+        bottom: tall ? 164 : 172,
+        corners: side && !tall
+      })
+      expect(componentProps<FieldProps>('FieldCanvas').frame).deep.equals(
+        frame.camera
+      )
+      const deck = container!.querySelector<HTMLElement>(
+        '[data-testid="scoring-deck"]'
+      )!
+      expect(deck.style.height).equals('120px')
+      expect(parseFloat(deck.parentElement!.style.top)).equals(frame.deckTop)
+      expect(frame.deckTop).equals(frame.catcherCardBottom + 4)
+    })
+  }
+  for (const top of [0, 59])
+    it(`moves the canvas and every point it reports by the inset lift: inset ${top}`, async function () {
+      const restore = stubFieldInsets(() =>
+        top === 0 ? null : { top, bottom: 34, left: 0, right: 0 }
+      )
+      try {
+        const lift = topLift(top, 'web')
+        const offset = -lift
+        expect(lift).equals(top === 59 ? 24 : 0)
+        const bases: BaseProjection[] = []
+        const game = {
+          gameId: 'g1',
+          accepted: undefined,
+          subscribe: () => () => undefined
+        } as unknown as RemoteScoringUpdatesProps['game']
+        container = document.createElement('div')
+        document.body.append(container)
+        root = createRoot(container)
         await act(async () => {
           root!.render(
             <ThemeProvider>
@@ -1845,7 +1945,8 @@ describe('scoring screen field wiring', function () {
                   selected: '',
                   onSelect: () => undefined,
                   view: 'home',
-                  zoom: 1
+                  zoom: 1,
+                  onBaseProjection: projection => bases.push(projection)
                 }}
                 remoteUpdates={{ game, userId: 'me' }}
                 onMenu={() => undefined}
@@ -1853,37 +1954,57 @@ describe('scoring screen field wiring', function () {
                 onPitch={() => undefined}
                 canPitch
                 summary="Game"
-                topBand={band}
                 instruction="Tap a fielder"
               />
             </ThemeProvider>
           )
         })
-        const holder = [
-          ...container!.querySelectorAll<HTMLElement>('div')
-        ].find(node => node.style.transform.startsWith('translateY('))
-        return {
-          transform: holder?.style.transform ?? '',
-          marginBottom: holder?.style.marginBottom ?? ''
-        }
+        const moved = [...container.querySelectorAll<HTMLElement>('div')]
+          .map(node => node.style.transform)
+          .filter(transform => transform.startsWith('translateY('))
+        expect(moved).deep.equals(
+          offset === 0 ? [] : [`translateY(${offset}px)`]
+        )
+        // The taller canvas still reaches the bottom when the holder is lifted.
+        const holder = [...container.querySelectorAll<HTMLElement>('div')].find(
+          node => node.style.transform.startsWith('translateY(')
+        )
+        const full = topLift(top, 'web')
+        expect(holder?.style.marginBottom ?? '').equals(
+          full > 0 ? `${-full}px` : ''
+        )
+        const canvas = componentProps<FieldProps>('FieldCanvas')
+        const point = { x: 100, y: 400 }
+        await act(async () => {
+          canvas.onBaseProjection?.({
+            width: 402,
+            height: 874,
+            bases: [point, point, point, point]
+          })
+          canvas.onScoreboardBounds?.({
+            x: 20,
+            y: 60,
+            width: 300,
+            height: 90
+          })
+          canvas.onCatcherBounds?.({ x: 190, y: 500, width: 20, height: 30 })
+        })
+        expect(bases.at(-1)?.bases[0]).deep.equals({
+          x: 100,
+          y: 400 + offset
+        })
+        expect(
+          componentProps<{ bounds?: { y: number } }>('InstructionToast').bounds
+            ?.y
+        ).equals(60 + offset)
+        // Without a frame there is no room for the log, so none is mounted.
+        expect(() => componentProps('RemoteScoringUpdates')).throws(
+          'The screen has not rendered'
+        )
+      } finally {
+        restore()
       }
-      const lifted = await holderAt(0)
-      const banded = await holderAt(SCORING_OFFLINE_BAND)
-      const again = await holderAt(0)
-      expect(lifted).deep.equals({
-        transform: 'translateY(-24px)',
-        marginBottom: '-24px'
-      })
-      // Only the move follows the band; the extra height stays.
-      expect(banded).deep.equals({
-        transform: `translateY(${SCORING_OFFLINE_BAND}px)`,
-        marginBottom: '-24px'
-      })
-      expect(again).deep.equals(lifted)
-    } finally {
-      restore()
-    }
-  })
+    })
 
   for (const change of ['close', 'reselect', 'account', 'unmount'] as const)
     it(`${change === 'account' ? 'issues no tag request' : 'still saves the tag'} after ${change} while scoring flush is pending`, async () => {
@@ -3697,4 +3818,135 @@ describe('prior-play runner field corrections and scoring sheet', () => {
       expect(JSON.stringify(session.actions)).equals(log)
       expect(baseIds(session.state)[1]).equals(100)
     })
+})
+
+describe('a field kept under the screens that take it', function () {
+  let root: Root | undefined
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+  interface Fiber {
+    type?: { name?: string } | string | null
+    memoizedProps?: unknown
+    child?: Fiber | null
+    sibling?: Fiber | null
+  }
+  /** Every `FieldCanvas` the page draws, by the props it was given. */
+  const canvases = (host: HTMLElement): FieldCanvasProps[] => {
+    const key = Object.keys(host).find(name =>
+      name.startsWith('__reactContainer$')
+    )!
+    const found: FieldCanvasProps[] = []
+    const walk = (fiber: Fiber | null | undefined): void => {
+      for (let node = fiber; node != null; node = node.sibling) {
+        if (typeof node.type === 'function' || typeof node.type === 'object')
+          if (node.type?.name === 'FieldCanvas')
+            found.push(node.memoizedProps as FieldCanvasProps)
+        walk(node.child)
+      }
+    }
+    walk((host as unknown as Record<string, Fiber>)[key])
+    return found
+  }
+  const screen = (
+    name: string,
+    bases: BaseProjection[],
+    catchers: unknown[]
+  ): React.ReactElement => (
+    <BaseballScreen
+      key={name}
+      field={{
+        players: [],
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        onBaseProjection: value => bases.push(value),
+        onCatcherBounds: value => catchers.push(value)
+      }}
+      onMenu={() => undefined}
+      onUndo={() => undefined}
+      onPitch={() => undefined}
+      canPitch
+      summary={name}
+    />
+  )
+  it('tells a screen that takes the field where the bases, the board and the catcher are, on the one field', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const first = { bases: [] as BaseProjection[], catchers: [] as unknown[] }
+    const second = { bases: [] as BaseProjection[], catchers: [] as unknown[] }
+    const draw = async (element: React.ReactElement): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <FieldKeeper>{element}</FieldKeeper>
+          </ThemeProvider>
+        )
+      })
+    }
+    await draw(screen('first', first.bases, first.catchers))
+    expect(canvases(host)).length(1)
+    const bases: BaseProjection = {
+      bases: [{ x: 1, y: 2 }],
+      width: 390,
+      height: 844
+    }
+    const catcher = { x: 3, y: 4, width: 5, height: 6 }
+    const board = { x: 0, y: 0, width: 100, height: 40 }
+    await act(async () => {
+      const field = canvases(host)[0]
+      field.onBaseProjection?.(bases)
+      field.onCatcherBounds?.(catcher)
+      field.onScoreboardBounds?.(board)
+    })
+    expect(first.bases).deep.equals([bases])
+    expect(first.catchers).deep.equals([catcher])
+    // Another screen takes the field: the same one, which says nothing new.
+    await draw(screen('second', second.bases, second.catchers))
+    expect(canvases(host)).length(1)
+    expect(second.bases).deep.equals([bases])
+    expect(second.catchers).deep.equals([catcher])
+    expect(first.bases).length(1)
+    // What the field says next goes to the screen on it now.
+    await act(async () => {
+      canvases(host)[0].onCatcherBounds?.({ ...catcher, x: 9 })
+    })
+    expect(second.catchers).deep.equals([catcher, { ...catcher, x: 9 }])
+    expect(first.catchers).length(1)
+  })
+
+  it('draws no field while the screen on it is suspended', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <FieldKeeper>
+            <BaseballScreen
+              suspended
+              field={{
+                players: [],
+                selected: '',
+                onSelect: () => undefined,
+                view: 'home',
+                zoom: 1
+              }}
+              onMenu={() => undefined}
+              onUndo={() => undefined}
+              onPitch={() => undefined}
+              canPitch
+              summary="Game"
+            />
+          </FieldKeeper>
+        </ThemeProvider>
+      )
+    })
+    expect(canvases(host)).length(0)
+  })
 })

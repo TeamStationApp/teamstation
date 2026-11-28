@@ -593,6 +593,7 @@ describe('fixture worlds', function () {
     expect(roleOf('coach')).deep.equals(['coach'])
     expect(roleOf('assistant')).deep.equals(['assistant'])
     expect(roleOf('scorekeeper')).deep.equals(['scorekeeper'])
+    expect(roleOf('peer')).deep.equals(['scorekeeper'])
     for (const account of Object.values(world.accounts)) {
       expect(isTestAddress(MAILBOX, account.email)).equals(true)
     }

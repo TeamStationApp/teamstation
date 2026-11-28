@@ -56,7 +56,7 @@ import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { BatIcon } from './BatIcon'
 import { shortPlayerNames, withRosterDetails } from './currentSetup'
-import { DefensiveField } from './DefensiveField'
+import { DEFENSE_CONTROL_ROW, DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { ExistingPlayerSheet } from './ExistingPlayerSheet'
 import { GameRosterHeader } from './GameRosterHeader'
@@ -202,7 +202,15 @@ export interface RosterEditorDraft {
    */
   base?: ScoringSessionState
 }
-/** The complete field takes priority when a wrapping error leaves less list room. */
+/**
+ * The complete field takes priority when a wrapping error leaves less list room.
+ * The field's least is its 60-point viewport plus the row Help and Clear take
+ * above a field that short. On the scoring screen the sheet ends above the
+ * notice band, which is always reserved, whether or not a notice shows, so
+ * in a short window the roster's scroll area is what gives way: shorter by
+ * the band, it ends above Cancel and Save Rosters instead of running under
+ * them.
+ */
 export function defenseRosterMinimum(
   areaHeight: number,
   dense: boolean
@@ -210,7 +218,10 @@ export function defenseRosterMinimum(
   const preferred = dense ? 64 : 88
   return areaHeight <= 0
     ? preferred
-    : Math.min(preferred, Math.max(0, areaHeight - 60 - (dense ? 2 : 8)))
+    : Math.min(
+        preferred,
+        Math.max(0, areaHeight - 60 - DEFENSE_CONTROL_ROW - (dense ? 2 : 8))
+      )
 }
 export function RosterEditor({
   state,

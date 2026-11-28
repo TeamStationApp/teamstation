@@ -100,7 +100,7 @@ const hasLabel = (label: string): boolean =>
   document.querySelector(`[aria-label="${label}"]`) != null
 
 const status = (): string | null | undefined =>
-  document.querySelector('[aria-label="Save status"]')?.textContent
+  document.querySelector('[data-testid="scoringNotice"]')?.textContent
 
 interface Fiber {
   type?: { name?: string } | string | null
@@ -431,27 +431,24 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     expect((await stored(eventsKey('g1')))!.pending).equals(0)
   })
 
-  it('puts the offline line at the top over a field moved under it, says nothing of a tap, and Saving… only while the queue goes out', async function () {
+  it('puts the offline line in the bottom strip, says nothing of a tap, and Saving… only while the queue goes out', async function () {
     const { client, net, rows } = await preparedPhone()
     net.offline = true
     await open(client)
     expect(status()).equals(OFFLINE_BANNER)
-    // At the top, in the web's place above the board, clear of the speaker
-    // and ☰: nothing moves for it there (a phone makes a band,
-    // `scoringStatusPlacement`).
-    const line = document.querySelector<HTMLElement>(
-      '[aria-label="Save status"]'
+    const rect = (id: string): string =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!.style
+        .cssText
+    const frame = document.querySelector<HTMLElement>(
+      '[data-testid="scoringNotice"]'
     )!
-    const frame = line.parentElement!.parentElement!
-    expect(frame.style.top).equals('8px')
-    expect(frame.style.minHeight).equals('28px')
-    expect(frame.style.left).equals('64px')
-    expect(frame.style.right).equals('64px')
-    const moved = (): boolean =>
-      [...document.querySelectorAll<HTMLElement>('div')].some(node =>
-        node.style.transform.includes('translateY(28px)')
-      )
-    expect(moved()).equals(false)
+    const strip = document.querySelector<HTMLElement>(
+      '[data-testid="scoring-notice-strip"]'
+    )!
+    expect(frame.style.top).equals(strip.style.top)
+    expect(frame.style.height).equals(strip.style.height)
+    expect(frame.style.left).equals('0px')
+    const deck = rect('scoring-deck')
     await click('Ball')
     await settle(50)
     await click('Ball')
@@ -482,11 +479,10 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     const draining = client.drainOutbox()
     await settle(50)
     expect(status()).equals('Saving…')
-    // Saving… sits where a save's line always sat, out of the band.
+    expect(rect('scoring-deck')).equals(deck)
     expect(
-      document.querySelector<HTMLElement>('[aria-label="Save status"]')!
-        .parentElement!.parentElement!.style.height
-    ).equals('')
+      document.querySelector('[data-testid="scoringSaveStatus"]')?.textContent
+    ).equals('Saving…')
     release()
     await act(async () => {
       await draining
@@ -499,7 +495,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     // g2's refused write is still on the phone; it keeps nothing busy here.
     expect((await rows()).some(row => row.chain === 'game:g2')).equals(true)
     expect(hasLabel('Save status')).equals(false)
-    expect(moved()).equals(false)
+    expect(rect('scoring-deck')).equals(deck)
   })
 
   it("says the server copy moved on over a parked game, and gives the phone's innings up for it once confirmed", async function () {
@@ -1201,9 +1197,22 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       })
       await settle(50)
       expect(await rows()).deep.equals([])
-      expect(net.writes.slice(before)).deep.equals(
-        queued.map(row => `${String(row.method)} ${String(row.path)}`)
+      const events = 'POST /games/g1/events'
+      const queuedWrites = queued.map(
+        row => `${String(row.method)} ${String(row.path)}`
       )
+      const create = queuedWrites.indexOf('POST /teams/home/roster-players')
+      expect(create).greaterThan(0)
+      expect(new Set(queuedWrites.slice(0, create))).deep.equals(
+        new Set([events])
+      )
+      // In order: the saves of plays queued before the player's create, each
+      // on the one before, go together; the lineup change and the pitch
+      // after it go alone.
+      expect(net.writes.slice(before)).deep.equals([
+        events,
+        ...queuedWrites.slice(create)
+      ])
     })
 
     it('opens again at once, with every request held, though the opponent’s default lineup was never stored (#358)', async function () {
@@ -2120,7 +2129,11 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
             await settle(200)
             expect(await rows()).deep.equals([])
             // Both pitches were of the at-bat on screen: one change.
-            expect(text()).includes(
+            expect(
+              document
+                .querySelector('[data-testid="scoringNotice"] [aria-label]')
+                ?.getAttribute('aria-label')
+            ).includes(
               reset
                 ? 'Home and away were swapped and the game was reset, so 1 change not yet saved before the reset was not kept.'
                 : 'Home and away were swapped, so changes not yet saved before the swap were not kept.'

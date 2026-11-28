@@ -6250,6 +6250,161 @@
       "file": "e2e/tests/platform/web/main-flows.e2e.ts"
     },
     {
+      "id": "platform/web/scoring-viewport#above-toolbar",
+      "title": "Scoring fits above the phone browser toolbar as it folds and opens",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/useFieldSurface.ts",
+        "src/app/web/index.html",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/web/scoring-viewport",
+      "file": "e2e/tests/platform/web/scoring-toolbar.e2e.ts"
+    },
+    {
+      "id": "platform/web/scoring-viewport#bottom-strip",
+      "title": "Scoring fits above the phone browser toolbar as it folds and opens",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/useFieldSurface.ts",
+        "src/app/web/index.html",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/web/scoring-viewport",
+      "file": "e2e/tests/platform/web/scoring-toolbar.e2e.ts"
+    },
+    {
+      "id": "platform/web/scoring-viewport#toolbar-probe",
+      "title": "What a phone browser’s bottom toolbar leaves the web scoring screen: paint, strip, taps and the deck",
+      "kind": "e2e",
+      "covers": [
+        "e2e/fixtures/viewportProbe/index.html",
+        "src/app/field/useFieldSurface.ts"
+      ],
+      "stack": "seat",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "required"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "platform/web/scoring-viewport",
+      "file": "e2e/tests/platform/web/scoring-viewport.e2e.ts"
+    },
+    {
       "id": "playback/recordings/director-take-finish#real-take",
       "title": "A real multi-gigabyte TS Director take is taken in as segments inside the apps’ 900 s",
       "kind": "e2e",
@@ -9029,6 +9184,506 @@
       "manual": false,
       "spec": "scoring/game-plan/share-print",
       "file": "e2e/tests/scoring/game-plan/share-print.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/device-matrix#desktop-widths",
+      "title": "The scoring layout follows a continuous desktop resize across its breakpoints",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/device-matrix",
+      "file": "e2e/tests/scoring/layout/desktopMatrix.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/device-matrix#mesh-devices",
+      "title": "Score from a leased device online, offline and during reconnect",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/scoring/ScoringNoticeBar.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "web-chrome-android": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/device-matrix",
+      "file": "e2e/tests/scoring/layout/meshMatrix.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/framing#web-sizes",
+      "title": "The scoreboard sits beneath the menu and the catcher clears the pitch controls",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/cameraModel.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/framing",
+      "file": "e2e/tests/scoring/layout/framing.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/side-column#ipad",
+      "title": "Rotate the iPad scoring field and retain its live log",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/scoring/ScoringNoticeBar.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-tablet"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "web-safari-ios": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-tablet"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/side-column",
+      "file": "e2e/tests/scoring/layout/sideIpad.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/side-column#web",
+      "title": "The side column frames both outfield corners and shows the live box score",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringSidePanel.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/scoring/OutcomePicker.tsx",
+        "src/app/scoring/scoringMenuAnchor.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 8,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/side-column",
+      "file": "e2e/tests/scoring/layout/sideWeb.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/stacked#done-pill",
+      "title": "Pitch controls and remote updates beneath the catcher",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/scoring/RemoteScoringUpdates.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 7,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/stacked",
+      "file": "e2e/tests/scoring/layout/stacked.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/stacked#native",
+      "title": "The native scoring deck sits above its remote updates and bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/NativeNameplates.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "ios-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "phone",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/stacked",
+      "file": "e2e/tests/scoring/layout/stackedNative.e2e.ts"
+    },
+    {
+      "id": "scoring/layout/stacked#web-sizes",
+      "title": "Pitch controls and remote updates beneath the catcher",
+      "kind": "e2e",
+      "covers": [
+        "src/app/field/scoringFrame.ts",
+        "src/app/field/BaseballScreen.tsx",
+        "src/app/scoring/RemoteScoringUpdates.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 7,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/layout/stacked",
+      "file": "e2e/tests/scoring/layout/stacked.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#held-game",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#offline-and-back",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#roster-conflict",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
+    },
+    {
+      "id": "scoring/notices/bottom-bar#swap-report",
+      "title": "Scoring notices stay in the bottom strip",
+      "kind": "e2e",
+      "covers": [
+        "src/app/scoring/ScoringNoticeBar.tsx",
+        "src/app/scoring/scoringNotice.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "scoring/notices/bottom-bar",
+      "file": "e2e/tests/scoring/notices/bottom-bar.e2e.ts"
     },
     {
       "id": "scoring/offline/eligible#cold-offline-open",

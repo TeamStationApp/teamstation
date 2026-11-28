@@ -10,6 +10,7 @@
 import type { Page } from 'puppeteer'
 
 import { BASES, createPlayers } from '../../src/app/field/fieldModel'
+import { BOARD_BOUNDS, FIELD_SCENE_PROBE, THREE_STATE } from './fieldScene.cjs'
 import { scriptLiteral } from './pageScript'
 
 type Point = [number, number]
@@ -104,26 +105,6 @@ async function until(
 
 // Page-side, as plain script: the field's three.js state through the scene
 // probe's fiber roots, and `project(x, y, z)` in page pixels.
-const THREE_STATE = `
-  const find = fiber => {
-    for (let at = fiber; at != null; at = at.sibling) {
-      const value = at.memoizedProps == null ? undefined : at.memoizedProps.value
-      const state = value == null || value.getState == null ? undefined : value.getState()
-      if (state != null && state.scene != null) return state
-      const inner = find(at.child)
-      if (inner != null) return inner
-    }
-    return undefined
-  }
-  let three
-  for (const root of window.qaRoots || []) three = three || find(root.current)
-  const project = (x, y, z) => {
-    const canvas = three.gl.domElement.getBoundingClientRect()
-    const v = three.camera.position.clone().set(x, y, z).project(three.camera)
-    return [canvas.x + ((v.x + 1) * canvas.width) / 2, canvas.y + ((1 - v.y) * canvas.height) / 2]
-  }
-`
-
 /** Waits until no player on the field is moving and no play is being shown. */
 export async function atRest(field: FieldDriver): Promise<void> {
   await until(
@@ -144,7 +125,8 @@ export async function atRest(field: FieldDriver): Promise<void> {
  */
 export async function playerAt(
   field: FieldDriver,
-  position: string
+  position: string,
+  bodyHeight = 1
 ): Promise<Point> {
   const selector = scriptLiteral(
     `[data-nameplate][data-position="${position}"]`
@@ -156,7 +138,7 @@ export async function playerAt(
   const read =
     spot == null || position.startsWith('R')
       ? plate
-      : `(${plate} || (() => { ${THREE_STATE}; if (three == null) return null; let best; three.scene.traverse(o => { if (!o.name.startsWith('player-') || o.name.startsWith('player-offense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${spot.x}) ** 2 + (at.z - ${spot.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, 1, best.at.z) })())`
+      : `(${plate} || (() => { ${THREE_STATE}; if (three == null) return null; let best; three.scene.traverse(o => { if (!o.name.startsWith('player-') || o.name.startsWith('player-offense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${spot.x}) ** 2 + (at.z - ${spot.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, ${bodyHeight}, best.at.z) })())`
   // A press while players still run to their places is lost to the motion.
   await atRest(field)
   try {
@@ -234,19 +216,20 @@ export async function setTrajectory(
  * Keeps React's fiber roots on `window.qaRoots`, through a stand-in for the
  * devtools hook, so `dropRunner` can read where the bases draw.
  */
+export { FIELD_SCENE_PROBE }
+
 export async function installSceneProbe(page: Page): Promise<void> {
-  await page.evaluateOnNewDocument(`(() => {
-    window.qaRoots = []
-    window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
-      supportsFiber: true,
-      renderers: new Map(),
-      inject() { return 1 },
-      onCommitFiberRoot(_id, root) {
-        if (!window.qaRoots.includes(root)) window.qaRoots.push(root)
-      },
-      onCommitFiberUnmount() {}
-    }
-  })()`)
+  await page.evaluateOnNewDocument(FIELD_SCENE_PROBE)
+}
+
+/** Project the corners of the rendered scoreboard meshes through the mounted camera. */
+export async function measuredBoard(
+  page: Page
+): Promise<{ top: number; width: number }> {
+  return (await page.evaluate(`(() => {
+    ${THREE_STATE}
+    ${BOARD_BOUNDS}
+  })()`)) as { top: number; width: number }
 }
 
 /** Where ground point (x, z), `y` up, draws on the page, through the live camera. */
@@ -264,7 +247,7 @@ export async function groundPoint(
 }
 
 /** Where the runner standing nearest base `base` draws, through the scene probe. */
-async function runnerAt(page: Page, base: number): Promise<Point> {
+export async function runnerAt(page: Page, base: number): Promise<Point> {
   const { x, z } = BASES[base]
   return (await page.evaluate(`(() => {
     ${THREE_STATE}
@@ -319,19 +302,36 @@ export async function dropRunner(
 }
 
 /**
+ * The field host's React pointer may still reference the previous render.
+ * Find its interaction owner in the tree that React actually committed.
+ */
+const currentFieldFiber = `(() => {
+  const host = document.querySelector('[aria-label="Baseball field"]')
+  if (host == null) return null
+  const key = Object.keys(host).find(name => name.startsWith('__reactFiber$'))
+  if (key == null) return null
+  let root = host[key]
+  while (root.return != null) root = root.return
+  function find(fiber, owner) {
+    if (fiber.memoizedProps != null && fiber.memoizedProps.interaction != null) owner = fiber
+    if (fiber.stateNode === host) return owner
+    for (let child = fiber.child; child != null; child = child.sibling) {
+      const found = find(child, owner)
+      if (found != null) return found
+    }
+    return null
+  }
+  return find(root.stateNode.current, null)
+})()`
+
+/**
  * The players the field offers to be pressed, in its own order: what a
  * scorer may pick at this step (`interaction.selectableIds`).
  */
 export async function offeredIds(field: FieldDriver): Promise<string[]> {
-  return await field.evaluate<string[]>(`(() => {
-    const host = document.querySelector('[aria-label="Baseball field"]')
-    const key = Object.keys(host).find(name => name.startsWith('__reactFiber$'))
-    for (let fiber = host[key]; fiber != null; fiber = fiber.return) {
-      const props = fiber.memoizedProps
-      if (props != null && props.interaction != null) return props.interaction.selectableIds
-    }
-    return []
-  })()`)
+  return await field.evaluate<string[]>(
+    `(${currentFieldFiber})?.memoizedProps.interaction.selectableIds ?? []`
+  )
 }
 
 /**
@@ -341,12 +341,9 @@ export async function offeredIds(field: FieldDriver): Promise<string[]> {
 async function screenText(field: FieldDriver): Promise<string> {
   return await field.evaluate<string>(`(() => {
     const text = document.body.innerText.replace(/\\s+/g, ' ').slice(0, 600)
-    const host = document.querySelector('[aria-label="Baseball field"]')
-    if (host == null) return text + ' (no field)'
-    const key = Object.keys(host).find(name => name.startsWith('__reactFiber$'))
-    for (let fiber = host[key]; fiber != null; fiber = fiber.return) {
+    const fiber = ${currentFieldFiber}
+    if (fiber != null) {
       const props = fiber.memoizedProps
-      if (props == null || props.interaction == null) continue
       const { selectableIds, ...interaction } = props.interaction
       const presentation = props.presentation == null ? 'none'
         : props.presentation.id + ' ' + props.presentation.stage +

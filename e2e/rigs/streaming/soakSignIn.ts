@@ -181,6 +181,17 @@ function onScreen(root: Node, text: string): Node | undefined {
       labels.includes('Videos')
     )
   })?.bounds
+  // The native tab bar floats over the end of Account's scroll view too, and
+  // a coordinate tap there selects a tab even when WDA reports Sign out.
+  const tabTop =
+    text === 'Sign out' && screen != null
+      ? all.find(
+          node =>
+            node.id === 'Schedule' &&
+            node.bounds != null &&
+            node.bounds.y > screen.y + screen.height / 2
+        )?.bounds?.y
+      : undefined
   return all.find(node => {
     const b = node.bounds
     if (node.text !== text || b == null) return false
@@ -196,7 +207,8 @@ function onScreen(root: Node, text: string): Node | undefined {
       return false
     return (
       screen == null ||
-      (b.y >= screen.y && b.y + b.height <= screen.y + screen.height)
+      (b.y >= screen.y &&
+        b.y + b.height <= (tabTop ?? screen.y + screen.height))
     )
   })
 }
@@ -239,15 +251,14 @@ export async function signOutApp(
     // The swipes below take over.
   }
   for (let swipes = 0; ; swipes++) {
-    if (onScreen((await device.hierarchy()) as Node, 'Sign out') != null) break
+    const root = (await device.hierarchy()) as Node
+    if (onScreen(root, 'Sign out') != null) break
     if (swipes === 15) throw new Error('no Sign out on the account page')
     // From low on the screen to high, away from the page's text fields: a swipe
     // from the middle can land on the name field and only focus it.
-    const root = (await device.hierarchy()) as Node
-    const screen = nodes(root)
-      .map(node => node.bounds)
-      .filter((b): b is NonNullable<Node['bounds']> => b != null)
-      .sort((a, b) => b.width * b.height - a.width * a.height)[0]
+    // A scroll view's content can be several screens tall with a negative
+    // origin. Give the gesture coordinates inside the actual window.
+    const screen = root.bounds
     if (screen == null) await device.swipe({ direction: 'UP' })
     else {
       const x = Math.round(screen.x + screen.width / 2)
@@ -263,6 +274,13 @@ export async function signOutApp(
     await new Promise(resolve => setTimeout(resolve, pauseMs))
   }
   await tapExactly(device, 'Sign out')
+  // Edits this phone has not sent: the app asks before they go with the
+  // account ("Sign Out?"), and its Sign Out confirms.
+  if (
+    (await shown(device, { text: 'Sign Out\\?' }, 3_000)) &&
+    onScreen((await device.hierarchy()) as Node, 'Sign Out') != null
+  )
+    await tapExactly(device, 'Sign Out')
   if (!(await shown(device, { text: SIGNED_OUT }, 15_000))) {
     throw new Error('Sign out did not return to the sign-in page')
   }

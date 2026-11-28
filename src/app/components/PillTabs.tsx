@@ -156,6 +156,11 @@ export function PillTabs<Id extends string = string>(
 }
 
 export interface PillFaceProps {
+  /**
+   * Shrink the label, down to 0.8, to fit a fixed width. The padding stays
+   * clear of the semicircular ends.
+   */
+  fitLabel?: boolean
   label: string
   badge?: string
   live?: boolean
@@ -177,6 +182,7 @@ export function PillFace({
   selected = true,
   size = 'compact',
   dense = false,
+  fitLabel = false,
   icon
 }: PillFaceProps): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -198,7 +204,10 @@ export function PillFace({
       <Text
         selectable={false}
         numberOfLines={1}
+        adjustsFontSizeToFit={fitLabel}
+        minimumFontScale={fitLabel ? 0.8 : undefined}
         style={[
+          fitLabel && { flexShrink: 1 },
           styles.label,
           compact && styles.labelCompact,
           small && styles.labelSmall,
@@ -235,6 +244,7 @@ export function PillButton({
   selected = true,
   size = 'compact',
   dense = false,
+  fitLabel,
   role = 'button',
   onPress,
   disabled = false,
@@ -285,6 +295,7 @@ export function PillButton({
         size={size}
         dense={dense}
         icon={icon}
+        fitLabel={fitLabel}
       />
     </Pressable>
   )

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - added: The phone tab bar supports dragging between labelled destinations and compacts as you scroll. On iOS 26 and later it uses native Liquid Glass in TeamStation’s theme. Reduced transparency gives the bar an opaque background
+- added: Scoring on an iPad or a wide window: the whole field, with the scoring log and the box score in a column on the right.
 - added: Scorers can end a live game during any play, see what will go in the scorebook, and undo the final after reopening the game
 - added: TS Director can show the selected game’s scoreboard in any camera window while the primary output stays on a camera
 - added: Radar exit velocity wipes across the batter’s stats for five seconds and follows the play during replay. On TS Director’s own stream output the wipe moves in steps; OBS and the web player draw it smoothly
@@ -39,6 +40,9 @@
 - added: Guardians and site administrators can change a person's age from Player Settings; only a site administrator can give a first age, make an adult a minor, or clear an age
 - added: The web page describes TeamStation ("where a team keeps its games, scores, and video") to search engines, web filters and browsers without JavaScript
 - changed: A game's sponsor logo and reels follow the viewer's team, and neutral viewers keep one stable pick
+- changed: Scoring: network, sync and roster-conflict messages show in one yellow bar at the bottom of the screen; nothing moves when one appears.
+- changed: Web scoring on a phone: the buttons and the scoring log stay above the browser's toolbar, with no white around it.
+- changed: Scoring: the pitch buttons sit right under the catcher, with the remote scoring log beneath them.
 - changed: A game ended during a play, or scored with a fielder’s choice called one runner at a time or a dropped third strike, opens and scores only on this release. Deploy the server before releasing the apps: an older server refuses this release’s apps on any game with a deferred lineup change
 - changed: Chat has a rounded message field and an attachment panel for photos and files. On phones, the panel takes the keyboard’s place and can open the camera.
 - changed: Tess shows how long a rate-limited change must wait before it can be confirmed again
@@ -57,6 +61,8 @@
 - changed: The 13+ consent sheet is gone, along with the account setting behind it
 - changed: In the iPhone and Android apps, the age modal's birth year and month are wheels, starting 10 years back; on an iPhone, Apple's age range (under 13, 13 to 15, 16 to 17, or 18 and older) skips the modal for an adult and offers a teenager only the years their range allows
 - fixed: The API rate-limit tests no longer fail GitHub Code Quality, which checks merges to develop
+- fixed: Live scoring: pitches scored offline reach viewers together when the scorer reconnects, and the live view catches up quickly.
+- fixed: Scoring: the field fits between the scoreboard and the pitch buttons on every screen size; home plate is never under the buttons.
 - fixed: The scoreboard keeps its width as scores, player names and radar speeds change
 - changed: The two-hour streaming test signs in through the same password form as a viewer and pairs the TV from its on-screen code
 - fixed: Letting go of slow motion in a multi-camera game restores each camera’s previous speed and the next tap responds immediately

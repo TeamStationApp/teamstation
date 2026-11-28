@@ -376,7 +376,7 @@ async function tap(page: Page, label: string): Promise<void> {
 async function waitSaved(page: Page): Promise<void> {
   await page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
   await page.waitForFunction(
-    () => document.querySelector('[aria-label="Save status"]') == null,
+    () => document.querySelector('[data-testid="scoringSaveStatus"]') == null,
     {
       timeout: 30000
     }

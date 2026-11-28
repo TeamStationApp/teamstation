@@ -75,7 +75,8 @@ interface Transport {
     body: Record<string, unknown>
   }>
   dropRecovered?: 'waiting' | 'armed'
-  holdAfterNextPost?: boolean
+  /** Nothing leaves the phone after this many more POSTs. */
+  holdAfterPosts?: number
   dropRecoveryRead?: 'waiting' | 'armed'
 }
 
@@ -133,8 +134,12 @@ function phoneOn(
       await response.text()
       throw new TypeError('The network connection was lost.')
     }
-    if (init.method === 'POST' && transport.holdAfterNextPost === true) {
-      transport.holdAfterNextPost = false
+    if (
+      init.method === 'POST' &&
+      transport.holdAfterPosts != null &&
+      --transport.holdAfterPosts === 0
+    ) {
+      transport.holdAfterPosts = undefined
       transport.held = true
     }
     return response
@@ -732,7 +737,9 @@ describe('the outbox against the server', function () {
     ).deep.equals([])
     await peer.flush()
     a.transport.held = false
-    a.transport.holdAfterNextPost = true
+    // The two saves go together first, and the peer's write stands: the
+    // first then goes alone, and the signal is lost after it.
+    a.transport.holdAfterPosts = 2
     a.client.wakeOutbox(true)
     await a.client.drainOutbox()
     expect((await a.client.outboxSummary()).count).equals(1)
@@ -1710,11 +1717,102 @@ describe('the outbox against the server', function () {
         'double'
       ])
       expect(result.scoringMutation?.id).equals('device-2')
+      // Sent together first, and superseded by the peer's: each then alone.
       expect(restarted.transport.posts.map(post => post.status)).deep.equals([
-        200, 200
+        200, 200, 200
       ])
+      expect(restarted.transport.posts[0].key?.startsWith('m-')).equals(true)
       await restarted.client.sessionRefused()
     })
+
+  it('sends four queued saves as one write, leaving the game as four saves one at a time do', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Owls',
+      away: 'Gulls'
+    })
+    const game = async (): Promise<string> =>
+      await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+    const alone = await game()
+    const queued = await game()
+    const { client, transport } = phoneOn(
+      f,
+      mkdtempSync(join(dir, 'queued-run-'))
+    )
+    const reader = phoneOn(f, mkdtempSync(join(dir, 'queued-run-reader-')))
+    // Four pitches, each saved as it is scored: the session's last scoring.
+    const score = async (
+      gameId: string,
+      /** Before the first pitch, once the game is open. */
+      opened: () => void = () => undefined
+    ): Promise<unknown> => {
+      const session = await ScoringSession.open(
+        {
+          load: async id => await client.gameEvents(id),
+          save: async (id, change) => await client.saveGameEvents(id, change)
+        },
+        gameId,
+        { gamePk: gameId, ...context },
+        { setTimer: () => null, clearTimer: () => undefined }
+      )
+      try {
+        opened()
+        for (const call of ['B', 'C', 'B', 'S'] as const) {
+          expect(session.apply({ type: 'pitch', call }).problems).deep.equals(
+            []
+          )
+          await session.flush()
+        }
+        return session.observedScoringMutation
+      } finally {
+        session.close()
+      }
+    }
+    const writes = (gameId: string): Array<[number, boolean]> =>
+      transport.posts
+        .filter(post => post.path === `/games/${gameId}/events`)
+        .map(post => [post.status, post.key?.startsWith('m-') === true])
+    await score(alone)
+    expect(writes(alone)).deep.equals([
+      [200, false],
+      [200, false],
+      [200, false],
+      [200, false]
+    ])
+    // The same four with no signal, from a game opened online, sent once it
+    // comes back.
+    const last = await score(queued, () => {
+      transport.held = true
+    })
+    expect((await client.outboxSummary()).count).equals(4)
+    transport.held = false
+    client.wakeOutbox(true)
+    await client.drainOutbox()
+    expect((await client.outboxSummary()).count).equals(0)
+    expect(writes(queued)).deep.equals([[200, true]])
+    // The case's request log, for its proving artifact: four saves one at a
+    // time, then the queued four under one merged key.
+    if (process.env.TS_TEST_REQUEST_LOG === '1')
+      for (const post of transport.posts)
+        process.stdout.write(
+          `POST ${post.path} idempotency-key=${post.key} -> ${post.status}\n`
+        )
+    const separate = await reader.client.gameEvents(alone)
+    const together = await reader.client.gameEvents(queued)
+    expect(together.scoringMutation).deep.equals(last)
+    expect(together.currentPlay?.count).deep.equals(separate.currentPlay?.count)
+    expect(together.currentPlay?.count).deep.includes({
+      balls: 2,
+      strikes: 2
+    })
+    expect(together.plays.length).equals(separate.plays.length)
+    expect(await playCount(f, queued)).equals(await playCount(f, alone))
+    await client.sessionRefused()
+    await reader.client.sessionRefused()
+  })
 
   it('sends a write again when its answer was lost, and the server keeps one of each (Lost response)', async function () {
     const { client, transport } = phoneOn(f, dir)

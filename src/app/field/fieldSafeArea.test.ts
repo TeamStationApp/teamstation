@@ -17,6 +17,7 @@ import {
   topLift,
   WEB_MENU_BUTTON
 } from './fieldSafeArea'
+import { scoringLayout } from './scoringFrame'
 
 describe('field safe area', function () {
   it('keeps the bottom deck the web gap above the home indicator', function () {
@@ -66,6 +67,36 @@ describe('field safe area', function () {
       844
     )
     expect(scoringMenuFrame(sideways)).deep.equals({ top: 64, right: 51 })
+  })
+
+  it('opens the menu below ☰ in the field column, beside a side column too', function () {
+    // The header row and the menu share the field column's layer; the menu
+    // opens 8 below ☰, its right edge 4 inside ☰'s, as on a phone.
+    const cases = [
+      { name: 'iPhone 15 Pro, portrait', width: 393, height: 852, top: 47 },
+      { name: 'web desktop', width: 1366, height: 1024, top: 8 },
+      { name: 'iPad Pro 11, landscape', width: 1210, height: 834, top: 24 },
+      { name: 'iPad Pro 11, portrait', width: 834, height: 1210, top: 24 }
+    ]
+    for (const { name, width, height, top } of cases) {
+      const { side, fieldWidth } = scoringLayout(width, height)
+      expect(side, name).equals(width > 393)
+      // The header row spans the layer, 8 in from each side.
+      const header = { x: 8, y: top, width: fieldWidth - 16, height: 48 }
+      const menuButtonRight = header.x + header.width
+      const menu = scoringMenuFrame(menuButtonEdges(header, fieldWidth))
+      expect(menu.top, name).equals(top + 48 + 8)
+      // In window points: the menu's right edge under ☰, inside the field
+      // column, never over the side column.
+      expect(fieldWidth - menu.right, name).equals(menuButtonRight - 4)
+      expect(fieldWidth - menu.right, name).lessThan(fieldWidth)
+    }
+    // The phone is unchanged: 12 from the screen's right, as before.
+    expect(
+      scoringMenuFrame(
+        menuButtonEdges({ x: 8, y: 47, width: 377, height: 48 }, 393)
+      )
+    ).deep.equals({ top: 103, right: 12 })
   })
 
   it('lifts the top controls and the scene half a button, never above the edge gap', function () {

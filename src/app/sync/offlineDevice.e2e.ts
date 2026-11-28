@@ -1977,8 +1977,10 @@ async function step7(): Promise<void> {
   // the top of the scorer where it draws: a light pill on the dark scorer.
   const lineLit = (png: Buffer): number => {
     const image = PNG.sync.read(png)
-    const top = Math.floor(image.height * 0.065)
-    const bottom = Math.floor(image.height * 0.105)
+    const top = Math.floor(image.height * (MODE === 'before' ? 0.065 : 0.95))
+    const bottom = Math.floor(
+      image.height * (MODE === 'before' ? 0.105 : 0.975)
+    )
     let lit = 0
     let total = 0
     for (let y = top; y < bottom; y += 2)
@@ -1991,8 +1993,10 @@ async function step7(): Promise<void> {
         total++
         if (
           image.data[i] > 215 &&
-          image.data[i + 1] > 215 &&
-          image.data[i + 2] > 205
+          image.data[i + 1] > (MODE === 'before' ? 215 : 185) &&
+          (MODE === 'before'
+            ? image.data[i + 2] > 205
+            : image.data[i + 2] < 125)
         )
           lit++
       }
@@ -2104,8 +2108,9 @@ async function step7(): Promise<void> {
   // the hierarchy; on iOS only its id is.
   const lineNode = (await nodes()).find(
     n =>
-      upper(0.15)(n) &&
-      (label(n) === OFFLINE_LINE || n.id === 'scoringSaveStatus')
+      (MODE === 'before' ? upper(0.15)(n) : inTabBar(n)) &&
+      (label(n) === OFFLINE_LINE ||
+        n.id === (MODE === 'before' ? 'scoringSaveStatus' : 'scoringNotice'))
   )
   log(
     `the lit band is ${lineNode == null ? 'NOT' : `"${label(lineNode)}" (${lineNode.id ?? ''})`}, scoring's own line`

@@ -10,6 +10,7 @@ import type { Duplex } from 'node:stream'
 
 import { sendReply, upstreamFailed } from '../core/forward'
 import type { ServerError } from '../core/invariants'
+import type { ScoringOutage } from './scoringOutage'
 
 /**
  * Sits between the app and a server, recording every 5xx, and breaking the matched
@@ -18,12 +19,19 @@ import type { ServerError } from '../core/invariants'
  */
 export interface FaultProxyOptions {
   target: string
+  scoringOutage?: ScoringOutage
   fault?: string
   match?: RegExp
   host?: string
   port?: number
   /** Answers a request first; true when it did, so the proxy leaves it. */
   control?: (req: IncomingMessage, res: ServerResponse) => boolean
+  /** A game-specific test gate may answer or resume a single event POST. */
+  gate?: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    resume: () => void
+  ) => boolean
   /** How long to hold a request for this path before handling it; none by default. */
   delay?: (path: string) => number
   /** Told of each request the proxy handles, with its path. */
@@ -148,9 +156,19 @@ export async function startFaultProxy(
   }
 
   const server: Server = createServer((req, res) => {
-    if (options.control?.(req, res) === true) return
+    if (
+      options.control?.(req, res) === true ||
+      options.scoringOutage?.request(req) === true
+    )
+      return
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
     options.onRequest?.(req.method ?? 'GET', path)
+    if (
+      options.gate?.(req, res, () => {
+        handle(req, res, path)
+      }) === true
+    )
+      return
     const ms = options.delay?.(path) ?? 0
     if (ms > 0) {
       setTimeout(() => {
@@ -199,6 +217,7 @@ export async function startFaultProxy(
   const drops = (path: string): boolean => !path.startsWith('/api/v1/none')
 
   server.on('upgrade', (req, socket, head) => {
+    if (options.scoringOutage?.socket(req, socket) === true) return
     open.add(socket)
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
     upgraded.set(socket, path)

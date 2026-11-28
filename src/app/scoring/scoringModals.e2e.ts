@@ -7,6 +7,7 @@ import type { Browser } from 'puppeteer'
 import { PerspectiveCamera, Vector3 } from 'three'
 
 import { modalFixture } from '../../../e2e/fixtures/scoringModalsFixture'
+import { emptyPitcherTarget } from '../../../e2e/rigs/emptyPitcherTarget'
 import {
   installSceneProbe,
   maestroDriver,
@@ -15,6 +16,7 @@ import {
 } from '../../../e2e/rigs/fieldPointer'
 import { turnWheel, wheelAt, wheelValue } from '../../../e2e/rigs/iosWheel'
 import { browserSession } from '../../../e2e/rigs/refinementsMaestro'
+import { recordOf } from '../../common/scoring/gumbo'
 import type { StoredGame } from '../../common/scoring/session'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
@@ -36,6 +38,7 @@ async function main(): Promise<void> {
   assert(['safari', 'native', 'chromium'].includes(surface))
   if (chromium) assert.equal(process.env.SCORING_MODAL_SECTION, 'endGame')
   const native = surface === 'native'
+  const nativeAppId = process.env.SCORING_APP_ID ?? 'app.teamstation.app'
   const baseline = process.env.SCORING_MODAL_BASELINE === '1'
   const phase = baseline ? 'before' : 'after'
   const artifacts = resolve(required('SCORING_ARTIFACT_DIR'))
@@ -67,7 +70,7 @@ async function main(): Promise<void> {
     return await daemon.attach({
       device,
       platform: 'ios',
-      appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari',
+      appId: native ? nativeAppId : 'com.apple.mobilesafari',
       artifacts: 'on-failure',
       waitForIdleTimeout: 500,
       stepDelay: 250
@@ -117,6 +120,15 @@ async function main(): Promise<void> {
   }
   const tap = async (text: string): Promise<void> => {
     console.log('Tap', text)
+    if (!native && !chromium && text === 'Assign P') {
+      const window = flat(await m.hierarchy()).find(
+        node => node.type === 'Window'
+      )?.bounds
+      assert(window != null)
+      const { x, y } = emptyPitcherTarget(await m.screenshot(), window.width)
+      await m.tapOn({ point: `${Math.round(x)},${Math.round(y)}` })
+      return
+    }
     if (chromium) {
       await m.tapOn({
         css: `[aria-label="${text}"]:not([aria-disabled="true"])`,
@@ -127,9 +139,10 @@ async function main(): Promise<void> {
     if (native) {
       const id = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const defensivePlayer = text.startsWith('Assign P #')
-      if (!defensivePlayer) await m.assertVisible({ id, timeout: 15000 })
+      const label = { text: `^${id}$`, timeout: 15000 }
+      if (!defensivePlayer) await m.assertVisible(label)
       if (text !== 'Create Player' && text !== 'Cancel' && !defensivePlayer) {
-        await m.tapOn({ id, timeout: 15000 })
+        await m.tapOn(label)
         await new Promise(resolve => setTimeout(resolve, 500))
         return
       }
@@ -163,7 +176,19 @@ async function main(): Promise<void> {
           (text.startsWith('Undo ') && node.text?.startsWith(text) === true)) &&
         node.bounds != null
     )
+    const segment = ['Roster', 'Lineup', 'Defense'].includes(text)
+      ? nodes.find(node => node.type !== 'StaticText')
+      : undefined
     const node =
+      segment ??
+      nodes
+        .filter(
+          node =>
+            node.type === 'Button' ||
+            node.type === 'Switch' ||
+            node.type === 'TextField'
+        )
+        .at(-1) ??
       nodes.at(-1) ??
       flat(hierarchy)
         .filter(node => node.text === text && node.bounds != null)
@@ -244,10 +269,12 @@ async function main(): Promise<void> {
       ? `teamstation://games/${gameId}/score`
       : `${required('SCORING_TEST_URL')}/games/${gameId}/score?capture=${phase}`
     if (!native && !chromium && browserOpened) {
-      await m.tapOn({ id: 'TabBarItemTitle' })
-      await m.eraseText()
-      await m.inputText({ text: link })
-      await m.pressKey('Enter')
+      const endpoint = await driver()
+      const result = await m.eval(
+        `http.post(${JSON.stringify(endpoint + '/url')},{body:${JSON.stringify({ url: link, bundleId: 'com.apple.mobilesafari', idleTimeoutMs: 1500 })}})`
+      )
+      assert.equal(result.status, 200)
+      assert(JSON.parse(result.body).value?.error == null)
     } else if (native) {
       const readyUntil = Date.now() + 45000
       while (Date.now() < readyUntil) {
@@ -265,7 +292,7 @@ async function main(): Promise<void> {
       }
       const endpoint = await driver()
       const result = await m.eval(
-        `http.post(${JSON.stringify(endpoint + '/url')},{body:${JSON.stringify({ url: link, bundleId: 'app.teamstation.app', idleTimeoutMs: 1500 })}})`
+        `http.post(${JSON.stringify(endpoint + '/url')},{body:${JSON.stringify({ url: link, bundleId: nativeAppId, idleTimeoutMs: 1500 })}})`
       )
       assert.equal(result.status, 200)
       assert(JSON.parse(result.body).value?.error == null)
@@ -296,7 +323,12 @@ async function main(): Promise<void> {
         const nodes = flat(await m.hierarchy())
         const screen = nodes.find(node => node.type === 'Window')?.bounds
         assert(screen != null)
-        const target = nodes.filter(node => node.text === text).at(-1)?.bounds
+        const target = nodes
+          .filter(
+            node =>
+              node.text === text || node.text?.startsWith(text + ',') === true
+          )
+          .at(-1)?.bounds
         if (
           target != null &&
           target.height > 0 &&
@@ -319,17 +351,33 @@ async function main(): Promise<void> {
         const nodes = flat(await m.hierarchy())
         const screen = nodes.find(node => node.type === 'Window')?.bounds
         assert(screen != null)
-        const target = nodes.filter(node => node.text === text).at(-1)?.bounds
+        const target = nodes
+          .filter(
+            node =>
+              node.text === text || node.text?.startsWith(text + ',') === true
+          )
+          .at(-1)?.bounds
+        const rosterFooter = nodes.find(
+          node => node.text === 'Save Rosters'
+        )?.bounds
+        const form = nodes.some(node => node.text === 'First Name')
+        const limit =
+          rosterFooter != null && !form
+            ? rosterFooter.y - 6
+            : screen.height - (text === 'Done' ? 100 : 110)
         if (
           target != null &&
           target.y >= 80 &&
-          target.y + target.height <=
-            screen.height - (text === 'Done' ? 100 : 110)
+          target.y + target.height <= limit
         )
           return
         const endpoint = await driver()
+        const x = Math.round(screen.width * 0.65)
+        const high = 270
+        const low = Math.round(Math.min(screen.height - 200, limit - 45))
+        const above = target != null && target.y < 80
         const result = await m.eval(
-          `http.post(${JSON.stringify(endpoint + '/wda/dragfromtoforduration')}, {body:${JSON.stringify({ fromX: Math.round(screen.width * 0.65), fromY: Math.round(screen.height - 200), toX: Math.round(screen.width * 0.65), toY: 280, duration: 0.001 })}})`
+          `http.post(${JSON.stringify(endpoint + '/wda/dragfromtoforduration')}, {body:${JSON.stringify({ fromX: x, fromY: above ? high : low, toX: x, toY: above ? low : high, duration: 0.001 })}})`
         )
         assert.equal(result.status, 200)
         await new Promise(resolve => setTimeout(resolve, 500))
@@ -337,7 +385,7 @@ async function main(): Promise<void> {
       assert.fail(`Browser action must remain reachable: ${text}`)
     }
     await m.scrollUntilVisible({
-      element: { text: `^${text}$` },
+      element: { text: `^${text}(,.*)?$` },
       direction: 'DOWN',
       timeout: 15000
     })
@@ -362,7 +410,18 @@ async function main(): Promise<void> {
           break
         await m.pressKey('Enter')
       }
-    } else await tap('Done')
+    } else if (flat(await m.hierarchy()).some(node => node.type === 'Keyboard'))
+      await tap('Done')
+  }
+  const exitConfirmation = async (): Promise<void> => {
+    fixture.refuseWrites(true)
+    await tap('Ball')
+    await shown('Fixture scoring edit refused')
+    await menu('Exit Current Game')
+    await shown('Discard and Exit')
+    await capture('exit')
+    await tap('Cancel')
+    fixture.refuseWrites(false)
   }
   const behavior = async (): Promise<void> => {
     await open()
@@ -387,11 +446,14 @@ async function main(): Promise<void> {
     await shown('Undo Ball')
     await tap('Undo Ball')
     await menu('Set Team Rosters')
-    await tap('Home')
-    await tap('Away')
+    await tap('Home Team')
+    await tap('Away Team')
     await tap('Defense')
     await tap('Lineup')
+    await tap('Roster')
+    await reach('Create Player')
     await tap('Create Player')
+    await shown('^First Name$')
     await input('First Name', 'Jose')
     await m.pressKey('Enter')
     await input('Last Name', 'Ramirez')
@@ -416,12 +478,41 @@ async function main(): Promise<void> {
     await finishKeyboard()
     await reach('Create Player')
     await tap('Create Player')
-    await shown('Gerrit Cole')
-    await shown('Jose Ramirez')
+    await reach('Gerrit Cole')
+    await shown(
+      'Gerrit Cole, jersey 12, bats right, throws right, edit settings'
+    )
+    await reach('Jose Ramirez')
+    await shown(
+      'Jose Ramirez, jersey 11, bats switch, throws left, positions P, SS, edit settings'
+    )
     await tap('Save Rosters')
     await shown('Undo Set team roster')
+    // Undo removes the scorer’s confirmation. Reading team membership can
+    // add the new accounts back to the game as an unconfirmed roster action.
+    const savedRoster = (book: StoredGame): boolean =>
+      [
+        ...book.plays,
+        ...(book.currentPlay == null ? [] : [book.currentPlay])
+      ].some(
+        play =>
+          recordOf(play, {
+            away: { id: 'away' },
+            home: { id: 'home' }
+          })?.actions.some(
+            action =>
+              action.type === 'lineup' &&
+              action.kind === 'roster' &&
+              action.confirmed?.includes('away') === true &&
+              action.confirmed.includes('home')
+          ) === true
+      )
+    await waitForBook(savedRoster, 'the saved game roster')
     await menu('Set Team Rosters')
-    await shown('Gerrit Cole')
+    await reach('Gerrit Cole')
+    await shown(
+      'Gerrit Cole, jersey 12, bats right, throws right, edit settings'
+    )
     await tap('Cancel')
     await shown('Undo ')
     const restoredUndo = flat(await m.hierarchy()).find(
@@ -429,8 +520,13 @@ async function main(): Promise<void> {
     )?.text
     assert(restoredUndo != null)
     await tap(restoredUndo)
+    await waitForBook(book => !savedRoster(book), 'the undone game roster')
     await menu('Set Team Rosters')
-    assert(!flat(await m.hierarchy()).some(node => node.text === 'Gerrit Cole'))
+    // Undo reverses the game edit. The created team account still exists.
+    await reach('Gerrit Cole')
+    await shown(
+      'Gerrit Cole, jersey 12, bats right, throws right, edit settings'
+    )
     await tap('Cancel')
     for (const [label, undo] of [
       ['End Half Inning', 'Undo End half inning'],
@@ -678,7 +774,7 @@ async function main(): Promise<void> {
   try {
     if (!chromium) {
       await m.stopApp({
-        appId: native ? 'app.teamstation.app' : 'com.apple.mobilesafari'
+        appId: native ? nativeAppId : 'com.apple.mobilesafari'
       })
       await m.launchApp({ stopApp: true })
       await m.setOrientation({ orientation: 'PORTRAIT' })
@@ -721,9 +817,16 @@ async function main(): Promise<void> {
       return
     }
     if (
-      !['advanced', 'error'].includes(process.env.SCORING_MODAL_SECTION ?? '')
+      !['advanced', 'error', 'behavior'].includes(
+        process.env.SCORING_MODAL_SECTION ?? ''
+      )
     )
       await open()
+    if (process.env.SCORING_MODAL_SECTION === 'exit') {
+      await exitConfirmation()
+      console.log('PASS permanently refused scoring edit and cancelled exit')
+      return
+    }
     if (process.env.SCORING_MODAL_SECTION === 'overrideNumbers') {
       assert(native, 'This regression requires native layout, not a browser')
       await menu('Overrides')
@@ -968,9 +1071,12 @@ async function main(): Promise<void> {
       }
       await menu('Set Team Rosters')
       await shown('^Save Rosters$')
+      await tap('Lineup')
       await capture('roster-lineup')
       await tap('Defense')
       await capture('roster-defense')
+      await tap('Roster')
+      await reach('Create Player')
       await tap('Create Player')
       await shown('^First Name$')
       await capture('create-player')
@@ -1004,13 +1110,7 @@ async function main(): Promise<void> {
         await capture(state)
         await tap('Cancel')
       }
-      fixture.pauseWrites(true)
-      await tap('Ball')
-      await menu('Exit Current Game')
-      await shown('Discard and Exit')
-      await capture('exit')
-      await tap('Cancel')
-      fixture.pauseWrites(false)
+      await exitConfirmation()
     }
     if (
       ['basic', 'player', 'additional'].includes(

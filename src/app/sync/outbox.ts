@@ -17,6 +17,7 @@ import {
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FOLD_VERSION } from '../../common/scoring/actions'
+import { FINAL_INDEX } from '../../common/scoring/gumbo'
 import {
   sameScoringMutation,
   type ScoringMutation
@@ -357,8 +358,9 @@ export function preparedWithoutStore(call: QueuedCall, body: unknown): unknown {
   if (field == null || (call.kind !== 'lineups' && call.kind !== 'events'))
     return body
   if (!isJson(body)) return body
-  const { [field]: base, ...rest } = body
-  if (!isLocal(base)) return body
+  const sent = call.kind === 'events' ? withoutMerged(body) : body
+  const { [field]: base, ...rest } = sent
+  if (!isLocal(base)) return sent
   return field === 'base' ? { ...rest, base: '' } : rest
 }
 
@@ -1018,6 +1020,112 @@ function ownKey(
     : eventsKey(call.gameId)
 }
 
+/**
+ * The plays a game's saves leave changed, in order: a save with a scoring
+ * identity drops every play at or past its frontier, a removal drops its
+ * play, and a later play of an at-bat replaces the earlier one.
+ */
+function foldedPlays(changes: SaveChange[]): {
+  plays: GumboPlay[]
+  remove: number[]
+} {
+  const plays = new Map<number, GumboPlay>()
+  const remove = new Set<number>()
+  for (const change of changes) {
+    if (change.scoringMutation != null)
+      for (const index of plays.keys())
+        if (index >= change.scoringMutation.frontier) plays.delete(index)
+    for (const index of change.remove ?? []) {
+      plays.delete(index)
+      remove.add(index)
+    }
+    for (const play of change.plays) {
+      plays.set(play.about.atBatIndex, play)
+      remove.delete(play.about.atBatIndex)
+    }
+  }
+  return { plays: [...plays.values()], remove: [...remove] }
+}
+
+/**
+ * A run of a game's queued saves (`pick`) as one save: built on what the
+ * first was built on, and leaving the game as the last leaves it, with
+ * every play the run changed. Its names are all of theirs, a later row's
+ * winning; its log is the last row's.
+ */
+function mergeRun(rows: OutboxRow[]): Extract<QueuedCall, { kind: 'events' }> {
+  const changes = rows.map(row => parsed(row.body))
+  const first = changes[0]
+  const last = changes[changes.length - 1]
+  const fence = changes
+    .map(change => change.fenceDistanceFt)
+    .filter(value => value !== undefined)
+    .at(-1)
+  const body: Json = {
+    ...last,
+    scoringBase: first.scoringBase,
+    ...foldedPlays(changes as unknown as SaveChange[]),
+    ...(fence === undefined ? {} : { fenceDistanceFt: fence })
+  }
+  if (first.lineupsBase === undefined) delete body.lineupsBase
+  else body.lineupsBase = first.lineupsBase
+  const call = callOfRow(rows[rows.length - 1]) as Extract<
+    QueuedCall,
+    { kind: 'events' }
+  >
+  const names = Object.assign({}, ...rows.map(namesOfRow)) as DeviceNames
+  const log = logOfRow(rows[rows.length - 1])
+  return {
+    kind: 'events',
+    gameId: call.gameId,
+    path: call.path,
+    body,
+    ...(Object.keys(names).length === 0 ? {} : { names }),
+    ...(log == null ? {} : { log })
+  }
+}
+
+/** The key a run of saves is sent under: never one a row of it used. */
+const runKey = (rows: OutboxRow[]): string =>
+  `m-${rows[0].idempotencyKey}-${rows[rows.length - 1].idempotencyKey}`
+
+/**
+ * A run a save of plays headed, sent with no answer to say whether the
+ * server took it: its key, and the id of its last row.
+ */
+interface MergedSend {
+  key: string
+  last: string
+}
+
+/** A body without the runs it was sent with. */
+function withoutMerged(body: Json): Json {
+  if (!('merged' in body)) return body
+  const { merged: _merged, ...rest } = body
+  return rest
+}
+
+/** The runs a head's body was sent with and not answered, oldest first. */
+function marksOf(body: Json): MergedSend[] {
+  return Array.isArray(body.merged) ? (body.merged as MergedSend[]) : []
+}
+
+/** `body` marked with `marks`, or with none. */
+function withMarks(body: Json, marks: MergedSend[]): string {
+  return JSON.stringify(
+    marks.length === 0 ? withoutMerged(body) : { ...body, merged: marks }
+  )
+}
+
+/** The run's head's body, marked with the run as it goes under `key` too. */
+function markedHead(run: OutboxRow[], key: string): string {
+  const body = parsed(run[0].body)
+  return withMarks(body, [
+    ...marksOf(body).filter(mark => mark.key !== key),
+    { key, last: run[run.length - 1].id }
+  ])
+}
+
 export class Outbox {
   private readonly options: Required<
     Omit<
@@ -1105,6 +1213,18 @@ export class Outbox {
    * settles the row or `giveUp` reads it.
    */
   private readonly released = new Map<string, ReleasedSend>()
+  /**
+   * Chains whose saves sent together the server did not take as one: each
+   * goes alone, as it was queued, until the chain is empty.
+   */
+  private readonly unmerged = new Set<string>()
+  /**
+   * Chains whose run was answered as built on another scorer's write while
+   * its head still holds runs sent before with no answer: those go again
+   * first, newest first, as they went, since one may have landed before
+   * that write.
+   */
+  private readonly recovering = new Set<string>()
   /**
    * Each chain's requests still out, direct, released or the drain's, by
    * chain, with the key each was sent under: `giveUp` aborts them at its
@@ -1249,6 +1369,8 @@ export class Outbox {
     this.lastNetwork = false
     this.paused = undefined
     this.idle = false
+    this.unmerged.clear()
+    this.recovering.clear()
   }
 
   /**
@@ -1417,16 +1539,27 @@ export class Outbox {
             : undefined
         // In queue order, so a save is judged after the one it was built on.
         const lostBefore: ScoringMutation[] = []
-        for (const row of [...given.cut].sort((a, b) => a.seq - b.seq)) {
+        const cut = [...given.cut].sort((a, b) => a.seq - b.seq)
+        const fates = cut.map(row => {
           const fate = cutFate(row, events, lostBefore)
           if (fate === 'lost') {
-            result.lost++
             const own = (parsed(row.body).scoringMutation ?? undefined) as
               ScoringMutation | undefined
             if (own != null) lostBefore.push(own)
           }
-          if (fate === 'unsure') result.unsure++
-        }
+          return fate
+        })
+        // A save the server kept holds the saves queued ahead of it, sent
+        // with it or landed before it.
+        const lastKept = fates.lastIndexOf('kept')
+        fates.forEach((fate, index) => {
+          if (fate === 'lost') result.lost++
+          if (
+            fate === 'unsure' &&
+            !(index < lastKept && callOfRow(cut[index]).kind === 'events')
+          )
+            result.unsure++
+        })
         return result
       }
     } finally {
@@ -2249,27 +2382,17 @@ export class Outbox {
         const ancestors = (await tx.outbox()).filter(
           row => row.chain === chainOf(call) && callOfRow(row).kind === 'events'
         )
-        const plays = new Map<number, SaveChange['plays'][number]>()
-        const remove = new Set<number>()
-        for (const change of [
-          ...ancestors.map(row => parsed(row.body) as unknown as SaveChange),
-          body
-        ]) {
-          if (change.scoringMutation != null)
-            for (const index of plays.keys())
-              if (index >= change.scoringMutation.frontier) plays.delete(index)
-          for (const index of change.remove ?? []) {
-            plays.delete(index)
-            remove.add(index)
-          }
-          for (const play of change.plays) {
-            plays.set(play.about.atBatIndex, play)
-            remove.delete(play.about.atBatIndex)
-          }
-        }
         call = {
           ...call,
-          body: { ...body, plays: [...plays.values()], remove: [...remove] }
+          body: {
+            ...body,
+            ...foldedPlays([
+              ...ancestors.map(
+                row => parsed(row.body) as unknown as SaveChange
+              ),
+              body
+            ])
+          }
         }
       }
     }
@@ -3686,13 +3809,19 @@ export class Outbox {
 
   /**
    * The next row to send, or none, as one transaction: never one of the
-   * chains in `skipped`, which wait out a server that could not answer.
+   * chains in `skipped`, which wait out a server that could not answer. A
+   * save of plays comes with the run of its chain's saves after it, sent
+   * together as one.
    */
   private async pick(
     tx: CacheTransaction,
     skipped: ReadonlySet<string> = new Set()
   ): Promise<{
     row?: OutboxRow
+    /** The saves sent together, the first `row`, each with its sent body. */
+    run?: OutboxRow[]
+    /** The key a run is sent under. */
+    key?: string
     call?: QueuedCall
     body?: unknown
     changed: boolean
@@ -3767,18 +3896,127 @@ export class Outbox {
       if (head.dependsOn.some(id => byId.has(id))) continue
       ready.push(head)
     }
+    // A chain with nothing left sends its saves together again.
+    for (const chain of this.unmerged)
+      if (!heads.has(chain)) this.unmerged.delete(chain)
+    for (const chain of this.recovering)
+      if (!heads.has(chain)) this.recovering.delete(chain)
     const row = ready.sort((a, b) => a.seq - b.seq)[0]
     if (row == null) return { changed, leaseEnds }
     const call = callOfRow(row)
     // The body goes as it went the first time, byte for byte, under its
     // key: built once (the server's ids, the server's digest) and kept on
     // the row. Built again, it is the same request, so the key still is.
-    const text = JSON.stringify(await this.prepared(tx, call, parsed(row.body)))
-    await tx.update(row.id, {
-      state: 'inflight',
-      leaseUntil: now + LEASE_MS,
-      ...(text === row.body ? {} : { body: text })
-    })
+    let text = JSON.stringify(await this.prepared(tx, call, parsed(row.body)))
+    // A save of plays goes with the chain's saves queued after it, each
+    // built on the one before, as one save: a live view gets them in one
+    // update. A chain the server did not take so goes a row at a time.
+    let run = [{ ...row, body: text }]
+    let key: string | undefined
+    const head = parsed(row.body)
+    // The runs the head was sent with and not answered, each kept while
+    // every row of it is still queued after the head, as it went.
+    const own = rows.filter(
+      other => other.chain === row.chain && other.seq >= row.seq
+    )
+    const endOf = (mark: MergedSend): number => {
+      const end = own.findIndex(other => other.id === mark.last)
+      return end > 0 &&
+        own
+          .slice(1, end + 1)
+          .every(
+            other => other.state === 'pending' && !this.direct.has(other.id)
+          )
+        ? end
+        : -1
+    }
+    const marks = marksOf(head).filter(mark => endOf(mark) > 0)
+    if (marks.length !== marksOf(head).length) {
+      text = withMarks(parsed(text), marks)
+      run = [{ ...row, body: text }]
+    }
+    // A head an older build folded is judged on its own first: its runs go
+    // again once it is this build's, and none of them waits in flight on it.
+    const older =
+      call.kind === 'events' &&
+      ((row.foldVersion ?? 0) < FOLD_VERSION || missingScoringBase(row))
+    // Answered as built on another scorer's write: the newest of them goes
+    // again as it went, under its key, and grows by nothing queued since.
+    const replayed =
+      !older && this.recovering.has(row.chain) ? marks.at(-1) : undefined
+    if (replayed != null) {
+      run = [{ ...row, body: text }, ...own.slice(1, endOf(replayed) + 1)]
+      key = replayed.key
+    } else if (!older) this.recovering.delete(row.chain)
+    if (
+      key == null &&
+      call.kind === 'events' &&
+      head.scoringMutation != null &&
+      head.scoringBase !== undefined &&
+      row.foldVersion === FOLD_VERSION &&
+      row.lineupRecovery == null &&
+      !this.released.has(row.idempotencyKey) &&
+      !this.unmerged.has(row.chain)
+    ) {
+      const lineupsBase = parsed(text).lineupsBase
+      for (const next of rows) {
+        if (next.chain !== row.chain || next.seq <= row.seq) continue
+        const previous = parsed(run[run.length - 1].body)
+        const body = parsed(next.body)
+        const own = body.scoringMutation as ScoringMutation | undefined
+        const before = previous.scoringMutation as ScoringMutation
+        if (
+          next.state !== 'pending' ||
+          this.direct.has(next.id) ||
+          next.path !== row.path ||
+          callOfRow(next).kind !== 'events' ||
+          next.foldVersion !== FOLD_VERSION ||
+          next.lineupRecovery != null ||
+          body.generation !== head.generation ||
+          own == null ||
+          body.scoringBase === undefined ||
+          !sameScoringMutation(
+            body.scoringBase as ScoringMutation | null,
+            before
+          ) ||
+          // An Undo that takes plays back goes alone.
+          own.frontier < before.frontier ||
+          (body.plays as GumboPlay[]).some(
+            play => play.about.atBatIndex === FINAL_INDEX
+          ) ||
+          next.dependsOn.some(id => byId.has(id) || unmade(id))
+        )
+          break
+        const prepared = JSON.stringify(
+          await this.prepared(tx, callOfRow(next), body)
+        )
+        if (parsed(prepared).lineupsBase !== lineupsBase) break
+        run.push({ ...next, body: prepared })
+      }
+    }
+    // A head that would go alone while it still holds a run sent before
+    // with no answer goes with that run again first, as it went, under its
+    // key: the server may hold it, and the head's own answer could not say.
+    const unanswered = older ? undefined : marks.at(-1)
+    if (run.length === 1 && key == null && unanswered != null) {
+      run = [run[0], ...own.slice(1, endOf(unanswered) + 1)]
+      key = unanswered.key
+    }
+    // Marked before it goes, beside the runs sent before it: should no
+    // answer ever come, not even after the app stops, the server may hold
+    // any of them.
+    if (run.length > 1 && key == null) {
+      key = runKey(run)
+      run[0] = { ...run[0], body: markedHead(run, key) }
+    }
+    for (const sent of run) {
+      const stored = rows.find(other => other.id === sent.id)!
+      await tx.update(sent.id, {
+        state: 'inflight',
+        leaseUntil: now + LEASE_MS,
+        ...(sent.body === stored.body ? {} : { body: sent.body })
+      })
+    }
     // In the transaction that puts it in flight: a chain being given up
     // waits for it from here.
     let end!: () => void
@@ -3786,7 +4024,17 @@ export class Outbox {
       end = resolve
     })
     this.drainSend = { chain: row.chain, done, end }
-    return { row, call, body: onTheWire(call, JSON.parse(text)), changed }
+    if (run.length === 1)
+      return { row, call, body: onTheWire(call, JSON.parse(text)), changed }
+    const together = mergeRun(run)
+    return {
+      row,
+      run,
+      key: key!,
+      call: together,
+      body: onTheWire(together, together.body),
+      changed
+    }
   }
 
   /** The drain is through with the row it picked. */
@@ -3862,13 +4110,17 @@ export class Outbox {
         if (left != null) this.schedule(left)
         return
       }
+      // The saves sent together, or the row alone, under the key it goes with.
+      const run = picked.run ?? [row]
+      const key = picked.key ?? row.idempotencyKey
       // The session changed while the row was read: it is not the new
       // session's to send, or to read the game for. It waits for its own
       // person's.
       if (this.options.owns?.() === false) {
         await store
           .atomically(async tx => {
-            await tx.update(row.id, { state: 'pending', leaseUntil: null })
+            for (const sent of run)
+              await tx.update(sent.id, { state: 'pending', leaseUntil: null })
           })
           .catch(() => undefined)
         return
@@ -3886,13 +4138,13 @@ export class Outbox {
         continue
       }
       let outcome: Outcome | typeof CUT
-      const request = this.outRequest(row.chain, row.idempotencyKey)
+      const request = this.outRequest(row.chain, key)
       try {
         const sent = this.options.send(
           methodOf(call),
           row.path,
           sentBody(call, picked.body),
-          row.idempotencyKey,
+          key,
           request.signal
         )
         sent.then(request.end, request.end)
@@ -3910,14 +4162,21 @@ export class Outbox {
       if (outcome === CUT) {
         await store
           .atomically(async tx => {
-            await tx.update(row.id, { state: 'pending', leaseUntil: null })
+            for (const sent of run)
+              await tx.update(sent.id, { state: 'pending', leaseUntil: null })
           })
           .catch(() => undefined)
         continue
       }
-      const go = await this.settle(store, row, call, picked.body, outcome)
+      const go =
+        run.length > 1
+          ? await this.settleRun(store, run, key, call, picked.body, outcome)
+          : await this.settle(store, row, call, picked.body, outcome)
       // Answered under its key, the row's own send says what the server did.
-      if (outcome.kind !== 'retry') this.released.delete(row.idempotencyKey)
+      if (outcome.kind !== 'retry') {
+        this.released.delete(key)
+        for (const sent of run) this.released.delete(sent.idempotencyKey)
+      }
       this.notify()
       if (!go) {
         if (outcome.kind !== 'retry' || outcome.network) return
@@ -4375,6 +4634,123 @@ export class Outbox {
       }
     }
   }
+
+  /**
+   * Records what a run of saves sent together (`pick`) came to. Taken, the
+   * run's rows go and the last lands with the answer. Found taken up to one
+   * of its rows already, the rows before it go, it lands with the answer,
+   * and the rest go again together. Refused, or found built on another
+   * scorer's write, every row goes back as it was, and each is sent alone.
+   * Not answered, every row waits as one row would. Whether the drain goes
+   * on.
+   */
+  private async settleRun(
+    store: DocumentStore,
+    run: OutboxRow[],
+    key: string,
+    call: QueuedCall,
+    sent: unknown,
+    outcome: Outcome
+  ): Promise<boolean> {
+    const chain = run[0].chain
+    const marks = marksOf(parsed(run[0].body))
+    // Back to pending, the head keeping `head`: with no answer, every run it
+    // was sent with (`pick`), any of which may have landed.
+    const back = async (head: string, attempted = false): Promise<void> => {
+      await store.atomically(async tx => {
+        for (const row of run)
+          await tx.update(row.id, {
+            state: 'pending',
+            leaseUntil: null,
+            ...(attempted ? { attempts: row.attempts + 1 } : {}),
+            ...(row === run[0] && head !== row.body ? { body: head } : {})
+          })
+      })
+    }
+    switch (outcome.kind) {
+      case 'ok': {
+        const response = (outcome.answer ?? {}) as Json
+        let landing = run.length - 1
+        let own = { call, sent, answer: outcome.answer }
+        if (response.superseded === true) {
+          // The server already holds one of the run's own saves: the rows up
+          // to it had landed, and it lands as it was sent alone.
+          landing = run.findIndex(row =>
+            sameScoringMutation(
+              parsed(row.body).scoringMutation as ScoringMutation | undefined,
+              response.scoringMutation as ScoringMutation | undefined
+            )
+          )
+          if (landing < 0) {
+            // This send's answer is known. A run sent before it with none may
+            // have landed before that write: each goes again first, newest
+            // first. With none left, each row goes alone.
+            const left = marks.filter(mark => mark.key !== key)
+            await back(withMarks(parsed(run[0].body), left))
+            if (left.length > 0) this.recovering.add(chain)
+            else {
+              this.recovering.delete(chain)
+              this.unmerged.add(chain)
+            }
+            return true
+          }
+          const { superseded: _superseded, ...answer } = response
+          own = {
+            call: callOfRow(run[landing]),
+            sent: parsed(run[landing].body),
+            answer
+          }
+        }
+        this.succeeded(chain)
+        // The head lands or goes, and the runs it was sent with with it.
+        this.recovering.delete(chain)
+        const row = run[landing]
+        // The last refusal of scoring a landed row carried is the one told.
+        const rejectedScoring =
+          run
+            .slice(0, landing + 1)
+            .map(taken => taken.rejectedScoring)
+            .filter(rejected => rejected != null)
+            .at(-1) ?? null
+        const told: Landing = { notices: [], reads: [] }
+        await store.atomically(async tx => {
+          for (const taken of run.slice(0, landing)) await tx.remove(taken.id)
+          for (const later of run.slice(landing + 1))
+            await tx.update(later.id, { state: 'pending', leaseUntil: null })
+          await this.landed(
+            tx,
+            own.call,
+            { ...row, rejectedScoring },
+            row.idempotencyKey,
+            own.sent,
+            own.answer,
+            told
+          )
+        })
+        // Answered and stored: a give-up waits no more for this send.
+        this.endDrainSend()
+        await this.told(told)
+        return true
+      }
+      case 'retry':
+        await back(run[0].body, true)
+        this.failed(outcome, chain)
+        return false
+      case 'auth':
+        await back(run[0].body)
+        this.paused = { token: this.options.token() }
+        return false
+      case 'update':
+        await back(run[0].body)
+        this.outdated.add(chain)
+        return true
+      default:
+        await back(withMarks(parsed(run[0].body), []))
+        this.recovering.delete(chain)
+        this.unmerged.add(chain)
+        return true
+    }
+  }
 }
 
 /**
@@ -4434,9 +4810,14 @@ export async function confirmedPlays(
   }
 }
 
-/** A row's body as it is sent: a reset's `effect` and `prepared` stay on the phone. */
+/**
+ * A row's body as it is sent: a reset's `effect` and `prepared`, and the
+ * run a save of plays was last sent with (`merged`), stay on the phone.
+ */
 function onTheWire(call: QueuedCall, body: unknown): unknown {
-  if (call.kind !== 'swapSides' || !isJson(body)) return body
+  if (!isJson(body)) return body
+  if (call.kind === 'events') return withoutMerged(body)
+  if (call.kind !== 'swapSides') return body
   const { effect: _effect, prepared: _prepared, ...rest } = body
   return rest
 }

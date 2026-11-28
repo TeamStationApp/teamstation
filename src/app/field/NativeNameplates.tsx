@@ -99,11 +99,33 @@ function Nameplate({
       transform: [{ translateX: spot?.x ?? 0 }, { translateY: spot?.y ?? 0 }]
     }
   })
-  const frame = anchorFrame(face.anchorX, face.anchorY)
+  // A fitted face has known dimensions. Give its moving native view those
+  // bounds too, so accessibility can report the same card the scorer sees.
+  const size = face.fittedSize
+  const origin =
+    size == null
+      ? PLATE_ORIGIN
+      : {
+          left: -face.anchorX * size.width,
+          top: -face.anchorY * size.height,
+          ...size
+        }
+  const frame =
+    size == null
+      ? anchorFrame(face.anchorX, face.anchorY)
+      : { left: 0, top: 0, ...size }
   return (
     <Animated.View
-      testID="field-nameplate"
-      style={[{ position: 'absolute', ...PLATE_ORIGIN }, moved]}
+      testID={size == null ? 'field-nameplate' : 'scoring-catcher-face'}
+      accessible={size == null ? undefined : true}
+      accessibilityLabel={
+        size == null
+          ? undefined
+          : face.emptyPosition === true
+            ? `Assign ${face.name}`
+            : face.name
+      }
+      style={[{ position: 'absolute', ...origin }, moved]}
     >
       <View style={{ position: 'absolute', ...frame }}>
         <View
@@ -125,6 +147,7 @@ function Nameplate({
               face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
             height:
               face.emptyPosition === true ? EMPTY_POSITION_SIZE : undefined,
+            ...face.fittedSize,
             justifyContent: 'center',
             alignItems: 'center'
           }}
@@ -137,6 +160,7 @@ function Nameplate({
             style={[
               styles.line,
               {
+                maxWidth: face.fittedSize == null ? undefined : '100%',
                 width: face.emptyPosition === true ? '100%' : undefined,
                 fontSize:
                   face.emptyPosition === true

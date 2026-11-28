@@ -1,7 +1,11 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { gridRotation, orientationLock } from './orientationLock'
+import {
+  gridRotation,
+  orientationLock,
+  scoringRotation
+} from './orientationLock'
 
 describe('turning the multi-camera view with the phone', function () {
   const recorder = (): {
@@ -100,4 +104,44 @@ describe('turning the full-screen sheet with the phone', function () {
     gridRotation(undefined).allow()
     gridRotation(null).restore()
   })
+})
+
+describe('turning the scoring screen with the device', function () {
+  const record = (): {
+    calls: string[]
+    native: { allowRotation: () => void; lockPortrait: () => void }
+  } => {
+    const calls: string[] = []
+    return {
+      calls,
+      native: {
+        allowRotation: () => calls.push('allow'),
+        lockPortrait: () => calls.push('portrait')
+      }
+    }
+  }
+  for (const [name, screen] of [
+    ['iPad mini', { width: 744, height: 1133 }],
+    ['iPad Pro 11-inch held sideways', { width: 1194, height: 834 }],
+    ['a 600-point tablet', { width: 600, height: 960 }]
+  ] as const)
+    it(`lets ${name} turn while scoring, and stands it upright after`, function () {
+      const { calls, native } = record()
+      const rotation = scoringRotation(native, screen)
+      rotation.allow()
+      rotation.restore()
+      expect(calls).deep.equals(['allow', 'portrait'])
+    })
+  for (const [name, screen] of [
+    ['iPhone 15', { width: 393, height: 852 }],
+    ['iPhone SE', { width: 320, height: 568 }],
+    ['a Pixel held sideways', { width: 915, height: 412 }]
+  ] as const)
+    it(`keeps ${name} upright while scoring`, function () {
+      const { calls, native } = record()
+      const rotation = scoringRotation(native, screen)
+      rotation.allow()
+      rotation.restore()
+      expect(calls).deep.equals([])
+    })
 })

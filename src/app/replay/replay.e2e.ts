@@ -1508,7 +1508,11 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
 
     // Thirty seconds offline: the pitches arrive together, then hurry.
     await wait(5000)
+    // The emulated offline network only tells the page it is offline: its
+    // requests still reach the server. Failing them as well is what keeps
+    // the pitches on the scorer's phone until the network is back.
     await scorer.setNetworkConditions({ offline: true })
+    await scorer.command('blockNetwork', { patterns: ['*/api/v1/*'] })
     note('scorer: offline')
     // Each pitch writes a different card: ball three, a foul, ball four and
     // the next batter's first pitch.
@@ -1519,6 +1523,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     }
     await wait(30000 - 4 * 1500)
     const online = Date.now()
+    await scorer.command('clearNetworkMocks')
     await scorer.setNetworkConditions({ offline: false })
     note('scorer: online')
     await catchUp('catching up after the network', 4, online, 45000)
@@ -1563,6 +1568,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       await recorder
         .stop(join(out, 'live-follow-web.mp4'))
         .catch(() => undefined)
+    await scorer.command('clearNetworkMocks').catch(() => undefined)
     await scorer.setNetworkConditions({ offline: false }).catch(() => undefined)
     await scorer.detach()
     await viewer.detach()
