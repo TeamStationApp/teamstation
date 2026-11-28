@@ -1,8 +1,16 @@
 import type { Position } from '../../common/scoring/state'
 import { fieldingLocation } from '../field/fieldingLocation'
+import { BASES } from '../field/fieldModel'
 import { lstrings } from '../locales/strings'
 import { fieldPlayersFor, withStandIns } from './fieldAdapter'
-import { accepted, act } from './scoringFlow'
+import type { ChainRunner } from './runnerChain'
+import {
+  accepted,
+  act,
+  forceOutEdit,
+  settleRunners,
+  throwToDefender
+} from './scoringFlow'
 import { baseIds, playSettled } from './scoringSelectors'
 import type { FielderRef, ScoringState } from './scoringTypes'
 
@@ -124,4 +132,88 @@ export function startDoublePlay(
     }
     next.phase = 'trajectory'
   })
+}
+
+/**
+ * Plays out the rest of a ground double play once its trajectory is in, on
+ * the working state and with no step of its own, so the whole relay comes off
+ * with the trajectory's Undo step. The first number's fielder throws to the
+ * second number's at 2nd, who forces the runner from 1st there and throws to
+ * the first baseman, who retires the batter: the same actions, credits and
+ * stored play as the scorer's hand relay. Each throw waits for the one before
+ * it to be drawn. Runners the ground out moved from 2nd and 3rd then answer
+ * Safe, Out or Back together, before the play can close.
+ */
+export function continueDoublePlay(next: ScoringState): void {
+  const kind = next.pendingPlay?.doublePlay?.kind
+  if (kind == null || kind === 'caught') return
+  for (let hop = 0; hop < 8 && next.presentation == null; hop++)
+    if (!relayStep(next, kind)) break
+}
+
+/** One step of the assumed relay; false when there is nothing to do now. */
+function relayStep(next: ScoringState, kind: DoublePlayKind): boolean {
+  const pending = next.pendingPlay!
+  const doublePlay = pending.doublePlay!
+  const action = next.runnerAction
+  const game = next.session
+  if (
+    next.phase === 'chooseDefender' &&
+    action?.purpose === 'batterRetirement'
+  ) {
+    const [fielded, pivot] = doublePlayPositions(kind).map(position =>
+      playerAt(next, position)
+    )
+    const route = action.defensiveRoute ?? []
+    const holder = route.at(-1)?.id
+    const first = game.pending?.originalBases[0]
+    const lead = game.pending?.movements.find(move => move.playerId === first)
+    if (first == null || lead == null) return false
+    const forced = lead.decision === 'out'
+    if (!forced && route.length === 1 && holder === fielded) {
+      throwToDefender(next, pivot, { ...BASES[2] })
+      return true
+    }
+    if (!forced && holder === pivot) {
+      forceOutEdit(next, first, 2)
+      return true
+    }
+    if (forced && holder === pivot) {
+      throwToDefender(next, playerAt(next, '1B'), { ...BASES[1] })
+      return true
+    }
+    if (forced && holder === playerAt(next, '1B')) {
+      throwToDefender(next, undefined)
+      return true
+    }
+    return false
+  }
+  const batter = game.liveData.plays.currentPlay?.matchup.batter.id
+  if (
+    doublePlay.chained === true ||
+    game.pending?.movements.some(
+      move => move.playerId === batter && move.decision === 'out'
+    ) !== true
+  )
+    return false
+  // The batter is out: the runners the ground out moved answer together.
+  doublePlay.chained = true
+  const out = new Set(
+    game.pending.movements
+      .filter(move => move.decision === 'out')
+      .map(move => move.playerId)
+  )
+  const pushed: ChainRunner[] = []
+  for (const from of [2, 3]) {
+    const id = game.pending.originalBases[from - 1]
+    if (id != null && !out.has(id))
+      pushed.push({ playerId: id, from, to: from + 1 })
+  }
+  if (pushed.length === 0 || game.liveData.linescore.outs >= 3) return false
+  next.runnerChain = { pushed }
+  next.correctionWindow = null
+  next.runnerAction = null
+  next.phase = 'runnerMovement'
+  settleRunners(next)
+  return false
 }

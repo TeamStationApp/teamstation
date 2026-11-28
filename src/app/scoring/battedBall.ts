@@ -9,6 +9,7 @@ import { fieldingLocation, isFairLocation } from '../field/fieldingLocation'
 import type { GroundPoint } from '../field/fieldModel'
 import { homeRunLanding } from '../field/stadiumBoundary'
 import { initialHitTarget } from '../field/trajectoryGuide'
+import { continueDoublePlay } from './doublePlay'
 import { fieldPlayersFor } from './fieldAdapter'
 import {
   type ContactKind,
@@ -215,5 +216,6 @@ export function acceptTrajectory(
     next.pendingPlay ??= pending
     next.phase = 'runnerMovement'
     settleRunners(next)
+    continueDoublePlay(next)
   })
 }
