@@ -54,9 +54,11 @@ import {
   isFinished,
   isOurSilence,
   JOIN_LEAD_SEC,
+  joinLeadSec,
+  LANDING_MS,
+  landingStep,
   liveOpeningMs,
   masterOf,
-  NUDGE_MAX_SEC,
   nudgeRate,
   type ParkReason,
   type Placeable,
@@ -665,6 +667,19 @@ export function useMultiCam(
    * when it last started, and none has run dry since. See `buffering.ts`.
    */
   const flowing = useRef(false)
+  /**
+   * When the grid began landing its tiles after the viewer's last seek
+   * (`landingStep`): the seek itself, or the gate's open after the hold that
+   * seek caused. Null before any seek, so a cold open keeps the steady rule.
+   */
+  const landingFrom = useRef<number | null>(null)
+  /** Tiles joined since then: one landing join each, then the steady rule. */
+  const landedJoins = useRef(new Set<string>())
+  /**
+   * The viewer's last seek left the grid held, so the gate's next open is
+   * that seek's landing. Only `goTo` sets it; a hold no seek caused does not.
+   */
+  const seekHeld = useRef(false)
   /** When each tile the grid is waiting for was first seen short of enough. */
   const shortSince = useRef(new Map<string, number>())
   /** Where each held tile was last moved to by the gate (`placeHeld`). */
@@ -1098,11 +1113,19 @@ export function useMultiCam(
     const fromMs = gameNow(video.id) ?? atWallRef.current
     const target = fromMs == null ? null : secondsAt(video, fromMs)
     if (target == null) return
+    // Never past where it can be sought to: told to go further, a player
+    // lands at its end, and the game reaches that picture early.
+    const lead = joinLeadSec({
+      targetSec: target,
+      leadSec,
+      seekableEndSec:
+        element.seekableQuiet === true ? null : seekableEndOf(element)
+    })
     if (element.playbackRate !== 1) element.playbackRate = 1
     intents.current.set(video.id, false)
     if (!element.paused) element.pause()
-    element.currentTime = target + leadSec
-    seekedAt.current.set(video.id, Date.now() + leadSec * 1000)
+    element.currentTime = target + lead
+    seekedAt.current.set(video.id, Date.now() + lead * 1000)
     const begun = Date.now()
     const start = (): void => {
       stopJoining(video.id)
@@ -1130,7 +1153,7 @@ export function useMultiCam(
         const there = wallAt(video, element.currentTime)
         // Nothing to follow: as good a guess as any is the lead itself.
         if (now == null || there == null) {
-          if (Date.now() - begun >= leadSec * 1000) start()
+          if (Date.now() - begun >= lead * 1000) start()
           return
         }
         if (now < there) return
@@ -1138,7 +1161,7 @@ export function useMultiCam(
         if (ready) {
           start()
         } else if (now - there > 250) {
-          joinAhead(video, element, Math.min(leadSec * 2, JOIN_LEAD_SEC * 4))
+          joinAhead(video, element, Math.min(lead * 2, JOIN_LEAD_SEC * 4))
         }
       }, JOIN_POLL_MS)
     )
@@ -1414,14 +1437,28 @@ export function useMultiCam(
         const errorSec = target == null ? 0 : target - element.currentTime
         // Joining — starting late, coming back, or too far out to close by
         // speed — it is sent just ahead and started when the game gets there.
-        const joins =
-          mode === 'settle' &&
+        // Right after a viewer's seek, one more than LANDING_JOIN_SEC out is
+        // joined too, once (`landingStep`): a phone's seek lands late, and
+        // speed takes most of ten seconds to close what it left.
+        const steps =
+          (mode === 'settle' || mode === 'open') &&
           run &&
           crawl.current == null &&
-          target != null &&
-          (element.paused ||
-            (Math.abs(errorSec) > NUDGE_MAX_SEC &&
-              worthCorrecting(element.readyState, errorSec)))
+          target != null
+        const sinceSeekMs =
+          landingFrom.current == null ? null : Date.now() - landingFrom.current
+        const step = steps
+          ? landingStep({
+              errorSec,
+              sinceSeekMs,
+              joinedThisSeek: landedJoins.current.has(video.id),
+              mode,
+              readyState: element.readyState,
+              toleranceSec
+            })
+          : null
+        const joins =
+          steps && ((mode === 'settle' && element.paused) || step === 'join')
         if (joins) {
           setTiles(current =>
             current[video.id]?.parked == null
@@ -1431,16 +1468,14 @@ export function useMultiCam(
                   [video.id]: { ...current[video.id], parked: null }
                 }
           )
+          if (sinceSeekMs != null && sinceSeekMs < LANDING_MS) {
+            landedJoins.current.add(video.id)
+          }
           joinAheadRef.current(video, element, JOIN_LEAD_SEC)
           continue
         }
-        const nudging =
-          settle &&
-          run &&
-          crawl.current == null &&
-          target != null &&
-          Math.abs(errorSec) <= NUDGE_MAX_SEC
-        if (nudging) {
+        const nudging = step === 'nudge' || step === 'none'
+        if (step === 'nudge') {
           const rate = nudgeRate(errorSec)
           if (element.playbackRate !== rate) element.playbackRate = rate
         } else if (crawl.current == null && element.playbackRate !== 1) {
@@ -1765,6 +1800,14 @@ export function useMultiCam(
       })
       frames.current.clear()
       setWaiting(false)
+      // The open after the hold a seek caused is that seek's landing: timed
+      // from here, the looks that land the tiles have the whole window. Any
+      // other hold's open keeps the window it fell in, or the steady rule.
+      if (seekHeld.current) {
+        landingFrom.current = Date.now()
+        landedJoins.current.clear()
+        seekHeld.current = false
+      }
       alignTo(startAt, undefined, undefined, 'open')
       return true
     },
@@ -2236,12 +2279,16 @@ export function useMultiCam(
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
       shortSince.current.clear()
+      // The grid lands its tiles from here (`landingStep`).
+      landingFrom.current = Date.now()
+      landedJoins.current.clear()
       if (flowing.current) {
         const held = awaited(wallMs).map(video =>
           bufferAt(video, elements.current.get(video.id), wallMs)
         )
         if (!canStart(held)) flowing.current = false
       }
+      seekHeld.current = !flowing.current
       alignTo(wallMs)
     },
     [alignTo, awaited]
