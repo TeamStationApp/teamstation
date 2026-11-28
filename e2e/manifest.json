@@ -260,6 +260,238 @@
       "file": "e2e/tests/app-shell/chat/composer-keyboard.e2e.ts"
     },
     {
+      "id": "app-shell/header/glass-growth#pinned-band-desktop",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#pinned-band-ios",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#pinned-band-phone",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#push-while-pinned-phone",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
       "id": "app-shell/lists/list-screens#box-score-desktop",
       "title": "List screens lay out their thumbnails, rows, filters and stream address",
       "kind": "e2e",

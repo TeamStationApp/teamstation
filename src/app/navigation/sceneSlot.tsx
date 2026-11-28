@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useMemo, useRef } from 'react'
 
 import { HeaderSlotProvider } from '../components/headerSlot'
 import { SceneShownProvider } from '../components/sceneShown'
+import { SceneTopProvider } from '../components/sceneTop'
 import {
   type ScreenScopeValue,
   ScreenScopeValueProvider,
@@ -133,18 +134,20 @@ export function SceneSlot(props: SceneSlotProps): React.ReactElement {
 
   return (
     <SceneShownProvider value={shown}>
-      <ScreenScopeValueProvider value={scope}>
-        <HeaderSlotProvider
-          headerHeight={headerHeight}
-          navigationHeight={props.navigationHeight}
-          bannerHeight={props.bannerHeight}
-          onHandoff={setHandoff}
-          onHandoffHeight={setHandoffHeight}
-          onBackOverride={setBackOverride}
-        >
-          {children}
-        </HeaderSlotProvider>
-      </ScreenScopeValueProvider>
+      <SceneTopProvider value={active}>
+        <ScreenScopeValueProvider value={scope}>
+          <HeaderSlotProvider
+            headerHeight={headerHeight}
+            navigationHeight={props.navigationHeight}
+            bannerHeight={props.bannerHeight}
+            onHandoff={setHandoff}
+            onHandoffHeight={setHandoffHeight}
+            onBackOverride={setBackOverride}
+          >
+            {children}
+          </HeaderSlotProvider>
+        </ScreenScopeValueProvider>
+      </SceneTopProvider>
     </SceneShownProvider>
   )
 }

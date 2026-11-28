@@ -1,9 +1,12 @@
 import { expect } from 'chai'
-import { describe, it } from 'mocha'
+import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import Animated from 'react-native-reanimated'
 
+import { usePinned } from './pinnedGlass'
 import type { PinnedHead } from './pinnedHead'
+import { SceneTopProvider } from './sceneTop'
 import { usePinnedHead } from './usePinnedHead.native'
 
 describe('native pinned schedule anchoring', () => {
@@ -331,5 +334,165 @@ describe('native pinned schedule anchoring', () => {
       })
       host.remove()
     }
+  })
+
+  describe('native pinned schedule anchoring: the glass the pills carry', () => {
+    const HEADER = 72
+    const PIN_AT = 200
+    const BAND = 60
+    let head!: PinnedHead
+    let carried: boolean | undefined
+    function Header(): null {
+      carried = usePinned()
+      return null
+    }
+    function Harness(): React.ReactElement {
+      head = usePinnedHead({
+        headerHeight: HEADER,
+        ready: true,
+        tab: 'info',
+        anchorOnRow: false,
+        tail: 30,
+        onScroll: () => undefined
+      })
+      return <Animated.View testID="glass" style={head.pillBand.glassStyle} />
+    }
+    let host: HTMLDivElement
+    let root: ReturnType<typeof createRoot> | undefined
+    const draw = async (top: boolean, band = true): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <>
+            <Header />
+            {band && (
+              <SceneTopProvider value={top}>
+                <Harness />
+              </SceneTopProvider>
+            )}
+          </>
+        )
+      })
+    }
+    const layout = (y: number, height: number): never => {
+      const event: unknown = {
+        nativeEvent: { layout: { x: 0, y, width: 390, height } }
+      }
+      return event as never
+    }
+    const frames = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+    }
+    const emit = (y: number): void => {
+      const handler = head.screen.onScroll as unknown as {
+        workletEventHandler: { worklet: (event: unknown) => void }
+      }
+      handler.workletEventHandler.worklet({
+        eventName: 'onScroll',
+        contentOffset: { x: 0, y },
+        contentSize: { width: 390, height: 3000 },
+        layoutMeasurement: { width: 390, height: 600 }
+      })
+    }
+    const scroll = async (y: number): Promise<void> => {
+      await act(async () => {
+        emit(y)
+      })
+      await frames()
+    }
+    const pane = (): { top: string; height: string } => {
+      const node = host.querySelector<HTMLElement>('[data-testid="glass"]')!
+      return { top: node.style.top, height: node.style.height }
+    }
+    const mount = async (top = true): Promise<void> => {
+      host = document.createElement('div')
+      document.body.append(host)
+      root = createRoot(host)
+      await draw(top)
+      // Lands where it is sent, as a page with room would.
+      ;(head.screen.scrollRef as unknown as (node: unknown) => void)({
+        scrollTo: ({ y }: { y: number }): void => {
+          emit(y)
+        }
+      })
+      await act(async () => {
+        head.screen.onLayout!(layout(0, 600))
+        head.pillBand.handleLayout!(layout(PIN_AT, BAND))
+        head.content.handleLayout!(layout(PIN_AT + BAND, 2000))
+        head.spacer.handleLayout!(
+          layout(0, (head.spacer.style as { height: number }).height)
+        )
+      })
+      // The first tab lands, through the anchor's own retries.
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      })
+    }
+    afterEach(async () => {
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+    })
+
+    it('animates the pane from the scroll and the band’s measured height', async () => {
+      await mount()
+      expect(pane()).deep.equals({
+        top: `${-(HEADER + PIN_AT)}px`,
+        height: `${HEADER}px`
+      })
+      await scroll(PIN_AT - BAND / 2)
+      expect(pane()).deep.equals({
+        top: `${-(HEADER + BAND / 2)}px`,
+        height: `${HEADER + BAND / 2}px`
+      })
+      await scroll(PIN_AT + 300)
+      expect(pane()).deep.equals({
+        top: `${-HEADER}px`,
+        height: `${HEADER + BAND}px`
+      })
+      // A taller band grows further.
+      await act(async () => {
+        head.pillBand.handleLayout!(layout(PIN_AT, 90))
+      })
+      await frames()
+      expect(pane().height).equals(`${HEADER + 90}px`)
+    })
+
+    it('reports once the pane grows and when it shrinks back', async () => {
+      await mount()
+      expect(carried).equals(false)
+      await scroll(PIN_AT - BAND)
+      expect(carried).equals(false)
+      await scroll(PIN_AT - BAND + 2)
+      expect(carried).equals(true)
+      await scroll(PIN_AT + 100)
+      expect(carried).equals(true)
+      await scroll(10)
+      expect(carried).equals(false)
+    })
+
+    it('reports nothing while its scene is not the top', async () => {
+      await mount(false)
+      await scroll(PIN_AT)
+      expect(carried).equals(false)
+    })
+
+    it('lets go while covered and reports again after Back with no new scroll', async () => {
+      await mount()
+      await scroll(PIN_AT + 100)
+      expect(carried).equals(true)
+      // A push over it: progress stays 1, and no reaction runs.
+      await draw(false)
+      expect(carried).equals(false)
+      // Back: still pinned, still no reaction; the kept progress reports.
+      await draw(true)
+      expect(carried).equals(true)
+      // And it lets go as it unmounts.
+      await draw(true, false)
+      expect(carried).equals(false)
+    })
   })
 })

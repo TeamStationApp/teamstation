@@ -2905,9 +2905,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               ) : (
                 <Screen key="sections" {...pinned.screen} wide>
                   <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
-                  <PillBand part={pinned.pillBand} glass>
-                    {tabs}
-                  </PillBand>
+                  <PillBand part={pinned.pillBand}>{tabs}</PillBand>
                   <TabPages page={tab} index={tabIndex}>
                     <PinnedContent
                       key={tab}

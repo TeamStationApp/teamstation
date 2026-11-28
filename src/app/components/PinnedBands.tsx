@@ -1,5 +1,5 @@
 import React from 'react'
-import { type LayoutChangeEvent, View } from 'react-native'
+import { type LayoutChangeEvent, useWindowDimensions, View } from 'react-native'
 import Animated from 'react-native-reanimated'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -11,6 +11,7 @@ import type { PinnedHead } from './pinnedHead'
 import {
   useActiveLayout,
   useActiveRef,
+  usePageActive,
   usePageHeadHidden,
   usePageOffset
 } from './TabPages'
@@ -59,32 +60,36 @@ export function CardBand(props: {
   )
 }
 
-/** The band holding the pills, which pins under the header. */
+/**
+ * The band holding the pills, which pins under the header, and carries the
+ * header's glass down over itself as it comes: one pane from the top of the
+ * screen, growing from the header's lower edge as the band rises to it and
+ * reaching the band's lower edge as it pins (`glassGrowth`), while the header
+ * draws none of its own. What scrolls under the pills blurs exactly as it
+ * does under the header, with no seam where two panes would meet.
+ */
 export function PillBand(props: {
   part: PinnedHead['pillBand']
   testID?: string
   /** Outside a column with its gaps: none of them to take back. */
   flat?: boolean
-  /**
-   * The band carries the header's glass down past its pills: one pane from
-   * the top of the screen, growing down from the header's lower edge as the
-   * band rises to it and reaching the band's lower edge as it pins
-   * (`glassGrowth`), while the header draws none of its own. What scrolls
-   * under the pills blurs exactly as it does under the header, with no seam
-   * where two panes would meet. Work in progress.
-   */
-  glass?: boolean
   children: React.ReactNode
 }): React.ReactElement {
-  const { part, testID, flat = false, glass = false, children } = props
+  const { part, testID, flat = false, children } = props
   const styles = getStyles(useTheme())
-  // Growing: the header has handed its glass to this band's pane.
-  const growing = usePinned(part.glassKey ?? NO_KEY)
-  const grows = glass && part.glassKey != null
-  const glassy = grows && growing
+  // Where pages share one head (an event's sliding panes), only the page on
+  // show holds the pane the head writes to, and only it draws the glass.
+  const active = usePageActive()
+  const reported = usePinned(part.glassKey)
+  const glassy = active && reported
+  // The band is only as wide as the column, which a wide window centres;
+  // the pane reaches a window's width past it either way, and the scene's
+  // scroller clips it to the scene, so the glass spans the whole header
+  // beside the sidebar.
+  const { width } = useWindowDimensions()
   return (
     <Band
-      testID={testID}
+      testID={testID ?? 'pill-band'}
       ref={useActiveRef(part.ref)}
       onLayout={useActiveRef(part.handleLayout)}
       style={[
@@ -96,26 +101,31 @@ export function PillBand(props: {
       ]}
     >
       {/*
-        A sliver of the page above the pills, under the header's lower edge.
-        iOS's glass blurs less at its very edge, and a row passing under it
-        showed sharp there, just above the pinned pills.
+        Placed and sized from the scroll by the head, every frame; the glass
+        itself is drawn only while the header has handed its own over.
       */}
-      {grows && (
-        // Placed and sized from the scroll by the head, every frame; the
-        // glass itself is drawn only while the header has none of its own.
-        <Animated.View
-          ref={part.glassRef}
-          pointerEvents="none"
-          style={[styles.glassPane, part.glassStyle]}
-        >
-          {glassy && (
-            <>
-              <GlassView style={styles.glassFill} />
-              <View style={styles.glassEdge} />
-            </>
-          )}
-        </Animated.View>
-      )}
+      <Animated.View
+        ref={useActiveRef(part.glassRef)}
+        testID="pill-band-glass"
+        pointerEvents="none"
+        style={[
+          styles.glassPane,
+          { left: -width, right: -width },
+          part.glassStyle
+        ]}
+      >
+        {glassy && (
+          <>
+            <GlassView style={styles.glassFill} />
+            <View style={styles.glassEdge} />
+          </>
+        )}
+      </Animated.View>
+      {/*
+        Otherwise, a sliver of the page above the pills, under the header's
+        lower edge. iOS's glass blurs less at its very edge, and a row
+        passing under it showed sharp there, just above the pinned pills.
+      */}
       {!glassy && (
         <View
           pointerEvents="none"
@@ -190,8 +200,6 @@ export function PinnedSpacer(props: {
   )
 }
 
-const NO_KEY = {}
-
 /** How much of the header's lower edge the pill band paints behind. */
 const GLASS_EDGE = 4
 
@@ -260,9 +268,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // The header's glass, from the top of the screen down to however far it
   // has grown: the head sets its top and height.
   glassPane: {
-    position: 'absolute',
-    left: 0,
-    right: 0
+    position: 'absolute'
   },
   glassFill: {
     position: 'absolute',

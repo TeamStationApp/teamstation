@@ -7,6 +7,7 @@ import type { ScreenScope } from '../../common/gameSocket'
 import type { ScreenScopeSocket } from '../../common/screenScope'
 import { useBackOverride, useHeaderHandoff } from '../components/headerSlot'
 import { useSceneShown } from '../components/sceneShown'
+import { useSceneTop } from '../components/sceneTop'
 import { useNoticedRead } from '../hooks/useNoticedRead'
 import {
   type ScreenScopeValue,
@@ -216,9 +217,15 @@ describe('scene slot', function () {
 
   describe('scene slot on show', function () {
     const shown = new Map<string, boolean>()
+    const tops = new Map<string, boolean>()
+    const mounts = new Map<string, number>()
     const reads = new Map<string, number>()
     function Showing(props: { name: string }): React.ReactElement {
       shown.set(props.name, useSceneShown())
+      tops.set(props.name, useSceneTop())
+      React.useEffect(() => {
+        mounts.set(props.name, (mounts.get(props.name) ?? 0) + 1)
+      }, [props.name])
       useNoticedRead(async () => {
         reads.set(props.name, (reads.get(props.name) ?? 0) + 1)
       })
@@ -266,6 +273,38 @@ describe('scene slot', function () {
         beneath: false,
         scorer: true
       })
+    })
+
+    it('is the top only for the top: no scene covered, leaving, beneath a drag or retained', async function () {
+      await place([
+        { name: 'top', role: 'top' },
+        { name: 'covered', role: 'covered' },
+        { name: 'outgoing', role: 'outgoing' },
+        { name: 'beneath', role: 'beneath' },
+        { name: 'scorer', role: 'retained' }
+      ])
+      expect(Object.fromEntries(tops)).deep.equals({
+        top: true,
+        covered: false,
+        outgoing: false,
+        beneath: false,
+        scorer: false
+      })
+    })
+
+    it('says so as the scene is covered and shown again, without remounting it', async function () {
+      mounts.clear()
+      await place([{ name: 'roster', role: 'top' }])
+      expect(tops.get('roster')).equals(true)
+      await place([
+        { name: 'roster', role: 'covered' },
+        { name: 'pushed', role: 'top' }
+      ])
+      expect(tops.get('roster')).equals(false)
+      expect(tops.get('pushed')).equals(true)
+      await place([{ name: 'roster', role: 'top' }])
+      expect(tops.get('roster')).equals(true)
+      expect(mounts.get('roster')).equals(1)
     })
 
     it('reads nothing on a covered screen until Back shows it again', async function () {

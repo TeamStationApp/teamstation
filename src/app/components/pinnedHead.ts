@@ -116,14 +116,15 @@ export function spacerFor(
 }
 
 /**
- * How far a glass pill band has carried the header's glass down over it.
+ * How far a pill band has carried the header's glass down over it.
  *
  * `reach` is how far below the header the band's top edge is drawn now: 0
  * once it is pinned. Over the last band-height of its travel the glass grows
  * down from the header's lower edge, `progress` going from 0 to 1, and meets
  * the band's lower edge as the band pins (over less, if the band starts
- * nearer than that); scrolling back shrinks it the same way. It follows the page exactly, so a slow scroll is a slow grow and a
- * held one holds it, as the card's name does going into the header.
+ * nearer than that); scrolling back shrinks it the same way. It follows the
+ * page exactly, so a slow scroll is a slow grow and a held one holds it, as
+ * the card's name does going into the header.
  */
 export function glassGrowth(
   state: HeadState,
@@ -188,14 +189,15 @@ export interface PinnedHead {
   /** The band holding the card, and the band holding the pills. */
   cardBand: Part & { style: BandStyle }
   /**
-   * `glassKey`: the band's key in `pinnedGlass`, where it reports whether its
-   * glass has started to grow. `glassRef` and `glassStyle` are for the pane
-   * of glass it grows (`glassGrowth`): the browser writes to the node, the
-   * phone animates the style.
+   * `glassKey`: the band's key in `pinnedGlass`, where the head reports
+   * whether its glass has started to grow (and its scene is the stack's
+   * top). `glassRef` and `glassStyle` are for the pane of glass it grows
+   * (`glassGrowth`): the browser writes to the node, the phone animates the
+   * style.
    */
   pillBand: Part & {
     style: BandStyle
-    glassKey?: object
+    glassKey: object
     glassRef?: React.Ref<React.ComponentRef<typeof View>>
     glassStyle?: BandStyle
   }

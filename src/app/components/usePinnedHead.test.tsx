@@ -3,7 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { usePinned } from './pinnedGlass'
 import type { PinnedHead } from './pinnedHead'
+import { SceneTopProvider } from './sceneTop'
 import { usePinnedHead } from './usePinnedHead'
 
 /**
@@ -36,6 +38,11 @@ interface HarnessProps {
   anchorOnRow: boolean
   /** Its page drawn after it slides in, as `TabPages` keeps one. */
   late?: boolean
+}
+
+interface SceneProps extends HarnessProps {
+  /** Whether its scene is the stack's top: false once one is pushed over it. */
+  top?: boolean
 }
 
 let head: PinnedHead | undefined
@@ -85,7 +92,9 @@ function Harness(props: HarnessProps): React.ReactElement {
     >
       <div data-name="column">
         <div data-name="card" ref={ref(head.cardBand.ref)} />
-        <div data-name="pills" ref={ref(head.pillBand.ref)} />
+        <div data-name="pills" ref={ref(head.pillBand.ref)}>
+          <div data-name="glass" ref={ref(head.pillBand.glassRef)} />
+        </div>
         {late ? (
           <LatePage key={tab} head={head} />
         ) : (
@@ -96,6 +105,25 @@ function Harness(props: HarnessProps): React.ReactElement {
         <div data-name="spacer" ref={ref(head.spacer.ref)} />
       </div>
     </div>
+  )
+}
+
+/** Whether any band carries the header's glass, as the header reads it. */
+let carried: boolean | undefined
+function Header(): null {
+  carried = usePinned()
+  return null
+}
+
+/** The harness in its scene, under the shell's header. */
+function Scene(props: SceneProps): React.ReactElement {
+  return (
+    <>
+      <Header />
+      <SceneTopProvider value={props.top ?? true}>
+        <Harness {...props} />
+      </SceneTopProvider>
+    </>
   )
 }
 
@@ -110,7 +138,11 @@ const original = {
     Element.prototype,
     'clientHeight'
   ),
-  scrollTop: Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
+  scrollTop: Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop'),
+  offsetHeight: Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'offsetHeight'
+  )
 }
 function installLayout(): void {
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
@@ -145,6 +177,12 @@ function installLayout(): void {
       return this.dataset.name === 'scroller' ? VIEWPORT : 0
     }
   })
+  Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.dataset.name === 'pills' ? LAYOUT.pills.height : 0
+    }
+  })
   Object.defineProperty(Element.prototype, 'scrollTop', {
     configurable: true,
     get(this: HTMLElement) {
@@ -156,9 +194,9 @@ function installLayout(): void {
   })
 }
 
-let props: HarnessProps = { tab: 'videos', ready: true, anchorOnRow: false }
+let props: SceneProps = { tab: 'videos', ready: true, anchorOnRow: false }
 
-async function mount(initial: Partial<HarnessProps> = {}): Promise<void> {
+async function mount(initial: Partial<SceneProps> = {}): Promise<void> {
   installLayout()
   scrollTop = 0
   calls.length = 0
@@ -167,14 +205,14 @@ async function mount(initial: Partial<HarnessProps> = {}): Promise<void> {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root!.render(<Harness {...props} />)
+    root!.render(<Scene {...props} />)
   })
 }
 
-async function rerender(patch: Partial<HarnessProps>): Promise<void> {
+async function rerender(patch: Partial<SceneProps>): Promise<void> {
   props = { ...props, ...patch }
   await act(async () => {
-    root!.render(<Harness {...props} />)
+    root!.render(<Scene {...props} />)
   })
 }
 
@@ -190,7 +228,7 @@ async function select(tab: string, anchorOnRow: boolean): Promise<void> {
   props = { ...props, tab, anchorOnRow }
   await act(async () => {
     head!.select(tab)
-    root!.render(<Harness {...props} />)
+    root!.render(<Scene {...props} />)
   })
 }
 
@@ -207,6 +245,12 @@ afterEach(async function () {
     if (descriptor != null)
       Object.defineProperty(Element.prototype, key, descriptor)
   }
+  if (original.offsetHeight != null)
+    Object.defineProperty(
+      HTMLElement.prototype,
+      'offsetHeight',
+      original.offsetHeight
+    )
 })
 
 describe('the pinned head in a browser', function () {
@@ -301,7 +345,7 @@ describe('the pinned head in a browser', function () {
       // A clamp as short content lands is not a scroll the head follows.
       scrollTop = 150
       named('scroller').dispatchEvent(new window.Event('scroll'))
-      root!.render(<Harness {...props} />)
+      root!.render(<Scene {...props} />)
     })
     expect(named('scroller').scrollTop).equals(PIN_AT)
     expect(named('pills').style.top).equals(`${HEADER}px`)
@@ -618,5 +662,87 @@ describe('the pinned head in a browser', function () {
       if (original != null)
         Object.defineProperty(Element.prototype, 'scrollHeight', original)
     }
+  })
+
+  describe('the pinned head in a browser: the glass the pills carry', function () {
+    const BAND = LAYOUT.pills.height
+    const pane = (): { top: string; height: string } => {
+      const { top, height } = named('glass').style
+      return { top, height }
+    }
+
+    it('places the pane from the top of the screen to how far it has grown', async function () {
+      await mount()
+      // At rest: the header's own height, from the screen's top, which is
+      // the pill band's top less the header and the distance to the pin.
+      expect(pane()).deep.equals({
+        top: `${-(HEADER + PIN_AT)}px`,
+        height: `${HEADER}px`
+      })
+      await setScroll(PIN_AT - BAND)
+      expect(pane()).deep.equals({
+        top: `${-(HEADER + BAND)}px`,
+        height: `${HEADER}px`
+      })
+      await setScroll(PIN_AT - BAND / 2)
+      expect(pane()).deep.equals({
+        top: `${-(HEADER + BAND / 2)}px`,
+        height: `${HEADER + BAND / 2}px`
+      })
+      await setScroll(PIN_AT)
+      expect(pane()).deep.equals({
+        top: `${-HEADER}px`,
+        height: `${HEADER + BAND}px`
+      })
+      await setScroll(PIN_AT + 500)
+      expect(pane()).deep.equals({
+        top: `${-HEADER}px`,
+        height: `${HEADER + BAND}px`
+      })
+    })
+
+    it('reports the glass carried once the pane grows, and not on the way back', async function () {
+      await mount()
+      expect(carried).equals(false)
+      await setScroll(PIN_AT - BAND)
+      expect(carried).equals(false)
+      await setScroll(PIN_AT - BAND + 1)
+      expect(carried).equals(true)
+      await setScroll(PIN_AT)
+      expect(carried).equals(true)
+      await setScroll(PIN_AT - BAND)
+      expect(carried).equals(false)
+    })
+
+    it('lets go of the header as it unmounts', async function () {
+      await mount()
+      await setScroll(PIN_AT)
+      expect(carried).equals(true)
+      await act(async () => {
+        root!.render(<Header />)
+      })
+      expect(carried).equals(false)
+    })
+
+    it('reports only while its scene is the top, from where it was left', async function () {
+      await mount()
+      await setScroll(PIN_AT)
+      expect(carried).equals(true)
+      // A player pushed over the pinned team: its header is the normal one.
+      await rerender({ top: false })
+      expect(carried).equals(false)
+      expect(pane().height).equals(`${HEADER + BAND}px`)
+      // Back, with no scroll: the band carries the glass again.
+      await rerender({ top: true })
+      expect(carried).equals(true)
+    })
+
+    it('does not report from a scroll while it is not the top', async function () {
+      await mount({ top: false })
+      await setScroll(PIN_AT)
+      expect(carried).equals(false)
+      await rerender({ top: true })
+      expect(carried).equals(true)
+    })
   })
 })
