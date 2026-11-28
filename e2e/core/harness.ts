@@ -13,7 +13,7 @@ import {
   connectToMaestroChromium,
   type Emulation
 } from './browserCdp'
-import { placement } from './capabilities'
+import { placement, REAL_ONLY } from './capabilities'
 import {
   type AiRuntime,
   Checkpoints,
@@ -174,14 +174,12 @@ export interface NormalizedNeeds {
   faults: string[]
 }
 
-const REAL_ONLY = ['camera', 'push', 'gpu']
-
 /**
  * The spec's needs through the mapping table: `tess-model` is
  * `real-model`, `smtp` is `mail-capture`, `api` and `web` go (every pool
  * stack serves them), `seat` is `isolated`, and a `none` stack naming a
  * service a pool stack supplies is `isolated`. A role without `simulator`
- * may not use one, and `camera`, `push` and `gpu` never may. A web-chromium
+ * may not use one, and `camera`, `push`, `gpu` and `bench-webcam` never may. A web-chromium
  * surface always has a browser.
  */
 export function normalizedNeeds(spec: E2eSpec | HarnessSpec): NormalizedNeeds {
@@ -205,8 +203,9 @@ export function normalizedNeeds(spec: E2eSpec | HarnessSpec): NormalizedNeeds {
       role: need.role,
       needs: [...need.needs],
       simulator:
-        need.needs.some(cap => REAL_ONLY.includes(cap)) ||
-        need.simulator !== 'allowed'
+        need.needs.some(cap =>
+          (REAL_ONLY as readonly string[]).includes(cap)
+        ) || need.simulator !== 'allowed'
           ? ('never' as const)
           : ('allowed' as const)
     }))

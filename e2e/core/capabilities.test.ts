@@ -77,6 +77,23 @@ describe('capabilities', function () {
     ).equals('never')
   })
 
+  it('knows bench-webcam as a feature only a real device in the webcam view has', function () {
+    expect(isCapability('bench-webcam')).equals(true)
+    const need = {
+      role: 'scorer',
+      needs: ['ipad', 'bench-webcam'],
+      hardware: 'none' as const,
+      simulator: 'allowed' as const
+    }
+    expect(simulatorFor(need)).equals('never')
+    expect(deviceNeedProblems(need)).deep.equals([
+      'role "scorer": simulator: \'allowed\' with bench-webcam, which only a real device has'
+    ])
+    expect(
+      deviceNeedProblems({ ...need, simulator: 'never' as const })
+    ).deep.equals([])
+  })
+
   it('places a browser with video or gpu on the Mac, and one with neither on a droplet', function () {
     expect(placement({ role: 'b', needs: ['video'], codecs: ['hevc'] })).equals(
       'mac'

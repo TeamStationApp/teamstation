@@ -20,7 +20,9 @@ export const FEATURES = [
   'microphone',
   'push',
   'gpu',
-  'keyboard-hardware'
+  'keyboard-hardware',
+  // In the bench webcam's view, for a scenario whose proof is its picture.
+  'bench-webcam'
 ] as const
 export type Feature = (typeof FEATURES)[number]
 
@@ -30,7 +32,12 @@ export const BROWSER_FEATURES = ['video', 'gpu'] as const
 export type BrowserFeature = (typeof BROWSER_FEATURES)[number]
 
 /** Needs a simulator or emulator cannot meet, so a role with one runs on a device. */
-export const REAL_ONLY: readonly Feature[] = ['camera', 'push', 'gpu']
+export const REAL_ONLY: readonly Feature[] = [
+  'camera',
+  'push',
+  'gpu',
+  'bench-webcam'
+]
 
 /** The 3D screens, which only a GPU draws: a spec covering them declares `gpu`. */
 export const GPU_SCREENS = [
