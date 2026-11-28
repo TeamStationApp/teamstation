@@ -42,6 +42,20 @@ async function unmount(): Promise<void> {
     root?.unmount()
   })
   root = undefined
+  // Give the window back its own size: a suite run after this one in the
+  // same bundle reads it, and a plan sheet sized for a sideways 1280 laid
+  // out its inning columns for that window instead of a phone's.
+  const html = document.documentElement
+  if (
+    Object.hasOwn(html, 'clientWidth') ||
+    Object.hasOwn(html, 'clientHeight')
+  ) {
+    Reflect.deleteProperty(html, 'clientWidth')
+    Reflect.deleteProperty(html, 'clientHeight')
+    await act(async () => {
+      window.dispatchEvent(new window.Event('resize'))
+    })
+  }
 }
 
 /** The window, as React Native reads it in a browser. */
