@@ -41,7 +41,8 @@ import { stepHalfEnds } from './replayGaps'
  *     replay; the home hero, the live game, keeping its inline label and no
  *     button; the outsider's and the signed-out tap opening the membership
  *     sheet ("…to watch this game live or its replay."), never the replay;
- *     the replay's address refused when signed out. `before` (the base
+ *     the replay's address refused by link (the outsider sees the game, the
+ *     signed out the sign-in). `before` (the base
  *     build): Live / Replay in "Game sections" for the league account and
  *     neither for the outsider or the signed out. Writes game-notStarted-,
  *     game-live-, game-final-, membership-outsider- and
@@ -597,23 +598,25 @@ async function heroButtonScenario(m: Device): Promise<void> {
   if (after) {
     await m.openBrowser({ url: `${required('REPLAY_WEB_URL')}/` })
     await m.assertVisible({ text: 'Live now', timeout: 20000 })
-    const home = await evalJson<{
-      game: string | null
-      liveNow: boolean
-      button: boolean
-    }>(
+    const home = await evalJson<{ liveNow: boolean; button: boolean }>(
       m,
       `
-        const card = document.querySelector('[aria-label="Live now"]')?.closest('a, [role="link"], [role="button"]') ?? null;
-        const link = card?.getAttribute('href') ?? '';
         return {
-          game: link,
           liveNow: document.querySelector('[aria-label="Live now"]') != null,
           button: document.querySelector('[data-testid="game-hero-replay"]') != null
         };
       `
     )
-    note(`home: ${JSON.stringify(home)}`)
+    // The game the home hero stands for: the newest played game, as the
+    // home screen asks for it (recentGame).
+    const recent = (await (
+      await fetch(`${required('REPLAY_API')}/events?played=1&limit=1`, {
+        headers: { authorization: `Bearer ${await sessionFor(LEAGUE)}` }
+      })
+    ).json()) as unknown
+    const recentId = /"id":"(gam_[^"]+)"/.exec(JSON.stringify(recent))?.[1]
+    note(`home: hero game ${recentId}, ${JSON.stringify(home)}`)
+    assert.equal(recentId, LIVE, 'home: the hero is not the live game')
     assert.ok(home.liveNow, 'home: no inline live label')
     assert.ok(!home.button, 'home: a Live / Replay button')
     await shot(m, `home-hero-${phase}`)
@@ -633,6 +636,14 @@ async function heroButtonScenario(m: Device): Promise<void> {
     assert.equal(await pathname(m), `/games/${FINAL}`)
     note('outsider: the replay sheet, offering Request membership')
     await shot(m, `membership-outsider-${phase}`)
+    // The replay's address by link: refused for a non-member, the game shows.
+    await m.openBrowser({
+      url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+    })
+    await m.assertVisible({ text: 'Box score', timeout: 20000 })
+    await m.assertNotVisible({ id: 'game-replay' })
+    assert.equal(await pathname(m), `/games/${FINAL}`)
+    note(`outsider: /games/${FINAL}/replay refused, ${await pathname(m)}`)
   } else {
     await before('outsider final', null)
     await shot(m, `membership-outsider-${phase}`)
@@ -652,14 +663,15 @@ async function heroButtonScenario(m: Device): Promise<void> {
     note('signed out: the replay sheet, offering Log in / Sign up')
     await shot(m, `membership-signedOut-${phase}`)
 
-    // 7. The replay's address, signed out: refused, the game shows.
+    // 7. The replay's address, signed out: refused, it asks for a sign-in.
     await m.openBrowser({
       url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
     })
-    await m.assertVisible({ text: 'Box score', timeout: 20000 })
+    await m.assertVisible({ text: 'Sign in to TeamStation', timeout: 20000 })
     await m.assertNotVisible({ id: 'game-replay' })
-    assert.equal(await pathname(m), `/games/${FINAL}`)
-    note(`signed out: /games/${FINAL}/replay refused, ${await pathname(m)}`)
+    note(
+      `signed out: /games/${FINAL}/replay refused, sign-in shown at ${await pathname(m)}`
+    )
   } else {
     await before('signed out live', null)
     await shot(m, `membership-signedOut-${phase}`)
