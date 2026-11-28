@@ -166,4 +166,45 @@ describe('GlassView native subtle blur', () => {
       expect(drawn).equals(JSON.stringify(Glass({ androidBlur })))
     }
   })
+  it('draws no material and no fill when bare, keeping the children in their place', () => {
+    const child = React.createElement('label', null, 'Back')
+    const parts = (element: React.ReactElement): unknown[] =>
+      (element.props as { children: unknown[] }).children
+    const fills = (element: React.ReactElement): string =>
+      JSON.stringify((element.props as { style: unknown }).style)
+    // iOS: the material's slot is emptied, never removed.
+    const ios = nativeGlass('ios')
+    const glass = ios({ children: child })
+    const bare = ios({ children: child, bare: true })
+    expect(bare.type).equals(glass.type)
+    expect(parts(glass)).length(2)
+    expect((parts(glass)[0] as React.ReactElement).type).equals('TSGlassView')
+    expect(parts(bare)).deep.equals([null, child])
+    expect(parts(bare)[1]).equals(parts(glass)[1])
+    // Android's blur: the same.
+    const android = nativeGlass('android')
+    const blurred = android({ children: child, androidBlur: true })
+    const bareBlur = android({ children: child, androidBlur: true, bare: true })
+    expect((parts(blurred)[0] as React.ReactElement).type).equals('TSBlurView')
+    expect(parts(bareBlur)).deep.equals([null, child])
+    // Android's fallback: the same view and child, with no fill.
+    const filled = android({ children: child, style: { height: 48 } })
+    const bareFill = android({
+      children: child,
+      style: { height: 48 },
+      bare: true
+    })
+    expect(bareFill.type).equals(filled.type)
+    expect((bareFill.props as { children: unknown }).children).equals(child)
+    expect(fills(filled)).includes('backgroundColor')
+    expect(fills(bareFill)).not.includes('backgroundColor')
+    expect(fills(bareFill)).not.includes('elevation')
+    // The browser: no material.
+    const web = nativeGlass('web', true)
+    const webBare = web({ children: child, bare: true })
+    expect((webBare.props as { children: unknown }).children).equals(child)
+    expect(fills(webBare)).not.includes('fallback')
+    expect(fills(webBare)).not.includes('blur')
+    expect(fills(web({ children: child }))).includes('fallback')
+  })
 })

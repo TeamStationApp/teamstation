@@ -4280,6 +4280,10 @@ function Shell(props: AppProps): React.ReactElement {
       // are.
       showMark={chromeFrame == null}
       sidebar={sidebarWidth > 0}
+      // The shell's header hands its glass to a pinned band's pane, keeping
+      // it over the sidebar, left of the scene.
+      glassHandover
+      sceneLeft={sidebarWidth}
       handoff={
         visit != null &&
         top?.name === 'player' &&

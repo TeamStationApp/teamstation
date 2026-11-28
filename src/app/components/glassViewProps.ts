@@ -53,9 +53,11 @@ export interface GlassViewProps extends ViewProps {
    */
   fallbackFill?: boolean
   /**
-   * Draw no material at all, for now: another pane is drawing this one's
-   * glass. The header goes bare while a pinned pill band carries the glass
-   * from the top of the screen down past its pills, so the two read as one.
+   * Draw no material and no fill, for now: another pane is drawing this
+   * one's glass. The shell's header goes bare while a pinned pill band
+   * carries the glass from the top of the screen down past its pills, so the
+   * two read as one. Toggling it never remounts the children: only the
+   * material's own view comes and goes.
    */
   bare?: boolean
   /**

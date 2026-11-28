@@ -33,6 +33,7 @@ import {
   scrolled,
   spacerFor
 } from './pinnedHead'
+import { useSceneTop } from './sceneTop'
 
 export type { PinnedHead, PinnedHeadOptions }
 
@@ -291,9 +292,18 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       { translateY: cardOffset({ y: y.value, collapse: collapse.value }) }
     ]
   }))
-  // Whether a glass band's glass has started to grow down from the header
-  // (`pinnedGlass`): reported to React only when it changes.
+  // Whether the band's pane has started to grow down from the header
+  // (`pinnedGlass`), reported only while this scene is the stack's top: a
+  // band pinned beneath a pushed screen leaves that screen's header alone.
   const glassKey = useRef({}).current
+  /** What the reaction last said: it says nothing again after a Back. */
+  const grown = useRef(false)
+  const top = useSceneTop()
+  const topRef = useRef(top)
+  topRef.current = top
+  useLayoutEffect(() => {
+    markPinned(glassKey, grown.current && top)
+  }, [glassKey, top])
   useEffect(
     () => () => {
       markPinned(glassKey, false)
@@ -304,7 +314,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   // a copy, which is not the key the band looks itself up by.
   const reportPinned = useCallback(
     (on: boolean): void => {
-      markPinned(glassKey, on)
+      grown.current = on
+      markPinned(glassKey, on && topRef.current)
     },
     [glassKey]
   )
@@ -325,8 +336,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       if (now !== before) runOnJS(reportPinned)(now)
     }
   )
-  // The pane of glass a glass band grows down from the header, frame by
-  // frame with the page (`glassGrowth`).
+  // The pane of the header's glass the band grows down over itself, frame
+  // by frame with the page (`glassGrowth`).
   const glassStyle = useAnimatedStyle(() => {
     const band = bandHeight.value
     const { reach, progress } = glassGrowth(

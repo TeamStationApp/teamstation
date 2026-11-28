@@ -20,6 +20,7 @@ import {
   scrolled,
   spacerFor
 } from './pinnedHead'
+import { useSceneTop } from './sceneTop'
 
 export type { PinnedHead, PinnedHeadOptions }
 
@@ -61,10 +62,21 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const content = useRef<Node>(null)
   const row = useRef<Node>(null)
   const spacer = useRef<Node>(null)
-  /** The glass pane a glass pill band grows down from the header. */
+  /** The pane of the header's glass the pill band grows down over itself. */
   const glass = useRef<Node>(null)
   /** This screen's key in `pinnedGlass`. */
   const glassKey = useRef({}).current
+  /** Whether the pane has started to grow, as the last paint left it. */
+  const grown = useRef(false)
+  // Only the stack's top hands the header anything: a band pinned beneath a
+  // pushed screen leaves that screen's header as it is, and has its own
+  // back the moment Back makes it the top again, at the scroll it kept.
+  const top = useSceneTop()
+  const topRef = useRef(top)
+  topRef.current = top
+  useLayoutEffect(() => {
+    markPinned(glassKey, grown.current && top)
+  }, [glassKey, top])
   useEffect(
     () => () => {
       markPinned(glassKey, false)
@@ -119,7 +131,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         glass.current.style.top = `${-(header + reach)}px`
         glass.current.style.height = `${header + progress * band}px`
       }
-      markPinned(glassKey, progress > 0)
+      grown.current = progress > 0
+      markPinned(glassKey, grown.current && topRef.current)
     }
     if (card.current != null) {
       const held = !inStep(head)

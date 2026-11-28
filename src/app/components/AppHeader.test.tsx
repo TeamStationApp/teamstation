@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React from 'react'
+import React, { act } from 'react'
 
 import {
   byLabel,
@@ -11,6 +11,7 @@ import {
   unmount
 } from '../../test/tessTestKit'
 import { AppHeader, type AppHeaderProps } from './AppHeader'
+import { markPinned } from './pinnedGlass'
 
 const account = {
   userId: 'usr_ruth',
@@ -192,6 +193,89 @@ describe('AppHeader', () => {
       await click(byLabel('Close menu'))
       await settle()
       expect(reported).deep.equals([true, false])
+    })
+  })
+
+  describe('the glass handed to a pinned band', () => {
+    const band = {}
+    const carry = async (on: boolean): Promise<void> => {
+      await act(async () => {
+        markPinned(band, on)
+      })
+    }
+    const glass = (): HTMLElement => byTestId('app-header')!
+    const style = (): CSSStyleDeclaration => getComputedStyle(glass())
+    const strip = (): HTMLElement | null => byTestId('app-header-sidebar-glass')
+    afterEach(async () => {
+      await carry(false)
+    })
+
+    it('goes bare with no lower line while a band carries the glass, and comes back', async () => {
+      await header({ glassHandover: true })
+      const glassColor = style().backgroundColor
+      expect(glassColor).not.equals('')
+      expect(style().borderBottomWidth).equals('1px')
+      await carry(true)
+      expect(glass().style.backgroundColor).equals('')
+      expect(style().borderBottomWidth).equals('0px')
+      // The line's row is kept, so nothing inside the header moves.
+      expect(style().paddingBottom).equals('1px')
+      await carry(false)
+      expect(style().backgroundColor).equals(glassColor)
+      expect(style().borderBottomWidth).equals('1px')
+    })
+
+    it('keeps its glass and line where it is not the shell’s header', async () => {
+      await header({})
+      const glassColor = style().backgroundColor
+      await carry(true)
+      expect(style().backgroundColor).equals(glassColor)
+      expect(style().borderBottomWidth).equals('1px')
+      expect(strip()).equals(null)
+    })
+
+    it('keeps its glass and line over the sidebar, left of the scene', async () => {
+      await header({ glassHandover: true, sceneLeft: 240, sidebar: true })
+      expect(strip()).equals(null)
+      await carry(true)
+      const sidebar = strip()!
+      expect(getComputedStyle(sidebar).position).equals('absolute')
+      expect(getComputedStyle(sidebar).left).equals('0px')
+      expect(getComputedStyle(sidebar).width).equals('240px')
+      expect(sidebar.style.backgroundColor).not.equals('')
+      // Drawn first, behind the columns.
+      expect(glass().firstElementChild).equals(sidebar)
+      const line = sidebar.firstElementChild as HTMLElement
+      expect(getComputedStyle(line).height).equals('1px')
+      expect(getComputedStyle(line).bottom).equals('0px')
+      // And bare from there on.
+      expect(glass().style.backgroundColor).equals('')
+      await carry(false)
+      expect(strip()).equals(null)
+    })
+
+    it('keeps its content mounted as the glass goes and comes back', async () => {
+      await header({
+        glassHandover: true,
+        showMark: true,
+        account,
+        tess,
+        onBack: () => undefined
+      })
+      await openMenu(MARK)
+      const back = byLabel('Back')
+      const title = [...glass().querySelectorAll('div')].find(
+        node => node.textContent === 'Your Home'
+      )
+      expect(title).not.equals(undefined)
+      await carry(true)
+      expect(byTestId('header-menu-panel')).not.equals(null)
+      expect(byLabel('Back')).equals(back)
+      expect(glass().contains(title!)).equals(true)
+      await carry(false)
+      expect(byTestId('header-menu-panel')).not.equals(null)
+      expect(byLabel('Back')).equals(back)
+      expect(glass().contains(title!)).equals(true)
     })
   })
 })

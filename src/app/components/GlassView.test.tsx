@@ -77,4 +77,44 @@ describe('GlassView', function () {
       painted(glassStyle(tsBallpark, true).backgroundColor)
     )
   })
+
+  it('draws no material when bare, and keeps its children through every toggle', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    let mounts = 0
+    const handle = React.createRef<HTMLSpanElement>()
+    function Child(): React.ReactElement {
+      React.useEffect(() => {
+        mounts++
+      }, [])
+      return <span ref={handle}>Back</span>
+    }
+    const draw = async (bare: boolean): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <GlassView testID="header" bare={bare}>
+              <Child />
+            </GlassView>
+          </ThemeProvider>
+        )
+      })
+    }
+    await draw(false)
+    const header = (): HTMLElement =>
+      host.querySelector<HTMLElement>('[data-testid="header"]')!
+    const first = handle.current
+    expect(header().style.backgroundColor).equals(
+      painted(glassStyle(tsBallpark).backgroundColor)
+    )
+    await draw(true)
+    expect(header().style.backgroundColor).equals('')
+    expect(header().style.cssText).not.includes('backdrop')
+    await draw(false)
+    await draw(true)
+    expect(mounts).equals(1)
+    expect(handle.current).equals(first)
+    expect(header().contains(first)).equals(true)
+  })
 })

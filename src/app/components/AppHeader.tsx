@@ -11,7 +11,7 @@ import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
 import { HeaderMenu, type HeaderMenuItem } from './HeaderMenu'
 import { PersonEmblem } from './PersonEmblem'
-import { usePinned } from './pinnedGlass'
+import { useGlassCarried } from './pinnedGlass'
 import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -63,6 +63,18 @@ export interface AppHeaderProps {
   menuKey?: string
   /** Whether a menu is open, for an owner whose Back has to wait for it. */
   onMenuOpenChange?: (open: boolean) => void
+  /**
+   * The shell's header, which hands its glass and its lower line to a pinned
+   * pill band's pane while one carries them (`pinnedGlass`). Off for every
+   * other header — an overlay's keeps its own over whatever is pinned.
+   */
+  glassHandover?: boolean
+  /**
+   * Where the scene starts, right of the wide sidebar. A band's pane is only
+   * as wide as the scene, so while the header is bare it keeps its glass and
+   * its line over the sidebar, left of this.
+   */
+  sceneLeft?: number
 }
 
 /**
@@ -92,8 +104,10 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  // A glass pill band pinned under the header carries its lower line.
-  const bandPinned = usePinned()
+  // A pinned pill band's pane carries the glass and the lower line: the
+  // header draws neither, except over the sidebar beside the scene.
+  const bare = useGlassCarried(props.glassHandover === true)
+  const sceneLeft = props.sceneLeft ?? 0
   const breakpoint = useBreakpoint()
   const wide = breakpoint !== 'phone'
   // The glass runs under the status bar and the island, which is what makes it
@@ -199,11 +213,12 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   return (
     <>
       <GlassView
-        bare={bandPinned}
+        bare={bare}
+        testID="app-header"
         style={[
           styles.header,
           wide && styles.headerWide,
-          bandPinned && styles.headerJoined,
+          bare && styles.headerBare,
           {
             height:
               Math.max(theme.rem(3), props.contentHeight ?? 0) + insets.top,
@@ -216,6 +231,20 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           onHeight?.(event.nativeEvent.layout.height)
         }}
       >
+        {/*
+          Always this slot, so the columns after it keep their place: the
+          glass and the line over the sidebar while the scene's pane carries
+          them, behind everything else in the header.
+        */}
+        {bare && sceneLeft > 0 ? (
+          <GlassView
+            testID="app-header-sidebar-glass"
+            pointerEvents="none"
+            style={[styles.sidebarGlass, { width: sceneLeft }]}
+          >
+            <View style={styles.sidebarLine} />
+          </GlassView>
+        ) : null}
         {/*
         Three columns of equal weight, so the middle is centred in the header
         rather than in the space left over. With `flex: 1` on the title alone
@@ -405,8 +434,26 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.glassBorderColor
   },
-  headerJoined: {
-    borderBottomColor: 'transparent'
+  // Bare: the band's pane draws the line. Its row stays the header's, as
+  // padding, so nothing inside moves, and the sidebar's line can be drawn in
+  // it (a child cannot draw over its parent's border where it clips).
+  headerBare: {
+    borderBottomWidth: 0,
+    paddingBottom: 1
+  },
+  sidebarGlass: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0
+  },
+  sidebarLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 1,
+    backgroundColor: theme.glassBorderColor
   },
   headerWide: {
     paddingHorizontal: theme.rem(edgeMarginRem(theme, 'tablet'))

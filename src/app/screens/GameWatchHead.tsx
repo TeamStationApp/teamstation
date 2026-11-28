@@ -53,12 +53,7 @@ export function GameWatchHead(props: {
       <CardBand part={pinned.cardBand} flat={short}>
         <View style={short ? undefined : padded}>{short ? null : head}</View>
       </CardBand>
-      <PillBand
-        part={pinned.pillBand}
-        flat={short}
-        glass
-        testID="event-pill-band"
-      >
+      <PillBand part={pinned.pillBand} flat={short} testID="event-pill-band">
         <View style={padded}>
           {/* The pill strip runs out through that margin to the edge. */}
           <ContentInsetContext.Provider value={side}>

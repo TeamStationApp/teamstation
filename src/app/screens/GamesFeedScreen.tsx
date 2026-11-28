@@ -288,7 +288,7 @@ export function GamesFeedScreen(
       wide={mode === 'videos'}
     >
       {mode === 'schedule' && (
-        <PillBand part={pinned.pillBand} glass>
+        <PillBand part={pinned.pillBand}>
           <PillTabs
             tabs={WHEN_TABS}
             selected={when}

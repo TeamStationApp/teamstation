@@ -32,7 +32,8 @@ export type { GlassViewProps }
  *
  * The glass is drawn **behind** the children rather than around them, so it
  * never takes part in React's child ordering and nothing can end up beneath
- * the material by accident.
+ * the material by accident. `bare` empties the material's slot and drops the
+ * fill, and nothing else: the children keep their place and their instances.
  */
 const NativeGlass =
   Platform.OS === 'ios'
@@ -78,27 +79,21 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
   const appTheme = useTheme()
   const theme = dark ? tsDark : appTheme
 
-  if (bare) {
-    return (
-      <View {...rest} style={style}>
-        {children}
-      </View>
-    )
-  }
-
   // Android, asked to blur: the backdrop, blurred, under the web's tint.
   if (NativeBlur != null && androidBlur && !opaque) {
     const { radius: blur, saturation } = backdropOf(theme.glassBlur)
     const tint = processColor(theme.glassBackgroundColor)
     return (
       <View {...rest} style={style}>
-        <NativeBlur
-          style={StyleSheet.absoluteFill}
-          blurRadius={subtleBlur ? 8 : blur}
-          blurTint={subtleBlur ? 0 : typeof tint === 'number' ? tint : 0}
-          blurSaturation={subtleBlur ? 1 : saturation}
-          blurCornerRadius={radius}
-        />
+        {bare ? null : (
+          <NativeBlur
+            style={StyleSheet.absoluteFill}
+            blurRadius={subtleBlur ? 8 : blur}
+            blurTint={subtleBlur ? 0 : typeof tint === 'number' ? tint : 0}
+            blurSaturation={subtleBlur ? 1 : saturation}
+            blurCornerRadius={radius}
+          />
+        )}
         {children}
       </View>
     )
@@ -111,7 +106,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     // `opaque` is somebody asking for a filled surface, so it always gets
     // one; `fallbackFill` is about a surface that is already on glass and
     // only wants the real thing.
-    const plain = !fallbackFill && !opaque
+    const plain = bare || (!fallbackFill && !opaque)
     return (
       <View
         {...rest}
@@ -130,17 +125,19 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
 
   return (
     <View {...rest} style={style}>
-      <NativeGlass
-        style={StyleSheet.absoluteFill}
-        glassInteractive={interactive}
-        glassClear={clear}
-        glassRadius={radius}
-        glassBackdropBlur={backdropBlur}
-        glassSubtleBlur={subtleBlur}
-        glassTint={tint}
-        // The app's theme, not the phone's Dark Mode: see `TSGlassView.mm`.
-        glassDark={theme.isDark}
-      />
+      {bare ? null : (
+        <NativeGlass
+          style={StyleSheet.absoluteFill}
+          glassInteractive={interactive}
+          glassClear={clear}
+          glassRadius={radius}
+          glassBackdropBlur={backdropBlur}
+          glassSubtleBlur={subtleBlur}
+          glassTint={tint}
+          // The app's theme, not the phone's Dark Mode: see `TSGlassView.mm`.
+          glassDark={theme.isDark}
+        />
+      )}
       {children}
     </View>
   )

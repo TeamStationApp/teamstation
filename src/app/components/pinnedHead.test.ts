@@ -5,6 +5,7 @@ import {
   anchored,
   AT_REST,
   cardOffset,
+  glassGrowth,
   inStep,
   pillsOffset,
   rowAnchored,
@@ -163,6 +164,68 @@ describe('the pinned head', function () {
     it('is exactly the shortfall otherwise', function () {
       expect(spacerFor(760, 1200, 844)).equals(760 + 844 - 1200)
       expect(spacerFor(PIN_AT, 300, 844)).equals(PIN_AT + 844 - 300)
+    })
+  })
+
+  describe('the glass the pills carry', function () {
+    const BAND = 60
+    const at = (y: number): { reach: number; progress: number } =>
+      glassGrowth({ y, collapse: y }, PIN_AT, BAND)
+
+    it('is the header’s alone at rest', function () {
+      expect(glassGrowth(AT_REST, PIN_AT, BAND)).deep.equals({
+        reach: PIN_AT,
+        progress: 0
+      })
+    })
+
+    it('starts to grow a band-height before the pin', function () {
+      expect(at(PIN_AT - BAND)).deep.equals({ reach: BAND, progress: 0 })
+      expect(at(PIN_AT - BAND + 6).progress).closeTo(0.1, 1e-9)
+    })
+
+    it('follows the scroll 1:1, halfway at half the band', function () {
+      expect(at(PIN_AT - BAND / 2)).deep.equals({
+        reach: BAND / 2,
+        progress: 0.5
+      })
+    })
+
+    it('reaches the band’s lower edge as it pins, and stays there', function () {
+      expect(at(PIN_AT)).deep.equals({ reach: 0, progress: 1 })
+      expect(at(PIN_AT + 400)).deep.equals({ reach: 0, progress: 1 })
+    })
+
+    it('follows the head, not the scroll, where a tab has parted them', function () {
+      // Anchored at a row: the page has scrolled on, the head has not.
+      expect(
+        glassGrowth({ y: 700, collapse: PIN_AT - BAND / 2 }, PIN_AT, BAND)
+      ).deep.equals({ reach: BAND / 2, progress: 0.5 })
+    })
+
+    it('reads the scroll where the head never parts (a sticky section)', function () {
+      const sticky = (y: number): { reach: number; progress: number } =>
+        glassGrowth({ y, collapse: PIN_AT }, PIN_AT, BAND)
+      expect(sticky(0)).deep.equals({ reach: PIN_AT, progress: 0 })
+      expect(sticky(40)).deep.equals({ reach: PIN_AT - 40, progress: 0 })
+      expect(sticky(PIN_AT - BAND / 2).progress).equals(0.5)
+      expect(sticky(PIN_AT + 10)).deep.equals({ reach: 0, progress: 1 })
+    })
+
+    it('grows over the travel it has when it starts nearer than its height', function () {
+      const near = (y: number): { reach: number; progress: number } =>
+        glassGrowth({ y, collapse: y }, 20, BAND)
+      expect(near(0)).deep.equals({ reach: 20, progress: 0 })
+      expect(near(10)).deep.equals({ reach: 10, progress: 0.5 })
+      expect(near(20)).deep.equals({ reach: 0, progress: 1 })
+    })
+
+    it('never grows with no travel at all', function () {
+      expect(glassGrowth(AT_REST, 0, BAND)).deep.equals({
+        reach: 0,
+        progress: 0
+      })
+      expect(glassGrowth({ y: 50, collapse: 50 }, 0, BAND).progress).equals(0)
     })
   })
 })
