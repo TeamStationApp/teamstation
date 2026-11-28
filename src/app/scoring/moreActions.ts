@@ -1,16 +1,24 @@
 import { shortName } from '../../common/scoring/actions'
 import { moreEligibility as gameEligibility } from '../../common/scoring/rules'
+import {
+  doublePlayChoices,
+  type DoublePlayKind,
+  startDoublePlay
+} from './doublePlay'
 import { moreEvents } from './scoringContract'
 import { accepted, act, settleRunners } from './scoringFlow'
 import { checkpointsFor, draftAt } from './scoringMachine'
+import { playSettled } from './scoringSelectors'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 /**
  * The "more" menu: the things that happen at the plate or between pitches
  * without a ball in play. The game decides what each one does; the screen
  * adds its own reason to wait, and drafts the runner a wild pitch moved.
+ * Double Play is the screen's own: it starts a ball in play (`doublePlay`).
  */
 export const MORE_GROUPS = [
+  { label: 'Ball in play', actions: ['Double Play'] },
   { label: 'Between pitches', actions: ['Balk'] },
   {
     label: "Didn't see it",
@@ -30,10 +38,12 @@ export const MORE_GROUPS = [
     ]
   }
 ] as const
-export type MoreAction = keyof typeof moreEvents
+export type MoreAction = keyof typeof moreEvents | 'Double Play'
 export interface MoreInput {
   action: MoreAction
   base?: number
+  /** The submenu row a Double Play was chosen from. */
+  doublePlay?: DoublePlayKind
   playerId?: number
   destinations?: Record<number, number>
 }
@@ -41,14 +51,11 @@ export function moreEligibility(
   state: ScoringState,
   action: MoreAction
 ): string | undefined {
-  if (
-    state.phase !== 'ready' ||
-    state.moreDraft != null ||
-    state.runnerDraft != null ||
-    state.activeGesture === true ||
-    state.motions.some(m => !m.complete)
-  )
-    return 'Finish the current play first'
+  if (!playSettled(state)) return 'Finish the current play first'
+  if (action === 'Double Play')
+    return doublePlayChoices(state).length === 0
+      ? 'Requires fewer than two outs and a runner on base'
+      : undefined
   return gameEligibility(state.session, action)
 }
 export function moreReducer(
@@ -56,6 +63,10 @@ export function moreReducer(
   event: Extract<ScoringEvent, { type: 'MORE' }>
 ): ScoringState {
   const { action, base, playerId } = event.input
+  if (action === 'Double Play')
+    return event.input.doublePlay == null
+      ? state
+      : startDoublePlay(state, event.input.doublePlay)
   if (!(action in moreEvents) || moreEligibility(state, action) != null)
     return state
   if (action === 'Wild Pitch' || action === 'Passed Ball')

@@ -18,8 +18,15 @@ export interface DropRow {
   key: string
   label: string
   disabled?: boolean
-  /** The row opens the submenu. */
-  submenu?: boolean
+  /** A second, smaller line under the label. */
+  subtext?: string
+}
+
+/** A row's submenu: its rows, its accessibility label and an optional header. */
+export interface DropSubmenu {
+  rows: DropRow[]
+  label: string
+  header?: React.ReactNode
 }
 
 type ViewRef = React.ComponentRef<typeof View>
@@ -52,7 +59,7 @@ async function measure(view: ViewRef | null | undefined): Promise<DropRect> {
 /**
  * The phone's version of the web's drop menu: the trigger, and above it,
  * anchored to it, the panel of rows and its submenu beside the row that opens
- * it. A tap on the trigger opens it for tapping. A press dragged up opens it
+ * it, one submenu open at a time. A tap on the trigger opens it for tapping. A press dragged up opens it
  * under the finger: the gesture is Gesture Handler's, on the trigger, so it
  * keeps the finger while the panel appears, and `useDropMenu` tests each
  * move against where the rows measured themselves on the screen.
@@ -68,11 +75,8 @@ export function DropMenuView({
   side,
   width,
   rows,
-  childKey,
-  childRows,
-  childHeader,
+  submenus,
   panelLabel,
-  childLabel,
   dismissLabel,
   triggerStyle,
   children
@@ -84,11 +88,9 @@ export function DropMenuView({
   /** The panel's width: a share of the window's less `less`, and its most. */
   width: { share: number; less: number; most: number }
   rows: DropRow[]
-  childKey: string
-  childRows: DropRow[]
-  childHeader?: React.ReactNode
+  /** The submenu each row that opens one opens, by the row's key. */
+  submenus: Record<string, DropSubmenu>
   panelLabel: string
-  childLabel: string
   dismissLabel: string
   triggerStyle: ViewStyle
   children: React.ReactNode
@@ -152,13 +154,19 @@ export function DropMenuView({
           insets.right,
           anchor == null ? GAP : window.width - anchor.x - anchor.width
         )
+  const open =
+    menu.child != null && menu.child in submenus
+      ? submenus[menu.child]
+      : undefined
   const childHeight =
-    childRows.length * (SCORING_MENU.rowHeight + 1) +
-    (childHeader == null ? 0 : HEADER_HEIGHT)
+    open == null
+      ? 0
+      : open.rows.length * (SCORING_MENU.rowHeight + 1) +
+        (open.header == null ? 0 : HEADER_HEIGHT)
   const childTop = Math.max(
     top,
     Math.min(
-      menu.rowRect(childKey)?.y ?? top,
+      (menu.child == null ? undefined : menu.rowRect(menu.child)?.y) ?? top,
       window.height - bottom - childHeight
     )
   )
@@ -176,9 +184,10 @@ export function DropMenuView({
     >
       <ScoringMenuButton
         label={item.label}
+        subtext={item.subtext}
         disabled={item.disabled}
-        submenuRight={item.submenu === true && side === 'left'}
-        submenuLeft={item.submenu === true && side === 'right'}
+        submenuRight={item.key in submenus && side === 'left'}
+        submenuLeft={item.key in submenus && side === 'right'}
         highlighted={menu.hover === item.key}
         onPress={() => {
           menu.select(item.key)
@@ -246,9 +255,10 @@ export function DropMenuView({
               ).map(row)}
             </ScrollView>
           </MeasuredPanel>
-          {menu.child && (
+          {open != null && (
             <MeasuredPanel
-              label={childLabel}
+              key={menu.child}
+              label={open.label}
               onMeasured={rect => {
                 menu.setPanel('child', rect)
               }}
@@ -273,8 +283,8 @@ export function DropMenuView({
                 { top: childTop, width: panelWidth }
               ]}
             >
-              {childHeader}
-              {childRows.map(row)}
+              {open.header}
+              {open.rows.map(row)}
             </MeasuredPanel>
           )}
         </Modal>

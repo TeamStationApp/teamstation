@@ -34,7 +34,7 @@ export function OutcomePicker({
     outcomeAvailable(value, hasRunners)
   const menu = useDropMenu({
     disabled,
-    childKey: OUT,
+    childKeys: [OUT],
     escape: false,
     onActive,
     canChoose: key =>
@@ -52,14 +52,16 @@ export function OutcomePicker({
       width={{ share: 0.46, less: 0, most: 230 }}
       rows={PRIMARY_OUTCOMES.filter(available).map(value => ({
         key: value,
-        label: value,
-        submenu: value === OUT
+        label: value
       }))}
-      childKey={OUT}
-      childRows={OUT_TYPES.map(value => ({ key: value, label: value }))}
-      childHeader={<OutTypeHeader />}
+      submenus={{
+        [OUT]: {
+          rows: OUT_TYPES.map(value => ({ key: value, label: value })),
+          label: 'Batter Out options',
+          header: <OutTypeHeader />
+        }
+      }}
       panelLabel={`${label} outcomes`}
-      childLabel="Batter Out options"
       dismissLabel="Dismiss outcomes"
       triggerStyle={{
         ...controlFrame,

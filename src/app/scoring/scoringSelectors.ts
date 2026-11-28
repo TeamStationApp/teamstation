@@ -82,6 +82,20 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
   }
 }
 
+/**
+ * Whether the screen is between plays, as More asks before any of its
+ * actions: nothing being scored, drafted, dragged or still moving.
+ */
+export function playSettled(state: ScoringSnapshot): boolean {
+  return (
+    state.phase === 'ready' &&
+    state.moreDraft == null &&
+    state.runnerDraft == null &&
+    state.activeGesture !== true &&
+    !state.motions.some(motion => !motion.complete)
+  )
+}
+
 /** Bottom scoring actions remain locked until every current-play interaction settles. */
 export function bottomActionsAllowed(state: ScoringSnapshot): boolean {
   return (
