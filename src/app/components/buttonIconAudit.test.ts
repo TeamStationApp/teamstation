@@ -22,6 +22,8 @@ const decorative: Record<string, string> = {
   'tess/TessThinking.tsx:Icon:"close"': 'Failure status',
   'components/PlacePhoto.tsx:Icon:"stadium"': 'Missing photo placeholder',
   'components/Emblem.tsx:Icon:{icon}': 'Identity emblem',
+  'plays/PlaysTab.tsx:Icon:"chevron_right"':
+    'Whether the pressable at-bat line around it is open',
   'umpires/UmpireLeaderboardView.tsx:UmpireMaskDrawing': 'Leaderboard identity',
   'scoring/LineupShareSheet.tsx:LineupQrGlyph': 'QR preview'
 }

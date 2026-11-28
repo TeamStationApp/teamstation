@@ -746,6 +746,32 @@ describe('addresses', function () {
     })
   })
 
+  it('carries the Plays tab in the address, and leaves the others as they were', function () {
+    expect(routePath({ name: 'game', gameId: 'gam_1', tab: 'plays' })).equals(
+      '/games/gam_1?tab=plays'
+    )
+    expect(parseRoute('/games/gam_1', '?tab=plays')).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'plays',
+      videoId: undefined,
+      at: undefined
+    })
+    for (const tab of ['info', 'boxScore', 'watch'] as const) {
+      expect(parseRoute('/games/gam_1', `?tab=${tab}`)).includes({ tab })
+      expect(routePath({ name: 'game', gameId: 'gam_1', tab })).equals(
+        `/games/gam_1?tab=${tab}`
+      )
+    }
+    expect(parseRoute('/games/gam_1', '?tab=nonsense')).includes({
+      tab: undefined
+    })
+    expect(parseRoute('/games/gam_1', '?tab=plays&video=vid_1')).includes({
+      tab: 'plays',
+      videoId: 'vid_1'
+    })
+  })
+
   it('falls back to the home screen rather than a blank page', function () {
     expect(parseRoute('/nonsense')).deep.equals({ name: 'home' })
     expect(parseRoute('/teams')).deep.equals({ name: 'home' })

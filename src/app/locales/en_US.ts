@@ -235,6 +235,29 @@ export const enUs = {
   plan_delete: 'Delete',
   game_replay: 'Replay',
   game_live: 'Live',
+  /** A game's pill for its stream of plays, after Videos. */
+  game_plays: 'Plays',
+  /** A non-member's Plays tab, in place of the stream. */
+  plays_members_only:
+    "You need to be a member of one of these teams to see this game's Plays.",
+  /** The round button that scrolls a live game's Plays back to its end. */
+  plays_latest: 'Latest play',
+  /** The Plays tab when its read failed, above Try again. */
+  plays_unavailable: 'Plays could not be loaded.',
+  plays_retry: 'Try again',
+  /** A half-inning's summary, one figure each, joined by the joiner. */
+  plays_half_runs: 'Runs: %s',
+  plays_half_hits: 'Hits: %s',
+  plays_half_errors: 'Errors: %s',
+  plays_half_left_on_base: 'Left on base: %s',
+  plays_half_joiner: ', ',
+  /** A pitch row's details: speed, and the in-play pitch's exit velocity. */
+  plays_pitch_speed: '%s mph',
+  plays_exit_velocity: 'Exit velocity %s mph',
+  /** Marks a scoring play's line, for a screen reader. */
+  plays_scoring: 'Scoring play',
+  /** Under an at-bat line: who pitched it. */
+  plays_pitcher: 'Pitcher: %s',
   /** The outs after a play on the Plays tab. */
   plays_outs_one: '%s out',
   plays_outs_other: '%s outs',
