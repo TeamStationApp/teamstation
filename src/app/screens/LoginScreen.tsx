@@ -174,7 +174,11 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
           onChangeText={setEmail}
           placeholder="parent@example.com"
           keyboardType="email-address"
-          autoComplete="email"
+          // The address is the account's sign-in name, so password managers
+          // (iCloud Keychain, Autofill with Google, a browser's) must see it
+          // as the username: tagged `email`, they neither offer a saved
+          // TeamStation password here nor save one against it.
+          autoComplete="username"
           // Only where focus is free. In a browser it puts the caret in the
           // field and costs nothing; on a phone it throws up a keyboard that
           // covers the lower half of the card — including `Use a password

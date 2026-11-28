@@ -19,6 +19,7 @@ import { webSettings } from './web-build-settings.mjs'
 const suites = [
   'src/app/scoreboard/scoreGameEntry.test.tsx',
   'src/app/screens/AccountScreen.test.tsx',
+  'src/app/screens/LoginScreen.test.tsx',
   'src/app/components/settingsPieces.test.tsx',
   'src/app/platform/pickAccountPhoto.test.tsx',
   'src/app/walkup/useSongPlayer.test.tsx',
@@ -150,6 +151,7 @@ run('node_modules/.bin/c8', [
     'src/server/jsonBody.ts',
     'src/server/openapi.ts',
     'src/app/App.tsx',
+    'src/app/screens/LoginScreen.tsx',
     'src/app/components/AppHeader.tsx'
   ].flatMap(file => ['--include', file])
 ])
@@ -170,6 +172,8 @@ run('node', [
   ...(base == null || base === '' ? [] : ['--base', base]),
   '--coverage',
   resolve(reportDir, 'coverage-final.json'),
+  '--report',
+  resolve(reportDir, 'changed-lines.json'),
   '--ext',
   '.ts',
   '--ext',
@@ -190,5 +194,7 @@ run('node', [
   '--allow-empty',
   // This command gates its account/password modules. Other feature modules
   // have their own measured coverage gate rather than an absent account report.
-  ...required
+  ...required,
+  // Gated on its changed lines only, not the whole-file bar above.
+  'src/app/screens/LoginScreen.tsx'
 ])

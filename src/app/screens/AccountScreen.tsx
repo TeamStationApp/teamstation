@@ -582,6 +582,17 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                     />
                   ) : (
                     <>
+                      {/* Password managers store a password against the
+                          username beside it. Without one, iOS and Google
+                          offer to save or update a password for no account. */}
+                      <TextField
+                        label="Account email"
+                        value={user.email ?? ''}
+                        onChangeText={() => {}}
+                        keyboardType="email-address"
+                        autoComplete="username"
+                        locked
+                      />
                       {reset != null ? (
                         <>
                           <Text style={styles.email}>
