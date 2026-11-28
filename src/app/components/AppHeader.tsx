@@ -11,6 +11,7 @@ import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
 import { HeaderMenu, type HeaderMenuItem } from './HeaderMenu'
 import { PersonEmblem } from './PersonEmblem'
+import { usePinned } from './pinnedGlass'
 import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -91,6 +92,8 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  // A glass pill band pinned under the header carries its lower line.
+  const bandPinned = usePinned()
   const breakpoint = useBreakpoint()
   const wide = breakpoint !== 'phone'
   // The glass runs under the status bar and the island, which is what makes it
@@ -199,6 +202,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
         style={[
           styles.header,
           wide && styles.headerWide,
+          bandPinned && styles.headerJoined,
           {
             height:
               Math.max(theme.rem(3), props.contentHeight ?? 0) + insets.top,
@@ -399,6 +403,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     paddingHorizontal: theme.rem(edgeMarginRem(theme, 'phone')),
     borderBottomWidth: 1,
     borderBottomColor: theme.glassBorderColor
+  },
+  headerJoined: {
+    borderBottomColor: 'transparent'
   },
   headerWide: {
     paddingHorizontal: theme.rem(edgeMarginRem(theme, 'tablet'))

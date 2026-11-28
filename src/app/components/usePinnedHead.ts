@@ -7,6 +7,7 @@ import {
   useState
 } from 'react'
 
+import { markPinned } from './pinnedGlass'
 import {
   anchored,
   AT_REST,
@@ -59,6 +60,14 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const content = useRef<Node>(null)
   const row = useRef<Node>(null)
   const spacer = useRef<Node>(null)
+  /** This screen's key in `pinnedGlass`. */
+  const glassKey = useRef({}).current
+  useEffect(
+    () => () => {
+      markPinned(glassKey, false)
+    },
+    [glassKey]
+  )
   const [, setGeneration] = useState(0)
 
   /** The anchor's reach into the tab: what the room after it is sized for. */
@@ -101,6 +110,10 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
           ? header
           : header + pinAt.current - Math.min(head.collapse, pinAt.current)
       }px`
+      markPinned(
+        glassKey,
+        pinAt.current > 0 && Math.min(head.y, head.collapse) >= pinAt.current
+      )
     }
     if (card.current != null) {
       const held = !inStep(head)
@@ -350,7 +363,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         ref: (node: unknown) => {
           pills.current = node as Node
         },
-        style: NO_STYLE
+        style: NO_STYLE,
+        glassKey
       },
       content: {
         ref: (node: unknown) => {
@@ -379,6 +393,6 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       },
       select
     }),
-    [cardRef, onScroll, select]
+    [cardRef, glassKey, onScroll, select]
   )
 }

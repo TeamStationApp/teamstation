@@ -162,7 +162,8 @@ export interface PinnedHead {
   }
   /** The band holding the card, and the band holding the pills. */
   cardBand: Part & { style: BandStyle }
-  pillBand: Part & { style: BandStyle }
+  /** `glassKey`: the band's key in `pinnedGlass`, where it reports. */
+  pillBand: Part & { style: BandStyle; glassKey?: object }
   /**
    * The selected tab's content, and on the schedule its next game and the
    * section holding it (the phone measures the row from its section).

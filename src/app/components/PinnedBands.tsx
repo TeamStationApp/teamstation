@@ -4,7 +4,9 @@ import Animated from 'react-native-reanimated'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
+import { glassStyle } from './glass'
 import { useHeaderSlot } from './headerSlot'
+import { usePinned } from './pinnedGlass'
 import type { PinnedHead } from './pinnedHead'
 import {
   useActiveLayout,
@@ -63,10 +65,18 @@ export function PillBand(props: {
   testID?: string
   /** Outside a column with its gaps: none of them to take back. */
   flat?: boolean
+  /**
+   * Pinned, the band is glass, continuing the header's: what scrolls under
+   * the pills blurs as it does under the header. Work in progress.
+   */
+  glass?: boolean
   children: React.ReactNode
 }): React.ReactElement {
-  const { part, testID, flat = false, children } = props
-  const styles = getStyles(useTheme())
+  const { part, testID, flat = false, glass = false, children } = props
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const pinned = usePinned(part.glassKey ?? NO_KEY)
+  const glassy = glass && pinned && part.glassKey != null
   return (
     <Band
       testID={testID}
@@ -76,6 +86,7 @@ export function PillBand(props: {
         styles.band,
         styles.pillBand,
         !flat && styles.pillBandSpacing,
+        glassy && glassStyle(theme),
         part.style
       ]}
     >
@@ -84,11 +95,14 @@ export function PillBand(props: {
         iOS's glass blurs less at its very edge, and a row passing under it
         showed sharp there, just above the pinned pills.
       */}
-      <View
-        pointerEvents="none"
-        style={[styles.backdrop, { top: -GLASS_EDGE, height: GLASS_EDGE }]}
-      />
+      {!glassy && (
+        <View
+          pointerEvents="none"
+          style={[styles.backdrop, { top: -GLASS_EDGE, height: GLASS_EDGE }]}
+        />
+      )}
       {children}
+      {glassy && <View pointerEvents="none" style={styles.glassEdge} />}
     </Band>
   )
 }
@@ -156,6 +170,8 @@ export function PinnedSpacer(props: {
   )
 }
 
+const NO_KEY = {}
+
 /** How much of the header's lower edge the pill band paints behind. */
 const GLASS_EDGE = 4
 
@@ -217,6 +233,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
   pillBand: {
     zIndex: 3,
     elevation: 9
+  },
+  // The header's lower line, moved down to the glass's new lower edge.
+  glassEdge: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 1,
+    backgroundColor: theme.glassBorderColor
   },
   pillBandSpacing: {
     // Takes back the column's gap, so the content starts at the band's lower

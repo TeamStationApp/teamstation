@@ -11,6 +11,7 @@ import {
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
+import { GlassTabs } from './GlassTabs'
 
 export interface PillTab<Id extends string = string> {
   id: Id
@@ -60,6 +61,12 @@ export interface PillTabsProps<Id extends string = string> {
    * its pills' width in a row beside something else.
    */
   style?: StyleProp<ViewStyle>
+  /**
+   * `glass`: bare labels and one pill that slides to the selected one
+   * (`GlassTabs`). Work in progress, on the schedule and event screens.
+   */
+  // eslint-disable-next-line react/no-unused-prop-types -- read as props.variant
+  variant?: 'pills' | 'glass'
 }
 
 /**
@@ -86,6 +93,13 @@ export interface PillTabsProps<Id extends string = string> {
  * the same shape.
  */
 export function PillTabs<Id extends string = string>(
+  props: PillTabsProps<Id>
+): React.ReactElement {
+  if (props.variant === 'glass') return <GlassTabs {...props} />
+  return <PillStrip {...props} />
+}
+
+function PillStrip<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
   const {
