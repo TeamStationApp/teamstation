@@ -64,6 +64,7 @@ import {
   setupOf,
   type Side
 } from '../../common/scoring/state'
+import { SCORING_FEATURE_HEADER } from '../../common/scoring/teamRecord'
 import { asGumboId, asUserId } from '../../common/userId'
 import {
   canKeepSongs,
@@ -101,12 +102,14 @@ import {
   renameGuestPlayer
 } from '../games/guestPlayers'
 import { requireNamedSides } from '../games/namedSides'
+import { fillOpenSides, fillVisibleOpenSides } from '../games/openSides'
 import {
   type GameAvailability,
   gameAvailability
 } from '../games/rosterAvailability'
 import { setRostered, unrosteredNow } from '../games/unroster'
 import { publicNames } from '../groups/playerNamePrivacy'
+import { realClock } from '../groups/requests'
 import { cleanBody } from '../jsonBody'
 import { setAudit, skipAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -207,6 +210,13 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asUnrosterBody, req.body)
+      // A game with an open side is given its TBD placeholders first.
+      await fillVisibleOpenSides(
+        db,
+        actor,
+        gameId,
+        req.get(SCORING_FEATURE_HEADER)
+      )
       // Once for each request key, claimed in the write's transaction: a
       // late copy of a send the phone gave up on writes nothing, and is
       // answered the lists as they stand now, which the phone keeps as the
@@ -254,6 +264,12 @@ export function lineupRoutes(
         req.body?.teamId == null
           ? undefined
           : cleanBody(asString, req.body.teamId)
+      await fillVisibleOpenSides(
+        db,
+        actor,
+        gameId,
+        req.get(SCORING_FEATURE_HEADER)
+      )
       // Once for each request key: a phone's queue that gave up on a send
       // on a stalled link sends it again under the same key, and the first
       // may still land. The key is claimed in the write's own transaction,
@@ -334,6 +350,12 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asExternalGuestsBody, req.body)
+      await fillVisibleOpenSides(
+        db,
+        actor,
+        gameId,
+        req.get(SCORING_FEATURE_HEADER)
+      )
       res.json({
         guests: await ensureExternalGuests(db, actor, gameId, body.guests)
       })
@@ -349,6 +371,12 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const userId = userIdParam(req.params.userId)
       const name = cleanBody(asPlayerSettingsName, req.body)
+      await fillVisibleOpenSides(
+        db,
+        actor,
+        gameId,
+        req.get(SCORING_FEATURE_HEADER)
+      )
       // Once for each request key, claimed in the write's transaction: a
       // late copy of a send the phone gave up on writes nothing.
       let renamed: GuestRenamed | undefined
@@ -461,6 +489,21 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asSaveLineupsBody, req.body)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+      // A game with an open side is given its TBD placeholders first, and
+      // the save runs on the filled game. Whoever may save the named side's
+      // lineup, a coach of it among them, fills it by saving that lineup.
+      await fillOpenSides(
+        db,
+        gameId,
+        actor,
+        realClock,
+        req.get(SCORING_FEATURE_HEADER),
+        (roles, game) => {
+          const teamId =
+            body.side === 'home' ? game.home_team_id : game.away_team_id
+          return teamId != null && lineupTeams(roles, game).includes(teamId)
+        }
+      )
       // The side's coach or assistant, or a scorekeeper of either team. Asked before
       // the game is replayed, so a save with nothing to change is refused
       // too, and again on the locked row the save is written against.

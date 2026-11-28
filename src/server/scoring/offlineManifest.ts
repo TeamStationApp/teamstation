@@ -89,9 +89,13 @@ export async function offlineScoringManifest(
     'scoringOwner',
     'currentPlay'
   ] as const
+  // A game with an open side is scored online only: its first scoring write
+  // gives the side its team, which a phone with no signal cannot make.
   const ofTeams = db
     .selectFrom('games')
     .select(columns)
+    .where('home_team_id', 'is not', null)
+    .where('away_team_id', 'is not', null)
     .where(eb =>
       eb.or([
         eb('home_team_id', '=', anyOf(teamIds)),
