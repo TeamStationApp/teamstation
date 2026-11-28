@@ -147,6 +147,9 @@ describe('app link hosts', function () {
       expect(companion.applinks.details[0].components).deep.includes({
         '/': '/tv-login'
       })
+      expect(companion.webcredentials).deep.equals({
+        apps: ['TEAM000000.test.example.companion']
+      })
       const other = JSON.parse(
         (
           await get(
@@ -175,7 +178,8 @@ describe('app link hosts', function () {
               components: [{ '/': '/signin/*' }, { '/': '/tv-login' }]
             }
           ]
-        }
+        },
+        webcredentials: { apps: ['TEAM000000.test.example.app1'] }
       })
     })
     it('is not found for a host with no iOS app, or no app', async function () {
@@ -199,14 +203,34 @@ describe('app link hosts', function () {
       expect(answer.headers['content-type']).match(/^application\/json/)
       expect(JSON.parse(answer.body)).deep.equals([
         {
-          relation: ['delegate_permission/common.handle_all_urls'],
+          relation: [
+            'delegate_permission/common.handle_all_urls',
+            'delegate_permission/common.get_login_creds'
+          ],
           target: {
             namespace: 'android_app',
             package_name: 'test.example.android',
             sha256_cert_fingerprints: [FINGERPRINT]
           }
+        },
+        {
+          relation: ['delegate_permission/common.get_login_creds'],
+          target: {
+            namespace: 'web',
+            site: 'https://android-only.example.test'
+          }
         }
       ])
+    })
+    it('shares credentials with each host’s own origin', async function () {
+      const statements = JSON.parse(
+        (await get('app1.example.test', '/.well-known/assetlinks.json')).body
+      )
+      expect(statements[0].target.package_name).equals('test.example.app1')
+      expect(statements[1]).deep.equals({
+        relation: ['delegate_permission/common.get_login_creds'],
+        target: { namespace: 'web', site: 'https://app1.example.test' }
+      })
     })
     it('is not found for a host with no Android app, or no app', async function () {
       for (const host of ['ios-only.example.test', 'other.example.test']) {

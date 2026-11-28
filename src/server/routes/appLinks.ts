@@ -45,6 +45,9 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
     res.type('application/json').send(JSON.stringify(body))
   }
 
+  // Each file also shares sign-in credentials between the app and this host
+  // (`webcredentials` for iOS, `get_login_creds` for Android), so a password
+  // saved for the web sign-in is offered in the app and the other way round.
   router.get('/.well-known/apple-app-site-association', (req, res, next) => {
     const app = appFor(req)
     const apple = app?.apple
@@ -66,24 +69,36 @@ export function appLinkRoutes(options: AppLinkRouteOptions): Router {
             ]
           }
         ]
-      }
+      },
+      webcredentials: { apps: apple.appIds }
     })
   })
 
   router.get('/.well-known/assetlinks.json', (req, res, next) => {
-    const android = appFor(req)?.android
-    if (android == null) {
+    const app = appFor(req)
+    const android = app?.android
+    if (app == null || android == null) {
       next()
       return
     }
+    // The second statement is the app's claim on this site: the app's
+    // `asset_statements` resource includes this file, so both halves of the
+    // credential-sharing link come from the one host.
     sendJson(res, [
       {
-        relation: ['delegate_permission/common.handle_all_urls'],
+        relation: [
+          'delegate_permission/common.handle_all_urls',
+          'delegate_permission/common.get_login_creds'
+        ],
         target: {
           namespace: 'android_app',
           package_name: android.packageName,
           sha256_cert_fingerprints: android.sha256CertFingerprints
         }
+      },
+      {
+        relation: ['delegate_permission/common.get_login_creds'],
+        target: { namespace: 'web', site: new URL(app.origin).origin }
       }
     ])
   })
