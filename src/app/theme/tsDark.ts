@@ -132,6 +132,7 @@ export const tsDark: Theme = {
   addEventCardTextColor: '#000000',
   linkTextColor: palette.blue,
   liveColor: palette.coralRed,
+  replayActionColor: palette.deepGreen,
   scheduledColor: palette.tsMediumOlive,
 
   winBadgeBackground: palette.tsDarkOlive,

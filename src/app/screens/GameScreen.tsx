@@ -62,6 +62,10 @@ import {
   useContentInset
 } from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
+import {
+  HeroReplayButton,
+  type HeroReplayButtonProps
+} from '../components/HeroReplayButton'
 import { PagedList } from '../components/PagedList'
 import {
   CardBand,
@@ -136,7 +140,7 @@ import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
-import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
+import { gameActions, gameTabs, heroCoachSides, heroReplay } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
@@ -765,7 +769,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     props.signedIn
   ])
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
-  const [membershipWarning, setMembershipWarning] = useState(false)
+  // Which members-only thing a viewer reached for: the game's videos, or its
+  // live game and replay from the hero's button.
+  const [membershipWarning, setMembershipWarning] = useState<
+    'videos' | 'replay' | null
+  >(null)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
@@ -1885,7 +1893,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const jumpTo = (highlight: Highlight): void => {
     if (props.signedIn === null) return
     if (nonMemberView || !props.signedIn) {
-      setMembershipWarning(true)
+      setMembershipWarning('videos')
       return
     }
     setActiveEventId(highlight.eventId)
@@ -2196,6 +2204,31 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
     )
 
+  // Live / Replay, for every viewer once something TeamStation scored is
+  // stored. A member's tap opens it; anybody else's opens the membership
+  // sheet, and the replay itself still refuses them by link.
+  const openReplay = (): void => {
+    if (props.signedIn === null) return
+    if (nonMemberView || !props.signedIn) {
+      setMembershipWarning('replay')
+      return
+    }
+    props.onReplay?.()
+  }
+  const replay = props.onReplay == null ? null : heroReplay(game)
+  const replayButton: HeroReplayButtonProps | null =
+    replay == null
+      ? null
+      : {
+          kind: replay.kind,
+          label: replay.label,
+          onPress: openReplay,
+          disabled: props.signedIn === null,
+          // On the web the game's video plays under the card on Videos, and
+          // any movement over it costs Chrome the picture (`LivePill`).
+          still: Platform.OS === 'web' && tab === 'watch'
+        }
+
   const heroCard =
     game.eventKind === 'event' ? (
       <Card testID="event-hero" style={styles.eventHero}>
@@ -2242,6 +2275,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         homeScore={game.homeScore}
         status={game.status === 'scheduled' ? '' : gameStatusLine(game)}
         live={game.isGameLive === true}
+        // The hero's Live button says so here, and a game the server calls
+        // live that has no button (a scheduled game with scoring events, one
+        // only an importer followed) shows nothing rather than a label.
+        liveLabel={false}
         winner={winnerOf(game)}
         compact
         awayRecord={game.awayRecord}
@@ -2264,6 +2301,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         onOpenAwayTeam={openSide(game.awayTeamId)}
         onOpenHomeTeam={openSide(game.homeTeamId)}
         actions={actionButtons}
+        replay={replayButton ?? undefined}
       />
     )
   // A held game says so above its hero, as the Score and Coach screens do.
@@ -2290,11 +2328,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
     )
 
-  const pills = gameTabs({
-    game,
-    now: clockNow,
-    onReplay: props.onReplay
-  })
+  const pills = gameTabs({ game, now: clockNow })
   // Which way a section change slides: by the pills' order.
   const tabIndex = pills.findIndex(item => item.id === tab)
   const tabs = (
@@ -2302,10 +2336,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       tabs={pills}
       selected={tab}
       onSelect={next => {
-        if (next === 'replay') {
-          props.onReplay?.()
-          return
-        }
         if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
         selectSection(next)
       }}
@@ -2398,7 +2428,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             busy: props.signedIn === null
           }}
           onPress={() => {
-            if (props.signedIn !== null) setMembershipWarning(true)
+            if (props.signedIn !== null) setMembershipWarning('videos')
           }}
           style={{
             width: layout.videoWidth,
@@ -2615,6 +2645,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     >
       <PillStripInset none={short}>
         {short && tab === 'watch' ? actionButtons : null}
+        {/*
+          Held sideways on Videos there is no hero; its actions move here,
+          and its Live / Replay with them, so it stays one tap away.
+        */}
+        {short && tab === 'watch' && replayButton != null ? (
+          <View style={styles.stripReplay}>
+            <HeroReplayButton {...replayButton} />
+          </View>
+        ) : null}
         <View
           onLayout={event => {
             setSectionPillsHeight(event.nativeEvent.layout.height)
@@ -2922,9 +2961,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           </View>
         </View>
       </LivePillHeld>
-      {membershipWarning && props.signedIn !== null && (
+      {membershipWarning != null && props.signedIn !== null && (
         <VideoMembershipSheet
           client={client}
+          resource={membershipWarning}
           signedIn={props.signedIn}
           teams={[
             { id: game.homeTeamId, name: game.homeTeamName },
@@ -2934,7 +2974,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             props.onSignIn?.()
           }}
           onClose={() => {
-            setMembershipWarning(false)
+            setMembershipWarning(null)
           }}
         />
       )}
@@ -3036,6 +3076,9 @@ const getStyles = cacheStyles((theme: Theme) =>
       justifyContent: 'center',
       backgroundColor: theme.backgroundColor,
       padding: theme.rem(1)
+    },
+    stripReplay: {
+      alignItems: 'center'
     },
     heroActions: {
       flexDirection: 'row',

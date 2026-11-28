@@ -119,15 +119,18 @@ export function livePillPulses(options: {
   return !options.reduceMotion && !options.held && options.shown
 }
 
-/** The pill as the apps draw it, pulsing on Reanimated's UI thread. */
-export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
-  const { inline = false } = props
-  const styles = getStyles(useTheme())
-  const placed = useOverlayStyle(inline)
+/**
+ * The live pulse, as an animated style: 1 to 0.72 opacity over 800 ms and
+ * back, repeating, on Reanimated's UI thread. Still unless `enabled`, and
+ * still wherever `livePillPulses` says a pill holds still.
+ */
+export function useLivePulse(
+  enabled: boolean
+): ReturnType<typeof useAnimatedStyle<{ opacity: number }>> {
   const reduceMotion = useMotionPreference()
   const shown = useSceneShown()
   const held = useContext(LivePillHeld)
-  const pulse = livePillPulses({ reduceMotion, held, shown })
+  const pulse = enabled && livePillPulses({ reduceMotion, held, shown })
   const opacity = useSharedValue(1)
   const animated = useAnimatedStyle(() => ({ opacity: opacity.value }))
   useEffect(() => {
@@ -148,6 +151,15 @@ export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
       cancelAnimation(opacity)
     }
   }, [opacity, pulse])
+  return animated
+}
+
+/** The pill as the apps draw it, pulsing on Reanimated's UI thread. */
+export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
+  const { inline = false } = props
+  const styles = getStyles(useTheme())
+  const placed = useOverlayStyle(inline)
+  const animated = useLivePulse(true)
 
   return (
     <Animated.View

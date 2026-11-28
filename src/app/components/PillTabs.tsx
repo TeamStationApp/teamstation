@@ -164,6 +164,12 @@ export interface PillFaceProps {
   dense?: boolean
   /** Drawn before the label, inside the pill: a `ButtonIcon` or a vector. */
   icon?: React.ReactNode
+  /**
+   * A fill of its own, with a white label, in place of the selected and idle
+   * colours: `live` red, `replay` green (a game hero's Live / Replay). The
+   * size's height, padding, radius, shadow and label are kept.
+   */
+  tone?: 'live' | 'replay'
 }
 
 /**
@@ -177,9 +183,16 @@ export function PillFace({
   selected = true,
   size = 'compact',
   dense = false,
-  icon
+  icon,
+  tone
 }: PillFaceProps): React.ReactElement {
   const styles = getStyles(useTheme())
+  const toned =
+    tone === 'live'
+      ? styles.pillLive
+      : tone === 'replay'
+        ? styles.pillReplay
+        : undefined
   const compact = size === 'compact'
   const small = size === 'small'
   return (
@@ -190,7 +203,7 @@ export function PillFace({
         compact && styles.pillCompact,
         small && styles.pillSmall,
         dense && styles.pillDense,
-        selected ? styles.pillActive : styles.pillIdle
+        toned ?? (selected ? styles.pillActive : styles.pillIdle)
       ]}
     >
       {live && <View testID="pill-live-dot" style={styles.liveDot} />}
@@ -202,7 +215,11 @@ export function PillFace({
           styles.label,
           compact && styles.labelCompact,
           small && styles.labelSmall,
-          selected ? styles.labelActive : styles.labelIdle
+          toned != null
+            ? styles.labelToned
+            : selected
+              ? styles.labelActive
+              : styles.labelIdle
         ]}
       >
         {label}
@@ -241,7 +258,8 @@ export function PillButton({
   accessibilityLabel = label,
   testID,
   icon,
-  hitSlop
+  hitSlop,
+  tone
 }: PillFaceProps & {
   role?: 'tab' | 'button'
   onPress?: () => void
@@ -285,6 +303,7 @@ export function PillButton({
         size={size}
         dense={dense}
         icon={icon}
+        tone={tone}
       />
     </Pressable>
   )
@@ -385,6 +404,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   pillActive: {
     backgroundColor: theme.pillActiveBackground
   },
+  pillLive: {
+    backgroundColor: theme.liveColor
+  },
+  pillReplay: {
+    backgroundColor: theme.replayActionColor
+  },
   label: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
@@ -401,6 +426,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   labelActive: {
     color: theme.pillActiveTextColor
+  },
+  // White, as on the live pill: the fill is fixed, so the label is too.
+  labelToned: {
+    color: '#FFFFFF'
   },
   badge: {
     fontFamily: theme.semiBoldTextFont,

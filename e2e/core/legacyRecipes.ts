@@ -284,7 +284,7 @@ const gameRosterLayout: Recipe = async context => {
   }))
 }
 
-const REPLAY_TWICE = ['pills', 'controls', 'liveInPlay', 'board']
+const REPLAY_TWICE = ['heroButton', 'controls', 'liveInPlay', 'board']
 const REPLAY_ONCE = [
   'replay',
   'announcer',

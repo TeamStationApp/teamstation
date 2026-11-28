@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asGameDetail, type GameDetail } from '../../common/api'
-import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
+import { gameActions, gameTabs, heroCoachSides, heroReplay } from './gameTabs'
 
 function gameWith(fields: Partial<GameDetail>): GameDetail {
   return {
@@ -309,45 +309,48 @@ describe('the pills across a game', function () {
     ])
   })
 
-  describe('Replay', function () {
-    const onReplay = (): void => undefined
+  describe('Live / Replay', function () {
     const finished = gameWith({ status: 'final', replayable: true })
 
-    it('follows Videos for a member once a game TeamStation scored is over', function () {
-      const pills = gameTabs({ game: finished, onReplay })
-      expect(ids(pills)).deep.equals(['boxScore', 'watch', 'replay', 'info'])
-      expect(pills[2]).deep.equals({
-        id: 'replay',
-        label: 'Replay',
-        role: 'button'
-      })
-      expect(
-        ids(gameTabs({ game: { ...finished, canScore: true }, onReplay }))
-      ).deep.equals(['boxScore', 'watch', 'replay', 'info'])
-    })
-
-    it('is a red Live pill while the game is scored', function () {
-      const pills = gameTabs({
-        game: { ...finished, status: 'inProgress' },
-        onReplay
-      })
-      expect(pills.find(pill => pill.id === 'replay')).deep.equals({
-        id: 'replay',
-        label: 'Live',
-        role: 'button',
-        live: true
-      })
-    })
-
-    it('is left out with nothing stored, for a non-member, before the first pitch, or with no way to open it', function () {
+    it('is never a section pill, for a final or in-progress game a member can replay', function () {
       for (const game of [
-        { ...finished, replayable: false },
-        { ...finished, nonMemberView: true },
-        { ...finished, status: 'scheduled' },
-        { ...finished, status: 'inProgress', replayable: false }
+        finished,
+        { ...finished, canScore: true },
+        { ...finished, status: 'inProgress' as const }
+      ]) {
+        const pills = gameTabs({ game })
+        expect(ids(pills)).not.includes('replay')
+        expect(pills.map(pill => pill.label)).not.includes('Live')
+        expect(pills.map(pill => pill.label)).not.includes('Replay')
+      }
+      expect(ids(gameTabs({ game: finished }))).deep.equals([
+        'boxScore',
+        'watch',
+        'info'
       ])
-        expect(ids(gameTabs({ game, onReplay }))).not.includes('replay')
-      expect(ids(gameTabs({ game: finished }))).not.includes('replay')
+    })
+
+    it('is the hero’s green Replay once a game TeamStation scored is over, and its red Live while it is scored', function () {
+      for (const nonMemberView of [false, true]) {
+        const game = { ...finished, nonMemberView }
+        expect(heroReplay(game)).deep.equals({
+          kind: 'replay',
+          label: 'Replay'
+        })
+        const live = { ...game, status: 'inProgress' as const }
+        expect(heroReplay(live)).deep.equals({ kind: 'live', label: 'Live' })
+      }
+    })
+
+    it('is no button before the first pitch, once cancelled, with nothing stored, or for an event', function () {
+      for (const game of [
+        { ...finished, status: 'scheduled' as const },
+        { ...finished, status: 'cancelled' as const },
+        { ...finished, replayable: false },
+        { ...finished, status: 'inProgress' as const, replayable: false },
+        { ...finished, eventKind: 'event' as const }
+      ])
+        expect(heroReplay(game)).equals(null)
     })
   })
 })

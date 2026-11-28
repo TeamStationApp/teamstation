@@ -223,4 +223,83 @@ describe('GameHeroCard', function () {
     })
     expect(opened).deep.equals(['home'])
   })
+
+  describe('the game hero’s Live / Replay row', function () {
+    const replay = {
+      kind: 'replay' as const,
+      label: 'Replay',
+      onPress: () => undefined
+    }
+    const actions = <div data-testid="game-hero-actions">Score</div>
+
+    for (const [layout, extra] of [
+      ['compact', { compact: true }],
+      [
+        'poster',
+        { compact: false, posterUrl: 'https://example.com/recording.png' }
+      ]
+    ] as const)
+      it(`is the card’s last row, after the actions and centred, in the ${layout} layout`, async function () {
+        const container = await render(
+          <GameHeroCard
+            {...oct4}
+            {...extra}
+            testID="event-hero"
+            actions={actions}
+            replay={replay}
+          />
+        )
+        const card = container.querySelector<HTMLElement>(
+          '[data-testid="event-hero"]'
+        )!
+        const children = Array.from(card.children)
+        const row = children[children.length - 1] as HTMLElement
+        expect(row.getAttribute('data-testid')).equals('game-hero-replay-row')
+        expect(
+          children[children.length - 2].getAttribute('data-testid')
+        ).equals('game-hero-actions')
+        expect(getComputedStyle(row).alignItems).equals('center')
+        // The actions row holds it off what is above.
+        expect(getComputedStyle(row).paddingTop).equals('0px')
+        expect(getComputedStyle(row).paddingBottom).not.equals('0px')
+        expect(
+          row.querySelector('[data-testid="game-hero-replay"]')?.textContent
+        ).equals('Replay')
+      })
+
+    it('takes a top inset of its own with no actions row above it', async function () {
+      const container = await render(<GameHeroCard {...oct4} replay={replay} />)
+      const row = container.querySelector<HTMLElement>(
+        '[data-testid="game-hero-replay-row"]'
+      )!
+      expect(getComputedStyle(row).paddingTop).equals(
+        getComputedStyle(row).paddingBottom
+      )
+    })
+
+    it('leaves a live game’s status slot empty with no live label', async function () {
+      const container = await render(
+        <GameHeroCard {...oct4} live liveLabel={false} />
+      )
+      expect(container.querySelector('[aria-label="Live now"]')).equals(null)
+      expect(leaf(container, 'LIVE')).equals(undefined)
+    })
+
+    it('keeps the inline live label by default, as the home screen draws it', async function () {
+      const container = await render(<GameHeroCard {...oct4} live />)
+      expect(container.querySelector('[aria-label="Live now"]')).not.equals(
+        null
+      )
+      expect(
+        container.querySelector('[data-testid="game-hero-replay-row"]')
+      ).equals(null)
+    })
+
+    it('keeps a game that is not live its status chip with no live label', async function () {
+      const container = await render(
+        <GameHeroCard {...oct4} status="FINAL" liveLabel={false} />
+      )
+      expect(leaf(container, 'FINAL')).not.equals(undefined)
+    })
+  })
 })
