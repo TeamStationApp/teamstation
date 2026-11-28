@@ -180,6 +180,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/games/guestPlayers.js',
   'server/games/externalGuests.js',
   'server/games/namedSides.js',
+  'server/games/openSides.js',
   'server/games/opponentFixed.js',
   'server/games/resetSwap.js',
   'server/games/retargetTeams.js',

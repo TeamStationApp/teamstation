@@ -47,6 +47,12 @@ export const SCORING_FEATURE_HEADER = 'x-teamstation-scoring'
 const DEFERRED_LINEUPS = 'deferred-lineups-v1'
 const LIVE_SCORING = 'live-scoring-v1'
 export const SCORING_FEATURES = `${DEFERRED_LINEUPS},${LIVE_SCORING}`
+/**
+ * Named by an app that handles a game whose side is open (TBD): its first
+ * scoring write on one gives the open side a placeholder team. A person's
+ * app that does not name it is refused that write (`fillOpenSides`).
+ */
+export const OPEN_SIDES_FEATURE = 'open-sides-v1'
 
 /** Versions that name teams in their setups and lineup actions. */
 export function isTeamRecordVersion(version: unknown): boolean {

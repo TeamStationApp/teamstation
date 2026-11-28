@@ -66,8 +66,10 @@ import { namedScoringAuthorship } from '../events/scoringAuthorship'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
 import { type GameSideIds, requireNamedSides } from '../games/namedSides'
+import { type FilledSides, fillOpenSides } from '../games/openSides'
 import { swapOrReset } from '../games/resetSwap'
 import { gameSwapEffect } from '../games/swapEffect'
+import { realClock } from '../groups/requests'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { namedScoringGame, type ReaderNames } from '../scoring/openRow'
@@ -339,6 +341,15 @@ export function eventRoutes(
       // Only whether the game can be seen is settled here. Everything the
       // write depends on is read from the locked row.
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+      // A game with an open side is given its TBD placeholders first, and
+      // the plays are posted on the filled game.
+      await fillOpenSides(
+        db,
+        gameId,
+        actor,
+        realClock,
+        req.get(SCORING_FEATURE_HEADER)
+      )
       let wrote = false
       const answer = await answerOnce(db, call, {
         write: async claim => {
@@ -590,8 +601,20 @@ export function eventRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
-      const read = cleanBody(asSwapSidesBody, req.body)
+      const asked = cleanBody(asSwapSidesBody, req.body)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+      // A game with an open side is given its TBD placeholders first. Its
+      // caller read the open side as `''`: a side this call filled is read
+      // as its new team, so the swap passes and swaps the filled game. A
+      // side another write filled first is still refused as changed.
+      const filled = await fillOpenSides(
+        db,
+        gameId,
+        actor,
+        realClock,
+        req.get(SCORING_FEATURE_HEADER)
+      )
+      const read = filled == null ? asked : filledSwapBody(asked, filled)
       const answerOf = (done: {
         homeTeamId: string
         awayTeamId: string
@@ -714,6 +737,35 @@ function asSwapSidesBody(raw: unknown): {
 }
 
 /**
+ * A swap's body once `fillOpenSides` filled the game: each side it names
+ * `''` that was open takes the side's new team, and the sides it makes are
+ * those exchanged.
+ */
+function filledSwapBody(
+  asked: ReturnType<typeof asSwapSidesBody>,
+  filled: FilledSides
+): ReturnType<typeof asSwapSidesBody> {
+  const side = (named: string, before: string | null, after: string): string =>
+    named === '' && before == null ? after : named
+  const homeTeamId = side(
+    asked.homeTeamId,
+    filled.before.home,
+    filled.after.home
+  )
+  const awayTeamId = side(
+    asked.awayTeamId,
+    filled.before.away,
+    filled.after.away
+  )
+  return {
+    ...asked,
+    homeTeamId,
+    awayTeamId,
+    swapped: { homeTeamId: awayTeamId, awayTeamId: homeTeamId }
+  }
+}
+
+/**
  * The `answer` a post asks for: `edits`, or none for every play. Anything
  * else is refused.
  */
@@ -765,7 +817,9 @@ interface StoredGameAnswer {
 async function storedGameRead(
   db: Kysely<Database>,
   gameId: string,
-  halves: (game: GameSideIds) => Promise<readonly string[]>,
+  halves: (
+    game: GameSideIds & { season_id: string | null }
+  ) => Promise<readonly string[]>,
   reader: Reader | undefined,
   held?: StoredPlay[]
 ): Promise<{
@@ -779,6 +833,7 @@ async function storedGameRead(
     .select([
       'home_team_id',
       'away_team_id',
+      'season_id',
       'currentPlay',
       'pregame',
       'lineups_digest',
