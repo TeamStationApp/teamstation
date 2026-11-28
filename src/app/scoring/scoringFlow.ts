@@ -25,7 +25,7 @@ import {
 } from '../../common/scoring/rules'
 import { type Applied, applyAction } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
-import { BASES } from '../field/fieldModel'
+import { BASES, type GroundPoint } from '../field/fieldModel'
 import { advanceReel, holdForLaterBeat } from './dictatedReel'
 import {
   chainAnswered,
@@ -397,15 +397,7 @@ export function forceOutInRelay(
   const action = state.runnerAction
   const route = action?.defensiveRoute ?? []
   const game = state.session
-  const offense = game.liveData.linescore.offense
-  const from =
-    [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(runner) +
-    1
-  const offer = to === from ? groundOfferAt(game, runner, to) : undefined
-  const forced =
-    offer != null
-      ? forcedFrom(game, offer.start ?? offer.from)
-      : to === from + 1 && forcedFrom(game, from)
+  const { from, offer, forced } = relayForce(game, runner, to)
   if (
     state.phase !== 'chooseDefender' ||
     action?.purpose !== 'batterRetirement' ||
@@ -421,28 +413,80 @@ export function forceOutInRelay(
     state,
     `${forced ? 'Force' : 'Tag'} out ${game.gameData.players[runner].fullName}`,
     next => {
-      act(next, {
-        type: 'runnerMovement',
-        runner,
-        to: destination(to),
-        out: true,
-        reason: forced ? 'Force Out' : 'Tag Out',
-        fielders: route.map(hop => hop.id),
-        locations: route.map(hop => ({ ...hop.point })),
-        runnerLocation: { ...BASES[to % 4] }
-      })
-      const holder = route[route.length - 1]
-      const relay = next.runnerAction!
-      relay.thrower = holder.id
-      relay.throwerPoint = { ...holder.point }
-      relay.defensiveRoute = [{ id: holder.id, point: { ...holder.point } }]
-      if (next.session.liveData.linescore.outs >= 3) {
-        next.runnerAction = null
-        next.phase = 'runnerMovement'
-        settleRunners(next)
-      }
+      forceOutEdit(next, runner, to)
     }
   )
+}
+
+/** Where `runner` stands, and whether the relay may force or tag him at `to`. */
+function relayForce(
+  game: ScoringState['session'],
+  runner: number,
+  to: number
+): {
+  from: number
+  offer: ReturnType<typeof groundOfferAt>
+  forced: boolean
+} {
+  const from = baseIds(game).indexOf(runner) + 1
+  const offer = to === from ? groundOfferAt(game, runner, to) : undefined
+  const forced =
+    offer != null
+      ? forcedFrom(game, offer.start ?? offer.from)
+      : to === from + 1 && forcedFrom(game, from)
+  return { from, offer, forced }
+}
+
+/**
+ * The relay's holder puts `runner` out at `to`, with the relay so far behind
+ * him, and the relay goes on for the batter from that holder. The third out
+ * ends the play instead.
+ */
+export function forceOutEdit(
+  next: ScoringState,
+  runner: number,
+  to: number
+): void {
+  const route = next.runnerAction!.defensiveRoute!
+  const { forced } = relayForce(next.session, runner, to)
+  act(next, {
+    type: 'runnerMovement',
+    runner,
+    to: destination(to),
+    out: true,
+    reason: forced ? 'Force Out' : 'Tag Out',
+    fielders: route.map(hop => hop.id),
+    locations: route.map(hop => ({ ...hop.point })),
+    runnerLocation: { ...BASES[to % 4] }
+  })
+  const holder = route[route.length - 1]
+  const relay = next.runnerAction!
+  relay.thrower = holder.id
+  relay.throwerPoint = { ...holder.point }
+  relay.defensiveRoute = [{ id: holder.id, point: { ...holder.point } }]
+  if (next.session.liveData.linescore.outs >= 3) {
+    next.runnerAction = null
+    next.phase = 'runnerMovement'
+    settleRunners(next)
+  }
+}
+
+/**
+ * The ball's holder throws to `id` at `point`, or with no `id` makes the out
+ * himself (Done): drawn when presentations are on, at once when not.
+ */
+export function throwToDefender(
+  next: ScoringState,
+  id: FielderRef | undefined,
+  point?: GroundPoint,
+  runnerPoint?: GroundPoint
+): void {
+  const action = next.runnerAction!
+  const holder = action.defensiveRoute?.at(-1)?.id ?? action.thrower!
+  action.runnerPoint = runnerPoint ?? action.runnerPoint
+  const sequence = throwPresentation(next, id ?? holder, point, id == null)
+  if (next.presentationEnabled === true) next.presentation = sequence
+  else completeDefense(next, sequence)
 }
 
 /** A throw the screen drew has arrived: another hop, or the out. */
@@ -1272,16 +1316,7 @@ export function runnerReducer(
         ? `Out by ${fielderName(state.session, id)}`
         : `Throw to ${fielderName(state.session, id)}`,
       next => {
-        next.runnerAction!.runnerPoint =
-          event.runnerPoint ?? next.runnerAction!.runnerPoint
-        const sequence = throwPresentation(
-          next,
-          id,
-          event.point,
-          event.id == null
-        )
-        if (next.presentationEnabled === true) next.presentation = sequence
-        else completeDefense(next, sequence)
+        throwToDefender(next, event.id, event.point, event.runnerPoint)
       }
     )
   }

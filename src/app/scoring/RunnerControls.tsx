@@ -7,7 +7,7 @@ import type { BaseProjection } from '../field/fieldTypes'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringDecisionSheet } from './EndGameConfirmation'
-import { chainBackError, chainDropError } from './runnerChain'
+import { chainBackError, chainDropError, chainOutError } from './runnerChain'
 import { choiceDecisionFrame, homeDecisionFrame } from './runnerControlLayout'
 import {
   hasCurrentRunnerPitch,
@@ -159,6 +159,7 @@ export function RunnerControls({
           const horizontal = runner.to % 4 === 2
           const backError = chainBackError(state, runner.playerId)
           const safeError = chainDropError(state, runner.playerId, runner.to)
+          const outError = chainOutError(state, runner.playerId)
           return (
             <View
               key={runner.playerId}
@@ -194,11 +195,12 @@ export function RunnerControls({
                         ? backError
                         : decision === 'safe'
                           ? safeError
-                          : undefined
+                          : outError
                     }
                     disabled={
                       (decision === 'back' && backError != null) ||
-                      (decision === 'safe' && safeError != null)
+                      (decision === 'safe' && safeError != null) ||
+                      (decision === 'out' && outError != null)
                     }
                     color={
                       decision === 'safe'

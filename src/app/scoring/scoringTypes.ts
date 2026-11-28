@@ -101,8 +101,12 @@ export interface PendingPlay {
     | 'Manual placement'
   /** Who fielded it: a player, or a stand-in at an empty position. */
   fielder?: FielderRef
-  /** The More menu's Double Play this ball in play was started from. */
-  doublePlay?: { kind: DoublePlayKind }
+  /**
+   * The More menu's Double Play this ball in play was started from;
+   * `throws` the relay has drawn so far, and `chained` once its relay is
+   * over and the runners it left were asked.
+   */
+  doublePlay?: { kind: DoublePlayKind; throws?: number; chained?: boolean }
   location?: GroundPoint
   angle?: number
   trajectoryAccepted: boolean
