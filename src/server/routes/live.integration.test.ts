@@ -904,6 +904,24 @@ describe('a game’s stream key over the API', function () {
       expect(live[0].awayTeamId).equals('tem_away')
       expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
+    // An open side is '' on the wire, as an installed app reads it.
+    await db
+      .updateTable('games')
+      .set({ away_team_id: null })
+      .where('id', '=', 'gam_1')
+      .execute()
+    const open = await ask('/live', MANAGER)
+    const opened = open.body as unknown as Array<Record<string, unknown>>
+    expect(opened[0]).includes({
+      homeTeamId: 'tem_home',
+      awayTeamId: '',
+      awayTeamName: 'TBD'
+    })
+    await db
+      .updateTable('games')
+      .set({ away_team_id: 'tem_away' })
+      .where('id', '=', 'gam_1')
+      .execute()
     // Home's scope gates this read by time: it answers no revision.
     const read = await fetch(`${base}/live`, {
       headers: { authorization: `Bearer ${MANAGER}` }

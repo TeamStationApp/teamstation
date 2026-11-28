@@ -590,7 +590,12 @@ export function teamRoutes(
       const event =
         actor == null ? null : await teamEventDetail(db, actor, gameId)
       if (event != null) {
-        res.json(event)
+        // The answer names the event's missing side as every answer does: ''.
+        res.json({
+          ...event,
+          homeTeamId: wireSideId(event.homeTeamId),
+          awayTeamId: wireSideId(event.awayTeamId)
+        })
         return
       }
       const scopes =

@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
-import type { ListCounts } from '../../common/api'
+import { asGameDetail, type ListCounts } from '../../common/api'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
 import { nextGameIndex } from '../../common/nextGame'
@@ -783,5 +783,13 @@ describe('schedule pages', function () {
       const after: Answer = await read('/events?paged=1')
       expect(after.counts).deep.equals(before.counts)
     })
+  })
+
+  it("names a team event's missing side '' on its page, as an installed app reads it", async () => {
+    const page = await read(`/games/${practiceNext}`)
+    expect(page.eventKind).equals('event')
+    expect(page.homeTeamId).equals(f.teamA)
+    expect(page.awayTeamId).equals('')
+    expect(asGameDetail(page).awayTeamId).equals(null)
   })
 })

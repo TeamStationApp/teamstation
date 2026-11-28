@@ -901,8 +901,9 @@ export function liveRoutes(
       }
 
       res.json(
-        [...byGame.values()].map(row =>
-          asLiveNow({
+        [...byGame.values()].map(row => {
+          // Cleaned as the app reads it, then sent with an open side as ''.
+          const live = asLiveNow({
             videoId: row.videoId,
             gameId: row.gameId,
             title: row.title,
@@ -917,7 +918,12 @@ export function liveRoutes(
             gameStartAt: new Date(row.gameStartAt).toISOString(),
             angles: row.angles
           })
-        )
+          return {
+            ...live,
+            homeTeamId: wireSideId(live.homeTeamId),
+            awayTeamId: wireSideId(live.awayTeamId)
+          }
+        })
       )
     })
   )
