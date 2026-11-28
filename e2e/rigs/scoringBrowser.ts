@@ -146,8 +146,20 @@ export async function score(
   fixture: LineupFixture,
   actions: ScoringAction[] | ((game: GameState) => ScoringAction[])
 ): Promise<ScoringSession> {
-  const client = await clientOf(fixture, 'scorekeeper')
-  const game = await client.game(fixture.gameId)
+  return await scoreWith(
+    await clientOf(fixture, 'scorekeeper'),
+    fixture.gameId,
+    actions
+  )
+}
+
+/** `score`, as `client` and into `gameId`: on any server, not only the local stack. */
+export async function scoreWith(
+  client: TeamStationClient,
+  gameId: string,
+  actions: ScoringAction[] | ((game: GameState) => ScoringAction[])
+): Promise<ScoringSession> {
+  const game = await client.game(gameId)
   // An outside opponent has no roster or default to read: none, as the
   // scoring screen takes it.
   const roster = async (teamId: string): Promise<RosterEntry[]> =>

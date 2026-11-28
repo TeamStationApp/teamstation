@@ -9172,6 +9172,58 @@
       "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
     },
     {
+      "id": "scoring/runners/correction-window#five-seconds",
+      "title": "The runner window after a play lasts five seconds, then the next batter is up",
+      "covers": [
+        "src/app/scoring/scoringTypes.ts",
+        "src/app/scoring/InstructionToast.tsx",
+        "src/app/scoring/useCorrectionClock.ts",
+        "src/app/scoring/useScoringClock.native.ts",
+        "src/app/scoring/scoringFlow.ts",
+        "src/app/scoring/scoringMachine.ts"
+      ],
+      "minutes": 6,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/runners/correction-window",
+      "file": "e2e/tests/scoring/runners/correction-window.e2e.ts"
+    },
+    {
       "id": "streaming/basic/four-synthetic#scrub",
       "title": "Four synthetic cameras stream live to an iPhone, an Android phone, Chrome, TeamStation TV and iPhone Safari for 30 minutes of scrubbing, every angle moving, recovering and aligned, with no memory growth",
       "kind": "e2e",

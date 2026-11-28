@@ -139,7 +139,7 @@ export interface RunnerAction {
   throwOut?: boolean
 }
 /** How long the scorekeeper has to move another runner before the play closes. */
-export const CORRECTION_WINDOW_MS = 7000
+export const CORRECTION_WINDOW_MS = 5000
 export interface CorrectionWindow {
   remainingMs: number
   revision: number

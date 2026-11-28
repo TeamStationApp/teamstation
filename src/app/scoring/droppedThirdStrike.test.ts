@@ -155,7 +155,7 @@ describe('automatic dropped third strike', () => {
       expect(done.phase).oneOf(['ready', 'awaitingBatter'])
       expect(done.session.liveData.plays.allPlays).has.length(1)
     })
-  it('waits seven seconds after Safe, ignores stale ticks, and resets after runner edits', () => {
+  it('waits five seconds after Safe, ignores stale ticks, and resets after runner edits', () => {
     let state = completeMotions(drop(start()))
     state = scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'safe' })
     const timer = {

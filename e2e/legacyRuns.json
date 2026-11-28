@@ -3341,12 +3341,12 @@
   "src/app/scoring/scoring.e2e.ts": [
     {
       "label": "default",
-      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing|finishes coordinated hit flight|requires a grab and cancels constrained drags", "--invert"],
+      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real five-second correction window|on the live field|pitch animation, hit flight and celebration timing|finishes coordinated hit flight|requires a grab and cancels constrained drags", "--invert"],
       "needs": "web"
     },
     {
       "label": "frames",
-      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing|finishes coordinated hit flight|requires a grab and cancels constrained drags"],
+      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real five-second correction window|on the live field|pitch animation, hit flight and celebration timing|finishes coordinated hit flight|requires a grab and cancels constrained drags"],
       "needs": "gpu"
     }
   ],

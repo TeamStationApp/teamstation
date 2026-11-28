@@ -121,8 +121,8 @@ describe('scoring instruction and completion toast', function () {
     expect(host.textContent).includes(CORRECTION_INSTRUCTION)
     const progress = (): HTMLElement =>
       host.querySelector('[role="progressbar"]')!
-    expect(progress().getAttribute('aria-valuemax')).equals('7')
-    expect(progress().getAttribute('aria-valuenow')).equals('7')
+    expect(progress().getAttribute('aria-valuemax')).equals('5')
+    expect(progress().getAttribute('aria-valuenow')).equals('5')
     expect((progress().firstChild as HTMLElement).style.width).equals('100%')
     await render(view(4201, false))
     expect(progress().getAttribute('aria-valuenow')).equals('5')
