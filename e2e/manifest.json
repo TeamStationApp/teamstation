@@ -9334,6 +9334,186 @@
       "file": "e2e/tests/scoring/runners/correction-window.e2e.ts"
     },
     {
+      "id": "scoring/runners/double-play#caught-one-runner",
+      "title": "More offers Double Play, whose submenu lists the double plays the bases allow",
+      "covers": [
+        "src/app/scoring/doublePlay.ts",
+        "src/app/scoring/moreActions.ts",
+        "src/app/scoring/MoreMenu.tsx",
+        "src/app/scoring/MoreMenu.native.tsx",
+        "src/app/scoring/dropMenu.ts",
+        "src/app/scoring/DropMenuView.tsx",
+        "src/app/scoring/scoringFlow.ts",
+        "src/app/scoring/battedBall.ts",
+        "src/app/scoring/runnerChain.ts",
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/TagBaseLabels.tsx",
+        "src/app/scoring/battedBallField.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/DestinationMarker.tsx"
+      ],
+      "minutes": 20,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/runners/double-play",
+      "file": "e2e/tests/scoring/runners/double-play.e2e.ts"
+    },
+    {
+      "id": "scoring/runners/double-play#caught-second-done",
+      "title": "More offers Double Play, whose submenu lists the double plays the bases allow",
+      "covers": [
+        "src/app/scoring/doublePlay.ts",
+        "src/app/scoring/moreActions.ts",
+        "src/app/scoring/MoreMenu.tsx",
+        "src/app/scoring/MoreMenu.native.tsx",
+        "src/app/scoring/dropMenu.ts",
+        "src/app/scoring/DropMenuView.tsx",
+        "src/app/scoring/scoringFlow.ts",
+        "src/app/scoring/battedBall.ts",
+        "src/app/scoring/runnerChain.ts",
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/TagBaseLabels.tsx",
+        "src/app/scoring/battedBallField.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/DestinationMarker.tsx"
+      ],
+      "minutes": 20,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/runners/double-play",
+      "file": "e2e/tests/scoring/runners/double-play.e2e.ts"
+    },
+    {
+      "id": "scoring/runners/double-play#caught-tag-base",
+      "title": "More offers Double Play, whose submenu lists the double plays the bases allow",
+      "covers": [
+        "src/app/scoring/doublePlay.ts",
+        "src/app/scoring/moreActions.ts",
+        "src/app/scoring/MoreMenu.tsx",
+        "src/app/scoring/MoreMenu.native.tsx",
+        "src/app/scoring/dropMenu.ts",
+        "src/app/scoring/DropMenuView.tsx",
+        "src/app/scoring/scoringFlow.ts",
+        "src/app/scoring/battedBall.ts",
+        "src/app/scoring/runnerChain.ts",
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/TagBaseLabels.tsx",
+        "src/app/scoring/battedBallField.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/DestinationMarker.tsx"
+      ],
+      "minutes": 20,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/runners/double-play",
+      "file": "e2e/tests/scoring/runners/double-play.e2e.ts"
+    },
+    {
       "id": "scoring/runners/double-play#ground-other-runners",
       "title": "More offers Double Play, whose submenu lists the double plays the bases allow",
       "covers": [
@@ -9346,9 +9526,13 @@
         "src/app/scoring/scoringFlow.ts",
         "src/app/scoring/battedBall.ts",
         "src/app/scoring/runnerChain.ts",
-        "src/app/scoring/RunnerControls.tsx"
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/TagBaseLabels.tsx",
+        "src/app/scoring/battedBallField.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/DestinationMarker.tsx"
       ],
-      "minutes": 12,
+      "minutes": 20,
       "faults": [
         "api-500",
         "hidden-element"
@@ -9402,9 +9586,13 @@
         "src/app/scoring/scoringFlow.ts",
         "src/app/scoring/battedBall.ts",
         "src/app/scoring/runnerChain.ts",
-        "src/app/scoring/RunnerControls.tsx"
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/TagBaseLabels.tsx",
+        "src/app/scoring/battedBallField.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/DestinationMarker.tsx"
       ],
-      "minutes": 12,
+      "minutes": 20,
       "faults": [
         "api-500",
         "hidden-element"
@@ -9458,9 +9646,13 @@
         "src/app/scoring/scoringFlow.ts",
         "src/app/scoring/battedBall.ts",
         "src/app/scoring/runnerChain.ts",
-        "src/app/scoring/RunnerControls.tsx"
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/TagBaseLabels.tsx",
+        "src/app/scoring/battedBallField.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/field/DestinationMarker.tsx"
       ],
-      "minutes": 12,
+      "minutes": 20,
       "faults": [
         "api-500",
         "hidden-element"

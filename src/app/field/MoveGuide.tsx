@@ -4,6 +4,7 @@ import React, { useRef } from 'react'
 import { type Group, type Mesh, Quaternion, Vector3 } from 'three'
 
 import { DESTINATION_RADIUS, DestinationMarker } from './DestinationMarker'
+import type { GroundPoint } from './fieldModel'
 import type { MoveDraft } from './movePreview'
 import { TERRAIN } from './terrain'
 
@@ -42,13 +43,19 @@ function guideShape(draft: MoveDraft): {
  *
  * `live`, when given, is the drag itself: the guide follows it every frame it
  * draws, so a finger moving across the field re-renders nothing in React.
+ * `shape` draws the rings as diamonds, and `markerAt`, when given, shows them
+ * only where it says the goal is a destination.
  */
 export function MoveGuide({
   draft,
-  live
+  live,
+  shape: markerShape = 'ring',
+  markerAt
 }: {
   draft: MoveDraft
   live?: { readonly current: MoveDraft | null }
+  shape?: 'ring' | 'diamond'
+  markerAt?: (goal: GroundPoint) => boolean
 }): React.ReactElement {
   const line = useRef<Mesh>(null)
   const guide = useRef<Group>(null)
@@ -60,9 +67,9 @@ export function MoveGuide({
     line.current.position.copy(shape.middle)
     line.current.quaternion.copy(shape.rotation)
     line.current.scale.set(1, Math.max(0.001, shape.length), 1)
-    guide.current
-      .getObjectByName('destination-marker')
-      ?.position.set(shape.to.x, shape.to.y, shape.to.z)
+    const marker = guide.current.getObjectByName('destination-marker')
+    marker?.position.set(shape.to.x, shape.to.y, shape.to.z)
+    if (marker != null) marker.visible = markerAt?.(current.goal) ?? true
   })
   const shape = guideShape(draft)
   return (
@@ -81,6 +88,8 @@ export function MoveGuide({
       <DestinationMarker
         position={[shape.to.x, shape.to.y, shape.to.z]}
         radius={DESTINATION_RADIUS}
+        shape={markerShape}
+        visible={markerAt?.(draft.goal) ?? true}
       />
     </group>
   )

@@ -2,7 +2,9 @@ import { forcedFrom, groundOfferAt } from '../../common/scoring/rules'
 import type { BallArcState } from '../field/ballArcModel'
 import { fieldingLocation } from '../field/fieldingLocation'
 import type { FieldCanvasProps } from '../field/fieldTypes'
+import { lstrings } from '../locales/strings'
 import { allowedAngle } from './battedBall'
+import { baseIds } from './scoringSelectors'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 export function fieldStageInstruction(state: ScoringState): string | undefined {
@@ -19,6 +21,7 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
     return 'Mark each runner Safe or Out in play order.'
   if (state.phase === 'chainDecision')
     return 'Mark each pushed runner Safe, Out or Back.'
+  if (state.phase === 'tagBase') return lstrings.scoring_tag_base_instruction
   if (state.phase === 'chooseDefender') {
     if (state.runnerAction?.purpose === 'fieldersChoice')
       return 'Tap or drag each defender who handled the ball, then hit Done to mark the runners.'
@@ -47,6 +50,12 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
         : 'Tap or drag the next defender, or hit Done to finish the out.'
   }
 }
+/** The bases a Caught out's tagging defender may be dropped on: those with a runner. */
+export function tagBases(state: ScoringState): number[] {
+  return baseIds(state.session).flatMap((id, index) =>
+    id == null ? [] : [index + 1]
+  )
+}
 /** Renderer callbacks and preview use the same phase and constraints as reducer events. */
 export function battedBallField(
   state: ScoringState,
@@ -64,6 +73,7 @@ export function battedBallField(
   | 'acceptDefenderTap'
   | 'deferDefenderPlacement'
   | 'constrainPlacement'
+  | 'tagBases'
   | 'onLandingAccepted'
   | 'arc'
   | 'arcMode'
@@ -72,7 +82,11 @@ export function battedBallField(
   const locating = state.phase === 'locateLanding'
   return {
     homeRunPlacement: locating,
-    deferDefenderPlacement: state.phase === 'locateFielder',
+    // A defender dragged to a base he tagged goes back to his place: the
+    // throw or tag that puts the runner out is drawn from there.
+    deferDefenderPlacement:
+      state.phase === 'locateFielder' || state.phase === 'tagBase',
+    tagBases: state.phase === 'tagBase' ? tagBases(state) : undefined,
     acceptDefenderTap:
       state.phase === 'locateFielder' ||
       state.phase === 'chooseThrower' ||

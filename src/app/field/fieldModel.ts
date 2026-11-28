@@ -72,6 +72,21 @@ export const BASES: GroundPoint[] = [
   { x: 0, z: -2 * BASE },
   { x: -BASE, z: -BASE }
 ]
+/**
+ * How near a base a defender must be dropped to have tagged it, in field
+ * metres. The bases are 27.4 m apart, so no point is this near two of them.
+ */
+export const TAG_RADIUS = 6
+/** Which of `bases` (1–3) `point` is within `TAG_RADIUS` of, if any. */
+export function tagBaseAt(
+  point: GroundPoint,
+  bases: readonly number[]
+): number | undefined {
+  return bases.find(
+    base =>
+      Math.hypot(point.x - BASES[base].x, point.z - BASES[base].z) <= TAG_RADIUS
+  )
+}
 /** Drawn fielder scale. Kept equal to PLAYER_SCALE in playerPresentation. */
 const DRAWN_FIELDER_SCALE = 3.2 * 1.15
 /** Shoulder-joint span of a drawn fielder, in field metres. */

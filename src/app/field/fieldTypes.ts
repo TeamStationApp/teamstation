@@ -42,6 +42,7 @@ export interface FieldCanvasProps {
   onPlayerTap?: (id: string) => void
   teams?: FieldTeams
   constrainPlacement?: (point: GroundPoint) => GroundPoint
+  tagBases?: readonly number[] // bases (1-3) a dragged defender may tag: lit, snapped to within TAG_RADIUS
   acceptDefenderTap?: boolean
   /** Record a fielding target without moving the defender before ball contact. */
   deferDefenderPlacement?: boolean
