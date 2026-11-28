@@ -232,7 +232,7 @@ describe('web camera management on Videos', function () {
         '--codec',
         'hevc',
         '--size',
-        '640x360',
+        '1280x720',
         '--duration',
         '100'
       ],

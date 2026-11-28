@@ -720,9 +720,22 @@ describe('a publisher replaced by its own reconnect', function () {
     return session
   }
 
-  /** What the RTMP session does when its client asks to publish. */
-  function push(session: TestSession): string | null {
-    return broadcast.postPublish(session)
+  /**
+   * What the RTMP session does when its client asks to publish, then the
+   * sequence header an encoder sends first: an HEVC one, or for
+   * `{ header: 'h264' }` an H.264 one, or none.
+   */
+  function push(
+    session: TestSession,
+    { header = 'hevc' }: { header?: 'hevc' | 'h264' | 'none' } = {}
+  ): string | null {
+    const refused = broadcast.postPublish(session)
+    if (refused == null && header !== 'none') {
+      broadcast.broadcastMessage(
+        header === 'hevc' ? enhancedHevcHeader() : enhancedAvcHeader()
+      )
+    }
+    return refused
   }
 
   beforeEach(function () {
@@ -950,7 +963,7 @@ describe('a publisher replaced by its own reconnect', function () {
       const avc = Object.assign(publisher('h264 onto HEVC'), {
         videoCodec: FOURCC_AVC
       })
-      push(avc)
+      push(avc, { header: 'h264' })
       tickSamplerForTest()
       expect(
         refusals().map(event => event.type === 'publishEnded' && event.reason)
@@ -963,7 +976,12 @@ describe('a publisher replaced by its own reconnect', function () {
         join(dir, 'init.mp4'),
         configuredAvcInit(avcParameterSetNals(1))
       )
-      push(Object.assign(publisher('HEVC onto H.264'), { videoCodec: 'hev1' }))
+      push(
+        Object.assign(publisher('HEVC onto H.264'), { videoCodec: 'hev1' }),
+        {
+          header: 'none'
+        }
+      )
       tickSamplerForTest()
       expect(refusals()).length(2)
       const second = refusals()[1]
@@ -972,7 +990,7 @@ describe('a publisher replaced by its own reconnect', function () {
       )
 
       const same = Object.assign(publisher('H.264 again'), { videoCodec: 7 })
-      push(same)
+      push(same, { header: 'h264' })
       tickSamplerForTest()
       expect(refusals(), 'the same codec').length(2)
       expect(started()).equals(1)
@@ -997,6 +1015,20 @@ describe('a publisher replaced by its own reconnect', function () {
     }
   }
 
+  /** An Enhanced RTMP HEVC sequence header as node-media-server parsed it. */
+  function enhancedHevcHeader(): Parameters<Broadcast['broadcastMessage']>[0] {
+    const data = hevcHeaderBody('enhanced', parameterSetNals(1))
+    return {
+      flags: 2,
+      dts: 0,
+      pts: 0,
+      codec_id: 0x68766331,
+      codec_type: 9,
+      size: data.length,
+      data
+    }
+  }
+
   it('decides at the sequence header, not a tick later, for a publish that sent no metadata', function () {
     const dir = spec().hlsDir
     mkdirSync(dir, { recursive: true })
@@ -1005,7 +1037,7 @@ describe('a publisher replaced by its own reconnect', function () {
       const avc = Object.assign(publisher('enhanced H.264'), {
         videoCodec: undefined
       })
-      push(avc)
+      push(avc, { header: 'none' })
       expect(started(), 'nothing shown yet').equals(0)
       broadcast.broadcastMessage(enhancedAvcHeader())
       expect(avc.videoCodec, 'the fourcc it read').equals(FOURCC_AVC)
@@ -1016,7 +1048,7 @@ describe('a publisher replaced by its own reconnect', function () {
       const fresh = Object.assign(publisher('a first H.264 publish'), {
         videoCodec: undefined
       })
-      push(fresh)
+      push(fresh, { header: 'none' })
       broadcast.broadcastMessage(enhancedAvcHeader())
       expect(started(), 'accepted at its header').equals(1)
       expect(refusals()).length(1)
@@ -1032,7 +1064,7 @@ describe('a publisher replaced by its own reconnect', function () {
       const made = Object.assign(publisher('metadata first'), {
         videoCodec: undefined as number | undefined
       })
-      push(made)
+      push(made, { header: 'none' })
       tickSamplerForTest()
       expect(started(), 'undecided').equals(0)
       expect(refusals(), 'undecided').length(0)
@@ -2836,6 +2868,14 @@ describe('a live publish that jumps (U19)', function () {
     for (const name of ['seg000000.m4s', 'seg000001.m4s'])
       writeFileSync(join(dir, name), 'x')
   }
+  /** A publisher's HEVC sequence header: its size is known once it has one. */
+  const showHeader = (made: Broadcast): void => {
+    made.broadcastMessage({
+      flags: 2,
+      dts: 0,
+      data: hevcHeaderBody('enhanced', parameterSetNals(1))
+    })
+  }
   /** A publisher's sound header: a first writer starts once it has one. */
   const showSound = (made: Broadcast): void => {
     made.broadcastMessage({
@@ -2849,6 +2889,7 @@ describe('a live publish that jumps (U19)', function () {
     const session = publisher(id, made)
     const before = started('hls').length
     publishArrivedForTest(session)
+    showHeader(made)
     showSound(made)
     await until(() => started('hls').length > before)
     return session
@@ -3123,6 +3164,7 @@ describe('a live publish that jumps (U19)', function () {
     const cuts = (): number =>
       logs.filter(line => line.includes('jumped')).length
     const cutsBefore = cuts()
+    showHeader(made)
     video(made, 0, 5)
     showSound(made)
     release()

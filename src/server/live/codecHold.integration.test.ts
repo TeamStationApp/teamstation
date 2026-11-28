@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { STREAM_REFUSAL_PREFIXES } from '../../common/api'
 import {
+  avcHeaderBody,
   hevcHeaderBody,
   hevcSegment,
   IDR_SLICE,
@@ -50,6 +51,15 @@ const DIR = join(ROOT, 'recording')
 const FAKE = join(ROOT, 'ffmpeg.sh')
 const SPAWNS = join(ROOT, 'spawns.txt')
 const START_MS = 1_790_000_000_000
+
+/** SPS units libx264 and libx265 wrote, at the size each names. */
+const SPS = {
+  avc1080: '67640028acd940780227e5c044000003000400000300f03c60c658',
+  avc540: '6764001facd940f0117ef0110000030001000003003c0f183196',
+  hevc1440:
+    '420101016000000300900000030000030096a001402005a16595952930bc05a020000003002000000303c1'
+}
+const AVC_PPS = Buffer.from('68ebe3cb22c0', 'hex')
 
 interface Packet {
   flags: number
@@ -195,6 +205,32 @@ describe('a publish on a key that already holds a recording', function () {
     })
     send(made, { flags: 3, dts: 0, codec_id: codec })
   }
+  /** A sequence header alone, Enhanced RTMP, with `sps` or stand-in sets. */
+  const showHeader = (
+    made: TestSession,
+    family: 'hevc' | 'h264',
+    sps?: string,
+    codecId?: number
+  ): void => {
+    const data =
+      family === 'hevc'
+        ? hevcHeaderBody(
+            'enhanced',
+            sps == null
+              ? parameterSetNals(1)
+              : [parameterSetNals(1)[0], Buffer.from(sps, 'hex')]
+          )
+        : avcHeaderBody('enhanced', [
+            Buffer.from(sps ?? SPS.avc1080, 'hex'),
+            AVC_PPS
+          ])
+    send(made, {
+      flags: 2,
+      dts: 0,
+      codec_id: codecId ?? (family === 'hevc' ? FOURCC_HEVC : FOURCC_AVC),
+      data
+    })
+  }
 
   /** Forgets the key and its writers, and puts the recording back. */
   const anew = (): void => {
@@ -283,6 +319,7 @@ describe('a publish on a key that already holds a recording', function () {
     live(START_MS)
     const made = session('camera', FOURCC_AVC)
     publishArrivedForTest(made)
+    showHeader(made, 'h264')
     showSound(made)
     await until(() => spawned().length === 1)
     tickSamplerForTest()
@@ -576,7 +613,9 @@ describe('a publish on a key that already holds a recording', function () {
     live()
     const made = session('camera', FOURCC_HEVC)
     publishArrivedForTest(made)
-    expect(heard(), 'accepted as it connects').deep.equals(['liv_hold'])
+    expect(heard(), 'its size is not known yet').deep.equals([])
+    showHeader(made, 'hevc')
+    expect(heard(), 'accepted on its header').deep.equals(['liv_hold'])
     expect(spawned(), 'sound first').length(0)
     showSound(made)
     await until(() => spawned().length === 1)
@@ -592,6 +631,8 @@ describe('a publish on a key that already holds a recording', function () {
     expect(heard(), 'no word yet').deep.equals([])
 
     send(made, { flags: 5, dts: 0, metadataCodec: FOURCC_HEVC })
+    expect(heard(), 'metadata does not give its size').deep.equals([])
+    showHeader(made, 'hevc')
     expect(heard()).deep.equals(['liv_hold'])
     showSound(made)
     await until(() => spawned().length === 1)
@@ -632,6 +673,8 @@ describe('a publish on a key that already holds a recording', function () {
       expect(onTheAir(), 'nothing moves the quiet clock').deep.equals([])
 
       send(made, { flags: 5, dts: 0, metadataCodec: FOURCC_HEVC })
+      expect(onTheAir(), 'its size is not known yet').deep.equals([])
+      showHeader(made, 'hevc')
       expect(onTheAir(), 'accepted, it is heard of').length.above(0)
     })
 
@@ -672,7 +715,7 @@ describe('a publish on a key that already holds a recording', function () {
 
       const good = session('camera')
       publishArrivedForTest(good)
-      send(good, { flags: 2, dts: 0, codec_id: FOURCC_HEVC })
+      showHeader(good, 'hevc')
       send(good, { flags: 3, dts: 1, codec_id: FOURCC_HEVC })
       tickSamplerForTest()
       tickSamplerForTest()
@@ -683,6 +726,7 @@ describe('a publish on a key that already holds a recording', function () {
       live()
       const good = session('camera', FOURCC_HEVC)
       publishArrivedForTest(good)
+      showHeader(good, 'hevc')
       showSound(good)
       await until(() => spawned().length === 1)
       await until(() => writerForTest(KEY) != null)
@@ -703,9 +747,72 @@ describe('a publish on a key that already holds a recording', function () {
       live()
       const made = session('camera')
       publishArrivedForTest(made)
+      // A header node-media-server could not name the codec of.
+      showHeader(made, 'hevc', undefined, 0)
+      expect(heard()).deep.equals([])
       made.videoCodec = FOURCC_HEVC
       tickSamplerForTest()
       expect(heard()).deep.equals(['liv_hold'])
+    })
+
+    it('waits for the sequence header, however long, before it takes a publish', async function () {
+      live()
+      const made = session('camera', FOURCC_HEVC)
+      publishArrivedForTest(made)
+      showSound(made)
+      for (let tick = 0; tick < 3; tick += 1) tickSamplerForTest()
+      await sleep(100)
+      expect(heard()).deep.equals([])
+      expect(spawned()).length(0)
+      expect(refusals()).length(0)
+    })
+  })
+
+  describe('a picture outside 720p to 1080p', function () {
+    for (const [name, family, codec, sps, size] of [
+      ['HEVC', 'hevc', FOURCC_HEVC, SPS.hevc1440, '2560 × 1440'],
+      ['H.264', 'h264', 7, SPS.avc540, '960 × 540']
+    ] as const) {
+      it(`refuses ${size} ${name} on its sequence header, before anything is written`, async function () {
+        live()
+        const made = session('camera')
+        publishArrivedForTest(made)
+        // Its metadata names the codec ahead of the header, as FFmpeg's does.
+        send(made, { flags: 5, dts: 0, metadataCodec: codec })
+        showSound(made)
+        expect(refusals(), 'the codec alone is fine').length(0)
+        showHeader(made, family, sps, family === 'hevc' ? codec : 0)
+
+        // No sampler tick: the header decides it.
+        const refused = refusals()
+        expect(refused).length(1)
+        expect(refused[0].type === 'publishEnded' && refused[0].reason).equals(
+          `TeamStation takes 720p to 1080p. This stream is ${size} — change the resolution and start it again.`
+        )
+        expect(statusFor(KEY)?.ingress.publishing).equals(false)
+        expect(heard(), 'never on the air').deep.equals([])
+        await sleep(100)
+        tickSamplerForTest()
+        expect(refusals(), 'refused once').length(1)
+        expect(spawned(), 'no writer').length(0)
+        expect(readdirSync(DIR), 'nothing written').deep.equals([])
+      })
+    }
+
+    it('takes 1080p onto a recording after a refused 540p try', async function () {
+      live()
+      const small = session('camera', FOURCC_AVC)
+      publishArrivedForTest(small)
+      showHeader(small, 'h264', SPS.avc540)
+      expect(refusals()).length(1)
+
+      const good = session('camera again', FOURCC_AVC)
+      publishArrivedForTest(good)
+      showHeader(good, 'h264', SPS.avc1080)
+      showSound(good)
+      await until(() => spawned().length === 1)
+      expect(heard()).deep.equals(['liv_hold'])
+      expect(refusals()).length(1)
     })
   })
 })

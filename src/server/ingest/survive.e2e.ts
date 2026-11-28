@@ -557,7 +557,7 @@ for (const [name, how] of [
           '-f',
           'lavfi',
           '-i',
-          "testsrc2=size=640x360:rate=30,drawtext=text='%{localtime\\:%T} f%{eif\\:mod(n\\,30)\\:d\\:2}':fontsize=48:fontcolor=white:box=1:boxcolor=black@0.7:x=12:y=48",
+          "testsrc2=size=1280x720:rate=30,drawtext=text='%{localtime\\:%T} f%{eif\\:mod(n\\,30)\\:d\\:2}':fontsize=48:fontcolor=white:box=1:boxcolor=black@0.7:x=12:y=48",
           '-c:v',
           'libx265',
           '-preset',
@@ -577,7 +577,7 @@ for (const [name, how] of [
         publisherErrors += String(chunk)
       })
       say(
-        `publishing testsrc2 640x360 30 fps HEVC GOP 30 to rtmp://127.0.0.1:${ports.live}/live/<key>`
+        `publishing testsrc2 1280x720 30 fps HEVC GOP 30 to rtmp://127.0.0.1:${ports.live}/live/<key>`
       )
 
       // 3. Two closed segments.

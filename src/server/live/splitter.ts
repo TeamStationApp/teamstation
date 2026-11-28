@@ -29,6 +29,7 @@ import {
   type SilentSound,
   soundHeaderOf
 } from './decoderConfig'
+import { pictureSizeOf, sizeRefusal } from './pictureSize'
 import { playlistTail, type PlaylistView } from './playlistTail'
 import {
   FIRST_INIT,
@@ -1727,11 +1728,16 @@ function firstSilence(entry: LiveEntry): SilentSound | undefined {
 
 /**
  * Whether the publish on a key has said what it carries, and the ingest may
- * record it: `streamRefusal` has nothing against it.
+ * record it: its codec and its sequence header, which gives its picture size,
+ * are in, and `streamRefusal` has nothing against them. A publish with no
+ * broadcast to hear has no header to wait for, as in `mustKnowPublish`.
  */
 function shownAcceptable(entry: LiveEntry): boolean {
   const codec = entry.ingress.session?.videoCodec
   if (codec == null || codec === 0 || codec === '') return false
+  const family = familyOf(codec)
+  const unheard = family != null && publishRecord(entry, family) == null
+  if (unheard && heardOf(entry) != null) return false
   return streamRefusal(entry) == null
 }
 
@@ -1812,11 +1818,33 @@ function recordingFamily(entry: LiveEntry): CodecFamily | undefined {
   }
 }
 
-/** Why the publish on a key may not be recorded, or `null`: see `refusalOf`. */
+/**
+ * The decoder configuration record in the publish's sequence header of
+ * `family`, once one has arrived.
+ */
+function publishRecord(
+  entry: LiveEntry,
+  family: CodecFamily
+): Buffer | undefined {
+  const heard = heardOf(entry)?.heard
+  return family === 'h264' ? heard?.avcHeader : heard?.hevcHeader
+}
+
+/**
+ * Why the publish on a key may not be recorded, or `null`: its codec, against
+ * the recording's (`refusalOf`), then its picture size (`sizeRefusal`), read
+ * from the SPS of its sequence header once that has come. A header whose SPS
+ * cannot be read is not refused for it: FFmpeg decides what it can record.
+ */
 export function streamRefusal(entry: LiveEntry): string | null {
   const codec = entry.ingress.session?.videoCodec
   if (codec == null || codec === 0 || codec === '') return null
-  return refusalOf(codec, recordingFamily(entry))
+  const refusal = refusalOf(codec, recordingFamily(entry))
+  const family = familyOf(codec)
+  if (refusal != null || family == null) return refusal
+  const record = publishRecord(entry, family)
+  const size = record == null ? undefined : pictureSizeOf(family, record)
+  return size == null ? null : sizeRefusal(size)
 }
 
 /** The HLS writer's `-tag:v`, for the codec of the publish it writes. */

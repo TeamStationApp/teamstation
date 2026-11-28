@@ -1,7 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { Bits, BitWriter, toPayload, toRbsp } from './nalBits'
+import {
+  Bits,
+  BitWriter,
+  skipProfileTierLevel,
+  toPayload,
+  toRbsp
+} from './nalBits'
 
 describe('NAL unit bits', function () {
   it('takes emulation prevention bytes out and puts them back', function () {
@@ -61,5 +67,28 @@ describe('NAL unit bits', function () {
       /bad exp-Golomb/
     )
     expect(() => new Bits(Buffer.alloc(2)).stopBit()).throws(/no stop bit/)
+  })
+
+  it('reads past an HEVC profile_tier_level and what its sub-layers add', function () {
+    const out = new BitWriter()
+    out.u(32, 0)
+    out.u(32, 0)
+    out.u(32, 0)
+    // Two sub-layers: the first with a profile and a level, the second a level.
+    out.u(1, 1)
+    out.u(1, 1)
+    out.u(1, 0)
+    out.u(1, 1)
+    out.u(12, 0)
+    out.u(32, 0)
+    out.u(32, 0)
+    out.u(24, 0)
+    out.u(8, 0)
+    out.u(8, 0)
+    out.ue(41)
+    out.align()
+    const bits = new Bits(out.bytes())
+    skipProfileTierLevel(bits, 2)
+    expect(bits.ue()).equals(41)
   })
 })

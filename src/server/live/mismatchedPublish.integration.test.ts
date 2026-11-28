@@ -228,6 +228,16 @@ describe('a publish configured differently from the recording', function () {
     made.broadcast?.broadcastMessage?.({ flags: 3, dts: 0, codec_id: codec })
   }
 
+  /** The sequence header of `camera` alone, with no picture after it yet. */
+  const header = (made: TestSession, camera = 1): void => {
+    made.broadcast?.broadcastMessage?.({
+      flags: 2,
+      dts: 0,
+      codec_id: FOURCC_HEVC,
+      data: hevcHeaderBody('enhanced', parameterSetNals(camera))
+    })
+  }
+
   /** Puts a recording on the disk and a publish of `camera` on the key. */
   const publish = async (
     camera: number,
@@ -490,17 +500,25 @@ describe('a publish configured differently from the recording', function () {
     expect(flags[0]).equals(2)
   })
 
-  it('goes on under its own name when no header ever comes', async function () {
+  it('records nothing while no header comes, however long, then goes on under its own name', async function () {
     firstPublishOnDisk(DIR, START_MS)
     const before = recording()
     live()
-    publishArrivedForTest(session('camera', FOURCC_HEVC))
+    const made = session('camera', FOURCC_HEVC)
+    publishArrivedForTest(made)
     await sleep(100)
     tickSamplerForTest()
     expect(spawned(), 'still waiting').length(0)
 
+    // Its size comes only with its header, and nothing is written without it.
     await sleep(CONFIGURATION_WAIT_MS)
     tickSamplerForTest()
+    await sleep(50)
+    expect(spawned(), 'no header, no writer').length(0)
+    expect(events.map(event => event.type)).not.contains('publishStarted')
+    expect(recording()).deep.equals(before)
+
+    show(made, 2)
     await until(() => spawned().length === 1)
     expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
       'init000003.mp4'
@@ -526,12 +544,16 @@ describe('a publish configured differently from the recording', function () {
     tickSamplerForTest()
     await sleep(50)
     expect(spawned(), 'the limit starts now').length(0)
-    expect(events.map(event => event.type)).contains('publishStarted')
+    expect(
+      events.map(event => event.type),
+      'nor without its header'
+    ).not.contains('publishStarted')
     show(made, 1)
     await until(() => spawned().length === 1)
     expect(optionOf(spawned()[0], '-hls_fmp4_init_filename')).equals(
       WRITER_INIT_NAME
     )
+    expect(events.map(event => event.type)).contains('publishStarted')
   })
 
   for (const [name, camera, init] of [
@@ -839,6 +861,7 @@ describe('a publish configured differently from the recording', function () {
         live()
         const made = session('camera', FOURCC_HEVC)
         publishArrivedForTest(made)
+        header(made)
         expect(spawned(), 'it has not shown sound').length(0)
         const asked = Date.now()
         soundHeader(made, SOUND)
@@ -853,6 +876,7 @@ describe('a publish configured differently from the recording', function () {
           live()
           const made = session('camera')
           publishArrivedForTest(made)
+          header(made)
           const asked = Date.now()
           metadata(made, { audiocodecid: said })
           await until(() => spawned().length === 1)
@@ -910,6 +934,7 @@ describe('a publish configured differently from the recording', function () {
         live()
         const made = session('camera')
         publishArrivedForTest(made)
+        header(made)
         metadata(made, { audiocodecid: 0 })
         metadata(made)
         await until(() => spawned().length === 1)
@@ -943,7 +968,9 @@ describe('a publish configured differently from the recording', function () {
 
       it('goes ahead with silence when no first picture and no sound show', async function () {
         live()
-        publishArrivedForTest(session('camera', FOURCC_HEVC))
+        const made = session('camera', FOURCC_HEVC)
+        publishArrivedForTest(made)
+        header(made)
         await sleep(CONFIGURATION_WAIT_MS + 20)
         tickSamplerForTest()
         await until(() => spawned().length === 1)
@@ -1098,7 +1125,9 @@ describe('a publish configured differently from the recording', function () {
       it('takes no metadata and no first picture for no sound as well', async function () {
         recordingWith(SOUND)
         live()
-        publishArrivedForTest(session('camera', FOURCC_HEVC))
+        const made = session('camera', FOURCC_HEVC)
+        publishArrivedForTest(made)
+        header(made)
         await sleep(CONFIGURATION_WAIT_MS + 20)
         tickSamplerForTest()
         await until(() => spawned().length === 1)

@@ -51,7 +51,7 @@ describe('a live origin shared by API nodes', function () {
         '-f',
         'lavfi',
         '-i',
-        'testsrc2=size=160x90:rate=10:duration=9',
+        'testsrc2=size=1280x720:rate=10:duration=9',
         '-c:v',
         'libx265',
         '-preset',

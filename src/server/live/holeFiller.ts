@@ -6,7 +6,13 @@ import { promisify } from 'util'
 
 import { ffprobeFor } from '../media/ffmpeg'
 import type { CodecFamily } from './decoderConfig'
-import { Bits, BitWriter, toPayload, toRbsp } from './nalBits'
+import {
+  Bits,
+  BitWriter,
+  skipProfileTierLevel,
+  toPayload,
+  toRbsp
+} from './nalBits'
 
 const run = promisify(execFile)
 
@@ -351,20 +357,6 @@ export function annexBUnits(data: Buffer): Buffer[] {
         : data.length
     )
   )
-}
-
-function skipProfileTierLevel(bits: Bits, maxSubLayersMinus1: number): void {
-  bits.skip(96)
-  const profile: number[] = []
-  const level: number[] = []
-  for (let i = 0; i < maxSubLayersMinus1; i++) {
-    profile.push(bits.u(1))
-    level.push(bits.u(1))
-  }
-  if (maxSubLayersMinus1 > 0) bits.skip(2 * (8 - maxSubLayersMinus1))
-  for (let i = 0; i < maxSubLayersMinus1; i++) {
-    bits.skip(profile[i] * 88 + level[i] * 8)
-  }
 }
 
 interface SpsFields {

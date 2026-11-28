@@ -124,3 +124,24 @@ export class BitWriter {
     return out
   }
 }
+
+/**
+ * Reads past an HEVC `profile_tier_level` with its profile present: twelve
+ * bytes of general profile, tier and level, then what each sub-layer adds.
+ */
+export function skipProfileTierLevel(
+  bits: Bits,
+  maxSubLayersMinus1: number
+): void {
+  bits.skip(96)
+  const profile: number[] = []
+  const level: number[] = []
+  for (let i = 0; i < maxSubLayersMinus1; i++) {
+    profile.push(bits.u(1))
+    level.push(bits.u(1))
+  }
+  if (maxSubLayersMinus1 > 0) bits.skip(2 * (8 - maxSubLayersMinus1))
+  for (let i = 0; i < maxSubLayersMinus1; i++) {
+    bits.skip(profile[i] * 88 + level[i] * 8)
+  }
+}
