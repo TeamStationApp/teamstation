@@ -24,7 +24,7 @@ export function MembershipAccess({
   onSignIn: () => void
   onClose?: () => void
   presentation?: 'inline' | 'sheet'
-  resource?: 'stats' | 'videos'
+  resource?: 'stats' | 'videos' | 'replay'
 }): React.ReactElement {
   const theme = useTheme()
   const [choices, setChoices] = useState<typeof teams>()
@@ -92,13 +92,17 @@ export function MembershipAccess({
     ? 'Membership request sent'
     : resource === 'videos'
       ? lstrings.game_videos_members_only
-      : teams.length === 1
-        ? 'You need to be a member of this team to see individual player stats.'
-        : lstrings.box_score_members_only
+      : resource === 'replay'
+        ? lstrings.game_replay_members_only
+        : teams.length === 1
+          ? 'You need to be a member of this team to see individual player stats.'
+          : lstrings.box_score_members_only
   const detail =
     error ??
     (sent
-      ? `A team administrator will review your request. ${resource === 'videos' ? 'Videos' : 'Individual player stats'} become available after approval.`
+      ? resource === 'replay'
+        ? lstrings.game_replay_members_after_request
+        : `A team administrator will review your request. ${resource === 'videos' ? 'Videos' : 'Individual player stats'} become available after approval.`
       : !signedIn
         ? 'Log in or create an account first to request membership.'
         : choices != null

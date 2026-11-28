@@ -268,6 +268,15 @@ export const enUs = {
    */
   game_videos_members_only:
     "You need to be a member of one of the teams to watch this game's videos.",
+  /**
+   * The sheet a non-member, or somebody signed out, gets on tapping the Live
+   * or Replay button on a game's hero card.
+   */
+  game_replay_members_only:
+    'You need to be a member of one of the teams to watch this game live or its replay.',
+  /** The same sheet once a membership request has been sent. */
+  game_replay_members_after_request:
+    'A team administrator will review your request. The live game and its replay become available after approval.',
   /** Under a non-member's line score, in place of each side's lines. */
   box_score_members_only:
     'You need to be a member of one of these teams to see individual player stats.',

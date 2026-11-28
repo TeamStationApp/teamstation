@@ -5,6 +5,7 @@ import React from 'react'
 import { TeamStationClient } from '../../common/api'
 import { asGroupDetail } from '../../common/publicGroups'
 import { find, mount, press, text, unmount } from '../../test/gameFormDom'
+import { lstrings } from '../locales/strings'
 import { MembershipAccess } from './MembershipAccess'
 
 const teams = [
@@ -148,5 +149,88 @@ describe('membership access requests', () => {
     )
     await press('Log in / Sign up')
     expect(actions).deep.equals(['close', 'signIn'])
+  })
+
+  it('names the live game and its replay to a guest, and takes them to sign in', async () => {
+    const actions: string[] = []
+    await mount(
+      <MembershipAccess
+        client={client()}
+        signedIn={false}
+        teams={teams}
+        resource="replay"
+        presentation="sheet"
+        onClose={() => {
+          actions.push('close')
+        }}
+        onSignIn={() => {
+          actions.push('signIn')
+        }}
+      />
+    )
+    expect(text()).includes(lstrings.game_replay_members_only)
+    expect(text()).includes(
+      'Log in or create an account first to request membership.'
+    )
+    await press('Log in / Sign up')
+    expect(actions).deep.equals(['close', 'signIn'])
+  })
+
+  it('requests membership for the replay and names it once the request is sent', async () => {
+    const api = client()
+    const requests: unknown[] = []
+    api.inviteRelationship = async request => {
+      requests.push(request)
+      return { id: 'request-demo', status: 'pending' }
+    }
+    let closed = 0
+    await mount(
+      <MembershipAccess
+        client={api}
+        signedIn
+        teams={teams}
+        resource="replay"
+        presentation="sheet"
+        onSignIn={() => undefined}
+        onClose={() => {
+          closed++
+        }}
+      />
+    )
+    expect(text()).includes(lstrings.game_replay_members_only)
+    await press('Request membership')
+    await press('Demo Owls')
+    await press('Send request')
+    expect(requests).length(1)
+    expect(requests[0]).includes({ kind: 'membership', teamId: 'owls' })
+    expect(text()).includes('Membership request sent')
+    expect(text()).includes(lstrings.game_replay_members_after_request)
+    await press('Done')
+    expect(closed).equals(1)
+  })
+
+  it('keeps the videos and stats wording for their own sheets', async () => {
+    await mount(
+      <MembershipAccess
+        client={client()}
+        signedIn
+        teams={teams}
+        resource="videos"
+        onSignIn={() => undefined}
+      />
+    )
+    expect(text()).includes(lstrings.game_videos_members_only)
+    expect(text()).not.includes(lstrings.game_replay_members_only)
+    await unmount()
+    await mount(
+      <MembershipAccess
+        client={client()}
+        signedIn
+        teams={teams}
+        onSignIn={() => undefined}
+      />
+    )
+    expect(text()).includes(lstrings.box_score_members_only)
+    expect(text()).not.includes(lstrings.game_replay_members_only)
   })
 })
