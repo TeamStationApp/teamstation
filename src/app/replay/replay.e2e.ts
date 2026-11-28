@@ -512,6 +512,8 @@ async function heroButtonScenario(m: Device): Promise<void> {
     })
     await m.assertVisible({ text: offer, timeout: 10000 })
     await m.assertNotVisible({ id: 'game-replay' })
+    // The sheet slides up over a fading scrim: shot once it has settled.
+    await wait(1500)
   }
 
   await signInWeb(m, LEAGUE)
