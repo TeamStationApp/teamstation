@@ -241,7 +241,11 @@ public struct SettingsView: View {
           }
           .accessibilityIdentifier("settings-stream-framerate")
 
-          StreamBitrateRange(low: $draft.streamBitrateLow, high: $draft.streamBitrateHigh)
+          StreamBitrateRange(
+            low: $draft.streamBitrateLow,
+            high: $draft.streamBitrateHigh,
+            maximum: AppConfig.streamBitrateMaximum(for: draft.streamCodec)
+          )
         } header: {
           Text("Programme master stream")
         } footer: {
@@ -917,11 +921,13 @@ private struct NewTemplateSheet: View {
   }
 }
 
-/// The stream's low and high bitrate on one track: 1 to 10 Mbps in half-megabit steps, with the range
-/// the bitrate may move in shown in green between the two points.
+/// The stream's low and high bitrate on one track: 1 Mbps to the stream codec's ceiling (10 in HEVC,
+/// 15 in H.264) in half-megabit steps, with the range the bitrate may move in shown in green between
+/// the two points.
 private struct StreamBitrateRange: View {
   @Binding var low: Int
   @Binding var high: Int
+  let maximum: Int
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -932,7 +938,7 @@ private struct StreamBitrateRange: View {
       RangeSlider(
         lower: Self.megabitBinding($low),
         upper: Self.megabitBinding($high),
-        in: Double(AppConfig.streamBitrateMinimum) / 1_000_000 ... Double(AppConfig.streamBitrateMaximum) / 1_000_000,
+        in: Double(AppConfig.streamBitrateMinimum) / 1_000_000 ... Double(maximum) / 1_000_000,
         step: Double(AppConfig.streamBitrateStep) / 1_000_000,
         tint: .green,
         lowerIdentifier: "settings-stream-bitrate-low",

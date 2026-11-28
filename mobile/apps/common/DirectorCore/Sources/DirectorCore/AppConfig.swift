@@ -78,8 +78,11 @@ public struct AppConfig: Hashable, Sendable, Codable {
   /// camera sent: pictures a camera did not send are repeated, extra ones are dropped.
   public var rawCameraFrameRate: Int
   public var rawCameraBitrate: Int
-  /// The stream's codec. HEVC needs a service that takes Enhanced RTMP.
-  public var streamCodec: ProgramCodec
+  /// The stream's codec. HEVC needs a service that takes Enhanced RTMP. A change re-clamps the
+  /// bitrates to the new codec's ceiling, so a 14 Mbps H.264 stream switched to HEVC sends 10.
+  public var streamCodec: ProgramCodec {
+    didSet { settingStreamBitrates(low: streamBitrateLow, high: streamBitrateHigh) }
+  }
   public var streamResolution: ProgramResolution
   public var streamFrameRate: Int
   /// The stream starts at `streamBitrateHigh` and comes down towards `streamBitrateLow` while the
@@ -172,11 +175,18 @@ public struct AppConfig: Hashable, Sendable, Codable {
   public static let replaySlowMotionRateMinimum: Double = 0
   public static let replaySlowMotionRateMaximum: Double = 1.0
 
-  /// The stream's bitrate range: 1 to 10 Mbps in half-megabit steps. Ten is the most the stream may
-  /// ever send.
+  /// The stream's bitrate range: from 1 Mbps to its codec's ceiling, in half-megabit steps.
   public static let streamBitrateMinimum = 1_000_000
-  public static let streamBitrateMaximum = 10_000_000
   public static let streamBitrateStep = 500_000
+
+  /// The most the stream may ever send: 10 Mbps in HEVC, 15 Mbps in H.264, which needs more bits
+  /// for the same picture.
+  public static func streamBitrateMaximum(for codec: ProgramCodec) -> Int {
+    switch codec {
+    case .hevc: 10_000_000
+    case .h264: 15_000_000
+    }
+  }
   public static let rawCameraBitrateMinimum = 1_000_000
   public static let rawCameraBitrateMaximum = 40_000_000
   /// The frame rates offered for the raw camera and stream encodings.
@@ -250,7 +260,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
     self.streamCodec = streamCodec
     self.streamResolution = streamResolution
     self.streamFrameRate = max(1, streamFrameRate)
-    let stream = Self.clampedStreamBitrates(low: streamBitrateLow, high: streamBitrateHigh)
+    let stream = Self.clampedStreamBitrates(low: streamBitrateLow, high: streamBitrateHigh, codec: streamCodec)
     self.streamBitrateLow = stream.low
     self.streamBitrateHigh = stream.high
     self.showDebugHUD = showDebugHUD
@@ -319,15 +329,23 @@ public struct AppConfig: Hashable, Sendable, Codable {
     min(max(bitrate, rawCameraBitrateMinimum), rawCameraBitrateMaximum)
   }
 
-  /// Both stream bitrates on the half-megabit grid, inside 1–10 Mbps, and the low one never above
-  /// the high one. They may meet, which is a fixed bitrate.
-  public static func clampedStreamBitrates(low: Int, high: Int) -> (low: Int, high: Int) {
+  /// Both stream bitrates on the half-megabit grid, inside 1 Mbps to `codec`'s ceiling, and the low
+  /// one never above the high one. They may meet, which is a fixed bitrate.
+  public static func clampedStreamBitrates(low: Int, high: Int, codec: ProgramCodec) -> (low: Int, high: Int) {
+    let maximum = streamBitrateMaximum(for: codec)
     func clamp(_ bitrate: Int) -> Int {
       let snapped = Int((Double(bitrate) / Double(streamBitrateStep)).rounded()) * streamBitrateStep
-      return min(max(snapped, streamBitrateMinimum), streamBitrateMaximum)
+      return min(max(snapped, streamBitrateMinimum), maximum)
     }
     let high = clamp(high)
     return (min(clamp(low), high), high)
+  }
+
+  /// Sets both stream bitrates, clamped for the stream codec in force.
+  public mutating func settingStreamBitrates(low: Int, high: Int) {
+    let range = Self.clampedStreamBitrates(low: low, high: high, codec: streamCodec)
+    streamBitrateLow = range.low
+    streamBitrateHigh = range.high
   }
 
   /// The /24s to sweep in addition to the local one, as network addresses (`198.51.100.0`). Empty when
@@ -399,7 +417,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
   ///
   /// A saved config is an iPad already in use, so a group it has never saved carries on doing what
   /// it did, rather than taking a new install's defaults: the stream was the programme's settings in
-  /// H.264, capped here at the stream's 10 Mbps, with half that as its floor; an NDI archive was
+  /// H.264, capped here at the stream's H.264 ceiling, with half that as its floor; an NDI archive was
   /// encoded at the programme's bitrate.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -413,6 +431,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
       ?? fallback.programFrameRate
     let programBitrate = try container.decodeIfPresent(Int.self, forKey: .programBitrate)
       ?? fallback.programBitrate
+    let streamCodec = try container.decodeIfPresent(ProgramCodec.self, forKey: .streamCodec) ?? .h264
     self.init(
       programCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .programCodec)
         ?? fallback.programCodec,
@@ -440,8 +459,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
         ?? fallback.rawCameraFrameRate,
       rawCameraBitrate: try container.decodeIfPresent(Int.self, forKey: .rawCameraBitrate)
         ?? programBitrate,
-      streamCodec: try container.decodeIfPresent(ProgramCodec.self, forKey: .streamCodec)
-        ?? .h264,
+      streamCodec: streamCodec,
       streamResolution: try container.decodeIfPresent(
         ProgramResolution.self,
         forKey: .streamResolution
@@ -449,7 +467,7 @@ public struct AppConfig: Hashable, Sendable, Codable {
       streamFrameRate: try container.decodeIfPresent(Int.self, forKey: .streamFrameRate)
         ?? programFrameRate,
       streamBitrateLow: try container.decodeIfPresent(Int.self, forKey: .streamBitrateLow)
-        ?? min(programBitrate, Self.streamBitrateMaximum) / 2,
+        ?? min(programBitrate, Self.streamBitrateMaximum(for: streamCodec)) / 2,
       streamBitrateHigh: try container.decodeIfPresent(Int.self, forKey: .streamBitrateHigh)
         ?? programBitrate,
       showDebugHUD: try container.decodeIfPresent(Bool.self, forKey: .showDebugHUD)

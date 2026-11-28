@@ -43,12 +43,40 @@ struct EncodingSettingsTests {
     // NDI was archived in the old codec setting at the programme's bitrate.
     #expect(config.rawCameraCodec == .h264)
     #expect(config.rawCameraBitrate == 12_000_000)
-    // The stream was the programme's settings in H.264; 12 Mbps is capped at the stream's 10.
+    // The stream was the programme's settings in H.264, whose 15 Mbps ceiling leaves 12 alone.
     #expect(config.streamCodec == .h264)
     #expect(config.streamResolution == .hd720)
     #expect(config.streamFrameRate == 30)
-    #expect(config.streamBitrateHigh == 10_000_000)
-    #expect(config.streamBitrateLow == 5_000_000)
+    #expect(config.streamBitrateHigh == 12_000_000)
+    #expect(config.streamBitrateLow == 6_000_000)
+  }
+
+  @Test("An old H.264 config above 15 Mbps streams at 15, with half that as its floor")
+  func savedConfigCappedAtH264Ceiling() throws {
+    let saved = """
+    {"programCodec":"hevc","programBitrate":20000000,"gopSeconds":2}
+    """
+    let config = try JSONDecoder().decode(AppConfig.self, from: Data(saved.utf8))
+    #expect(config.streamCodec == .h264)
+    #expect(config.streamBitrateHigh == 15_000_000)
+    #expect(config.streamBitrateLow == 7_500_000)
+  }
+
+  @Test("An H.264 stream saved at 15 Mbps loads at 15 Mbps; an HEVC one saved there loads at 10")
+  func savedStreamBitrateKeepsItsCodecCeiling() throws {
+    var h264 = AppConfig(streamCodec: .h264)
+    h264.settingStreamBitrates(low: 2_000_000, high: 15_000_000)
+    let loaded = try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(h264))
+    #expect(loaded.streamCodec == .h264)
+    #expect(loaded.streamBitrateHigh == 15_000_000)
+    #expect(loaded.streamBitrateLow == 2_000_000)
+
+    let hevc = """
+    {"streamCodec":"hevc","streamBitrateLow":2000000,"streamBitrateHigh":15000000}
+    """
+    let clamped = try JSONDecoder().decode(AppConfig.self, from: Data(hevc.utf8))
+    #expect(clamped.streamBitrateHigh == 10_000_000)
+    #expect(clamped.streamBitrateLow == 2_000_000)
   }
 
   @Test("Every new setting survives a save and a load")
@@ -67,14 +95,52 @@ struct EncodingSettingsTests {
     #expect(loaded == config)
   }
 
-  @Test("Stream bitrates sit on the half-megabit grid inside 1–10 Mbps, the low never above the high")
+  @Test("Stream bitrates sit on the half-megabit grid inside 1 Mbps to the codec's ceiling, the low never above the high")
   func streamBitratesClamp() {
-    #expect(AppConfig.clampedStreamBitrates(low: 2_300_000, high: 6_100_000) == (2_500_000, 6_000_000))
-    #expect(AppConfig.clampedStreamBitrates(low: 200_000, high: 25_000_000) == (1_000_000, 10_000_000))
-    #expect(AppConfig.clampedStreamBitrates(low: 8_000_000, high: 3_000_000) == (3_000_000, 3_000_000))
+    #expect(AppConfig.streamBitrateMaximum(for: .hevc) == 10_000_000)
+    #expect(AppConfig.streamBitrateMaximum(for: .h264) == 15_000_000)
+    #expect(AppConfig.clampedStreamBitrates(low: 2_300_000, high: 6_100_000, codec: .hevc) == (2_500_000, 6_000_000))
+    #expect(AppConfig.clampedStreamBitrates(low: 200_000, high: 25_000_000, codec: .hevc) == (1_000_000, 10_000_000))
+    #expect(AppConfig.clampedStreamBitrates(low: 200_000, high: 25_000_000, codec: .h264) == (1_000_000, 15_000_000))
+    #expect(AppConfig.clampedStreamBitrates(low: 8_000_000, high: 3_000_000, codec: .h264) == (3_000_000, 3_000_000))
     let config = AppConfig(streamBitrateLow: 7_000_000, streamBitrateHigh: 4_000_000)
     #expect(config.streamBitrateLow == 4_000_000)
     #expect(config.streamBitrateHigh == 4_000_000)
+    let h264 = AppConfig(streamCodec: .h264, streamBitrateLow: 15_000_000, streamBitrateHigh: 15_000_000)
+    #expect(h264.streamBitrateHigh == 15_000_000)
+    let hevc = AppConfig(streamCodec: .hevc, streamBitrateLow: 15_000_000, streamBitrateHigh: 15_000_000)
+    #expect(hevc.streamBitrateLow == 10_000_000)
+    #expect(hevc.streamBitrateHigh == 10_000_000)
+  }
+
+  @Test("settingStreamBitrates clamps to the codec in force: 15 Mbps in H.264, 10 in HEVC, 1 at least")
+  func settingStreamBitratesUsesTheCodec() {
+    var h264 = AppConfig(streamCodec: .h264)
+    h264.settingStreamBitrates(low: 3_000_000, high: 15_000_000)
+    #expect(h264.streamBitrateLow == 3_000_000)
+    #expect(h264.streamBitrateHigh == 15_000_000)
+    h264.settingStreamBitrates(low: 0, high: 0)
+    #expect(h264.streamBitrateLow == 1_000_000)
+    #expect(h264.streamBitrateHigh == 1_000_000)
+
+    var hevc = AppConfig(streamCodec: .hevc)
+    hevc.settingStreamBitrates(low: 3_000_000, high: 15_000_000)
+    #expect(hevc.streamBitrateLow == 3_000_000)
+    #expect(hevc.streamBitrateHigh == 10_000_000)
+    hevc.settingStreamBitrates(low: 0, high: 0)
+    #expect(hevc.streamBitrateLow == 1_000_000)
+    #expect(hevc.streamBitrateHigh == 1_000_000)
+  }
+
+  @Test("Switching an H.264 stream at 14 Mbps to HEVC clamps it to 10; switching back leaves it at 10")
+  func codecSwitchReclamps() {
+    var config = AppConfig(streamCodec: .h264, streamBitrateLow: 12_000_000, streamBitrateHigh: 14_000_000)
+    #expect(config.streamBitrateHigh == 14_000_000)
+    config.streamCodec = .hevc
+    #expect(config.streamBitrateLow == 10_000_000)
+    #expect(config.streamBitrateHigh == 10_000_000)
+    config.streamCodec = .h264
+    #expect(config.streamBitrateHigh == 10_000_000)
   }
 
   @Test("A take records the raw camera and programme settings it started with")
