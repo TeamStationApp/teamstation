@@ -5,7 +5,8 @@ import type { Position } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
 import { fieldingLocation } from '../field/fieldingLocation'
-import { BASES, createPlayers } from '../field/fieldModel'
+import { BASES, createPlayers, TAG_RADIUS } from '../field/fieldModel'
+import { fieldStageInstruction, tagBases } from './battedBallField'
 import {
   continueDoublePlay,
   DOUBLE_PLAYS,
@@ -574,5 +575,334 @@ describe('the runners a ground double play leaves', function () {
     // That Out is the third: the half ends.
     expect(out.session.liveData.linescore.isTopInning).equals(false)
     expect(out.runnerChain).equals(undefined)
+  })
+})
+
+/** A Caught out from `before`, caught by `position` at `point`, angle 20°. */
+function caughtPlay(
+  before: ScoringState,
+  position: Position,
+  point: { x: number; z: number },
+  angle = 20
+): ScoringState {
+  let state = scoringReducer(before, {
+    type: 'MORE',
+    input: { action: 'Double Play', doublePlay: 'caught' }
+  })
+  state = scoringReducer(state, {
+    type: 'FIELDER',
+    id: at(before, position),
+    point,
+    generation: state.generation
+  })
+  return played(
+    scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle,
+      generation: state.generation,
+      dragged: true
+    }),
+    false
+  )
+}
+
+/** The runner movements logged since `before`. */
+function movements(before: ScoringState, after: ScoringState): unknown[] {
+  return after.log
+    .slice(before.log.length)
+    .filter(action => action.type === 'runnerMovement')
+}
+
+/** The same catch scored by hand, the runner on `base` put back out there. */
+function handCaught(
+  before: ScoringState,
+  position: Position,
+  point: { x: number; z: number },
+  base: number,
+  receiver?: Position
+): ScoringState {
+  const step = (
+    state: ScoringState,
+    event: Parameters<typeof scoringReducer>[1]
+  ): ScoringState => played(scoringReducer(state, event), false)
+  let state = step(before, { type: 'OUTCOME', outcome: 'Ball Caught' })
+  state = step(state, {
+    type: 'FIELDER',
+    id: at(before, position),
+    point,
+    generation: state.generation
+  })
+  state = step(state, {
+    type: 'TRAJECTORY',
+    angle: 20,
+    generation: state.generation,
+    dragged: true
+  })
+  state = step(state, {
+    type: 'RUNNER_PROPOSE',
+    id: bases(before)[base - 1]!,
+    to: base
+  })
+  state = step(state, { type: 'RUNNER_DECIDE', decision: 'out' })
+  state = step(state, { type: 'RUNNER_REASON', reason: 'Did Not Tag Up' })
+  if (receiver != null)
+    state = step(state, {
+      type: 'DEFENDER',
+      id: at(before, receiver),
+      point: { ...BASES[base] },
+      generation: state.generation
+    })
+  return step(state, { type: 'DEFENDER', generation: state.generation })
+}
+
+describe('a Caught out with one runner on', function () {
+  for (const presentations of [false, true])
+    for (const [base, position, point, receiver] of [
+      [1, 'CF', { x: 0, z: -90 }, '1B'],
+      [1, '1B', { x: 24, z: -30 }, undefined],
+      [3, 'LF', { x: -50, z: -70 }, '3B'],
+      [3, '3B', { x: -24, z: -28 }, undefined]
+    ] as const)
+      it(`doubles off the runner on ${base === 1 ? '1st' : '3rd'} caught by ${position}, presentations ${presentations ? 'on' : 'off'}`, function () {
+        const before = initial(base === 1 ? 1 : 4, 0, presentations)
+        const runner = bases(before)[base - 1]!
+        const done = caughtPlay(before, position, point)
+        // Two outs, the bases empty, and the play closed with no window.
+        expect(done.session.liveData.linescore.outs).equals(2)
+        expect(bases(done)).deep.equals([undefined, undefined, undefined])
+        expect(done.phase).equals('ready')
+        expect(done.correctionWindow).equals(null)
+        const moved = movements(before, done)
+        expect(moved).deep.equals(
+          movements(
+            before,
+            handCaught(
+              initial(base === 1 ? 1 : 4, 0, presentations),
+              position,
+              point,
+              base,
+              receiver
+            )
+          )
+        )
+        expect(moved).length(1)
+        expect(moved[0]).includes({
+          runner,
+          to: base === 1 ? '1B' : '3B',
+          out: true,
+          reason: 'Ball Caught'
+        })
+        // A throw from the catcher to the baseman, or the baseman's own tag.
+        expect((moved[0] as { fielders: number[] }).fielders).deep.equals(
+          receiver == null
+            ? [at(before, position)]
+            : [at(before, position), at(before, receiver)]
+        )
+        // The whole double off comes back with the trajectory.
+        expect(done.past.map(entry => entry.label)).deep.equals([
+          'Double Play: caught out',
+          `Fielded by ${done.session.gameData.players[at(before, position)].fullName}`,
+          '20° Line Drive'
+        ])
+        const undone = scoringReducer(done, { type: 'UNDO' })
+        expect(undone.phase).equals('trajectory')
+        expect(undone.session.liveData.linescore.outs).equals(0)
+      })
+  it('refuses a grounder: the trajectory is raised to 10°', function () {
+    const before = initial(1)
+    const done = caughtPlay(before, 'CF', { x: 0, z: -90 }, -20)
+    expect(done.past.at(-1)?.label).equals('10° Line Drive')
+    expect(
+      done.log.find(
+        action => action.type === 'ballInPlay' && action.launchAngle != null
+      )
+    ).includes({ launchAngle: 10 })
+    expect(done.session.liveData.linescore.outs).equals(2)
+  })
+  it('asks once who took the throw at 2nd, with the standard prompt and no timer', function () {
+    for (const presentations of [false, true]) {
+      const before = initial(2, 0, presentations)
+      const asked = caughtPlay(before, 'LF', { x: -50, z: -70 })
+      expect(asked.phase).equals('chooseDefender')
+      expect(asked.correctionWindow).equals(null)
+      expect(fieldStageInstruction(asked)).equals(
+        'Tap or drag the next defender, or hit Done to finish the out.'
+      )
+      expect(asked.runnerAction).includes({
+        playerId: 3,
+        from: 2,
+        to: 2,
+        decision: 'out',
+        thrower: at(before, 'LF')
+      })
+      // Done: the catcher's own tag.
+      const tagged = played(
+        scoringReducer(asked, {
+          type: 'DEFENDER',
+          generation: asked.generation
+        }),
+        false
+      )
+      expect(movements(before, tagged)).deep.equals([
+        {
+          type: 'runnerMovement',
+          runner: 3,
+          to: '2B',
+          out: true,
+          reason: 'Ball Caught',
+          fielders: [at(before, 'LF')],
+          locations: [{ ...BASES[2] }],
+          runnerLocation: { ...BASES[2] }
+        }
+      ])
+      expect(tagged.phase).equals('ready')
+      expect(tagged.session.liveData.linescore.outs).equals(2)
+      // A defender tapped: the throw to him at 2nd is the out, nobody else asked.
+      const thrown = played(
+        scoringReducer(asked, {
+          type: 'DEFENDER',
+          id: at(before, 'SS'),
+          point: { ...BASES[2] },
+          generation: asked.generation
+        }),
+        false
+      )
+      expect(thrown.phase).equals('ready')
+      const [out] = movements(before, thrown) as Array<{ fielders: number[] }>
+      expect(out.fielders).deep.equals([at(before, 'LF'), at(before, 'SS')])
+      expect(out).includes({ runner: 3, to: '2B', reason: 'Ball Caught' })
+      expect(thrown.session.liveData.linescore.outs).equals(2)
+      expect(thrown.past.at(-1)?.label).equals(
+        `Throw to ${thrown.session.gameData.players[at(before, 'SS')].fullName}`
+      )
+      // Undo returns to the question.
+      expect(scoringReducer(thrown, { type: 'UNDO' }).phase).equals(
+        'chooseDefender'
+      )
+    }
+  })
+  it('doubles off nobody before the catch is in the game', function () {
+    const state = initial(1)
+    const started = startDoublePlay(state, 'caught')
+    started.pendingPlay!.trajectoryAccepted = true
+    const copy = structuredClone(started)
+    continueDoublePlay(started)
+    expect(started).deep.equals(copy)
+  })
+})
+
+describe('a Caught out with several runners on', function () {
+  const drop = (
+    state: ScoringState,
+    position: Position,
+    point: { x: number; z: number }
+  ): ScoringState =>
+    played(
+      scoringReducer(state, {
+        type: 'TAG_BASE',
+        id: at(state, position),
+        point,
+        generation: state.generation
+      }),
+      false
+    )
+  for (const presentations of [false, true])
+    it(`waits for the tagging defender's drop on an occupied base, presentations ${presentations ? 'on' : 'off'}`, function () {
+      const before = initial(5, 0, presentations)
+      const asked = caughtPlay(before, 'RF', { x: 50, z: -70 })
+      expect(asked.phase).equals('tagBase')
+      expect(asked.correctionWindow).equals(null)
+      expect(tagBases(asked)).deep.equals([1, 3])
+      expect(fieldStageInstruction(asked)).equals(
+        'Drag the defender who tagged a base to that base.'
+      )
+      // No timer and nothing else moves it on.
+      expect(
+        scoringReducer(asked, {
+          type: 'TIMER_TICK',
+          elapsedMs: 9000,
+          generation: asked.generation,
+          revision: asked.session.meta.sequence
+        })
+      ).equals(asked)
+      // Far from any base, or on the empty 2nd: refused.
+      expect(drop(asked, '1B', { x: 10, z: -30 })).equals(asked)
+      expect(drop(asked, '2B', { ...BASES[2] })).equals(asked)
+      expect(
+        scoringReducer(asked, {
+          type: 'TAG_BASE',
+          id: at(asked, '1B'),
+          point: { ...BASES[1] },
+          generation: asked.generation + 1
+        })
+      ).equals(asked)
+      // Within TAG_RADIUS of 1st: the catcher's throw to 1B there.
+      const near = { x: BASES[1].x + TAG_RADIUS - 0.5, z: BASES[1].z }
+      expect(
+        drop(asked, '1B', { x: BASES[1].x + TAG_RADIUS + 0.5, z: BASES[1].z })
+      ).equals(asked)
+      const tagged = drop(asked, '1B', near)
+      const [out] = movements(before, tagged) as Array<{ fielders: number[] }>
+      expect(out).includes({
+        runner: 2,
+        to: '1B',
+        out: true,
+        reason: 'Ball Caught'
+      })
+      expect(out.fielders).deep.equals([at(before, 'RF'), at(before, '1B')])
+      expect(bases(tagged)).deep.equals([undefined, undefined, 4])
+      expect(tagged.session.liveData.linescore.outs).equals(2)
+      // The runner left gets the five-second window.
+      expect(tagged.phase).equals('correctionWindow')
+      expect(tagged.correctionWindow?.remainingMs).equals(5000)
+      expect(tagged.past.at(-1)?.label).equals(
+        `Tag 1st ${tagged.session.gameData.players[at(before, '1B')].fullName}`
+      )
+      // Undo returns to the drop.
+      const undone = scoringReducer(tagged, { type: 'UNDO' })
+      expect(undone.phase).equals('tagBase')
+      expect(bases(undone)).deep.equals([2, undefined, 4])
+      // The catcher dragged to 3rd: his own tag there.
+      const own = drop(asked, 'RF', { ...BASES[3] })
+      expect(movements(before, own)).deep.equals([
+        {
+          type: 'runnerMovement',
+          runner: 4,
+          to: '3B',
+          out: true,
+          reason: 'Ball Caught',
+          fielders: [at(before, 'RF')],
+          locations: [{ ...BASES[3] }],
+          runnerLocation: { ...BASES[3] }
+        }
+      ])
+      expect(bases(own)).deep.equals([2, undefined, undefined])
+    })
+  it('lights only the occupied bases, and sends a stand-in where nobody plays', function () {
+    const before = initial(6)
+    before.session.liveData.linescore.defense.SS = null
+    const asked = caughtPlay(before, 'CF', { x: 0, z: -90 })
+    expect(tagBases(asked)).deep.equals([2, 3])
+    const tagged = played(
+      scoringReducer(asked, {
+        type: 'TAG_BASE',
+        id: 'SS',
+        point: { ...BASES[2] },
+        generation: asked.generation
+      }),
+      false
+    )
+    const [out] = movements(before, tagged) as Array<{ fielders: unknown[] }>
+    expect(out.fielders).deep.equals([at(before, 'CF'), 'SS'])
+    expect(bases(tagged)).deep.equals([undefined, undefined, 4])
+    // Who is not in the field is refused.
+    expect(
+      scoringReducer(asked, {
+        type: 'TAG_BASE',
+        id: '2B',
+        point: { x: Number.NaN, z: 0 },
+        generation: asked.generation
+      })
+    ).equals(asked)
   })
 })

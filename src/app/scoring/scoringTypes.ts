@@ -62,6 +62,11 @@ export type ScoringPhase =
   | 'correctionWindow'
   /** The runners a drag pushed each answer Safe, Out or Back. */
   | 'chainDecision'
+  /**
+   * A Caught out with several runners on: the scorer drags the defender who
+   * tagged a base to it, and the runner there is doubled off.
+   */
+  | 'tagBase'
 /**
  * The ball in play as the screen draws it: the outcome the scorer chose, where
  * the ball went, who fielded it and holds it now, and where the batter-runner
@@ -104,9 +109,15 @@ export interface PendingPlay {
   /**
    * The More menu's Double Play this ball in play was started from;
    * `throws` the relay has drawn so far, and `chained` once its relay is
-   * over and the runners it left were asked.
+   * over and the runners it left were asked; `doubled` once a Caught out
+   * has begun putting out the runner who did not tag.
    */
-  doublePlay?: { kind: DoublePlayKind; throws?: number; chained?: boolean }
+  doublePlay?: {
+    kind: DoublePlayKind
+    throws?: number
+    chained?: boolean
+    doubled?: boolean
+  }
   location?: GroundPoint
   angle?: number
   trajectoryAccepted: boolean
@@ -355,6 +366,13 @@ export type ScoringEvent =
       type: 'CHAIN_DECIDE'
       id: number
       decision: 'safe' | 'out' | 'back'
+      generation: number
+    }
+  /** In `tagBase`, the defender the scorer dragged onto the base he tagged. */
+  | {
+      type: 'TAG_BASE'
+      id: FielderRef
+      point: GroundPoint
       generation: number
     }
   | { type: 'RUNNER_PROPOSE'; id: number; to: number }

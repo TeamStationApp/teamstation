@@ -7,7 +7,7 @@ import { type Camera, PerspectiveCamera, Ray, Vector2, Vector3 } from 'three'
 import type { BallArcState } from './ballArcModel'
 import { projectBases } from './baseProjection'
 import { fieldingLocation } from './fieldingLocation'
-import { createPlayers } from './fieldModel'
+import { BASES, createPlayers, TAG_RADIUS } from './fieldModel'
 import { FieldScene, whenDrawn } from './FieldScene'
 import type { BaseProjection, FieldPlacement } from './fieldTypes'
 import {
@@ -726,6 +726,109 @@ describe('outcome-constrained defender gestures', function () {
       expect(players[0].position).deep.equals({ x: 0, z: -18.44 })
       expect(players[0].target).deep.equals(players[0].position)
       await renderer.advanceFrames(20, 1 / 60)
+      expect(players[0].position).deep.equals({ x: 0, z: -18.44 })
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
+describe('a defender dragged to tag a base', function () {
+  it('lights the bases he may tag, snaps onto one within TAG_RADIUS with diamonds there, and not beyond it', async function () {
+    const players = createPlayers()
+    const placements: FieldPlacement[] = []
+    const renderer = await create(
+      React.createElement(FieldScene, {
+        players,
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        deferDefenderPlacement: true,
+        tagBases: [1, 3],
+        interaction: {
+          generation: 2,
+          selectableIds: [players[0].id],
+          gestures: ['place']
+        },
+        onFieldPlacement: value => {
+          placements.push(value)
+        }
+      })
+    )
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      // Only the occupied bases are lit, each with a dim diamond.
+      for (const base of [1, 3]) {
+        const lit = renderer.scene.findByProps({ name: `tag-base-${base}` })
+        expect(lit.instance.position.x).closeTo(BASES[base].x, 1e-9)
+        expect(lit.instance.position.z).closeTo(BASES[base].z, 1e-9)
+        const ring = lit.instance.children[0] as unknown as {
+          geometry: { parameters: { thetaSegments: number } }
+          material: { opacity: number }
+        }
+        expect(ring.geometry.parameters.thetaSegments).equals(4)
+        expect(ring.material.opacity).lessThan(0.5)
+      }
+      expect(renderer.scene.findAllByProps({ name: 'tag-base-2' })).deep.equals(
+        []
+      )
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      const event = {
+        button: 0,
+        pointerId: 47,
+        pointerType: 'mouse',
+        pointer: new Vector2(0, 0),
+        ray: new Ray(new Vector3(0, 100, -18.44), new Vector3(0, -1, 0)),
+        target: {
+          setPointerCapture: () => undefined,
+          releasePointerCapture: () => undefined
+        }
+      }
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      const marker = (): { visible: boolean; x: number; z: number } => {
+        const guide = renderer.scene.findByProps({ name: 'move-preview' })
+        const found = guide.instance.getObjectByName('destination-marker')!
+        return {
+          visible: found.visible,
+          x: found.position.x,
+          z: found.position.z
+        }
+      }
+      // Within TAG_RADIUS of 1st: onto the bag, with the diamonds there.
+      event.ray.origin.set(BASES[1].x - TAG_RADIUS + 0.5, 100, BASES[1].z)
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(marker()).deep.include({ visible: true })
+      expect(marker().x).closeTo(BASES[1].x, 1e-9)
+      expect(marker().z).closeTo(BASES[1].z, 1e-9)
+      const rings = renderer.scene
+        .findByProps({ name: 'move-preview' })
+        .instance.getObjectByName('destination-marker')!
+        .children[0] as unknown as {
+        geometry: { parameters: { thetaSegments: number } }
+      }
+      expect(rings.geometry.parameters.thetaSegments).equals(4)
+      // Beyond it: no snap and no diamonds.
+      event.ray.origin.set(BASES[1].x - TAG_RADIUS - 0.5, 100, BASES[1].z)
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(marker().visible).equals(false)
+      expect(marker().x).closeTo(BASES[1].x - TAG_RADIUS - 0.5, 1e-6)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(placements).length(1)
+      expect(placements[0].point.x).closeTo(BASES[1].x - TAG_RADIUS - 0.5, 1e-6)
+      // A release within it is placed on the base, and he goes back.
+      event.ray.origin.set(0, 100, -18.44)
+      await renderer.fireEvent(surface, 'pointerDown', event)
+      event.ray.origin.set(BASES[3].x + 2, 100, BASES[3].z - 2)
+      await renderer.fireEvent(surface, 'pointerMove', event)
+      await renderer.fireEvent(surface, 'pointerUp', event)
+      expect(placements).length(2)
+      expect(placements[1].point).deep.equals(BASES[3])
+      expect(placements[1].generation).equals(2)
       expect(players[0].position).deep.equals({ x: 0, z: -18.44 })
     } finally {
       await renderer.unmount()

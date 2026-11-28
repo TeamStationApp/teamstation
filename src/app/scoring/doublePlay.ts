@@ -1,17 +1,19 @@
+import { canField, DID_NOT_TAG_UP } from '../../common/scoring/rules'
 import type { Position } from '../../common/scoring/state'
 import { fieldingLocation } from '../field/fieldingLocation'
-import { BASES } from '../field/fieldModel'
+import { BASES, type GroundPoint, tagBaseAt } from '../field/fieldModel'
 import { lstrings } from '../locales/strings'
 import { fieldPlayersFor, withStandIns } from './fieldAdapter'
 import type { ChainRunner } from './runnerChain'
 import {
   accepted,
   act,
+  beginDefense,
   forceOutEdit,
   settleRunners,
   throwToDefender
 } from './scoringFlow'
-import { baseIds, playSettled } from './scoringSelectors'
+import { baseIds, fielderName, playSettled } from './scoringSelectors'
 import type { FielderRef, ScoringState } from './scoringTypes'
 
 /**
@@ -146,7 +148,11 @@ export function startDoublePlay(
  */
 export function continueDoublePlay(next: ScoringState): void {
   const doublePlay = next.pendingPlay?.doublePlay
-  if (doublePlay == null || doublePlay.kind === 'caught') return
+  if (doublePlay == null) return
+  if (doublePlay.kind === 'caught') {
+    doubleOff(next)
+    return
+  }
   for (let hop = 0; hop < 8 && next.presentation == null; hop++) {
     if (!relayStep(next, doublePlay.kind)) break
     // A throw drawn straight after the last one, with nothing scored between,
@@ -224,4 +230,121 @@ function relayStep(next: ScoringState, kind: DoublePlayKind): boolean {
   next.phase = 'runnerMovement'
   settleRunners(next)
   return false
+}
+
+/** The baseman who takes a throw at 1st or 3rd. */
+const BASEMAN: Readonly<Record<number, Position>> = { 1: '1B', 3: '3B' }
+
+/**
+ * A Caught out, once the catch is in and drawn: the runner who did not tag
+ * is doubled off. One on 1st or 3rd is put out by the catcher's throw to
+ * that base's baseman, or by the baseman's own tag when he made the catch;
+ * one on 2nd waits for the scorer to tap who took the throw there, or Done
+ * for the catcher's own tag, and the first throw's arrival makes the out.
+ * With several runners on, the scorer drags whoever tagged a base to it
+ * (`tagBase`). It is the trajectory's own step, so Undo takes it back with
+ * the catch.
+ */
+function doubleOff(next: ScoringState): void {
+  const doublePlay = next.pendingPlay!.doublePlay!
+  const game = next.session
+  if (
+    doublePlay.doubled === true ||
+    next.presentation != null ||
+    next.pendingPlay?.trajectoryAccepted !== true ||
+    game.pending?.outcome !== 'Ball Caught' ||
+    game.liveData.linescore.outs >= 3
+  )
+    return
+  const occupied = baseIds(game).flatMap((id, index) =>
+    id == null ? [] : [{ id, base: index + 1 }]
+  )
+  if (occupied.length === 0) return
+  doublePlay.doubled = true
+  next.correctionWindow = null
+  if (occupied.length > 1) {
+    next.runnerAction = null
+    next.phase = 'tagBase'
+    return
+  }
+  const [{ id, base }] = occupied
+  doubleOffAt(
+    next,
+    id,
+    base,
+    base === 2 ? undefined : playerAt(next, BASEMAN[base])
+  )
+}
+
+/**
+ * Puts the runner on `base` out for not tagging up, from the fielder who
+ * made the catch: by his own tag when `tagger` is he, by a throw to `tagger`
+ * at that base otherwise, or with no `tagger` waiting for the scorer to say
+ * who took the throw. Either way one throw, or the tag, makes the out.
+ */
+function doubleOffAt(
+  next: ScoringState,
+  runner: number,
+  base: number,
+  tagger: FielderRef | undefined
+): void {
+  next.runnerAction = {
+    playerId: runner,
+    from: base,
+    to: base,
+    origin: 'current',
+    returnPhase: 'correctionWindow',
+    decision: 'out',
+    reason: DID_NOT_TAG_UP,
+    // The first throw's arrival is the out: nobody is asked for after it.
+    throwOut: true
+  }
+  beginDefense(next)
+  if (tagger == null) return
+  const catcher = next.runnerAction.thrower
+  if (tagger === catcher) throwToDefender(next, undefined)
+  else throwToDefender(next, tagger, { ...BASES[base] })
+}
+
+/**
+ * In `tagBase`, the scorer dropped defender `id` at `point`: on a base with
+ * a runner, that runner is doubled off there, by the catcher's own tag when
+ * `id` made the catch and by the catcher's throw to `id` otherwise, as one
+ * step. A drop on no such base changes nothing.
+ */
+export function tagBase(
+  state: ScoringState,
+  id: FielderRef,
+  point: GroundPoint,
+  generation: number
+): ScoringState {
+  const ids = baseIds(state.session)
+  const bases = ids.flatMap((runner, index) =>
+    runner == null ? [] : [index + 1]
+  )
+  const base = tagBaseAt(point, bases)
+  if (
+    state.phase !== 'tagBase' ||
+    state.presentation != null ||
+    generation !== state.generation ||
+    base == null ||
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.z) ||
+    !canField(state.session.liveData.linescore.defense, id)
+  )
+    return state
+  const runner = ids[base - 1]!
+  return accepted(
+    state,
+    `${TAG_LABEL[base]()} ${fielderName(state.session, id)}`,
+    next => {
+      doubleOffAt(next, runner, base, id)
+    }
+  )
+}
+
+const TAG_LABEL: Readonly<Record<number, () => string>> = {
+  1: () => lstrings.scoring_tag_first,
+  2: () => lstrings.scoring_tag_second,
+  3: () => lstrings.scoring_tag_third
 }

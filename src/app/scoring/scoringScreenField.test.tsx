@@ -289,6 +289,107 @@ describe('scoring screen field wiring', function () {
     expect(baseIds(live.state)).deep.equals([2, null, null])
   })
 
+  it('labels the bases a Caught out may tag, only while it waits for the drop', async function () {
+    const live = ScoringSession.start(
+      memoryStore(),
+      'g1',
+      scoringSession(gameFixture)
+    )
+    live.apply({ type: 'gameFlow', kind: 'placeRunner', runner: 2, base: '1B' })
+    live.apply({ type: 'gameFlow', kind: 'placeRunner', runner: 4, base: '3B' })
+    await mount({ open: async () => live })
+    const press = async (label: string): Promise<void> => {
+      const control = document.querySelector<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(control, label).not.equals(null)
+      await step(() => {
+        control!.click()
+      })
+    }
+    const fielder = (label: string): Rendered =>
+      (players() as Array<Rendered & { label?: string }>).find(
+        player => player.team === 'defense' && player.label === label
+      )!
+    const projection: BaseProjection = {
+      width: 390,
+      height: 844,
+      bases: [
+        { x: 195, y: 580 },
+        { x: 280, y: 450 },
+        { x: 195, y: 360 },
+        { x: 110, y: 450 }
+      ]
+    }
+    const labels = (): string[] =>
+      [...document.querySelectorAll('[aria-label^="Tag "]')].map(node =>
+        node.getAttribute('aria-label')!
+      )
+    await step(() => field().onBaseProjection?.(projection))
+    expect(labels()).deep.equals([])
+    await press('More')
+    await press('Double Play')
+    await press('Caught out')
+    await step(() =>
+      field().onFieldPlacement?.({
+        ...placement(fielder('RF').id),
+        point: { x: 50, z: -70 },
+        generation: field().interaction!.generation
+      })
+    )
+    await step(() =>
+      field().onTrajectoryAccepted?.(25, field().interaction!.generation, true)
+    )
+    await settle()
+    expect(field().tagBases).deep.equals([1, 3])
+    expect(document.body.textContent).includes(
+      'Drag the defender who tagged a base to that base.'
+    )
+    // Any defender may be dragged, the one holding the ball too.
+    expect(field().interaction?.selectableIds).includes(fielder('RF').id)
+    expect(field().interaction?.selectableIds).includes(fielder('1B').id)
+    expect(field().deferDefenderPlacement).equals(true)
+    expect(labels()).deep.equals(['Tag 1st', 'Tag 3rd'])
+    const style = (label: string): CSSStyleDeclaration =>
+      getComputedStyle(
+        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+      )
+    // Right of 1st, left of 3rd.
+    expect(parseFloat(style('Tag 1st').left)).greaterThan(280)
+    expect(parseFloat(style('Tag 3rd').right)).greaterThan(390 - 110)
+    // Dropped away from a base: nothing changes.
+    await step(() =>
+      field().onFieldPlacement?.({
+        ...placement(fielder('1B').id),
+        point: { x: 5, z: -40 },
+        generation: field().interaction!.generation
+      })
+    )
+    await settle()
+    expect(baseIds(live.state)).deep.equals([2, null, 4])
+    expect(labels()).deep.equals(['Tag 1st', 'Tag 3rd'])
+    // On 1st: the runner there is doubled off, and the labels go.
+    await step(() =>
+      field().onFieldPlacement?.({
+        ...placement(fielder('1B').id),
+        point: { x: 19.4, z: -19.4 },
+        generation: field().interaction!.generation
+      })
+    )
+    await settle()
+    expect(baseIds(live.state)).deep.equals([null, null, 4])
+    expect(live.state.liveData.linescore.outs).equals(2)
+    expect(labels()).deep.equals([])
+    expect(field().tagBases).equals(undefined)
+    expect(props().remainingMs).equals(5000)
+    // Undo brings the drop back.
+    await step(() => {
+      props().onUndo()
+    })
+    expect(baseIds(live.state)).deep.equals([2, null, 4])
+    expect(labels()).deep.equals(['Tag 1st', 'Tag 3rd'])
+  })
+
   for (const previous of [false, true])
     it(`limits passed-ball pitch entry to three controls, previous pitch ${previous}`, async () => {
       const initial = scoringSession(gameFixture)

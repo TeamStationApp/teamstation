@@ -33,7 +33,7 @@ import {
   stealsByBase
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
-import { continueDoublePlay } from './doublePlay'
+import { continueDoublePlay, tagBase } from './doublePlay'
 import { moreEligibility, moreReducer } from './moreActions'
 import { overrideActions } from './overrideModel'
 import {
@@ -970,6 +970,8 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       : decided
   }
   if (event.type === 'CHAIN_DECIDE') return chainDecide(state, event)
+  if (event.type === 'TAG_BASE')
+    return tagBase(state, event.id, event.point, event.generation)
   const runnerResult = runnerTransition(state, event)
   if (runnerResult != null) return runnerResult
   if (event.type === 'OUTCOME')

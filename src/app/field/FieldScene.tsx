@@ -29,8 +29,16 @@ import { Ballpark } from './Ballpark'
 import { projectBases } from './baseProjection'
 import { applyFieldCamera } from './cameraModel'
 import { catcherBounds, movedRect, type ScreenRect } from './catcherBounds'
-import type { FieldPlayer } from './fieldModel'
-import { BASES, catcherSpot, clampToField } from './fieldModel'
+import { DestinationMarker } from './DestinationMarker'
+import {
+  BASES,
+  catcherSpot,
+  clampToField,
+  type FieldPlayer,
+  type GroundPoint,
+  TAG_RADIUS,
+  tagBaseAt
+} from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import { frameThrottle } from './frameThrottle'
@@ -155,6 +163,18 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     gl.shadowMap.needsUpdate = true
   }, [gl])
   const drag = useRef<MoveDraft | null>(null)
+  /**
+   * Where a dragged player would be placed: the screen's constraint, then,
+   * while bases may be tagged, onto a base within `TAG_RADIUS` of it.
+   */
+  const placementGoal = (point: GroundPoint): GroundPoint => {
+    const constrained = props.constrainPlacement?.(point) ?? { ...point }
+    const base =
+      props.tagBases == null
+        ? undefined
+        : tagBaseAt(constrained, props.tagBases)
+    return base == null ? constrained : { ...BASES[base] }
+  }
   const dragCapture = useRef<Element | null>(null)
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const runnerDrag = useRef<{
@@ -411,8 +431,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     } else {
       if (event.ray.intersectPlane(ground, point) == null) return
       previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
-      if (props.constrainPlacement != null)
-        drag.current.goal = props.constrainPlacement(drag.current.goal)
+      drag.current.goal = placementGoal(drag.current.goal)
     }
     if (runnerDrag.current != null) {
       if (
@@ -591,8 +610,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
       drag.current.offset = { x: 0, z: 0 }
       if (nearest == null && event.ray.intersectPlane(ground, point) != null)
         previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
-      if (props.constrainPlacement != null)
-        drag.current.goal = props.constrainPlacement(drag.current.goal)
+      drag.current.goal = placementGoal(drag.current.goal)
     } else if (nearest == null)
       previewMove(drag.current, offsetTouchTarget(point, isTouch(event)))
     // A scoring-screen redraw from this handler drops the rest of a touch on
@@ -646,9 +664,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     const player = players.find(item => item.id === drag.current?.id)
     if (player != null) {
       finishMove(player, drag.current, cancel)
-      const landing = props.constrainPlacement?.(player.target) ?? {
-        ...player.target
-      }
+      const landing = placementGoal(player.target)
       if (props.homeRunPlacement === true)
         player.target = clampToField(player.target)
       if (
@@ -1016,7 +1032,28 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
           editing={arcMode === 'edit'}
         />
       )}
-      {preview != null && <MoveGuide draft={preview} live={drag} />}
+      {props.tagBases?.map(base => (
+        <DestinationMarker
+          key={base}
+          name={`tag-base-${base}`}
+          position={[BASES[base].x, TERRAIN.players + 0.06, BASES[base].z]}
+          radius={TAG_RADIUS}
+          shape="diamond"
+          dim
+        />
+      ))}
+      {preview != null && (
+        <MoveGuide
+          draft={preview}
+          live={drag}
+          {...(props.tagBases == null
+            ? {}
+            : {
+                shape: 'diamond' as const,
+                markerAt: goal => tagBaseAt(goal, props.tagBases!) != null
+              })}
+        />
+      )}
       <mesh
         ref={arcSurface}
         name={

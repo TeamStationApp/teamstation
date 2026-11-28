@@ -91,7 +91,11 @@ import {
 } from '../walkup/walkUpReadiness'
 import { WalkUpReadinessModals } from '../walkup/WalkUpReadinessModals'
 import { startingAngle, trajectoryLabel } from './battedBall'
-import { battedBallField, fieldStageInstruction } from './battedBallField'
+import {
+  battedBallField,
+  fieldStageInstruction,
+  tagBases
+} from './battedBallField'
 import { candidateNames } from './candidateNames'
 import {
   assignDefender,
@@ -212,6 +216,7 @@ import {
   replacedNotice,
   useGameReplaced
 } from './sidesSwapped'
+import { TagBaseLabels } from './TagBaseLabels'
 import {
   RunnerRosterSheet,
   TiebreakerBases,
@@ -3558,14 +3563,17 @@ function ScoringPanel(props: {
                     'locateFielder',
                     'chooseThrower',
                     'chooseDefender',
-                    'runnerError'
+                    'runnerError',
+                    'tagBase'
                   ].includes(state.phase)
                 ? [
                     ...players
                       .filter(
                         player =>
                           player.team !== 'runner' &&
+                          // The fielder who made a catch may tag a base too.
                           (state.phase === 'runnerError' ||
+                            state.phase === 'tagBase' ||
                             player.hasBall !== true) &&
                           // An empty position is played by a stand-in
                           // while a play is open.
@@ -3625,6 +3633,13 @@ function ScoringPanel(props: {
           )
             dispatchRunner({
               type: state.phase === 'chooseThrower' ? 'THROWER' : 'DEFENDER',
+              id,
+              point: event.point,
+              generation: event.generation
+            })
+          if (id != null && state.phase === 'tagBase')
+            dispatch({
+              type: 'TAG_BASE',
               id,
               point: event.point,
               generation: event.generation
@@ -3941,6 +3956,9 @@ function ScoringPanel(props: {
           onClose={tiebreaker.handleClose}
           problem={tiebreaker.problem}
         />
+      )}
+      {state.phase === 'tagBase' && (
+        <TagBaseLabels projection={baseProjection} bases={tagBases(state)} />
       )}
       {tiebreaker.mode === 'bases' && !menu && sheet == null && (
         <TiebreakerBases

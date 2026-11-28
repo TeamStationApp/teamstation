@@ -1341,6 +1341,11 @@ export const enUs = {
   scoring_double_play_menu: 'Double play',
   scoring_caught_out: 'Caught out',
   scoring_did_not_tag: 'Did not tag',
+  scoring_tag_first: 'Tag 1st',
+  scoring_tag_second: 'Tag 2nd',
+  scoring_tag_third: 'Tag 3rd',
+  scoring_tag_base_instruction:
+    'Drag the defender who tagged a base to that base.',
   scoring_at_home: 'At Home',
   scoring_at_first: 'At First',
   scoring_at_second: 'At Second',
