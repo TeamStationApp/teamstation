@@ -142,6 +142,13 @@ android {
         buildConfigField "String", "TS_SENTRY_DSN", groovy.json.JsonOutput.toJson(System.getenv("TS_SENTRY_DSN") ?: "")
         manifestPlaceholders += [appLinkHost: appLinkHost,
             googleMapsApiKey: System.getenv("GOOGLE_MAPS_ANDROID_API_KEY") ?: ""]
+        // The app's claim on its link host for shared sign-in credentials:
+        // the host's assetlinks.json grants get_login_creds back to it. Only a
+        // build with a link host declares it (src/appLinks/AndroidManifest.xml).
+        if (appLinkHost) {
+            resValue "string", "asset_statements",
+                "[{\\\"include\\\": \\\"https://${appLinkHost}/.well-known/assetlinks.json\\\"}]"
+        }
     }
     signingConfigs {
         debug {

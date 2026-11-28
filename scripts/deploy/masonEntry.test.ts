@@ -32,7 +32,9 @@ import {
   DISTRIBUTOR_DEVELOP_APP,
   GOOGLE_SERVICES,
   GOOGLE_SERVICES_SECRET,
+  LINK_HOST_PARAM,
   MAPS_KEY_CHECK,
+  phoneLinkEnvironment,
   PLAY_PUBLISHER_SECRET,
   PLAY_TRACK,
   playAccessToken,
@@ -420,10 +422,14 @@ describe('TeamStation pipeline Masonfile', () => {
       'distributor'
     ])
     assert.deepEqual(workflows.build?.options, {
-      params: {
-        seat: SEAT_PARAM
-      }
+      params: { seat: SEAT_PARAM, linkHost: LINK_HOST_PARAM }
     })
+    assert.deepEqual(workflows.tvos?.options.params, { seat: SEAT_PARAM })
+    const linkHost = new RegExp(LINK_HOST_PARAM.pattern)
+    for (const value of ['develop', 'seat']) assert.match(value, linkHost)
+    for (const value of ['production', '']) {
+      assert.doesNotMatch(value, linkHost)
+    }
     // A seat, production, or a host name: an end-to-end stack's.
     const pattern = new RegExp(SEAT_PARAM.pattern)
     for (const seat of ['production', '1', '8', 'e2e-03.teamstation.app']) {
@@ -1209,6 +1215,53 @@ describe('TeamStation pipeline Masonfile', () => {
     )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
     assert.throws(() => seated({ seat: 3 }), /Unknown seat 3/)
+  })
+
+  it("points a seat's phone build at the seat's own link host only when asked", () => {
+    const runs = [
+      { branch: 'master', params: { seat: 'production' } },
+      { branch: 'paul/example', params: { seat: 'production' } },
+      { branch: 'paul/example', params: { seat: '3' } },
+      { branch: 'paul/example', params: { seat: 'e2e-03.teamstation.app' } }
+    ]
+    for (const run of runs) {
+      for (const linkHost of [undefined, 'develop']) {
+        const params =
+          linkHost == null ? run.params : { ...run.params, linkHost }
+        assert.deepEqual(
+          phoneLinkEnvironment({ run: { ...run, params } }),
+          seatEnvironment({ run })
+        )
+      }
+    }
+    const seated = (seat: string): Record<string, string> =>
+      phoneLinkEnvironment({
+        run: { branch: 'paul/example', params: { seat, linkHost: 'seat' } }
+      })
+    const three = seatEnvironment({
+      run: { branch: 'paul/example', params: { seat: '3' } }
+    })
+    assert.deepEqual(seated('3'), {
+      ...three,
+      TS_APP_ORIGIN: 'https://develop3.teamstation.app'
+    })
+    assert.equal(seated('3').TS_API_BASE_URL, three.TS_API_BASE_URL)
+    assert.equal(seated('3').TS_SENTRY_DSN, three.TS_SENTRY_DSN)
+    assert.equal(
+      seated('e2e-03.teamstation.app').TS_APP_ORIGIN,
+      'https://e2e-03.teamstation.app'
+    )
+    assert.throws(
+      () => seated('production'),
+      /linkHost seat needs a development seat/
+    )
+    assert.throws(
+      () =>
+        phoneLinkEnvironment({
+          run: { branch: 'paul/example', params: { linkHost: 'seat' } }
+        }),
+      /linkHost seat needs a development seat/
+    )
   })
 
   it('publishes the develop app for the develop branch and for a seat', () => {

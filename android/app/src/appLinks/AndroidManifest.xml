@@ -8,6 +8,14 @@
       open in the app; other addresses remain with the web site.
     -->
     <application>
+        <!--
+          Shared sign-in credentials: the link host's assetlinks.json, which
+          grants get_login_creds to this app and its web origin, so a password
+          saved for one is offered in the other.
+        -->
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
         <activity android:name=".MainActivity">
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />

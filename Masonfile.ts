@@ -43,6 +43,16 @@ export const SEAT_PARAM = {
     '^(production|[1-8]|[a-z0-9-]+(\\.[a-z0-9-]+)*\\.teamstation\\.app)$',
   default: 'production'
 } as const
+/**
+ * Which link host a phone build claims: `develop` (the standing develop
+ * server's, as before) or `seat`, the development seat's own host, so a seat
+ * running a branch serves the well-known files the build verifies against.
+ */
+export const LINK_HOST_PARAM = {
+  type: 'string',
+  pattern: '^(develop|seat)$',
+  default: 'develop'
+} as const
 export const TV_APP = 'app.teamstation.tv'
 export const DEVELOP_APP = 'app.teamstation.develop'
 export const DEVELOP_DISPLAY_NAME = 'TeamStation Develop'
@@ -242,7 +252,8 @@ export function setup(m: Setup): void {
     'build',
     {
       params: {
-        seat: SEAT_PARAM
+        seat: SEAT_PARAM,
+        linkHost: LINK_HOST_PARAM
       }
     },
     w => {
@@ -548,6 +559,25 @@ export function seatEnvironment(
 }
 
 /**
+ * A phone build's environment: `seatEnvironment`, except that a seat build
+ * asked for `linkHost=seat` claims the seat's own host as its app origin, so
+ * its associated domains, Android App Links and asset statements name the seat.
+ */
+export function phoneLinkEnvironment(
+  ctx: Pick<Stage, 'run'>
+): Record<string, string> {
+  const environment = seatEnvironment(ctx)
+  if (ctx.run.params?.linkHost !== 'seat') return environment
+  if ((ctx.run.params?.seat ?? 'production') === 'production') {
+    throw new Error('linkHost seat needs a development seat')
+  }
+  return {
+    ...environment,
+    TS_APP_ORIGIN: new URL(environment.TS_API_BASE_URL).origin
+  }
+}
+
+/**
  * What the about screen shows. Mason checks the pinned commit out detached, so
  * reading the git branch names it "detached", and a missing build number is
  * "development". The native build number and the run's branch go in instead.
@@ -678,7 +708,7 @@ export async function buildIos(ctx: Stage): Promise<void> {
     // output as a failed archive. Turning explicit modules off avoids it.
     xcargs: [
       'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
-      `TS_APP_LINK_HOST=${new URL(seatEnvironment(ctx).TS_APP_ORIGIN).host}`,
+      `TS_APP_LINK_HOST=${new URL(phoneLinkEnvironment(ctx).TS_APP_ORIGIN).host}`,
       'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements',
       // An ad hoc or App Store build's tokens are production APNs's.
       'TS_APS_ENVIRONMENT=production',
@@ -688,7 +718,7 @@ export async function buildIos(ctx: Stage): Promise<void> {
       CARGO_HOME: `${rustRoot}/cargo`,
       RUSTUP_HOME: `${rustRoot}/rustup`,
       PATH: `${rustRoot}/cargo/bin:${process.env.PATH ?? ''}`,
-      ...seatEnvironment(ctx),
+      ...phoneLinkEnvironment(ctx),
       ...provenanceEnvironment(ctx, version, build)
     }
   })
@@ -917,7 +947,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
   await ctx.sh('cargo install cargo-ndk', { env: rustEnv })
   const gradleEnv = {
     ...rustEnv,
-    ...seatEnvironment(ctx),
+    ...phoneLinkEnvironment(ctx),
     ...provenanceEnvironment(ctx, version, build),
     MASON_BUILD_NUMBER: build,
     MASON_APP_VERSION: version

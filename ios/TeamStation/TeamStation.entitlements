@@ -23,6 +23,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:$(TS_APP_LINK_HOST)</string>
+		<string>webcredentials:$(TS_APP_LINK_HOST)</string>
 	</array>
 </dict>
 </plist>
