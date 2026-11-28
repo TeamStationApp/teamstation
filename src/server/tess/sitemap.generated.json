@@ -347,6 +347,12 @@
           "id": "watch",
           "label": "Videos",
           "path": "/games/:gameId?tab=watch"
+        },
+        {
+          "param": "tab",
+          "id": "plays",
+          "label": "Plays",
+          "path": "/games/:gameId?tab=plays"
         }
       ],
       "settings": []
