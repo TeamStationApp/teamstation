@@ -22,7 +22,9 @@ import ts from 'typescript'
  * server's own record transforms; the swap itself is the server's.
  * `scoringEntry` says how a game may be scored, so the Game page and the
  * server's choice of games a phone keeps for scoring agree; it inspects a
- * game, changes nothing.
+ * game, changes nothing. `linescore` works out a game's halves and line score
+ * from its plays, as the server does for `games.linescore`, so the Plays tab's
+ * half summaries agree with it; it reads copies and changes nothing.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -40,7 +42,8 @@ export const APP_MAY_IMPORT = [
   'playsLost',
   'actionChain',
   'swapDocuments',
-  'scoringEntry'
+  'scoringEntry',
+  'linescore'
 ]
 const LIBRARY = 'src/common/scoring'
 
@@ -64,7 +67,8 @@ function sources(dir) {
 // session's and the server's. `rosterAvailability`'s `gameRosterEntries`
 // reads a side's players back as roster rows. `readerNames`'
 // `withoutReaderNames` names a copy of a game by its players' public labels,
-// for a reader who may no longer read their full names.
+// for a reader who may no longer read their full names. `importedRecord`'s
+// `isTurnAtBat` tells a turn at bat from a lineup change or a placeholder.
 const READ_ONLY_EXPORTS = {
   // The cache inspects a stored play and compares accepted identities; it
   // never constructs a stored scoring record or applies scoring actions.
@@ -74,7 +78,8 @@ const READ_ONLY_EXPORTS = {
   readerNames: ['withoutReaderNames'],
   rosterAvailability: ['gameRosterEntries'],
   lineupHistory: ['revealedSides', 'confirmedSides'],
-  storedNames: ['namesIn', 'withNames']
+  storedNames: ['namesIn', 'withNames'],
+  importedRecord: ['isTurnAtBat']
 }
 
 function imports(text) {

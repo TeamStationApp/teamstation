@@ -235,6 +235,11 @@ export const enUs = {
   plan_delete: 'Delete',
   game_replay: 'Replay',
   game_live: 'Live',
+  /** The outs after a play on the Plays tab. */
+  plays_outs_one: '%s out',
+  plays_outs_other: '%s outs',
+  /** The at-bat in progress: batter, balls, strikes, `1 out`. */
+  plays_batting: '%1$s batting, %2$s-%3$s, %4$s',
   /** The volume button's label, on the scoring screen and the replay. */
   sound_mute: 'Mute game sounds',
   sound_unmute: 'Unmute game sounds',
