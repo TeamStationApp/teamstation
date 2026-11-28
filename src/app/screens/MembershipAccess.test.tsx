@@ -149,4 +149,49 @@ describe('membership access requests', () => {
     await press('Log in / Sign up')
     expect(actions).deep.equals(['close', 'signIn'])
   })
+
+  it("names the game's Plays inline, its sent detail, and a guest's sign-in first", async () => {
+    const api = client()
+    api.inviteRelationship = async () => ({
+      id: 'request-demo',
+      status: 'pending'
+    })
+    await mount(
+      <MembershipAccess
+        client={api}
+        signedIn
+        teams={teams.slice(0, 1)}
+        resource="plays"
+        onSignIn={() => undefined}
+      />
+    )
+    expect(text()).includes(
+      "You need to be a member of one of these teams to see this game's Plays."
+    )
+    await press('Request membership')
+    await press('Send request')
+    expect(text()).includes('Membership request sent')
+    expect(text()).includes('Plays become available after approval.')
+    await unmount()
+    let signIns = 0
+    await mount(
+      <MembershipAccess
+        client={api}
+        signedIn={false}
+        teams={teams}
+        resource="plays"
+        onSignIn={() => {
+          signIns++
+        }}
+      />
+    )
+    expect(text()).includes(
+      "You need to be a member of one of these teams to see this game's Plays."
+    )
+    expect(text()).includes(
+      'Log in or create an account first to request membership.'
+    )
+    await press('Log in / Sign up')
+    expect(signIns).equals(1)
+  })
 })

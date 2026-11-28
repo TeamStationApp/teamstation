@@ -13,6 +13,7 @@ import {
   dropScratchDatabase,
   testDatabaseUrl
 } from '../../../migrate/testDatabase'
+import { finalGame } from '../../../test/replayGameFixture'
 import { readPasswordRecord } from '../../auth/passwords'
 import { preparePreview } from '../../autoScheduler/previews'
 import { type Database, makeDatabase } from '../../db/database'
@@ -31,6 +32,7 @@ import {
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runPlaysGame } from './playsGame'
 import { runRefreshNotices } from './refreshNotices'
 import {
   hasGroupCoordinates,
@@ -117,6 +119,7 @@ describe('the fixtures script', function () {
     expect(Object.keys(WORLDS)).includes('packed-league')
     expect(Object.keys(WORLDS)).includes('packed-league-limit')
     expect(Object.keys(WORLDS)).includes('sponsors')
+    expect(Object.keys(WORLDS)).includes('plays-game')
   })
 })
 
@@ -623,6 +626,155 @@ describe('fixture worlds', function () {
     ).deep.equals(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
     // The world runs on a database the baseline accepts: no other address.
     expect(await refuseRealAddresses(the(), MAILBOX)).not.equals(undefined)
+  })
+
+  it('plays-game gives a member, a scorer and an outsider five games of the replay, clocked by the radar, and nothing in common under another nonce', async function () {
+    const run = async (): Promise<FixtureManifest> =>
+      await runPlaysGame({ db: the(), mailbox: MAILBOX, nonce: makeNonce() })
+    const world = await run()
+    expect(Object.keys(world.accounts).sort()).deep.equals([
+      'member',
+      'outsider',
+      'scorer'
+    ])
+    for (const account of Object.values(world.accounts))
+      expect(isTestAddress(MAILBOX, account.email)).equals(true)
+    const on = await the()
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id'])
+      .where('user_id', 'in', [
+        world.accounts.member.userId,
+        world.accounts.scorer.userId,
+        world.accounts.outsider.userId
+      ] as never)
+      .execute()
+    const pairs = (rows: string[][]): string[] =>
+      rows.map(row => row.join(' ')).sort((a, b) => a.localeCompare(b))
+    expect(pairs(on.map(row => [row.user_id, row.team_id]))).deep.equals(
+      pairs([
+        [world.accounts.member.userId, world.ids.homeTeam],
+        [world.accounts.scorer.userId, world.ids.homeTeam]
+      ])
+    )
+    const roles = await the()
+      .selectFrom('scope_roles')
+      .select(['user_id', 'role'])
+      .where('scope_id', '=', world.ids.homeTeam)
+      .execute()
+    expect(roles).deep.equals([
+      { user_id: world.accounts.scorer.userId, role: 'scorekeeper' }
+    ])
+
+    const games = await the()
+      .selectFrom('games')
+      .select(['id', 'status', 'home_team_id', 'away_team_id', 'start_at'])
+      .where('id', 'in', [
+        world.ids.final,
+        world.ids.inProgress,
+        world.ids.mixed,
+        world.ids.imported,
+        world.ids.onePitch
+      ])
+      .execute()
+    const statusOf = (id: string): string | undefined =>
+      games.find(game => game.id === id)?.status
+    expect(games).length(5)
+    expect(statusOf(world.ids.final)).equals('final')
+    expect(statusOf(world.ids.imported)).equals('final')
+    for (const id of [world.ids.inProgress, world.ids.onePitch])
+      expect(statusOf(id)).not.equals('final')
+    for (const game of games) {
+      expect(game.home_team_id).equals(world.ids.homeTeam)
+      expect(game.away_team_id).equals(world.ids.awayTeam)
+    }
+
+    type Event = Record<string, any>
+    const playsOf = async (gameId: string): Promise<Event[]> =>
+      (
+        await the()
+          .selectFrom('events')
+          .select('gumbo')
+          .where('gameId', '=', gameId)
+          .execute()
+      ).map(row => row.gumbo as Event)
+    const pitchesOf = (plays: Event[]): Event[] =>
+      plays.flatMap(play =>
+        ((play.playEvents ?? []) as Event[]).filter(
+          event => event.isPitch === true
+        )
+      )
+
+    // Every pitch of the final game has the radar's speed, every fair ball
+    // put in play its exit velocity, and the speeds are the readings', not
+    // one reading copied to every pitch.
+    const finalPitches = pitchesOf(await playsOf(world.ids.final))
+    expect(finalPitches.length).equals(
+      pitchesOf((await finalGame()).plays as Event[]).length
+    )
+    const speeds = finalPitches.map(event => event.pitchData?.startSpeed)
+    expect(speeds.every(speed => speed >= 70 && speed <= 81)).equals(true)
+    expect(new Set(speeds).size).equals(12)
+    const inPlay = finalPitches.filter(
+      event => event.details?.isInPlay === true
+    )
+    expect(inPlay.length).greaterThan(0)
+    const exits = inPlay
+      .map(event => event.hitData?.launchSpeed)
+      .filter(speed => speed != null)
+    expect(exits.length).greaterThan(0)
+    expect(exits.every(speed => speed >= 88 && speed <= 97)).equals(true)
+
+    // The game in progress: Muncy's at-bat with one pitch.
+    const live = await the()
+      .selectFrom('games')
+      .select('currentPlay')
+      .where('id', '=', world.ids.inProgress)
+      .executeTakeFirstOrThrow()
+    expect(pitchesOf([live.currentPlay as Event])).length(1)
+    // The first game's only pitch, nothing stored yet.
+    const onePitch = await the()
+      .selectFrom('games')
+      .select('currentPlay')
+      .where('id', '=', world.ids.onePitch)
+      .executeTakeFirstOrThrow()
+    expect(await playsOf(world.ids.onePitch)).deep.equals([])
+    expect(pitchesOf([onePitch.currentPlay as Event])).length(1)
+    // The mixed game: the first two innings without pitches, then scored.
+    const mixed = await playsOf(world.ids.mixed)
+    const early = mixed.filter(play => play.about.inning < 3)
+    expect(early.length).greaterThan(0)
+    expect(pitchesOf(early)).deep.equals([])
+    expect(
+      pitchesOf(mixed.filter(play => play.about.inning >= 3)).length
+    ).greaterThan(0)
+    // The imported game: every play, not one pitch.
+    const imported = await playsOf(world.ids.imported)
+    expect(imported.length).greaterThan(0)
+    expect(pitchesOf(imported)).deep.equals([])
+
+    const other = await run()
+    const userIds = (m: FixtureManifest): string[] =>
+      Object.values(m.accounts).map(account => account.userId)
+    expect(
+      userIds(world).filter(id => userIds(other).includes(id))
+    ).deep.equals([])
+    const shared = Object.entries(world.ids).filter(
+      ([key, id]) =>
+        !key.endsWith('Name') && Object.values(other.ids).includes(id)
+    )
+    expect(shared).deep.equals([])
+    const players = async (m: FixtureManifest): Promise<string[]> =>
+      (
+        await the()
+          .selectFrom('memberships')
+          .select('user_id')
+          .where('team_id', 'in', [m.ids.homeTeam, m.ids.awayTeam])
+          .execute()
+      ).map(row => row.user_id)
+    const mine = await players(world)
+    expect((await players(other)).filter(id => mine.includes(id))).deep.equals(
+      []
+    )
   })
 
   it('search gives each scenario its own named organizations, people in and out of reach, and a Jev key', async function () {

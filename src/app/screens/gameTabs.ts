@@ -9,7 +9,7 @@ import {
 } from './eventTabPolicy'
 
 export type GameTab =
-  'info' | 'boxScore' | 'watch' | 'replay' | 'score' | 'coach' | 'dj'
+  'info' | 'boxScore' | 'watch' | 'plays' | 'replay' | 'score' | 'coach' | 'dj'
 
 export interface GameTabPill {
   id: GameTab
@@ -52,11 +52,21 @@ export interface GameTabsInput {
   now?: number
 }
 
+/** A game shows its Plays from the first recorded pitch. */
+export function hasPlaysPill(
+  game: Pick<GameTabsInput['game'], 'eventKind' | 'hasScoringEvents'>
+): boolean {
+  return game.eventKind !== 'event' && game.hasScoringEvents === true
+}
+
 const sectionLabel: Record<GameSection, string> = {
   info: 'Info',
   boxScore: lstrings.game_box_score,
   watch: lstrings.game_videos
 }
+
+/** The game's plays, after Videos; also the Tess sitemap's `?tab=plays`. */
+const PLAYS_TAB: GameTabPill = { id: 'plays', label: lstrings.game_plays }
 
 /**
  * The content pills across a game, left to right. Settings lives in the gear.
@@ -69,9 +79,14 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
     id,
     label: sectionLabel[id]
   }))
+  // The game's plays, from its first recorded pitch (the at-bat in progress
+  // included), right after Videos. Never a section a reader lands on.
+  const videos = pills.findIndex(item => item.id === 'watch')
+  const plays = hasPlaysPill(game)
+  if (plays) pills.splice(videos < 0 ? pills.length : videos + 1, 0, PLAYS_TAB)
   // The game in 3D, for a member, once something TeamStation scored is
   // stored: replayed once it is over, followed live while it is scored.
-  // It follows Videos, wherever the game's sections put Info.
+  // It follows Videos and Plays, wherever the game's sections put Info.
   if (input.onReplay != null && isReplayable(game, game.replayable)) {
     const pill: GameTabPill =
       game.status === 'inProgress'
@@ -82,8 +97,7 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
             live: true
           }
         : { id: 'replay', label: lstrings.game_replay, role: 'button' }
-    const videos = pills.findIndex(item => item.id === 'watch')
-    pills.splice(videos < 0 ? pills.length : videos + 1, 0, pill)
+    pills.splice(videos < 0 ? pills.length : videos + (plays ? 2 : 1), 0, pill)
   }
   return pills
 }
