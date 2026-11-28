@@ -227,6 +227,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/live/holeFiller.js',
   'server/live/ingestQuiet.js',
   'server/live/localTail.e2e.js',
+  'server/live/nalBits.js',
   'server/live/originFixtures.js',
   'server/live/originPublish.js',
   'server/live/originPublisher.js',

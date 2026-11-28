@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawnSync } from 'child_process'
 import {
   chmodSync,
   existsSync,
@@ -19,13 +19,17 @@ import { RECONNECT_GRACE_MS } from './controller'
 import { fileForRemux, toRecording } from './finishVideo'
 import {
   annexBUnits,
+  avcCUnits,
+  encodeBlackAvcPictures,
   encodeBlackPicture,
   frameRate,
   hvcCUnits,
-  initWithHvcC,
+  initWithConfig,
   MAX_HOLE_SEC,
   planHole,
+  probeShape,
   readSampleEntry,
+  renumberAvcPictures,
   renumberPicture,
   type SegmentSpan
 } from './holeFiller'
@@ -41,12 +45,16 @@ function findFfmpeg(): string {
   }
 }
 
-/** A closed live playlist of two one-second publishes, `gapSec` apart. */
+/**
+ * A closed live playlist of two one-second publishes, `gapSec` apart, with a
+ * tone in AAC when `sound` is set.
+ */
 function liveWithHole(
   ffmpeg: string,
   dir: string,
   codec: string[],
-  gapSec = 30
+  gapSec = 30,
+  sound = false
 ): void {
   const common = [
     '-y',
@@ -57,6 +65,16 @@ function liveWithHole(
     'lavfi',
     '-i',
     'testsrc2=size=160x120:rate=30:duration=1',
+    ...(sound
+      ? [
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=440:sample_rate=48000:duration=1',
+          '-c:a',
+          'aac'
+        ]
+      : []),
     ...codec,
     '-f',
     'hls',
@@ -190,10 +208,10 @@ describe('filling a live recording’s holes', function () {
   it('refuses parameter sets it cannot renumber', function () {
     expect(() => renumberPicture([], [])).throws(/one IDR slice/)
     expect(readSampleEntry(Buffer.from('not an mp4'))).equals(
-      'no hvcC in the init segment'
+      'no hvcC or avcC in the init segment'
     )
-    expect(() => initWithHvcC(Buffer.alloc(16), Buffer.alloc(0))).throws(
-      /no hvcC/
+    expect(() => initWithConfig(Buffer.alloc(16), Buffer.alloc(0))).throws(
+      /no hvcC or avcC/
     )
   })
 
@@ -212,6 +230,7 @@ describe('filling a live recording’s holes', function () {
     it('renumbers a black picture beside the phone’s sets, and it decodes black', async function () {
       this.timeout(20_000)
       const shape = {
+        codec: 'hevc' as const,
         width: 64,
         height: 64,
         pixFmt: 'yuv420p',
@@ -232,7 +251,7 @@ describe('filling a live recording’s holes', function () {
       writeFileSync(
         stream,
         Buffer.concat(
-          [...own, ...picture.parameterSets, picture.slice].flatMap(nal => [
+          [...own, ...picture.parameterSets, ...picture.slices].flatMap(nal => [
             start,
             nal
           ])
@@ -256,14 +275,164 @@ describe('filling a live recording’s holes', function () {
       expect(Math.max(...luma)).equals(16)
     })
 
-    it('keeps the holes unfilled for a stream it cannot match', async function () {
+    it('renumbers black H.264 pictures beside the phone’s sets, and they decode black', async function () {
+      this.timeout(20_000)
+      const shape = {
+        codec: 'h264' as const,
+        width: 64,
+        height: 64,
+        pixFmt: 'yuv420p',
+        colorRange: 'tv',
+        videoIndex: 0,
+        videoTimescale: 15360
+      }
+      // A High profile, level 3.0 avcC.
+      const avcC = Buffer.from([1, 100, 0, 30, 0xff])
+      const units = await encodeBlackAvcPictures(ffmpeg, shape, avcC, 0)
+      expect(units.map(unit => unit[0] & 0x1f)).deep.equals([7, 8, 5, 7, 8, 5])
+      const own = units.slice(0, 2)
+      const picture = renumberAvcPictures(units, own)
+      expect(picture.parameterSets.length).equals(2)
+      expect(picture.slices.length).equals(2)
+      for (const nal of [...picture.parameterSets, ...picture.slices]) {
+        expect(units.some(other => other.equals(nal))).equals(false)
+      }
+      const start = Buffer.from([0, 0, 0, 1])
+      const stream = join(dir, 'both.h264')
+      writeFileSync(
+        stream,
+        Buffer.concat(
+          [...own, ...picture.parameterSets, ...picture.slices].flatMap(nal => [
+            start,
+            nal
+          ])
+        )
+      )
+      const luma = execFileSync(ffmpeg, [
+        '-v',
+        'error',
+        '-xerror',
+        '-f',
+        'h264',
+        '-i',
+        stream,
+        '-vf',
+        'extractplanes=y',
+        '-f',
+        'rawvideo',
+        'pipe:1'
+      ])
+      expect(luma.length).equals(2 * 64 * 64)
+      expect(Math.max(...luma)).equals(16)
+    })
+
+    it('reads an H.264 stream’s shape and sample entry', async function () {
       this.timeout(20_000)
       liveWithHole(ffmpeg, dir, ['-c:v', 'libx264', '-bf', '0', '-g', '30'])
+      const init = join(dir, 'init.mp4')
+      const shape = await probeShape(
+        ffmpeg,
+        `concat:${init}|${join(dir, 'seg000000.m4s')}`
+      )
+      if (typeof shape === 'string') throw new Error(shape)
+      expect(shape.codec).equals('h264')
+      expect([shape.width, shape.height]).deep.equals([160, 120])
+      const entry = readSampleEntry(readFileSync(init))
+      if (typeof entry === 'string') throw new Error(entry)
+      expect(entry.family).equals('h264')
+      expect(avcCUnits(entry.payload).lengthSize).equals(4)
+      expect(entry.units.map(unit => unit[0] & 0x1f)).deep.equals([7, 8])
+    })
+
+    it('fills a 10 s hole in an H.264 recording with black pictures and silence that play through', async function () {
+      this.timeout(60_000)
+      liveWithHole(
+        ffmpeg,
+        dir,
+        ['-c:v', 'libx264', '-bf', '0', '-g', '30', '-tag:v', 'avc1'],
+        10,
+        true
+      )
+      const said: string[] = []
+      const recording = await toRecording(ffmpeg, dir, message =>
+        said.push(message)
+      )
+      expect(said.join('\n')).not.match(/holes kept unfilled|failed/)
+      expect(recording.durationSec).closeTo(12, 0.5)
+      const playlist = join(dir, 'recording', 'video.m3u8')
+      expect(readFileSync(playlist, 'utf8')).does.not.contain('DISCONTINUITY')
+      const init = readFileSync(join(dir, 'recording', 'init.mp4'))
+      const entry = readSampleEntry(init)
+      if (typeof entry === 'string') throw new Error(entry)
+      // The stream's SPS and PPS, and the filler's beside them.
+      const { sps, pps } = avcCUnits(entry.payload)
+      expect([sps.length, pps.length]).deep.equals([2, 2])
+      // Decode errors are what FFmpeg prints at -v error.
+      const decoded = spawnSync(
+        ffmpeg,
+        ['-v', 'error', '-i', playlist, '-f', 'null', '-'],
+        { encoding: 'utf8' }
+      )
+      expect(decoded.status).equals(0)
+      expect(decoded.stderr).equals('')
+      // A picture in the middle of the hole is black, and so is its sound.
+      const luma = execFileSync(ffmpeg, [
+        '-v',
+        'error',
+        '-ss',
+        '6',
+        '-i',
+        playlist,
+        '-frames:v',
+        '1',
+        '-vf',
+        'extractplanes=y',
+        '-f',
+        'rawvideo',
+        'pipe:1'
+      ])
+      expect(luma.length).equals(160 * 120)
+      expect(Math.max(...luma)).equals(16)
+      const samples = execFileSync(ffmpeg, [
+        '-v',
+        'error',
+        '-ss',
+        '5',
+        '-t',
+        '2',
+        '-i',
+        playlist,
+        '-vn',
+        '-f',
+        's16le',
+        '-ac',
+        '1',
+        'pipe:1'
+      ])
+      expect(samples.length).greaterThan(0)
+      const loudest = Math.max(
+        ...Array.from({ length: samples.length / 2 }, (_, i) =>
+          Math.abs(samples.readInt16LE(i * 2))
+        )
+      )
+      expect(loudest).lessThan(16)
+      if (process.env.TS_PROOF_TRACE != null) {
+        console.log(
+          `\n    a 10 s hole in H.264, filled: ${recording.durationSec.toFixed(2)} s, ` +
+            `avcC holds ${sps.length} SPS and ${pps.length} PPS, ` +
+            `ffmpeg -v error printed nothing, luma at 6 s peaks at ${Math.max(...luma)}`
+        )
+      }
+    })
+
+    it('keeps the holes unfilled for a stream it cannot match', async function () {
+      this.timeout(20_000)
+      liveWithHole(ffmpeg, dir, ['-c:v', 'mpeg4', '-g', '30'])
       const said: string[] = []
       const list = await fileForRemux(dir, ffmpeg, message =>
         said.push(message)
       )
-      expect(said.join('\n')).match(/holes kept unfilled: no hvcC/)
+      expect(said.join('\n')).match(/holes kept unfilled: no hvcC or avcC/)
       const text = readFileSync(list, 'utf8')
       expect(text).match(/duration 31\.0/)
       expect(text).not.match(/filler\d\.mp4/)

@@ -1,4 +1,4 @@
-import { avcCPath, boxesIn, hvcCPath, hvcCUnits } from './holeFiller'
+import { avcCPath, avcCUnits, boxesIn, hvcCPath, hvcCUnits } from './holeFiller'
 
 /**
  * Whether a publish can share a recording's init segment.
@@ -59,38 +59,19 @@ const PARAMETER_SET_TYPES = new Set([32, 33, 34])
 /** H.264's SPS and PPS. */
 const AVC_PARAMETER_SET_TYPES = new Set([7, 8])
 
-/**
- * The SPS and PPS units of an AVCDecoderConfigurationRecord: five bytes of
- * profile, level and length size, a count of SPS (low five bits) each behind a
- * 16-bit length, then a count of PPS, the same. What follows them, the high
- * profiles' chroma and bit depth, repeats what the SPS says.
- */
-function avcCUnits(avcC: Buffer): Buffer[] {
-  const units: Buffer[] = []
-  let at = 5
-  for (const mask of [0x1f, 0xff]) {
-    if (at >= avcC.length) throw new RangeError('a short avcC')
-    const count = avcC[at++] & mask
-    for (let i = 0; i < count; i++) {
-      const length = avcC.readUInt16BE(at)
-      if (at + 2 + length > avcC.length) throw new RangeError('a short avcC')
-      units.push(avcC.subarray(at + 2, at + 2 + length))
-      at += 2 + length
-    }
-  }
-  return units
-}
-
 /** The parameter sets of a decoder configuration record of `family`. */
 function parameterSets(family: CodecFamily, record: Buffer): string[] {
-  const units =
-    family === 'hevc'
-      ? hvcCUnits(record).units.filter(nal =>
-          PARAMETER_SET_TYPES.has((nal[0] >> 1) & 0x3f)
-        )
-      : avcCUnits(record).filter(nal =>
-          AVC_PARAMETER_SET_TYPES.has(nal[0] & 0x1f)
-        )
+  let units: Buffer[]
+  if (family === 'hevc') {
+    units = hvcCUnits(record).units.filter(nal =>
+      PARAMETER_SET_TYPES.has((nal[0] >> 1) & 0x3f)
+    )
+  } else {
+    const { sps, pps } = avcCUnits(record)
+    units = [...sps, ...pps].filter(nal =>
+      AVC_PARAMETER_SET_TYPES.has(nal[0] & 0x1f)
+    )
+  }
   return units.map(nal => nal.toString('hex')).sort()
 }
 

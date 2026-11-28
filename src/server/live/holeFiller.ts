@@ -5,6 +5,8 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 
 import { ffprobeFor } from '../media/ffmpeg'
+import type { CodecFamily } from './decoderConfig'
+import { Bits, BitWriter, toPayload, toRbsp } from './nalBits'
 
 const run = promisify(execFile)
 
@@ -20,22 +22,24 @@ const run = promisify(execFile)
  * any, is silence at the stream's own rate and layout, so picture and sound
  * stay the same length and the return opens at its wall time.
  *
- * The pictures are the stream's own codec, size and pixel format, encoded
- * here, so they need parameter sets of their own. The recording is one
- * fragmented MP4 with one sample entry, which every later `-c copy` keeps, so
- * the filler's VPS, SPS and PPS are renumbered to ids the phone does not use
- * and added beside the phone's in that one `hvcC`. Each slice names its own
+ * The pictures are the stream's own codec, HEVC or H.264, size and pixel
+ * format, encoded here (libx265 or libx264), so they need parameter sets of
+ * their own. The recording is one fragmented MP4 with one sample entry, which
+ * every later `-c copy` keeps, so the filler's parameter sets (VPS, SPS and
+ * PPS, or SPS and PPS) are renumbered to ids the phone does not use and added
+ * beside the phone's in that one `hvcC` or `avcC`. Each slice names its own
  * PPS, so a decoder switches at the filler's first picture and back at the
  * return's keyframe, and the phone's pictures are copied untouched. A map of
  * its own behind a discontinuity for every hole would mean a recording whose
  * every FFmpeg reader stops at the first, which only a publish that cannot
  * share the init segment is worth (`toRecording`), and pictures relying on
- * parameter sets in the stream are not allowed in an `hvc1` track, which is
- * what Safari plays.
+ * parameter sets in the stream are not allowed in an `hvc1` or `avc1` track,
+ * which is what Safari plays.
  *
  * Every filler picture is a keyframe, and all of them are the same few hundred
- * bytes, so only one is encoded however long the hole is, and a seek into the
- * hole lands at once.
+ * bytes, so only one is encoded however long the hole is (two for H.264, whose
+ * consecutive IDR pictures differ in `idr_pic_id`, taken in turn), and a seek
+ * into the hole lands at once.
  */
 
 /**
@@ -59,6 +63,7 @@ export const MAX_JOIN_GAP_SEC = 6 * 60 * 60
 
 /** What a filler has to match. */
 export interface StreamShape {
+  codec: CodecFamily
   width: number
   height: number
   pixFmt: string
@@ -128,7 +133,8 @@ export async function probeShape(
   const streams = (JSON.parse(stdout) as { streams?: ProbedStream[] }).streams
   const video = streams?.find(stream => stream.codec_type === 'video')
   if (video == null) return 'no picture'
-  if (video.codec_name !== 'hevc') return `pictures are ${video.codec_name}`
+  const codec = video.codec_name
+  if (codec !== 'hevc' && codec !== 'h264') return `pictures are ${codec}`
   const videoTimescale = timescaleOf(video.time_base)
   if (
     video.width == null ||
@@ -158,6 +164,7 @@ export async function probeShape(
   const named = (value?: string): string | undefined =>
     value == null || value === 'unknown' ? undefined : value
   return {
+    codec,
     width: video.width,
     height: video.height,
     pixFmt: video.pix_fmt,
@@ -346,119 +353,6 @@ export function annexBUnits(data: Buffer): Buffer[] {
   )
 }
 
-function toRbsp(payload: Buffer): Buffer {
-  const out: number[] = []
-  for (let i = 0; i < payload.length; i++) {
-    if (
-      i >= 2 &&
-      payload[i] === 3 &&
-      payload[i - 1] === 0 &&
-      payload[i - 2] === 0 &&
-      out.length >= 2 &&
-      out[out.length - 1] === 0 &&
-      out[out.length - 2] === 0
-    ) {
-      continue
-    }
-    out.push(payload[i])
-  }
-  return Buffer.from(out)
-}
-
-function toPayload(rbsp: Buffer): Buffer {
-  const out: number[] = []
-  let zeros = 0
-  for (const byte of rbsp) {
-    if (zeros >= 2 && byte <= 3) {
-      out.push(3)
-      zeros = 0
-    }
-    out.push(byte)
-    zeros = byte === 0 ? zeros + 1 : 0
-  }
-  if (out[out.length - 1] === 0) out.push(3)
-  return Buffer.from(out)
-}
-
-class Bits {
-  pos = 0
-  constructor(readonly data: Buffer) {}
-  bit(): number {
-    const byte = this.data[this.pos >> 3]
-    if (byte == null) throw new Error('parameter set ends early')
-    const value = (byte >> (7 - (this.pos & 7))) & 1
-    this.pos++
-    return value
-  }
-
-  u(n: number): number {
-    let value = 0
-    for (let i = 0; i < n; i++) value = value * 2 + this.bit()
-    return value
-  }
-
-  ue(): number {
-    let zeros = 0
-    while (this.bit() === 0) {
-      if (++zeros > 31) throw new Error('bad exp-Golomb code')
-    }
-    return 2 ** zeros - 1 + this.u(zeros)
-  }
-
-  se(): number {
-    const value = this.ue()
-    return value % 2 === 1 ? (value + 1) / 2 : -(value / 2)
-  }
-
-  skip(n: number): void {
-    this.pos += n
-  }
-
-  /** Where the stop bit of the RBSP trailing bits is. */
-  stopBit(): number {
-    for (let at = this.data.length * 8 - 1; at >= 0; at--) {
-      if (((this.data[at >> 3] >> (7 - (at & 7))) & 1) === 1) return at
-    }
-    throw new Error('no stop bit')
-  }
-}
-
-class BitWriter {
-  private readonly bits: number[] = []
-  u(n: number, value: number): void {
-    for (let i = n - 1; i >= 0; i--) {
-      this.bits.push(Math.floor(value / 2 ** i) % 2)
-    }
-  }
-
-  ue(value: number): void {
-    const code = value + 1
-    const length = Math.floor(Math.log2(code))
-    this.u(length, 0)
-    this.u(length + 1, code)
-  }
-
-  copy(from: Bits, start: number, end: number): void {
-    const reader = new Bits(from.data)
-    reader.pos = start
-    while (reader.pos < end) this.bits.push(reader.bit())
-  }
-
-  /** A stop bit and zeros to the next byte. */
-  align(): void {
-    this.bits.push(1)
-    while (this.bits.length % 8 !== 0) this.bits.push(0)
-  }
-
-  bytes(): Buffer {
-    const out = Buffer.alloc(this.bits.length / 8)
-    this.bits.forEach((bit, i) => {
-      if (bit === 1) out[i >> 3] |= 0x80 >> (i & 7)
-    })
-    return out
-  }
-}
-
 function skipProfileTierLevel(bits: Bits, maxSubLayersMinus1: number): void {
   bits.skip(96)
   const profile: number[] = []
@@ -609,12 +503,16 @@ function lowestFree(used: Set<number>): number {
   return id
 }
 
-/** One encoded black picture, renumbered to sit beside the phone's sets. */
+/** Encoded black pictures, renumbered to sit beside the phone's sets. */
 export interface FillerPicture {
-  /** The renumbered VPS, SPS and PPS. */
+  /** The renumbered parameter sets: VPS, SPS and PPS, or SPS and PPS. */
   parameterSets: Buffer[]
-  /** The IDR slice, as a NAL unit without a start code. */
-  slice: Buffer
+  /**
+   * The IDR slices, as NAL units without start codes, which the filler's
+   * pictures take in turn: one for HEVC, two for H.264, whose back-to-back
+   * IDR pictures must differ in `idr_pic_id`.
+   */
+  slices: Buffer[]
 }
 
 /**
@@ -726,10 +624,111 @@ export function renumberPicture(
       finish(sps, spsOut.bytes()),
       finish(pps, ppsOut.bytes())
     ],
-    slice: finish(
-      slice,
-      Buffer.concat([sliceOut.bytes(), sliceRbsp.subarray(dataStart)])
-    )
+    slices: [
+      finish(
+        slice,
+        Buffer.concat([sliceOut.bytes(), sliceRbsp.subarray(dataStart)])
+      )
+    ]
+  }
+}
+
+/* H.264 parameter sets ----------------------------------------------------- */
+
+const AVC_SPS = 7
+const AVC_PPS = 8
+const AVC_IDR = 5
+
+function avcType(nal: Buffer): number {
+  return nal[0] & 0x1f
+}
+
+/** Where an H.264 SPS's id is, in RBSP bits: after profile, flags and level. */
+function avcSpsId(bits: Bits): { id: number; start: number; end: number } {
+  bits.pos = 24
+  const id = bits.ue()
+  return { id, start: 24, end: bits.pos }
+}
+
+/** The ids of the H.264 parameter sets of `type` in `units`. */
+function avcIdsOf(units: Buffer[], type: number): Set<number> {
+  return new Set(
+    units
+      .filter(nal => avcType(nal) === type)
+      .map(nal => {
+        const bits = new Bits(toRbsp(nal.subarray(1)))
+        return type === AVC_SPS ? avcSpsId(bits).id : bits.ue()
+      })
+  )
+}
+
+/** The lowest SPS id an H.264 stream with sets `existing` leaves free. */
+export function freeAvcSpsId(existing: Buffer[]): number {
+  return lowestFree(avcIdsOf(existing, AVC_SPS))
+}
+
+/**
+ * Renumbers encoded black H.264 IDR pictures' SPS and PPS so they do not
+ * collide with the ones in `existing`: the SPS's id, the PPS's own id and the
+ * SPS it names, and each slice's `pic_parameter_set_id`. The pictures are
+ * entropy coded with CAVLC, whose slice data follows the header with no
+ * alignment, so everything after the rewritten id is copied bit for bit.
+ */
+export function renumberAvcPictures(
+  units: Buffer[],
+  existing: Buffer[]
+): FillerPicture {
+  const sps = units.find(nal => avcType(nal) === AVC_SPS)
+  const pps = units.find(nal => avcType(nal) === AVC_PPS)
+  const slices = units.filter(nal => avcType(nal) >= 1 && avcType(nal) <= 5)
+  if (
+    sps == null ||
+    pps == null ||
+    slices.length === 0 ||
+    slices.some(nal => avcType(nal) !== AVC_IDR)
+  ) {
+    throw new Error('the filler pictures are not IDR slices with their sets')
+  }
+  const spsId = lowestFree(avcIdsOf(existing, AVC_SPS))
+  const ppsId = lowestFree(avcIdsOf(existing, AVC_PPS))
+  if (spsId > 31 || ppsId > 255)
+    throw new Error('no parameter set ids are free')
+  const finish = (nal: Buffer, out: BitWriter): Buffer =>
+    Buffer.concat([nal.subarray(0, 1), toPayload(out.bytes())])
+
+  const spsBits = new Bits(toRbsp(sps.subarray(1)))
+  const spsHead = avcSpsId(spsBits)
+  const spsOut = new BitWriter()
+  spsOut.copy(spsBits, 0, spsHead.start)
+  spsOut.ue(spsId)
+  spsOut.copy(spsBits, spsHead.end, spsBits.stopBit())
+  spsOut.align()
+
+  const ppsBits = new Bits(toRbsp(pps.subarray(1)))
+  ppsBits.ue()
+  ppsBits.ue()
+  if (ppsBits.u(1) === 1) throw new Error('the filler PPS uses CABAC')
+  const ppsOut = new BitWriter()
+  ppsOut.ue(ppsId)
+  ppsOut.ue(spsId)
+  ppsOut.copy(ppsBits, ppsBits.pos - 1, ppsBits.stopBit())
+  ppsOut.align()
+
+  return {
+    parameterSets: [finish(sps, spsOut), finish(pps, ppsOut)],
+    slices: slices.map(slice => {
+      const bits = new Bits(toRbsp(slice.subarray(1)))
+      if (bits.ue() !== 0) throw new Error('the filler has several slices')
+      if (bits.ue() % 5 !== 2) throw new Error('the filler slice is not intra')
+      const idStart = bits.pos
+      bits.ue()
+      const out = new BitWriter()
+      out.copy(bits, 0, idStart)
+      out.ue(ppsId)
+      out.copy(bits, bits.pos, bits.stopBit())
+      out.align()
+      return finish(slice, out)
+    })
   }
 }
 
@@ -877,36 +876,116 @@ export function hvcCWith(hvcC: Buffer, added: Buffer[]): Buffer {
 }
 
 /**
+ * The SPS and PPS units of an AVCDecoderConfigurationRecord, its NAL length
+ * size, and where what follows them starts: five bytes of profile, level and
+ * length size, a count of SPS (low five bits) each behind a 16-bit length,
+ * then a count of PPS, the same. What follows them, the high profiles'
+ * chroma and bit depth, repeats what the SPS says.
+ */
+export function avcCUnits(avcC: Buffer): {
+  sps: Buffer[]
+  pps: Buffer[]
+  lengthSize: number
+  rest: number
+} {
+  const lists: Buffer[][] = []
+  let at = 5
+  for (const mask of [0x1f, 0xff]) {
+    if (at >= avcC.length) throw new RangeError('a short avcC')
+    const count = avcC[at++] & mask
+    const units: Buffer[] = []
+    for (let i = 0; i < count; i++) {
+      if (at + 2 > avcC.length) throw new RangeError('a short avcC')
+      const length = avcC.readUInt16BE(at)
+      if (at + 2 + length > avcC.length) throw new RangeError('a short avcC')
+      units.push(avcC.subarray(at + 2, at + 2 + length))
+      at += 2 + length
+    }
+    lists.push(units)
+  }
+  return {
+    sps: lists[0],
+    pps: lists[1],
+    lengthSize: (avcC[4] & 3) + 1,
+    rest: at
+  }
+}
+
+/** An `avcC` payload with `added` SPS and PPS appended to their lists. */
+export function avcCWith(avcC: Buffer, added: Buffer[]): Buffer {
+  const { sps, pps, rest } = avcCUnits(avcC)
+  const allSps = [...sps, ...added.filter(nal => avcType(nal) === AVC_SPS)]
+  const allPps = [...pps, ...added.filter(nal => avcType(nal) === AVC_PPS)]
+  if (allSps.length > 31 || allPps.length > 255) {
+    throw new Error('too many parameter sets for an avcC')
+  }
+  const list = (units: Buffer[]): Buffer[] =>
+    units.flatMap(nal => {
+      const length = Buffer.alloc(2)
+      length.writeUInt16BE(nal.length)
+      return [length, nal]
+    })
+  return Buffer.concat([
+    avcC.subarray(0, 5),
+    Buffer.from([0xe0 | allSps.length]),
+    ...list(allSps),
+    Buffer.from([allPps.length]),
+    ...list(allPps),
+    avcC.subarray(rest)
+  ])
+}
+
+/** The video sample entry's decoder configuration a filler shares. */
+export interface SampleEntry {
+  family: CodecFamily
+  /** Its parameter sets. */
+  units: Buffer[]
+  /** The `hvcC` or `avcC` payload. */
+  payload: Buffer
+}
+
+/** The chain of boxes from `moov` down to the `hvcC` or the `avcC`. */
+function configPath(init: Buffer): Box[] | undefined {
+  return hvcCPath(init) ?? avcCPath(init)
+}
+
+/**
  * The phone's init segment and its video sample entry's parameter sets, or
  * why a filler cannot share that entry.
  */
-export function readSampleEntry(
-  init: Buffer
-): { units: Buffer[]; payload: Buffer } | string {
-  const path = hvcCPath(init)
-  if (path == null) return 'no hvcC in the init segment'
-  const hvcC = path[path.length - 1]
-  if (hvcC.header !== 8) return 'an hvcC with a large size'
-  const payload = init.subarray(hvcC.start + 8, hvcC.end)
-  const { units, lengthSize } = hvcCUnits(payload)
+export function readSampleEntry(init: Buffer): SampleEntry | string {
+  const path = configPath(init)
+  if (path == null) return 'no hvcC or avcC in the init segment'
+  const config = path[path.length - 1]
+  if (config.header !== 8) return `an ${config.type} with a large size`
+  const payload = init.subarray(config.start + 8, config.end)
+  if (config.type === 'hvcC') {
+    const { units, lengthSize } = hvcCUnits(payload)
+    if (lengthSize !== 4) return `NAL lengths of ${lengthSize} bytes`
+    return { family: 'hevc', units, payload }
+  }
+  const { sps, pps, lengthSize } = avcCUnits(payload)
   if (lengthSize !== 4) return `NAL lengths of ${lengthSize} bytes`
-  return { units, payload }
+  return { family: 'h264', units: [...sps, ...pps], payload }
 }
 
-/** The init segment with its `hvcC` replaced and every box around it resized. */
-export function initWithHvcC(init: Buffer, payload: Buffer): Buffer {
-  const path = hvcCPath(init)
-  if (path == null) throw new Error('no hvcC in the init segment')
-  const hvcC = path[path.length - 1]
-  const grow = 8 + payload.length - (hvcC.end - hvcC.start)
+/**
+ * The init segment with its `hvcC` or `avcC` replaced and every box around it
+ * resized.
+ */
+export function initWithConfig(init: Buffer, payload: Buffer): Buffer {
+  const path = configPath(init)
+  if (path == null) throw new Error('no hvcC or avcC in the init segment')
+  const config = path[path.length - 1]
+  const grow = 8 + payload.length - (config.end - config.start)
   const box = Buffer.alloc(8)
   box.writeUInt32BE(8 + payload.length)
-  box.write('hvcC', 4, 'latin1')
+  box.write(config.type, 4, 'latin1')
   const out = Buffer.concat([
-    init.subarray(0, hvcC.start),
+    init.subarray(0, config.start),
     box,
     payload,
-    init.subarray(hvcC.end)
+    init.subarray(config.end)
   ])
   for (const parent of path.slice(0, -1)) {
     if (parent.header !== 8) throw new Error('a box with a large size')
@@ -917,6 +996,29 @@ export function initWithHvcC(init: Buffer, payload: Buffer): Buffer {
 
 /* Encoding ---------------------------------------------------------------- */
 
+/** FFmpeg's arguments for black pictures of the stream's size and colour. */
+function blackSource(shape: StreamShape, frames: number): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    `color=black:size=${shape.width}x${shape.height}:rate=1`,
+    '-frames:v',
+    String(frames),
+    '-pix_fmt',
+    shape.pixFmt,
+    ...(shape.colorRange == null ? [] : ['-color_range', shape.colorRange]),
+    ...(shape.colorSpace == null ? [] : ['-colorspace', shape.colorSpace]),
+    ...(shape.colorTransfer == null ? [] : ['-color_trc', shape.colorTransfer]),
+    ...(shape.colorPrimaries == null
+      ? []
+      : ['-color_primaries', shape.colorPrimaries])
+  ]
+}
+
 /** Encodes one black picture of the stream's shape, as Annex B units. */
 export async function encodeBlackPicture(
   ffmpegPath: string,
@@ -925,25 +1027,7 @@ export async function encodeBlackPicture(
   const { stdout } = await run(
     ffmpegPath,
     [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-f',
-      'lavfi',
-      '-i',
-      `color=black:size=${shape.width}x${shape.height}:rate=1`,
-      '-frames:v',
-      '1',
-      '-pix_fmt',
-      shape.pixFmt,
-      ...(shape.colorRange == null ? [] : ['-color_range', shape.colorRange]),
-      ...(shape.colorSpace == null ? [] : ['-colorspace', shape.colorSpace]),
-      ...(shape.colorTransfer == null
-        ? []
-        : ['-color_trc', shape.colorTransfer]),
-      ...(shape.colorPrimaries == null
-        ? []
-        : ['-color_primaries', shape.colorPrimaries]),
+      ...blackSource(shape, 1),
       '-c:v',
       'libx265',
       '-preset',
@@ -962,6 +1046,93 @@ export async function encodeBlackPicture(
   })
 }
 
+/** libx264's names for the H.264 profiles it makes, by `profile_idc`. */
+const X264_PROFILES: Record<number, string> = {
+  66: 'baseline',
+  77: 'main',
+  100: 'high',
+  110: 'high10',
+  122: 'high422',
+  244: 'high444'
+}
+
+/**
+ * The profile and level an `avcC` declares, as libx264 takes them: the
+ * filler is held to them so it asks no more of a decoder than the stream.
+ */
+export function x264ProfileOf(
+  avcC: Buffer
+): { profile: string; level: string } | undefined {
+  const profile = X264_PROFILES[avcC[1]]
+  if (profile == null) return undefined
+  const level = avcC[3] === 9 ? '1b' : (avcC[3] / 10).toFixed(1)
+  return { profile, level }
+}
+
+/**
+ * Encodes two black IDR pictures of the stream's shape with libx264, as
+ * Annex B units: CAVLC, one slice, no B pictures, at the stream's profile and
+ * level, and with `spsId` as its SPS and PPS ids where the stream leaves it
+ * free. SEI is left out.
+ */
+export async function encodeBlackAvcPictures(
+  ffmpegPath: string,
+  shape: StreamShape,
+  avcC: Buffer,
+  spsId: number
+): Promise<Buffer[]> {
+  const target = x264ProfileOf(avcC)
+  if (target == null) {
+    throw new Error(`H.264 profile ${avcC[1]} is not one libx264 makes`)
+  }
+  const { profile, level } = target
+  const { stdout } = await run(
+    ffmpegPath,
+    [
+      ...blackSource(shape, 2),
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-profile:v',
+      profile,
+      '-x264-params',
+      `log-level=error:keyint=1:min-keyint=1:scenecut=0:bframes=0:cabac=0:slices=1:aud=0:level=${level}:sps-id=${spsId}`,
+      '-f',
+      'h264',
+      'pipe:1'
+    ],
+    { encoding: 'buffer', maxBuffer: 1 << 24 }
+  )
+  return annexBUnits(stdout).filter(nal => {
+    const type = avcType(nal)
+    return (type >= 1 && type <= 5) || type === AVC_SPS || type === AVC_PPS
+  })
+}
+
+/** The filler's black pictures, renumbered beside the sets in `entry`. */
+export async function fillerPicture(
+  ffmpegPath: string,
+  shape: StreamShape,
+  entry: SampleEntry
+): Promise<FillerPicture> {
+  if (entry.family === 'hevc') {
+    return renumberPicture(
+      await encodeBlackPicture(ffmpegPath, shape),
+      entry.units
+    )
+  }
+  return renumberAvcPictures(
+    await encodeBlackAvcPictures(
+      ffmpegPath,
+      shape,
+      entry.payload,
+      freeAvcSpsId(entry.units)
+    ),
+    entry.units
+  )
+}
+
 /** Writes one filler file: black pictures, and silence after `soundOffsetSec`. */
 export async function writeFiller(
   ffmpegPath: string,
@@ -972,13 +1143,14 @@ export async function writeFiller(
   path: string
 ): Promise<void> {
   const start = Buffer.from([0, 0, 0, 1])
-  const raw = `${path}.hevc`
-  const unit = Buffer.concat([start, picture.slice])
+  const format = shape.codec === 'hevc' ? 'hevc' : 'h264'
+  const raw = `${path}.${format}`
+  const units = picture.slices.map(slice => Buffer.concat([start, slice]))
   await writeFile(
     raw,
     Buffer.concat([
       ...picture.parameterSets.flatMap(nal => [start, nal]),
-      ...Array.from({ length: plan.frames }, () => unit)
+      ...Array.from({ length: plan.frames }, (_, i) => units[i % units.length])
     ])
   )
   const sound = shape.sound != null && plan.soundFrames > 1 ? shape.sound : null
@@ -991,7 +1163,7 @@ export async function writeFiller(
       'error',
       '-y',
       '-f',
-      'hevc',
+      format,
       '-framerate',
       `${rate.num}/${rate.den}`,
       '-i',
@@ -1011,7 +1183,7 @@ export async function writeFiller(
       '-c:v',
       'copy',
       '-tag:v',
-      'hvc1',
+      shape.codec === 'hevc' ? 'hvc1' : 'avc1',
       // Every picture one frame long, the n-th at n frames.
       '-bsf:v',
       `setts=ts=N*${rate.den}/(${rate.num}*TB):duration=${rate.den}/(${rate.num}*TB)`,
@@ -1063,14 +1235,16 @@ export async function fillHoles(
     `concat:${head}|${file}`
   const shape = await probeShape(ffmpegPath, pair(pieces[0].path))
   if (typeof shape === 'string') return shape
-  const picture = renumberPicture(
-    await encodeBlackPicture(ffmpegPath, shape),
-    entry.units
-  )
+  const picture = await fillerPicture(ffmpegPath, shape, entry)
   const sharedInit = join(scratch, 'init.mp4')
   await writeFile(
     sharedInit,
-    initWithHvcC(init, hvcCWith(entry.payload, picture.parameterSets))
+    initWithConfig(
+      init,
+      entry.family === 'hevc'
+        ? hvcCWith(entry.payload, picture.parameterSets)
+        : avcCWith(entry.payload, picture.parameterSets)
+    )
   )
 
   const quote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`

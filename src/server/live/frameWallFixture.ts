@@ -6,7 +6,7 @@
  */
 
 import { encodeWallClockSei } from '../../common/wallClockSei'
-import { hvcCPath, hvcCWith, initWithHvcC } from './holeFiller'
+import { hvcCPath, hvcCWith, initWithConfig } from './holeFiller'
 
 export function box(type: string, payload: Buffer): Buffer {
   const head = Buffer.alloc(8)
@@ -180,7 +180,7 @@ export function hvcCRecord(nals: Buffer[]): Buffer {
 
 /** {@link hevcInit} with `nals` in its `hvcC`, and sound described by `sound`. */
 export function configuredInit(nals: Buffer[], sound?: Buffer): Buffer {
-  const init = initWithHvcC(hevcInit(), hvcCRecord(nals))
+  const init = initWithConfig(hevcInit(), hvcCRecord(nals))
   if (sound == null) return init
   const length = Buffer.from([sound.length])
   const descriptors = Buffer.concat([
